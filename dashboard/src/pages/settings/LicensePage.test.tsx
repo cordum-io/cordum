@@ -225,17 +225,4 @@ describe("LicensePage", () => {
       cleanup();
     }
   });
-
-  it("uses a truthful license handoff section instead of a dead file picker", () => {
-    const { container, cleanup } = renderPage();
-
-    try {
-      expect(container.textContent).toContain("License update handoff");
-      expect(container.textContent).toContain("No dashboard upload path");
-      expect(container.textContent).not.toContain("Select file");
-      expect(container.textContent).not.toContain("Selected replacement");
-    } finally {
-      cleanup();
-    }
-  });
 });

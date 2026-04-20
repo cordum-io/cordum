@@ -5,6 +5,7 @@ import (
 	"net"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
@@ -18,12 +19,12 @@ func TestGRPCRateLimitUsesTenantKey(t *testing.T) {
 	info := &grpc.UnaryServerInfo{FullMethod: "/cordum.api.v1.CordumApi/SubmitJob"}
 	handler := func(ctx context.Context, req any) (any, error) { return "ok", nil }
 
-	ctx1 := grpcContextWithPeer(context.WithValue(context.Background(), authContextKey{}, &AuthContext{Tenant: "tenant-a"}), "10.0.0.1")
+	ctx1 := grpcContextWithPeer(context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{Tenant: "tenant-a"}), "10.0.0.1")
 	if _, err := interceptor(ctx1, nil, info, handler); err != nil {
 		t.Fatalf("expected first request to pass: %v", err)
 	}
 
-	ctx2 := grpcContextWithPeer(context.WithValue(context.Background(), authContextKey{}, &AuthContext{Tenant: "tenant-a"}), "10.0.0.2")
+	ctx2 := grpcContextWithPeer(context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{Tenant: "tenant-a"}), "10.0.0.2")
 	if _, err := interceptor(ctx2, nil, info, handler); status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("expected rate limit by tenant, got %v", err)
 	}

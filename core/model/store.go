@@ -7,9 +7,35 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
+// ApprovalOwnerKind identifies which subsystem owns the approval. New
+// values must be enumerated here; ApprovalRecord.OwnerKind is consumed
+// by audit code, dashboard rendering, and the cordumctl `mcp` subcommand.
+type ApprovalOwnerKind string
+
+const (
+	// ApprovalOwnerJob is the legacy default — approvals attached to jobs.
+	// Records with OwnerKind == "" are interpreted as ApprovalOwnerJob for
+	// backward compatibility with pre-MCP records already in Redis.
+	ApprovalOwnerJob ApprovalOwnerKind = "job"
+
+	// ApprovalOwnerMCPCall is the per-tool approval gate added for MCP.
+	// OwnerID holds the MCP-call approval ID; the job-scoped fields
+	// (JobHash, Decision tied to a JobRequest, etc.) are not populated.
+	ApprovalOwnerMCPCall ApprovalOwnerKind = "mcp_call"
+)
+
 // ApprovalRecord captures approval audit metadata plus explicit lifecycle state.
+//
+// Owner discrimination:
+//   - When OwnerKind is empty or "job", the approval is keyed by JobID
+//     (the existing job-meta storage). All legacy fields apply.
+//   - When OwnerKind == "mcp_call", OwnerID is the approval ID and
+//     MCPCallID identifies the originating tools/call invocation. JobID
+//     is NOT populated; consume the new fields instead.
+//
+// The owner discriminator is additive (omitempty) so existing serialised
+// records decode unchanged.
 type ApprovalRecord struct {
-	SubmittedBy    string                `json:"submitted_by,omitempty"`
 	ApprovedBy     string                `json:"approved_by,omitempty"`
 	ApprovedRole   string                `json:"approved_role,omitempty"`
 	ApprovedAt     int64                 `json:"approved_at,omitempty"`
@@ -24,6 +50,31 @@ type ApprovalRecord struct {
 	PublishStatus  ApprovalPublishStatus `json:"publish_status,omitempty"`
 	PublishTarget  ApprovalPublishTarget `json:"publish_target,omitempty"`
 	PublishedAt    int64                 `json:"published_at,omitempty"`
+
+	// OwnerKind identifies which subsystem the approval belongs to.
+	// Empty means legacy job-scoped behaviour (treated as "job").
+	OwnerKind ApprovalOwnerKind `json:"owner_kind,omitempty"`
+
+	// OwnerID is the canonical ID of the approval target. For job
+	// approvals this mirrors the existing JobID-based access path so
+	// callers can move to a uniform key without changing semantics.
+	OwnerID string `json:"owner_id,omitempty"`
+
+	// MCPCallID is the MCP-call invocation ID that produced this approval
+	// (set only when OwnerKind == "mcp_call"). Together with the args
+	// hash on the request it lets the server short-circuit a re-issued
+	// tools/call against an already-granted approval.
+	MCPCallID string `json:"mcp_call_id,omitempty"`
+}
+
+// EffectiveOwnerKind returns the owner kind, defaulting to job for legacy
+// records. Use this rather than reading OwnerKind directly so the
+// "" → "job" backward-compat translation lives in exactly one place.
+func (r ApprovalRecord) EffectiveOwnerKind() ApprovalOwnerKind {
+	if r.OwnerKind == "" {
+		return ApprovalOwnerJob
+	}
+	return r.OwnerKind
 }
 
 // HasPendingPublish reports whether the approval still has durable side effects
@@ -35,6 +86,8 @@ func (r ApprovalRecord) HasPendingPublish() bool {
 // JobStore tracks job state and result pointers.
 type JobStore interface {
 	SetState(ctx context.Context, jobID string, state JobState) error
+	SetStateWithContext(ctx context.Context, jobID string, state JobState, evtCtx *StateEventContext) error
+	GetJobEvents(ctx context.Context, jobID string) ([]JobEvent, error)
 	GetState(ctx context.Context, jobID string) (JobState, error)
 	SetResultPtr(ctx context.Context, jobID, resultPtr string) error
 	GetResultPtr(ctx context.Context, jobID string) (string, error)

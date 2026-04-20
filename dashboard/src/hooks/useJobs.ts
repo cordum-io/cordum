@@ -6,6 +6,7 @@ import { useToastStore } from "../state/toast";
 import type {
   Job,
   JobStatus,
+  JobEvent,
   SafetyDecision,
   ApiResponse,
   RemediateJobInput,
@@ -15,6 +16,7 @@ import type {
 } from "../api/types";
 import {
   mapJobDetail,
+  mapJobEvent,
   mapJobRecord,
   mapSafetyDecision,
   type BackendJobDetail,
@@ -96,10 +98,8 @@ function rangeToMicros(range?: string): { after?: number; before?: number } {
 
 function buildParams(filters: JobFilters): string {
   const params = new URLSearchParams();
-  if (filters.state?.length) {
-    for (const s of filters.state) {
-      params.append("state", stateToBackend(s));
-    }
+  if (filters.state?.length === 1) {
+    params.set("state", stateToBackend(filters.state[0]));
   }
   if (filters.topic) params.set("topic", filters.topic);
   if (filters.tenant) params.set("tenant", filters.tenant);
@@ -123,46 +123,6 @@ function buildParams(filters: JobFilters): string {
   return qs ? `?${qs}` : "";
 }
 
-function filterJobsForClient(items: Job[], filters: JobFilters): Job[] {
-  let filtered = items;
-  if (filters.state && filters.state.length > 0) {
-    filtered = filtered.filter((job) => filters.state?.includes(job.status));
-  }
-  if (filters.decision && filters.decision.length > 0) {
-    filtered = filtered.filter((job) =>
-      job.safetyDecision && filters.decision?.includes(job.safetyDecision.type),
-    );
-  }
-  return filtered;
-}
-
-function applyOptimisticCancelToList(
-  old: ApiResponse<Job[]> | undefined,
-  id: string,
-): ApiResponse<Job[]> | undefined {
-  if (!old?.items) return old;
-  return {
-    ...old,
-    items: old.items.map((job) =>
-      job.id === id ? { ...job, status: "cancelled" as JobStatus } : job,
-    ),
-  };
-}
-
-function applyOptimisticCancelToDetail(
-  old: Job | undefined,
-): Job | undefined {
-  return old ? { ...old, status: "cancelled" as JobStatus } : old;
-}
-
-function validateRemediateJobId(jobId: string): string {
-  const trimmedJobID = jobId.trim();
-  if (!trimmedJobID) {
-    throw new Error("job id is required");
-  }
-  return trimmedJobID;
-}
-
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
@@ -174,8 +134,15 @@ export function useJobs(filters: JobFilters = {}) {
       const res = await get<{ items: BackendJobRecord[]; next_cursor?: number | null }>(
         `/jobs${buildParams(filters)}`,
       );
-      const mapped = (res.items ?? []).map(mapJobRecord);
-      const items = filterJobsForClient(mapped, filters);
+      let items = (res.items ?? []).map(mapJobRecord);
+      if (filters.state && filters.state.length > 1) {
+        items = items.filter((j) => filters.state?.includes(j.status));
+      }
+      if (filters.decision && filters.decision.length > 0) {
+        items = items.filter((j) =>
+          j.safetyDecision && filters.decision?.includes(j.safetyDecision.type),
+        );
+      }
       return {
         items,
         next_cursor: res.next_cursor ?? null,
@@ -185,15 +152,16 @@ export function useJobs(filters: JobFilters = {}) {
   });
 }
 
-export function useJob(id: string) {
+export function useJob(id: string, options?: { refetchInterval?: number | false }) {
   return useQuery<Job>({
     queryKey: queryKeys.jobs.detail(id),
     queryFn: async () => {
-      const res = await get<BackendJobDetail>(`/jobs/${encodeURIComponent(id)}`);
+      const res = await get<BackendJobDetail>(`/jobs/${id}`);
       return mapJobDetail(res);
     },
     enabled: !!id,
     staleTime: 5_000,
+    refetchInterval: options?.refetchInterval,
   });
 }
 
@@ -201,7 +169,7 @@ export function useJobDecisions(id: string) {
   return useQuery<SafetyDecision[]>({
     queryKey: queryKeys.jobs.decisions(id),
     queryFn: async () => {
-      const res = await get<Array<Record<string, unknown>>>(`/jobs/${encodeURIComponent(id)}/decisions`);
+      const res = await get<Array<Record<string, unknown>>>(`/jobs/${id}/decisions`);
       return (res ?? []).map((r) =>
         mapSafetyDecision(
           typeof r.decision === "string" ? r.decision : undefined,
@@ -212,6 +180,18 @@ export function useJobDecisions(id: string) {
     },
     enabled: !!id,
     staleTime: 30_000,
+  });
+}
+
+export function useJobEvents(id: string) {
+  return useQuery<JobEvent[]>({
+    queryKey: queryKeys.jobs.events(id),
+    queryFn: async () => {
+      const res = await get<{ events: Array<Record<string, unknown>> }>(`/jobs/${id}/events`);
+      return (res?.events ?? []).map(mapJobEvent);
+    },
+    enabled: !!id,
+    staleTime: 5_000,
   });
 }
 
@@ -241,7 +221,6 @@ export function useSubmitJob() {
         topic: input.topic,
         error: err.message,
       });
-      useToastStore.getState().addToast({ type: "error", title: "Job submission failed", description: err.message });
     },
   });
 }
@@ -252,7 +231,7 @@ export function useCancelJob() {
   return useMutation<void, Error, string, CancelSnapshot>({
     mutationFn: (id) => {
       logger.info("jobs", "Cancelling job", { id });
-      return post<void>(`/jobs/${encodeURIComponent(id)}/cancel`);
+      return post<void>(`/jobs/${id}/cancel`);
     },
     onMutate: async (id) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.jobs.all });
@@ -261,10 +240,13 @@ export function useCancelJob() {
       const previousDetail = queryClient.getQueryData<Job>(queryKeys.jobs.detail(id));
       queryClient.setQueriesData<ApiResponse<Job[]>>(
         { queryKey: queryKeys.jobs.all },
-        (old) => applyOptimisticCancelToList(old, id),
+        (old) => {
+          if (!old?.items) return old;
+          return { ...old, items: old.items.map((j) => j.id === id ? { ...j, status: "cancelled" as JobStatus } : j) };
+        },
       );
       queryClient.setQueryData<Job>(queryKeys.jobs.detail(id), (old) =>
-        applyOptimisticCancelToDetail(old),
+        old ? { ...old, status: "cancelled" as JobStatus } : old,
       );
       return { previousList, previousDetail, id };
     },
@@ -293,22 +275,18 @@ export function useCancelJob() {
 
 export function useRetryJob() {
   const queryClient = useQueryClient();
-  return useMutation<SubmitJobResponse, Error, { id: string; topic: string }>({
-    mutationFn: ({ id, topic }) => {
-      logger.info("jobs", "Retrying job via resubmit", { id, topic });
-      return post<SubmitJobResponse>("/jobs", {
-        topic,
-        prompt: "",
-        labels: { retry: "true", retry_of_job: id },
-      });
+  return useMutation<void, Error, string>({
+    mutationFn: (id) => {
+      logger.info("jobs", "Retrying job", { id });
+      return post<void>(`/dlq/${id}/retry`);
     },
-    onSuccess: (result, { id }) => {
-      logger.info("jobs", "Job retried", { originalId: id, newJobId: result.job_id });
+    onSuccess: (_data, id) => {
+      logger.info("jobs", "Job retried", { id });
       useToastStore.getState().addToast({ type: "success", title: "Retrying job" });
       queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.jobs.detail(id) });
     },
-    onError: (err, { id }) => {
+    onError: (err, id) => {
       logger.error("jobs", "Retry job failed", { id, error: err.message });
       useToastStore.getState().addToast({ type: "error", title: "Failed to retry job", description: err.message });
     },
@@ -323,7 +301,10 @@ export function useRemediateJob() {
     { jobId: string; input: RemediateJobInput }
   >({
     mutationFn: ({ jobId, input }) => {
-      const trimmedJobID = validateRemediateJobId(jobId);
+      const trimmedJobID = jobId.trim();
+      if (!trimmedJobID) {
+        throw new Error("job id is required");
+      }
       logger.info("jobs", "Remediating job", {
         jobId: trimmedJobID,
       });
@@ -338,7 +319,6 @@ export function useRemediateJob() {
         jobId: variables.jobId,
         error: err.message,
       });
-      useToastStore.getState().addToast({ type: "error", title: "Remediation failed", description: err.message });
     },
   });
 }
@@ -348,8 +328,4 @@ export const __jobsInternal = {
   stateToBackend,
   rangeToMicros,
   buildParams,
-  filterJobsForClient,
-  applyOptimisticCancelToList,
-  applyOptimisticCancelToDetail,
-  validateRemediateJobId,
 };

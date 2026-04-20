@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -23,7 +24,7 @@ func (s *server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePolicySnapshots(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermPolicyRead, "admin", "operator") {
+	if !s.requirePermissionOrRole(w, r, auth.PermPolicyRead, "admin", "operator") {
 		return
 	}
 	if s.safetyClient == nil {
@@ -48,7 +49,7 @@ func (s *server) handlePolicySnapshots(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode string) {
-	if !s.requirePermissionOrRole(w, r, PermPolicyWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermPolicyWrite, "admin") {
 		return
 	}
 	if s.safetyClient == nil {

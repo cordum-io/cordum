@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -133,7 +132,7 @@ func (e *Entitlements) FeatureEnabled(name string) bool {
 		return e.VelocityRules
 	case "break_glass_admin":
 		return e.BreakGlassAdmin
-	case "agent_identity", "agentidentity":
+	case "agent_identity":
 		return e.AgentIdentity
 	default:
 		if e.Features == nil {
@@ -301,28 +300,14 @@ func parseLicense(data []byte) (*License, error) {
 		return nil, fmt.Errorf("compact license payload: %w", err)
 	}
 
-	if isLegacyLicenseEnvelope(raw.Payload) {
-		// Peek at org_id / license_id from the legacy envelope for the log
-		// line; they share the same field names with the current schema
-		// so json.Unmarshal into a minimal struct is safe even when the
-		// rest of the payload uses the deprecated features/limits shape.
-		var ident struct {
-			OrgID     string `json:"org_id"`
-			LicenseID string `json:"license_id"`
-		}
-		_ = json.Unmarshal(raw.Payload, &ident)
-		slog.Error("legacy license format rejected",
-			"component", "licensing",
-			"kid", strings.TrimSpace(raw.KID),
-			"org_id", strings.TrimSpace(ident.OrgID),
-			"license_id", strings.TrimSpace(ident.LicenseID),
-			"suggested_action", "regenerate with cordum-tools license-generator in the current schema",
-			"error", ErrUnsupportedLegacyLicenseFormat.Error(),
-		)
-		return nil, ErrUnsupportedLegacyLicenseFormat
-	}
 	var claims Claims
-	if err := json.Unmarshal(raw.Payload, &claims); err != nil {
+	if isLegacyClaims(raw.Payload) {
+		var legacy legacyClaims
+		if err := json.Unmarshal(raw.Payload, &legacy); err != nil {
+			return nil, fmt.Errorf("parse legacy claims: %w", err)
+		}
+		claims = migrateLegacyClaims(legacy)
+	} else if err := json.Unmarshal(raw.Payload, &claims); err != nil {
 		return nil, fmt.Errorf("parse claims: %w", err)
 	}
 

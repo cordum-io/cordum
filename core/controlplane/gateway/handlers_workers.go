@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/model"
@@ -24,7 +25,7 @@ import (
 // emitted through the tenant audit chain (task-2497391e) so SOC2
 // tooling can reconstruct who revoked which worker when.
 func (s *server) handleRevokeWorkerSession(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermWorkersWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkersWrite, "admin") {
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
@@ -72,7 +73,7 @@ func (s *server) emitWorkerTrustChangeAudit(ctx context.Context, workerID, tenan
 		return
 	}
 	actor := "admin"
-	if ac, ok := r.Context().Value(authContextKey{}).(*AuthContext); ok && ac != nil && ac.PrincipalID != "" {
+	if ac, ok := r.Context().Value(auth.ContextKey{}).(*auth.AuthContext); ok && ac != nil && ac.PrincipalID != "" {
 		actor = ac.PrincipalID
 	}
 	// Capture the prior JTI when available so the SIEM event can
@@ -108,7 +109,7 @@ func (s *server) emitWorkerHandshakeRevokeAudit(ctx context.Context, workerID, t
 		return
 	}
 	actor := "admin"
-	if ac, ok := r.Context().Value(authContextKey{}).(*AuthContext); ok && ac != nil && ac.PrincipalID != "" {
+	if ac, ok := r.Context().Value(auth.ContextKey{}).(*auth.AuthContext); ok && ac != nil && ac.PrincipalID != "" {
 		actor = ac.PrincipalID
 	}
 	s.auditExporter.Send(audit.SIEMEvent{
@@ -156,7 +157,7 @@ func buildTrustChangeEvent(workerID, tenant, actor string) audit.SIEMEvent {
 
 // handleGetWorker returns a single worker by ID from the Redis snapshot.
 func (s *server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermWorkersRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
 		return
 	}
 
@@ -200,7 +201,7 @@ func (s *server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
 // When the per-worker index is empty (pre-existing jobs), falls back to
 // recent jobs filtered by the worker's pool topics.
 func (s *server) handleGetWorkerJobs(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermWorkersRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
 		return
 	}
 
@@ -310,7 +311,7 @@ func (s *server) recentJobsByPool(ctx context.Context, pool string, limit int64)
 
 // handleListPools returns all pools with utilization metrics.
 func (s *server) handleListPools(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermWorkersRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
 		return
 	}
 
@@ -337,7 +338,7 @@ func (s *server) handleListPools(w http.ResponseWriter, r *http.Request) {
 
 // handleGetPool returns a single pool's detail with its workers and topics.
 func (s *server) handleGetPool(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermWorkersRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
 		return
 	}
 

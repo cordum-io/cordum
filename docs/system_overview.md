@@ -33,11 +33,7 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - HTTP/WS endpoints for jobs, workflows/runs, approvals, config, policy (bundles + publish/rollback/audit), DLQ, schemas, locks, artifacts, workers, traces, packs.
   - Marketplace endpoints for pack discovery/installs (gateway seeds `cfg:system:pack_catalogs` with the official catalog; override via env or config).
   - gRPC service (`CordumApi`) for job submit/status.
-  - Submit-time policy evaluation: both HTTP and gRPC submit paths call the Safety Kernel before persisting state or publishing to the bus. Policy deny returns 403/PermissionDenied, throttle returns 429/ResourceExhausted, and require_human creates the job in APPROVAL state without publishing. When the Safety Kernel is unavailable, `POLICY_CHECK_FAIL_MODE` controls behavior: `closed` (default) rejects the job, `open` allows it.
-  - Streams `BusPacket` events over `/api/v1/stream` (protojson). WebSocket connections use ping/pong keepalive (30s interval), credential revalidation (120s), unique `conn_id` tracking, and structured lifecycle logging with disconnect reasons.
-  - Live `/health` endpoint checks NATS connectivity and Redis pool health, returning JSON `{status, nats, redis}`.
-  - Policy governance: `/api/v1/policy/replay` (what-if replay) and `/api/v1/policy/analytics` (rule hit analytics, override rates).
-  - Approval context: `/api/v1/approvals/{job_id}/context` returns enriched decision briefing with blast radius, prior approvals, rollback hints, and time-remaining.
+  - Streams `BusPacket` events over `/api/v1/stream` (protojson).
   - Enforces API key + tenant headers and CORS allowlist if configured (HTTP `X-API-Key` + `X-Tenant-ID`, gRPC metadata `x-api-key`, WS `Sec-WebSocket-Protocol: cordum-api-key, <base64url>` + `?tenant_id=<tenant>`).
   - OSS auth uses an API key allowlist (`CORDUM_API_KEYS`, `CORDUM_API_KEY`, or `CORDUM_API_KEYS_PATH`) with optional role/tenant metadata and a single-tenant default (`TENANT_ID`, default `default`). HTTP requests must supply `X-Tenant-ID`.
   - Multi-tenant API keys and RBAC enforcement are provided by the enterprise auth provider (enterprise repo).
@@ -46,14 +42,10 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 - Dashboard (`dashboard/`)
   - React UI served via Nginx; connects to `/api/v1` and `/api/v1/stream`.
   - Runtime config via `/config.json` (API base URL, API key, tenant, optional principal for enterprise auth).
-  - Governance pages:
-    - `/govern/replay` — policy replay (what-if analysis: replay historical jobs against candidate policies).
-    - `/govern/analytics` — policy rule analytics (hit counts, override rates, approval latency histograms).
-    - `/approvals/:jobId` — approval detail with 6 context sections: what, why blocked, blast radius, risk, prior history, rollback guidance.
 
 - Scheduler (`core/controlplane/scheduler`, `cmd/cordum-scheduler`; binary `cordum-scheduler`)
   - Subscribes to `sys.job.submit`, `sys.job.result`, `sys.job.cancel`, `sys.heartbeat`.
-  - Calls Safety Kernel before dispatch (allow/deny/approve/throttle/constraints). When the Safety Kernel is unreachable, `WithInputFailMode` controls behavior: `closed` (default) denies the job, `open` allows it. Both gateway and scheduler use `POLICY_CHECK_FAIL_MODE` — the gateway evaluates policy at submit time, the scheduler at dispatch time.
+  - Calls Safety Kernel before dispatch (allow/deny/approve/throttle/constraints).
   - Routes jobs using pool mapping + least-loaded strategy, labels, and requires-based pool eligibility.
   - Persists job state in Redis and emits DLQ for non-success results.
   - Reconciler marks stale `DISPATCHED`/`RUNNING` jobs as `TIMEOUT`.
@@ -66,15 +58,13 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Applies effective config embedded in job env.
   - Returns optional remediations; gateway can apply them to create a new job with safer topic/capability/labels.
   - Optional decision cache (`SAFETY_DECISION_CACHE_TTL`) keeps latency low for repeated checks.
-  - Server-side risk tag derivation: packs can declare a `riskTagDeriver` on topics. When registered, the kernel derives authoritative risk tags from job content (`_content.payload_json` label) instead of trusting client-supplied tags. Prevents risk tag spoofing. Built-in derivers: `amount-threshold` (parses `amount` from JSON payload, used by mock-bank).
 
 - Workflow Engine (`core/workflow`, `cmd/cordum-workflow-engine`; binary `cordum-workflow-engine`)
   - Stores workflow definitions and runs in Redis; maintains run timeline.
   - Dispatches ready steps as jobs (`sys.job.submit`).
   - Supports condition, delay, notify, for_each fan-out, retries/backoff, approvals, run cancel.
   - `depends_on` enables DAG execution: independent steps run in parallel; steps wait for all deps to succeed.
-  - Failed/cancelled/timed-out/denied deps block downstream steps (no implicit continue-on-error).
-  - Denied is a first-class terminal status: `JOB_STATUS_DENIED` maps to `StepStatusDenied` and propagates to `RunStatusDenied` (not `RunStatusFailed`). Denied steps support `on_error` recovery chains just like failed steps. The status pipeline reports denied in its own bucket, separate from failed.
+  - Failed/cancelled/timed-out deps block downstream steps (no implicit continue-on-error).
   - Supports rerun-from-step and dry-run mode.
   - Validates workflow input and step input/output schemas.
   - Subscribes to `sys.job.result` to advance runs; reconciler retries stuck runs.
@@ -82,19 +72,6 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 - Context Engine (`core/contextwindow/engine`, `cmd/cordum-context-engine`; binary `cordum-context-engine`)
   - gRPC service for `BuildWindow` and `UpdateMemory`.
   - Maintains chat history and generic memory under `mem:<memory_id>:*`.
-
-- MCP Server (`cmd/cordum-mcp`; binary `cordum-mcp`)
-  - Model Context Protocol bridge that exposes Cordum capabilities (jobs, workflows, policy) as MCP tools and resources.
-
-- Licensing (`core/licensing/`)
-  - Ed25519-signed license loading and validation with three tiers (Community/Team/Enterprise).
-  - Entitlement enforcement across services: gateway rate limits, scheduler concurrency caps, workflow step limits, safety kernel policy bundle quotas, audit retention periods.
-  - Graceful degradation to Community tier on license expiry.
-  - Config: `CORDUM_LICENSE_FILE`, `CORDUM_LICENSE_TOKEN`, `CORDUM_LICENSE_PUBLIC_KEY`.
-
-- Telemetry (`core/telemetry/`)
-  - Structured metrics collection across all services; Prometheus exposition on each service's metrics port.
-  - License-tier-aware retention and export controls.
 
 - External workers (not in this repo)
   - Subscribe to job topics or direct subjects; honor `sys.job.cancel`.
@@ -105,7 +82,6 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
 ## Job lifecycle (single job)
 
 1) Client or gateway writes input JSON to Redis at `ctx:<job_id>`.
-   - Before persisting, the gateway evaluates submit-time policy via the Safety Kernel. Jobs denied by policy are rejected immediately (HTTP 403 / gRPC PermissionDenied) and never reach the bus or scheduler. Throttled jobs receive 429 / ResourceExhausted. Jobs requiring approval are created in APPROVAL state without publishing.
 2) Publish `BusPacket{JobRequest}` to `sys.job.submit` with `context_ptr`.
 3) Scheduler:
    - Sets job state `PENDING`, resolves effective config, runs safety check.
@@ -197,7 +173,6 @@ JetStream (optional):
 - `cordum-workflow-engine`
 - `cordum-context-engine`
 - `cordumctl` (CLI)
-- `cordum-mcp` (MCP server)
 
 ## Repo layout
 

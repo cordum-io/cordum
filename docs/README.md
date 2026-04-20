@@ -70,7 +70,6 @@ variables from your shell.
 | [k8s-deployment.md](k8s-deployment.md) | Detailed Kubernetes deployment guide — base manifests, production overlay, TLS, clustering, monitoring, scaling, backups |
 | [troubleshooting.md](troubleshooting.md) | Troubleshooting guide — common issues, error diagnosis, debug commands |
 | [SCHEDULER_POOL_SPEC.md](SCHEDULER_POOL_SPEC.md) | Pool routing specification |
-| [compliance/soc2_mapping.md](compliance/soc2_mapping.md) | SOC2 control mapping + `GET /api/v1/audit/export` operator guide (NDJSON + CSV, chain verification, incident playbook) |
 
 ## Architecture
 
@@ -91,8 +90,6 @@ variables from your shell.
 | [adr/005-output-policy-architecture.md](adr/005-output-policy-architecture.md) | ADR: Two-phase output policy architecture |
 | [adr/006-circuit-breaker-safety.md](adr/006-circuit-breaker-safety.md) | ADR: Circuit breaker on Safety Kernel client |
 | [adr/007-dashboard-state-management.md](adr/007-dashboard-state-management.md) | ADR: Zustand + React Query state management |
-| [adr/008-spa-auth-localstorage.md](adr/008-spa-auth-localstorage.md) | ADR: SPA auth token storage in localStorage |
-| [adr/009-control-plane-boundary-hardening.md](adr/009-control-plane-boundary-hardening.md) | ADR: Canonical topic registrations, worker credentials, and worker snapshots |
 
 ## API Reference
 

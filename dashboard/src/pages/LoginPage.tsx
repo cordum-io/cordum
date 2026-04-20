@@ -2,7 +2,7 @@
  * DESIGN: "Control Surface" — Login
  * Multi-auth: API Key, Password, OIDC, SAML
  */
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useConfigStore } from "@/state/config";
@@ -21,102 +21,6 @@ import {
 import { cn } from "@/lib/utils";
 
 type AuthMode = "api_key" | "password" | "oidc" | "saml";
-
-/** Build a minimal fallback user when the server returns { token } without user data. */
-export function buildPasswordFallbackUser(username: string): {
-  id: string;
-  username: string;
-  email: string;
-  display_name: string;
-  roles: string[];
-  tenant: string;
-} {
-  const trimmed = username.trim();
-  return {
-    id: trimmed,
-    username: trimmed,
-    email: "",
-    display_name: trimmed,
-    roles: ["viewer"],
-    tenant: "default",
-  };
-}
-
-export async function readJsonIfOk<T>(
-  response: Pick<Response, "ok" | "json">,
-): Promise<T | null> {
-  if (!response.ok) return null;
-  try {
-    return await response.json();
-  } catch {
-    return null;
-  }
-}
-
-export function parseLoginUser(value: unknown): User | null {
-  if (!value || typeof value !== "object") return null;
-
-  const candidate = value as Record<string, unknown>;
-  if (
-    typeof candidate.id !== "string" ||
-    typeof candidate.username !== "string" ||
-    typeof candidate.email !== "string" ||
-    typeof candidate.display_name !== "string" ||
-    typeof candidate.tenant !== "string" ||
-    !Array.isArray(candidate.roles) ||
-    !candidate.roles.every((role) => typeof role === "string")
-  ) {
-    return null;
-  }
-
-  return {
-    id: candidate.id,
-    username: candidate.username,
-    email: candidate.email,
-    display_name: candidate.display_name,
-    roles: candidate.roles,
-    tenant: candidate.tenant,
-    ...(typeof candidate.createdAt === "string"
-      ? { createdAt: candidate.createdAt }
-      : {}),
-    ...(typeof candidate.lastLogin === "string"
-      ? { lastLogin: candidate.lastLogin }
-      : {}),
-  };
-}
-
-function buildSamlFragmentUser(fragment: URLSearchParams): User | null {
-  const username =
-    fragment.get("username")?.trim() ||
-    fragment.get("email")?.trim() ||
-    fragment.get("user_id")?.trim() ||
-    "";
-  if (!username) return null;
-
-  const role = fragment.get("role")?.trim() || "viewer";
-  return {
-    id: fragment.get("user_id")?.trim() || username,
-    username,
-    email: fragment.get("email")?.trim() || "",
-    display_name: fragment.get("display_name")?.trim() || username,
-    tenant: fragment.get("tenant")?.trim() || "default",
-    roles: [role],
-  };
-}
-
-export function parseSamlCallbackHash(hash: string): { token: string; user: User } | null {
-  const normalized = hash.startsWith("#") ? hash.slice(1) : hash;
-  if (!normalized) return null;
-
-  const fragment = new URLSearchParams(normalized);
-  const token = fragment.get("token")?.trim();
-  if (!token) return null;
-
-  const user = buildSamlFragmentUser(fragment);
-  if (!user) return null;
-
-  return { token, user };
-}
 
 const LOGIN_TIMEOUT = 10_000;
 
@@ -137,90 +41,11 @@ export function isSafeReturnUrl(url: string | null): string {
   return trimmed;
 }
 
-/** Validate API URL is same-origin or relative path — blocks open redirect in OIDC/SAML flows. */
-export function isSafeApiUrl(url: string): string {
-  const fallback = "/api/v1";
-  const trimmed = url.trim();
-  if (!trimmed) return fallback;
-
-  // Relative paths starting with / are safe (block protocol-relative //)
-  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) return trimmed;
-
-  // Absolute URLs must be same-origin
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.origin === window.location.origin) return trimmed;
-  } catch {
-    // Not a valid absolute URL — reject
-  }
-
-  return fallback;
-}
-
-export function buildSamlRedirectTarget(returnUrl: string): string {
-  const target = new URL("/login", window.location.origin);
-  if (returnUrl && returnUrl !== "/") {
-    target.searchParams.set("returnUrl", returnUrl);
-  }
-  return target.toString();
-}
-
-export function buildSamlLoginHref(apiUrl: string, returnUrl: string): string {
-  const baseUrl = isSafeApiUrl(apiUrl);
-  const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
-  const loginUrl = new URL(`${normalizedBaseUrl}/auth/sso/saml/login`, window.location.origin);
-  loginUrl.searchParams.set("redirect", buildSamlRedirectTarget(returnUrl));
-  return loginUrl.toString();
-}
-
-export function buildOidcLoginHref(apiUrl: string, returnUrl: string): string {
-  const baseUrl = isSafeApiUrl(apiUrl);
-  const normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
-  const loginUrl = new URL(`${normalizedBaseUrl}/auth/sso/oidc/login`, window.location.origin);
-  loginUrl.searchParams.set("redirect", buildSamlRedirectTarget(returnUrl));
-  return loginUrl.toString();
-}
-
-function parseSSOErrorHash(hash: string): string | null {
-  const normalized = hash.startsWith("#") ? hash.slice(1) : hash;
-  if (!normalized) return null;
-  const fragment = new URLSearchParams(normalized);
-  const error = fragment.get("error")?.trim();
-  if (!error) return null;
-  const description = fragment.get("error_description")?.trim();
-  return description || error;
-}
-
-const authModes: {
-  id: AuthMode;
-  label: string;
-  icon: React.ReactNode;
-  description: string;
-}[] = [
-  {
-    id: "api_key",
-    label: "API Key",
-    icon: <KeyRound className="w-4 h-4" />,
-    description: "Connect with an API key",
-  },
-  {
-    id: "password",
-    label: "Password",
-    icon: <Lock className="w-4 h-4" />,
-    description: "Username & password login",
-  },
-  {
-    id: "oidc",
-    label: "OIDC / SSO",
-    icon: <Globe className="w-4 h-4" />,
-    description: "OpenID Connect provider",
-  },
-  {
-    id: "saml",
-    label: "SAML / Enterprise",
-    icon: <Building2 className="w-4 h-4" />,
-    description: "Enterprise SAML SSO",
-  },
+const authModes: { id: AuthMode; label: string; icon: React.ReactNode; description: string }[] = [
+  { id: "api_key", label: "API Key", icon: <KeyRound className="w-4 h-4" />, description: "Connect with an API key" },
+  { id: "password", label: "Password", icon: <Lock className="w-4 h-4" />, description: "Username & password login" },
+  { id: "oidc", label: "OIDC / SSO", icon: <Globe className="w-4 h-4" />, description: "OpenID Connect provider" },
+  { id: "saml", label: "SAML / Enterprise", icon: <Building2 className="w-4 h-4" />, description: "Enterprise SAML SSO" },
 ];
 
 export default function LoginPage() {
@@ -249,33 +74,6 @@ export default function LoginPage() {
   const showErrorToast = (message: string) =>
     toast.error(message, { className: errorToastClass });
 
-  useEffect(() => {
-    const normalizedHash = window.location.hash.startsWith("#")
-      ? window.location.hash.slice(1)
-      : window.location.hash;
-    const token = new URLSearchParams(normalizedHash).get("token")?.trim();
-    if (!token) return;
-
-    const payload = parseSamlCallbackHash(window.location.hash);
-    if (!payload) {
-      showErrorToast("SSO login finished, but the gateway returned incomplete user details");
-      window.history.replaceState(null, "", window.location.pathname + window.location.search);
-      return;
-    }
-
-    login(payload.token, payload.user);
-    showSuccessToast("Signed in");
-    window.history.replaceState(null, "", window.location.pathname + window.location.search);
-    navigate(returnUrl, { replace: true });
-  }, [login, navigate, returnUrl]);
-
-  useEffect(() => {
-    const message = parseSSOErrorHash(window.location.hash);
-    if (!message) return;
-    showErrorToast(message);
-    window.history.replaceState(null, "", window.location.pathname + window.location.search);
-  }, []);
-
   const handleApiKeyLogin = async () => {
     if (!apiKey.trim()) {
       showErrorToast("API key is required");
@@ -292,32 +90,24 @@ export default function LoginPage() {
         headers: { Authorization: `Bearer ${apiKey.trim()}` },
         signal: AbortSignal.timeout(LOGIN_TIMEOUT),
       });
-      if (!res.ok) {
-        const msg =
-          res.status === 401 || res.status === 403
-            ? "Invalid API key"
-            : res.status >= 500
-              ? "Server error — try again later"
-              : `Connection failed (HTTP ${res.status})`;
-        showErrorToast(msg);
-        return;
+      if (res.ok) {
+        const user = await res.json();
+        login(apiKey.trim(), user);
+        toast.success("Connected to Cordum");
+        navigate(returnUrl);
+      } else {
+        const msg = res.status === 401 || res.status === 403
+          ? "Invalid API key"
+          : res.status >= 500
+            ? "Server error — try again later"
+            : `Connection failed (HTTP ${res.status})`;
+        toast.error(msg);
       }
-      const rawUser = await readJsonIfOk<Record<string, unknown>>(res);
-      const user = parseLoginUser(rawUser);
-      if (!user) {
-        showErrorToast(
-          "Connected, but the server returned an invalid user response",
-        );
-        return;
-      }
-      login(apiKey.trim(), user);
-      showSuccessToast("Connected to Cordum");
-      navigate(returnUrl);
     } catch (err) {
       if (err instanceof DOMException && err.name === "TimeoutError") {
-        showErrorToast("Request timed out — check your connection");
+        toast.error("Request timed out — check your connection");
       } else {
-        showErrorToast("Cannot reach API server — check the endpoint URL");
+        toast.error("Cannot reach API server — check the endpoint URL");
       }
     } finally {
       setLoading(false);
@@ -339,39 +129,31 @@ export default function LoginPage() {
       const res = await fetch(`${baseUrl}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: username.trim(),
-          password: password.trim(),
-        }),
+        body: JSON.stringify({ username: username.trim(), password: password.trim() }),
         signal: AbortSignal.timeout(LOGIN_TIMEOUT),
       });
-      if (!res.ok) {
-        showErrorToast("Invalid credentials");
-        return;
+      if (res.ok) {
+        const data = await res.json();
+        // Fallback user object for servers that return { token } without a user field.
+        // Roles default to ["admin"] — the backend enforces real RBAC via the token.
+        login(data.token || "session", data.user || {
+          id: username.trim(),
+          username: username.trim(),
+          email: "",
+          display_name: username.trim(),
+          roles: ["admin"],
+          tenant: "default",
+        });
+        toast.success("Logged in");
+        navigate(returnUrl);
+      } else {
+        toast.error("Invalid credentials");
       }
-      const data = await readJsonIfOk<{
-        token?: string;
-        user?: Record<string, unknown>;
-      }>(res);
-      if (!data) {
-        showErrorToast(
-          "Login succeeded, but the server returned an invalid session payload",
-        );
-        return;
-      }
-      const parsedUser = parseLoginUser(data.user);
-      // Fallback user when server returns { token } without user data.
-      login(
-        data.token || "session",
-        parsedUser || buildPasswordFallbackUser(username),
-      );
-      showSuccessToast("Logged in");
-      navigate(returnUrl);
     } catch (err) {
       if (err instanceof DOMException && err.name === "TimeoutError") {
-        showErrorToast("Request timed out — check your connection");
+        toast.error("Request timed out — check your connection");
       } else {
-        showErrorToast("Cannot reach API server — check the endpoint URL");
+        toast.error("Cannot reach API server — check the endpoint URL");
       }
     } finally {
       setLoading(false);
@@ -385,7 +167,7 @@ export default function LoginPage() {
       toast.warning("Unsafe API URL blocked — using default endpoint");
     }
     toast.info("Redirecting to OIDC provider...");
-    window.location.href = buildOidcLoginHref(baseUrl, returnUrl);
+    window.location.href = `${baseUrl}/auth/oidc/login`;
   };
 
   const handleSamlLogin = () => {
@@ -395,7 +177,7 @@ export default function LoginPage() {
       toast.warning("Unsafe API URL blocked — using default endpoint");
     }
     toast.info("Redirecting to SAML IdP...");
-    window.location.href = buildSamlLoginHref(baseUrl, returnUrl);
+    window.location.href = `${baseUrl}/auth/saml/login`;
   };
 
   const handleSubmit = () => {
@@ -550,105 +332,127 @@ export default function LoginPage() {
                   className="h-9 w-full rounded-2xl border border-border bg-card/80 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
                 />
               </div>
-            </motion.div>
-          )}
-
-          {/* Password mode */}
-          {authMode === "password" && (
-            <motion.div
-              key="password"
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="space-y-4"
-            >
-              <div className="space-y-2">
-                <label className="text-xs font-mono font-semibold text-muted-foreground uppercase tracking-[0.08em]">
-                  Username
-                </label>
-                <input
-                  type="text"
-                  placeholder="admin"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="h-9 w-full rounded-2xl border border-border bg-card/80 px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
-                />
+            )}
+            <div>
+              <label htmlFor="username" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                Username
+              </label>
+              <Input
+                id="username"
+                name="username"
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Enter username"
+                autoComplete="username"
+                required
+              />
+            </div>
+            <div>
+              <label htmlFor="password" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                Password
+              </label>
+              <Input
+                id="password"
+                name="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password"
+                autoComplete="current-password"
+                required
+              />
+            </div>
+            <div>
+              <label htmlFor="tenant" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                Tenant
+              </label>
+              <Input
+                id="tenant"
+                name="tenant"
+                type="text"
+                value={tenantInput}
+                onChange={(e) => setTenantInput(e.target.value)}
+                placeholder={defaultTenant}
+                autoComplete="organization"
+              />
+            </div>
+            {error && (
+              <div className="rounded-xl bg-[color:rgba(184,58,58,0.1)] px-4 py-2.5 text-sm text-danger">
+                {error}
               </div>
-              <div className="space-y-2">
-                <label className="text-xs font-mono font-semibold text-muted-foreground uppercase tracking-[0.08em]">
-                  Password
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                  <input
-                    type="password"
-                    placeholder="Enter password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-                    className="h-9 w-full rounded-2xl border border-border bg-card/80 pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 font-mono"
-                  />
-                </div>
+            )}
+            <Button type="submit" className="w-full" disabled={submitting}>
+              {submitting ? "Signing in..." : "Sign in"}
+            </Button>
+          </form>
+        ) : (
+          <form onSubmit={handleApiKeyLogin} className="space-y-4">
+            {showModeToggle && (
+              <div className="flex rounded-full border border-border p-1">
+                <button
+                  type="button"
+                  className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide ${
+                    mode === "user" ? "text-muted" : "bg-accent/15 text-accent"
+                  }`}
+                  onClick={() => setMode("user")}
+                >
+                  User
+                </button>
+                <button
+                  type="button"
+                  className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold uppercase tracking-wide ${
+                    mode === "apiKey" ? "bg-accent/15 text-accent" : "text-muted"
+                  }`}
+                  onClick={() => setMode("apiKey")}
+                >
+                  API Key
+                </button>
               </div>
-            </motion.div>
-          )}
-
-          {/* OIDC mode */}
-          {authMode === "oidc" && (
-            <motion.div
-              key="oidc"
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="text-center py-2"
-            >
-              <Globe className="w-8 h-8 text-cordum mx-auto mb-2" />
-              <p className="text-xs text-muted-foreground">
-                You will be redirected to your OIDC provider to authenticate.
-              </p>
-            </motion.div>
-          )}
-
-          {/* SAML mode */}
-          {authMode === "saml" && (
-            <motion.div
-              key="saml"
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="text-center py-2"
-            >
-              <Building2 className="w-8 h-8 text-cordum mx-auto mb-2" />
-              <p className="text-xs text-muted-foreground">
-                You will be redirected to your enterprise identity provider.
-              </p>
-            </motion.div>
-          )}
-
-          <Button
-            variant="primary"
-            className="w-full rounded-full bg-primary text-primary-foreground shadow-glow hover:bg-primary/90"
-            loading={loading}
-            onClick={handleSubmit}
-          >
-            {authMode === "api_key" && "Connect"}
-            {authMode === "password" && "Sign In"}
-            {authMode === "oidc" && "Continue with OIDC"}
-            {authMode === "saml" && "Continue with SAML"}
-            <ArrowRight className="w-3.5 h-3.5 ml-1" />
-          </Button>
-        </div>
-
-        <p className="text-center text-xs text-muted-foreground">
-          Need help? Check the{" "}
-          <a
-            href="https://cordum.io/docs"
-            className="text-cordum hover:text-cordum-bright transition-colors"
-          >
-            documentation
-          </a>
-        </p>
-      </motion.div>
+            )}
+            <div>
+              <label htmlFor="api-key" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                API Key
+              </label>
+              <Input
+                id="api-key"
+                name="api-key"
+                type="password"
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                placeholder="Enter your API key"
+                autoComplete="off"
+                required
+              />
+            </div>
+            <div>
+              <label htmlFor="tenant-api" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">
+                Tenant
+              </label>
+              <Input
+                id="tenant-api"
+                name="tenant-api"
+                type="text"
+                value={tenantInput}
+                onChange={(e) => setTenantInput(e.target.value)}
+                placeholder={defaultTenant}
+                autoComplete="organization"
+              />
+            </div>
+            {error && (
+              <div className="rounded-xl bg-[color:rgba(184,58,58,0.1)] px-4 py-2.5 text-sm text-danger">
+                {error}
+              </div>
+            )}
+            <Button type="submit" className="w-full" disabled={submitting}>
+              {submitting ? "Connecting..." : "Connect"}
+            </Button>
+            <p className="text-center text-xs text-muted">
+              API-key authentication mode
+            </p>
+          </form>
+        )}
+      </Card>
     </div>
   );
 }

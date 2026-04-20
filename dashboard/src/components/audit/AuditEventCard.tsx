@@ -72,15 +72,15 @@ function classifySeverity(entry: AuditEntry): Severity {
 // ---------------------------------------------------------------------------
 
 const categoryBorder: Record<AuditCategory, string> = {
-  safety_decision: "border-l-[var(--color-info)]",
-  human_action: "border-l-primary",
-  system_event: "border-l-muted",
-  access_event: "border-l-[var(--color-warning)]",
+  safety_decision: "border-l-blue-500",
+  human_action: "border-l-purple-500",
+  system_event: "border-l-gray-400",
+  access_event: "border-l-amber-500",
 };
 
 const severityDot: Record<Severity, string> = {
-  high: "bg-destructive",
-  medium: "bg-[var(--color-warning)]",
+  high: "bg-red-500",
+  medium: "bg-yellow-500",
   low: "",
 };
 
@@ -111,11 +111,10 @@ function resourceLink(resourceType: string, resourceId: string): string | null {
     case "job":
       return `/jobs/${resourceId}`;
     case "workflow":
-      return `/workflows/${resourceId}/studio`;
+      return `/workflows/${resourceId}`;
     case "policy":
-      return `/govern/overview`;
     case "bundle":
-      return `/govern/overview?tab=bundles`;
+      return `/policies`;
     case "approval":
       return `/approvals`;
     default:
@@ -130,8 +129,8 @@ function resourceLink(resourceType: string, resourceId: string): string | null {
 const decisionVariant: Record<string, string> = {
   allow: "success",
   safety_allow: "success",
-  deny: "governance",
-  safety_deny: "governance",
+  deny: "danger",
+  safety_deny: "danger",
   require_approval: "warning",
   safety_require_approval: "warning",
   throttle: "info",
@@ -167,11 +166,11 @@ function SafetyDecisionContent({ entry, searchQuery }: { entry: AuditEntry; sear
           </span>
         )}
         {entry.resourceName && entry.resourceId && (
-          <span className="text-xs text-muted-foreground">{entry.resourceId.slice(0, 12)}</span>
+          <span className="text-xs text-muted">{entry.resourceId.slice(0, 12)}</span>
         )}
       </div>
       {entry.message && (
-        <p className="text-xs text-muted-foreground"><HighlightText text={entry.message} query={searchQuery ?? ""} /></p>
+        <p className="text-xs text-muted"><HighlightText text={entry.message} query={searchQuery ?? ""} /></p>
       )}
       {riskTags.length > 0 && (
         <div className="flex flex-wrap gap-1">
@@ -199,16 +198,16 @@ function HumanActionContent({ entry, searchQuery }: { entry: AuditEntry; searchQ
             <HighlightText text={resourceLabel(entry)} query={searchQuery ?? ""} />
           </Link>
         ) : (
-          <span className="text-muted-foreground">
+          <span className="text-muted">
             <HighlightText text={resourceLabel(entry)} query={searchQuery ?? ""} />
           </span>
         )}
       </p>
       {entry.message && (
-        <p className="text-xs text-muted-foreground"><HighlightText text={entry.message} query={searchQuery ?? ""} /></p>
+        <p className="text-xs text-muted"><HighlightText text={entry.message} query={searchQuery ?? ""} /></p>
       )}
       {hasDiff && (
-        <p className="text-xs text-muted-foreground italic">
+        <p className="text-xs text-muted italic">
           Content modified (click to view diff)
         </p>
       )}
@@ -242,7 +241,7 @@ function SystemEventContent({ entry, searchQuery }: { entry: AuditEntry; searchQ
 
   return (
     <div className="space-y-1.5 opacity-80">
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+      <div className="flex items-center gap-2 text-sm text-muted">
         {link ? (
           <Link to={link} className="text-accent hover:underline">
             <HighlightText text={resourceLabel(entry)} query={searchQuery ?? ""} />
@@ -261,17 +260,17 @@ function SystemEventContent({ entry, searchQuery }: { entry: AuditEntry; searchQ
           </Badge>
         )}
         {sourceComponent && (
-          <span className="inline-flex items-center rounded border border-border/60 bg-surface2 px-1.5 py-0.5 text-xs font-mono text-muted-foreground">
+          <span className="inline-flex items-center rounded border border-border/60 bg-surface2 px-1.5 py-0.5 text-[11px] font-mono text-muted">
             {sourceComponent}
           </span>
         )}
       </div>
       {entry.message && (
-        <p className="text-xs text-muted-foreground"><HighlightText text={entry.message} query={searchQuery ?? ""} /></p>
+        <p className="text-xs text-muted"><HighlightText text={entry.message} query={searchQuery ?? ""} /></p>
       )}
       {traceId && (
-        <p className="text-xs">
-          <span className="text-muted-foreground">Trace: </span>
+        <p className="text-[11px]">
+          <span className="text-muted">Trace: </span>
           <Link to={`/jobs/${traceId}`} className="font-mono text-accent hover:underline">
             {traceId.slice(0, 12)}...
           </Link>
@@ -282,15 +281,15 @@ function SystemEventContent({ entry, searchQuery }: { entry: AuditEntry; searchQ
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); setDetailsOpen(!detailsOpen); }}
-            className="text-xs text-muted-foreground hover:text-accent transition-colors"
+            className="text-[11px] text-muted hover:text-accent transition-colors"
           >
             {detailsOpen ? "Hide details" : "Show details"}
           </button>
           {detailsOpen && (
-            <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+            <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px]">
               {Object.entries(details).map(([k, v]) => (
                 <div key={k} className="contents">
-                  <dt className="font-semibold text-muted-foreground">{k}</dt>
+                  <dt className="font-semibold text-muted">{k}</dt>
                   <dd className="font-mono text-ink truncate">{String(v)}</dd>
                 </div>
               ))}
@@ -311,7 +310,7 @@ function AccessEventContent({ entry, searchQuery }: { entry: AuditEntry; searchQ
     <div className="space-y-1.5">
       <div className="flex items-center gap-2 text-sm">
         {isLogout ? (
-          <LogOut className="h-4 w-4 text-muted-foreground" />
+          <LogOut className="h-4 w-4 text-muted" />
         ) : (
           <LogIn className={cn("h-4 w-4", isFailure ? "text-danger" : "text-success")} />
         )}
@@ -321,7 +320,7 @@ function AccessEventContent({ entry, searchQuery }: { entry: AuditEntry; searchQ
         </Badge>
       </div>
       {entry.message && (
-        <p className="text-xs text-muted-foreground"><HighlightText text={entry.message} query={searchQuery ?? ""} /></p>
+        <p className="text-xs text-muted"><HighlightText text={entry.message} query={searchQuery ?? ""} /></p>
       )}
     </div>
   );
@@ -388,7 +387,7 @@ export function AuditEventCard({ entry, onClick, searchQuery }: AuditEventCardPr
       <div className="space-y-2">
         {/* Header: timestamp + severity dot */}
         <div className="flex items-center justify-between">
-          <span className="font-mono text-xs text-muted-foreground">
+          <span className="font-mono text-[11px] text-muted">
             {formatTimestampMs(entry.timestamp)}
           </span>
           {severity !== "low" && (
@@ -404,7 +403,7 @@ export function AuditEventCard({ entry, onClick, searchQuery }: AuditEventCardPr
 
         {/* Payload-only match indicator */}
         {isPayloadOnlyMatch(entry, searchQuery) && (
-          <p className="text-xs italic text-muted-foreground">Match found in payload</p>
+          <p className="text-[11px] italic text-muted">Match found in payload</p>
         )}
 
         {/* Related events action */}
@@ -412,7 +411,7 @@ export function AuditEventCard({ entry, onClick, searchQuery }: AuditEventCardPr
           <button
             type="button"
             onClick={handleRelated}
-            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-accent transition-colors"
+            className="flex items-center gap-1 text-[11px] text-muted hover:text-accent transition-colors"
           >
             <Link2 className="h-3 w-3" />
             Related

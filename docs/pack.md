@@ -100,7 +100,6 @@ my-pack/
     triage.yaml
   schemas/
     IncidentContext.json
-    IncidentResult.json
   overlays/
     pools.patch.yaml
     timeouts.patch.yaml
@@ -138,8 +137,6 @@ compatibility:
 
 topics:
   - name: job.sre-investigator.collect.k8s
-    inputSchema: sre-investigator/IncidentContext
-    outputSchema: sre-investigator/IncidentResult
     requires: ["kubectl", "network:egress"]
     riskTags: ["network"]
     capability: sre.collect.k8s
@@ -148,8 +145,6 @@ resources:
   schemas:
     - id: sre-investigator/IncidentContext
       path: schemas/IncidentContext.json
-    - id: sre-investigator/IncidentResult
-      path: schemas/IncidentResult.json
   workflows:
     - id: sre-investigator.triage
       path: workflows/triage.yaml
@@ -182,28 +177,6 @@ tests:
       expectDecision: ALLOW
 ```
 
-### Topic schema bindings
-
-Topic entries may bind request/response schemas directly in the manifest:
-
-```yaml
-topics:
-  - name: job.my-pack.action
-    inputSchema: my-pack/ActionInput
-    outputSchema: my-pack/ActionResult
-```
-
-Rules:
-
-- `inputSchema` and `outputSchema` are optional, but when set they must reference IDs
-  declared under `resources.schemas`.
-- At install time these fields are copied into the canonical topic registry as
-  `input_schema_id` / `output_schema_id`.
-- The gateway uses the input binding for submit-time validation, and the scheduler uses
-  the same registry metadata during pre-dispatch schema enforcement.
-- Packs that omit schema bindings remain valid; the topic is still registered, just
-  without schema-backed validation.
-
 ## Naming rules (enforced by installer)
 
 - Pack ID: `^[a-z0-9-]+$`
@@ -224,13 +197,11 @@ Rules:
 4) Upsert workflows.
 5) Apply config overlays (json merge patch) into config service.
 6) Apply policy fragments into config service bundle.
-7) Register manifest topics in the canonical topic registry (`cfg:system:topics`).
-8) Write pack registry record to `cfg:system:packs`.
+7) Write pack registry record to `cfg:system:packs`.
 
 ### Atomicity + rollback (best-effort)
 
 If any step after writes begin fails, the installer attempts to roll back:
-- delete any topic registrations created in this attempt
 - revert config overlays to the previous snapshot
 - restore previous policy fragment values (or delete if newly added)
 - delete schemas/workflows created in this attempt; restore previous versions when upgrading
@@ -248,18 +219,8 @@ cfg:system:policy.data.bundles["<pack_id>/<name>"] = {
 }
 ```
 
-Pack policy fragments must never be written to `cfg:system:default`. Gateway
-startup migrates any legacy `system/default.data.bundles` entries into
-`cfg:system:policy`, and config writes targeting `system/default` reject a
-top-level `bundles` key to prevent future scope corruption.
-
 Safety kernel merges file/URL policy with config service fragments on load/reload.
 Snapshot hashes are combined (e.g. `baseSnapshot|cfg:<hash>`).
-
-When a pack installs or updates a policy fragment, the installer publishes a NATS
-notification on `sys.config.changed` to signal the safety kernel. The kernel
-picks up the new fragment and reloads policy immediately — no service restart
-required.
 
 Policy rules may include **remediations** to suggest safer alternatives:
 
@@ -320,7 +281,6 @@ On startup the scheduler bootstraps defaults from `config/pools.yaml` and
 
 `cordumctl pack uninstall <id>`:
 
-- Removes pack-owned topic registrations from the canonical topic registry.
 - Removes config overlays (merge patch deletion).
 - Removes policy fragments.
 - Marks pack as `DISABLED` in registry.

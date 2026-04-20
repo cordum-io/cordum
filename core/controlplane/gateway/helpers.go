@@ -16,9 +16,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
@@ -62,6 +62,7 @@ type submitJobRequest struct {
 	MaxOutputTokens    int64             `json:"max_output_tokens"`
 	MaxTotalTokens     int64             `json:"max_total_tokens"`
 	DeadlineMs         int64             `json:"deadline_ms"`
+	DelegationToken    string            `json:"delegation_token,omitempty"`
 }
 
 type policyMetaRequest struct {
@@ -129,14 +130,13 @@ func (r *submitJobRequest) validate(defaultTenant string, promptLimits ...int) e
 			break
 		}
 	}
-	promptLen := utf8.RuneCountInString(r.Prompt)
-	if promptLen > promptLimit {
+	if len(r.Prompt) > promptLimit {
 		return fmt.Errorf(
-			"prompt too long (%d chars, max %d): %w",
-			promptLen, promptLimit,
+			"prompt too long (>%d chars): %w",
+			promptLimit,
 			&licensing.TierLimitError{
 				Limit:      "max_prompt_chars",
-				Current:    int64(promptLen),
+				Current:    int64(len(r.Prompt)),
 				Allowed:    int64(promptLimit),
 				UpgradeURL: licensing.DefaultUpgradeURL,
 			},
@@ -572,7 +572,7 @@ func tenantFromRequest(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	if tenant := headerValue(r, "X-Tenant-ID"); tenant != "" {
+	if tenant := auth.HeaderValue(r, "X-Tenant-ID"); tenant != "" {
 		return tenant
 	}
 	if websocket.IsWebSocketUpgrade(r) {
@@ -584,7 +584,7 @@ func tenantFromRequest(r *http.Request) string {
 		}
 	}
 	// Fall back to auth context tenant (e.g. from session token)
-	if authCtx := authFromRequest(r); authCtx != nil && authCtx.Tenant != "" {
+	if authCtx := auth.FromRequest(r); authCtx != nil && authCtx.Tenant != "" {
 		return authCtx.Tenant
 	}
 	return ""
@@ -1013,39 +1013,6 @@ func writeTierLimitJSON(w http.ResponseWriter, limitErr *licensing.TierLimitErro
 	}
 }
 
-func writeTierFeatureJSON(w http.ResponseWriter, feature, message string) {
-	feature = strings.TrimSpace(feature)
-	if feature == "" {
-		feature = "feature"
-	}
-	message = strings.TrimSpace(message)
-	if message == "" {
-		message = "feature requires a higher tier"
-	}
-	payload := licensing.TierLimitHTTPError{
-		Code:       "tier_limit_exceeded",
-		Message:    message,
-		Limit:      feature,
-		Current:    0,
-		Allowed:    0,
-		UpgradeURL: licensing.DefaultUpgradeURL,
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusForbidden)
-	if err := json.NewEncoder(w).Encode(map[string]any{
-		"error":       payload.Code,
-		"code":        payload.Code,
-		"status":      http.StatusForbidden,
-		"message":     payload.Message,
-		"limit":       payload.Limit,
-		"current":     payload.Current,
-		"allowed":     payload.Allowed,
-		"upgrade_url": payload.UpgradeURL,
-	}); err != nil {
-		slog.Warn("json encode tier feature response failed", "error", err)
-	}
-}
-
 // writeInternalError logs the real error server-side and returns a generic message to the client.
 // Use for ALL 5xx responses to prevent leaking internal details (Redis URLs, config paths, etc.).
 func writeInternalError(w http.ResponseWriter, r *http.Request, operation string, err error) {
@@ -1242,22 +1209,22 @@ func (s *server) requirePermissionOrRole(w http.ResponseWriter, r *http.Request,
 		return true
 	}
 
-	if s != nil && s.auth != nil && s.permChecker != nil && RBACEntitled(s.currentEntitlements()) {
+	if s != nil && s.auth != nil && s.permChecker != nil && auth.RBACEntitled(s.currentEntitlements()) {
 		if err := s.permChecker.RequirePermission(r, permission); err != nil {
 			writeForbidden(w, r, err)
 			return false
 		}
-		return true
+		return s.requireLicensePermission(w, r, permission)
 	}
 
 	if len(legacyRoles) == 0 {
-		return true
+		return s.requireLicensePermission(w, r, permission)
 	}
 	if err := s.requireRole(r, legacyRoles...); err != nil {
 		writeForbidden(w, r, err)
 		return false
 	}
-	return true
+	return s.requireLicensePermission(w, r, permission)
 }
 
 func (s *server) requireFeatureEntitlement(w http.ResponseWriter, feature, message string) bool {
@@ -1325,7 +1292,7 @@ func requirePathParam(w http.ResponseWriter, r *http.Request, name string) (stri
 // stored on the job and compared against the approver identity.
 // Format: "apikey:<sha256-prefix-8>|principal:<principal_id>"
 func submitterIdentity(r *http.Request) string {
-	ac := authFromRequest(r)
+	ac := auth.FromRequest(r)
 	if ac == nil {
 		return ""
 	}
@@ -1364,7 +1331,7 @@ func extractIdentityPart(identity, prefix string) string {
 // submitterIdentityFromContext builds the same composite identity from a
 // context (for gRPC handlers).
 func submitterIdentityFromContext(ctx context.Context) string {
-	ac := authFromContext(ctx)
+	ac := auth.FromContext(ctx)
 	if ac == nil {
 		return ""
 	}

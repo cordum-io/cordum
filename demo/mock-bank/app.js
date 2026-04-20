@@ -1,6 +1,6 @@
 const STORAGE_KEY = "cordum-mock-bank-config";
 const DEFAULT_CONFIG = {
-  apiBaseUrl: "",
+  apiBaseUrl: "http://localhost:8081",
   apiKey: "",
   tenantId: "default",
   principalId: "demo",
@@ -50,15 +50,6 @@ function bindEvents() {
     appendChat("client", text);
     handleChatMessage(text);
   });
-
-  const resetBtn = document.getElementById("resetConfig");
-  if (resetBtn) {
-    resetBtn.addEventListener("click", (event) => {
-      event.preventDefault();
-      localStorage.removeItem(STORAGE_KEY);
-      location.reload();
-    });
-  }
 }
 
 function appendChat(role, text) {
@@ -79,12 +70,18 @@ function handleChatMessage(text) {
     return;
   }
 
-  appendChat("agent", `Processing transfer request for ${formatMoney(amount)}.`);
+  const route = routeForAmount(amount);
+  appendChat(
+    "agent",
+    `Understood. I will submit a transfer request for ${formatMoney(amount)}. ${route.preflight}`,
+  );
+
   submitTransfer({
     amount,
     customer: "Alex Morgan",
     reason: "Client transfer request",
     note: text,
+    policyBucket: route.bucket,
   });
 }
 
@@ -96,7 +93,7 @@ function respondToMessage(text) {
   if (/(transfer|send|wire|payment|payout)/.test(lower)) {
     return "Certainly. What amount should I transfer?";
   }
-  return "I can help with transfers. Just let me know the amount.";
+  return "I can help with transfers. Share an amount like $40 so I can start the request.";
 }
 
 function formatMoney(amount) {
@@ -154,7 +151,26 @@ function parseAmount(text) {
   return Number(match[1]);
 }
 
-async function submitTransfer({ amount, customer, reason, note }) {
+function routeForAmount(amount) {
+  if (amount < 50) {
+    return {
+      bucket: "auto",
+      preflight: "This is a low-risk transfer and should process quickly.",
+    };
+  }
+  if (amount > 1000) {
+    return {
+      bucket: "blocked",
+      preflight: "This exceeds the $1,000 limit and will be blocked by policy.",
+    };
+  }
+  return {
+    bucket: "review",
+    preflight: "This will require manager approval before funds move.",
+  };
+}
+
+async function submitTransfer({ amount, customer, reason, note, policyBucket }) {
   const request = {
     id: `req-${Date.now()}`,
     amount,
@@ -174,6 +190,7 @@ async function submitTransfer({ amount, customer, reason, note }) {
       reason,
       note,
       requested_by: "agent-demo",
+      policy_bucket: policyBucket,
     };
     const runResp = await apiRequest(`/api/v1/workflows/${WORKFLOW_ID}/runs`, {
       method: "POST",
@@ -181,21 +198,44 @@ async function submitTransfer({ amount, customer, reason, note }) {
       query: { org_id: state.config.orgId },
     });
     request.runId = runResp.run_id;
-    appendChat("agent", "Please wait, waiting for representative for approval.");
+    appendChat("agent", "Request received. Monitoring approval and execution.");
 
-    await pollRun(request);
+    const jobId = await waitForJobId(request.runId);
+    request.jobId = jobId;
+
+    await pollJob(request);
   } catch (err) {
-    request.status = "error";
+    request.status = "blocked";
     appendChat("agent", buildErrorMessage(err));
   }
 }
 
-async function pollRun(request) {
+async function waitForJobId(runId) {
+  const maxAttempts = 30;
+  for (let i = 0; i < maxAttempts; i += 1) {
+    const run = await apiRequest(`/api/v1/workflow-runs/${runId}`);
+    const step = findStepWithJobId(run?.steps);
+    if (step) {
+      return step.job_id;
+    }
+    await sleep(500);
+  }
+  throw new Error("Timed out waiting for job id");
+}
+
+function findStepWithJobId(steps) {
+  if (!steps) {
+    return null;
+  }
+  return Object.values(steps).find((step) => step && step.job_id) || null;
+}
+
+async function pollJob(request) {
   let done = false;
   while (!done) {
-    let run;
+    let job;
     try {
-      run = await apiRequest(`/api/v1/workflow-runs/${encodeURIComponent(request.runId)}`);
+      job = await apiRequest(`/api/v1/jobs/${encodeURIComponent(request.jobId)}`);
     } catch (err) {
       if (isNotFound(err)) {
         await sleep(800);
@@ -203,46 +243,26 @@ async function pollRun(request) {
       }
       throw err;
     }
-    const status = String(run.status || "").toLowerCase();
+    const stateValue = String(job.state || "").toUpperCase();
 
-    if (status === "waiting") {
+    if (stateValue === "APPROVAL_REQUIRED") {
       setRequestStatus(request, "approval", () => {
-        appendChat(
-          "agent",
-          "This transfer requires manager approval per safety policy. Open the Cordum dashboard to approve or reject.",
-        );
+        appendChat("agent", "This transfer needs manager approval. I will notify you once cleared.");
       });
-    } else if (status === "denied") {
+    } else if (stateValue === "DENIED") {
       setRequestStatus(request, "blocked", () => {
-        appendChat(
-          "agent",
-          "This transfer was blocked by the Safety Kernel. Transfers of $300 or more are not permitted.",
-        );
+        appendChat("agent", "The transfer was declined by policy. No funds moved.");
       });
       done = true;
-    } else if (status === "succeeded") {
+    } else if (stateValue === "SUCCEEDED") {
       setRequestStatus(request, "completed", () => {
         applyTransaction(request);
         appendChat("agent", "Transfer completed. Your balance has been updated.");
       });
       done = true;
-    } else if (status === "failed") {
-      const hasDeniedStep = run.steps && Object.values(run.steps).some(
-        (s) => s.status === "denied" || (s.safety_decision && s.safety_decision.type === "deny"),
-      );
-      if (hasDeniedStep) {
-        setRequestStatus(request, "blocked", () => {
-          appendChat("agent", "This transfer was blocked by the Safety Kernel.");
-        });
-      } else {
-        setRequestStatus(request, "blocked", () => {
-          appendChat("agent", "The transfer could not be completed.");
-        });
-      }
-      done = true;
-    } else if (["cancelled", "timed_out"].includes(status)) {
+    } else if (["FAILED", "CANCELLED", "TIMEOUT"].includes(stateValue)) {
       setRequestStatus(request, "blocked", () => {
-        appendChat("agent", `The transfer was ${status.replace("_", " ")}.`);
+        appendChat("agent", `The transfer did not complete (${stateValue.toLowerCase()}).`);
       });
       done = true;
     }
@@ -278,8 +298,11 @@ function setRequestStatus(request, status, onChange) {
 }
 
 async function apiRequest(path, options = {}) {
-  const base = state.config.apiBaseUrl;
-  const url = base ? new URL(path, base) : new URL(path, window.location.origin);
+  const base = state.config.apiBaseUrl || DEFAULT_CONFIG.apiBaseUrl;
+  if (!base) {
+    throw new Error("API base URL is missing.");
+  }
+  const url = new URL(path, base);
   if (options.query) {
     Object.entries(options.query).forEach(([key, value]) => {
       if (value === undefined || value === null || value === "") {
@@ -356,7 +379,8 @@ function loadStoredConfig() {
     if (!parsed || typeof parsed !== "object") {
       return {};
     }
-    return parsed;
+    const { apiKey: _apiKey, ...rest } = parsed;
+    return rest;
   } catch (err) {
     return {};
   }
@@ -411,9 +435,10 @@ function sanitizeConfig(input) {
 
 function persistConfig(config) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    const { apiKey: _apiKey, ...rest } = config;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(rest));
   } catch (err) {
-    // Ignore storage failures.
+    // Ignore storage failures for demo environments.
   }
 }
 
@@ -442,7 +467,6 @@ function ensureApiKey() {
   const entered = window.prompt("Enter your Cordum API key to continue:");
   if (entered && entered.trim()) {
     state.config.apiKey = entered.trim();
-    persistConfig(state.config);
     return true;
   }
   return false;
@@ -455,7 +479,7 @@ function buildErrorMessage(err) {
     return "I could not reach the bank API. Please ensure the Cordum API is running and the page is served over http://localhost.";
   }
   if (lower.includes("401") || lower.includes("unauthorized")) {
-    return "The request was rejected. Check your API key and retry (refresh to re-enter).";
+    return "The request was rejected. Update the demo API key and retry (refresh to re-enter).";
   }
   if (lower.includes("403") || lower.includes("tenant")) {
     return "The request was rejected. Set a tenant (try ?tenantId=default) and reload.";

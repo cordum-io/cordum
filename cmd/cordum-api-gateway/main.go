@@ -16,11 +16,12 @@ func main() {
 	logging.Init("gateway")
 	slog.Info("cordum api gateway starting...")
 	buildinfo.Log("cordum-api-gateway")
-	// Fail fast if strict=enforce and no signing key is configured:
-	// continuing would let clients save unsigned bundles that the
-	// kernel will later refuse — a confusing half-failure.
+	// Fail fast if the operator opted into enforce mode without a
+	// signing key — we do not want to discover that at first bundle
+	// save. The helper also emits the authoritative INFO log describing
+	// the active mode + key_id for boot-time observability.
 	if err := policysign.CheckGatewayBoot(); err != nil {
-		slog.Error("api gateway refused to start", "error", err)
+		slog.Error("api gateway: policy signing preflight failed", "error", err)
 		os.Exit(1)
 	}
 	cfg := config.Load()

@@ -13,19 +13,8 @@ and is licensed under BUSL-1.1.
 - Audit export (JSON, CSV, SIEM)
 - Advanced RBAC controls
 
-License loading, validation, and tier enforcement now live in core
-(`core/licensing/`). The core licensing system uses Ed25519 signature
-verification and enforces three tiers (Community/Team/Enterprise) with
-entitlement limits across all services (gateway rate limits, scheduler
-concurrency, workflow steps, safety kernel policy bundles, audit retention).
-Licenses degrade gracefully to Community tier on expiry.
-
-The enterprise repo provides license **issuance**, SSO/SAML, and advanced RBAC.
-
-Configuration variables (set in core):
-- `CORDUM_LICENSE_FILE` — path to the signed license file
-- `CORDUM_LICENSE_TOKEN` — inline license token (alternative to file)
-- `CORDUM_LICENSE_PUBLIC_KEY` — Ed25519 public key for signature verification
+License configuration (e.g., `CORDUM_LICENSE_KEY`, `CORDUM_LICENSE_PATH`) is
+documented in the `cordum-enterprise` repo.
 
 ## Authentication
 

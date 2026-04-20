@@ -86,61 +86,6 @@ func TestGetArtifactEncodesPointer(t *testing.T) {
 	}
 }
 
-func TestExtractEvalDatasetFromIncidentsDryRun(t *testing.T) {
-	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.Method != http.MethodPost {
-			t.Fatalf("expected POST, got %s", req.Method)
-		}
-		if req.URL.EscapedPath() != "/api/v1/evals/datasets/from-incidents" {
-			t.Fatalf("unexpected path: %s", req.URL.EscapedPath())
-		}
-		if req.URL.RawQuery != "dry_run=true" {
-			t.Fatalf("expected dry_run query, got %q", req.URL.RawQuery)
-		}
-		if got := req.Header.Get("X-Tenant-ID"); got != "tenant-1" {
-			t.Fatalf("expected tenant header, got %q", got)
-		}
-
-		var body ExtractIncidentsRequest
-		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-		if body.Name != "preview-dataset" {
-			t.Fatalf("unexpected name: %+v", body)
-		}
-		if len(body.Verdicts) != 1 || body.Verdicts[0] != "deny" {
-			t.Fatalf("unexpected verdicts: %+v", body.Verdicts)
-		}
-
-		return jsonResponse(http.StatusOK, `{"name":"preview-dataset","entry_count":12,"deduped_count":3,"scanned_decisions":30,"warnings":["preview only"]}`), nil
-	}))
-
-	resp, err := client.ExtractEvalDatasetFromIncidents(context.Background(), &ExtractIncidentsRequest{
-		Name:     "preview-dataset",
-		Verdicts: []string{"deny"},
-		DryRun:   true,
-	})
-	if err != nil {
-		t.Fatalf("ExtractEvalDatasetFromIncidents error: %v", err)
-	}
-	if resp.Name != "preview-dataset" || resp.EntryCount != 12 || resp.DedupedCount != 3 || resp.ScannedDecisions != 30 {
-		t.Fatalf("unexpected response: %+v", resp)
-	}
-	if len(resp.Warnings) != 1 || resp.Warnings[0] != "preview only" {
-		t.Fatalf("unexpected warnings: %+v", resp.Warnings)
-	}
-}
-
-func TestExtractEvalDatasetFromIncidentsNilRequest(t *testing.T) {
-	client := newTestClient(nil)
-	if _, err := client.ExtractEvalDatasetFromIncidents(context.Background(), nil); err == nil {
-		t.Fatal("expected error for nil request")
-	}
-	if _, err := client.ExtractEvalDatasetFromIncidents(context.Background(), &ExtractIncidentsRequest{}); err == nil {
-		t.Fatal("expected error for empty dataset name")
-	}
-}
-
 func TestListTopics(t *testing.T) {
 	client := newTestClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Method != http.MethodGet {

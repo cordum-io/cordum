@@ -5,9 +5,7 @@ import { Button } from "../ui/Button";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { useCancelJob, useRetryJob } from "../../hooks/useJobs";
 import { logger } from "../../lib/logger";
-import { friendlyError } from "../../lib/friendlyError";
 import type { Job, JobStatus } from "../../api/types";
-import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
 // State helpers
@@ -69,30 +67,28 @@ export function JobActions({ job }: JobActionsProps) {
         close();
       },
       onError: (err) => {
-        const friendly = friendlyError(err, "cancel job");
         setFeedback({
           type: "error",
-          message: friendly.description,
+          message: err.message || "Failed to cancel job.",
         });
-        toast.error(friendly.title, { description: friendly.description });
+        close();
       },
     });
   }, [job.id, cancelMutation, close]);
 
   const handleRetry = useCallback(() => {
     logger.info("job-actions", "Retry clicked", { jobId: job.id });
-    retryMutation.mutate({ id: job.id, topic: job.topic || "" }, {
+    retryMutation.mutate(job.id, {
       onSuccess: () => {
         setFeedback({ type: "success", message: "Job resubmitted for retry." });
         close();
       },
       onError: (err) => {
-        const friendly = friendlyError(err, "retry job");
         setFeedback({
           type: "error",
-          message: friendly.description,
+          message: err.message || "Failed to retry job.",
         });
-        toast.error(friendly.title, { description: friendly.description });
+        close();
       },
     });
   }, [job.id, retryMutation, close]);
@@ -128,7 +124,7 @@ export function JobActions({ job }: JobActionsProps) {
       {/* Action buttons */}
       <div className="flex items-center gap-2">
         <Button
-          variant="danger"
+          variant="destructive"
           size="sm"
           type="button"
           disabled={!canCancel}
@@ -166,7 +162,7 @@ export function JobActions({ job }: JobActionsProps) {
         title="Cancel Job"
         message={`Are you sure you want to cancel job ${job.id.slice(0, 8)}...? This will terminate the job immediately.`}
         confirmLabel="Cancel Job"
-        confirmVariant="danger"
+        confirmVariant="destructive"
         isPending={cancelMutation.isPending}
         onConfirm={handleCancel}
         onCancel={close}

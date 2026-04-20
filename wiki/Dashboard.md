@@ -1,51 +1,83 @@
-# Dashboard
+# Dashboard Design System & Parity
 
-The Cordum dashboard is a React UI for workflows, jobs, packs, and policies.
+The Cordum dashboard follows the **Control Surface** design language: a dark-first,
+compact, data-dense interface built for infrastructure operators. Every surface,
+color, and typographic choice is driven by CSS custom properties so themes can be
+swapped without touching component code.
 
-## Run locally (dev)
+## Design System Usage
+
+### CSS Variables (Theming)
+
+All colors and surfaces are defined as CSS custom properties in `dashboard/src/styles/index.css`:
+
+| Token | Purpose |
+|-------|---------|
+| `--surface-glass` | Primary card/panel background (frosted glass) |
+| `--ink` | Default text color |
+| `--muted` | Secondary/dimmed text |
+| `--accent` | Interactive highlights, links, focus rings |
+| `--success`, `--warning`, `--danger` | Semantic status colors |
+| `--font-sans`, `--font-mono` | Typography stacks |
+
+### TailwindCSS Utilities
+
+The Tailwind config maps CSS variables to utility classes:
+
+- `bg-surface1`, `bg-surface2`, `bg-surface3` -- layered surface backgrounds
+- `text-ink`, `text-muted`, `text-accent` -- semantic text colors
+- `font-mono` -- monospace for IDs, hashes, code
+- `border-white/5`, `border-white/10` -- subtle dividers
+
+### Class Merging
+
+Use the `cn()` utility (`dashboard/src/lib/utils.ts`) to merge Tailwind classes
+safely, avoiding duplicate or conflicting classes:
+
+```tsx
+import { cn } from '@/lib/utils';
+<div className={cn('rounded-lg bg-surface1', isActive && 'ring-1 ring-accent')} />
+```
+
+### Component Patterns
+
+| Component | File | Usage |
+|-----------|------|-------|
+| `Card` | `components/ui/Card.tsx` | Container with glass background |
+| `Badge` | `components/ui/Badge.tsx` | Status labels, counts |
+| `MetricCard` | `components/ui/MetricCard.tsx` | KPI display with trend |
+| `StatusBadge` | `components/ui/StatusBadge.tsx` | Job/run state indicator |
+
+## Parity Validation
+
+Run the full validation sequence after any styling or theming changes:
 
 ```bash
 cd dashboard
-npm install
-npm run dev
+node ./node_modules/typescript/bin/tsc --noEmit
+npx vitest run src/styles/design-parity.test.ts src/styles/theme-tokens.test.ts
+npx vitest run
+npm run build
 ```
 
-Update `dashboard/public/config.json` to point to your gateway:
+Guard tests in `src/styles/` verify that CSS variable tokens, Tailwind mappings,
+and component classes stay aligned with the spec.
 
-```json
-{
-  "apiBaseUrl": "http://localhost:8081",
-  "apiKey": "",
-  "tenantId": "default",
-  "principalId": "dashboard",
-  "principalRole": "admin"
-}
-```
+## Intentional Deviations
 
-## Run in Docker
+No major deviations from the Control Surface spec at this time. Minor
+implementation details (e.g., exact border-radius values, transition durations)
+are documented inline where they differ.
 
-```bash
-docker build -t cordum-dashboard -f dashboard/Dockerfile dashboard
+## Cross-Platform Notes
 
-docker run --rm -p 8082:8080 \
-  -e CORDUM_API_BASE_URL=http://localhost:8081 \
-  -e CORDUM_TENANT_ID=default \
-  cordum-dashboard
-```
+- **Windows/MSYS**: use forward slashes in all paths.
+- TypeScript check: always use `node ./node_modules/typescript/bin/tsc --noEmit`
+  (not `npx tsc`, which can resolve the wrong binary on Windows).
+- Vitest and Vite work normally under MSYS bash.
 
-## Runtime configuration
+## Further Reading
 
-The container writes `config.json` at startup from environment variables:
-
-- `CORDUM_API_BASE_URL` (empty = same origin)
-- `CORDUM_API_KEY` (embedded only when `CORDUM_DASHBOARD_EMBED_API_KEY=1`)
-- `CORDUM_TENANT_ID`
-- `CORDUM_PRINCIPAL_ID`
-- `CORDUM_PRINCIPAL_ROLE`
-
-For security, the dashboard does not persist API keys in localStorage. Keys live
-in memory unless you explicitly embed them in `config.json`.
-
-The default Compose stack embeds the API key into the dashboard config for local
-development (`CORDUM_DASHBOARD_EMBED_API_KEY=true`). Remove that variable in
-shared environments to require manual auth.
+- [`dashboard/DESIGN_PARITY_CHECKLIST.md`](../dashboard/DESIGN_PARITY_CHECKLIST.md) -- detailed token-by-token evidence
+- [`dashboard/DESIGN_LANGUAGE_MAPPING.md`](../dashboard/DESIGN_LANGUAGE_MAPPING.md) -- spec-to-code mapping
+- [`cordum-dashboard-design-language.md`](../cordum-dashboard-design-language.md) -- full design language spec (v0.6.0)

@@ -11,8 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cordum/cordum/core/model"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/model"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -72,25 +73,25 @@ output_rules:
 
 type policySimAuth struct{}
 
-func (a *policySimAuth) AuthenticateHTTP(r *http.Request) (*AuthContext, error) {
-	return authFromRequest(r), nil
+func (a *policySimAuth) AuthenticateHTTP(r *http.Request) (*auth.AuthContext, error) {
+	return auth.FromRequest(r), nil
 }
 
-func (a *policySimAuth) AuthenticateGRPC(ctx context.Context) (*AuthContext, error) {
-	return authFromContext(ctx), nil
+func (a *policySimAuth) AuthenticateGRPC(ctx context.Context) (*auth.AuthContext, error) {
+	return auth.FromContext(ctx), nil
 }
 
 func (a *policySimAuth) RequireRole(r *http.Request, roles ...string) error {
-	auth := authFromRequest(r)
+	auth := auth.FromRequest(r)
 	if auth == nil {
 		return errors.New("unauthorized")
 	}
-	role := normalizeRole(auth.Role)
+	role := auth.NormalizeRole(auth.Role)
 	if role == "" {
 		return errors.New("role required")
 	}
 	for _, candidate := range roles {
-		if normalizeRole(candidate) == role {
+		if auth.NormalizeRole(candidate) == role {
 			return nil
 		}
 	}
@@ -98,7 +99,7 @@ func (a *policySimAuth) RequireRole(r *http.Request, roles ...string) error {
 }
 
 func (a *policySimAuth) ResolveTenant(r *http.Request, requested, _ string) (string, error) {
-	auth := authFromRequest(r)
+	auth := auth.FromRequest(r)
 	if auth == nil {
 		return "", errors.New("unauthorized")
 	}
@@ -117,7 +118,7 @@ func (a *policySimAuth) ResolveTenant(r *http.Request, requested, _ string) (str
 }
 
 func (a *policySimAuth) RequireTenantAccess(r *http.Request, tenant string) error {
-	auth := authFromRequest(r)
+	auth := auth.FromRequest(r)
 	if auth == nil {
 		return errors.New("unauthorized")
 	}
@@ -139,7 +140,7 @@ func (a *policySimAuth) ResolvePrincipal(r *http.Request, requested string) (str
 	if requested != "" {
 		return requested, nil
 	}
-	auth := authFromRequest(r)
+	auth := auth.FromRequest(r)
 	if auth == nil || strings.TrimSpace(auth.PrincipalID) == "" {
 		return "", errors.New("principal required")
 	}
@@ -248,14 +249,14 @@ func TestPolicyBundleSimulateAuthAndTenant(t *testing.T) {
 	putReq := httptest.NewRequest(http.MethodPut, "/api/v1/policy/bundles/secops/test", bytes.NewReader(seed))
 	putReq.Header.Set("X-Tenant-ID", "tenant-a")
 	putReq.SetPathValue("id", "secops/test")
-	putReq = withAuth(putReq, &AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-1"})
+	putReq = withAuth(putReq, &auth.AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-1"})
 	putRec := httptest.NewRecorder()
 	s.handlePutPolicyBundle(putRec, putReq)
 	if putRec.Code != http.StatusOK {
 		t.Fatalf("seed bundle: %d %s", putRec.Code, putRec.Body.String())
 	}
 
-	simulate := func(auth *AuthContext, requestedTenant string) (*httptest.ResponseRecorder, *pb.PolicyCheckResponse) {
+	simulate := func(auth *auth.AuthContext, requestedTenant string) (*httptest.ResponseRecorder, *pb.PolicyCheckResponse) {
 		simBody, _ := json.Marshal(map[string]any{
 			"request": map[string]any{
 				"topic":  "job.test",
@@ -283,21 +284,21 @@ func TestPolicyBundleSimulateAuthAndTenant(t *testing.T) {
 	}
 
 	t.Run("non-admin forbidden", func(t *testing.T) {
-		rec, _ := simulate(&AuthContext{Tenant: "tenant-a", Role: "viewer", PrincipalID: "user-1"}, "tenant-a")
+		rec, _ := simulate(&auth.AuthContext{Tenant: "tenant-a", Role: "viewer", PrincipalID: "user-1"}, "tenant-a")
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 
 	t.Run("cross-tenant denied", func(t *testing.T) {
-		rec, _ := simulate(&AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-1"}, "tenant-b")
+		rec, _ := simulate(&auth.AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-1"}, "tenant-b")
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 		}
 	})
 
 	t.Run("cross-tenant allowed uses requested tenant", func(t *testing.T) {
-		rec, resp := simulate(&AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-1", AllowCrossTenant: true}, "tenant-b")
+		rec, resp := simulate(&auth.AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-1", AllowCrossTenant: true}, "tenant-b")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 		}
@@ -307,7 +308,7 @@ func TestPolicyBundleSimulateAuthAndTenant(t *testing.T) {
 	})
 
 	t.Run("admin success uses resolved tenant", func(t *testing.T) {
-		rec, resp := simulate(&AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-1"}, "tenant-a")
+		rec, resp := simulate(&auth.AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-1"}, "tenant-a")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 		}
@@ -864,8 +865,8 @@ func TestPolicyEvaluate_ViewerForbidden(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/evaluate", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("X-Api-Key", "viewer-key")
-	authCtx := &AuthContext{Role: "viewer", Tenant: "default"}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	authCtx := &auth.AuthContext{Role: "viewer", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 
 	rec := httptest.NewRecorder()
 	s.handlePolicyEvaluate(rec, req)
@@ -888,8 +889,8 @@ func TestPolicyEvaluate_AdminAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/evaluate", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("X-Api-Key", "admin-key")
-	authCtx := &AuthContext{Role: "admin", Tenant: "default"}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	authCtx := &auth.AuthContext{Role: "admin", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 
 	rec := httptest.NewRecorder()
 	s.handlePolicyEvaluate(rec, req)
@@ -909,8 +910,8 @@ func TestPolicySimulate_ViewerForbidden(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/policy/simulate", strings.NewReader(body))
 	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("X-Api-Key", "viewer-key")
-	authCtx := &AuthContext{Role: "viewer", Tenant: "default"}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	authCtx := &auth.AuthContext{Role: "viewer", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 
 	rec := httptest.NewRecorder()
 	s.handlePolicySimulate(rec, req)
@@ -929,8 +930,8 @@ func TestPolicySnapshots_ViewerForbidden(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/policy/snapshots", nil)
 	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("X-Api-Key", "viewer-key")
-	authCtx := &AuthContext{Role: "viewer", Tenant: "default"}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	authCtx := &auth.AuthContext{Role: "viewer", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 
 	rec := httptest.NewRecorder()
 	s.handlePolicySnapshots(rec, req)

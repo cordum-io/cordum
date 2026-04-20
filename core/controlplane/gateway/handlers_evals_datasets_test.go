@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 )
@@ -30,8 +31,8 @@ func bindEvalDatasetRoutes(t *testing.T, s *server) *http.ServeMux {
 	return mux
 }
 
-func evalAuthCtx(tenant, role string) *AuthContext {
-	return &AuthContext{
+func evalAuthCtx(tenant, role string) *auth.AuthContext {
+	return &auth.AuthContext{
 		Tenant:      tenant,
 		Role:        role,
 		PrincipalID: "tester@" + tenant,
@@ -645,7 +646,7 @@ func TestEvalDatasetHandlersRequireTenant(t *testing.T) {
 	mux := bindEvalDatasetRoutes(t, s)
 
 	// An auth context without a tenant (tenantFromRequest returns "").
-	noTenant := &AuthContext{Role: "admin", PrincipalID: "alice"}
+	noTenant := &auth.AuthContext{Role: "admin", PrincipalID: "alice"}
 
 	routes := []struct {
 		name   string

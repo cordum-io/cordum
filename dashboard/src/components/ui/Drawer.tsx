@@ -15,7 +15,7 @@ export function Drawer({
   size?: "sm" | "md" | "lg" | "xl" | "full";
   label?: string;
 }) {
-  const dialogRef = useDialogA11y(onClose, { enabled: open });
+  const dialogRef = useDialogA11y(onClose);
 
   if (!open) {
     return null;
@@ -35,7 +35,7 @@ export function Drawer({
         type="button"
         aria-label="Close"
         onClick={onClose}
-        className="absolute inset-0 animate-fade-in bg-[color:var(--surface-glass)] backdrop-blur-md"
+        className="absolute inset-0 bg-black/20 backdrop-blur-sm animate-fade-in"
       />
       <div
         ref={dialogRef}
@@ -43,7 +43,7 @@ export function Drawer({
         aria-modal="true"
         aria-label={label || "Drawer"}
         className={cn(
-          "absolute right-0 top-0 h-full w-full overflow-y-auto rounded-l-3xl border-l border-border bg-[color:var(--surface-glass)] p-6 shadow-2xl backdrop-blur-xl animate-slide-in",
+          "absolute right-0 top-0 h-full w-full overflow-y-auto bg-surface/95 p-6 shadow-2xl animate-slide-in border-l border-border",
           sizeClass
         )}
       >

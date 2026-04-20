@@ -108,7 +108,21 @@ func TestVerifyDelegationTokenErrors(t *testing.T) {
 	})
 
 	t.Run("bad signature", func(t *testing.T) {
-		badToken := baseToken[:len(baseToken)-1] + "x"
+		parts := strings.Split(baseToken, ".")
+		if len(parts) != 3 {
+			t.Fatalf("unexpected JWT shape: %q", baseToken)
+		}
+		sig := []byte(parts[2])
+		if len(sig) < 4 {
+			t.Fatalf("signature segment too short: %q", parts[2])
+		}
+		idx := len(sig) / 2
+		if sig[idx] == 'x' {
+			sig[idx] = 'y'
+		} else {
+			sig[idx] = 'x'
+		}
+		badToken := strings.Join([]string{parts[0], parts[1], string(sig)}, ".")
 		_, err := service.VerifyDelegationToken(context.Background(), badToken, "agent-b")
 		if !errors.Is(err, ErrBadSignature) && !errors.Is(err, ErrMalformed) {
 			t.Fatalf("VerifyDelegationToken() error = %v, want ErrBadSignature/ErrMalformed", err)

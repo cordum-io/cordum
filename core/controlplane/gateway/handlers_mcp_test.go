@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/mcp"
 )
 
@@ -21,21 +23,21 @@ type mcpTestAuth struct {
 	tenant string
 }
 
-func (a mcpTestAuth) AuthenticateHTTP(r *http.Request) (*AuthContext, error) {
+func (a mcpTestAuth) AuthenticateHTTP(r *http.Request) (*auth.AuthContext, error) {
 	if strings.TrimSpace(r.Header.Get("X-API-Key")) != a.apiKey {
 		return nil, errors.New("unauthorized")
 	}
-	return &AuthContext{
+	return &auth.AuthContext{
 		APIKey:      a.apiKey,
 		Tenant:      a.tenant,
 		PrincipalID: "tester",
 		Role:        "admin",
-		AuthSource:  AuthSourceAPIKey,
+		AuthSource:  auth.AuthSourceAPIKey,
 	}, nil
 }
 
-func (a mcpTestAuth) AuthenticateGRPC(context.Context) (*AuthContext, error) {
-	return &AuthContext{Tenant: a.tenant}, nil
+func (a mcpTestAuth) AuthenticateGRPC(context.Context) (*auth.AuthContext, error) {
+	return &auth.AuthContext{Tenant: a.tenant}, nil
 }
 
 func (a mcpTestAuth) RequireRole(*http.Request, ...string) error { return nil }
@@ -51,6 +53,119 @@ func (a mcpTestAuth) RequireTenantAccess(*http.Request, string) error { return n
 
 func (a mcpTestAuth) ResolvePrincipal(_ *http.Request, requested string) (string, error) {
 	return requested, nil
+}
+
+func TestResolveMCPIdentity_HeaderPresent(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestGateway(t)
+
+	identity, err := s.agentIdentityStore.Create(context.Background(), store.AgentIdentity{
+		Name:                "reader",
+		Owner:               "tester",
+		RiskTier:            "medium",
+		AllowedTools:        []string{"jobs.*"},
+		DataClassifications: []string{"pii"},
+	})
+	if err != nil {
+		t.Fatalf("create agent identity: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/message", nil)
+	req.Header.Set(mcpAgentIDHeader, identity.ID)
+
+	got := s.resolveMCPIdentity(req)
+	if got == nil {
+		t.Fatalf("expected identity, got nil")
+	}
+	if got.ID != identity.ID {
+		t.Fatalf("want ID %q, got %q", identity.ID, got.ID)
+	}
+	if got.RiskTier != "medium" {
+		t.Fatalf("want risk_tier=medium, got %q", got.RiskTier)
+	}
+	if len(got.AllowedTools) != 1 || got.AllowedTools[0] != "jobs.*" {
+		t.Fatalf("want allowed_tools=[jobs.*], got %v", got.AllowedTools)
+	}
+}
+
+func TestResolveMCPIdentity_HeaderMissing(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestGateway(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/message", nil)
+	// No X-Agent-Id header, no auth context → nil identity (fail-closed).
+	if got := s.resolveMCPIdentity(req); got != nil {
+		t.Fatalf("want nil identity when header and auth absent, got %+v", got)
+	}
+}
+
+func TestResolveMCPIdentity_UnknownID(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestGateway(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/message", nil)
+	req.Header.Set(mcpAgentIDHeader, "does-not-exist")
+	if got := s.resolveMCPIdentity(req); got != nil {
+		t.Fatalf("want nil for unknown id, got %+v", got)
+	}
+}
+
+func TestResolveMCPIdentity_RevokedIDFailsClosed(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestGateway(t)
+
+	identity, err := s.agentIdentityStore.Create(context.Background(), store.AgentIdentity{
+		Name:         "ghost",
+		Owner:        "tester",
+		RiskTier:     "low",
+		AllowedTools: []string{"*"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := s.agentIdentityStore.Delete(context.Background(), identity.ID); err != nil {
+		t.Fatalf("delete (soft revoke): %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/message", nil)
+	req.Header.Set(mcpAgentIDHeader, identity.ID)
+	if got := s.resolveMCPIdentity(req); got != nil {
+		t.Fatalf("revoked identity must fail closed, got %+v", got)
+	}
+}
+
+func TestResolveMCPIdentity_AuthFallbackByWorker(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestGateway(t)
+
+	ctx := context.Background()
+	identity, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		Name:         "linked",
+		Owner:        "tester",
+		RiskTier:     "high",
+		AllowedTools: []string{"*"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := s.agentIdentityStore.LinkWorker(ctx, identity.ID, "worker-x"); err != nil {
+		t.Fatalf("link worker: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/message", nil)
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, &auth.AuthContext{
+		APIKey:      "k",
+		PrincipalID: "worker-x",
+		Tenant:      "default",
+	}))
+
+	got := s.resolveMCPIdentity(req)
+	if got == nil {
+		t.Fatalf("want identity via worker fallback, got nil")
+	}
+	if got.ID != identity.ID {
+		t.Fatalf("want ID %q, got %q", identity.ID, got.ID)
+	}
 }
 
 func TestRegisterMCPRoutesEnforcesAuthAndHandlesPing(t *testing.T) {

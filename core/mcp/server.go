@@ -17,17 +17,17 @@ const (
 	jsonRPCInvalidParamsCode  = -32602
 	jsonRPCInternalErrorCode  = -32603
 	// jsonRPCApprovalRequiredCode is the Cordum-reserved JSON-RPC code
-	// returned when a tool call is gated by a human-approval rule.
+	// returned when a tool call is gated by a human-approval rule. The
+	// error.data payload carries {approval_id, tool, reason} so MCP
+	// clients can surface the pending approval to the user. -32099 sits
+	// in the JSON-RPC 2.0 "Server error" range (-32000..-32099) which is
+	// reserved for application-defined errors.
 	jsonRPCApprovalRequiredCode = -32099
 	// jsonRPCNotAuthorizedCode is returned when the scope filter rejects
-	// a tools/call. error.data carries {tool, sub_reason, agent_id}.
+	// a tools/call. error.data carries {tool, sub_reason, agent_id} so
+	// MCP clients can distinguish allowlist, tier, and classification
+	// denials. Sits just above -32099 in the application-defined range.
 	jsonRPCNotAuthorizedCode = -32098
-	// jsonRPCGatewayMisconfiguredCode is returned when the approval gate
-	// (or another dependency wired at startup) is missing the context it
-	// needs to evaluate a call — typically a middleware wiring bug such
-	// as a missing WithMCPCallMetadata before dispatch. Distinct from
-	// -32603 so operators can page on it specifically.
-	jsonRPCGatewayMisconfiguredCode = -32097
 )
 
 var (
@@ -412,13 +412,6 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 	var denied *NotAuthorized
 	if errors.As(err, &denied) {
 		return s.rpcError(jsonRPCNotAuthorizedCode, "not authorized", denied)
-	}
-	// Gateway-misconfiguration signal — surfaces when middleware fails
-	// to propagate request-scoped metadata into the approval gate.
-	// Checked before the generic internal-error bucket so operators
-	// page on a specific code instead of chasing "internal error".
-	if errors.Is(err, ErrApprovalGateMisconfigured) {
-		return s.rpcError(jsonRPCGatewayMisconfiguredCode, "gateway misconfigured", err.Error())
 	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):

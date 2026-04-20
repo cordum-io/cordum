@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -17,28 +18,28 @@ import (
 
 type governanceAuth struct{}
 
-func (governanceAuth) AuthenticateHTTP(r *http.Request) (*AuthContext, error) {
-	if auth := authFromRequest(r); auth != nil {
+func (governanceAuth) AuthenticateHTTP(r *http.Request) (*auth.AuthContext, error) {
+	if auth := auth.FromRequest(r); auth != nil {
 		return auth, nil
 	}
 	return nil, errors.New("unauthorized")
 }
 
-func (governanceAuth) AuthenticateGRPC(ctx context.Context) (*AuthContext, error) {
-	if auth := authFromContext(ctx); auth != nil {
+func (governanceAuth) AuthenticateGRPC(ctx context.Context) (*auth.AuthContext, error) {
+	if auth := auth.FromContext(ctx); auth != nil {
 		return auth, nil
 	}
 	return nil, errors.New("unauthorized")
 }
 
 func (governanceAuth) RequireRole(r *http.Request, roles ...string) error {
-	auth := authFromRequest(r)
+	auth := auth.FromRequest(r)
 	if auth == nil {
 		return errors.New("unauthorized")
 	}
-	role := normalizeRole(auth.Role)
+	role := auth.NormalizeRole(auth.Role)
 	for _, candidate := range roles {
-		if normalizeRole(candidate) == role {
+		if auth.NormalizeRole(candidate) == role {
 			return nil
 		}
 	}
@@ -46,7 +47,7 @@ func (governanceAuth) RequireRole(r *http.Request, roles ...string) error {
 }
 
 func (governanceAuth) ResolveTenant(r *http.Request, requested, _ string) (string, error) {
-	auth := authFromRequest(r)
+	auth := auth.FromRequest(r)
 	if auth == nil {
 		return "", errors.New("unauthorized")
 	}
@@ -61,7 +62,7 @@ func (governanceAuth) ResolveTenant(r *http.Request, requested, _ string) (strin
 }
 
 func (governanceAuth) RequireTenantAccess(r *http.Request, tenant string) error {
-	auth := authFromRequest(r)
+	auth := auth.FromRequest(r)
 	if auth == nil {
 		return errors.New("unauthorized")
 	}
@@ -75,7 +76,7 @@ func (governanceAuth) ResolvePrincipal(r *http.Request, requested string) (strin
 	if requested != "" {
 		return requested, nil
 	}
-	auth := authFromRequest(r)
+	auth := auth.FromRequest(r)
 	if auth == nil {
 		return "", errors.New("unauthorized")
 	}
@@ -128,7 +129,7 @@ func TestHandleListGovernanceDecisionsRoundTripsFilters(t *testing.T) {
 	s.decisionLogStore = store
 
 	cursor := model.EncodeDecisionCursor(1776680400000, "decision-1")
-	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/governance/decisions?since=2026-04-20T09:00:00Z&until=1776681000000&topic=job.test&rule_id=rule-1&verdict=constrain&agent_id=agent-1&cursor="+cursor+"&limit=25", nil), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/governance/decisions?since=2026-04-20T09:00:00Z&until=1776681000000&topic=job.test&rule_id=rule-1&verdict=constrain&agent_id=agent-1&cursor="+cursor+"&limit=25", nil), &auth.AuthContext{
 		Tenant:      "tenant-a",
 		Role:        "viewer",
 		PrincipalID: "viewer-a",
@@ -198,7 +199,7 @@ func TestHandleListGovernanceDecisionsRejectsBadQuery(t *testing.T) {
 	}
 
 	for _, url := range tests {
-		req := withAuth(httptest.NewRequest(http.MethodGet, url, nil), &AuthContext{
+		req := withAuth(httptest.NewRequest(http.MethodGet, url, nil), &auth.AuthContext{
 			Tenant:      "tenant-a",
 			Role:        "viewer",
 			PrincipalID: "viewer-a",
@@ -233,14 +234,14 @@ func TestHandleListGovernanceDecisionsRBACDenied(t *testing.T) {
 	setTestEntitlements(t, s, licensing.PlanEnterprise, func(ent *licensing.Entitlements) {
 		ent.RBAC = true
 	})
-	if err := s.rbacStore.PutRole(context.Background(), &RoleDefinition{
+	if err := s.rbacStore.PutRole(context.Background(), &auth.RoleDefinition{
 		Name:        "jobs-only",
-		Permissions: []string{PermJobsRead},
+		Permissions: []string{auth.PermJobsRead},
 	}); err != nil {
 		t.Fatalf("PutRole() error = %v", err)
 	}
 
-	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/governance/decisions", nil), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/governance/decisions", nil), &auth.AuthContext{
 		Tenant:      "tenant-a",
 		Role:        "jobs-only",
 		PrincipalID: "jobs-only-a",
@@ -273,7 +274,7 @@ func TestHandleListGovernanceDecisionsTenantIsolation(t *testing.T) {
 	}
 	s.decisionLogStore = store
 
-	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/governance/decisions", nil), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/governance/decisions", nil), &auth.AuthContext{
 		Tenant:      "tenant-a",
 		Role:        "viewer",
 		PrincipalID: "viewer-a",

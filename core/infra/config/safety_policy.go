@@ -26,7 +26,7 @@ type SafetyPolicy struct {
 // InputPolicyConfig controls input-policy evaluation behavior.
 type InputPolicyConfig struct {
 	Enabled      bool   `yaml:"enabled"`
-	FailMode     string `yaml:"fail_mode,omitempty"`     // open|closed (default: closed = requeue when kernel down)
+	FailMode     string `yaml:"fail_mode,omitempty"`      // open|closed (default: closed = requeue when kernel down)
 	MaxScanBytes int    `yaml:"max_scan_bytes,omitempty"` // default 2 MiB
 }
 
@@ -221,6 +221,7 @@ type PolicyMatch struct {
 	LabelAllowlist           map[string][]string `yaml:"label_allowlist,omitempty"` // deny when label value NOT in list
 	LabelThreshold           map[string]float64  `yaml:"label_threshold,omitempty"` // deny when label value > threshold
 	SecretsPresent           *bool               `yaml:"secrets_present,omitempty"`
+	Predicate                string              `yaml:"predicate,omitempty"`
 	MCP                      MCPPolicy           `yaml:"mcp"`
 }
 
@@ -298,6 +299,7 @@ type PolicyInput struct {
 	Meta           PolicyMeta
 	SecretsPresent bool
 	MCP            MCPRequest
+	Delegation     *DelegationContext
 }
 
 // PolicyMeta captures structured job metadata for policy checks.
@@ -356,6 +358,9 @@ func ParseSafetyPolicy(data []byte) (*SafetyPolicy, error) {
 			if err := rule.Velocity.Validate(rule.ID); err != nil {
 				return nil, fmt.Errorf("parse safety policy: %w", err)
 			}
+		}
+		if err := validateDelegationPredicate(rule.Match.Predicate); err != nil {
+			return nil, fmt.Errorf("parse safety policy: rule %q: %w", rule.ID, err)
 		}
 	}
 	return &policy, nil
@@ -532,6 +537,9 @@ func matchRule(match PolicyMatch, input PolicyInput) bool {
 		return false
 	}
 	if len(match.LabelThreshold) > 0 && !labelThresholdMatch(match.LabelThreshold, input.Labels) {
+		return false
+	}
+	if !delegationPredicateMatch(match.Predicate, input.Delegation) {
 		return false
 	}
 	if !mcpMatch(match.MCP, input.MCP) {

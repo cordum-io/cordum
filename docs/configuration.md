@@ -38,20 +38,6 @@ Shared across services:
 - Redis TLS: `REDIS_TLS_CA`, `REDIS_TLS_CERT`, `REDIS_TLS_KEY`, `REDIS_TLS_INSECURE`, `REDIS_TLS_SERVER_NAME`
 - Redis clustering: `REDIS_CLUSTER_ADDRESSES` (comma-separated host:port seeds)
 
-## Typed environment variable helpers
-
-Several services use typed env var helpers from `core/infra/env/` that parse
-values with safe fallback behavior:
-
-- **`env.IntOr(key, default)`** — Parses an integer from the named env var. Falls back to the compiled default if the variable is missing, empty, or not a valid positive integer.
-- **`env.Int64Or(key, default)`** — Same as `IntOr` but for `int64` values.
-- **`env.DurationOr(key, default)`** — Parses a Go duration string (e.g. `30s`, `5m`). Falls back to the default if the variable is missing, empty, or not a valid positive duration.
-- **`env.Bool(key)`** — Returns `true` for `1`, `true`, `yes`, `y`, `on` (case-insensitive). Returns `false` for anything else, including unset.
-
-All helpers silently fall back — they never panic or return errors. This means
-a misconfigured value reverts to the compiled default rather than crashing the
-service.
-
 ## Gateway
 
 - `GATEWAY_GRPC_ADDR`, `GATEWAY_HTTP_ADDR`, `GATEWAY_METRICS_ADDR`
@@ -72,8 +58,6 @@ service.
 - Pack catalog defaults: `CORDUM_PACK_CATALOG_URL`, `CORDUM_PACK_CATALOG_ID`,
   `CORDUM_PACK_CATALOG_TITLE`, `CORDUM_PACK_CATALOG_DEFAULT_DISABLED=1`
 - Marketplace fetch: `CORDUM_MARKETPLACE_ALLOW_HTTP=1`, `CORDUM_MARKETPLACE_HTTP_TIMEOUT` (e.g. `15s`)
-- `GATEWAY_MAX_JOB_PAYLOAD_BYTES` (max job submission payload size, default `2097152` / 2 MB)
-- `GATEWAY_MAX_BODY_BYTES` (max HTTP request body size, default `1048576` / 1 MB)
 
 ### User authentication
 
@@ -127,75 +111,6 @@ User management endpoints (admin only):
   `SAFETY_POLICY_SIGNATURE_REQUIRED`
 - Policy reload/overlays: `SAFETY_POLICY_RELOAD_INTERVAL`, `SAFETY_POLICY_CONFIG_SCOPE`, `SAFETY_POLICY_CONFIG_ID`, `SAFETY_POLICY_CONFIG_KEY`, `SAFETY_POLICY_CONFIG_DISABLE`
 - Safety kernel reads policy bundle fragments from the config service in Redis; ensure `REDIS_URL` is set when using pack policy overlays.
-
-## Config overlay hot-reload
-
-Pool routing, timeout, and fail-mode configuration stored in Redis via the
-config service (`PUT /api/v1/config`) is reloaded at runtime without restarting
-the scheduler. Two mechanisms work together:
-
-1. **NATS notification** — When the API gateway writes config to Redis, it
-   publishes to `sys.config.changed`. All scheduler replicas subscribe and
-   reload immediately.
-2. **Polling fallback** — Each replica polls Redis on a configurable interval
-   (default 30 s) to catch any missed notifications.
-
-Set `SCHEDULER_CONFIG_RELOAD_INTERVAL` to adjust the polling interval (e.g.
-`10s` for faster convergence, `60s` for lower overhead). On each reload the
-scheduler compares content hashes and only applies changes when pool routing,
-timeouts, or fail modes have actually changed.
-
-For the full reload flow and reset instructions, see the
-[Config Reload](configuration-reference.md#config-reload) section in the
-reference.
-
-## Dynamic pool lifecycle
-
-Worker pools can be created, drained, and deleted at runtime without
-restarting any services. The scheduler picks up changes via config hot-reload
-(NATS notification or 30-second poll).
-
-### Lifecycle states
-
-```
-create → ACTIVE → drain → DRAINING → (auto) → INACTIVE → delete
-```
-
-- **Active**: Pool receives new job routing. Default state.
-- **Draining**: Pool is removed from the routing table. In-flight jobs on
-  workers complete normally. A background goroutine checks every 10 seconds
-  and transitions to inactive when all jobs finish or the drain timeout
-  expires.
-- **Inactive**: Pool is fully drained. Can be deleted or reactivated via
-  update.
-
-### How it works
-
-1. **API mutation**: `PUT /api/v1/pools/{name}` (or cordumctl, dashboard)
-   writes to `cfg:system:default.data.pools` via `SetWithRetry` (optimistic
-   locking).
-2. **NATS broadcast**: Gateway publishes `sys.config.changed` so all replicas
-   reload immediately.
-3. **Scheduler reload**: `watchConfigChanges` detects the change,
-   `buildRouting()` rebuilds the routing table, filtering out draining and
-   inactive pools.
-4. **Drain checker**: Gateway background goroutine monitors draining pools,
-   reads worker snapshot, and auto-transitions to inactive.
-
-### Pack overlays
-
-Packs register pools via `overlays/pools.patch.yaml` in their bundle.
-During pack install, the overlay is merged into the system config via
-`json_merge_patch`. Pack uninstall removes the overlay. The scheduler
-picks up changes on the next reload cycle.
-
-### Management surfaces
-
-| Surface | Commands |
-|---------|----------|
-| REST API | `PUT/PATCH/DELETE /api/v1/pools/{name}`, drain, topic management |
-| Dashboard | Pools page (`/pools`) — create, edit, drain, delete, topic assignment |
-| CLI | `cordumctl pool list/get/create/update/delete/drain/topic` |
 
 ## NATS server durability (JetStream)
 

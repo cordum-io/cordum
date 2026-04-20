@@ -384,8 +384,7 @@ func main() {
 		WithSchemaRegistry(schemaRegistry).
 		WithEntitlements(entitlementResolver).
 		WithContextClient(jobStore.Client()).
-		WithSaga(sagaManager).
-		WithAgentResolver(scheduler.NewAgentResolver(workerCredentialCache, store.NewAgentIdentityStoreFromClient(sagaRedis)))
+		WithSaga(sagaManager)
 	if dlqStore != nil {
 		engine.WithDLQSink(&redisDLQSink{
 			store:    dlqStore,
@@ -504,8 +503,7 @@ func main() {
 
 	dispatchTimeout, runningTimeout, scanInterval := reconcilerTimeouts(snapshot.Timeouts)
 	reconciler := scheduler.NewReconciler(jobStore, dispatchTimeout, runningTimeout, scanInterval).
-		WithApprovalMetrics(approvalMetrics).
-		WithSnapshotProvider(safetyClient)
+		WithApprovalMetrics(approvalMetrics)
 	go reconciler.Start(ctx)
 	pendingReplayer := scheduler.NewPendingReplayer(engine, jobStore, dispatchTimeout, scanInterval)
 	go pendingReplayer.Start(ctx)

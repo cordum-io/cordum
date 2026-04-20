@@ -8,25 +8,28 @@ import { Textarea } from "../../ui/Textarea";
 import { Select } from "../../ui/Select";
 import { Button } from "../../ui/Button";
 import { usePacks } from "../../../hooks/usePacks";
-import { packActionSchema, type PackActionConfig as PackActionFormValues } from "../../workflow/job/schemas";
-import type { UnifiedNodeData } from "../types";
+import { packActionSchema, type PackActionConfig } from "./schemas";
 
-function nodeToDefaults(d: UnifiedNodeData): PackActionFormValues {
-  const config = (d.config ?? {}) as Record<string, unknown>;
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function nodeToDefaults(node: Node): PackActionConfig {
+  const config = (node.data?.config ?? {}) as Record<string, unknown>;
   return {
-    label: d.label ?? "",
+    label: (node.data?.label as string) ?? "",
     packId: (config.packId as string) ?? "",
-    topic: d.topic ?? (config.topic as string) ?? "",
+    topic: (config.topic as string) ?? "",
     capability: (config.capability as string) ?? "",
     input: (config.input as string) ?? "",
     riskTags: Array.isArray(config.riskTags) ? (config.riskTags as string[]) : undefined,
     requires: Array.isArray(config.requires) ? (config.requires as string[]) : undefined,
-    timeout: d.timeout_sec ? `${d.timeout_sec}s` : (config.timeout as string) ?? "",
-    retryMax: d.retry?.max_retries ?? (config.retryMax as number | undefined),
+    timeout: (config.timeout as string) ?? "",
+    retryMax: config.retryMax as number | undefined,
   };
 }
 
-function formToNodeData(values: PackActionFormValues) {
+function formToNodeData(values: PackActionConfig) {
   const { label, ...rest } = values;
   const config: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(rest)) {
@@ -42,45 +45,61 @@ function Field({ label, error, hint, children }: {
 }) {
   return (
     <div>
-      <label className="mb-1 flex items-baseline gap-1 text-xs text-muted-foreground">
+      <label className="mb-1 flex items-baseline gap-1 text-xs text-muted">
         {label}
-        {hint && <span className="text-xs text-muted/60">({hint})</span>}
+        {hint && <span className="text-[10px] text-muted/60">({hint})</span>}
       </label>
       {children}
-      {error && <p className="mt-0.5 text-xs text-danger">{error}</p>}
+      {error && <p className="mt-0.5 text-[10px] text-danger">{error}</p>}
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Inline TagInput (comma-separated)
+// ---------------------------------------------------------------------------
 
 function TagInput({ value, onChange, placeholder }: {
   value: string[]; onChange: (tags: string[]) => void; placeholder?: string;
 }) {
   const [text, setText] = useState(value.join(", "));
-  useEffect(() => { setText(value.join(", ")); }, [value]);
+
+  useEffect(() => {
+    setText(value.join(", "));
+  }, [value]);
+
   return (
     <Input
       value={text}
       onChange={(e) => {
         setText(e.target.value);
-        onChange(e.target.value.split(",").map((s) => s.trim()).filter(Boolean));
+        onChange(
+          e.target.value
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        );
       }}
       placeholder={placeholder}
     />
   );
 }
 
-export interface PackActionConfigProps {
-  node: Node<UnifiedNodeData>;
+// ---------------------------------------------------------------------------
+// PackActionPanel
+// ---------------------------------------------------------------------------
+
+export interface PackActionPanelProps {
+  node: Node;
   onSave: (nodeId: string, data: { label: string; config: Record<string, unknown> }) => void;
   onClose: () => void;
   onDelete?: (nodeId: string) => void;
 }
 
-export function PackActionConfig({ node, onSave, onClose, onDelete }: PackActionConfigProps) {
+export function PackActionPanel({ node, onSave, onClose, onDelete }: PackActionPanelProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const { data: packsData } = usePacks();
   const packs = packsData?.items ?? [];
-  const isStartNode = node.id === "start" || node.data.stepType === "start";
 
   const {
     register,
@@ -89,16 +108,18 @@ export function PackActionConfig({ node, onSave, onClose, onDelete }: PackAction
     watch,
     setValue,
     formState: { errors, isDirty },
-  } = useForm<PackActionFormValues>({
+  } = useForm<PackActionConfig>({
     resolver: zodResolver(packActionSchema),
-    defaultValues: nodeToDefaults(node.data),
+    defaultValues: nodeToDefaults(node),
   });
 
   useEffect(() => {
-    reset(nodeToDefaults(node.data));
-  }, [node.id, reset, node.data]);
+    reset(nodeToDefaults(node));
+  }, [node.id, reset, node]);
 
   const selectedPackId = watch("packId");
+
+  // Derive capabilities from selected pack
   const selectedPack = useMemo(
     () => packs.find((p) => p.id === selectedPackId || p.name === selectedPackId),
     [packs, selectedPackId],
@@ -109,13 +130,14 @@ export function PackActionConfig({ node, onSave, onClose, onDelete }: PackAction
     ? String((selectedPack.manifest as Record<string, unknown>).type ?? "").toLowerCase() === "mcp"
     : false;
 
+  // Auto-fill topic when pack changes
   useEffect(() => {
     if (selectedPack?.poolAssignment) {
       setValue("topic", `job.${selectedPack.poolAssignment}`, { shouldDirty: true });
     }
   }, [selectedPack, setValue]);
 
-  const onSubmit = (values: PackActionFormValues) => {
+  const onSubmit = (values: PackActionConfig) => {
     onSave(node.id, formToNodeData(values));
   };
 
@@ -123,7 +145,7 @@ export function PackActionConfig({ node, onSave, onClose, onDelete }: PackAction
     <aside className="flex w-96 shrink-0 flex-col border-l border-border bg-surface1 overflow-y-auto">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h3 className="text-sm font-semibold text-ink">Pack Action Config</h3>
-        <button type="button" onClick={onClose} className="rounded-lg p-1 text-muted-foreground hover:bg-surface2 hover:text-ink transition-colors">
+        <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-surface2 hover:text-ink transition-colors">
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -137,7 +159,9 @@ export function PackActionConfig({ node, onSave, onClose, onDelete }: PackAction
           <Select {...register("packId")}>
             <option value="">Select a pack...</option>
             {packs.map((p) => (
-              <option key={p.id} value={p.id}>{p.name} ({p.version})</option>
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.version})
+              </option>
             ))}
           </Select>
         </Field>
@@ -158,7 +182,7 @@ export function PackActionConfig({ node, onSave, onClose, onDelete }: PackAction
                 disabled={!selectedPackId}
               />
               {selectedPackId && !hasCapabilities && (
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="mt-1 text-[10px] text-muted">
                   {isMcpPack
                     ? "MCP pack — type the tool/action name manually."
                     : "This pack has no declared actions. Enter an action name or leave empty."}
@@ -168,6 +192,7 @@ export function PackActionConfig({ node, onSave, onClose, onDelete }: PackAction
           )}
         </Field>
 
+        {/* Show topic inline when no capabilities (user needs manual control) */}
         {selectedPackId && !hasCapabilities && (
           <Field label="Topic" hint="required for dispatch">
             <Input {...register("topic")} placeholder="job.pack-pool" />
@@ -178,10 +203,11 @@ export function PackActionConfig({ node, onSave, onClose, onDelete }: PackAction
           <Textarea {...register("input")} placeholder='{"key": "value"}' rows={4} />
         </Field>
 
+        {/* Advanced section */}
         <button
           type="button"
           onClick={() => setAdvancedOpen(!advancedOpen)}
-          className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-ink transition-colors"
+          className="flex items-center gap-1 text-xs font-medium text-muted hover:text-ink transition-colors"
         >
           {advancedOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           Advanced
@@ -217,8 +243,8 @@ export function PackActionConfig({ node, onSave, onClose, onDelete }: PackAction
 
         <div className="mt-auto space-y-2 pt-4">
           <Button type="submit" disabled={!isDirty} className="w-full">Save</Button>
-          {onDelete && !isStartNode && (
-            <Button type="button" variant="danger" size="sm" className="w-full" onClick={() => onDelete(node.id)}>
+          {onDelete && node.id !== "start" && node.type !== "start" && (
+            <Button type="button" variant="destructive" size="sm" className="w-full" onClick={() => onDelete(node.id)}>
               <Trash2 className="h-3.5 w-3.5" />
               Delete Node
             </Button>

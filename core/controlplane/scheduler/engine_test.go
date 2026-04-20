@@ -16,10 +16,10 @@ import (
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	infraSchema "github.com/cordum/cordum/core/infra/schema"
 	infraStore "github.com/cordum/cordum/core/infra/store"
-	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/encoding/protowire"
@@ -211,6 +211,20 @@ func (s *fakeJobStore) SetState(_ context.Context, jobID string, state JobState)
 		s.attempts[jobID]++
 	}
 	return nil
+}
+
+func (s *fakeJobStore) SetStateWithContext(_ context.Context, jobID string, state JobState, _ *StateEventContext) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.states[jobID] = state
+	if state == JobStateScheduled {
+		s.attempts[jobID]++
+	}
+	return nil
+}
+
+func (s *fakeJobStore) GetJobEvents(_ context.Context, _ string) ([]model.JobEvent, error) {
+	return nil, nil
 }
 
 func (s *fakeJobStore) GetState(_ context.Context, jobID string) (JobState, error) {

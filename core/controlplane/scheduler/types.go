@@ -170,21 +170,5 @@ type JobStore = model.JobStore
 // SafetyDecisionRecord captures a policy decision and constraints for auditing.
 type SafetyDecisionRecord = model.SafetyDecisionRecord
 
-// ApprovalRecord captures approval lifecycle + durable publish metadata.
-type ApprovalRecord = model.ApprovalRecord
-
-type ApprovalDecision = model.ApprovalDecision
-type ApprovalPublishStatus = model.ApprovalPublishStatus
-type ApprovalPublishTarget = model.ApprovalPublishTarget
-
-const (
-	ApprovalDecisionApprove = model.ApprovalDecisionApprove
-	ApprovalDecisionReject  = model.ApprovalDecisionReject
-
-	ApprovalPublishPending   = model.ApprovalPublishPending
-	ApprovalPublishPublished = model.ApprovalPublishPublished
-
-	ApprovalPublishTargetSubmit       = model.ApprovalPublishTargetSubmit
-	ApprovalPublishTargetDLQ          = model.ApprovalPublishTargetDLQ
-	ApprovalPublishTargetDLQAndResult = model.ApprovalPublishTargetDLQAndResult
-)
+// StateEventContext carries rich context for job state transition events.
+type StateEventContext = model.StateEventContext

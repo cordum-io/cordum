@@ -27,11 +27,15 @@ export function MaintenanceBanner() {
   if (!config?.maintenanceMode || dismissed) return null;
 
   return (
-    <div className="sticky top-0 z-30 flex items-center gap-3 bg-warning/15 border-b border-warning/30 px-4 py-2 text-xs">
+    <div
+      className="sticky top-0 z-30 flex items-center gap-2 border-b border-status-warning-border bg-status-warning-bg px-4 py-2 text-xs"
+      role="status"
+      aria-live="polite"
+    >
       <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
       <span className="font-semibold text-warning">System is in maintenance mode</span>
       {config.maintenanceMessage && (
-        <span className="text-ink">&mdash; {config.maintenanceMessage}</span>
+        <span className="text-foreground">&mdash; {config.maintenanceMessage}</span>
       )}
       {config.maintenanceStartedAt && (
         <span className="ml-auto font-mono text-muted-foreground">
@@ -41,8 +45,8 @@ export function MaintenanceBanner() {
       <button
         type="button"
         onClick={() => setDismissed(true)}
-        className="ml-2 rounded-full p-0.5 text-muted-foreground hover:text-ink"
-        aria-label="Dismiss"
+        className="ml-2 rounded-full p-0.5 text-muted-foreground transition-colors duration-micro hover:bg-surface-2/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35"
+        aria-label="Dismiss maintenance banner"
       >
         <X className="h-3.5 w-3.5" />
       </button>

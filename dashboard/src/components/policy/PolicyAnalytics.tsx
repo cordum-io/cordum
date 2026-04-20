@@ -21,10 +21,22 @@ import { get } from "../../api/client";
 import { Button } from "../ui/Button";
 import { Card, CardHeader, CardTitle } from "../ui/Card";
 import { cn } from "../../lib/utils";
-import { POLICY_STATS_SUPPORTED, usePolicyAudit, usePolicyRules } from "../../hooks/usePolicies";
+import {
+  POLICY_STATS_SUPPORTED,
+  usePolicyAudit,
+  usePolicyBundles,
+  usePolicyRules,
+} from "../../hooks/usePolicies";
 import { useJobs } from "../../hooks/useJobs";
 import { exportPdf, type PdfSection } from "../../lib/pdfExport";
+import { buildComplianceReportData } from "../../lib/compliance-report";
+import {
+  CompliancePdfExportError,
+  exportCompliancePdf,
+  type CompliancePdfProgress,
+} from "../../lib/exportCompliancePdf";
 import { useAuth } from "../../hooks/useAuth";
+import { chartColors, tooltipProps, axisProps, gridProps } from "../../lib/chart-theme";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -89,30 +101,19 @@ const RANGES: { value: TimeRange; label: string }[] = [
 // ---------------------------------------------------------------------------
 
 const DECISION_COLORS: Record<string, string> = {
-  allow: "#1f7a57",
-  deny: "#7c3aed",
-  require_approval: "#c58a1c",
-  throttle: "#0f7f7a",
-};
-
-// Dash patterns per decision type — colorblind-accessible differentiation.
-const DECISION_DASH: Record<string, string | undefined> = {
-  allow: undefined,       // solid
-  deny: "8 4",            // dashed
-  require_approval: "4 2", // short dashes
-  throttle: "8 4 2 4",    // dash-dot
+  allow: "var(--success)",
+  deny: "var(--danger)",
+  require_approval: "var(--warning)",
+  throttle: "var(--info)",
 };
 
 const LATENCY_COLORS: Record<string, string> = {
-  p50: "#0f7f7a",
-  p95: "#c58a1c",
-  p99: "#b83a3a",
+  p50: "var(--chart-1)",
+  p95: "var(--chart-3)",
+  p99: "var(--chart-4)",
 };
 
-const REASON_PALETTE = [
-  "#b83a3a", "#c58a1c", "#0f7f7a", "#d4833a",
-  "#06b6d4", "#84cc16", "#d4833a", "#0f7f7a",
-];
+const REASON_PALETTE = chartColors;
 
 // ---------------------------------------------------------------------------
 // CSV export
@@ -181,6 +182,27 @@ function formatMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function describeCompliancePdfProgress(progress: CompliancePdfProgress): string {
+  if (progress.phase === "preparing") return "Preparing compliance report...";
+  if (progress.phase === "rendering") {
+    return `Rendering page ${progress.currentPage} of ${progress.totalPages}...`;
+  }
+  return "Saving compliance report...";
+}
+
+function compliancePdfErrorMessage(error: unknown): string {
+  if (error instanceof CompliancePdfExportError) {
+    if (error.code === "invalid_data") {
+      return "Compliance report data is incomplete. Refresh policy data and try again.";
+    }
+    if (error.code === "render_timeout") {
+      return "Compliance PDF rendering timed out. Try again with a smaller time range.";
+    }
+    return "Failed to render compliance PDF. Please retry.";
+  }
+  return "Failed to export compliance PDF. Please try again.";
+}
+
 // ---------------------------------------------------------------------------
 // Custom tooltip
 // ---------------------------------------------------------------------------
@@ -205,16 +227,18 @@ function ChartTooltip({
   if (!active || !payload?.length) return null;
   const fmt = valueFormatter ?? String;
   return (
-    <div className="rounded-xl border border-border bg-card px-3 py-2 shadow-lg text-xs space-y-1">
-      {label && <p className="font-semibold text-ink">{formatTime(label)}</p>}
+    <div className="rounded-md border border-border bg-surface-2 px-3 py-2 shadow-lg text-[11px] space-y-1">
+      {label && <p className="font-bold uppercase tracking-wider text-muted mb-1">{formatTime(label)}</p>}
       {payload.map((entry) => (
-        <div key={entry.name} className="flex items-center gap-2">
-          <span
-            className="inline-block h-2 w-2 rounded-full"
-            style={{ background: entry.color }}
-          />
-          <span className="text-muted-foreground">{entry.name}:</span>
-          <span className="font-medium text-ink">{fmt(entry.value)}</span>
+        <div key={entry.name} className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <span
+              className="inline-block h-2 w-2 rounded-sm"
+              style={{ background: entry.color }}
+            />
+            <span className="text-muted font-medium">{entry.name}:</span>
+          </div>
+          <span className="font-mono font-bold text-ink">{fmt(entry.value)}</span>
         </div>
       ))}
     </div>
@@ -314,9 +338,9 @@ function buildCoverageData(
 }
 
 function coverageColor(pct: number): string {
-  if (pct >= 80) return "#1f7a57";
-  if (pct >= 50) return "#c58a1c";
-  return "#b83a3a";
+  if (pct >= 80) return "var(--success)";
+  if (pct >= 50) return "var(--warning)";
+  return "var(--danger)";
 }
 
 // ---------------------------------------------------------------------------
@@ -353,14 +377,45 @@ export function PolicyAnalytics() {
     [auditEntries, range],
   );
 
-  // Coverage data
-  usePolicyRules(); // ensure rules are cached
+  // Coverage + compliance export data
+  const {
+    data: policyRulesData,
+    isLoading: isLoadingPolicyRules,
+    isError: isPolicyRulesError,
+  } = usePolicyRules();
+  const { data: policyBundlesData } = usePolicyBundles();
+
+  const policyRules = policyRulesData?.items ?? [];
   const { data: jobsData } = useJobs({ limit: 100 });
   const recentJobs = jobsData?.items ?? [];
   const { rows: coverageRows, overall: overallCoverage } = useMemo(
     () => buildCoverageData(recentJobs),
     [recentJobs],
   );
+
+  const bundleVersionLabel = useMemo(() => {
+    const versions = (policyBundlesData?.items ?? [])
+      .map((bundle) => bundle.version)
+      .filter((version): version is number => typeof version === "number" && Number.isFinite(version));
+    if (versions.length === 0) return undefined;
+    return `v${Math.max(...versions)}`;
+  }, [policyBundlesData]);
+
+  const complianceReportData = useMemo(
+    () =>
+      buildComplianceReportData(policyRules, {
+        organizationName: tenantId ?? undefined,
+        bundleVersion: bundleVersionLabel,
+      }),
+    [policyRules, tenantId, bundleVersionLabel],
+  );
+
+  const complianceDataFallbackMessage = useMemo(() => {
+    if (isLoadingPolicyRules) return "Loading policy rules for compliance export...";
+    if (isPolicyRulesError) return "Compliance export is unavailable because policy rules failed to load.";
+    if (policyRules.length === 0) return "Compliance export requires at least one policy rule.";
+    return null;
+  }, [isLoadingPolicyRules, isPolicyRulesError, policyRules.length]);
 
   const handleExport = useCallback(() => {
     downloadCsv(`policy-decisions-${range}.csv`, buildDecisionsCsv(decisions));
@@ -410,9 +465,42 @@ export function PolicyAnalytics() {
     }
   }, [range, tenantId]);
 
+  const [complianceExporting, setComplianceExporting] = useState(false);
+  const [complianceExportProgress, setComplianceExportProgress] = useState<string | null>(null);
+  const [complianceExportError, setComplianceExportError] = useState<string | null>(null);
+
+  const handleExportCompliancePdf = useCallback(async () => {
+    setComplianceExportError(null);
+
+    if (complianceDataFallbackMessage) {
+      setComplianceExportProgress(null);
+      setComplianceExportError(complianceDataFallbackMessage);
+      return;
+    }
+
+    setComplianceExporting(true);
+    setComplianceExportProgress("Preparing compliance report...");
+
+    try {
+      await exportCompliancePdf({
+        report: complianceReportData,
+        filename: `cordum-policy-compliance-${range}`,
+        onProgress: (progress) => {
+          setComplianceExportProgress(describeCompliancePdfProgress(progress));
+        },
+      });
+      setComplianceExportProgress("Compliance report exported successfully.");
+    } catch (error) {
+      setComplianceExportProgress(null);
+      setComplianceExportError(compliancePdfErrorMessage(error));
+    } finally {
+      setComplianceExporting(false);
+    }
+  }, [complianceDataFallbackMessage, complianceReportData, range]);
+
   if (!POLICY_STATS_SUPPORTED) {
     return (
-      <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
+      <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted">
         Policy analytics are not available in this deployment.
       </div>
     );
@@ -420,7 +508,7 @@ export function PolicyAnalytics() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-16 text-sm text-muted-foreground">
+      <div className="flex items-center justify-center py-16 text-sm text-muted">
         <Loader className="mr-2 h-4 w-4 animate-spin" />
         Loading analytics...
       </div>
@@ -435,38 +523,68 @@ export function PolicyAnalytics() {
     );
   }
 
+  const complianceFeedbackMessage =
+    complianceExportError ?? complianceExportProgress ?? complianceDataFallbackMessage;
+
   return (
     <div className="space-y-6">
       {/* Controls */}
-      <div className="flex items-center justify-between">
-        <div className="flex rounded-full border border-border">
-          {RANGES.map((r) => (
-            <button
-              key={r.value}
-              type="button"
-              className={cn(
-                "px-4 py-1.5 text-xs font-semibold transition first:rounded-l-full last:rounded-r-full",
-                range === r.value
-                  ? "bg-accent/15 text-accent"
-                  : "text-muted-foreground hover:text-ink",
-              )}
-              onClick={() => setRange(r.value)}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex rounded-full border border-border">
+            {RANGES.map((r) => (
+              <button
+                key={r.value}
+                type="button"
+                className={cn(
+                  "px-4 py-1.5 text-xs font-semibold transition first:rounded-l-full last:rounded-r-full",
+                  range === r.value
+                    ? "bg-accent/15 text-accent"
+                    : "text-muted hover:text-ink",
+                )}
+                onClick={() => setRange(r.value)}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleExport}>
+              <Download className="h-3.5 w-3.5" />
+              Export CSV
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportPdf} disabled={pdfExporting}>
+              <Download className="h-3.5 w-3.5" />
+              {pdfExporting ? "Exporting…" : "Export PDF"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportCompliancePdf}
+              disabled={complianceExporting || Boolean(complianceDataFallbackMessage)}
             >
-              {r.label}
-            </button>
-          ))}
+              {complianceExporting ? (
+                <Loader className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              {complianceExporting ? "Exporting…" : "Export Compliance PDF"}
+            </Button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleExport}>
-            <Download className="h-3.5 w-3.5" />
-            Export CSV
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleExportPdf} disabled={pdfExporting}>
-            <Download className="h-3.5 w-3.5" />
-            {pdfExporting ? "Exporting…" : "Export PDF"}
-          </Button>
-        </div>
+        {complianceFeedbackMessage && (
+          <p
+            className={cn(
+              "text-xs",
+              complianceExportError ? "text-danger" : "text-muted",
+            )}
+            aria-live="polite"
+          >
+            {complianceFeedbackMessage}
+          </p>
+        )}
       </div>
 
       {/* Decisions over time */}
@@ -476,27 +594,23 @@ export function PolicyAnalytics() {
           <CardTitle>Decisions Over Time</CardTitle>
         </CardHeader>
         {decisions.length === 0 ? (
-          <p className="px-4 pb-4 text-sm text-muted-foreground">No decision data for this range.</p>
+          <p className="px-4 pb-4 text-sm text-muted">No decision data for this range.</p>
         ) : (
           <div style={{ width: "100%", height: 280 }}>
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={decisions} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(25, 36, 40, 0.12)" />
+                <CartesianGrid {...gridProps} />
                 <XAxis
                   dataKey="time"
                   tickFormatter={formatTime}
-                  tick={{ fontSize: 10, fill: "#5a6a70" }}
-                  axisLine={false}
-                  tickLine={false}
+                  {...axisProps}
                 />
                 <YAxis
-                  tick={{ fontSize: 10, fill: "#5a6a70" }}
-                  axisLine={false}
-                  tickLine={false}
+                  {...axisProps}
                 />
-                <Tooltip content={<ChartTooltip />} />
+                <Tooltip {...tooltipProps} content={<ChartTooltip />} />
                 <Legend
-                  wrapperStyle={{ fontSize: 11 }}
+                  wrapperStyle={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}
                   formatter={(value: string) => value.replace(/_/g, " ")}
                 />
                 <Area
@@ -506,7 +620,6 @@ export function PolicyAnalytics() {
                   stroke={DECISION_COLORS.allow}
                   fill={DECISION_COLORS.allow}
                   fillOpacity={0.6}
-                  strokeWidth={2}
                 />
                 <Area
                   type="monotone"
@@ -515,8 +628,6 @@ export function PolicyAnalytics() {
                   stroke={DECISION_COLORS.deny}
                   fill={DECISION_COLORS.deny}
                   fillOpacity={0.6}
-                  strokeWidth={2}
-                  strokeDasharray={DECISION_DASH.deny}
                 />
                 <Area
                   type="monotone"
@@ -525,8 +636,6 @@ export function PolicyAnalytics() {
                   stroke={DECISION_COLORS.require_approval}
                   fill={DECISION_COLORS.require_approval}
                   fillOpacity={0.6}
-                  strokeWidth={2}
-                  strokeDasharray={DECISION_DASH.require_approval}
                 />
                 <Area
                   type="monotone"
@@ -535,8 +644,6 @@ export function PolicyAnalytics() {
                   stroke={DECISION_COLORS.throttle}
                   fill={DECISION_COLORS.throttle}
                   fillOpacity={0.6}
-                  strokeWidth={2}
-                  strokeDasharray={DECISION_DASH.throttle}
                 />
               </AreaChart>
             </ResponsiveContainer>
@@ -552,26 +659,22 @@ export function PolicyAnalytics() {
           <CardTitle>Denied By Reason</CardTitle>
         </CardHeader>
         {deniedData.length === 0 ? (
-          <p className="px-4 pb-4 text-sm text-muted-foreground">No deny data for this range.</p>
+          <p className="px-4 pb-4 text-sm text-muted">No deny data for this range.</p>
         ) : (
           <div style={{ width: "100%", height: 280 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={deniedData} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(25, 36, 40, 0.12)" />
+                <CartesianGrid {...gridProps} />
                 <XAxis
                   dataKey="time"
                   tickFormatter={formatTime}
-                  tick={{ fontSize: 10, fill: "#5a6a70" }}
-                  axisLine={false}
-                  tickLine={false}
+                  {...axisProps}
                 />
                 <YAxis
-                  tick={{ fontSize: 10, fill: "#5a6a70" }}
-                  axisLine={false}
-                  tickLine={false}
+                  {...axisProps}
                 />
-                <Tooltip content={<ChartTooltip />} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Tooltip {...tooltipProps} content={<ChartTooltip />} />
+                <Legend wrapperStyle={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }} />
                 {deniedReasons.map((reason, i) => (
                   <Bar
                     key={reason}
@@ -592,10 +695,10 @@ export function PolicyAnalytics() {
       <Card>
         <CardHeader>
           <CardTitle>Rule Coverage</CardTitle>
-          <span className="text-xs text-muted-foreground">% of recent jobs evaluated by policy</span>
+          <span className="text-xs text-muted">% of recent jobs evaluated by policy</span>
         </CardHeader>
         {coverageRows.length === 0 ? (
-          <p className="px-4 pb-4 text-sm text-muted-foreground">No job data to compute coverage.</p>
+          <p className="px-4 pb-4 text-sm text-muted">No job data to compute coverage.</p>
         ) : (
           <>
             {/* Overall metric */}
@@ -607,7 +710,7 @@ export function PolicyAnalytics() {
                 >
                   {overallCoverage.toFixed(0)}%
                 </span>
-                <span className="text-sm text-muted-foreground">overall coverage</span>
+                <span className="text-sm text-muted">overall coverage</span>
               </div>
             </div>
             <div style={{ width: "100%", height: Math.max(coverageRows.length * 32 + 40, 160) }}>
@@ -617,26 +720,24 @@ export function PolicyAnalytics() {
                   layout="vertical"
                   margin={{ top: 8, right: 24, bottom: 8, left: 8 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(25, 36, 40, 0.12)" horizontal={false} />
+                  <CartesianGrid {...gridProps} horizontal={false} vertical={true} />
                   <XAxis
                     type="number"
                     domain={[0, 100]}
-                    tick={{ fontSize: 10, fill: "#5a6a70" }}
-                    axisLine={false}
-                    tickLine={false}
+                    {...axisProps}
                     tickFormatter={(v: number) => `${v}%`}
                   />
                   <YAxis
                     type="category"
                     dataKey="topic"
                     width={140}
-                    tick={{ fontSize: 11, fill: "#1f2a2e" }}
-                    axisLine={false}
-                    tickLine={false}
+                    {...axisProps}
+                    tick={{ ...axisProps.tick, fill: "var(--text)" }}
                   />
                   <Tooltip
+                    {...tooltipProps}
                     content={<ChartTooltip valueFormatter={(v) => `${v.toFixed(1)}%`} />}
-                    cursor={{ fill: "rgba(0,0,0,0.03)" }}
+                    cursor={{ fill: "var(--surface-2)", opacity: 0.4 }}
                   />
                   <Bar dataKey="coverage" radius={[0, 4, 4, 0]} barSize={20}>
                     {coverageRows.map((row) => (
@@ -656,10 +757,10 @@ export function PolicyAnalytics() {
       <Card>
         <CardHeader>
           <CardTitle>Most-Hit Rules</CardTitle>
-          <span className="text-xs text-muted-foreground">Top 10</span>
+          <span className="text-xs text-muted">Top 10</span>
         </CardHeader>
         {sortedRules.length === 0 ? (
-          <p className="px-4 pb-4 text-sm text-muted-foreground">No rule hit data for this range.</p>
+          <p className="px-4 pb-4 text-sm text-muted">No rule hit data for this range.</p>
         ) : (
           <div style={{ width: "100%", height: Math.max(sortedRules.length * 36 + 40, 160) }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -668,26 +769,24 @@ export function PolicyAnalytics() {
                 layout="vertical"
                 margin={{ top: 8, right: 24, bottom: 8, left: 8 }}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(25, 36, 40, 0.12)" horizontal={false} />
+                <CartesianGrid {...gridProps} horizontal={false} vertical={true} />
                 <XAxis
                   type="number"
-                  tick={{ fontSize: 10, fill: "#5a6a70" }}
-                  axisLine={false}
-                  tickLine={false}
+                  {...axisProps}
                 />
                 <YAxis
                   type="category"
                   dataKey="ruleName"
                   width={140}
-                  tick={{ fontSize: 11, fill: "#1f2a2e" }}
-                  axisLine={false}
-                  tickLine={false}
+                  {...axisProps}
+                  tick={{ ...axisProps.tick, fill: "var(--text)" }}
                 />
                 <Tooltip
+                  {...tooltipProps}
                   content={<ChartTooltip />}
-                  cursor={{ fill: "rgba(0,0,0,0.03)" }}
+                  cursor={{ fill: "var(--surface-2)", opacity: 0.4 }}
                 />
-                <Bar dataKey="count" fill="#0f7f7a" radius={[0, 4, 4, 0]} barSize={20} />
+                <Bar dataKey="count" fill="var(--chart-1)" radius={[0, 4, 4, 0]} barSize={20} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -702,32 +801,28 @@ export function PolicyAnalytics() {
           <CardTitle>Eval Latency Trends</CardTitle>
         </CardHeader>
         {latency.length === 0 ? (
-          <p className="px-4 pb-4 text-sm text-muted-foreground">No latency data for this range.</p>
+          <p className="px-4 pb-4 text-sm text-muted">No latency data for this range.</p>
         ) : (
           <div style={{ width: "100%", height: 280 }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={latency} margin={{ top: 8, right: 16, bottom: 8, left: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(25, 36, 40, 0.12)" />
+                <CartesianGrid {...gridProps} />
                 <XAxis
                   dataKey="time"
                   tickFormatter={formatTime}
-                  tick={{ fontSize: 10, fill: "#5a6a70" }}
-                  axisLine={false}
-                  tickLine={false}
+                  {...axisProps}
                 />
                 <YAxis
                   tickFormatter={(v: number) => formatMs(v)}
-                  tick={{ fontSize: 10, fill: "#5a6a70" }}
-                  axisLine={false}
-                  tickLine={false}
+                  {...axisProps}
                 />
-                <Tooltip content={<ChartTooltip valueFormatter={formatMs} />} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Tooltip {...tooltipProps} content={<ChartTooltip valueFormatter={formatMs} />} />
+                <Legend wrapperStyle={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }} />
                 <ReferenceLine
                   y={100}
-                  stroke="#b83a3a"
+                  stroke="var(--danger)"
                   strokeDasharray="5 5"
-                  label={{ value: "SLA 100ms", position: "right", fill: "#b83a3a", fontSize: 10 }}
+                  label={{ value: "SLA 100ms", position: "right", fill: "var(--danger)", fontSize: 10, fontWeight: 700 }}
                 />
                 <Line
                   type="monotone"

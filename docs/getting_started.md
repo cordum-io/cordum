@@ -5,53 +5,47 @@ setup.
 
 ## Prerequisites
 
-- Docker + Docker Compose (4GB+ RAM allocated to Docker)
+- Docker + Docker Compose
 - curl
-- Go 1.24+ (for cert generation and local builds)
-- Node 18+ (only if developing the dashboard locally)
+- jq
+- openssl (optional, for generating an API key)
 
-Optional: jq (for pretty-printing JSON responses)
+## Set an API key (required)
 
-## Fastest Path (recommended)
+Cordum requires an API key for all API requests. Compose and the quickstart
+scripts will fail fast if `CORDUM_API_KEY` is missing.
+
+```bash
+cp .env.example .env
+# generate a key (requires openssl)
+export CORDUM_API_KEY="$(openssl rand -hex 32)"
+# set a tenant for requests
+export CORDUM_TENANT_ID=default
+```
+
+Docker Compose automatically loads `.env`. The helper scripts read environment
+variables from your shell, so keep the `export` lines when running scripts.
+
+## Start the stack
+
+One command (requires Go):
+
+```bash
+go run ./cmd/cordumctl up
+```
+
+Or build the CLI once and run it:
+
+```bash
+make build SERVICE=cordumctl
+./bin/cordumctl up
+```
+
+Or the fastest one-liner:
 
 ```bash
 ./tools/scripts/quickstart.sh
 ```
-
-This single command:
-1. Creates `.env` from `.env.example` with auto-generated API key and Redis password
-2. Generates TLS certificates
-3. Builds and starts all 7 services + NATS + Redis
-4. Waits for health readiness
-5. Runs smoke tests
-
-**Default login:** `admin` / `admin123` (change via `CORDUM_ADMIN_PASSWORD` in `.env`)
-
-## Manual Setup (alternative)
-
-If you prefer step-by-step control:
-
-```bash
-# 1. Create environment config
-cp .env.example .env
-# Edit .env: set CORDUM_API_KEY (generate with: openssl rand -hex 32)
-
-# 2. Start the stack
-go run ./cmd/cordumctl up
-# Or: make build SERVICE=cordumctl && ./bin/cordumctl up
-
-# 3. Open dashboard
-open http://localhost:8082
-# Login: admin / admin123
-```
-
-## Platform Notes
-
-| Platform | Notes |
-|----------|-------|
-| **Windows/MSYS** | Use Unix paths. Prefix docker exec with `MSYS_NO_PATHCONV=1`. Use `-count=3` instead of `-race` for Go tests. |
-| **macOS** | Ensure Docker Desktop has 4GB+ RAM (Settings → Resources) |
-| **Linux** | Add user to docker group: `sudo usermod -aG docker $USER` |
 
 `cordumctl up` sets `COMPOSE_HTTP_TIMEOUT` and `DOCKER_CLIENT_TIMEOUT` to `1800`
 seconds if they are not already set. Override them in your shell if needed.
@@ -86,7 +80,7 @@ CORDUM_API_KEY=${CORDUM_API_KEY:?set CORDUM_API_KEY} bash ./tools/scripts/platfo
 Expected output:
 - workflow created
 - run started
-- workflow gate approval granted
+- approval step approved
 - run completes
 - workflow + run deleted
 

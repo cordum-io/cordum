@@ -28,6 +28,17 @@ these entries into a versioned release note and reset this file.
 
 ## Added
 
+- **Delegation token service (`/api/v1/agents/{id}/delegate`,
+  `/api/v1/agents/verify-delegation`,
+  `/api/v1/agents/revoke-delegation`):** Enterprise agent identities can now
+  mint Ed25519-signed JWT delegation tokens with bounded `allowed_actions`,
+  `allowed_topics`, TTL, chain depth, and revocation by `jti`. Gateway job
+  submission verifies delegation tokens, injects `_delegation.*` context for
+  Safety Kernel policy when `CORDUM_DELEGATION_POLICY_ENABLED=true`, and emits
+  lineage-preserving audit events for issue / verify / revoke. Operator
+  guidance lives in [`docs/auth/delegation.md`](../auth/delegation.md), and the
+  canonical HTTP contract is now captured in
+  [`docs/api/openapi/cordum-api.yaml`](../api/openapi/cordum-api.yaml).
 - **Policy Decision Log API (`/api/v1/governance/decisions`):**
   governance-native read surface for policy outcomes, including matched
   rule, verdict, reason, constraints, approval status/decision,

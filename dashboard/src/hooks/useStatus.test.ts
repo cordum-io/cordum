@@ -150,8 +150,7 @@ describe("useStatus hooks", () => {
       dispatched: 0,
       running: 1,
       succeeded: 1,
-      failed: 1,
-      denied: 1,
+      failed: 2,
     });
     hook.unmount();
   });
@@ -254,8 +253,8 @@ describe("useStatus hooks", () => {
       expect(hook.result.current?.isSuccess).toBe(true);
     });
 
-    expect(hook.result.current?.data?.items!).toHaveLength(1);
-    expect(hook.result.current?.data?.items![0]).toMatchObject({ id: "w1", activeJobs: 1, capacity: 5 });
+    expect(hook.result.current?.data?.items).toHaveLength(1);
+    expect(hook.result.current?.data?.items[0]).toMatchObject({ id: "w1", activeJobs: 1, capacity: 5 });
     hook.unmount();
   });
 
@@ -282,7 +281,7 @@ describe("useStatus hooks", () => {
       expect(hook.result.current?.isSuccess).toBe(true);
     });
 
-    expect(hook.result.current?.data?.items![0]).toMatchObject({ id: "j1", status: "running" });
+    expect(hook.result.current?.data?.items[0]).toMatchObject({ id: "j1", status: "running" });
     hook.unmount();
   });
 
@@ -330,22 +329,20 @@ describe("useStatus hooks", () => {
       expect(hook.result.current?.isSuccess).toBe(true);
     });
 
-    expect(hook.result.current?.data?.items![0]).toMatchObject({ id: "run-1", workflowId: "wf-1" });
+    expect(hook.result.current?.data?.items[0]).toMatchObject({ id: "run-1", workflowId: "wf-1" });
     hook.unmount();
   });
 
-  it("pipelineFromJobs separates denied from failed bucket", () => {
+  it("pipelineFromJobs maps denied and quarantined states into failed bucket", () => {
     const pipeline = __statusInternal.pipelineFromJobs([
       { id: "a", state: "DENIED" },
       { id: "b", state: "OUTPUT_QUARANTINED" },
       { id: "c", state: "CANCELLED" },
-      { id: "d", state: "FAILED" },
     ]);
-    expect(pipeline.denied).toBe(1);
     expect(pipeline.failed).toBe(3);
   });
 
-  it("pipelineTotal sums all pipeline counters including denied", () => {
+  it("pipelineTotal sums all pipeline counters", () => {
     expect(
       __statusInternal.pipelineTotal({
         pending: 1,
@@ -353,8 +350,7 @@ describe("useStatus hooks", () => {
         running: 3,
         succeeded: 4,
         failed: 5,
-        denied: 6,
       }),
-    ).toBe(21);
+    ).toBe(15);
   });
 });

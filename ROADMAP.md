@@ -1,6 +1,6 @@
 # Cordum Roadmap
 
-> **Last Updated:** April 13, 2026
+> **Last Updated:** February 20, 2026
 
 This roadmap outlines our vision for Cordum's evolution. Priorities may shift based on community feedback and production learnings.
 
@@ -193,7 +193,7 @@ The path to v1.0.0 focuses on **production hardening** and **API stability**. Ba
 
 ### Goals
 - 🎯 **v1.0.0 GA Release**
-- 🎯 **Grow Early Adopter Community**
+- 🎯 **100+ Production Adopters**
 - 🎯 **Public Pack Registry**
 
 ### Features

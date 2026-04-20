@@ -29,9 +29,19 @@ vi.mock("@/hooks/useAuditChainVerify", () => ({
   useAuditChainVerify: () => ({
     data: undefined,
     isLoading: false,
-    isFetching: false,
     isError: false,
     dataUpdatedAt: 0,
+  }),
+}));
+vi.mock("@/hooks/useAuth", () => ({
+  useAuth: () => ({ tenantId: "default" }),
+}));
+vi.mock("@/hooks/usePageTitle", () => ({ usePageTitle: () => {} }));
+vi.mock("@/hooks/useStatus", () => ({ useStatus: () => ({ data: null, isLoading: false }) }));
+vi.mock("@/hooks/usePolicyAccess", () => ({
+  usePolicyAccess: () => ({
+    canEdit: true, canPublish: true, canRelease: true, isReadOnly: false,
+    canManageOutputRules: true, canManageTenants: true,
   }),
 }));
 vi.mock("@/hooks/useAuditVerify", () => ({

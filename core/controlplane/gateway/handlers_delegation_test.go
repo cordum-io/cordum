@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/auth/delegation"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
 )
@@ -113,12 +114,12 @@ func TestHandleDelegateAgentRequiresMatchingPrincipalOrAdmin(t *testing.T) {
 		entitlements.RBAC = true
 	})
 	setDelegationKeys(t)
-	putTestRole(t, s, "delegator", PermAgentsDelegate)
+	putTestRole(t, s, "delegator", auth.PermAgentsDelegate)
 
 	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.alpha"})
 	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.alpha"})
 
-	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-a/delegate", strings.NewReader(`{"target_agent_id":"agent-b","allowed_actions":["read"],"allowed_topics":["job.alpha"]}`)), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-a/delegate", strings.NewReader(`{"target_agent_id":"agent-b","allowed_actions":["read"],"allowed_topics":["job.alpha"]}`)), &auth.AuthContext{
 		Tenant:      "default",
 		PrincipalID: "someone-else",
 		Role:        "delegator",

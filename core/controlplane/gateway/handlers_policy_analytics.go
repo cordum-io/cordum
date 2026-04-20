@@ -56,7 +56,8 @@ const (
 )
 
 func (s *server) handlePolicyAnalytics(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermPolicyRead, "admin") {
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeForbidden(w, r, err)
 		return
 	}
 	if s.jobStore == nil {

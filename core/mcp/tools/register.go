@@ -149,8 +149,9 @@ func RegisterWithBridge(registry *mcp.ToolRegistry, bridge mcp.ServiceBridge) er
 	return mcp.RegisterAllTools(registry, bridge)
 }
 
-// gatewayAgentResponse mirrors the agent identity payload the gateway
-// returns on GET /api/v1/agents/{id}. Only fields the filter needs.
+// gatewayAgentResponse mirrors the agentResponseFromIdentity payload
+// the gateway returns on GET /api/v1/agents/{id}. Only the fields
+// needed by the scope filter are decoded.
 type gatewayAgentResponse struct {
 	ID                  string   `json:"id"`
 	AllowedTools        []string `json:"allowed_tools"`
@@ -160,8 +161,10 @@ type gatewayAgentResponse struct {
 }
 
 // FetchAgentIdentity resolves an agent identity by ID via the gateway's
-// /api/v1/agents/{id} endpoint. Returns nil when the identity is
-// absent or revoked/suspended so callers can fail-closed uniformly.
+// /api/v1/agents/{id} admin endpoint. The returned *mcp.AgentIdentity
+// drops fields the filter doesn't need. Returns nil with no error when
+// the identity is absent or revoked/suspended so callers can treat it
+// uniformly with fail-closed semantics.
 func (c *GatewayClient) FetchAgentIdentity(ctx context.Context, agentID string) (*mcp.AgentIdentity, error) {
 	if c == nil {
 		return nil, fmt.Errorf("gateway client unavailable")
@@ -175,6 +178,7 @@ func (c *GatewayClient) FetchAgentIdentity(ctx context.Context, agentID string) 
 	if err != nil {
 		return nil, fmt.Errorf("build agent url: %w", err)
 	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("build agent request: %w", err)

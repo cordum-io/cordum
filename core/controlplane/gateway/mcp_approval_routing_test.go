@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/model"
 )
 
@@ -26,21 +27,21 @@ func routingTestServer(t *testing.T) (*server, *MCPApprovalStore) {
 	s.auth = &policySimAuth{}
 	handler := newMCPApprovalHandler(store)
 	handler.getApproverIdentity = func(r *http.Request) string {
-		auth := authFromRequest(r)
+		auth := auth.FromRequest(r)
 		if auth == nil {
 			return ""
 		}
 		return "apikey:test|principal:" + strings.TrimSpace(auth.PrincipalID)
 	}
 	handler.approverPrincipalID = func(r *http.Request) string {
-		auth := authFromRequest(r)
+		auth := auth.FromRequest(r)
 		if auth == nil {
 			return ""
 		}
 		return strings.TrimSpace(auth.PrincipalID)
 	}
 	handler.approverRole = func(r *http.Request) string {
-		auth := authFromRequest(r)
+		auth := auth.FromRequest(r)
 		if auth == nil {
 			return ""
 		}
@@ -74,7 +75,7 @@ func signRequest(tenant, principal, role string) *http.Request {
 	r.Header.Set("X-Tenant-ID", tenant)
 	r.Header.Set("X-Principal-Id", principal)
 	r.Header.Set("X-Principal-Role", role)
-	return withAuth(r, &AuthContext{Tenant: tenant, PrincipalID: principal, Role: role})
+	return withAuth(r, &auth.AuthContext{Tenant: tenant, PrincipalID: principal, Role: role})
 }
 
 func TestMCPApprovalRouter_UnavailableReturns503(t *testing.T) {
@@ -120,7 +121,7 @@ func TestMCPApprovalRouter_AdminCanApprove(t *testing.T) {
 	r.Header.Set("X-Tenant-ID", "default")
 	r.Header.Set("X-Principal-Id", "admin-1")
 	r.Header.Set("X-Principal-Role", "admin")
-	r = withAuth(r, &AuthContext{Tenant: "default", PrincipalID: "admin-1", Role: "admin"})
+	r = withAuth(r, &auth.AuthContext{Tenant: "default", PrincipalID: "admin-1", Role: "admin"})
 	r.SetPathValue("id", approval.ID)
 
 	rec := httptest.NewRecorder()
@@ -145,7 +146,7 @@ func TestMCPApprovalRouter_SelfApprovalBlocked(t *testing.T) {
 	r.Header.Set("X-Tenant-ID", "default")
 	r.Header.Set("X-Principal-Id", "alice")
 	r.Header.Set("X-Principal-Role", "admin")
-	r = withAuth(r, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	r = withAuth(r, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 	r.SetPathValue("id", approval.ID)
 
 	rec := httptest.NewRecorder()
@@ -172,7 +173,7 @@ func TestMCPApprovalRouter_ListFiltersByTenant(t *testing.T) {
 	r.Header.Set("X-Tenant-ID", "default")
 	r.Header.Set("X-Principal-Id", "alice")
 	r.Header.Set("X-Principal-Role", "admin")
-	r = withAuth(r, &AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	r = withAuth(r, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
 
 	rec := httptest.NewRecorder()
 	s.handleMCPApprovalList(rec, r)

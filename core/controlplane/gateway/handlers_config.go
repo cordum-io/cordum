@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/licensing"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -20,7 +21,7 @@ import (
 // Config handlers
 
 func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermConfigWrite, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermConfigWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 
@@ -128,11 +129,11 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	// System config requires admin; all other scopes require at least operator.
 	if configsvc.Scope(scope) == configsvc.ScopeSystem {
-		if !s.requirePermissionOrRole(w, r, PermConfigRead, "admin") {
+		if !s.requirePermissionOrRole(w, r, auth.PermConfigRead, "admin") {
 			return
 		}
 	} else {
-		if !s.requirePermissionOrRole(w, r, PermConfigRead, "admin", "operator") {
+		if !s.requirePermissionOrRole(w, r, auth.PermConfigRead, "admin", "operator") {
 			return
 		}
 	}
@@ -176,7 +177,7 @@ func (s *server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGetEffectiveConfig(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermConfigRead, []string{"admin", "operator"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermConfigRead, []string{"admin", "operator"}, s.configSvc) {
 		return
 	}
 	orgID, err := s.resolveTenant(r, r.URL.Query().Get("org_id"))
@@ -242,7 +243,7 @@ type schemaRegisterRequest struct {
 }
 
 func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermSchemasWrite, []string{"admin"}, s.schemaRegistry) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermSchemasWrite, []string{"admin"}, s.schemaRegistry) {
 		return
 	}
 	var req schemaRegisterRequest
@@ -281,7 +282,7 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleListSchemas(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermSchemasRead, []string{"admin", "operator", "viewer"}, s.schemaRegistry) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermSchemasRead, []string{"admin", "operator", "viewer"}, s.schemaRegistry) {
 		return
 	}
 	limit, _ := parsePagination(r, 100)
@@ -296,7 +297,7 @@ func (s *server) handleListSchemas(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermSchemasRead, []string{"admin", "operator", "viewer"}, s.schemaRegistry) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermSchemasRead, []string{"admin", "operator", "viewer"}, s.schemaRegistry) {
 		return
 	}
 	id := r.PathValue("id")
@@ -324,7 +325,7 @@ func (s *server) handleGetSchema(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleDeleteSchema(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermSchemasWrite, []string{"admin"}, s.schemaRegistry) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermSchemasWrite, []string{"admin"}, s.schemaRegistry) {
 		return
 	}
 	id := r.PathValue("id")

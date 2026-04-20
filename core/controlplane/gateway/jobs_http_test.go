@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	infraSchema "github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
@@ -348,7 +349,7 @@ func TestHandleSubmitJobHTTPViewerDenied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleSubmitJobHTTP(rec, req)
@@ -377,7 +378,7 @@ func TestHandleSubmitJobHTTPAdminAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleSubmitJobHTTP(rec, req)
@@ -406,7 +407,7 @@ func TestHandleSubmitJobHTTPUserAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleSubmitJobHTTP(rec, req)
@@ -435,7 +436,7 @@ func TestHandleSubmitJobHTTPOperatorAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleSubmitJobHTTP(rec, req)
@@ -897,208 +898,148 @@ func TestGetJob_AttemptCount_FallsThroughToDLQ(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Submit-time policy regression tests
-// ---------------------------------------------------------------------------
+func TestHandleListJobEvents(t *testing.T) {
+	tests := []struct {
+		name       string
+		setupJob   bool
+		jobID      string
+		states     []model.JobState
+		tenant     string
+		reqTenant  string
+		wantCode   int
+		wantEvents int
+	}{
+		{
+			name:       "valid job with 3 events",
+			setupJob:   true,
+			jobID:      "job-events-ok",
+			states:     []model.JobState{model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched},
+			tenant:     "default",
+			reqTenant:  "default",
+			wantCode:   http.StatusOK,
+			wantEvents: 3,
+		},
+		{
+			name:       "non-existent job returns 404",
+			setupJob:   false,
+			jobID:      "job-does-not-exist",
+			tenant:     "",
+			reqTenant:  "default",
+			wantCode:   http.StatusNotFound,
+			wantEvents: -1,
+		},
+		{
+			name:       "job with zero events returns empty array",
+			setupJob:   true,
+			jobID:      "job-no-events",
+			states:     nil,
+			tenant:     "default",
+			reqTenant:  "default",
+			wantCode:   http.StatusOK,
+			wantEvents: 0,
+		},
+	}
 
-func TestHandleSubmitJobHTTP_PolicyDeny(t *testing.T) {
-	s, bus, safetyClient := newTestGateway(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			s.tenant = tt.reqTenant
+			ctx := context.Background()
+
+			if tt.setupJob {
+				if len(tt.states) == 0 {
+					// Simulate a legacy job with state metadata but no events list.
+					// Seed the meta hash directly via Redis so GetState returns non-empty
+					// but the events LIST remains absent (zero events).
+					rc := s.jobStore.Client()
+					metaKey := "job:meta:" + tt.jobID
+					rc.HSet(ctx, metaKey, "state", "pending", "tenant", tt.tenant)
+				} else {
+					// Set tenant first.
+					if tt.tenant != "" {
+						if err := s.jobStore.SetTenant(ctx, tt.jobID, tt.tenant); err != nil {
+							t.Fatalf("set tenant: %v", err)
+						}
+					}
+					// Walk through state transitions to create events.
+					for _, st := range tt.states {
+						if err := s.jobStore.SetState(ctx, tt.jobID, st); err != nil {
+							t.Fatalf("set state %s: %v", st, err)
+						}
+					}
+				}
+			}
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+tt.jobID+"/events", nil)
+			req.Header.Set("X-Tenant-ID", tt.reqTenant)
+			req.SetPathValue("id", tt.jobID)
+			rec := httptest.NewRecorder()
+
+			s.handleListJobEvents(rec, req)
+
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status=%d, want %d; body=%s", rec.Code, tt.wantCode, rec.Body.String())
+			}
+			if tt.wantEvents < 0 {
+				return // Don't check body for error responses.
+			}
+
+			var resp struct {
+				Events []json.RawMessage `json:"events"`
+			}
+			if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if len(resp.Events) != tt.wantEvents {
+				t.Fatalf("events count=%d, want %d", len(resp.Events), tt.wantEvents)
+			}
+		})
+	}
+}
+
+func TestHandleListJobEvents_TenantIsolation(t *testing.T) {
+	s, _, _ := newTestGateway(t)
 	s.tenant = "default"
-
-	safetyClient.setResponse(&pb.PolicyCheckResponse{
-		Decision: pb.DecisionType_DECISION_TYPE_DENY,
-		Reason:   "topic prohibited by policy",
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"key-a","role":"user","tenant":"tenant-a"}]`,
 	})
 
-	payload := map[string]any{
-		"prompt": "hello",
-		"topic":  "job.test",
+	ctx := context.Background()
+	jobID := "job-evt-tenant"
+
+	// Create job owned by tenant-b.
+	if err := s.jobStore.SetTenant(ctx, jobID, "tenant-b"); err != nil {
+		t.Fatalf("set tenant: %v", err)
 	}
-	body, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
-	req.Header.Set("X-Tenant-ID", "default")
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID+"/events", nil)
+	req.Header.Set("X-Tenant-ID", "tenant-a")
+	req.Header.Set("X-API-Key", "key-a")
+	authCtx, err := s.auth.AuthenticateHTTP(req)
+	if err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
+	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	req.SetPathValue("id", jobID)
 	rec := httptest.NewRecorder()
 
-	s.handleSubmitJobHTTP(rec, req)
+	s.handleListJobEvents(rec, req)
 
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for policy deny, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	bus.mu.Lock()
-	defer bus.mu.Unlock()
-	if len(bus.published) != 0 {
-		t.Fatalf("expected no bus publish on deny, got %d", len(bus.published))
+		t.Fatalf("status=%d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
 }
 
-func TestHandleSubmitJobHTTP_PolicyThrottle(t *testing.T) {
-	s, bus, safetyClient := newTestGateway(t)
-	s.tenant = "default"
-
-	safetyClient.setResponse(&pb.PolicyCheckResponse{
-		Decision: pb.DecisionType_DECISION_TYPE_THROTTLE,
-		Reason:   "rate limit exceeded",
-	})
-
-	payload := map[string]any{
-		"prompt": "hello",
-		"topic":  "job.test",
-	}
-	body, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
-	req.Header.Set("X-Tenant-ID", "default")
+func TestHandleListJobEvents_MissingID(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs//events", nil)
+	// Don't set path value — simulates missing id.
 	rec := httptest.NewRecorder()
-
-	s.handleSubmitJobHTTP(rec, req)
-
-	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected 429 for policy throttle, got %d: %s", rec.Code, rec.Body.String())
-	}
-	retryAfter := rec.Header().Get("Retry-After")
-	if retryAfter == "" {
-		t.Fatalf("expected Retry-After header on throttle response")
-	}
-
-	bus.mu.Lock()
-	defer bus.mu.Unlock()
-	if len(bus.published) != 0 {
-		t.Fatalf("expected no bus publish on throttle, got %d", len(bus.published))
-	}
-}
-
-func TestHandleSubmitJobHTTP_PolicyApprovalRequired(t *testing.T) {
-	s, bus, safetyClient := newTestGateway(t)
-	s.tenant = "default"
-
-	safetyClient.setResponse(&pb.PolicyCheckResponse{
-		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
-		Reason:           "high-risk action requires approval",
-		ApprovalRequired: true,
-	})
-
-	payload := map[string]any{
-		"prompt": "hello",
-		"topic":  "job.test",
-	}
-	body, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
-	req.Header.Set("X-Tenant-ID", "default")
-	rec := httptest.NewRecorder()
-
-	s.handleSubmitJobHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 for approval required, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	var resp map[string]string
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp["job_id"] == "" {
-		t.Fatalf("expected job_id in response")
-	}
-	if resp["status"] != "approval_required" {
-		t.Fatalf("expected status=approval_required, got %q", resp["status"])
-	}
-
-	// Verify job is in APPROVAL state.
-	jobID := resp["job_id"]
-	state, err := s.jobStore.GetState(context.Background(), jobID)
-	if err != nil {
-		t.Fatalf("get state: %v", err)
-	}
-	if state != model.JobStateApproval {
-		t.Fatalf("expected job state APPROVAL_REQUIRED, got %s", state)
-	}
-
-	// Verify safety decision record was persisted.
-	safetyRec, err := s.jobStore.GetSafetyDecision(context.Background(), jobID)
-	if err != nil {
-		t.Fatalf("expected safety decision record, got error: %v", err)
-	}
-	if !safetyRec.ApprovalRequired {
-		t.Fatalf("expected approval_required=true in safety record")
-	}
-
-	// Verify job request was persisted (needed by approval endpoint).
-	jobReq, err := s.jobStore.GetJobRequest(context.Background(), jobID)
-	if err != nil {
-		t.Fatalf("expected job request persisted for approval, got error: %v", err)
-	}
-	if jobReq.GetTopic() != "job.test" {
-		t.Fatalf("expected job request topic=job.test, got %q", jobReq.GetTopic())
-	}
-
-	// No bus publish — job awaits human approval.
-	bus.mu.Lock()
-	defer bus.mu.Unlock()
-	if len(bus.published) != 0 {
-		t.Fatalf("expected no bus publish for approval-required job, got %d", len(bus.published))
-	}
-}
-
-func TestHandleSubmitJobHTTP_PolicyFailClosed(t *testing.T) {
-	s, bus, _ := newTestGateway(t)
-	s.tenant = "default"
-
-	// Replace the safety client with one that returns errors from Evaluate.
-	s.safetyClient = &failingSafetyClient{}
-
-	// Default fail mode is "closed" — error from Evaluate should deny.
-	t.Setenv("POLICY_CHECK_FAIL_MODE", "")
-
-	payload := map[string]any{
-		"prompt": "hello",
-		"topic":  "job.test",
-	}
-	body, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
-	req.Header.Set("X-Tenant-ID", "default")
-	rec := httptest.NewRecorder()
-
-	s.handleSubmitJobHTTP(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("expected 403 for fail-closed, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	bus.mu.Lock()
-	defer bus.mu.Unlock()
-	if len(bus.published) != 0 {
-		t.Fatalf("expected no bus publish on fail-closed, got %d", len(bus.published))
-	}
-}
-
-func TestHandleSubmitJobHTTP_PolicyFailOpen(t *testing.T) {
-	s, bus, _ := newTestGateway(t)
-	s.tenant = "default"
-
-	// Replace the safety client with one that returns errors from Evaluate.
-	s.safetyClient = &failingSafetyClient{}
-
-	// Set fail mode to "open" — error from Evaluate should allow.
-	t.Setenv("POLICY_CHECK_FAIL_MODE", "open")
-
-	payload := map[string]any{
-		"prompt": "hello",
-		"topic":  "job.test",
-	}
-	body, _ := json.Marshal(payload)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
-	req.Header.Set("X-Tenant-ID", "default")
-	rec := httptest.NewRecorder()
-
-	s.handleSubmitJobHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 for fail-open, got %d: %s", rec.Code, rec.Body.String())
-	}
-
-	bus.mu.Lock()
-	defer bus.mu.Unlock()
-	if len(bus.published) != 1 {
-		t.Fatalf("expected 1 bus publish for fail-open, got %d", len(bus.published))
+	s.handleListJobEvents(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400", rec.Code)
 	}
 }

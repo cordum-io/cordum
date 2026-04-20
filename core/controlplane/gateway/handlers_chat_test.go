@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	wf "github.com/cordum/cordum/core/workflow"
 )
 
@@ -23,13 +24,13 @@ func seedChatRun(t *testing.T, s *server, runID, wfID, orgID string) {
 	}
 }
 
-func postChat(t *testing.T, s *server, runID string, authCtx *AuthContext, body map[string]string) *httptest.ResponseRecorder {
+func postChat(t *testing.T, s *server, runID string, authCtx *auth.AuthContext, body map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	data, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflow-runs/"+runID+"/chat", bytes.NewReader(data))
 	req.Header.Set("X-Tenant-ID", authCtx.Tenant)
 	req.SetPathValue("id", runID)
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 	s.handlePostRunChat(rec, req)
 	return rec
@@ -44,7 +45,7 @@ func TestPostRunChat_ViewerDenied(t *testing.T) {
 	s.auth = &tenantStrictAuth{tenant: "default", role: "viewer"}
 	seedChatRun(t, s, "run-v", "wf-v", "default")
 
-	ac := &AuthContext{Tenant: "default", Role: "viewer", PrincipalID: "u1"}
+	ac := &auth.AuthContext{Tenant: "default", Role: "viewer", PrincipalID: "u1"}
 	rec := postChat(t, s, "run-v", ac, map[string]string{"content": "hello", "role": "user"})
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for viewer, got %d: %s", rec.Code, rec.Body.String())
@@ -56,7 +57,7 @@ func TestPostRunChat_OperatorAllowed(t *testing.T) {
 	s.auth = &tenantStrictAuth{tenant: "default", role: "operator"}
 	seedChatRun(t, s, "run-op", "wf-op", "default")
 
-	ac := &AuthContext{Tenant: "default", Role: "operator", PrincipalID: "u2"}
+	ac := &auth.AuthContext{Tenant: "default", Role: "operator", PrincipalID: "u2"}
 	rec := postChat(t, s, "run-op", ac, map[string]string{"content": "hello"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for operator, got %d: %s", rec.Code, rec.Body.String())
@@ -68,7 +69,7 @@ func TestPostRunChat_AdminAllowed(t *testing.T) {
 	s.auth = &tenantStrictAuth{tenant: "default", role: "admin"}
 	seedChatRun(t, s, "run-ad", "wf-ad", "default")
 
-	ac := &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "u3"}
+	ac := &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "u3"}
 	rec := postChat(t, s, "run-ad", ac, map[string]string{"content": "hello"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 for admin, got %d: %s", rec.Code, rec.Body.String())
@@ -85,7 +86,7 @@ func TestPostRunChat_OperatorForcedToUser(t *testing.T) {
 	seedChatRun(t, s, "run-oi", "wf-oi", "default")
 
 	for _, injectedRole := range []string{"agent", "system", "assistant"} {
-		ac := &AuthContext{Tenant: "default", Role: "operator", PrincipalID: "op1"}
+		ac := &auth.AuthContext{Tenant: "default", Role: "operator", PrincipalID: "op1"}
 		rec := postChat(t, s, "run-oi", ac, map[string]string{"content": "test", "role": injectedRole})
 		if rec.Code != http.StatusOK {
 			t.Fatalf("role=%s: expected 200, got %d: %s", injectedRole, rec.Code, rec.Body.String())
@@ -105,7 +106,7 @@ func TestPostRunChat_AdminCanSetAgent(t *testing.T) {
 	s.auth = &tenantStrictAuth{tenant: "default", role: "admin"}
 	seedChatRun(t, s, "run-aa", "wf-aa", "default")
 
-	ac := &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin1"}
+	ac := &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin1"}
 	rec := postChat(t, s, "run-aa", ac, map[string]string{"content": "agent msg", "role": "agent"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -124,7 +125,7 @@ func TestPostRunChat_AdminCanSetSystem(t *testing.T) {
 	s.auth = &tenantStrictAuth{tenant: "default", role: "admin"}
 	seedChatRun(t, s, "run-as", "wf-as", "default")
 
-	ac := &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin1"}
+	ac := &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin1"}
 	rec := postChat(t, s, "run-as", ac, map[string]string{"content": "sys msg", "role": "system"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -148,7 +149,7 @@ func TestPostRunChat_InvalidRole_Rejected(t *testing.T) {
 	seedChatRun(t, s, "run-ir", "wf-ir", "default")
 
 	for _, badRole := range []string{"root", "superadmin", "moderator"} {
-		ac := &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin1"}
+		ac := &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin1"}
 		rec := postChat(t, s, "run-ir", ac, map[string]string{"content": "test", "role": badRole})
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("role=%s: expected 400, got %d: %s", badRole, rec.Code, rec.Body.String())
@@ -161,7 +162,7 @@ func TestPostRunChat_EmptyRole_DefaultsToUser(t *testing.T) {
 	s.auth = &tenantStrictAuth{tenant: "default", role: "operator"}
 	seedChatRun(t, s, "run-er", "wf-er", "default")
 
-	ac := &AuthContext{Tenant: "default", Role: "operator", PrincipalID: "op1"}
+	ac := &auth.AuthContext{Tenant: "default", Role: "operator", PrincipalID: "op1"}
 	rec := postChat(t, s, "run-er", ac, map[string]string{"content": "hi"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
@@ -184,7 +185,7 @@ func TestPostRunChat_CrossTenant_Denied(t *testing.T) {
 	s.auth = &tenantStrictAuth{tenant: "tenant-a", role: "admin"}
 	seedChatRun(t, s, "run-ct", "wf-ct", "tenant-b")
 
-	ac := &AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-a"}
+	ac := &auth.AuthContext{Tenant: "tenant-a", Role: "admin", PrincipalID: "admin-a"}
 	rec := postChat(t, s, "run-ct", ac, map[string]string{"content": "cross-tenant"})
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for cross-tenant, got %d: %s", rec.Code, rec.Body.String())
@@ -200,7 +201,7 @@ func TestPostRunChat_EmptyContent_Rejected(t *testing.T) {
 	s.auth = &tenantStrictAuth{tenant: "default", role: "admin"}
 	seedChatRun(t, s, "run-ec", "wf-ec", "default")
 
-	ac := &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin1"}
+	ac := &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin1"}
 	rec := postChat(t, s, "run-ec", ac, map[string]string{"content": "  ", "role": "user"})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for empty content, got %d: %s", rec.Code, rec.Body.String())

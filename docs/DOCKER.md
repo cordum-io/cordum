@@ -15,12 +15,12 @@ Prereqs: Docker + Docker Compose. The smoke test script requires `curl` and `jq`
 
 | Service | Dockerfile | Ports | Health Endpoint | Depends On |
 |---------|-----------|-------|-----------------|------------|
-| `nats` | *(image: nats:2.10-alpine)* | 4222 | `:8222/healthz` | — |
-| `redis` | *(image: redis:7-alpine)* | 6379 | `redis-cli ping` (TLS) | — |
+| `nats` | *(image: nats:2.10-alpine)* | 4222 | `nc -z localhost 4222` | — |
+| `redis` | *(image: redis:7-alpine)* | 6379 | `redis-cli ping` | — |
 | `context-engine` | `Dockerfile` (SERVICE=cordum-context-engine) | 50070 (gRPC) | `nc -z localhost 50070` | redis |
 | `safety-kernel` | `Dockerfile` (SERVICE=cordum-safety-kernel) | 50051 (gRPC) | `nc -z localhost 50051` | nats |
-| `scheduler` | `Dockerfile` (SERVICE=cordum-scheduler) | 9090 (metrics) | `GET /health` on :9090 | nats, redis, safety-kernel |
-| `api-gateway` | `Dockerfile` (SERVICE=cordum-api-gateway) | 8080 (HTTP), 8081 (health), 9092 (metrics) | `GET /health` on :8081 (HTTPS) | nats, redis, scheduler, safety-kernel |
+| `scheduler` | `Dockerfile` (SERVICE=cordum-scheduler) | 9090 (metrics) | `GET /metrics` on :9090 | nats, redis, safety-kernel |
+| `api-gateway` | `Dockerfile` (SERVICE=cordum-api-gateway) | 8080 (HTTP), 8081 (health), 9092 (metrics) | `GET /health` on :8081 | nats, redis, scheduler, safety-kernel |
 | `workflow-engine` | `Dockerfile` (SERVICE=cordum-workflow-engine) | 9093 (HTTP) | `GET /health` on :9093 | nats, redis, scheduler |
 | `dashboard` | `dashboard/Dockerfile` | 8082→8080 (nginx) | `GET /healthz` on :8080 | api-gateway |
 
@@ -51,17 +51,17 @@ variables from your shell, so keep the `export` lines when running scripts.
 ### Use GHCR Images (Release Builds)
 
 ```bash
-export CORDUM_VERSION=v0.9.7
+export CORDUM_VERSION=v0.1.4
 docker compose -f docker-compose.release.yml pull
 docker compose -f docker-compose.release.yml up -d
 ```
 
 Release images:
-- `ghcr.io/cordum-io/cordum/api-gateway:<version>`
-- `ghcr.io/cordum-io/cordum/scheduler:<version>`
-- `ghcr.io/cordum-io/cordum/safety-kernel:<version>`
-- `ghcr.io/cordum-io/cordum/workflow-engine:<version>`
-- `ghcr.io/cordum-io/cordum/context-engine:<version>`
+- `ghcr.io/cordum-io/cordum/control-plane:<version>-api-gateway`
+- `ghcr.io/cordum-io/cordum/control-plane:<version>-scheduler`
+- `ghcr.io/cordum-io/cordum/control-plane:<version>-safety-kernel`
+- `ghcr.io/cordum-io/cordum/control-plane:<version>-workflow-engine`
+- `ghcr.io/cordum-io/cordum/control-plane:<version>-context-engine`
 - `ghcr.io/cordum-io/cordum/dashboard:<version>`
 
 ### Smoke Test (No Workers Required)
@@ -185,12 +185,12 @@ healthcheck:
 
 | Service | Command | What It Checks |
 |---------|---------|---------------|
-| nats | `wget -qO- http://localhost:8222/healthz \|\| exit 1` | NATS HTTP monitoring healthz endpoint (requires `:8222` enabled in `nats.conf`) |
-| redis | `redis-cli --tls --cacert <ca> -a <pass> ping` | Redis responds to PING over TLS |
+| nats | `nc -z localhost 4222` | TCP port open |
+| redis | `redis-cli -a <password> ping` | Redis responds to PING |
 | context-engine | `nc -z localhost 50070` | gRPC port open |
 | safety-kernel | `nc -z localhost 50051` | gRPC port open |
-| scheduler | `wget --spider -q http://127.0.0.1:9090/health` | Dedicated health HTTP endpoint |
-| api-gateway | `wget --spider -q --no-check-certificate https://127.0.0.1:8081/health` | Dedicated health HTTPS endpoint |
+| scheduler | `wget --spider -q http://127.0.0.1:9090/metrics` | Prometheus metrics endpoint |
+| api-gateway | `wget --spider -q http://127.0.0.1:8081/health` | Dedicated health HTTP endpoint |
 | workflow-engine | `wget --spider -q http://127.0.0.1:9093/health` | Dedicated health HTTP endpoint |
 | dashboard | `curl -f http://127.0.0.1:8080/healthz` | Nginx healthz endpoint |
 

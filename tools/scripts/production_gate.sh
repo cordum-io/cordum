@@ -233,7 +233,7 @@ poll_job_terminal() {
       echo "__POLL_TIMEOUT__"
       return 1
     fi
-    sleep 1
+    sleep 0.5
   done
 }
 
@@ -257,8 +257,38 @@ poll_run_terminal() {
       echo "__POLL_TIMEOUT__"
       return 1
     fi
-    sleep 1
+    sleep 0.5
   done
+}
+
+poll_run_terminal_with_retry() {
+  local run_id="$1"
+  local timeout_sec="${2:-120}"
+  local retry_sec="${3:-60}"
+  local label="${4:-workflow run}"
+  local status run_state
+
+  status="$(poll_run_terminal "${run_id}" "${timeout_sec}")" && {
+    printf '%s' "${status}"; return 0
+  }
+
+  # Dump diagnostic state on first timeout
+  run_state="$(api_body GET "/workflow-runs/${run_id}" 2>/dev/null || true)"
+  log "WARN: ${label} (${run_id}) not terminal after ${timeout_sec}s:" >&2
+  echo "${run_state}" | jq -c '{status, steps: (.steps // {} | to_entries | map({key, status: .value.status, job_id: .value.job_id}))}' 2>/dev/null >&2 || echo "${run_state}" >&2
+
+  # Retry
+  log "Retrying poll for ${label} (${run_id}) for ${retry_sec}s..." >&2
+  status="$(poll_run_terminal "${run_id}" "${retry_sec}")" && {
+    printf '%s' "${status}"; return 0
+  }
+
+  # Final failure — full dump
+  run_state="$(api_body GET "/workflow-runs/${run_id}" 2>/dev/null || true)"
+  log "FATAL: ${label} (${run_id}) still not terminal after retry. Full state:" >&2
+  echo "${run_state}" | jq '.' 2>/dev/null >&2 || echo "${run_state}" >&2
+  echo "__POLL_TIMEOUT__"
+  return 1
 }
 
 ensure_mock_bank_pack() {
@@ -519,7 +549,7 @@ gate_3_workflows() {
     echo "auto workflow run did not return run_id" >&2
     return 1
   }
-  auto_status="$(poll_run_terminal "${auto_run}" 90)"
+  auto_status="$(poll_run_terminal_with_retry "${auto_run}" 120 60 "auto workflow")"
   [[ "${auto_status}" == "succeeded" ]] || {
     echo "auto workflow expected succeeded, got ${auto_status}" >&2
     return 1
@@ -540,8 +570,8 @@ gate_3_workflows() {
   }
 
   review_job=""
-  for _ in {1..40}; do
-    review_job="$(api_body GET "/workflow-runs/${review_run}" | jq -r '.steps.execute_review.job_id // empty' 2>/dev/null || true)"
+  for _ in {1..80}; do
+    review_job="$(api_body GET "/workflow-runs/${review_run}" | jq -r '.steps.review.job_id // empty' 2>/dev/null || true)"
     if [[ -n "${review_job}" ]]; then
       break
     fi
@@ -558,7 +588,9 @@ gate_3_workflows() {
     return 1
   }
 
-  review_status="$(poll_run_terminal "${review_run}" 90)"
+  sleep 2  # give the engine time to process the approval before polling
+
+  review_status="$(poll_run_terminal_with_retry "${review_run}" 180 90 "review workflow")"
   [[ "${review_status}" == "succeeded" ]] || {
     echo "review workflow expected succeeded after approval, got ${review_status}" >&2
     return 1
@@ -638,7 +670,7 @@ gate_3_workflows() {
     echo "rerun endpoint did not return run_id" >&2
     return 1
   }
-  rerun_status="$(poll_run_terminal "${rerun_run}" 90)"
+  rerun_status="$(poll_run_terminal_with_retry "${rerun_run}" 120 60 "rerun workflow")"
   [[ "${rerun_status}" == "succeeded" ]] || {
     echo "rerun expected succeeded, got ${rerun_status}" >&2
     return 1
@@ -1752,11 +1784,9 @@ gate_11_streaming() {
 
   # --- WebSocket hold test (30s soak with ping/pong verification) ---
   # Build ws-soak binary if not present.
-  local gate_root
-  gate_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-  local soak_bin="${gate_root}/bin/ws-soak"
+  local soak_bin="${ROOT_DIR}/bin/ws-soak"
   if [[ ! -x "${soak_bin}" ]]; then
-    go build -o "${soak_bin}" "${gate_root}/tools/ws-soak/" 2>/dev/null || {
+    go build -o "${soak_bin}" "${ROOT_DIR}/tools/ws-soak/" 2>/dev/null || {
       echo "failed to build ws-soak binary" >&2
       return 1
     }

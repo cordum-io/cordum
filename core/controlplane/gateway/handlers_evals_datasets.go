@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 )
@@ -81,7 +82,7 @@ func decodeEvalDatasetJSON(w http.ResponseWriter, r *http.Request, dst any) bool
 }
 
 func (s *server) handleCreateEvalDataset(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermEvalsDatasetsWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermEvalsDatasetsWrite, "admin") {
 		return
 	}
 	if s.evalDatasetStore == nil {
@@ -143,7 +144,7 @@ func (s *server) handleCreateEvalDataset(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *server) handleUpdateEvalDataset(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermEvalsDatasetsWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermEvalsDatasetsWrite, "admin") {
 		return
 	}
 	if s.evalDatasetStore == nil {
@@ -233,7 +234,7 @@ func (s *server) handleUpdateEvalDataset(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *server) handleListEvalDatasets(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermEvalsDatasetsRead, "admin", "operator", "viewer") {
+	if !s.requirePermissionOrRole(w, r, auth.PermEvalsDatasetsRead, "admin", "operator", "viewer") {
 		return
 	}
 	if s.evalDatasetStore == nil {
@@ -306,7 +307,7 @@ func (s *server) handleListEvalDatasets(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *server) handleGetEvalDataset(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermEvalsDatasetsRead, "admin", "operator", "viewer") {
+	if !s.requirePermissionOrRole(w, r, auth.PermEvalsDatasetsRead, "admin", "operator", "viewer") {
 		return
 	}
 	if s.evalDatasetStore == nil {
@@ -339,7 +340,7 @@ func (s *server) handleGetEvalDataset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleListEvalDatasetVersions(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermEvalsDatasetsRead, "admin", "operator", "viewer") {
+	if !s.requirePermissionOrRole(w, r, auth.PermEvalsDatasetsRead, "admin", "operator", "viewer") {
 		return
 	}
 	if s.evalDatasetStore == nil {
@@ -371,7 +372,7 @@ func (s *server) handleListEvalDatasetVersions(w http.ResponseWriter, r *http.Re
 }
 
 func (s *server) handleGetEvalDatasetByNameVersion(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermEvalsDatasetsRead, "admin", "operator", "viewer") {
+	if !s.requirePermissionOrRole(w, r, auth.PermEvalsDatasetsRead, "admin", "operator", "viewer") {
 		return
 	}
 	if s.evalDatasetStore == nil {
@@ -411,7 +412,7 @@ func (s *server) handleGetEvalDatasetByNameVersion(w http.ResponseWriter, r *htt
 }
 
 func (s *server) handleDeleteEvalDataset(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermEvalsDatasetsDelete, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermEvalsDatasetsDelete, "admin") {
 		return
 	}
 	if s.evalDatasetStore == nil {

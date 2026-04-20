@@ -8,7 +8,9 @@ import (
 	"time"
 )
 
-// testAdminIdentity returns an identity that sees every tool.
+// testAdminIdentity returns an identity that sees every tool. Test
+// messages targeting tools/list attach this so pre-filter tests
+// continue to exercise the full catalogue.
 func testAdminIdentity() *AgentIdentity {
 	return &AgentIdentity{
 		ID:                  "test-admin",
@@ -318,6 +320,197 @@ func TestReloadConfigAppliesToRegistries(t *testing.T) {
 	if got := len(resources.List()); got != 0 {
 		t.Fatalf("expected resource disabled after reload, got %d", got)
 	}
+}
+
+// TestToolsCallScopeFilter_DenialSubReasons asserts the server maps
+// each filter rejection to JSON-RPC code -32098 with the specific
+// sub_reason preserved in error.data.
+func TestToolsCallScopeFilter_DenialSubReasons(t *testing.T) {
+	t.Parallel()
+
+	handler := func(_ context.Context, _ json.RawMessage) (*ToolCallResult, error) {
+		t.Fatal("handler must not run when filter denies")
+		return nil, nil
+	}
+
+	type denialCase struct {
+		name       string
+		identity   *AgentIdentity
+		tool       Tool
+		wantReason DenyReason
+	}
+	cases := []denialCase{
+		{
+			name: "tool_not_in_allowed_list",
+			identity: &AgentIdentity{
+				ID:           "under",
+				RiskTier:     "critical",
+				AllowedTools: []string{"fs.*"},
+			},
+			tool:       Tool{Name: "jobs.delete", RiskTier: "low"},
+			wantReason: DenyReasonNotInAllowedList,
+		},
+		{
+			name: "risk_tier_too_low",
+			identity: &AgentIdentity{
+				ID:           "low-tier",
+				RiskTier:     "low",
+				AllowedTools: []string{"*"},
+			},
+			tool:       Tool{Name: "jobs.delete", RiskTier: "critical"},
+			wantReason: DenyReasonRiskTierTooLow,
+		},
+		{
+			name: "missing_data_classification",
+			identity: &AgentIdentity{
+				ID:                  "no-pii",
+				RiskTier:            "critical",
+				AllowedTools:        []string{"*"},
+				DataClassifications: nil,
+			},
+			tool:       Tool{Name: "pii.read", RiskTier: "low", DataClassifications: []string{"pii"}},
+			wantReason: DenyReasonMissingDataClassification,
+		},
+		{
+			name:       "no_identity",
+			identity:   nil,
+			tool:       Tool{Name: "fs.read", RiskTier: "low"},
+			wantReason: DenyReasonNoIdentity,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			tools := NewToolRegistry()
+			tools.SetScopeEnforcement(true)
+			recorded := make(chan DenyEvent, 1)
+			tools.SetDenyAuditor(denyAuditorFunc(func(_ context.Context, ev DenyEvent) {
+				recorded <- ev
+			}))
+			if err := tools.Register(tc.tool, handler); err != nil {
+				t.Fatalf("register: %v", err)
+			}
+
+			transport := newChannelTransport()
+			srv := NewServer(transport, tools, NewResourceRegistry(), ServerConfig{})
+			errCh := startServer(t, srv, transport)
+
+			params := json.RawMessage(`{"name":"` + tc.tool.Name + `","arguments":{}}`)
+			transport.in <- &JSONRPCMessage{
+				JSONRPC:  JSONRPCVersion,
+				ID:       json.RawMessage(`10`),
+				Method:   MethodToolsCall,
+				Params:   params,
+				identity: tc.identity,
+			}
+			resp := awaitResponse(t, transport.out)
+			if resp.Error == nil {
+				t.Fatalf("expected rpc error, got result %+v", resp.Result)
+			}
+			if resp.Error.Code != jsonRPCNotAuthorizedCode {
+				t.Errorf("error.code = %d, want %d", resp.Error.Code, jsonRPCNotAuthorizedCode)
+			}
+			// error.data may be *NotAuthorized in-process or a map after
+			// JSON round-trip. Accept both.
+			var reason DenyReason
+			switch d := resp.Error.Data.(type) {
+			case *NotAuthorized:
+				reason = d.SubReason
+			case map[string]any:
+				reason = DenyReason(stringOf(d["sub_reason"]))
+			}
+			if reason != tc.wantReason {
+				t.Errorf("sub_reason = %q, want %q", reason, tc.wantReason)
+			}
+
+			// Audit hook must fire with matching sub_reason.
+			select {
+			case ev := <-recorded:
+				if ev.SubReason != tc.wantReason {
+					t.Errorf("audit sub_reason = %q, want %q", ev.SubReason, tc.wantReason)
+				}
+				if ev.ToolName != tc.tool.Name {
+					t.Errorf("audit tool_name = %q, want %q", ev.ToolName, tc.tool.Name)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for DenyAuditor")
+			}
+
+			closeServer(t, transport, errCh)
+		})
+	}
+}
+
+type denyAuditorFunc func(ctx context.Context, ev DenyEvent)
+
+func (f denyAuditorFunc) ToolDenied(ctx context.Context, ev DenyEvent) { f(ctx, ev) }
+
+func stringOf(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+// TestToolsCallApprovalRequiredMapsTo32099 is the end-to-end server
+// check for step 4: a tool with RequiresApproval=true and a gate that
+// returns ApprovalRequired must surface on the transport as a JSON-RPC
+// error with code=-32099 and data.approval_id populated.
+func TestToolsCallApprovalRequiredMapsTo32099(t *testing.T) {
+	t.Parallel()
+	tools := NewToolRegistry()
+	if err := tools.Register(Tool{Name: "dangerous.delete", RequiresApproval: true},
+		func(_ context.Context, _ json.RawMessage) (*ToolCallResult, error) {
+			t.Fatal("handler must not execute when gate blocks")
+			return nil, nil
+		}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	tools.SetApprovalGate(&fakeGate{response: &ApprovalRequired{ApprovalID: "app-42", Reason: "dangerous rule matched"}})
+
+	transport := newChannelTransport()
+	srv := NewServer(transport, tools, NewResourceRegistry(), ServerConfig{})
+	errCh := startServer(t, srv, transport)
+
+	transport.in <- &JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
+		ID:      json.RawMessage(`7`),
+		Method:  MethodToolsCall,
+		Params:  json.RawMessage(`{"name":"dangerous.delete","arguments":{}}`),
+	}
+	resp := awaitResponse(t, transport.out)
+	if resp.Error == nil {
+		t.Fatalf("expected JSON-RPC error, got result %+v", resp.Result)
+	}
+	if resp.Error.Code != jsonRPCApprovalRequiredCode {
+		t.Errorf("error.code = %d, want %d", resp.Error.Code, jsonRPCApprovalRequiredCode)
+	}
+	// error.data should carry the ApprovalRequired struct — either as
+	// the struct itself (in-process) or as a decoded map after JSON
+	// round-trip. Accept both shapes.
+	var approvalID, toolName string
+	switch d := resp.Error.Data.(type) {
+	case *ApprovalRequired:
+		approvalID = d.ApprovalID
+		toolName = d.Tool
+	case map[string]any:
+		if v, ok := d["approval_id"].(string); ok {
+			approvalID = v
+		}
+		if v, ok := d["tool"].(string); ok {
+			toolName = v
+		}
+	default:
+		t.Fatalf("error.data has unexpected type %T: %#v", resp.Error.Data, resp.Error.Data)
+	}
+	if approvalID != "app-42" {
+		t.Errorf("approval_id = %q, want app-42", approvalID)
+	}
+	if toolName != "dangerous.delete" {
+		t.Errorf("tool = %q, want dangerous.delete", toolName)
+	}
+	closeServer(t, transport, errCh)
 }
 
 func startServer(t *testing.T, srv *MCPServer, transport *channelTransport) chan error {

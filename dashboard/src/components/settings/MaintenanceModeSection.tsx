@@ -14,7 +14,7 @@ import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { Textarea } from "../ui/Textarea";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
-import { cn, formatDuration } from "../../lib/utils";
+import { cn } from "../../lib/utils";
 import { useGeneralConfig, useSetGeneralConfig } from "../../hooks/useSettings";
 import type {
   GeneralConfig,
@@ -37,6 +37,13 @@ function formatElapsed(startIso: string): string {
   return `${days}d ${hrs % 24}h`;
 }
 
+function formatDuration(ms: number): string {
+  const mins = Math.round(ms / 60_000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ${mins % 60}m`;
+  return `${Math.floor(hrs / 24)}d ${hrs % 24}h`;
+}
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -167,7 +174,7 @@ export function MaintenanceModeSection() {
           <div className={cn("mt-1 h-3 w-3 rounded-full", isActive ? "bg-danger animate-pulse" : "bg-success")} />
           <div>
             <h3 className="font-display text-base font-semibold text-ink">Maintenance Mode</h3>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted">
               {isActive
                 ? "System is in maintenance — new jobs are rejected"
                 : "System is operational"}
@@ -190,7 +197,7 @@ export function MaintenanceModeSection() {
       {isActive && (
         <div className="mt-4 space-y-3 rounded-xl border border-danger/20 bg-danger/5 p-4">
           <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2 text-xs text-muted">
               <Clock className="h-3.5 w-3.5" />
               Started {config.maintenanceStartedAt ? formatDateTime(config.maintenanceStartedAt) : "—"}
             </div>
@@ -203,7 +210,7 @@ export function MaintenanceModeSection() {
           </div>
 
           <div className="space-y-1">
-            <label className="text-xs font-semibold text-muted-foreground">Maintenance Message</label>
+            <label className="text-xs font-semibold text-muted">Maintenance Message</label>
             <div className="flex gap-2">
               <Textarea
                 value={message}
@@ -231,7 +238,7 @@ export function MaintenanceModeSection() {
         <button
           type="button"
           onClick={() => setShowSchedule((v) => !v)}
-          className="flex w-full items-center justify-between rounded-lg px-1 py-2 text-xs font-semibold text-muted-foreground hover:text-ink"
+          className="flex w-full items-center justify-between rounded-lg px-1 py-2 text-xs font-semibold text-muted hover:text-ink"
         >
           <span className="flex items-center gap-2">
             <Calendar className="h-3.5 w-3.5" />
@@ -249,9 +256,9 @@ export function MaintenanceModeSection() {
                   <span className="font-medium text-ink">
                     {formatDateTime(s.startAt)} — {formatDateTime(s.endAt)}
                   </span>
-                  {s.message && <span className="ml-2 text-muted-foreground">"{s.message}"</span>}
+                  {s.message && <span className="ml-2 text-muted">"{s.message}"</span>}
                   {s.recurring && (
-                    <Badge variant="info" className="ml-2 text-xs">
+                    <Badge variant="info" className="ml-2 text-[10px]">
                       Recurring: {s.recurring.daysOfWeek.map((d) => DAY_LABELS[d]).join(", ")}
                     </Badge>
                   )}
@@ -259,7 +266,7 @@ export function MaintenanceModeSection() {
                 <button
                   type="button"
                   onClick={() => handleRemoveSchedule(s.id)}
-                  className="rounded-full p-1 text-muted-foreground hover:text-danger"
+                  className="rounded-full p-1 text-muted hover:text-danger"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -267,7 +274,7 @@ export function MaintenanceModeSection() {
             ))}
 
             {schedule.length === 0 && (
-              <p className="text-xs text-muted-foreground italic">No scheduled maintenance windows</p>
+              <p className="text-xs text-muted italic">No scheduled maintenance windows</p>
             )}
 
             {/* Add schedule form */}
@@ -275,7 +282,7 @@ export function MaintenanceModeSection() {
               <p className="text-xs font-semibold text-ink">Schedule New Window</p>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-muted-foreground">Start</label>
+                  <label className="text-[10px] font-semibold text-muted">Start</label>
                   <Input
                     type="datetime-local"
                     value={schedStart}
@@ -284,7 +291,7 @@ export function MaintenanceModeSection() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-semibold text-muted-foreground">End</label>
+                  <label className="text-[10px] font-semibold text-muted">End</label>
                   <Input
                     type="datetime-local"
                     value={schedEnd}
@@ -321,7 +328,7 @@ export function MaintenanceModeSection() {
                         className={cn(
                           "rounded-full px-3 py-1 text-xs font-medium transition",
                           recurDays.includes(idx)
-                            ? "bg-accent text-primary-foreground"
+                            ? "bg-accent text-white"
                             : "border border-border text-ink hover:bg-surface2",
                         )}
                       >
@@ -329,7 +336,7 @@ export function MaintenanceModeSection() {
                       </button>
                     ))}
                   </div>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2 text-xs text-muted">
                     <Input
                       type="number"
                       value={recurStartHour}
@@ -372,7 +379,7 @@ export function MaintenanceModeSection() {
         <button
           type="button"
           onClick={() => setShowHistory((v) => !v)}
-          className="flex w-full items-center justify-between rounded-lg px-1 py-2 text-xs font-semibold text-muted-foreground hover:text-ink"
+          className="flex w-full items-center justify-between rounded-lg px-1 py-2 text-xs font-semibold text-muted hover:text-ink"
         >
           <span className="flex items-center gap-2">
             <Clock className="h-3.5 w-3.5" />
@@ -384,7 +391,7 @@ export function MaintenanceModeSection() {
         {showHistory && (
           <div className="mt-1 space-y-2">
             {history.length === 0 && (
-              <p className="text-xs text-muted-foreground italic">No maintenance history</p>
+              <p className="text-xs text-muted italic">No maintenance history</p>
             )}
             {history.map((w, i) => (
               <div key={i} className="flex items-center justify-between rounded-lg border border-border bg-surface2/50 px-3 py-2 text-xs">
@@ -392,7 +399,7 @@ export function MaintenanceModeSection() {
                   <div className="font-medium text-ink">
                     {formatDateTime(w.startedAt)} — {formatDateTime(w.endedAt)}
                   </div>
-                  {w.message && <div className="text-muted-foreground">"{w.message}"</div>}
+                  {w.message && <div className="text-muted">"{w.message}"</div>}
                 </div>
                 <Badge variant="default">{formatDuration(w.durationMs)}</Badge>
               </div>
@@ -407,7 +414,7 @@ export function MaintenanceModeSection() {
         title="Enable Maintenance Mode"
         message="This will reject all new jobs and show a maintenance banner to all dashboard users. Existing running jobs will continue."
         confirmLabel="Enable Maintenance"
-        confirmVariant="danger"
+        confirmVariant="destructive"
         isPending={saveConfig.isPending}
         onConfirm={handleToggleOn}
         onCancel={() => setConfirmOn(false)}

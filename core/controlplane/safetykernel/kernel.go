@@ -31,19 +31,18 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	infraHealth "github.com/cordum/cordum/core/infra/health"
-	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
-	"go.opentelemetry.io/otel/attribute"
-	oteltrace "go.opentelemetry.io/otel/trace"
 	"github.com/cordum/cordum/core/licensing"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -73,18 +72,6 @@ type server struct {
 	cacheMaxSize      int
 	entitlements      *licensing.EntitlementResolver
 	customBundleCount int
-	shadowEvaluator   *ShadowEvaluator
-
-	// Agent identity store for enriching policy evaluation with agent context.
-	agentStore        *store.AgentIdentityStore
-	agentCacheMu      sync.Mutex
-	agentCache        map[string]agentCacheEntry
-	agentCacheTTL     time.Duration
-
-	// Server-side risk tag derivation registry. When a deriver is registered
-	// for a topic, it replaces client-supplied risk_tags with authoritative
-	// tags derived from the job content. Prevents risk tag spoofing.
-	tagDeriverRegistry *TagDeriverRegistry
 }
 
 const (
@@ -282,33 +269,14 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	if err != nil {
 		slog.Warn("safety-kernel: output result redis client disabled", "err", err)
 	}
-	var agentStore *store.AgentIdentityStore
-	if resultClient != nil {
-		agentStore = store.NewAgentIdentityStoreFromClient(resultClient)
-	}
-	tagRegistry := NewTagDeriverRegistry()
-	registerBuiltinTagDerivers(tagRegistry)
-	// Load deriver registrations from topic registry (pack-installed derivers).
-	// These take precedence over built-in registrations.
-	if loader.configSvc != nil {
-		if entries, err := loadTopicDeriverEntries(context.Background(), loader.configSvc); err != nil {
-			slog.Warn("safety-kernel: failed to load tag derivers from topic registry", "err", err)
-		} else if n := loadTagDeriversFromTopics(tagRegistry, entries); n > 0 {
-			slog.Info("safety-kernel: loaded tag derivers from topic registry", "count", n)
-		}
-	}
-
 	srv := &server{
-		cacheTTL:           parseDurationEnv(envDecisionCacheTTL),
-		cache:              map[string]cacheEntry{},
-		cacheMaxSize:       cacheMax,
-		scanners:           loadOutputScanners(),
-		resultClient:       resultClient,
-		velocityChecker:    newVelocityChecker(resultClient),
-		entitlements:       resolver,
-		agentStore:         agentStore,
-		agentCacheTTL:      defaultAgentCacheTTL,
-		tagDeriverRegistry: tagRegistry,
+		cacheTTL:        parseDurationEnv(envDecisionCacheTTL),
+		cache:           map[string]cacheEntry{},
+		cacheMaxSize:    cacheMax,
+		scanners:        loadOutputScanners(),
+		resultClient:    resultClient,
+		velocityChecker: newVelocityChecker(resultClient),
+		entitlements:    resolver,
 	}
 	srv.setPolicyWithBundleCount(policy, snapshot, customBundleCount)
 
@@ -327,7 +295,6 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 
 	grpcServer := grpc.NewServer(
 		serverCreds,
-		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			MaxConnectionAge:      env.DurationOr(envGRPCServerMaxConnectionAge, 2*time.Hour),
 			MaxConnectionAgeGrace: env.DurationOr(envGRPCServerMaxConnectionGrace, 30*time.Second),
@@ -573,11 +540,12 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	}
 
 	input := config.PolicyInput{
-		Tenant: tenant,
-		Topic:  topic,
-		Labels: req.GetLabels(),
-		Meta:   policyMetaFromRequest(req),
-		MCP:    extractMCPRequest(req.GetLabels()),
+		Tenant:     tenant,
+		Topic:      topic,
+		Labels:     req.GetLabels(),
+		Meta:       policyMetaFromRequest(req),
+		MCP:        extractMCPRequest(req.GetLabels()),
+		Delegation: delegationContextFromRequest(req),
 	}
 
 	// Server-side risk tag derivation: when a deriver is registered for this
@@ -1153,17 +1121,6 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 			s.setPolicyWithBundleCount(policy, snapshot, customBundleCount)
 			slog.Info("safety-kernel: policy snapshot updated", "snapshot", snapshot, "trigger", trigger)
 		}
-
-		// Reload tag derivers from topic registry. Pack installs update the
-		// topic registry and publish a config change notification, so this
-		// picks up newly installed pack derivers without a kernel restart.
-		if loader.configSvc != nil && s.tagDeriverRegistry != nil {
-			if entries, err := loadTopicDeriverEntries(ctx, loader.configSvc); err != nil {
-				slog.Warn("safety-kernel: tag deriver reload failed", "err", err, "trigger", trigger)
-			} else if n := loadTagDeriversFromTopics(s.tagDeriverRegistry, entries); n > 0 {
-				slog.Info("safety-kernel: tag derivers reloaded from topic registry", "count", n, "trigger", trigger)
-			}
-		}
 	}
 
 	for {
@@ -1344,10 +1301,18 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 	var skippedCount int
 	customBundleCount := 0
 	bundleLimit := l.policyBundleLimit()
+	verifier := newBundleVerifier()
 	for _, key := range keys {
 		content, ok := extractPolicyFragment(rawBundles[key])
 		if !ok || strings.TrimSpace(content) == "" {
 			continue
+		}
+		// Verify the bundle signature under the active strict mode.
+		// In enforce mode, any failure propagates an error so the
+		// previous known-good policy stays active. In warn/off mode
+		// the call returns nil and continues.
+		if err := verifyBundleSignature(key, []byte(content), fragmentSignature(rawBundles[key]), verifier.mode, verifier.store); err != nil {
+			return nil, "", 0, err
 		}
 		isCustomBundle := strings.HasPrefix(key, customPolicyBundlePrefix)
 		if isCustomBundle && bundleLimit != licensing.Unlimited {
@@ -1614,7 +1579,7 @@ func loadPolicyBundle(source string) (*config.SafetyPolicy, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	if err := verifyPolicySignature(data, source); err != nil {
+	if err := verifyFilePolicySignature(data, source); err != nil {
 		return nil, "", err
 	}
 	policy, err := config.ParseSafetyPolicy(data)

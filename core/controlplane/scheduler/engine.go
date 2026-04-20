@@ -19,11 +19,9 @@ import (
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/config"
-	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	infraSchema "github.com/cordum/cordum/core/infra/schema"
 	infraStore "github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
-	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
@@ -83,13 +81,11 @@ type Engine struct {
 	registry                WorkerRegistry
 	strategy                SchedulingStrategy
 	jobStore                JobStore
-	decisionLog             model.DecisionLogStore
 	dlqSink                 DLQSink
 	metrics                 Metrics
 	config                  ConfigProvider
 	topicRegistry           *topicregistry.Service
 	workerCredentialCache   *WorkerCredentialCache
-	agentResolver           *AgentResolver
 	workerAttestation       WorkerAttestationMode
 	workerReadinessRequired bool
 	schemaRegistry          *infraSchema.Registry
@@ -97,8 +93,6 @@ type Engine struct {
 	saga                    *SagaManager
 	entitlements            *licensing.EntitlementResolver
 	contextClient           redis.UniversalClient // optional, for loading payloads referenced by ContextPtr
-	failModeResolver        *FailModeResolver
-	otelMetrics             otelMetricsBridge     // optional OTEL dual-emission bridge
 	counterClient           redis.UniversalClient // optional, for operational counters shared across services
 	stopped                 atomic.Bool
 	activeHandlers          atomic.Int64
@@ -106,8 +100,6 @@ type Engine struct {
 	wg                      sync.WaitGroup
 	ctx                     context.Context
 	cancel                  context.CancelFunc
-	traceCtxMu              sync.Mutex
-	lastTraceCtx            context.Context
 }
 
 func jobLockKey(jobID string) string {
@@ -262,7 +254,6 @@ func NewEngine(bus Bus, safety SafetyChecker, registry WorkerRegistry, strategy 
 		registry:                registry,
 		strategy:                strategy,
 		jobStore:                jobStore,
-		decisionLog:             NoopDecisionLogStore{},
 		metrics:                 metrics,
 		contextClient:           contextClient,
 		workerAttestation:       ParseWorkerAttestationMode(os.Getenv("WORKER_ATTESTATION")),
@@ -292,11 +283,6 @@ func (e *Engine) WithSchemaRegistry(registry *infraSchema.Registry) *Engine {
 
 func (e *Engine) WithWorkerCredentialCache(cache *WorkerCredentialCache) *Engine {
 	e.workerCredentialCache = cache
-	return e
-}
-
-func (e *Engine) WithAgentResolver(resolver *AgentResolver) *Engine {
-	e.agentResolver = resolver
 	return e
 }
 
@@ -562,21 +548,6 @@ func (e *Engine) Start() error {
 	}
 
 	return nil
-}
-
-// HandlePacketWithContext is the context-aware version of HandlePacket.
-// It receives trace context extracted from NATS headers and threads it
-// through to processJob for distributed tracing continuity.
-func (e *Engine) HandlePacketWithContext(ctx context.Context, p *pb.BusPacket) error {
-	// Store the trace context so processJob can pick it up.
-	// We merge the incoming trace context with the engine's lifecycle context.
-	if ctx != nil && ctx != context.Background() {
-		// Use the trace span from the incoming context if present.
-		e.traceCtxMu.Lock()
-		e.lastTraceCtx = ctx
-		e.traceCtxMu.Unlock()
-	}
-	return e.HandlePacket(p)
 }
 
 func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
@@ -962,6 +933,7 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 			"job_id", safeJobID(req),
 			"topic", safeTopic(req),
 		)
+		// TODO(timeline): enrich with StateEventContext when context is available
 		if err := e.setJobState(jobID, JobStateFailed); err != nil {
 			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
 			return RetryAfter(err, retryDelayStore)
@@ -996,8 +968,8 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 							dlqStatus = pb.JobStatus_JOB_STATUS_DENIED
 						}
 						if dlqErr := e.emitDLQWithRetry(jobID, topic, dlqStatus, "terminal state redelivery", "redelivery_dlq_retry"); dlqErr != nil {
-							slog.Error("dlq emit failed on terminal redelivery", "job_id", jobID, "topic", topic, "error", dlqErr)
-						}
+								slog.Error("dlq emit failed on terminal redelivery", "job_id", jobID, "topic", topic, "error", dlqErr)
+							}
 					}
 					return nil
 				}
@@ -1036,6 +1008,7 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 		}
 
 		if currentState == "" {
+			// TODO(timeline): enrich with StateEventContext when context is available
 			if err := e.setJobState(jobID, JobStatePending); err != nil {
 				return RetryAfter(err, retryDelayStore)
 			}
@@ -1100,6 +1073,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			"job_id", safeJobID(req),
 			"topic", safeTopic(req),
 		)
+		// TODO(timeline): enrich with StateEventContext when context is available
 		if err := e.setJobState(safeJobID(req), JobStateFailed); err != nil {
 			slog.Error("state transition failed, retrying", "job_id", safeJobID(req), "target_state", JobStateFailed, "error", err)
 			return RetryAfter(err, retryDelayStore)
@@ -1150,7 +1124,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	// (e.g. job.default with no workers). Job goes to DLQ for investigation.
 	if attempts >= maxSchedulingRetries {
 		reason := fmt.Sprintf("max scheduling retries exceeded (attempts=%d)", attempts)
-		slog.Warn("giving up on job", "job_id", jobID, "topic", topic, "attempts", attempts)
+		logging.Warn("scheduler", "giving up on job", "job_id", jobID, "topic", topic, "attempts", attempts)
+		// TODO(timeline): enrich with StateEventContext when context is available
 		if err := e.setJobState(jobID, JobStateFailed); err != nil {
 			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
 			return RetryAfter(err, retryDelayStore)
@@ -1253,9 +1228,11 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			"reason", record.Reason,
 			"trace_id", traceID,
 		)
-		if err := e.setJobState(jobID, JobStateApproval); err != nil {
-			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateApproval, "error", err)
-			return RetryAfter(err, retryDelayStore)
+		if err := e.setJobStateWithContext(jobID, JobStateApproval, &StateEventContext{
+			Rule:   record.RuleID,
+			Reason: record.Reason,
+		}); err != nil {
+			logging.Error("scheduler", "state transition failed", "job_id", jobID, "target_state", JobStateApproval, "error", err)
 		}
 		return nil
 	case SafetyDeny:
@@ -1265,9 +1242,11 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			"reason", record.Reason,
 			"trace_id", traceID,
 		)
-		if err := e.setJobState(jobID, JobStateDenied); err != nil {
-			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateDenied, "error", err)
-			return RetryAfter(err, retryDelayStore)
+		if err := e.setJobStateWithContext(jobID, JobStateDenied, &StateEventContext{
+			Rule:   record.RuleID,
+			Reason: record.Reason,
+		}); err != nil {
+			logging.Error("scheduler", "state transition failed", "job_id", jobID, "target_state", JobStateDenied, "error", err)
 		}
 		e.incSafetyDenied(topic)
 		if err := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_DENIED, record.Reason, "safety_denied"); err != nil {
@@ -1282,9 +1261,11 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			"reason", record.Reason,
 			"trace_id", traceID,
 		)
-		if err := e.setJobState(jobID, JobStateDenied); err != nil {
-			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateDenied, "error", err)
-			return RetryAfter(err, retryDelayStore)
+		if err := e.setJobStateWithContext(jobID, JobStateDenied, &StateEventContext{
+			Rule:   record.RuleID,
+			Reason: record.Reason,
+		}); err != nil {
+			logging.Error("scheduler", "state transition failed", "job_id", jobID, "target_state", JobStateDenied, "error", err)
 		}
 		e.incSafetyDenied(topic)
 		if err := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_DENIED, record.Reason, "safety_unknown"); err != nil {
@@ -1302,6 +1283,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			allowedAttempts := int(maxRetries) + 1
 			if attempts >= allowedAttempts {
 				reason := fmt.Sprintf("max retries exceeded (attempts=%d, max_retries=%d)", attempts, maxRetries)
+				// TODO(timeline): enrich with StateEventContext when context is available
 				if err := e.setJobState(jobID, JobStateFailed); err != nil {
 					slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
 					return RetryAfter(err, retryDelayStore)
@@ -1426,7 +1408,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			}
 			return RetryAfter(err, backoffDelay(attempts, backoffBase, backoffMax))
 		}
-		dispatchErr := err // capture before setJobState shadows err
+		// TODO(timeline): enrich with StateEventContext when context is available
 		if err := e.setJobState(jobID, JobStateFailed); err != nil {
 			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
 			return RetryAfter(err, retryDelayStore)
@@ -1483,6 +1465,11 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	e.incJobsDispatched(topic)
 	if e.metrics != nil {
 		e.metrics.ObserveDispatchLatency(topic, time.Since(dispatchStart).Seconds())
+	}
+	if err := e.setJobStateWithContext(jobID, JobStateDispatched, &StateEventContext{
+		Pool: subject,
+	}); err != nil {
+		return RetryAfter(err, retryDelayStore)
 	}
 	if err := e.setJobState(jobID, JobStateRunning); err != nil {
 		return RetryAfter(err, retryDelayStore)
@@ -1660,30 +1647,6 @@ func (e *Engine) failSchemaValidation(req *pb.JobRequest, traceID, schemaID, rea
 		return false, RetryAfter(err, retryDelayPublish)
 	}
 	return true, nil
-}
-
-func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
-	tracer := cordumotel.Tracer("cordum-scheduler")
-	_, safetySpan := tracer.Start(ctx, "scheduler.safety_check",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-	)
-	defer safetySpan.End()
-
-	if req != nil {
-		safetySpan.SetAttributes(attribute.String("cordum.job_id", strings.TrimSpace(req.JobId)))
-	}
-
-	record, err := e.checkSafetyDecision(req)
-	if err != nil {
-		safetySpan.SetStatus(otelcodes.Error, err.Error())
-		safetySpan.RecordError(err)
-	} else {
-		safetySpan.SetAttributes(
-			attribute.String("cordum.safety_decision", string(record.Decision)),
-			attribute.String("cordum.safety_rule_id", record.RuleID),
-		)
-	}
-	return record, err
 }
 
 func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, error) {
@@ -1942,11 +1905,23 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 			}
 		}
 
-		// Write result pointer BEFORE terminal state so that a retry after
-		// partial failure can still persist the pointer.  If we set terminal
-		// state first and then SetResultPtr fails, the idempotency guard
-		// (terminal-state check at the top of handleJobResult) blocks
-		// reprocessing, permanently orphaning the result data.
+		evtCtx := &StateEventContext{
+			DurationMs: res.ExecutionMs,
+			WorkerID:   res.WorkerId,
+		}
+		if succeeded {
+			evtCtx.ResultPtr = res.ResultPtr
+		} else {
+			evtCtx.ErrorCode = res.ErrorCode
+			evtCtx.ErrorMsg = res.ErrorMessage
+		}
+		if state == JobStateQuarantined {
+			evtCtx.Findings = len(outputRecord.Findings)
+			evtCtx.Reason = strings.TrimSpace(outputRecord.Reason)
+		}
+		if err := e.setJobStateWithContext(jobID, state, evtCtx); err != nil {
+			return RetryAfter(err, retryDelayStore)
+		}
 		if res.ResultPtr != "" {
 			if err := e.setResultPtr(jobID, res.ResultPtr); err != nil {
 				e.incResultPtrWriteFailure()
@@ -2190,26 +2165,20 @@ func (e *Engine) startAsyncOutputCheck(jobID, topic string, res *pb.JobResult, r
 			if lastErr == nil {
 				break
 			}
-			slog.Error("async quarantine transition failed",
-				"job_id", jobID, "topic", topic, "attempt", attempt,
-				"max_attempts", maxQuarantineRetries, "error", lastErr)
-			if attempt < maxQuarantineRetries {
-				time.Sleep(time.Duration(attempt) * time.Second)
+			reason := strings.TrimSpace(record.Reason)
+			if reason == "" {
+				reason = "output quarantined by async policy"
 			}
-		}
-
-		// Safety net: if quarantine state transition failed after all retries,
-		// emit a DLQ entry so the failure is visible to operators. The job
-		// remains in SUCCEEDED state, which is wrong, but at least the DLQ
-		// entry ensures the issue is discoverable.
-		if lastErr != nil {
-			slog.Error("CRITICAL: quarantine transition exhausted all retries — job remains in succeeded state",
-				"job_id", jobID, "topic", topic, "error", lastErr,
-				"output_decision", string(record.Decision), "reason", reason)
-			if dlqErr := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED,
-				fmt.Sprintf("quarantine_state_failed: %v", lastErr), "quarantine_failed"); dlqErr != nil {
-				slog.Error("dlq emit failed during quarantine recovery", "job_id", jobID, "topic", topic, "error", dlqErr)
+			if err := e.setJobStateWithContext(jobID, JobStateQuarantined, &StateEventContext{
+				Findings: len(record.Findings),
+				Reason:   reason,
+			}); err != nil {
+				return err
 			}
+			e.emitOutputAuditEvent(jobID, topic, outputPolicyAsync, reason, record.Decision)
+			return e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_DENIED, reason, outputPolicyAsync)
+		}); err != nil {
+			logging.Error("scheduler", "async quarantine transition failed", "job_id", jobID, "error", err)
 		}
 	}()
 }
@@ -2298,6 +2267,19 @@ func (e *Engine) setJobState(jobID string, state JobState) error {
 		return fmt.Errorf("set job state: %w", err)
 	}
 	slog.Info("job state changed", "job_id", jobID, "new_state", string(state))
+	return nil
+}
+
+func (e *Engine) setJobStateWithContext(jobID string, state JobState, evtCtx *StateEventContext) error {
+	if e.jobStore == nil || jobID == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+	defer cancel()
+	if err := e.jobStore.SetStateWithContext(ctx, jobID, state, evtCtx); err != nil {
+		logging.Error("scheduler", "failed to set job state", "job_id", jobID, "state", state, "error", err)
+		return fmt.Errorf("set job state: %w", err)
+	}
 	return nil
 }
 

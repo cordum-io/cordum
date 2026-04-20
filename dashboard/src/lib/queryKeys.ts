@@ -28,6 +28,7 @@ export const queryKeys = {
     safetyDecisions: (limit: number) => ["jobs", "safety-decisions", limit] as const,
     detail: (id: string) => ["job", id] as const,
     decisions: (id: string) => ["job", id, "decisions"] as const,
+    events: (id: string) => ["job", id, "events"] as const,
     outputFindings: (jobId: string) => ["job", jobId, "output-findings"] as const,
     artifacts: (jobId: string) => ["job-artifacts", jobId] as const,
   },
@@ -39,7 +40,6 @@ export const queryKeys = {
     detail: (id: string) => ["approval", id] as const,
     history: (filters: ApprovalHistoryFilters) => ["approvals", "history", filters] as const,
     nav: () => ["approvals", "nav"] as const,
-    context: (jobId: string) => ["approvals", "context", jobId] as const,
   },
 
   // ── DLQ ───────────────────────────────────────────────────────────
@@ -82,8 +82,6 @@ export const queryKeys = {
     bundles: () => ["policy-bundles"] as const,
     bundle: (id: string) => ["policy-bundle", id] as const,
     rules: () => ["policy-rules"] as const,
-    velocityRules: () => ["policy-velocity-rules"] as const,
-    velocityRuleStats: () => ["policy-velocity-rules", "stats"] as const,
     audit: () => ["policy-audit"] as const,
     snapshots: () => ["policy-snapshots"] as const,
     snapshot: (id: string | null) => ["policy-snapshot", id] as const,
@@ -104,12 +102,6 @@ export const queryKeys = {
     all: ["workers"] as const,
     detail: (id: string) => ["worker", id] as const,
     jobs: (workerId: string) => ["worker-jobs", workerId] as const,
-  },
-
-  // ── Pools ──────────────────────────────────────────────────────────
-  pools: {
-    all: ["pools"] as const,
-    detail: (name: string) => ["pool", name] as const,
   },
 
   // ── Config ────────────────────────────────────────────────────────

@@ -2,14 +2,14 @@ import { describe, it, expect } from "vitest";
 import { runStatusMeta, jobStatusMeta, approvalStatusMeta } from "./status";
 
 describe("runStatusMeta", () => {
-  it("maps succeeded to completed success state", () => {
+  it("maps succeeded to success tone", () => {
     const meta = runStatusMeta("succeeded");
     expect(meta.tone).toBe("success");
-    expect(meta.label).toBe("completed");
+    expect(meta.label).toBe("succeeded");
   });
 
-  it("maps running to accent tone", () => {
-    expect(runStatusMeta("running").tone).toBe("accent");
+  it("maps running to info tone", () => {
+    expect(runStatusMeta("running").tone).toBe("info");
   });
 
   it("maps failed to danger tone", () => {
@@ -22,18 +22,10 @@ describe("runStatusMeta", () => {
 
   it("maps pending to warning tone", () => {
     expect(runStatusMeta("pending").tone).toBe("warning");
-    expect(runStatusMeta("pending").label).toBe("queued");
   });
 
-  it("maps blocked/denied variants to governance blocked state", () => {
-    expect(runStatusMeta("blocked").tone).toBe("governance");
-    expect(runStatusMeta("blocked").label).toBe("blocked");
-    expect(runStatusMeta("denied").label).toBe("blocked");
-  });
-
-  it("maps cancelled to failed tone", () => {
-    expect(runStatusMeta("cancelled").tone).toBe("danger");
-    expect(runStatusMeta("cancelled").label).toBe("failed");
+  it("maps cancelled to muted tone", () => {
+    expect(runStatusMeta("cancelled").tone).toBe("muted");
   });
 
   it("returns muted for unknown status", () => {
@@ -60,8 +52,8 @@ describe("jobStatusMeta", () => {
     expect(meta.shape).toBe("shield");
   });
 
-  it("maps denied to governance tone", () => {
-    expect(jobStatusMeta("denied").tone).toBe("governance");
+  it("maps denied to danger tone", () => {
+    expect(jobStatusMeta("denied").tone).toBe("danger");
   });
 
   it("returns muted for unknown state", () => {

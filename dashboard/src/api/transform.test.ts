@@ -1,892 +1,1407 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import {
+  auditResourceLink,
   computeUrgencyLevel,
-  deriveApprovalActionability,
   deriveApprovalStatus,
   mapApprovalItem,
   mapDLQEntry,
-  mapGovernanceDecision,
-  mapHeartbeatToWorker,
   mapJobDetail,
   mapJobRecord,
-  mapOutputSafetyRecord,
+  mapPolicyAuditEntry,
   mapPolicyBundleDetail,
+  mapPolicyBundleSummary,
+  mapPolicyRule,
+  mapPolicySnapshot,
+  mapPolicySnapshotSummary,
+  mapMarketplaceCatalog,
+  mapMarketplaceItem,
+  mapPackRecord,
+  mapSafetyDecision,
+  mapHeartbeatToWorker,
   mapWorkflow,
   mapWorkflowRun,
   mapWorkflowRunStep,
+  mapWorkflowStep,
   microsToISO,
-  normalizeGovernanceVerdict,
   normalizeDecisionType,
   normalizeJobStatus,
-  normalizeOutputDecision,
+  mapOutputSafetyRecord,
+  mapJobEvent,
+  buildUnifiedTimeline,
 } from "./transform";
+import type { Job, JobEvent } from "./types";
 
-describe("api/transform mappings", () => {
-  it("maps job records with normalized status, output safety fallback, and deduped capabilities", () => {
-    const job = mapJobRecord({
-      id: "job-1",
-      topic: "job.default",
-      state: "RUNNING",
-      updated_at: 1_700_000_000_000_000,
-      capability: "cap.read",
-      requires: ["cap.write", "cap.read"],
-      output_decision: "DENY",
-    });
+describe("date helpers", () => {
+  it("maps valid microseconds and returns empty string for invalid values", () => {
+    const micros = 1707000000000000;
+    expect(microsToISO(micros)).toBe(new Date(Math.floor(micros / 1000)).toISOString());
 
-    expect(job.status).toBe("running");
-    expect(job.capabilities).toEqual(["cap.read", "cap.write"]);
-    expect(job.output_safety?.decision).toBe("QUARANTINE");
-    expect(job.updatedAt).toContain("T");
+    expect(microsToISO(0)).toBe("");
+    expect(microsToISO(-1)).toBe("");
+    expect(microsToISO(Number.NaN)).toBe("");
+    expect(microsToISO("1707000000000000")).toBe("");
+    expect(microsToISO(undefined)).toBe("");
+    expect(microsToISO(null)).toBe("");
   });
 
-  it("maps job detail fields on top of base job mapping", () => {
-    const detail = mapJobDetail({
-      id: "job-2",
-      topic: "job.detail",
-      state: "SUCCEEDED",
-      context_ptr: "redis://ctx:job-2",
-      result_ptr: "redis://res:job-2",
-      workflow_id: "wf-1",
-      run_id: "run-1",
-      labels: { env: "prod" },
-      approval_required: true,
-      approval_ref: "approval-1",
+});
+
+describe("pack, marketplace, and heartbeat mapping", () => {
+  it("maps pack records using topic capabilities and metadata title", () => {
+    const mapped = mapPackRecord({
+      id: "pack-1",
+      version: "1.0.1",
+      status: "installed",
+      installed_at: "2026-02-01T00:00:00.000Z",
+      installed_by: "ops",
+      manifest: {
+        metadata: {
+          id: "pack-meta-id",
+          version: "1.0.0",
+          title: "  Search Pack  ",
+          description: "Search toolkit",
+        },
+        topics: [
+          { capability: "search.query" },
+          { capability: "search.query" },
+          { capability: "search.index" },
+        ],
+      },
+      resources: { icon: "search.svg" },
     });
 
-    expect(detail.workflowId).toBe("wf-1");
-    expect(detail.workflowRunId).toBe("run-1");
-    expect(detail.contextPtr).toBe("redis://ctx:job-2");
-    expect(detail.resultPtr).toBe("redis://res:job-2");
-    expect(detail.approvalRequired).toBe(true);
-    expect(detail.approvalRef).toBe("approval-1");
-    expect(detail.metadata.env).toBe("prod");
+    expect(mapped).toMatchObject({
+      id: "pack-1",
+      name: "Search Pack",
+      version: "1.0.1",
+      status: "installed",
+      capabilities: ["search.query", "search.index"],
+      poolAssignment: undefined,
+      installedAt: "2026-02-01T00:00:00.000Z",
+      installedBy: "ops",
+      description: "Search toolkit",
+      resources: { icon: "search.svg" },
+    });
   });
 
-  it("maps workflow definitions and run records with normalized step payloads", () => {
-    const workflow = mapWorkflow({
-      id: "wf-1",
-      name: "Workflow One",
-      timeout_sec: 120,
-      steps: {
-        stepA: {
-          type: "job",
-          topic: "job.default",
-          timeout_sec: 30,
-          retry: { max_retries: 2 },
-          meta: { pack_id: "pack-hello" },
+  it("falls back to manifest capability/action/tool arrays and title fallback chain", () => {
+    const fromCapabilities = mapPackRecord({
+      id: "pack-2",
+      manifest: {
+        metadata: { id: "pack-2-meta", version: "2.0.0" },
+        topics: [],
+      },
+    });
+    expect(fromCapabilities.capabilities).toEqual([]);
+    expect(fromCapabilities.name).toBe("pack-2-meta");
+    expect(fromCapabilities.version).toBe("2.0.0");
+
+    const fromFallbackArrays = mapPackRecord({
+      id: "pack-4",
+      manifest: {
+        metadata: {},
+        topics: [],
+        actions: [{ name: "action.run" }, { id: "action.stop" }],
+        pool_assignment: "batch-pool",
+      } as unknown as NonNullable<Parameters<typeof mapPackRecord>[0]["manifest"]>,
+    } as unknown as Parameters<typeof mapPackRecord>[0]);
+    expect(fromFallbackArrays.capabilities).toEqual(["action.run", "action.stop"]);
+    expect(fromFallbackArrays.poolAssignment).toBe("batch-pool");
+    expect(fromFallbackArrays.name).toBe("pack-4");
+    expect(fromFallbackArrays.status).toBe("unknown");
+  });
+
+  it("maps marketplace catalog and item fields from backend shapes", () => {
+    expect(
+      mapMarketplaceCatalog({
+        id: "catalog-1",
+        title: "Official",
+        url: "https://example.com/catalog",
+        enabled: true,
+        updated_at: "2026-02-10T00:00:00.000Z",
+        error: "none",
+      }),
+    ).toEqual({
+      id: "catalog-1",
+      title: "Official",
+      url: "https://example.com/catalog",
+      enabled: true,
+      updatedAt: "2026-02-10T00:00:00.000Z",
+      error: "none",
+    });
+
+    expect(
+      mapMarketplaceItem({
+        id: "pack-x",
+        version: "1.2.3",
+        title: "Pack X",
+        description: "A marketplace pack",
+        author: "Cordum",
+        homepage: "https://example.com/pack-x",
+        source: "https://github.com/example/pack-x",
+        image: "https://example.com/pack-x.png",
+        license: "Apache-2.0",
+        url: "https://example.com/install/pack-x",
+        sha256: "deadbeef",
+        catalog_id: "catalog-1",
+        catalog_title: "Official",
+        capabilities: ["search"],
+        requires: ["db.read"],
+        risk_tags: ["pii"],
+        installed_version: "1.2.0",
+        installed_status: "installed",
+        installed_at: "2026-02-11T00:00:00.000Z",
+      }),
+    ).toEqual({
+      id: "pack-x",
+      version: "1.2.3",
+      title: "Pack X",
+      description: "A marketplace pack",
+      author: "Cordum",
+      homepage: "https://example.com/pack-x",
+      source: "https://github.com/example/pack-x",
+      image: "https://example.com/pack-x.png",
+      license: "Apache-2.0",
+      url: "https://example.com/install/pack-x",
+      sha256: "deadbeef",
+      catalogId: "catalog-1",
+      catalogTitle: "Official",
+      capabilities: ["search"],
+      requires: ["db.read"],
+      riskTags: ["pii"],
+      installedVersion: "1.2.0",
+      installedStatus: "installed",
+      installedAt: "2026-02-11T00:00:00.000Z",
+    });
+  });
+
+  it("maps heartbeat payloads to workers with status and capacity fallback logic", () => {
+    expect(mapHeartbeatToWorker({})).toBeNull();
+    expect(mapHeartbeatToWorker({ worker_id: "" })).toBeNull();
+
+    const active = mapHeartbeatToWorker({
+      worker_id: "worker-1",
+      active_jobs: 2,
+      max_parallel_jobs: 0,
+      labels: { name: "GPU Worker" },
+      capabilities: ["gpu.infer"],
+      pool: "gpu-pool",
+      region: "us-east-1",
+      type: "gpu",
+      cpu_load: 0.45,
+      gpu_utilization: 0.9,
+      memory_load: 0.7,
+    });
+    expect(active).toEqual({
+      id: "worker-1",
+      name: "GPU Worker",
+      pool: "gpu-pool",
+      capabilities: ["gpu.infer"],
+      status: "active",
+      activeJobs: 2,
+      capacity: 2,
+      region: "us-east-1",
+      type: "gpu",
+      cpuLoad: 0.45,
+      gpuUtilization: 0.9,
+      memoryLoad: 0.7,
+    });
+
+    const online = mapHeartbeatToWorker({
+      worker_id: "worker-2",
+      active_jobs: 0,
+      max_parallel_jobs: 0,
+      labels: { worker_name: "Fallback Name" },
+    });
+    expect(online).toEqual({
+      id: "worker-2",
+      name: "Fallback Name",
+      pool: "default",
+      capabilities: [],
+      status: "online",
+      activeJobs: 0,
+      capacity: 1,
+      region: undefined,
+      type: undefined,
+      cpuLoad: undefined,
+      gpuUtilization: undefined,
+      memoryLoad: undefined,
+    });
+  });
+});
+
+describe("policy mapping", () => {
+  it("maps policy rules and normalizes match criteria keys", () => {
+    const mapped = mapPolicyRule({
+      id: "rule-1",
+      decision: "DECISION_TYPE_REQUIRE_APPROVAL",
+      reason: "human approval required",
+      match: {
+        risk_tags: ["pii"],
+        pack_ids: ["pack-1"],
+        actor_ids: ["actor-1"],
+        actor_types: ["service"],
+        secrets_present: true,
+        topic: "sys.job.submit",
+      },
+      priority: 12,
+      logic: "all",
+      source: { bundle: "default" },
+      enabled: true,
+    });
+
+    expect(mapped).toEqual({
+      id: "rule-1",
+      matchCriteria: {
+        riskTags: ["pii"],
+        packIds: ["pack-1"],
+        actorIds: ["actor-1"],
+        actorTypes: ["service"],
+        secretsPresent: true,
+        topic: "sys.job.submit",
+      },
+      decisionType: "require_approval",
+      reason: "human approval required",
+      priority: 12,
+      logic: "all",
+      source: { bundle: "default" },
+      enabled: true,
+    });
+  });
+
+  it("normalizes framework tag aliases and deduplicates values", () => {
+    const mapped = mapPolicyRule({
+      id: "rule-framework",
+      decision: "allow",
+      framework_tags: [
+        "SOC2",
+        "soc_2",
+        "GDPR",
+        "NIST",
+        "NIST_RMF",
+        "custom_framework",
+        123,
+        "",
+      ],
+    });
+
+    expect(mapped.frameworkTags).toEqual([
+      "soc2",
+      "gdpr",
+      "nist-rmf",
+      "custom_framework",
+    ]);
+  });
+
+  it("uses camelCase frameworkTags when snake_case is not present", () => {
+    const mapped = mapPolicyRule({
+      id: "rule-framework-camel",
+      decision: "deny",
+      frameworkTags: ["ISO-27001", "iso_27001"],
+    });
+
+    expect(mapped.frameworkTags).toEqual(["iso27001"]);
+  });
+
+  it("maps policy rules with missing fields to safe defaults", () => {
+    expect(mapPolicyRule({})).toEqual({
+      id: "",
+      matchCriteria: {},
+      decisionType: "deny",
+      reason: "",
+      priority: undefined,
+      logic: undefined,
+      source: undefined,
+      enabled: undefined,
+    });
+  });
+
+  it("maps policy bundle summaries with YAML rules and parsing fallback", () => {
+    const yamlContent = `
+rules:
+  - id: rule-a
+    decision: ALLOW
+    reason: safe
+    match:
+      risk_tags: [pii]
+  - id: rule-b
+    decision: DECISION_TYPE_THROTTLE
+    match:
+      pack_ids: [pack-7]
+`;
+    const mapped = mapPolicyBundleSummary(
+      {
+        id: "bundle-1",
+        enabled: false,
+        source: "repo",
+        author: "ops",
+        message: "policy update",
+        created_at: "2026-02-01T00:00:00.000Z",
+        updated_at: "2026-02-02T00:00:00.000Z",
+        version: "7",
+        installed_at: "2026-02-03T00:00:00.000Z",
+        sha256: "abc123",
+      },
+      yamlContent,
+    );
+    expect(mapped.id).toBe("bundle-1");
+    expect(mapped.name).toBe("bundle-1");
+    expect(mapped.version).toBe(7);
+    expect(mapped.enabled).toBe(false);
+    expect(mapped.publishedAt).toBe("2026-02-02T00:00:00.000Z");
+    expect(mapped.rules).toHaveLength(2);
+    expect(mapped.rules[0]).toMatchObject({
+      id: "rule-a",
+      decisionType: "allow",
+      matchCriteria: { riskTags: ["pii"] },
+    });
+    expect(mapped.rules[1]).toMatchObject({
+      id: "rule-b",
+      decisionType: "throttle",
+      matchCriteria: { packIds: ["pack-7"] },
+    });
+
+    const invalidYaml = mapPolicyBundleSummary(
+      { id: "bundle-2", version: "not-a-number" },
+      "rules: [",
+    );
+    expect(invalidYaml.rules).toEqual([]);
+    expect(invalidYaml.version).toBeUndefined();
+    expect(invalidYaml.enabled).toBe(true);
+
+    const noContent = mapPolicyBundleSummary({ id: "bundle-3" });
+    expect(noContent.rules).toEqual([]);
+    expect(noContent.enabled).toBe(true);
+  });
+
+  it("maps policy bundle detail with content, empty content, and invalid inputs", () => {
+    const contentMapped = mapPolicyBundleDetail({
+      id: "bundle-detail-1",
+      enabled: true,
+      author: "ops",
+      message: "detail",
+      created_at: "2026-02-01T00:00:00.000Z",
+      updated_at: "2026-02-02T00:00:00.000Z",
+      content: `
+rules:
+  - id: rule-1
+    decision: DENY
+`,
+    });
+    expect(contentMapped).toMatchObject({
+      id: "bundle-detail-1",
+      name: "bundle-detail-1",
+      enabled: true,
+      author: "ops",
+      message: "detail",
+      content: expect.stringContaining("rules"),
+    });
+    expect(contentMapped.rules).toHaveLength(1);
+    expect(contentMapped.rules[0]).toMatchObject({ id: "rule-1", decisionType: "deny" });
+
+    const noContent = mapPolicyBundleDetail({ id: "bundle-detail-2" });
+    expect(noContent.rules).toEqual([]);
+    expect(noContent.content).toBe("");
+    expect(noContent.enabled).toBe(true);
+
+    expect(mapPolicyBundleDetail(null as unknown as never)).toEqual({
+      id: "",
+      name: "",
+      rules: [],
+      enabled: true,
+      content: "",
+    });
+    expect(mapPolicyBundleDetail(undefined as unknown as never)).toEqual({
+      id: "",
+      name: "",
+      rules: [],
+      enabled: true,
+      content: "",
+    });
+  });
+
+  it("builds audit resource links for all known resource types", () => {
+    expect(auditResourceLink("job", "j1")).toBe("/jobs/j1");
+    expect(auditResourceLink("workflow", "wf1")).toBe("/workflows/wf1");
+    expect(auditResourceLink("run", "r1")).toBe("/workflows");
+    expect(auditResourceLink("policy", "p1")).toBe("/policies");
+    expect(auditResourceLink("user", "u1")).toBe("/settings");
+    expect(auditResourceLink("pack", "pk1")).toBe("/packs");
+    expect(auditResourceLink("approval", "a1")).toBe("/approvals");
+    expect(auditResourceLink("unknown", "x")).toBe("");
+  });
+
+  it("maps policy audit entries with category/severity/actor derivation and parsed snapshots", () => {
+    const humanHigh = mapPolicyAuditEntry({
+      id: "audit-1",
+      action: "edit",
+      resource_type: "policy",
+      resource_id: "policy-1",
+      resource_name: "Default Policy",
+      actor_id: "alice",
+      role: "admin",
+      bundle_ids: ["bundle-1"],
+      message: "updated policy rule",
+      snapshot_before: "{\"rules\":1}",
+      snapshot_after: "{\"rules\":2}",
+      created_at: "2026-02-10T01:00:00.000Z",
+    });
+    expect(humanHigh.category).toBe("human_action");
+    expect(humanHigh.severity).toBe("high");
+    expect(humanHigh.actorInfo).toEqual({ id: "alice", type: "user", role: "admin" });
+    expect(humanHigh.resourceInfo).toEqual({
+      type: "policy",
+      id: "policy-1",
+      name: "Default Policy",
+      link: "/policies",
+    });
+    expect(humanHigh.snapshotBefore).toEqual({ rules: 1 });
+    expect(humanHigh.snapshotAfter).toEqual({ rules: 2 });
+
+    const safety = mapPolicyAuditEntry({
+      id: "audit-2",
+      action: "allow",
+      resource_type: "job",
+      actor_id: "gateway",
+    });
+    expect(safety.category).toBe("safety_decision");
+    expect(safety.severity).toBe("low");
+    expect(safety.actorInfo).toEqual({ id: "gateway", type: "api_key", role: undefined });
+
+    const system = mapPolicyAuditEntry({
+      id: "audit-3",
+      action: "dispatch",
+      resource_type: "job",
+      actor_id: "system",
+      snapshot_before: "{invalid",
+    });
+    expect(system.category).toBe("system_event");
+    expect(system.severity).toBe("low");
+    expect(system.actorInfo).toEqual({ id: "system", type: "system", role: undefined });
+    expect(system.snapshotBefore).toBeUndefined();
+
+    const access = mapPolicyAuditEntry({
+      id: "audit-4",
+      action: "login",
+      resource_type: "user",
+      actor_id: "user-1",
+      role: "user",
+    });
+    expect(access.category).toBe("access_event");
+    expect(access.severity).toBe("low");
+  });
+
+  it("maps policy snapshot summary and extracts rules from snapshot bundles", () => {
+    expect(
+      mapPolicySnapshotSummary({
+        id: "snap-1",
+        created_at: "2026-02-11T00:00:00.000Z",
+        note: "after deploy",
+      }),
+    ).toEqual({
+      id: "snap-1",
+      createdAt: "2026-02-11T00:00:00.000Z",
+      note: "after deploy",
+    });
+
+    const snapshot = mapPolicySnapshot({
+      id: "snap-2",
+      created_at: "2026-02-12T00:00:00.000Z",
+      note: "nightly",
+      bundles: {
+        bundleA: {
+          rules: [{ id: "ra", decision: "ALLOW" }],
+        },
+        bundleB: {
+          rules: [{ id: "rb", decision: "DECISION_TYPE_DENY", match: { actor_ids: ["a1"] } }],
         },
       },
     });
-    expect(workflow.steps).toHaveLength(1);
-    expect(workflow.steps[0].id).toBe("stepA");
-    expect(workflow.steps[0].type).toBe("pack-action");
-    expect(workflow.steps[0].retry?.max_retries).toBe(2);
+    expect(snapshot.id).toBe("snap-2");
+    expect(snapshot.createdAt).toBe("2026-02-12T00:00:00.000Z");
+    expect(snapshot.note).toBe("nightly");
+    expect(snapshot.rules).toEqual([
+      {
+        id: "ra",
+        matchCriteria: {},
+        decisionType: "allow",
+        reason: "",
+        priority: undefined,
+        logic: undefined,
+        source: undefined,
+        enabled: undefined,
+      },
+      {
+        id: "rb",
+        matchCriteria: { actorIds: ["a1"] },
+        decisionType: "deny",
+        reason: "",
+        priority: undefined,
+        logic: undefined,
+        source: undefined,
+        enabled: undefined,
+      },
+    ]);
+  });
+});
+
+describe("status and decision normalization", () => {
+  it("normalizes all known backend job statuses", () => {
+    expect(normalizeJobStatus("PENDING")).toBe("pending");
+    expect(normalizeJobStatus("SCHEDULED")).toBe("scheduled");
+    expect(normalizeJobStatus("DISPATCHED")).toBe("dispatched");
+    expect(normalizeJobStatus("RUNNING")).toBe("running");
+    expect(normalizeJobStatus("SUCCEEDED")).toBe("succeeded");
+    expect(normalizeJobStatus("FAILED")).toBe("failed");
+    expect(normalizeJobStatus("FAILED_RETRYABLE")).toBe("failed");
+    expect(normalizeJobStatus("FAILED_FATAL")).toBe("failed");
+    expect(normalizeJobStatus("CANCELLED")).toBe("cancelled");
+    expect(normalizeJobStatus("APPROVAL_REQUIRED")).toBe("approval_required");
+    expect(normalizeJobStatus("DENIED")).toBe("denied");
+    expect(normalizeJobStatus("TIMEOUT")).toBe("timeout");
+    expect(normalizeJobStatus("UNKNOWN")).toBe("pending");
+    expect(normalizeJobStatus(undefined)).toBe("pending");
+  });
+
+  it("normalizes all known backend safety decisions", () => {
+    expect(normalizeDecisionType("ALLOW")).toBe("allow");
+    expect(normalizeDecisionType("ALLOW_WITH_CONSTRAINTS")).toBe("allow");
+    expect(normalizeDecisionType("DENY")).toBe("deny");
+    expect(normalizeDecisionType("REQUIRE_APPROVAL")).toBe("require_approval");
+    expect(normalizeDecisionType("REQUIRE_HUMAN")).toBe("require_approval");
+    expect(normalizeDecisionType("THROTTLE")).toBe("throttle");
+
+    expect(normalizeDecisionType("DECISION_TYPE_ALLOW")).toBe("allow");
+    expect(normalizeDecisionType("DECISION_TYPE_ALLOW_WITH_CONSTRAINTS")).toBe("allow");
+    expect(normalizeDecisionType("DECISION_TYPE_DENY")).toBe("deny");
+    expect(normalizeDecisionType("DECISION_TYPE_REQUIRE_HUMAN")).toBe("require_approval");
+    expect(normalizeDecisionType("DECISION_TYPE_REQUIRE_APPROVAL")).toBe("require_approval");
+    expect(normalizeDecisionType("DECISION_TYPE_THROTTLE")).toBe("throttle");
+
+    expect(normalizeDecisionType("anything-else")).toBe("deny");
+    expect(normalizeDecisionType(undefined)).toBe("deny");
+  });
+});
+
+describe("mapSafetyDecision", () => {
+  it("maps full and partial safety decision data", () => {
+    expect(mapSafetyDecision("ALLOW", "policy passed", "rule-1")).toEqual({
+      type: "allow",
+      reason: "policy passed",
+      matchedRule: "rule-1",
+    });
+
+    expect(mapSafetyDecision(undefined, "reason only", undefined)).toEqual({
+      type: "deny",
+      reason: "reason only",
+      matchedRule: undefined,
+    });
+  });
+
+  it("returns undefined when no decision data is present", () => {
+    expect(mapSafetyDecision(undefined, undefined, undefined)).toBeUndefined();
+  });
+});
+
+describe("computeUrgencyLevel", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("maps wait time to fresh/aging/critical/breach including boundaries", () => {
+    expect(computeUrgencyLevel(0)).toBe("fresh");
+    expect(computeUrgencyLevel(119_999)).toBe("fresh");
+    expect(computeUrgencyLevel(120_000)).toBe("aging");
+    expect(computeUrgencyLevel(899_999)).toBe("aging");
+    expect(computeUrgencyLevel(900_000)).toBe("critical");
+    expect(computeUrgencyLevel(3_599_999)).toBe("critical");
+    expect(computeUrgencyLevel(3_600_000)).toBe("breach");
+  });
+});
+
+describe("job mapping", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("maps a full backend job record with deduped capabilities and converted timestamps", () => {
+    const record = {
+      id: "job-1",
+      trace_id: "trace-1",
+      updated_at: 1_707_000_000_000_000,
+      state: "FAILED_RETRYABLE",
+      topic: "sys.job.submit",
+      tenant: "tenant-a",
+      team: "team-x",
+      actor_id: "actor-1",
+      actor_type: "service",
+      capability: "search",
+      risk_tags: ["pii"],
+      requires: ["read", "search", "read"],
+      attempts: 3,
+      safety_decision: "ALLOW_WITH_CONSTRAINTS",
+      safety_reason: "within policy",
+      safety_rule_id: "rule-7",
+    };
+
+    const mapped = mapJobRecord(record);
+    const expectedIso = new Date(Math.floor(record.updated_at / 1000)).toISOString();
+    expect(mapped).toMatchObject({
+      id: "job-1",
+      type: "",
+      topic: "sys.job.submit",
+      status: "failed",
+      pool: "",
+      capabilities: ["search", "read"],
+      riskTags: ["pii"],
+      metadata: {},
+      traceId: "trace-1",
+      tenant: "tenant-a",
+      team: "team-x",
+      actorId: "actor-1",
+      actorType: "service",
+      capability: "search",
+      requires: ["read", "search", "read"],
+      attempts: 3,
+      safetyDecision: {
+        type: "allow",
+        reason: "within policy",
+        matchedRule: "rule-7",
+      },
+    });
+    expect(mapped.updatedAt).toBe(expectedIso);
+    expect(mapped.createdAt).toBe(expectedIso);
+  });
+
+  it("maps minimal job records with safe defaults", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-13T05:00:00.000Z"));
+
+    const mapped = mapJobRecord({ id: "job-min" });
+    expect(mapped).toMatchObject({
+      id: "job-min",
+      type: "",
+      topic: "",
+      status: "pending",
+      pool: "",
+      capabilities: [],
+      riskTags: [],
+      metadata: {},
+      safetyDecision: undefined,
+      contextPtr: undefined,
+      resultPtr: undefined,
+      workflowRunId: undefined,
+    });
+    expect(mapped.createdAt).toBe("2026-02-13T05:00:00.000Z");
+    expect(mapped.updatedAt).toBe("2026-02-13T05:00:00.000Z");
+  });
+
+  it("maps job detail fields on top of base job mapping", () => {
+    const detail = {
+      id: "job-2",
+      state: "RUNNING",
+      topic: "sys.job.submit",
+      context_ptr: "redis://ctx:job-2",
+      result_ptr: "redis://res:job-2",
+      error_message: "timeout waiting for worker",
+      error_status: "DEADLINE_EXCEEDED",
+      error_code: "E_TIMEOUT",
+      last_state: "DISPATCHED",
+      run_id: "run-9",
+      workflow_id: "wf-3",
+      safety_decision: "REQUIRE_APPROVAL",
+    };
+
+    const mapped = mapJobDetail(detail);
+    expect(mapped.status).toBe("running");
+    expect(mapped.contextPtr).toBe("redis://ctx:job-2");
+    expect(mapped.resultPtr).toBe("redis://res:job-2");
+    expect(mapped.errorMessage).toBe("timeout waiting for worker");
+    expect(mapped.errorStatus).toBe("DEADLINE_EXCEEDED");
+    expect(mapped.errorCode).toBe("E_TIMEOUT");
+    expect(mapped.lastState).toBe("DISPATCHED");
+    expect(mapped.workflowRunId).toBe("run-9");
+    expect(mapped.workflowId).toBe("wf-3");
+    expect(mapped.safetyDecision?.type).toBe("require_approval");
+  });
+});
+
+describe("workflow mapping", () => {
+  it("normalizes workflow step node types and fallback IDs", () => {
+    const minimal = mapWorkflowStep({}, "fallback-step");
+    expect(minimal).toMatchObject({
+      id: "fallback-step",
+      name: "fallback-step",
+      type: "agent-task",
+      config: {},
+    });
+
+    expect(mapWorkflowStep({ type: "job" }, "job-step").type).toBe("agent-task");
+    expect(
+      mapWorkflowStep({ type: "job", meta: { pack_id: "pack-1" } }, "pack-step").type,
+    ).toBe("pack-action");
+    expect(
+      mapWorkflowStep({ type: "job", meta: { capability: "shell.exec" } }, "tool-step").type,
+    ).toBe("tool-call");
+    expect(
+      mapWorkflowStep(
+        { type: "job", for_each: "$.items[*]", meta: { capability: "shell.exec", prompt: "x" } },
+        "fanout-step",
+      ).type,
+    ).toBe("fan-out");
+
+    expect(mapWorkflowStep({ type: "approval" }, "approval-step").type).toBe("approval");
+    expect(mapWorkflowStep({ type: "delay" }, "delay-step").type).toBe("delay");
+    expect(mapWorkflowStep({ type: "condition" }, "condition-step").type).toBe("condition");
+    expect(mapWorkflowStep({ type: "notify" }, "notify-step").type).toBe("notify");
+
+    const unknown = mapWorkflowStep({ type: "custom_node" }, "unknown-step");
+    expect(unknown.type).toBe("agent-task");
+    expect(unknown.config).toMatchObject({ backendType: "custom_node" });
+  });
+
+  it("extracts workflow step config fields from backend step payloads", () => {
+    const step = mapWorkflowStep(
+      {
+        id: "step-1",
+        name: "Step 1",
+        type: "job",
+        worker_id: "worker-a",
+        topic: "sys.job.submit",
+        depends_on: ["prev"],
+        condition: "input.ok",
+        for_each: "$.items[*]",
+        max_parallel: 4,
+        timeout_sec: 30,
+        delay_sec: 10,
+        input: {
+          message: "hello",
+          component: "slack",
+          prompt: "Summarize",
+          budget: {
+            input_tokens: 11,
+            output_tokens: 22,
+            total_tokens: 33,
+          },
+        },
+        input_schema: { type: "object" },
+        input_schema_id: "schema-in",
+        output_schema: { type: "string" },
+        output_schema_id: "schema-out",
+        output_path: "$.result",
+        route_labels: { region: "us-east" },
+        retry: {
+          max_retries: 3,
+          initial_backoff_sec: 5,
+          multiplier: 2,
+        },
+        meta: {
+          capability: "search",
+          requires: ["db.read", "cache.read"],
+          risk_tags: ["pii"],
+          labels: { team: "ops" },
+          pack_id: "pack-1",
+          actor_id: "actor-1",
+          actor_type: "service",
+          adapter_id: "adapter-1",
+          memory_id: "mem-1",
+          context_mode: "windowed",
+          allow_summarization: true,
+          allow_retrieval: false,
+          deadline_ms: 1_700,
+          priority: "high",
+        },
+      },
+      "fallback-step",
+    );
+
+    expect(step.type).toBe("pack-action");
+    expect(step.retry).toEqual({
+      max_retries: 3,
+      backoff_sec: 5,
+      backoff_multiplier: 2,
+    });
+    expect(step.config).toMatchObject({
+      topic: "sys.job.submit",
+      workerId: "worker-a",
+      timeout: "30s",
+      retryMax: 3,
+      expression: "input.ok",
+      forEach: "$.items[*]",
+      parallelism: 4,
+      duration: "10s",
+      input: {
+        message: "hello",
+        component: "slack",
+        prompt: "Summarize",
+        budget: {
+          input_tokens: 11,
+          output_tokens: 22,
+          total_tokens: 33,
+        },
+      },
+      messageTemplate: "hello",
+      channel: "slack",
+      prompt: "Summarize",
+      maxInputTokens: 11,
+      maxOutputTokens: 22,
+      maxTotalTokens: 33,
+      capabilities: ["search", "db.read", "cache.read"],
+      riskTags: ["pii"],
+      labels: { team: "ops" },
+      packId: "pack-1",
+      actorId: "actor-1",
+      actorType: "service",
+      adapterId: "adapter-1",
+      memoryId: "mem-1",
+      contextMode: "windowed",
+      allowSummarization: true,
+      allowRetrieval: false,
+      deadlineMs: 1700,
+      priority: "high",
+      routeLabels: { region: "us-east" },
+      inputSchema: { type: "object" },
+      inputSchemaId: "schema-in",
+      outputSchema: { type: "string" },
+      outputSchemaId: "schema-out",
+      outputPath: "$.result",
+    });
+  });
+
+  it("maps workflow definitions with metadata and step maps", () => {
+    const mapped = mapWorkflow({
+      id: "wf-1",
+      org_id: "org-1",
+      team_id: "team-1",
+      name: "Ingest Workflow",
+      description: "Ingest and summarize",
+      version: "2",
+      timeout_sec: 120,
+      config: { strategy: "safe" },
+      input_schema: { type: "object" },
+      parameters: [{ name: "query" }],
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+      steps: {
+        s1: { type: "job", topic: "sys.job.submit" },
+        s2: { type: "approval" },
+      },
+    });
+
+    expect(mapped.id).toBe("wf-1");
+    expect(mapped.name).toBe("Ingest Workflow");
+    expect(mapped.timeout_sec).toBe(120);
+    expect(mapped.timeout).toBe(120);
+    expect(mapped.steps).toHaveLength(2);
+    expect(mapped.steps[0].id).toBe("s1");
+    expect(mapped.steps[1].type).toBe("approval");
+    expect(mapped.metadata).toEqual({
+      orgId: "org-1",
+      teamId: "team-1",
+      description: "Ingest and summarize",
+      version: "2",
+      config: { strategy: "safe" },
+      inputSchema: { type: "object" },
+      parameters: [{ name: "query" }],
+    });
+  });
+
+  it("maps workflows without steps to an empty array", () => {
+    const mapped = mapWorkflow({ id: "wf-empty" });
+    expect(mapped.name).toBe("wf-empty");
+    expect(mapped.steps).toEqual([]);
+    expect(mapped.timeout).toBe(0);
+  });
+
+  it("maps workflow run steps and run-level fields", () => {
+    const runStep = mapWorkflowRunStep(
+      {
+        step_id: "step-99",
+        status: "succeeded",
+        output: { ok: true },
+        error: { code: "E_FAIL" },
+        started_at: "2026-02-10T10:00:00.000Z",
+        completed_at: "2026-02-10T10:00:10.000Z",
+      },
+      "fallback-id",
+    );
+    expect(runStep).toEqual({
+      id: "step-99",
+      name: "step-99",
+      type: "step",
+      status: "succeeded",
+      output: { ok: true },
+      error: "{\"code\":\"E_FAIL\"}",
+      startedAt: "2026-02-10T10:00:00.000Z",
+      completedAt: "2026-02-10T10:00:10.000Z",
+    });
 
     const run = mapWorkflowRun({
       id: "run-1",
       workflow_id: "wf-1",
+      org_id: "org-1",
+      team_id: "team-1",
       status: "running",
-      started_at: "2026-01-01T00:00:00.000Z",
-      completed_at: "2026-01-01T00:00:05.000Z",
+      started_at: "2026-02-10T10:00:00.000Z",
+      completed_at: null,
+      created_at: "2026-02-10T09:59:00.000Z",
+      updated_at: "2026-02-10T10:00:05.000Z",
+      input: { q: "hello" },
+      output: { done: false },
+      error: { reason: "none" },
+      rerun_of: "run-0",
+      rerun_step: "s2",
+      dry_run: true,
       steps: {
-        stepA: {
-          step_id: "stepA",
-          status: "SUCCEEDED",
-          output: { ok: true },
-        },
+        s1: { status: "succeeded", output: { ok: true } },
       },
     });
-    expect(run.workflowId).toBe("wf-1");
-    expect(run.steps[0].id).toBe("stepA");
-    expect(run.duration).toBe(5000);
+    expect(run).toMatchObject({
+      id: "run-1",
+      workflowId: "wf-1",
+      status: "running",
+      startedAt: "2026-02-10T10:00:00.000Z",
+      completedAt: null,
+      createdAt: "2026-02-10T09:59:00.000Z",
+      updatedAt: "2026-02-10T10:00:05.000Z",
+      orgId: "org-1",
+      teamId: "team-1",
+      input: { q: "hello" },
+      output: { done: false },
+      error: { reason: "none" },
+      rerunOf: "run-0",
+      rerunStep: "s2",
+      dryRun: true,
+    });
+    expect(run.steps).toHaveLength(1);
+    expect(run.steps[0].id).toBe("s1");
+    expect(run.steps[0].name).toBe("s1");
   });
 
-  it("derives approval statuses for decision/state combinations", () => {
-    const cases: Array<{
-      jobState?: string;
-      decision?: string;
-      expected: string;
-    }> = [
-      { decision: "approved", expected: "approved" },
-      { decision: "reject", expected: "rejected" },
-      { jobState: "DENIED", expected: "rejected" },
-      { jobState: "OUTPUT_QUARANTINED", expected: "approved" },
-      { jobState: "TIMEOUT", expected: "expired" },
-      { jobState: "APPROVAL_REQUIRED", expected: "pending" },
-      { jobState: "SUCCEEDED", expected: "approved" },
-      { jobState: "UNKNOWN", expected: "pending" },
-    ];
+  it("maps workflow runs without optional fields safely", () => {
+    const run = mapWorkflowRun({ id: "run-empty" });
+    expect(run.workflowId).toBe("");
+    expect(run.status).toBe("pending");
+    expect(run.steps).toEqual([]);
+    expect(run.startedAt).toBeNull();
+    expect(run.completedAt).toBeNull();
+    expect(run.rerunOf).toBeUndefined();
+    expect(run.rerunStep).toBeUndefined();
+  });
+});
 
-    for (const testCase of cases) {
-      expect(
-        deriveApprovalStatus(testCase.jobState, testCase.decision),
-      ).toBe(testCase.expected);
-    }
+describe("approval and DLQ mapping", () => {
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
-  it("derives approval actionability from explicit fields or lifecycle fallback", () => {
-    expect(deriveApprovalActionability("actionable", "pending")).toBe("actionable");
-    expect(deriveApprovalActionability(undefined, "pending")).toBe("actionable");
-    expect(deriveApprovalActionability(undefined, "approved")).toBe("resolved");
-    expect(deriveApprovalActionability(undefined, "invalidated")).toBe("invalidated");
-    expect(deriveApprovalActionability(undefined, "repaired")).toBe("repaired");
-  });
-
-  it("maps approval items and handles missing job payload safely", () => {
+  it("returns null approval when job data is missing", () => {
     expect(mapApprovalItem({})).toBeNull();
-
-    const approval = mapApprovalItem({
-      approval_ref: "approval-2",
-      policy_reason: "Requires manual review",
-      job: {
-        id: "job-approval",
-        topic: "job.review",
-        state: "APPROVAL_REQUIRED",
-        updated_at: Date.now() * 1000,
-      },
-    });
-
-    expect(approval).not.toBeNull();
-    expect(approval?.status).toBe("pending");
-    expect(approval?.actionability).toBe("actionable");
-    expect(approval?.humanSummary).toContain('Job on "job.review"');
-    expect(approval?.urgencyLevel).toBeDefined();
   });
 
-  it("maps decision-first approval summaries into stable frontend fields", () => {
+  it("maps full approval records with workflow context and enriched summary", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-02-13T05:00:00.000Z"));
+
     const approval = mapApprovalItem({
-      approval_ref: "approval-rich",
-      policy_reason: "fallback policy reason",
-      workflow_id: "wf-7",
-      workflow_name: "Expense Approval",
-      workflow_run_id: "run-7",
-      workflow_step_id: "approve-budget",
-      step_name: "Budget Review",
-      context_ptr: "redis://ctx:job-7",
-      job_input: {
-        decision: {
-          vendor: "Acme Travel",
-        },
-      },
-      decision_summary: {
-        source: "workflow_payload",
-        completeness: "rich",
-        context_status: "available",
-        title: "Approve 1250 USD request with Acme Travel",
-        subject: "Approve 1250 USD request with Acme Travel",
-        why: "manager threshold exceeded",
-        next_effect: "Approve to continue Budget Review.",
-        amount: 1250,
-        currency: "USD",
-        vendor: "Acme Travel",
-        item_count: 2,
-        items_preview: ["flight", "hotel"],
-        escalation_reason: "manager threshold exceeded",
-        missing_fields: [],
-      },
       job: {
-        id: "job-7",
-        topic: "job.workflow.approval",
-        state: "APPROVAL_REQUIRED",
-        updated_at: Date.now() * 1000,
+        id: "job-approval-1",
+        state: "RUNNING",
+        topic: "sys.job.submit",
+        tenant: "tenant-1",
+        actor_id: "actor-7",
+        capability: "search",
+        requires: ["db.read"],
+        risk_tags: ["pii"],
+        updated_at: Date.parse("2026-02-13T04:50:00.000Z") * 1000,
+        safety_decision: "REQUIRE_APPROVAL",
       },
-    });
-
-    expect(approval).not.toBeNull();
-    expect(approval?.decisionSummary?.source).toBe("workflow_payload");
-    expect(approval?.decisionSummary?.vendor).toBe("Acme Travel");
-    expect(approval?.decisionSummary?.amount).toBe(1250);
-    expect(approval?.decisionSummary?.itemsPreview).toEqual(["flight", "hotel"]);
-    expect(approval?.reason).toBe("manager threshold exceeded");
-    expect(approval?.humanSummary).toBe(
-      "Approve 1250 USD request with Acme Travel",
-    );
-    expect(approval?.workflowContext).toEqual({
-      workflowId: "wf-7",
-      workflowName: "Expense Approval",
-      runId: "run-7",
-      stepId: "approve-budget",
-      stepIndex: undefined,
-      stepName: "Budget Review",
-      totalSteps: undefined,
-    });
-    expect(approval?.contextPtr).toBe("redis://ctx:job-7");
-    expect(approval?.jobInput).toEqual({
-      decision: {
-        vendor: "Acme Travel",
-      },
-    });
-  });
-
-  it("falls back to legacy approval fields when decision summaries are absent or invalid", () => {
-    const approval = mapApprovalItem({
-      approval_ref: "approval-legacy",
-      policy_reason: "Requires manual review",
-      decision_summary: {
-        source: "policy_only",
-        completeness: "minimal",
-        context_status: "absent",
-        title: "   ",
-      },
-      job: {
-        id: "job-legacy",
-        topic: "job.review",
-        state: "APPROVAL_REQUIRED",
-        updated_at: Date.now() * 1000,
-      },
-    });
-
-    expect(approval).not.toBeNull();
-    expect(approval?.decisionSummary).toBeUndefined();
-    expect(approval?.reason).toBe("Requires manual review");
-    expect(approval?.humanSummary).toContain('Job on "job.review"');
-  });
-
-  it("maps degraded workflow approvals with missing context markers into stable frontend fields", () => {
-    const approval = mapApprovalItem({
-      approval_ref: "approval-missing-context",
-      policy_reason: "manager review required",
-      workflow_id: "wf-9",
-      workflow_name: "Expense Approval",
-      workflow_run_id: "run-9",
-      workflow_step_id: "manager-approval",
-      step_name: "Manager Approval",
-      context_ptr: "redis://ctx:job-9",
-      decision_summary: {
-        source: "workflow_payload",
-        completeness: "partial",
-        context_status: "missing",
-        title: "Approve manager-approval",
-        why: "manager review required",
-        missing_fields: ["approval_context", "business_context"],
-      },
-      job: {
-        id: "job-9",
-        topic: "job.workflow.approval",
-        state: "APPROVAL_REQUIRED",
-        updated_at: Date.now() * 1000,
-      },
-    });
-
-    expect(approval).not.toBeNull();
-    expect(approval?.status).toBe("pending");
-    expect(approval?.decisionSummary?.source).toBe("workflow_payload");
-    expect(approval?.decisionSummary?.contextStatus).toBe("missing");
-    expect(approval?.decisionSummary?.completeness).toBe("partial");
-    expect(approval?.decisionSummary?.missingFields).toEqual([
-      "approval_context",
-      "business_context",
-    ]);
-    expect(approval?.humanSummary).toBe("Approve manager-approval");
-    expect(approval?.reason).toBe("manager review required");
-    expect(approval?.contextPtr).toBe("redis://ctx:job-9");
-    expect(approval?.jobInput).toBeUndefined();
-    expect(approval?.workflowContext?.stepName).toBe("Manager Approval");
-  });
-
-  it("maps resolved denied workflow approvals without losing decision-first fields", () => {
-    const approval = mapApprovalItem({
-      approval_ref: "approval-denied",
-      policy_reason: "finance approval required",
-      resolved_by: "manager-2",
-      resolved_at: 1_709_000_002_000_000,
-      resolved_comment: "over budget for this quarter",
-      approval_status: "rejected",
-      approval_actionability: "resolved",
-      approval_revision: 2,
-      approval_decision: "reject",
+      decision: "approve",
+      policy_rule_id: "rule-9",
+      policy_reason: "manual review needed",
+      approval_ref: "approval-1",
+      job_hash: "hash-1",
+      policy_snapshot: "snap-1",
+      context_ptr: "redis://ctx:job-approval-1",
+      resolved_at: Date.parse("2026-02-13T04:55:00.000Z") * 1000,
+      resolved_by: "admin-1",
+      resolved_comment: "approved after review",
+      constraints: { redact: true },
       workflow_id: "wf-10",
-      workflow_name: "Expense Approval",
       workflow_run_id: "run-10",
-      workflow_step_id: "approve",
-      step_name: "Manager Approval",
-      context_ptr: "redis://ctx:job-10",
-      decision_summary: {
-        source: "workflow_payload",
-        completeness: "rich",
-        context_status: "available",
-        title: "Approve 8800 USD request with Contoso Travel",
-        why: "budget threshold exceeded",
-        amount: 8800,
-        currency: "USD",
-        vendor: "Contoso Travel",
-        escalation_reason: "budget threshold exceeded",
-      },
-      job_input: {
-        decision: {
-          vendor: "Contoso Travel",
-          amount: 8800,
-        },
-      },
-      job: {
-        id: "job-10",
-        topic: "job.workflow.approval",
-        state: "DENIED",
-        updated_at: Date.now() * 1000,
-      },
+      step_index: 2,
+      step_name: "SafetyGate",
+      total_steps: 5,
     });
 
     expect(approval).not.toBeNull();
-    expect(approval?.status).toBe("rejected");
-    expect(approval?.actionability).toBe("resolved");
-    expect(approval?.revision).toBe(2);
-    expect(approval?.approvalDecision).toBe("reject");
-    expect(approval?.actor).toBe("manager-2");
-    expect(approval?.comment).toBe("over budget for this quarter");
-    expect(approval?.decisionSummary?.vendor).toBe("Contoso Travel");
-    expect(approval?.decisionSummary?.contextStatus).toBe("available");
-    expect(approval?.humanSummary).toBe(
-      "Approve 8800 USD request with Contoso Travel",
-    );
-    expect(approval?.jobInput).toEqual({
-      decision: {
-        vendor: "Contoso Travel",
-        amount: 8800,
+    expect(approval).toMatchObject({
+      id: "approval-1",
+      jobId: "job-approval-1",
+      status: "approved",
+      actor: "admin-1",
+      actorId: "actor-7",
+      reason: "manual review needed",
+      comment: "approved after review",
+      policyRule: "rule-9",
+      topic: "sys.job.submit",
+      safetyDecision: { type: "require_approval", reason: "", matchedRule: undefined },
+      riskTags: ["pii"],
+      capabilities: ["search", "db.read"],
+      workflowContext: {
+        workflowId: "wf-10",
+        runId: "run-10",
+        stepIndex: 2,
+        stepName: "SafetyGate",
+        totalSteps: 5,
       },
+      urgencyLevel: "aging",
+      waitMs: 600000,
+      policySnapshot: "snap-1",
+      jobHash: "hash-1",
+      approvalRef: "approval-1",
+      tenant: "tenant-1",
+      contextPtr: "redis://ctx:job-approval-1",
+      constraints: { redact: true },
     });
-    expect(approval?.resolvedAt).toContain("T");
-  });
-
-  it("maps policy bundle detail content and tolerates malformed YAML", () => {
-    const mapped = mapPolicyBundleDetail({
-      id: "bundle-1",
-      content: `
-rules:
-  - id: deny-admin
-    match: {}
-    decision: deny
-    reason: block admin flows
-`,
-      enabled: true,
-    });
-    expect(mapped.id).toBe("bundle-1");
-    expect(mapped.rules[0].id).toBe("deny-admin");
-    expect(mapped.rules[0].decision).toBe("deny");
-
-    const malformed = mapPolicyBundleDetail({
-      id: "bundle-2",
-      content: "rules: [invalid",
-    });
-    expect(malformed.rules).toEqual([]);
-  });
-
-  it("maps DLQ entries and worker heartbeat snapshots", () => {
-    const dlq = mapDLQEntry({
-      job_id: "job-dlq-1",
-      topic: "job.default",
-      reason: "worker timeout",
-      attempts: 3,
-      status: "FAILED",
-    });
-    expect(dlq.jobId).toBe("job-dlq-1");
-    expect(dlq.retryCount).toBe(3);
-    expect(dlq.error).toBe("worker timeout");
-
-    expect(mapHeartbeatToWorker({})).toBeNull();
-    const worker = mapHeartbeatToWorker({
-      worker_id: "worker-1",
-      pool: "general",
-      labels: { name: "Worker One" },
-      active_jobs: 2,
-      max_parallel_jobs: 0,
-      capabilities: ["code.read"],
-    });
-    expect(worker).not.toBeNull();
-    expect(worker?.name).toBe("Worker One");
-    expect(worker?.status).toBe("busy");
-    expect(worker?.capacity).toBe(2);
-  });
-
-  it("maps governance decisions with optional fields and structured constraints", () => {
-    const decision = mapGovernanceDecision({
-      job_id: "job-gov-1",
-      run_id: "run-gov-1",
-      step_id: "step-7",
-      topic: "jobs.review",
-      matched_rule: "rule-42",
-      rule_name: "Escalate risky changes",
-      verdict: "ALLOW_WITH_CONSTRAINTS",
-      reason: "Needs domain allowlist",
-      constraints: {
-        maxInvocations: 3,
-        allowedDomains: ["cordum.io"],
-      },
-      approval_status: "pending",
-      approval_decision: "approve",
-      agent_id: "agent-4",
-      policy_version: "2026-04-20",
-      timestamp: "2026-04-20T08:30:00.000Z",
-    });
-
-    expect(decision).toEqual({
-      jobId: "job-gov-1",
-      runId: "run-gov-1",
-      stepId: "step-7",
-      topic: "jobs.review",
-      matchedRule: "rule-42",
-      ruleName: "Escalate risky changes",
-      verdict: "constrain",
-      reason: "Needs domain allowlist",
-      constraints: {
-        maxInvocations: 3,
-        allowedDomains: ["cordum.io"],
-      },
-      approvalStatus: "pending",
-      approvalDecision: "approve",
-      agentId: "agent-4",
-      policyVersion: "2026-04-20",
-      timestamp: "2026-04-20T08:30:00.000Z",
+    expect(approval?.requestedAt).toBe("2026-02-13T04:50:00.000Z");
+    expect(approval?.resolvedAt).toBe("2026-02-13T04:55:00.000Z");
+    expect(approval?.humanSummary).toContain('Job on "sys.job.submit"');
+    expect(approval?.humanSummary).toContain("requires search, db.read");
+    expect(approval?.humanSummary).toContain("manual review needed");
+    expect(approval?.jobContext).toEqual({
+      topic: "sys.job.submit",
+      tenant: "tenant-1",
+      capabilities: ["search", "db.read"],
+      riskTags: ["pii"],
     });
   });
 
-  it("maps governance decisions when optional fields are absent", () => {
-    const decision = mapGovernanceDecision({
-      job_id: "job-gov-2",
-      topic: "jobs.review",
-      matched_rule: "rule-9",
-      verdict: "ALLOW",
-      reason: "Allowed",
-      agent_id: "agent-9",
-      timestamp: "2026-04-20T08:45:00.000Z",
+  it("derives rejected/resolved/pending approval statuses and workflow context absence", () => {
+    const rejected = mapApprovalItem({
+      job: { id: "job-reject", state: "RUNNING" },
+      decision: "reject",
     });
+    expect(rejected?.status).toBe("rejected");
+    expect(rejected?.workflowContext).toBeUndefined();
 
-    expect(decision).toEqual({
-      jobId: "job-gov-2",
-      topic: "jobs.review",
-      matchedRule: "rule-9",
-      verdict: "allow",
-      reason: "Allowed",
-      agentId: "agent-9",
-      timestamp: "2026-04-20T08:45:00.000Z",
+    const resolved = mapApprovalItem({
+      job: { id: "job-resolved", state: "succeeded" },
     });
-  });
-});
+    expect(resolved?.status).toBe("resolved");
 
-// ---------------------------------------------------------------------------
-// Contract drift and hardening regression tests
-// ---------------------------------------------------------------------------
-
-describe("transform contract hardening", () => {
-  describe("normalizeOutputDecision fail-closed (security fix)", () => {
-    it("returns QUARANTINE for unknown output decisions instead of ALLOW", () => {
-      expect(normalizeOutputDecision("BLOCK")).toBe("QUARANTINE");
-      expect(normalizeOutputDecision("HOLD")).toBe("QUARANTINE");
-      expect(normalizeOutputDecision("PENDING_REVIEW")).toBe("QUARANTINE");
+    const pending = mapApprovalItem({
+      job: { id: "job-pending", state: "RUNNING" },
     });
-
-    it("still returns ALLOW for explicit ALLOW", () => {
-      expect(normalizeOutputDecision("ALLOW")).toBe("ALLOW");
-      expect(normalizeOutputDecision("allow")).toBe("ALLOW");
-    });
-
-    it("returns ALLOW only when value is empty/undefined (no decision made)", () => {
-      expect(normalizeOutputDecision(undefined)).toBe("ALLOW");
-      expect(normalizeOutputDecision("")).toBe("ALLOW");
-    });
-
-    it("maps DENY to QUARANTINE", () => {
-      expect(normalizeOutputDecision("DENY")).toBe("QUARANTINE");
-    });
-
-    it("maps known decisions correctly", () => {
-      expect(normalizeOutputDecision("REDACT")).toBe("REDACT");
-      expect(normalizeOutputDecision("QUARANTINE")).toBe("QUARANTINE");
-    });
+    expect(pending?.status).toBe("pending");
   });
 
-  describe("normalizeJobStatus unknown states", () => {
-    it("returns pending for empty/undefined state", () => {
-      expect(normalizeJobStatus(undefined)).toBe("pending");
-      expect(normalizeJobStatus("")).toBe("pending");
-    });
-
-    it("still returns pending for truly unknown states (logged)", () => {
-      expect(normalizeJobStatus("PAUSED")).toBe("pending");
-      expect(normalizeJobStatus("RETRYING")).toBe("pending");
-    });
-
-    it("normalizes all known states", () => {
-      expect(normalizeJobStatus("RUNNING")).toBe("running");
-      expect(normalizeJobStatus("SUCCEEDED")).toBe("succeeded");
-      expect(normalizeJobStatus("FAILED")).toBe("failed");
-      expect(normalizeJobStatus("FAILED_RETRYABLE")).toBe("failed");
-      expect(normalizeJobStatus("FAILED_FATAL")).toBe("failed");
-      expect(normalizeJobStatus("OUTPUT_QUARANTINED")).toBe("output_quarantined");
-    });
-  });
-
-  describe("computeUrgencyLevel NaN safety", () => {
-    it("returns 'fresh' for NaN waitMs (not 'breach')", () => {
-      expect(computeUrgencyLevel(NaN)).toBe("fresh");
-    });
-
-    it("returns 'fresh' for negative waitMs", () => {
-      expect(computeUrgencyLevel(-1000)).toBe("fresh");
-    });
-
-    it("returns 'fresh' for Infinity", () => {
-      expect(computeUrgencyLevel(Infinity)).toBe("fresh");
-    });
-
-    it("correctly classifies valid wait times", () => {
-      expect(computeUrgencyLevel(0)).toBe("fresh");
-      expect(computeUrgencyLevel(60_000)).toBe("fresh");
-      expect(computeUrgencyLevel(5 * 60_000)).toBe("aging");
-      expect(computeUrgencyLevel(30 * 60_000)).toBe("critical");
-      expect(computeUrgencyLevel(90 * 60_000)).toBe("breach");
-    });
-  });
-
-  describe("mapWorkflowRunStep status normalization", () => {
-    it("normalizes uppercase backend statuses to lowercase", () => {
-      const step = mapWorkflowRunStep({ step_id: "s1", status: "SUCCEEDED" }, "fallback");
-      expect(step.status).toBe("succeeded");
-    });
-
-    it("maps common backend status variants", () => {
-      expect(mapWorkflowRunStep({ step_id: "s1", status: "completed" }, "f").status).toBe("succeeded");
-      expect(mapWorkflowRunStep({ step_id: "s1", status: "error" }, "f").status).toBe("failed");
-      expect(mapWorkflowRunStep({ step_id: "s1", status: "timeout" }, "f").status).toBe("timed_out");
-      expect(mapWorkflowRunStep({ step_id: "s1", status: "canceled" }, "f").status).toBe("cancelled");
-      expect(mapWorkflowRunStep({ step_id: "s1", status: "queued" }, "f").status).toBe("pending");
-      expect(mapWorkflowRunStep({ step_id: "s1", status: "blocked" }, "f").status).toBe("denied");
-    });
-
-    it("defaults unknown statuses to pending instead of passing through raw strings", () => {
-      const step = mapWorkflowRunStep({ step_id: "s1", status: "UNKNOWN_STATE" }, "f");
-      expect(step.status).toBe("pending");
-    });
-
-    it("uses fallback ID when step_id is missing", () => {
-      const step = mapWorkflowRunStep({}, "fallback-id");
-      expect(step.id).toBe("fallback-id");
-    });
-  });
-
-  describe("microsToISO edge cases", () => {
-    it("returns null for non-finite values", () => {
-      expect(microsToISO(NaN)).toBeNull();
-      expect(microsToISO(Infinity)).toBeNull();
-      expect(microsToISO(-1)).toBeNull();
-      expect(microsToISO(0)).toBeNull();
-    });
-
-    it("returns null for non-numbers", () => {
-      expect(microsToISO("not a number")).toBeNull();
-      expect(microsToISO(null)).toBeNull();
-      expect(microsToISO(undefined)).toBeNull();
-    });
-
-    it("converts valid microsecond timestamps", () => {
-      const result = microsToISO(1_700_000_000_000_000);
-      expect(result).toContain("2023");
-      expect(result).toContain("T");
-    });
-  });
-
-  describe("mapOutputSafetyRecord robustness", () => {
-    it("returns undefined for null/non-object input", () => {
-      expect(mapOutputSafetyRecord(null as unknown as undefined)).toBeUndefined();
-      expect(mapOutputSafetyRecord(undefined)).toBeUndefined();
-      expect(mapOutputSafetyRecord("string" as unknown as undefined)).toBeUndefined();
-    });
-
-    it("returns empty findings array when findings is not an array", () => {
-      const result = mapOutputSafetyRecord({ decision: "ALLOW", findings: "not-array" as unknown as undefined });
-      expect(result?.findings).toEqual([]);
-    });
-
-    it("maps findings correctly when present", () => {
-      const result = mapOutputSafetyRecord({
-        decision: "QUARANTINE",
-        findings: [{ type: "pii", severity: "high", detail: "SSN detected" }],
-      });
-      expect(result?.decision).toBe("QUARANTINE");
-      expect(result?.findings).toHaveLength(1);
-      expect(result?.findings?.[0].type).toBe("pii");
-    });
-  });
-
-  describe("normalizeDecisionType edge cases", () => {
-    it("defaults unknown values to deny (fail-closed)", () => {
-      expect(normalizeDecisionType("UNKNOWN")).toBe("deny");
-      expect(normalizeDecisionType("BLOCK")).toBe("deny");
-    });
-
-    it("maps protobuf-prefixed variants", () => {
-      expect(normalizeDecisionType("DECISION_TYPE_ALLOW")).toBe("allow");
-      expect(normalizeDecisionType("DECISION_TYPE_DENY")).toBe("deny");
-      expect(normalizeDecisionType("DECISION_TYPE_REQUIRE_HUMAN")).toBe("require_approval");
-    });
-  });
-
-  describe("governance decision hardening", () => {
-    it("falls back to deny and warns for unknown verdicts", () => {
-      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-      expect(normalizeGovernanceVerdict("ESCALATE_LATER")).toBe("deny");
-      expect(warn).toHaveBeenCalledWith(
-        '[transform] Unknown governance verdict "ESCALATE_LATER", defaulting to deny',
-      );
-
-      warn.mockRestore();
-    });
-
-    it("skips malformed governance timestamps instead of throwing", () => {
-      expect(
-        mapGovernanceDecision({
-          job_id: "job-bad-ts",
-          topic: "jobs.review",
-          matched_rule: "rule-9",
-          verdict: "DENY",
-          reason: "invalid timestamp",
-          agent_id: "agent-9",
-          timestamp: "not-a-date",
-        }),
-      ).toBeNull();
-    });
-  });
-
-  describe("mapJobRecord with missing/malformed data", () => {
-    it("generates stable ID for empty ID (not undefined)", () => {
-      const job = mapJobRecord({ id: "", topic: "test" });
-      expect(job.id).toBeTruthy();
-      expect(typeof job.id).toBe("string");
-    });
-
-    it("handles completely empty record without crashing", () => {
-      const job = mapJobRecord({ id: "x" });
-      expect(job.id).toBe("x");
-      expect(job.topic).toBe("");
-      expect(job.status).toBe("pending");
-      expect(job.capabilities).toEqual([]);
-      expect(job.riskTags).toEqual([]);
-    });
-
-    it("maps all known job status values without falling through to default", () => {
-      const nonPendingStatuses = [
-        "SCHEDULED", "DISPATCHED", "RUNNING", "SUCCEEDED",
-        "FAILED", "CANCELLED", "APPROVAL_REQUIRED", "DENIED", "TIMEOUT",
-        "OUTPUT_QUARANTINED",
-      ];
-      for (const s of nonPendingStatuses) {
-        const job = mapJobRecord({ id: "j", state: s });
-        expect(job.status).not.toBe("pending");
-      }
-      expect(mapJobRecord({ id: "j", state: "PENDING" }).status).toBe("pending");
-    });
-  });
-
-  describe("mapWorkflowRun status normalization", () => {
-    it("normalizes run-level status", () => {
-      const run = mapWorkflowRun({
-        id: "run-1",
-        workflow_id: "wf-1",
-        status: "completed",
-      });
-      expect(run.status).toBe("succeeded");
-    });
-
-    it("normalizes queued/blocked run-level aliases", () => {
-      const queuedRun = mapWorkflowRun({
-        id: "run-queued",
-        workflow_id: "wf-1",
-        status: "queued",
-      });
-      expect(queuedRun.status).toBe("pending");
-
-      const blockedRun = mapWorkflowRun({
-        id: "run-blocked",
-        workflow_id: "wf-1",
-        status: "blocked",
-      });
-      expect(blockedRun.status).toBe("denied");
-    });
-
-    it("handles missing steps gracefully", () => {
-      const run = mapWorkflowRun({
-        id: "run-2",
-        workflow_id: "wf-1",
-        status: "running",
-      });
-      expect(run.steps).toEqual([]);
-    });
-  });
-
-  describe("mapOutputSafetyRecord", () => {
-    it("handles finding with all optional fields missing", () => {
-      const result = mapOutputSafetyRecord({
-        decision: "ALLOW",
-        findings: [{ type: "pii", severity: "high", detail: "found SSN" }],
-      });
-      expect(result).toBeDefined();
-      expect(result!.findings).toHaveLength(1);
-      expect(result!.findings![0].scanner).toBeUndefined();
-      expect(result!.findings![0].confidence).toBeUndefined();
-      expect(result!.findings![0].matched_pattern).toBeUndefined();
-      expect(result!.findings![0].offset).toBeUndefined();
-      expect(result!.findings![0].length).toBeUndefined();
-    });
-
-    it("preserves optional fields when present", () => {
-      const result = mapOutputSafetyRecord({
-        decision: "QUARANTINE",
-        findings: [{
-          type: "secret",
-          severity: "critical",
-          detail: "API key",
-          scanner: "regex",
-          confidence: 0.95,
-          matched_pattern: "sk-.*",
-          offset: 42,
-          length: 51,
-        }],
-      });
-      expect(result!.findings![0].scanner).toBe("regex");
-      expect(result!.findings![0].confidence).toBe(0.95);
-      expect(result!.findings![0].matched_pattern).toBe("sk-.*");
-      expect(result!.findings![0].offset).toBe(42);
-      expect(result!.findings![0].length).toBe(51);
-    });
-
-    it("returns undefined for null/undefined input", () => {
-      expect(mapOutputSafetyRecord(undefined)).toBeUndefined();
-      expect(mapOutputSafetyRecord(null as unknown as undefined)).toBeUndefined();
-    });
-
-    it("handles empty findings array", () => {
-      const result = mapOutputSafetyRecord({ decision: "ALLOW", findings: [] });
-      expect(result!.findings).toEqual([]);
-    });
-  });
-});
-
-describe("api/transform evals mappers", () => {
-  it("maps a backend eval dataset round-trip", async () => {
-    const { mapEvalDataset } = await import("./transform");
-    const ds = mapEvalDataset({
-      id: "ds-1",
-      name: "denies-2026-04",
-      version: 3,
-      tenant: "acme",
-      description: "April denies",
-      entry_count: 42,
-      content_hash: "sha256:abc",
-      created_at: "2026-04-01T00:00:00Z",
-      updated_at: "2026-04-02T00:00:00Z",
-      created_by: "worker-aa42",
-    });
-    expect(ds).toEqual({
-      id: "ds-1",
-      name: "denies-2026-04",
-      version: 3,
-      tenant: "acme",
-      description: "April denies",
-      entryCount: 42,
-      contentHash: "sha256:abc",
-      createdAt: "2026-04-01T00:00:00Z",
-      updatedAt: "2026-04-02T00:00:00Z",
-      createdBy: "worker-aa42",
-    });
-  });
-
-  it("defaults missing dataset fields safely", async () => {
-    const { mapEvalDataset } = await import("./transform");
-    const ds = mapEvalDataset({});
-    expect(ds.id).toBe("");
-    expect(ds.version).toBe(1);
-    expect(ds.entryCount).toBe(0);
-    expect(ds.contentHash).toBe("");
-    expect(ds.updatedAt).toBe("");
-  });
-
-  it("maps an eval entry result with known status and drift", async () => {
-    const { mapEvalEntryResult } = await import("./transform");
-    const r = mapEvalEntryResult({
-      entry_id: "e-1",
-      input: { topic: "fs.delete" },
-      expected_decision: "deny",
-      actual_decision: "allow",
-      rule_id: "rule-relaxed",
-      reason: "policy relaxed",
-      status: "regression",
-      drift_direction: "relaxed",
-    });
-    expect(r.status).toBe("regression");
-    expect(r.driftDirection).toBe("relaxed");
-    expect(r.expectedDecision).toBe("deny");
-    expect(r.actualDecision).toBe("allow");
-  });
-
-  it("falls back to error + unchanged on unknown status and drift", async () => {
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { mapEvalEntryResult } = await import("./transform");
-    const r = mapEvalEntryResult({
-      entry_id: "e-2",
-      expected_decision: "weird",
-      actual_decision: "also-weird",
-      status: "not-a-real-status",
-      drift_direction: "sideways",
-    });
-    expect(r.status).toBe("error");
-    expect(r.driftDirection).toBe("unchanged");
-    // Unknown expected decision -> defaults to "deny" (safer).
-    expect(r.expectedDecision).toBe("deny");
-    // Unknown actual decision is passed through as lowercased string.
-    expect(r.actualDecision).toBe("also-weird");
-    warnSpy.mockRestore();
-  });
-
-  it("maps an eval run with coerced scorePercent and summary defaults", async () => {
-    const { mapEvalRun, isRegressionRun } = await import("./transform");
-    const run = mapEvalRun({
-      run_id: "run-1",
-      dataset_id: "ds-1",
-      dataset_name: "denies",
-      dataset_version: 2,
-      policy_snapshot: "snap-abc",
-      started_at: "2026-04-19T12:00:00Z",
-      completed_at: "2026-04-19T12:00:05Z",
-      summary: {
-        total: 10,
-        passed: 7,
-        failed: 2,
-        regressions: 1,
-        errored: 0,
-        score_percent: 70,
-      },
-      entries: [
-        {
-          entry_id: "e-1",
-          expected_decision: "deny",
-          actual_decision: "allow",
-          status: "regression",
-          drift_direction: "relaxed",
-        },
-      ],
-    });
-    expect(run.summary.scorePercent).toBe(70);
-    expect(isRegressionRun(run)).toBe(true);
-    expect(run.entries).toHaveLength(1);
-  });
-
-  it("coerces NaN/null scorePercent to null", async () => {
-    const { mapEvalRun } = await import("./transform");
-    const nan = mapEvalRun({ summary: { score_percent: Number.NaN } });
-    expect(nan.summary.scorePercent).toBeNull();
-    const nil = mapEvalRun({ summary: { score_percent: null } });
-    expect(nil.summary.scorePercent).toBeNull();
-    const missing = mapEvalRun({});
-    expect(missing.summary.scorePercent).toBeNull();
-    expect(missing.summary.total).toBe(0);
-  });
-
-  it("isRegressionRun returns false when no regressions", async () => {
-    const { isRegressionRun } = await import("./transform");
+  it("maps DLQ entries with full and minimal payloads", () => {
     expect(
-      isRegressionRun({
-        summary: { total: 5, passed: 5, failed: 0, regressions: 0, errored: 0, scorePercent: 100 },
+      mapDLQEntry({
+        job_id: "job-dlq-1",
+        topic: "sys.job.submit",
+        status: "failed",
+        reason: "worker crashed",
+        reason_code: "E_WORKER",
+        last_state: "RUNNING",
+        attempts: 2,
+        created_at: "2026-02-12T10:00:00.000Z",
       }),
-    ).toBe(false);
+    ).toEqual({
+      id: "job-dlq-1",
+      jobId: "job-dlq-1",
+      error: "worker crashed",
+      retryCount: 2,
+      maxRetries: 0,
+      originalTopic: "sys.job.submit",
+      failedAt: "2026-02-12T10:00:00.000Z",
+      status: "failed",
+      reasonCode: "E_WORKER",
+      lastState: "RUNNING",
+      reason: "worker crashed",
+      attempts: 2,
+      createdAt: "2026-02-12T10:00:00.000Z",
+    });
+
+    expect(mapDLQEntry({ job_id: "job-dlq-min" })).toEqual({
+      id: "job-dlq-min",
+      jobId: "job-dlq-min",
+      error: "",
+      retryCount: 0,
+      maxRetries: 0,
+      originalTopic: "",
+      failedAt: "",
+      status: undefined,
+      reasonCode: undefined,
+      lastState: undefined,
+      reason: undefined,
+      attempts: undefined,
+      createdAt: undefined,
+    });
+  });
+});
+
+describe("mapOutputSafetyRecord", () => {
+  it("returns undefined for null/undefined input", () => {
+    expect(mapOutputSafetyRecord(undefined)).toBeUndefined();
+    expect(mapOutputSafetyRecord(null as never)).toBeUndefined();
+  });
+
+  it("returns undefined for non-object input", () => {
+    expect(mapOutputSafetyRecord("string" as never)).toBeUndefined();
+    expect(mapOutputSafetyRecord(42 as never)).toBeUndefined();
+  });
+
+  it("defaults findings to empty array when not provided", () => {
+    const result = mapOutputSafetyRecord({ decision: "QUARANTINE" });
+    expect(result).toBeDefined();
+    expect(result?.findings).toEqual([]);
+    expect(result?.decision).toBe("QUARANTINE");
+  });
+
+  it("maps full output safety record with findings", () => {
+    const result = mapOutputSafetyRecord({
+      decision: "QUARANTINE",
+      reason: "PII detected",
+      rule_id: "rule-1",
+      findings: [
+        { type: "pii", severity: "high", detail: "SSN found" },
+      ],
+      phase: "async",
+      policy_snapshot: "snap-1",
+      redacted_ptr: "ptr-redacted",
+      original_ptr: "ptr-original",
+    });
+    expect(result).toEqual({
+      decision: "QUARANTINE",
+      reason: "PII detected",
+      rule_id: "rule-1",
+      findings: [
+        { type: "pii", severity: "high", detail: "SSN found", scanner: undefined, confidence: undefined, matched_pattern: undefined, offset: undefined, length: undefined },
+      ],
+      phase: "async",
+      policy_snapshot: "snap-1",
+      redacted_ptr: "ptr-redacted",
+      original_ptr: "ptr-original",
+    });
+  });
+
+  it("handles partial data with missing optional fields", () => {
+    const result = mapOutputSafetyRecord({});
+    expect(result).toBeDefined();
+    expect(result?.decision).toBe("ALLOW");
+    expect(result?.reason).toBeUndefined();
+    expect(result?.rule_id).toBeUndefined();
+    expect(result?.findings).toEqual([]);
+  });
+});
+
+describe("deriveApprovalStatus", () => {
+  it("returns approved for approve/approved decisions", () => {
+    expect(deriveApprovalStatus(undefined, "approve")).toBe("approved");
+    expect(deriveApprovalStatus(undefined, "approved")).toBe("approved");
+  });
+
+  it("returns rejected for reject/rejected/deny decisions", () => {
+    expect(deriveApprovalStatus(undefined, "reject")).toBe("rejected");
+    expect(deriveApprovalStatus(undefined, "rejected")).toBe("rejected");
+    expect(deriveApprovalStatus(undefined, "deny")).toBe("rejected");
+  });
+
+  it("returns rejected for denied job state", () => {
+    expect(deriveApprovalStatus("denied", undefined)).toBe("rejected");
+  });
+
+  it("returns quarantined for output_quarantined job state", () => {
+    expect(deriveApprovalStatus("output_quarantined", undefined)).toBe("quarantined");
+  });
+
+  it("returns pending for approval_required job state", () => {
+    expect(deriveApprovalStatus("approval_required", undefined)).toBe("pending");
+  });
+
+  it("returns resolved for terminal job states", () => {
+    expect(deriveApprovalStatus("succeeded", undefined)).toBe("resolved");
+    expect(deriveApprovalStatus("failed", undefined)).toBe("resolved");
+    expect(deriveApprovalStatus("cancelled", undefined)).toBe("resolved");
+  });
+
+  it("returns pending for unknown/undefined states", () => {
+    expect(deriveApprovalStatus(undefined, undefined)).toBe("pending");
+    expect(deriveApprovalStatus("running", undefined)).toBe("pending");
+  });
+
+  it("decision takes precedence over job state", () => {
+    expect(deriveApprovalStatus("denied", "approved")).toBe("approved");
+    expect(deriveApprovalStatus("succeeded", "reject")).toBe("rejected");
+  });
+});
+
+describe("mapJobRecord empty ID validation", () => {
+  it("returns job with valid ID unchanged", () => {
+    const job = mapJobRecord({ id: "job-valid", state: "RUNNING" });
+    expect(job.id).toBe("job-valid");
+  });
+
+  it("generates a placeholder UUID for empty ID", () => {
+    const job = mapJobRecord({ id: "" });
+    expect(job.id).toBeTruthy();
+    expect(job.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it("generates unique IDs for separate empty-ID records", () => {
+    const job1 = mapJobRecord({ id: "" });
+    const job2 = mapJobRecord({ id: "" });
+    expect(job1.id).not.toBe(job2.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mapJobEvent
+// ---------------------------------------------------------------------------
+
+describe("mapJobEvent", () => {
+  it("converts ts microseconds to ISO string", () => {
+    const evt = mapJobEvent({ ts: 1700000000000000, state: "PENDING" });
+    expect(evt.timestamp).toBe("2023-11-14T22:13:20.000Z");
+    expect(evt.state).toBe("PENDING");
+    expect(evt.ctx).toBeUndefined();
+  });
+
+  it("converts snake_case ctx fields to camelCase", () => {
+    const evt = mapJobEvent({
+      ts: 1700000001000000,
+      state: "SCHEDULED",
+      ctx: {
+        rule: "prod-approval",
+        eval_ms: 42,
+        eval_path: ["default", "prod-approval"],
+        worker_id: "w-1",
+        approved_by: "alice@co.com",
+        approval_role: "admin",
+        approval_note: "LGTM",
+        wait_ms: 5000,
+        error_code: "E001",
+        error_msg: "timeout",
+        result_ptr: "redis://res:1",
+        duration_ms: 1500,
+        risk_tags: ["pii"],
+        actor_id: "actor-1",
+      },
+    });
+    expect(evt.ctx).toBeDefined();
+    expect(evt.ctx!.rule).toBe("prod-approval");
+    expect(evt.ctx!.evalMs).toBe(42);
+    expect(evt.ctx!.evalPath).toEqual(["default", "prod-approval"]);
+    expect(evt.ctx!.workerId).toBe("w-1");
+    expect(evt.ctx!.approvedBy).toBe("alice@co.com");
+    expect(evt.ctx!.approvalRole).toBe("admin");
+    expect(evt.ctx!.approvalNote).toBe("LGTM");
+    expect(evt.ctx!.waitMs).toBe(5000);
+    expect(evt.ctx!.errorCode).toBe("E001");
+    expect(evt.ctx!.errorMsg).toBe("timeout");
+    expect(evt.ctx!.resultPtr).toBe("redis://res:1");
+    expect(evt.ctx!.durationMs).toBe(1500);
+    expect(evt.ctx!.riskTags).toEqual(["pii"]);
+    expect(evt.ctx!.actorId).toBe("actor-1");
+  });
+
+  it("handles missing ctx gracefully", () => {
+    const evt = mapJobEvent({ ts: 1700000000000000, state: "RUNNING" });
+    expect(evt.ctx).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildUnifiedTimeline
+// ---------------------------------------------------------------------------
+
+describe("buildUnifiedTimeline", () => {
+  const baseJob: Job = {
+    id: "j1",
+    type: "default",
+    topic: "job.test",
+    status: "succeeded",
+    pool: "default",
+    capabilities: ["cap1"],
+    riskTags: [],
+    metadata: {},
+    createdAt: "2023-11-14T22:00:00.000Z",
+    updatedAt: "2023-11-14T22:10:00.000Z",
+  };
+
+  it("maps full lifecycle events", () => {
+    const events: JobEvent[] = [
+      { timestamp: "2023-11-14T22:00:00.000Z", state: "PENDING", ctx: { topic: "job.test" } },
+      { timestamp: "2023-11-14T22:01:00.000Z", state: "APPROVAL_REQUIRED" },
+      { timestamp: "2023-11-14T22:05:00.000Z", state: "SCHEDULED", ctx: { approvedBy: "alice" } },
+      { timestamp: "2023-11-14T22:06:00.000Z", state: "DISPATCHED", ctx: { workerId: "w-1" } },
+      { timestamp: "2023-11-14T22:07:00.000Z", state: "RUNNING" },
+      { timestamp: "2023-11-14T22:10:00.000Z", state: "SUCCEEDED", ctx: { durationMs: 3000 } },
+    ];
+    const timeline = buildUnifiedTimeline(events, baseJob);
+    expect(timeline).toHaveLength(6);
+    expect(timeline[0].kind).toBe("submitted");
+    expect(timeline[1].kind).toBe("approval_requested");
+    expect(timeline[1].status).toBe("warning");
+    expect(timeline[2].kind).toBe("approved");
+    expect(timeline[2].title).toContain("alice");
+    expect(timeline[3].kind).toBe("dispatched");
+    expect(timeline[3].title).toContain("w-1");
+    expect(timeline[4].kind).toBe("executing");
+    expect(timeline[5].kind).toBe("succeeded");
+    expect(timeline[5].title).toContain("3000ms");
+    expect(timeline[5].status).toBe("current");
+    // All before last should be completed (except warning for approval)
+    expect(timeline[0].status).toBe("completed");
+    expect(timeline[3].status).toBe("completed");
+  });
+
+  it("denied flow has error status", () => {
+    const events: JobEvent[] = [
+      { timestamp: "2023-11-14T22:00:00.000Z", state: "PENDING" },
+      { timestamp: "2023-11-14T22:01:00.000Z", state: "DENIED", ctx: { reason: "PII detected" } },
+    ];
+    const deniedJob = { ...baseJob, status: "denied" as const };
+    const timeline = buildUnifiedTimeline(events, deniedJob);
+    expect(timeline).toHaveLength(2);
+    expect(timeline[1].kind).toBe("denied");
+    expect(timeline[1].status).toBe("error");
+    expect(timeline[1].title).toContain("PII detected");
+  });
+
+  it("zero-event fallback produces timeline from job fields", () => {
+    const timeline = buildUnifiedTimeline([], baseJob);
+    expect(timeline.length).toBeGreaterThanOrEqual(1);
+    expect(timeline[0].kind).toBe("submitted");
+    expect(timeline[0].title).toContain("job.test");
+    // Succeeded job should have a second event
+    expect(timeline.length).toBe(2);
+    expect(timeline[1].kind).toBe("succeeded");
+    expect(timeline[1].status).toBe("current");
+  });
+
+  it("zero-event fallback for pending job produces single event", () => {
+    const pendingJob = { ...baseJob, status: "pending" as const };
+    const timeline = buildUnifiedTimeline([], pendingJob);
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0].kind).toBe("submitted");
+    expect(timeline[0].status).toBe("current");
+  });
+
+  it("events without ctx produce generic titles", () => {
+    const events: JobEvent[] = [
+      { timestamp: "2023-11-14T22:00:00.000Z", state: "PENDING" },
+      { timestamp: "2023-11-14T22:01:00.000Z", state: "RUNNING" },
+      { timestamp: "2023-11-14T22:05:00.000Z", state: "FAILED" },
+    ];
+    const failedJob = { ...baseJob, status: "failed" as const };
+    const timeline = buildUnifiedTimeline(events, failedJob);
+    expect(timeline).toHaveLength(3);
+    expect(timeline[0].title).toBe("Submitted");
+    expect(timeline[1].title).toBe("Executing");
+    expect(timeline[2].title).toBe("Failed");
+    expect(timeline[2].status).toBe("error");
   });
 });

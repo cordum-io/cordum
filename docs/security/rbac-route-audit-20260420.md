@@ -15,10 +15,13 @@ Durable checklist for the remaining enterprise RBAC/license hardening sweep. Thi
 - **67** handler callsites across **27** gateway files are in scope.
 - Recommended disposition: **59 `MIGRATE`** + **8 `KEEP_ROLE_WITH_JUSTIFICATION`**.
 - **16** rows are comment/test-defined routes that are not currently visible in `gateway.go` route registration; they are still included because the task asked for every handler callsite in `core/controlplane/gateway/`, not only wired routes.
+- **Step-2 migration status (repo HEAD `93cb19f`)**: all **59** audited `MIGRATE` callsites now use permission-aware guards; the remaining raw-role callsites are the **8** intentional `KEEP_ROLE_WITH_JUSTIFICATION` entries below. During implementation I also found an extra MCP approval approve/reject shim outside the original 67-row audit and migrated it to `PermJobsApprove` so the live gateway raw-role count is still **8**.
 
 ## Existing permission namespaces to reuse
 
 - `PermWorkflowsWrite` (`workflows.write`)
+- `PermJobsApprove` (`jobs.approve`)
+- `PermAgentsDelegate` (`agents.delegate`)
 - `PermConfigRead` (`config.read`)
 - `PermPolicyRead` (`policy.read`)
 - `PermPolicyWrite` (`policy.write`)
@@ -55,7 +58,7 @@ Durable checklist for the remaining enterprise RBAC/license hardening sweep. Thi
 | `core/controlplane/gateway/handlers_auth.go:1070` | `DELETE /api/v1/auth/keys/{id}` | admin + keyStore | `PermAPIKeysWrite` (`apiKeys.write`) | Identity / access | `MIGRATE` | Revoke belongs with the same API-key management permission as create. |
 | `core/controlplane/gateway/handlers_chat.go:192` | `POST /api/v1/workflow-runs/{id}/chat` | admin, operator | `PermWorkflowsWrite` (`workflows.write`) | Workflow runtime | `MIGRATE` | Posting chat mutates run history; reuse the existing workflow write permission. |
 | `core/controlplane/gateway/handlers_config.go:111` | `GET /api/v1/config` | store-only preflight (nil roles) + configSvc | `PermConfigRead` (`config.read`) | Config service | `KEEP_ROLE_WITH_JUSTIFICATION` | This callsite is not a legacy role decision; the real permission split already happens lower in the handler. |
-| `core/controlplane/gateway/handlers_delegation.go:222` | `POST /api/v1/agents/revoke-delegation` | admin | `PermAgentsWrite` (`agents.write`) | Agent delegation / trust | `MIGRATE` | Revoking a delegation token is an agent-trust mutation and should live with other agent write operations. |
+| `core/controlplane/gateway/handlers_delegation.go:222` | `POST /api/v1/agents/revoke-delegation` | admin | `PermAgentsDelegate` (`agents.delegate`) | Agent delegation / trust | `MIGRATE` | Revoking a delegation token belongs with the delegation-issue surface, not the generic agent-profile write scope. |
 
 ### Jobs, licensing, locks, and compliance
 

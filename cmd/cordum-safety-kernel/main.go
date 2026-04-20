@@ -16,11 +16,11 @@ func main() {
 	logging.Init("safety-kernel")
 	slog.Info("cordum safety kernel starting...")
 	buildinfo.Log("cordum-safety-kernel")
-	// Fail fast if strict=enforce and the trust store is empty: with no
-	// keys to verify against, every bundle will be refused — better to
-	// surface that as a clear boot error than to silently drop policy.
+	// Enforce mode requires at least one trusted public key — otherwise
+	// every bundle would be rejected at load time. Refuse to start so
+	// the operator notices the misconfiguration immediately.
 	if err := policysign.CheckKernelBoot(); err != nil {
-		slog.Error("safety-kernel refused to start", "error", err)
+		slog.Error("safety kernel: policy signing preflight failed", "error", err)
 		os.Exit(1)
 	}
 	cfg := config.Load()

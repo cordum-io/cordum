@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
@@ -102,7 +103,7 @@ func TestHandleAuthConfigDefaults(t *testing.T) {
 		t.Fatalf("expected 200 got=%d body=%s", rr.Code, rr.Body.String())
 	}
 
-	var resp AuthConfig
+	var resp auth.AuthConfig
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode json: %v", err)
 	}
@@ -119,7 +120,7 @@ func TestHandleAuthConfigDefaults(t *testing.T) {
 
 func TestApiKeyUnaryInterceptor(t *testing.T) {
 	t.Setenv("CORDUM_API_KEYS", "secret")
-	provider, err := newBasicAuthProvider("default")
+	provider, err := auth.NewBasicAuthProvider("default")
 	if err != nil {
 		t.Fatalf("auth init: %v", err)
 	}
@@ -158,32 +159,34 @@ type stubUserStore struct {
 	closed bool
 }
 
-func (s *stubUserStore) GetByUsername(_ context.Context, _, _ string) (*User, error) {
+func (s *stubUserStore) GetByUsername(_ context.Context, _, _ string) (*auth.User, error) {
 	if s.closed {
-		return nil, ErrUserNotFound
+		return nil, auth.ErrUserNotFound
 	}
-	return &User{ID: "u1", Username: "admin"}, nil
+	return &auth.User{ID: "u1", Username: "admin"}, nil
 }
 
-func (s *stubUserStore) GetByEmail(_ context.Context, _, _ string) (*User, error) {
-	return nil, ErrUserNotFound
+func (s *stubUserStore) GetByEmail(_ context.Context, _, _ string) (*auth.User, error) {
+	return nil, auth.ErrUserNotFound
 }
 
-func (s *stubUserStore) GetByID(_ context.Context, _ string) (*User, error) {
-	return nil, ErrUserNotFound
+func (s *stubUserStore) GetByID(_ context.Context, _ string) (*auth.User, error) {
+	return nil, auth.ErrUserNotFound
 }
 
-func (s *stubUserStore) Create(_ context.Context, _ *User, _ string) error { return nil }
+func (s *stubUserStore) Create(_ context.Context, _ *auth.User, _ string) error { return nil }
 
-func (s *stubUserStore) List(_ context.Context, _ string) ([]*User, error) { return nil, nil }
+func (s *stubUserStore) List(_ context.Context, _ string) ([]*auth.User, error) { return nil, nil }
 
-func (s *stubUserStore) Update(_ context.Context, _ *User) error { return nil }
+func (s *stubUserStore) Update(_ context.Context, _ *auth.User) error { return nil }
 
 func (s *stubUserStore) Delete(_ context.Context, _ string) error { return nil }
 
 func (s *stubUserStore) UpdatePassword(_ context.Context, _, _ string) error { return nil }
 
-func (s *stubUserStore) ValidatePassword(_ context.Context, _ *User, _ string) bool { return false }
+func (s *stubUserStore) ValidatePassword(_ context.Context, _ *auth.User, _ string) bool {
+	return false
+}
 
 func (s *stubUserStore) Close() error {
 	s.closed = true
@@ -210,7 +213,7 @@ func TestSeedDefaultAdminUserRejectsEmptyPassword(t *testing.T) {
 	t.Setenv("CORDUM_ADMIN_USERNAME", "admin")
 	t.Setenv("CORDUM_ADMIN_PASSWORD", "")
 	us := &stubUserStore{}
-	err := seedDefaultAdminUser(context.Background(), us, "default")
+	err := auth.SeedDefaultAdminUser(context.Background(), us, "default")
 	if err == nil {
 		t.Fatal("expected error for empty admin password")
 	}
@@ -439,10 +442,10 @@ func TestRateLimitAuthOrdering(t *testing.T) {
 
 func TestRateLimitKeyTenantBased(t *testing.T) {
 	// Verify that authenticated requests use tenant-based keys.
-	req1 := requestWithAuthContext(&AuthContext{Tenant: "tenant-a"})
+	req1 := requestWithAuthContext(&auth.AuthContext{Tenant: "tenant-a"})
 	req1.RemoteAddr = "10.0.0.1:12345"
 
-	req2 := requestWithAuthContext(&AuthContext{Tenant: "tenant-b"})
+	req2 := requestWithAuthContext(&auth.AuthContext{Tenant: "tenant-b"})
 	req2.RemoteAddr = "10.0.0.1:12345"
 
 	key1 := rateLimitKey(req1)
@@ -643,7 +646,7 @@ func TestGatewaySafetyTransportCredentials(t *testing.T) {
 func TestAuthConfigReflectsUserStore(t *testing.T) {
 	t.Setenv("CORDUM_API_KEY", "test-key-12345678901234567890123456789012")
 	t.Setenv("CORDUM_ALLOW_INSECURE_NO_AUTH", "")
-	basic, err := newBasicAuthProvider("default")
+	basic, err := auth.NewBasicAuthProvider("default")
 	if err != nil {
 		t.Fatalf("newBasicAuthProvider: %v", err)
 	}
@@ -661,8 +664,8 @@ func TestAuthConfigReflectsUserStore(t *testing.T) {
 	}
 
 	// Verify through interface chain (mirrors handleAuthConfig path)
-	var provider AuthProvider = basic
-	configProvider, ok := provider.(AuthConfigProvider)
+	var provider auth.AuthProvider = basic
+	configProvider, ok := provider.(auth.AuthConfigProvider)
 	if !ok {
 		t.Fatal("BasicAuthProvider does not implement AuthConfigProvider")
 	}

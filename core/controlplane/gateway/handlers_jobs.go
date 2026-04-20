@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/infra/artifacts"
@@ -58,7 +59,7 @@ func safeUnmarshal(data []byte, v any, field, jobID string) bool {
 // --- Handlers ---
 
 func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermWorkersRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
 		return
 	}
 	// Prefer Redis snapshot (consistent across all replicas). The
@@ -75,7 +76,7 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 			items = append(items, s.workerStatusFromSummary(r.Context(), ws, snap.CapturedAt))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		writeJSON(w, map[string]any{"items": items})
+		writeJSON(w, map[string]any{"items": workerSummariesToHeartbeats(workers)})
 		return
 	}
 	if err != nil {
@@ -95,7 +96,7 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 		items = append(items, s.workerStatusResponse(r.Context(), hb, seenCopy[hb.GetWorkerId()]))
 	}
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, map[string]any{"items": items})
+	writeJSON(w, map[string]any{"items": out})
 }
 
 func (s *server) activeWorkersSnapshot(now time.Time) []*pb.Heartbeat {
@@ -130,6 +131,10 @@ func (s *server) activeWorkersSnapshot(now time.Time) []*pb.Heartbeat {
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionSystemStatus) {
+		return
+	}
+
 	// Check cache first — avoids repeated Redis PING + snapshot reads on
 	// every dashboard poll (dashboard polls /api/v1/status every 5-10s).
 	if cached := s.statusCacheObj.Get(); cached != nil {
@@ -261,8 +266,52 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Cache the response for subsequent requests
-	s.statusCacheObj.Set(resp)
+	// HA-aware fields (additive — existing consumers ignore unknown fields).
+	resp["instance_id"] = s.instanceID
+	resp["rate_limiter"] = map[string]any{
+		"mode": rateLimiterMode(s.apiRL),
+	}
+
+	// Circuit breaker status from Redis (read-only).
+	var cbRedis redis.UniversalClient
+	if s.jobStore != nil {
+		cbRedis = s.jobStore.Client()
+	}
+	resp["circuit_breakers"] = map[string]any{
+		"input":  readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety"),
+		"output": readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety:output"),
+	}
+
+	// Input fail-open counter from Redis (incremented by scheduler).
+	if cbRedis != nil {
+		if val, err := cbRedis.Get(r.Context(), "cordum:scheduler:input_fail_open_total").Int64(); err == nil {
+			resp["input_fail_open_total"] = val
+		}
+	}
+
+	// HA environment variables (read-only, startup-only).
+	haEnv := map[string]any{
+		"redis_pool_size":      os.Getenv("REDIS_POOL_SIZE"),
+		"redis_min_idle_conns": os.Getenv("REDIS_MIN_IDLE_CONNS"),
+		"audit_transport":      os.Getenv("AUDIT_TRANSPORT"),
+	}
+	resp["ha_env"] = haEnv
+
+	// Worker snapshot metadata (writer ID + age).
+	if snap, snapErr := s.snapshotFromRedis(); snapErr == nil && snap != nil {
+		resp["snapshot_meta"] = map[string]any{
+			"writer_id":   snap.WriterID,
+			"captured_at": snap.CapturedAt,
+		}
+	}
+
+	// Replica registry from Redis SCAN.
+	if s.instanceRegistry != nil && s.jobStore != nil {
+		replicas, err := registry.ListAllInstances(r.Context(), s.jobStore.Client())
+		if err == nil {
+			resp["replicas"] = replicas
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Cache", "MISS")
@@ -348,7 +397,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "job store unavailable")
 		return
 	}
-	if !s.requirePermissionOrRole(w, r, PermJobsRead) {
+	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead) {
 		return
 	}
 	limit, _ := parsePagination(r, 50)
@@ -436,7 +485,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermJobsRead) {
+	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead) {
 		return
 	}
 	id, ok := requirePathParam(w, r, "id")
@@ -694,7 +743,7 @@ func (s *server) handleListJobDecisions(w http.ResponseWriter, r *http.Request) 
 		writeErrorJSON(w, http.StatusServiceUnavailable, "job store unavailable")
 		return
 	}
-	if !s.requirePermissionOrRole(w, r, PermJobsRead) {
+	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead) {
 		return
 	}
 	id, ok := requirePathParam(w, r, "id")
@@ -715,8 +764,45 @@ func (s *server) handleListJobDecisions(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, decisions)
 }
 
+func (s *server) handleListJobEvents(w http.ResponseWriter, r *http.Request) {
+	if s.jobStore == nil {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "job store unavailable")
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "missing id")
+		return
+	}
+
+	// Check job exists via state — empty state means no such job.
+	state, err := s.jobStore.GetState(r.Context(), id)
+	if err != nil || state == "" {
+		writeErrorJSON(w, http.StatusNotFound, "job not found")
+		return
+	}
+
+	// Tenant access check — same pattern as handleGetJob.
+	if tenant, _ := s.jobStore.GetTenant(r.Context(), id); tenant != "" {
+		if err := s.requireTenantAccess(r, tenant); err != nil {
+			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+			return
+		}
+	}
+
+	events, err := s.jobStore.GetJobEvents(r.Context(), id)
+	if err != nil {
+		logging.Error("api-gateway", "job events list failed", "error", err, "job_id", id)
+		writeErrorJSON(w, http.StatusInternalServerError, "failed to list events")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	writeJSON(w, map[string]any{"events": events})
+}
+
 func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermMemoryRead, []string{"admin"}, s.memStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermMemoryRead, []string{"admin"}, s.memStore) {
 		return
 	}
 
@@ -757,7 +843,7 @@ func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 		ptr = store.PointerForKey(key)
 	}
 
-	if auth := authFromRequest(r); auth != nil {
+	if auth := auth.FromRequest(r); auth != nil {
 		slog.Info("memory read", "tenant", auth.Tenant, "principal", auth.PrincipalID, "key", key, "ptr", ptr)
 	} else {
 		slog.Info("memory read", "tenant", "", "principal", "", "key", key, "ptr", ptr)
@@ -1013,8 +1099,8 @@ func (s *server) handlePutArtifact(w http.ResponseWriter, r *http.Request) {
 		Retention:   parseRetention(req.Retention),
 		Labels:      req.Labels,
 	}
-	auth := authFromRequest(r)
-	tenant := strings.TrimSpace(headerValue(r, "X-Tenant-ID"))
+	auth := auth.FromRequest(r)
+	tenant := strings.TrimSpace(auth.HeaderValue(r, "X-Tenant-ID"))
 	allowCrossTenant := false
 	if auth != nil {
 		if auth.Tenant != "" {
@@ -1082,8 +1168,8 @@ func (s *server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	auth := authFromRequest(r)
-	tenant := strings.TrimSpace(headerValue(r, "X-Tenant-ID"))
+	auth := auth.FromRequest(r)
+	tenant := strings.TrimSpace(auth.HeaderValue(r, "X-Tenant-ID"))
 	allowCrossTenant := false
 	if auth != nil {
 		if auth.Tenant != "" {
@@ -1107,7 +1193,7 @@ func (s *server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermJobsWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin") {
 		return
 	}
 	id, ok := requirePathParam(w, r, "id")
@@ -1197,7 +1283,7 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "job store or bus unavailable")
 		return
 	}
-	if !s.requirePermissionOrRole(w, r, PermJobsWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin") {
 		return
 	}
 	jobID, ok := requirePathParam(w, r, "id")
@@ -1311,7 +1397,11 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		newReq.Meta.Labels = nil
 	}
 
-	if err := s.jobStore.SetState(r.Context(), newJobID, model.JobStatePending); err != nil {
+	if err := s.jobStore.SetStateWithContext(r.Context(), newJobID, model.JobStatePending, &model.StateEventContext{
+		Topic:   newReq.GetTopic(),
+		ActorID: policyActorID(r),
+		Reason:  "remediation of job " + jobID,
+	}); err != nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to initialize job state")
 		return
 	}
@@ -1357,9 +1447,9 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	// RBAC: custom roles may submit when they hold jobs.write. When advanced
 	// RBAC is disabled, preserve the historical admin/user fallback.
-	if !s.requirePermissionOrRole(w, r, PermJobsWrite, "admin", "user") {
+	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		actorID, role := "anonymous", "none"
-		if ac := authFromRequest(r); ac != nil {
+		if ac := auth.FromRequest(r); ac != nil {
 			actorID, role = ac.PrincipalID, ac.Role
 		}
 		s.appendAuditEntryNamed(r.Context(), "submit_denied", "job", "", "", actorID, role, "job submit denied: permission or role check failed")
@@ -1568,6 +1658,12 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			meta.Labels["agent_id"] = agent.ID
 		}
+	}
+
+	if req.Labels, err = s.applySubmitDelegation(r.Context(), orgID, req.Labels["agent_id"], req.DelegationToken, req.Labels, meta); err != nil {
+		status, message := submitDelegationErrorStatus(err)
+		writeErrorJSON(w, status, message)
+		return
 	}
 
 	// Inject job content into labels so the safety kernel's tag deriver can
@@ -1828,8 +1924,13 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Set initial state
-	if err := s.jobStore.SetState(r.Context(), jobID, model.JobStatePending); err != nil {
-		slog.Error("failed to initialize job state", "job_id", jobID, "error", err)
+	if err := s.jobStore.SetStateWithContext(r.Context(), jobID, model.JobStatePending, &model.StateEventContext{
+		Topic:        req.Topic,
+		Capabilities: append([]string{}, req.Requires...),
+		RiskTags:     append([]string{}, req.RiskTags...),
+		ActorID:      actorID,
+	}); err != nil {
+		logging.Error("api-gateway", "failed to initialize job state", "job_id", jobID, "error", err)
 		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to initialize job state")
 		return
 	}
@@ -1904,8 +2005,11 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.bus.Publish(capsdk.SubjectSubmit, packet); err != nil {
-		slog.Error("job publish failed", "job_id", jobID, "error", err)
-		_ = s.jobStore.SetState(r.Context(), jobID, model.JobStateFailed)
+		logging.Error("api-gateway", "job publish failed", "job_id", jobID, "error", err)
+		_ = s.jobStore.SetStateWithContext(r.Context(), jobID, model.JobStateFailed, &model.StateEventContext{
+			ErrorCode: "bus_publish_failed",
+			ErrorMsg:  "failed to enqueue job on message bus",
+		})
 		writeErrorJSON(w, http.StatusServiceUnavailable, "failed to enqueue job")
 		return
 	}

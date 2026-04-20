@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -116,13 +117,13 @@ func TestHandleSession_ValidSession(t *testing.T) {
 	s := &server{auth: provider, tenant: "default"}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
-	authCtx := &AuthContext{
+	authCtx := &auth.AuthContext{
 		APIKey:      "session-key",
 		Tenant:      "default",
 		PrincipalID: "bob",
 		Role:        "viewer",
 	}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleSession(rec, req)
@@ -217,7 +218,7 @@ func TestBasicAuthProvidesAuthConfig_NoKeys(t *testing.T) {
 }
 
 func TestSessionTokenCryptoRandom(t *testing.T) {
-	user := &User{
+	user := &auth.User{
 		ID:       "user-1",
 		Username: "test",
 		Tenant:   "default",
@@ -259,7 +260,7 @@ func (failingReader) Read([]byte) (int, error) {
 }
 
 func TestBuildUserLoginResponseRandFailure(t *testing.T) {
-	user := &User{
+	user := &auth.User{
 		ID:       "user-1",
 		Username: "test",
 		Tenant:   "default",
@@ -276,27 +277,27 @@ func TestBuildUserLoginResponseRandFailure(t *testing.T) {
 // timingUserStore returns a user with a bcrypt hash for "exists" and
 // ErrUserNotFound for anything else, so we can measure bcrypt timing.
 type timingUserStore struct {
-	user *User
+	user *auth.User
 }
 
-func (s *timingUserStore) GetByUsername(_ context.Context, username, _ string) (*User, error) {
+func (s *timingUserStore) GetByUsername(_ context.Context, username, _ string) (*auth.User, error) {
 	if username == "exists" {
 		return s.user, nil
 	}
-	return nil, ErrUserNotFound
+	return nil, auth.ErrUserNotFound
 }
-func (s *timingUserStore) GetByEmail(_ context.Context, _, _ string) (*User, error) {
-	return nil, ErrUserNotFound
+func (s *timingUserStore) GetByEmail(_ context.Context, _, _ string) (*auth.User, error) {
+	return nil, auth.ErrUserNotFound
 }
-func (s *timingUserStore) GetByID(_ context.Context, _ string) (*User, error) {
-	return nil, ErrUserNotFound
+func (s *timingUserStore) GetByID(_ context.Context, _ string) (*auth.User, error) {
+	return nil, auth.ErrUserNotFound
 }
-func (s *timingUserStore) Create(_ context.Context, _ *User, _ string) error   { return nil }
-func (s *timingUserStore) List(_ context.Context, _ string) ([]*User, error)   { return nil, nil }
-func (s *timingUserStore) Update(_ context.Context, _ *User) error             { return nil }
-func (s *timingUserStore) Delete(_ context.Context, _ string) error            { return nil }
-func (s *timingUserStore) UpdatePassword(_ context.Context, _, _ string) error { return nil }
-func (s *timingUserStore) ValidatePassword(_ context.Context, u *User, password string) bool {
+func (s *timingUserStore) Create(_ context.Context, _ *auth.User, _ string) error { return nil }
+func (s *timingUserStore) List(_ context.Context, _ string) ([]*auth.User, error) { return nil, nil }
+func (s *timingUserStore) Update(_ context.Context, _ *auth.User) error           { return nil }
+func (s *timingUserStore) Delete(_ context.Context, _ string) error               { return nil }
+func (s *timingUserStore) UpdatePassword(_ context.Context, _, _ string) error    { return nil }
+func (s *timingUserStore) ValidatePassword(_ context.Context, u *auth.User, password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) == nil
 }
 func (s *timingUserStore) Close() error { return nil }
@@ -304,12 +305,12 @@ func (s *timingUserStore) Close() error { return nil }
 func TestLoginTimingEqualization(t *testing.T) {
 	// Create a user with the same bcrypt cost as the timing dummy hash
 	// to ensure timing equalization works correctly.
-	hash, err := bcrypt.GenerateFromPassword([]byte("correct-password"), bcryptCostFromEnv())
+	hash, err := bcrypt.GenerateFromPassword([]byte("correct-password"), auth.BcryptCostFromEnv())
 	if err != nil {
 		t.Fatalf("generate hash: %v", err)
 	}
 	us := &timingUserStore{
-		user: &User{
+		user: &auth.User{
 			ID:           "u-timing",
 			Username:     "exists",
 			Tenant:       "default",
@@ -357,7 +358,7 @@ func TestLoginTimingEqualization(t *testing.T) {
 
 // ---- Login integration tests with RedisUserStore ----
 
-func setupLoginIntegration(t *testing.T) (*server, *RedisUserStore) {
+func setupLoginIntegration(t *testing.T) (*server, *auth.RedisUserStore) {
 	t.Helper()
 	store, _ := newTestUserStore(t)
 	provider := newBasicAuthForTest(t, map[string]string{
@@ -373,7 +374,7 @@ func TestLoginHandler_BruteForce429(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a user to trigger the user-auth path.
-	user := &User{Username: "bruteforce-target", Tenant: "default", Role: "user"}
+	user := &auth.User{Username: "bruteforce-target", Tenant: "default", Role: "user"}
 	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -406,7 +407,7 @@ func TestLoginHandler_DisabledUser403(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a disabled user.
-	user := &User{Username: "disabled-user", Tenant: "default", Role: "user", Disabled: true}
+	user := &auth.User{Username: "disabled-user", Tenant: "default", Role: "user", Disabled: true}
 	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -427,7 +428,7 @@ func TestLoginHandler_SessionTokenCreated(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a user.
-	user := &User{Username: "session-user", Tenant: "default", Role: "admin"}
+	user := &auth.User{Username: "session-user", Tenant: "default", Role: "admin"}
 	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -464,7 +465,7 @@ func TestLoginHandler_APIKeyFallback(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a user (different password) so the user-auth path runs but fails.
-	user := &User{Username: "some-user", Tenant: "default", Role: "user"}
+	user := &auth.User{Username: "some-user", Tenant: "default", Role: "user"}
 	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -496,22 +497,22 @@ type stubKeyStore struct {
 	revokeErr error
 }
 
-func (s *stubKeyStore) List(_ context.Context, _ string) ([]*ManagedKey, error) { return nil, nil }
-func (s *stubKeyStore) Create(_ context.Context, _ *ManagedKey, _ string) error { return nil }
-func (s *stubKeyStore) Revoke(_ context.Context, _ string, _ string) error      { return s.revokeErr }
-func (s *stubKeyStore) ValidateKey(_ context.Context, _ string) (*ManagedKey, error) {
-	return nil, ErrKeyNotFound
+func (s *stubKeyStore) List(_ context.Context, _ string) ([]*auth.ManagedKey, error) { return nil, nil }
+func (s *stubKeyStore) Create(_ context.Context, _ *auth.ManagedKey, _ string) error { return nil }
+func (s *stubKeyStore) Revoke(_ context.Context, _ string, _ string) error           { return s.revokeErr }
+func (s *stubKeyStore) ValidateKey(_ context.Context, _ string) (*auth.ManagedKey, error) {
+	return nil, auth.ErrKeyNotFound
 }
 func (s *stubKeyStore) RecordUsage(_ context.Context, _ string) error { return nil }
 
 func TestHandleRevokeKeyNotFound(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.tenant = "default"
-	s.keyStore = &stubKeyStore{revokeErr: ErrKeyNotFound}
+	s.keyStore = &stubKeyStore{revokeErr: auth.ErrKeyNotFound}
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/auth/keys/nonexistent", nil)
 	req.SetPathValue("id", "nonexistent")
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, &AuthContext{
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, &auth.AuthContext{
 		Role:   "admin",
 		Tenant: "default",
 	}))
@@ -530,7 +531,7 @@ func TestHandleRevokeKeyInternalError(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/auth/keys/some-id", nil)
 	req.SetPathValue("id", "some-id")
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, &AuthContext{
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, &auth.AuthContext{
 		Role:   "admin",
 		Tenant: "default",
 	}))
@@ -557,7 +558,7 @@ func TestHandleRevokeKeyViewerDenied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 	s.handleRevokeKey(rec, req)
 
@@ -585,7 +586,7 @@ func TestLogin_SetsHttpOnlyCookie(t *testing.T) {
 	cookies := rec.Result().Cookies()
 	var sessionCookie *http.Cookie
 	for _, c := range cookies {
-		if c.Name == sessionCookieName {
+		if c.Name == auth.SessionCookieName {
 			sessionCookie = c
 			break
 		}
@@ -611,7 +612,7 @@ func TestLogin_UserAuth_SetsHttpOnlyCookie(t *testing.T) {
 	s, store := setupLoginIntegration(t)
 	ctx := context.Background()
 
-	user := &User{Username: "cookie-user", Tenant: "default", Role: "admin"}
+	user := &auth.User{Username: "cookie-user", Tenant: "default", Role: "admin"}
 	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
@@ -629,7 +630,7 @@ func TestLogin_UserAuth_SetsHttpOnlyCookie(t *testing.T) {
 	cookies := rec.Result().Cookies()
 	var sessionCookie *http.Cookie
 	for _, c := range cookies {
-		if c.Name == sessionCookieName {
+		if c.Name == auth.SessionCookieName {
 			sessionCookie = c
 			break
 		}
@@ -660,7 +661,7 @@ func TestLogout_ClearsCookie(t *testing.T) {
 	cookies := rec.Result().Cookies()
 	var sessionCookie *http.Cookie
 	for _, c := range cookies {
-		if c.Name == sessionCookieName {
+		if c.Name == auth.SessionCookieName {
 			sessionCookie = c
 			break
 		}

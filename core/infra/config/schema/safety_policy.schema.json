@@ -212,6 +212,7 @@
           "additionalProperties": {"type": "number"}
         },
         "secrets_present": {"type": "boolean"},
+        "predicate": {"type": "string"},
         "mcp": {"$ref": "#/definitions/mcpPolicy"}
       }
     },

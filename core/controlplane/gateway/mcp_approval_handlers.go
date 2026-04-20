@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/model"
 	"github.com/redis/go-redis/v9"
 )
@@ -133,7 +134,7 @@ func (h *mcpApprovalHandler) List(w http.ResponseWriter, r *http.Request) {
 // allowed to see approvals for the given tenant. Cross-tenant admins
 // always pass; otherwise the caller's tenant must match exactly.
 func (h *mcpApprovalHandler) callerMayViewTenant(r *http.Request, tenant string) bool {
-	auth := authFromRequest(r)
+	auth := auth.FromRequest(r)
 	if auth == nil {
 		return false
 	}
@@ -240,7 +241,7 @@ func writeJSONObject(w http.ResponseWriter, status int, v any) {
 // approvals.
 func (s *server) requireMCPApprovalHandler(w http.ResponseWriter, r *http.Request, adminOnly bool) *mcpApprovalHandler {
 	if adminOnly {
-		if !s.requirePermissionOrRole(w, r, PermJobsApprove, "admin") {
+		if !s.requirePermissionOrRole(w, r, auth.PermJobsApprove, "admin") {
 			return nil
 		}
 	}

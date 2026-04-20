@@ -2,61 +2,9 @@ import { useState, useCallback } from "react";
 import { RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
+import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { useRetryDLQ, useDeleteDLQ } from "../../hooks/useDLQ";
 import { logger } from "../../lib/logger";
-
-// ---------------------------------------------------------------------------
-// Confirm dialog
-// ---------------------------------------------------------------------------
-
-function ConfirmDialog({
-  title,
-  message,
-  confirmLabel,
-  variant,
-  isPending,
-  onConfirm,
-  onCancel,
-}: {
-  title: string;
-  message: string;
-  confirmLabel: string;
-  variant: "primary" | "danger";
-  isPending: boolean;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <Card className="relative z-10 w-full max-w-sm">
-        <div className="space-y-4">
-          <h3 className="font-display text-lg font-semibold text-ink">
-            {title}
-          </h3>
-          <p className="text-sm text-muted-foreground">{message}</p>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onCancel}
-              disabled={isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant={variant}
-              size="sm"
-              onClick={onConfirm}
-              disabled={isPending}
-            >
-              {isPending ? "Processing..." : confirmLabel}
-            </Button>
-          </div>
-        </div>
-      </Card>
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Single-row action buttons
@@ -122,7 +70,7 @@ export function DLQRowActions({
       <div className="flex items-center gap-1">
         {feedback && (
           <span
-            className={`text-xs font-semibold ${
+            className={`text-[10px] font-semibold ${
               feedback.type === "success" ? "text-success" : "text-danger"
             }`}
           >
@@ -152,10 +100,11 @@ export function DLQRowActions({
 
       {showDeleteConfirm && (
         <ConfirmDialog
+          open={showDeleteConfirm}
           title="Delete DLQ Entry"
           message="Are you sure you want to delete this entry? This action cannot be undone."
           confirmLabel="Delete"
-          variant="danger"
+          confirmVariant="destructive"
           isPending={deleteDLQ.isPending}
           onConfirm={handleDelete}
           onCancel={() => setShowDeleteConfirm(false)}

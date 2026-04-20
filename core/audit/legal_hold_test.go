@@ -246,6 +246,10 @@ func TestIsUnderHold_EmptyTenant(t *testing.T) {
 // as they would without the hold. Legal hold is a retention-policy
 // flag, not a pipeline filter — it must never shift seq numbering or
 // the chain's verifiability collapses.
+//
+// Regression guard: if a future change accidentally routes held-tenant
+// events around Chainer.Append (e.g. to short-circuit to a long-term
+// retention store), this test detects the seq gap.
 func TestLegalHold_ChainLinkageUnaffected(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {
@@ -260,6 +264,10 @@ func TestLegalHold_ChainLinkageUnaffected(t *testing.T) {
 	chainer := NewChainer(client, "lh:chain:")
 	ctx := context.Background()
 
+	// Place tenant under legal hold BEFORE appending any events so the
+	// hold is active throughout. If Append consulted the hold store
+	// and took a different path, the chain would shift — that would
+	// show up as a broken prev_hash.
 	if _, err := holdStore.CreateHold(ctx, "lh-tenant", "regulatory inquiry 2026-Q2", "admin@cordum.io"); err != nil {
 		t.Fatalf("create hold: %v", err)
 	}
@@ -297,6 +305,9 @@ func TestLegalHold_ChainLinkageUnaffected(t *testing.T) {
 		hashes = append(hashes, ev.EventHash)
 	}
 
+	// Verify every event_hash recomputes — if the held-tenant path
+	// ever mutates payloads (e.g. to tag them with a hold_id), the
+	// hash would stop matching and this assertion catches it.
 	stream, err := client.XRange(ctx, chainer.StreamKey("lh-tenant"), "-", "+").Result()
 	if err != nil {
 		t.Fatalf("xrange: %v", err)

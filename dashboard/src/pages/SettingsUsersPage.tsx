@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { get, post, put, del } from "@/api/client";
+import { get, post, del } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
@@ -13,16 +13,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonTable, SkeletonCard } from "@/components/ui/Skeleton";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { DialogOverlay } from "@/components/ui/DialogOverlay";
-import { Input } from "@/components/ui/Input";
-import { Select } from "@/components/ui/Select";
-import { Tabs } from "@/components/ui/Tabs";
-import { LabeledField } from "@/components/ui/LabeledField";
-import { StatTile } from "@/components/ui/StatTile";
-import { InstrumentCard, InstrumentCardBody } from "@/components/ui/InstrumentCard";
-import { Checkbox } from "@/components/ui/Checkbox";
-import { UpgradePrompt } from "@/components/UpgradePrompt";
-import { useLicense } from "@/hooks/useLicense";
-import { Search, UserPlus, Users, Shield, Trash2, X, Mail, Key, Plus, Check } from "lucide-react";
+import { Search, UserPlus, Users, Shield, Trash2, Edit, X, Mail, Key } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { friendlyError } from "@/lib/friendlyError";
@@ -37,22 +28,7 @@ interface User {
   status: "active" | "invited" | "disabled";
 }
 
-interface RoleDefinition {
-  name: string;
-  description: string;
-  permissions: string[];
-  inherits: string[];
-  built_in: boolean;
-  created_at?: string;
-  updated_at?: string;
-}
-
-interface RolesResponse {
-  roles: RoleDefinition[];
-  entitled: boolean;
-}
-
-const BASIC_ROLES: { value: string; label: string; desc: string; color: BadgeVariant }[] = [
+const ROLES: { value: string; label: string; desc: string; color: BadgeVariant }[] = [
   { value: "admin", label: "Admin", desc: "Full access to all resources", color: "warning" },
   { value: "operator", label: "Operator", desc: "Manage jobs, workflows, approvals", color: "healthy" },
   { value: "viewer", label: "Viewer", desc: "Read-only access", color: "info" },
@@ -368,18 +344,8 @@ export default function SettingsUsersPage() {
                         <p className="text-xs text-muted-foreground">{user.email}</p>
                       </div>
                     </td>
-                    <td className="px-5 py-3">
-                      <Select
-                        value={user.role}
-                        onChange={(e) => updateRoleMutation.mutate({ id: user.id, role: e.target.value })}
-                        disabled={updateRoleMutation.isPending}
-                        className="h-7 max-w-[180px] rounded-lg bg-surface-0 px-2 py-0 text-xs font-medium"
-                      >
-                        {BASIC_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                        {roles.filter(r => !r.built_in).map(r => (
-                          <option key={r.name} value={r.name}>{r.name}</option>
-                        ))}
-                      </Select>
+                    <td className="px-4 py-3">
+                      <StatusBadge variant={ROLES.find(r => r.value === user.role)?.color || "muted"}>{user.role}</StatusBadge>
                     </td>
                     <td className="px-5 py-3">
                       <StatusBadge variant={user.status === "active" ? "healthy" : user.status === "invited" ? "warning" : "danger"}>{user.status}</StatusBadge>
@@ -400,95 +366,19 @@ export default function SettingsUsersPage() {
 
       {/* Roles Tab */}
       {activeTab === "roles" && (
-        <div className="space-y-4">
-          {!rbacEntitled && (
-            <UpgradePrompt
-              label="Advanced RBAC"
-              plan={license.data?.plan}
-              forceVisible
-              title="Custom roles require Enterprise"
-              description="Create custom roles with granular permission sets. Built-in roles (Admin, Operator, Viewer) are available on all plans."
-            />
-          )}
-
-          {rolesLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <SkeletonCard /><SkeletonCard /><SkeletonCard />
-            </div>
-          ) : (
-            <>
-              {/* Role cards */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {roles.map((role, i) => (
-                  <motion.div
-                    key={role.name}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.05 }}
-                    className="instrument-card group"
-                  >
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-cordum" />
-                        <span className="text-sm font-display font-semibold text-foreground capitalize">{role.name}</span>
-                        {role.built_in ? (
-                          <StatusBadge variant="info">built-in</StatusBadge>
-                        ) : (
-                          <StatusBadge variant="healthy">custom</StatusBadge>
-                        )}
-                      </div>
-                      {rbacEntitled && (
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            type="button"
-                            onClick={() => openRoleEditor(role)}
-                            className="p-1 rounded hover:bg-surface-2 transition-colors"
-                            title="Edit role"
-                          >
-                            <Shield className="w-3 h-3 text-muted-foreground" />
-                          </button>
-                          {!role.built_in && (
-                            <button
-                              type="button"
-                              onClick={() => setRoleDeleteTarget(role)}
-                              className="p-1 rounded hover:bg-destructive/10 transition-colors"
-                              title="Delete role"
-                            >
-                              <Trash2 className="w-3 h-3 text-destructive" />
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-3">{role.description || "No description"}</p>
-                    {role.inherits.length > 0 && (
-                      <p className="text-xs text-muted-foreground mb-2">
-                        Inherits: {role.inherits.map(r => <span key={r} className="inline-flex items-center gap-0.5 mr-1 px-1.5 py-0.5 rounded bg-surface-2 text-foreground text-[10px] font-medium">{r}</span>)}
-                      </p>
-                    )}
-                    <div className="pt-3 border-t border-border">
-                      <p className="text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest mb-2">Permissions</p>
-                      <div className="flex flex-wrap gap-1">
-                        {role.permissions.includes("admin.*") ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cordum/10 text-cordum text-[10px] font-medium">
-                            <Check className="w-2.5 h-2.5" />All access
-                          </span>
-                        ) : (
-                          role.permissions.slice(0, 6).map(p => (
-                            <span key={p} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-surface-2 text-foreground text-[10px] font-mono">
-                              {p}
-                            </span>
-                          ))
-                        )}
-                        {!role.permissions.includes("admin.*") && role.permissions.length > 6 && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-surface-2 text-muted-foreground text-[10px]">
-                            +{role.permissions.length - 6} more
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {ROLES.map((role, i) => (
+            <motion.div
+              key={role.value}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05 }}
+              className="instrument-card p-5"
+            >
+              <div className="flex items-center gap-2 mb-3">
+                <Shield className="w-4 h-4 text-cordum" />
+                <span className="text-sm font-display font-semibold text-foreground capitalize">{role.label}</span>
+                <StatusBadge variant={role.color}>{role.value}</StatusBadge>
               </div>
 
               {/* Permissions matrix */}
@@ -540,155 +430,46 @@ export default function SettingsUsersPage() {
         </div>
       )}
 
-      {/* Create User Dialog */}
-      <DialogOverlay open={inviteOpen} onClose={() => { setInviteOpen(false); resetInviteForm(); }} label="Create user" className="w-[420px] bg-surface-1 border border-border rounded-xl shadow-2xl p-6">
+      {/* Invite Dialog */}
+      <DialogOverlay open={inviteOpen} onClose={() => setInviteOpen(false)} label="Invite user" className="w-[420px] bg-surface-1 border border-border rounded-xl shadow-2xl p-6">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-display font-semibold text-foreground">Create User</h2>
-          <button type="button" onClick={() => { setInviteOpen(false); resetInviteForm(); }} className="p-1 rounded hover:bg-surface-2 transition-colors">
+          <h3 className="text-sm font-display font-semibold text-foreground">Invite User</h3>
+          <button onClick={() => setInviteOpen(false)} className="p-1 rounded hover:bg-surface-2 transition-colors">
             <X className="w-4 h-4 text-muted-foreground" />
           </button>
         </div>
         <div className="space-y-4">
-          <LabeledField label="Username">
-            <Input
-              type="text"
-              value={inviteUsername}
-              onChange={(e) => setInviteUsername(e.target.value)}
-              placeholder="jsmith"
-              className="bg-surface-2"
-            />
-          </LabeledField>
-          <LabeledField label="Email">
-            <Input
-              type="email"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="user@company.com"
-              icon={<Mail className="h-3.5 w-3.5" />}
-              className="bg-surface-2"
-            />
-          </LabeledField>
-          <LabeledField label="Password">
-            <Input
-              type="password"
-              value={invitePassword}
-              onChange={(e) => setInvitePassword(e.target.value)}
-              placeholder="Minimum 8 characters"
-              icon={<Key className="h-3.5 w-3.5" />}
-              className="bg-surface-2"
-            />
-          </LabeledField>
-          <LabeledField label="Role">
-            <Select
+          <div>
+            <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Email</label>
+            <div className="relative">
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <input
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="user@company.com"
+                className="h-9 w-full pl-9 pr-3 text-sm bg-surface-2 border border-border rounded-md text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider block mb-1.5">Role</label>
+            <select
               value={inviteRole}
               onChange={(e) => setInviteRole(e.target.value)}
-              className="bg-surface-2"
+              className="h-9 w-full px-3 text-sm bg-surface-2 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
             >
-              {BASIC_ROLES.map(r => <option key={r.value} value={r.value}>{r.label} — {r.desc}</option>)}
-            </Select>
-          </LabeledField>
+              {ROLES.map(r => <option key={r.value} value={r.value}>{r.label} — {r.desc}</option>)}
+            </select>
+          </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" size="sm" onClick={() => { setInviteOpen(false); resetInviteForm(); }}>Cancel</Button>
-            <Button variant="primary" size="sm" onClick={() => inviteMutation.mutate()} loading={inviteMutation.isPending} disabled={!inviteUsername.trim() || !invitePassword.trim()}>
-              <UserPlus className="w-3 h-3 mr-1" />Create User
+            <Button variant="ghost" size="sm" onClick={() => setInviteOpen(false)}>Cancel</Button>
+            <Button variant="primary" size="sm" onClick={() => inviteMutation.mutate()} loading={inviteMutation.isPending} disabled={!inviteEmail.trim()}>
+              <UserPlus className="w-3 h-3 mr-1" />Send Invite
             </Button>
           </div>
         </div>
       </DialogOverlay>
-
-      {/* Role Editor Dialog */}
-      <DialogOverlay open={roleEditOpen} onClose={closeRoleEditor} label={editingRole ? "Edit role" : "Create role"} className="w-[520px] max-h-[80vh] overflow-y-auto bg-surface-1 border border-border rounded-xl shadow-2xl p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-display font-semibold text-foreground">{editingRole ? `Edit Role: ${editingRole.name}` : "Create Custom Role"}</h2>
-          <button type="button" onClick={closeRoleEditor} className="p-1 rounded hover:bg-surface-2 transition-colors">
-            <X className="w-4 h-4 text-muted-foreground" />
-          </button>
-        </div>
-        <div className="space-y-4">
-          {!editingRole && (
-            <LabeledField label="Role name">
-              <Input
-                type="text"
-                value={roleName}
-                onChange={(e) => setRoleName(e.target.value)}
-                placeholder="devops_engineer"
-                className="bg-surface-2"
-              />
-            </LabeledField>
-          )}
-          <LabeledField label="Description">
-            <Input
-              type="text"
-              value={roleDesc}
-              onChange={(e) => setRoleDesc(e.target.value)}
-              placeholder="What this role is for"
-              className="bg-surface-2"
-            />
-          </LabeledField>
-
-          {/* Inherit from */}
-          {!(editingRole?.built_in) && (
-            <LabeledField
-              label="Inherits from"
-              description="Start from a related role, then layer in extra permissions."
-            >
-              <div className="flex flex-wrap gap-2">
-                {roles.filter(r => r.name !== editingRole?.name).map(r => (
-                  <button
-                    key={r.name}
-                    type="button"
-                    onClick={() => setRoleInherits(prev => prev.includes(r.name) ? prev.filter(n => n !== r.name) : [...prev, r.name])}
-                    className={cn(
-                      "px-2.5 py-1 text-xs rounded-lg border transition-colors capitalize",
-                      roleInherits.includes(r.name)
-                        ? "border-cordum bg-cordum/10 text-cordum"
-                        : "border-border bg-surface-2 text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {r.name}
-                  </button>
-                ))}
-              </div>
-            </LabeledField>
-          )}
-
-          {/* Permissions */}
-          <LabeledField
-            label="Permissions"
-            description="Select the capabilities this role grants across each product area."
-          >
-            <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-              {PERMISSION_CATEGORIES.map(cat => (
-                <div key={cat}>
-                  <p className="text-[10px] font-mono font-semibold text-cordum uppercase tracking-widest mb-1">{cat}</p>
-                  <div className="space-y-0.5">
-                    {ALL_PERMISSIONS.filter(p => p.category === cat).map(perm => {
-                      const checked = rolePerms.includes(perm.key);
-                      const disabled = editingRole?.built_in && perm.key === "admin.*";
-                      return (
-                        <div
-                          key={perm.key}
-                          className={cn(
-                            "flex items-center gap-2 rounded px-2 py-1 transition-colors hover:bg-surface-2/50",
-                            disabled && "opacity-50",
-                          )}
-                        >
-                          <Checkbox
-                            checked={checked}
-                            onChange={() => !disabled && togglePerm(perm.key)}
-                            disabled={disabled}
-                            aria-label={`${perm.label} permission`}
-                          />
-                          <span className="text-xs text-foreground">{perm.label}</span>
-                          <span className="text-[10px] font-mono text-muted-foreground ml-auto">{perm.key}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </LabeledField>
 
           <div className="flex justify-end gap-2 pt-2 border-t border-border">
             <Button variant="ghost" size="sm" onClick={closeRoleEditor}>Cancel</Button>

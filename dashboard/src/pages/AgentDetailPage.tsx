@@ -89,7 +89,7 @@ export default function AgentDetailPage() {
   const queryClient = useQueryClient();
 
   const { data: agent, isLoading: agentLoading, error: agentError } = useWorker(id);
-  const { data: jobs, isLoading: jobsLoading, isError: jobsError, error: jobsErr, refetch: refetchJobs } = useWorkerJobs(id);
+  const { data: jobs, isLoading: jobsLoading } = useWorkerJobs(id);
   const { data: bundlesData } = usePolicyBundles();
   const bundles = bundlesData?.items ?? [];
 
@@ -293,8 +293,8 @@ export default function AgentDetailPage() {
         </div>
 
         {/* Policy Bindings */}
-        <div className="instrument-card">
-          <h2 className="font-display font-semibold text-sm text-foreground mb-4">Active Policy Bindings</h2>
+        <div className="instrument-card p-5">
+          <h3 className="font-display font-semibold text-sm text-foreground mb-4">Active Policy Bindings</h3>
           {bundles.length === 0 ? (
             <div className="py-6 text-center">
               <p className="text-xs text-muted-foreground">No policy bundles bound to this agent's pool</p>
@@ -302,13 +302,13 @@ export default function AgentDetailPage() {
           ) : (
             <div className="space-y-2">
               {bundles.map((b) => (
-                <div key={b.id} className="flex items-center justify-between rounded-2xl bg-surface-0 border border-border p-3">
+                <div key={b.id} className="flex items-center justify-between rounded-lg bg-surface-0 border border-border p-3">
                   <div className="flex items-center gap-2">
                     <AlertTriangle className="w-3.5 h-3.5 text-cordum" />
                     <span className="text-sm font-medium text-foreground">{b.name || b.id}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-mono text-muted-foreground">{b.rule_count ?? b.rules?.length ?? 0} rules</span>
+                    <span className="text-[10px] font-mono text-muted-foreground">{b.rule_count ?? b.rules?.length ?? 0} rules</span>
                     <StatusBadge variant={b.status === "published" ? "healthy" : "muted"}>{b.status ?? "published"}</StatusBadge>
                   </div>
                 </div>
@@ -374,7 +374,7 @@ export default function AgentDetailPage() {
           </div>
         ) : !jobs || jobs.length === 0 ? (
           <div className="py-8 text-center">
-            <p className="text-xs text-muted-foreground">No recent jobs for this agent</p>
+            <p className="text-xs text-muted-foreground">Per-agent job tracking is not yet available</p>
           </div>
         ) : (
           <table className="w-full">

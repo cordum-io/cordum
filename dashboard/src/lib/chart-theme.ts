@@ -1,89 +1,97 @@
 /**
- * Control Surface chart defaults.
- * Shared Recharts configuration, semantic palette, and helpers.
+ * Chart Theme — Control Surface defaults for Recharts
+ *
+ * Provides shared chart configuration (colors, grid, axis, tooltip, bar props)
+ * aligned with the Control Surface design language tokens. Use these helpers
+ * instead of inline hex values in chart components.
  */
 
 // ---------------------------------------------------------------------------
-// Semantic palette — safety decision colors
+// Semantic chart palette
 // ---------------------------------------------------------------------------
 
-export const chartColors = {
-  allow: "#1f7a57",
-  deny: "#7c3aed",
-  require_approval: "#c58a1c",
-  allow_with_constraints: "#0f7f7a",
-  throttle: "#d4833a",
-  cordum: "#0f7f7a",
-  muted: "#5a6a70",
+/** Semantic color map for decision/status visualizations */
+export const SEMANTIC_COLORS = {
+  allow: "var(--success)",
+  deny: "var(--danger)",
+  require_approval: "var(--warning)",
+  throttle: "var(--muted)",
+  pending: "var(--warning)",
+  running: "var(--accent)",
+  succeeded: "var(--success)",
+  failed: "var(--danger)",
+  timeout: "var(--danger)",
 } as const;
 
-export type ChartColorKey = keyof typeof chartColors;
-
-/** Resolve a semantic key or pass through a raw hex color. */
-export function resolveChartColor(key: string): string {
-  return (chartColors as Record<string, string>)[key] ?? key;
+/** Get a semantic color by key, with a muted fallback */
+export function semanticColor(key: string): string {
+  return (SEMANTIC_COLORS as Record<string, string>)[key] ?? "var(--muted)";
 }
 
 // ---------------------------------------------------------------------------
-// Gradient helpers (for AreaChart fills)
+// Shared axis/grid configuration
 // ---------------------------------------------------------------------------
 
-export function gradientId(key: string): string {
-  return `grad-${key}`;
-}
-
-export function gradientFill(key: string): string {
-  return `url(#${gradientId(key)})`;
-}
-
-// ---------------------------------------------------------------------------
-// Axis / grid shared defaults
-// ---------------------------------------------------------------------------
-
-export const axisTickStyle = {
-  fontSize: 10,
-  fontFamily: "'JetBrains Mono', monospace",
-  fill: "#5a6a70",
-} as const;
-
+/** Default CartesianGrid props (low-opacity dashed grid) */
 export const gridProps = {
   strokeDasharray: "3 3",
-  stroke: "rgba(255,255,255,0.04)",
+  stroke: "var(--border)",
+  strokeOpacity: 0.6,
+} as const;
+
+/** Default XAxis/YAxis tick style (mono, small, muted) */
+export const axisTickStyle = {
+  fontSize: 10,
+  fontFamily: '"IBM Plex Mono", monospace',
+  fill: "var(--muted)",
+} as const;
+
+/** Default axis line props (hidden for clean look) */
+export const axisLineProps = {
+  axisLine: false,
+  tickLine: false,
 } as const;
 
 // ---------------------------------------------------------------------------
-// Tooltip surface
+// Tooltip
 // ---------------------------------------------------------------------------
 
+/** Default tooltip content style (surface card background) */
 export const tooltipStyle = {
-  background: "var(--surface-2, #1f2a2e)",
-  border: "1px solid var(--border-color, #1f2a2e)",
-  borderRadius: 8,
-  padding: 12,
-  boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
+  backgroundColor: "var(--surface)",
+  border: "1px solid var(--border)",
+  borderRadius: 12,
+  padding: "8px 12px",
+  fontSize: 12,
+  boxShadow: "0 8px 24px var(--shadow)",
 } as const;
 
 // ---------------------------------------------------------------------------
-// Bar chart shared defaults
+// Bar/Area defaults
 // ---------------------------------------------------------------------------
 
+/** Default bar chart props (rounded corners, compact radius) */
 export const barDefaults = {
-  radius: [3, 3, 0, 0] as [number, number, number, number],
-  maxBarSize: 32,
+  radius: [4, 4, 0, 0] as [number, number, number, number],
+  maxBarSize: 40,
+} as const;
+
+/** Default area chart props */
+export const areaDefaults = {
+  type: "monotone" as const,
+  strokeWidth: 2,
+  fillOpacity: 0.15,
 } as const;
 
 // ---------------------------------------------------------------------------
-// Decision label mapping
+// Chart motion
 // ---------------------------------------------------------------------------
 
-export const decisionLabels: Record<string, string> = {
-  allow: "Allow",
-  deny: "Deny",
-  require_approval: "Approval",
-  allow_with_constraints: "Constrained",
-  throttle: "Throttle",
-};
-
-export function getDecisionLabel(decision: string): string {
-  return decisionLabels[decision] ?? decision;
-}
+/** Animation props that respect prefers-reduced-motion */
+export const chartMotionProps = {
+  isAnimationActive: typeof window !== "undefined" && typeof window.matchMedia === "function"
+    ? !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    : true,
+  animationDuration: 400,
+  animationEasing: "ease-out" as const,
+} as const;

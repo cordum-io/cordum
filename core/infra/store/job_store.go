@@ -49,10 +49,6 @@ const (
 	metaFieldPackID                = "pack_id"
 	metaFieldAttempts              = "attempts"
 	metaFieldDeadline              = "deadline_unix"
-	metaFieldAgentID               = "agent_id"
-	metaFieldAgentName             = "agent_name"
-	metaFieldAgentRiskTier         = "agent_risk_tier"
-	metaFieldSubmittedBy           = "submitted_by"
 	metaFieldSafetyDecision        = "safety_decision"
 	metaFieldSafetyReason          = "safety_reason"
 	metaFieldSafetyRuleID          = "safety_rule_id"
@@ -162,44 +158,13 @@ func normalizeTimestampMicrosUpper(ts int64) int64 {
 	}
 }
 
-// hashApprovalJobRequest computes the canonical hash used by the
-// approval-repair classifier. Identical to scheduler.HashJobRequest —
-// intentionally duplicated here because the store package cannot
-// import scheduler without a cycle. Any change must land in both
-// sites; the `TestHashParity_StoreAndScheduler` regression test
-// pins them together.
-//
-// The canonical form strips mutable fields (approval_* labels,
-// bus.LabelBusMsgID, scheduler-injected env keys) and roundtrips
-// through protojson so proto unknown fields are dropped — matching
-// what SetJobRequest persists into Redis. Without the protojson
-// roundtrip the scheduler's in-memory hash and the reconciler's
-// Redis-read hash would diverge whenever the in-memory proto
-// carried unknown fields, falsely tripping the StaleRequest
-// classifier and auto-invalidating brand-new approvals.
 func hashApprovalJobRequest(req *pb.JobRequest) (string, error) {
 	if req == nil {
 		return "", fmt.Errorf("job request required")
 	}
-	clone, err := canonicalApprovalJobRequest(req)
-	if err != nil {
-		return "", err
-	}
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(clone)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
-}
-
-func canonicalApprovalJobRequest(req *pb.JobRequest) (*pb.JobRequest, error) {
-	if req == nil {
-		return nil, fmt.Errorf("job request required")
-	}
 	clone, ok := proto.Clone(req).(*pb.JobRequest)
 	if !ok || clone == nil {
-		return nil, fmt.Errorf("job request clone failed")
+		return "", fmt.Errorf("job request clone failed")
 	}
 	if clone.Labels != nil {
 		for key := range clone.Labels {
@@ -218,17 +183,12 @@ func canonicalApprovalJobRequest(req *pb.JobRequest) (*pb.JobRequest, error) {
 			clone.Env = nil
 		}
 	}
-	marshalOpts := protojson.MarshalOptions{EmitUnpopulated: true}
-	raw, err := marshalOpts.Marshal(clone)
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(clone)
 	if err != nil {
-		return nil, fmt.Errorf("canonical approval job request marshal: %w", err)
+		return "", err
 	}
-	out := &pb.JobRequest{}
-	unmarshalOpts := protojson.UnmarshalOptions{DiscardUnknown: true}
-	if err := unmarshalOpts.Unmarshal(raw, out); err != nil {
-		return nil, fmt.Errorf("canonical approval job request unmarshal: %w", err)
-	}
-	return out, nil
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // RedisJobStore implements model.JobStore backed by Redis.
@@ -499,7 +459,11 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (model.JobS
 			pipe.Expire(ctx, jobResultPtrKey(jobID), s.metaTTL)
 		}
 
-		pipe.RPush(ctx, jobEventsKey(jobID), fmt.Sprintf("%d|%s", now, model.JobStateCancelled))
+		cancelEvtStr, serErr := serializeJobEvent(model.JobStateCancelled, now, nil)
+		if serErr != nil {
+			return serErr
+		}
+		pipe.RPush(ctx, jobEventsKey(jobID), cancelEvtStr)
 
 		if _, err := pipe.Exec(ctx); err != nil {
 			return fmt.Errorf("job store cancel %s: %w", jobID, err)
@@ -618,88 +582,7 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 }
 
 func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state model.JobState) error {
-	if jobID == "" || state == "" {
-		return fmt.Errorf("invalid jobID or state")
-	}
-
-	now := nowUnixMicros()
-	metaKey := jobMetaKey(jobID)
-
-	return s.client.Watch(ctx, func(tx *redis.Tx) error {
-		prev, err := tx.HGet(ctx, metaKey, "state").Result()
-		if err != nil && err != redis.Nil {
-			return fmt.Errorf("job store set state %s: %w", jobID, err)
-		}
-		prevState := model.JobState(prev)
-		if !isAllowedTransition(prevState, state) {
-			return fmt.Errorf("invalid transition %s -> %s", prevState, state)
-		}
-		attempts := 0
-		if raw, err := tx.HGet(ctx, metaKey, metaFieldAttempts).Result(); err == nil {
-			if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
-				attempts = parsed
-			}
-		}
-		// Count every scheduling attempt, including replays that remain in
-		// SCHEDULED due to downstream publish failures. This keeps retry budgets
-		// accurate under redelivery loops.
-		if state == model.JobStateScheduled {
-			attempts++
-		}
-		tenant, _ := tx.HGet(ctx, metaKey, metaFieldTenant).Result()
-
-		pipe := tx.TxPipeline()
-		pipe.HSet(ctx, metaKey, map[string]any{
-			"state":           string(state),
-			"updated_at":      now,
-			metaFieldAttempts: attempts,
-		})
-		// keep legacy key for compatibility
-		pipe.Set(ctx, jobStateKey(jobID), string(state), 0)
-
-		// maintain per-state index for reconciliation
-		prevIdx := stateIndexKey(prevState)
-		if prevIdx != "" {
-			pipe.ZRem(ctx, prevIdx, jobID)
-		}
-		idx := stateIndexKey(state)
-		if idx != "" {
-			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
-		}
-
-		// Tenant active set: no TTL — self-manages via SAdd/SRem.
-		// A TTL would expire the key for long-running jobs, making them
-		// vanish from active counts while still running.
-		if tenant != "" {
-			activeKey := tenantActiveKey(tenant)
-			if isActiveState(state) {
-				pipe.SAdd(ctx, activeKey, jobID)
-			} else if terminalStates[state] {
-				pipe.SRem(ctx, activeKey, jobID)
-			}
-		}
-
-		// Maintain global recent jobs list (score = updated_at)
-		pipe.ZAdd(ctx, "job:recent", redis.Z{Score: float64(now), Member: jobID})
-		// Keep only last 1000
-		pipe.ZRemRangeByRank(ctx, "job:recent", 0, -1001)
-		if s.metaTTL > 0 {
-			pipe.Expire(ctx, metaKey, s.metaTTL)
-			pipe.Expire(ctx, jobStateKey(jobID), s.metaTTL)
-			pipe.Expire(ctx, jobResultPtrKey(jobID), s.metaTTL)
-		}
-
-		// append event
-		pipe.RPush(ctx, jobEventsKey(jobID), fmt.Sprintf("%d|%s", now, state))
-
-		if terminalStates[state] {
-			pipe.ZRem(ctx, deadlineIndexKey(), jobID)
-			pipe.HDel(ctx, metaKey, metaFieldDeadline)
-		}
-
-		_, execErr := pipe.Exec(ctx)
-		return execErr
-	}, metaKey, jobStateKey(jobID))
+	return s.SetStateWithContext(ctx, jobID, state, nil)
 }
 
 // ListRecentJobs returns the N most recently updated jobs.
@@ -2126,16 +2009,6 @@ func ClassifyApprovalRepair(snapshot ApprovalRepairSnapshot, opts ApprovalRepair
 	}
 
 	if snapshot.SafetyRecord.JobHash != "" && snapshot.RequestHash != "" && snapshot.RequestHash != snapshot.SafetyRecord.JobHash {
-		// The hashes only differ when the canonical JobRequest body
-		// genuinely changed between safety-decision time and now. The
-		// scheduler's preMutationHash path (engine.go checkSafetyDecision)
-		// captures the hash BEFORE attachEffectiveConfig / applyConstraints
-		// mutate req.Env, and the reconciler re-hashes the stored
-		// (pre-mutation) JobRequest, so any mismatch here is an actual
-		// user-visible request drift. An earlier version of this branch
-		// added a 60s wall-clock grace to hide false positives from a
-		// broken canonicaliser; that masking is no longer needed and
-		// would silently weaken legitimate StaleRequest detection.
 		plan.Kind = ApprovalRepairInvalidateStaleRequest
 		plan.Repairable = true
 		plan.Reason = "job request changed since the approval request was created"
@@ -3027,4 +2900,152 @@ func stringFromEntry(entry map[string]any, key string) string {
 		}
 	}
 	return ""
+}
+
+// parseJobEvent parses a raw event string from the job:events:{id} LIST.
+// It tries JSON first (new format), then falls back to "timestamp|state"
+// (old format). Returns (zero, false) for malformed entries.
+func parseJobEvent(raw string) (model.JobEvent, bool) {
+	var evt model.JobEvent
+	if err := json.Unmarshal([]byte(raw), &evt); err == nil && evt.State != "" {
+		return evt, true
+	}
+
+	// Fall back to old "timestamp|state" format.
+	parts := strings.SplitN(raw, "|", 2)
+	if len(parts) != 2 {
+		slog.Warn("malformed job event entry", "raw", raw)
+		return model.JobEvent{}, false
+	}
+	ts, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		slog.Warn("malformed job event timestamp", "raw", raw, "err", err)
+		return model.JobEvent{}, false
+	}
+	return model.JobEvent{Timestamp: ts, State: parts[1]}, true
+}
+
+// serializeJobEvent creates the JSON string for a job event entry.
+func serializeJobEvent(state model.JobState, nowMicros int64, evtCtx *model.StateEventContext) (string, error) {
+	evt := model.JobEvent{
+		Timestamp: nowMicros,
+		State:     string(state),
+		Context:   evtCtx,
+	}
+	b, err := json.Marshal(evt)
+	if err != nil {
+		return "", fmt.Errorf("marshal job event: %w", err)
+	}
+	return string(b), nil
+}
+
+// SetStateWithContext transitions a job to a new state and appends a rich
+// JSON event (with optional context) to the job:events:{id} LIST.
+// When evtCtx is nil, a minimal {"ts":...,"state":"..."} event is stored.
+func (s *RedisJobStore) SetStateWithContext(ctx context.Context, jobID string, state model.JobState, evtCtx *model.StateEventContext) error {
+	if jobID == "" || state == "" {
+		return fmt.Errorf("invalid jobID or state")
+	}
+
+	now := nowUnixMicros()
+	metaKey := jobMetaKey(jobID)
+
+	return s.client.Watch(ctx, func(tx *redis.Tx) error {
+		prev, err := tx.HGet(ctx, metaKey, "state").Result()
+		if err != nil && err != redis.Nil {
+			return fmt.Errorf("job store set state %s: %w", jobID, err)
+		}
+		prevState := model.JobState(prev)
+		if !isAllowedTransition(prevState, state) {
+			return fmt.Errorf("invalid transition %s -> %s", prevState, state)
+		}
+		attempts := 0
+		if raw, err := tx.HGet(ctx, metaKey, metaFieldAttempts).Result(); err == nil {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+				attempts = parsed
+			}
+		}
+		if state == model.JobStateScheduled && prevState != model.JobStateScheduled {
+			attempts++
+		}
+		tenant, _ := tx.HGet(ctx, metaKey, metaFieldTenant).Result()
+
+		pipe := tx.TxPipeline()
+		pipe.HSet(ctx, metaKey, map[string]any{
+			"state":           string(state),
+			"updated_at":      now,
+			metaFieldAttempts: attempts,
+		})
+		// keep legacy key for compatibility
+		pipe.Set(ctx, jobStateKey(jobID), string(state), 0)
+
+		// maintain per-state index for reconciliation
+		prevIdx := stateIndexKey(prevState)
+		if prevIdx != "" {
+			pipe.ZRem(ctx, prevIdx, jobID)
+		}
+		idx := stateIndexKey(state)
+		if idx != "" {
+			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
+		}
+
+		if tenant != "" {
+			activeKey := tenantActiveKey(tenant)
+			if isActiveState(state) {
+				pipe.SAdd(ctx, activeKey, jobID)
+			} else if terminalStates[state] {
+				pipe.SRem(ctx, activeKey, jobID)
+			}
+			if s.metaTTL > 0 {
+				pipe.Expire(ctx, activeKey, s.metaTTL)
+			}
+		}
+
+		// Maintain global recent jobs list (score = updated_at)
+		pipe.ZAdd(ctx, "job:recent", redis.Z{Score: float64(now), Member: jobID})
+		// Keep only last 1000
+		pipe.ZRemRangeByRank(ctx, "job:recent", 0, -1001)
+		if s.metaTTL > 0 {
+			pipe.Expire(ctx, metaKey, s.metaTTL)
+			pipe.Expire(ctx, jobStateKey(jobID), s.metaTTL)
+			pipe.Expire(ctx, jobResultPtrKey(jobID), s.metaTTL)
+		}
+
+		// append rich event
+		eventStr, err := serializeJobEvent(state, now, evtCtx)
+		if err != nil {
+			return err
+		}
+		pipe.RPush(ctx, jobEventsKey(jobID), eventStr)
+
+		if terminalStates[state] {
+			pipe.ZRem(ctx, deadlineIndexKey(), jobID)
+			pipe.HDel(ctx, metaKey, metaFieldDeadline)
+		}
+
+		_, execErr := pipe.Exec(ctx)
+		return execErr
+	}, metaKey, jobStateKey(jobID))
+}
+
+// GetJobEvents returns all state transition events for a job, parsed from
+// the job:events:{id} LIST. Handles both JSON (new) and "timestamp|state"
+// (old) formats. Malformed entries are skipped with a warning log.
+func (s *RedisJobStore) GetJobEvents(ctx context.Context, jobID string) ([]model.JobEvent, error) {
+	if jobID == "" {
+		return nil, fmt.Errorf("job store get events: empty jobID")
+	}
+	raw, err := s.client.LRange(ctx, jobEventsKey(jobID), 0, -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("job store get events %s: %w", jobID, err)
+	}
+	events := make([]model.JobEvent, 0, len(raw))
+	for _, entry := range raw {
+		evt, ok := parseJobEvent(entry)
+		if !ok {
+			continue
+		}
+		events = append(events, evt)
+	}
+	return events, nil
 }

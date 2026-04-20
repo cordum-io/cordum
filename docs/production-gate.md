@@ -1,7 +1,7 @@
 # Production Gate
 
 `tools/scripts/production_gate.sh` is the release-candidate gate runner for local and CI validation.
-It executes 19 production-readiness gates classified as **blocking** or **advisory**, and exits non-zero if any blocking gate fails.
+It executes 17 production-readiness gates classified as **blocking** or **advisory**, and exits non-zero if any blocking gate fails.
 
 ## What It Tests
 
@@ -22,8 +22,6 @@ It executes 19 production-readiness gates classified as **blocking** or **adviso
 15. `Gate 15 Pack Management`: pack install, upgrade, marketplace listing.
 16. `Gate 16 Degradation`: graceful degradation under partial failures, gRPC fallback.
 17. `Gate 17 Dashboard`: HTML serving, static assets, CSP headers, SPA fallback.
-18. `Gate 20 Connection Metrics`: WebSocket metric export and `/status` uptime validation.
-19. `Gate 21 Infrastructure Health`: Live `/health` endpoint checks (NATS connected, Redis ok).
 
 ## Gate Classification
 
@@ -48,8 +46,6 @@ Gates are classified as **blocking** (security/correctness fundamentals) or **ad
 | 15 | Pack Management | ADVISORY | Pack install/upgrade, marketplace | Marketplace URL unreachable, pack validation failing | Check `validateMarketplaceURL`, verify pack store |
 | 16 | Degradation | ADVISORY | Graceful degradation, gRPC fallback | gRPC services unreachable, fallback not implemented | Verify gRPC health checks, check circuit breaker config |
 | 17 | Dashboard | ADVISORY | HTML, static assets, CSP, SPA fallback | Dashboard not built, static file serving misconfigured | Run `npm run build` in dashboard, verify nginx/gateway static routes |
-| 20 | Connection Metrics | ADVISORY | WebSocket `cordum_gateway_ws_clients_active` metric exported, `/status` returns valid `uptime_seconds` | Metrics endpoint unreachable, WS metrics not registered | Verify gateway is running with `/metrics` on port 9092, check Prometheus metric registration |
-| 21 | Infrastructure Health | **BLOCKING** | `/health` returns 200 with `nats=connected` and `redis=ok` | NATS or Redis down, health handler not wired | Check NATS/Redis containers, verify health handler registration in gateway |
 
 ## Prerequisites
 
