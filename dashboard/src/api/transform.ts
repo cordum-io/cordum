@@ -48,6 +48,7 @@ import type {
   EvalDriftDirection,
   SafetyDecisionType,
   PolicyConstraints,
+  PolicyBundleSignature,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -1306,6 +1307,40 @@ export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary, cont
     sha256: summary.sha256,
     rule_count: summary.rule_count,
     healthStatus: undefined,
+  };
+}
+
+export function readPolicyBundleSignature(
+  raw: unknown,
+): PolicyBundleSignature | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const bundle = raw as Record<string, unknown>;
+  const rawSig = bundle._signature ?? bundle.signature;
+  if (!rawSig || typeof rawSig !== "object") return undefined;
+
+  const sig = rawSig as Record<string, unknown>;
+  const algorithm =
+    typeof sig.algorithm === "string" ? sig.algorithm.trim() : "";
+  const keyID = typeof sig.key_id === "string" ? sig.key_id.trim() : "";
+  const value = typeof sig.value === "string" ? sig.value.trim() : "";
+  const hash = typeof sig.hash === "string" ? sig.hash.trim() : "";
+  const signedBytes =
+    typeof sig.signed_bytes === "number"
+      ? sig.signed_bytes
+      : typeof sig.signed_bytes === "string"
+        ? Number.parseInt(sig.signed_bytes, 10)
+        : Number.NaN;
+
+  if (!algorithm || !keyID || !value || !hash || !Number.isFinite(signedBytes)) {
+    return undefined;
+  }
+
+  return {
+    algorithm,
+    key_id: keyID,
+    value,
+    hash,
+    signed_bytes: signedBytes,
   };
 }
 

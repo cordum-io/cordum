@@ -73,6 +73,7 @@ type server struct {
 	cacheMaxSize      int
 	entitlements      *licensing.EntitlementResolver
 	customBundleCount int
+	shadowEvaluator   *ShadowEvaluator
 
 	// Agent identity store for enriching policy evaluation with agent context.
 	agentStore        *store.AgentIdentityStore
@@ -113,6 +114,12 @@ type cacheEntry struct {
 type agentCacheEntry struct {
 	identity *store.AgentIdentity
 	expires  time.Time
+}
+
+func (s *server) SetShadowEvaluator(eval *ShadowEvaluator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.shadowEvaluator = eval
 }
 
 const defaultAgentCacheTTL = 30 * time.Second

@@ -188,8 +188,7 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin", "operator"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermWorkflowsWrite, "admin", "operator") {
 		return
 	}
 	if s.workflowStore == nil {

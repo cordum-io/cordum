@@ -83,8 +83,7 @@ func (s *server) mcpVerifier() (*outbound.Verifier, error) {
 
 // handleMCPVerifySignature serves POST /api/v1/mcp/verify-signature.
 func (s *server) handleMCPVerifySignature(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermMCPVerify, "admin") {
 		return
 	}
 	var body mcpVerifySignatureRequest

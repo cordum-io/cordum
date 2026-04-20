@@ -54,6 +54,31 @@ interface AuditObserverState {
 
 const PAGE_SIZE = 50;
 
+export function parseSeqParam(raw?: string | null): number | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export function filterEventsBySeq<T extends { seq?: number }>(
+  events: T[],
+  fromSeq?: number,
+  toSeq?: number,
+): T[] {
+  if (fromSeq === undefined && toSeq === undefined) {
+    return events;
+  }
+  return events.filter((event) => {
+    if (typeof event.seq !== "number") return false;
+    if (fromSeq !== undefined && event.seq < fromSeq) return false;
+    if (toSeq !== undefined && event.seq > toSeq) return false;
+    return true;
+  });
+}
+
 export function shouldFetchNextAuditPage(
   entries: Pick<IntersectionObserverEntry, "isIntersecting">[],
   hasNextPage: boolean,

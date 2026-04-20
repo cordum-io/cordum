@@ -15,7 +15,9 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/artifacts"
@@ -23,6 +25,7 @@ import (
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/cordum/cordum/core/policyshadow"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/gorilla/websocket"
@@ -371,6 +374,11 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 		lockStore:             lockStore,
 		schemaRegistry:        schemaRegistry,
 		safetyClient:          safetyClient,
+		auditChainer:          audit.NewChainer(jobStore.Client(), ""),
+		policyShadowStore:     policyshadow.NewStore(configSvc),
+		mcpDenyRing:           newDenyEventRing(500),
+		trustResolver:         scheduler.NewTrustResolver(jobStore.Client()),
+		heartbeatMode:         scheduler.HeartbeatModeAuthority,
 		started:               time.Now().UTC(),
 	}
 

@@ -42,7 +42,7 @@ type packWorkerCredentialResponse struct {
 }
 
 func (s *server) handleListPacks(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPacksRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	records, _, err := s.loadPackRegistry(r.Context())
@@ -60,7 +60,7 @@ func (s *server) handleListPacks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGetPack(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPacksRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	packID := strings.TrimSpace(r.PathValue("id"))
@@ -514,7 +514,7 @@ func packWorkerID(packID string) string {
 }
 
 func (s *server) handleVerifyPack(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.safetyClient) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPacksVerify, []string{"admin"}, s.safetyClient) {
 		return
 	}
 	packID := strings.TrimSpace(r.PathValue("id"))
@@ -1140,7 +1140,7 @@ func acquirePackLocks(ctx context.Context, store locks.Store, packID, owner stri
 // ---------------------------------------------------------------------------
 
 func (s *server) handleMarketplacePacks(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPacksRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	resp, err := s.marketplaceSnapshot(r.Context(), false)
@@ -1158,7 +1158,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		writeErrorJSON(w, http.StatusServiceUnavailable, "marketplace operation failed")
 		return
 	}
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.lockStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPacksInstall, []string{"admin"}, s.lockStore) {
 		return
 	}
 	var req marketplaceInstallRequest

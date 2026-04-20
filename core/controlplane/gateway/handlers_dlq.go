@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
@@ -15,7 +15,7 @@ import (
 
 // DLQ handlers
 func (s *server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.dlqStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermDLQRead, []string{"admin"}, s.dlqStore) {
 		return
 	}
 	limit, _ := parsePagination(r, 100)
@@ -41,7 +41,7 @@ func (s *server) handleListDLQ(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.dlqStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermDLQRead, []string{"admin"}, s.dlqStore) {
 		return
 	}
 	limit := int64(100)
@@ -92,7 +92,7 @@ func (s *server) handleListDLQPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleDeleteDLQ(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.dlqStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermDLQWrite, []string{"admin"}, s.dlqStore) {
 		return
 	}
 	jobID, ok := requirePathParam(w, r, "job_id")
@@ -122,8 +122,7 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "dlq, job, or memory store unavailable")
 		return
 	}
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermDLQWrite, "admin") {
 		return
 	}
 	jobID, ok := requirePathParam(w, r, "job_id")

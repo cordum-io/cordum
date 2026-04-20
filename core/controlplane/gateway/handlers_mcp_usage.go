@@ -49,23 +49,23 @@ const (
 
 // MCPUsageCell is a single bucket in the heatmap.
 type MCPUsageCell struct {
-	AgentID                string  `json:"agent_id"`
-	ToolName               string  `json:"tool_name"`
-	Count                  int     `json:"count"`
-	AllowCount             int     `json:"allow_count"`
-	DenyCount              int     `json:"deny_count"`
-	ApprovalRequiredCount  int     `json:"approval_required_count"`
-	P50LatencyMs           float64 `json:"p50_latency_ms"`
-	P99LatencyMs           float64 `json:"p99_latency_ms"`
-	LastInvokedAtMs        int64   `json:"last_invoked_at_ms"`
+	AgentID               string  `json:"agent_id"`
+	ToolName              string  `json:"tool_name"`
+	Count                 int     `json:"count"`
+	AllowCount            int     `json:"allow_count"`
+	DenyCount             int     `json:"deny_count"`
+	ApprovalRequiredCount int     `json:"approval_required_count"`
+	P50LatencyMs          float64 `json:"p50_latency_ms"`
+	P99LatencyMs          float64 `json:"p99_latency_ms"`
+	LastInvokedAtMs       int64   `json:"last_invoked_at_ms"`
 }
 
 // MCPUsageResponse is the heatmap payload.
 type MCPUsageResponse struct {
-	Cells           []MCPUsageCell `json:"cells"`
-	TotalCalls      int            `json:"total_calls"`
-	WindowMs        int64          `json:"window_ms"`
-	TruncatedAtMax  bool           `json:"truncated_at_max"`
+	Cells          []MCPUsageCell `json:"cells"`
+	TotalCalls     int            `json:"total_calls"`
+	WindowMs       int64          `json:"window_ms"`
+	TruncatedAtMax bool           `json:"truncated_at_max"`
 }
 
 // handleMCPUsage implements GET /api/v1/mcp/usage.
@@ -80,7 +80,7 @@ type MCPUsageResponse struct {
 // Response: MCPUsageResponse. Admin-gated, tenant-scoped.
 func (s *server) handleMCPUsage(w http.ResponseWriter, r *http.Request) {
 	client := s.redisClient()
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, client) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermMCPRead, []string{"admin"}, client) {
 		return
 	}
 	tenant, err := s.resolveTenant(r, "")
@@ -134,8 +134,8 @@ type mcpUsageAggregator struct {
 }
 
 type mcpUsageBucket struct {
-	cell       MCPUsageCell
-	latencies  []float64
+	cell      MCPUsageCell
+	latencies []float64
 }
 
 func newMCPUsageAggregator(agentFilter, toolFilter string) *mcpUsageAggregator {

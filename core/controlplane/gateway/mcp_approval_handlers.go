@@ -28,7 +28,7 @@ import (
 // without standing up the full server. Production code constructs it
 // with the server's store + auth middleware.
 type mcpApprovalHandler struct {
-	store             *MCPApprovalStore
+	store *MCPApprovalStore
 	// getApproverIdentity returns the composite identity of the HTTP
 	// caller. In production it is submitterIdentity(r); tests override
 	// with a deterministic stub.
@@ -240,8 +240,7 @@ func writeJSONObject(w http.ResponseWriter, status int, v any) {
 // approvals.
 func (s *server) requireMCPApprovalHandler(w http.ResponseWriter, r *http.Request, adminOnly bool) *mcpApprovalHandler {
 	if adminOnly {
-		if err := s.requireRole(r, "admin"); err != nil {
-			writeForbidden(w, r, err)
+		if !s.requirePermissionOrRole(w, r, PermJobsApprove, "admin") {
 			return nil
 		}
 	}

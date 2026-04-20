@@ -112,6 +112,20 @@ func NewTokenService(signingKey SigningKey, keyring map[string]ed25519.PublicKey
 	}
 }
 
+func (s *TokenService) KeyID() string {
+	if s == nil {
+		return ""
+	}
+	return s.signingKey.KID
+}
+
+func (s *TokenService) MaxTTL() time.Duration {
+	if s == nil || s.maxTTL <= 0 {
+		return maxTokenTTL
+	}
+	return s.maxTTL
+}
+
 func (s *TokenService) IssueDelegationToken(ctx context.Context, req IssueRequest) (string, DelegationClaims, error) {
 	if ctx == nil {
 		ctx = context.Background()

@@ -42,8 +42,7 @@ const (
 )
 
 func (s *server) handleListTopics(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin", "operator", "viewer"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermTopicsRead, "admin", "operator", "viewer") {
 		return
 	}
 	if s.topicRegistry == nil {
@@ -83,8 +82,7 @@ func (s *server) handleListTopics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermTopicsWrite, "admin") {
 		return
 	}
 	if s.topicRegistry == nil || s.configSvc == nil {
@@ -170,8 +168,7 @@ func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleDeleteTopic(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermTopicsWrite, "admin") {
 		return
 	}
 	if s.topicRegistry == nil {

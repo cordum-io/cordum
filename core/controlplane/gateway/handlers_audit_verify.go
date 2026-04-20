@@ -48,7 +48,7 @@ const (
 // that distinguishes routine log-expiry from real integrity failures.
 func (s *server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 	client := s.redisClient()
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, client) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermAuditVerify, []string{"admin"}, client) {
 		return
 	}
 

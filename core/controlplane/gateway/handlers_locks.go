@@ -32,8 +32,7 @@ func stripTenantLockPrefix(tenantID, resource string) string {
 }
 
 func (s *server) handleGetLock(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin", "operator", "viewer"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermLocksRead, "admin", "operator", "viewer") {
 		return
 	}
 	if s.lockStore == nil {

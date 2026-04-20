@@ -17,12 +17,21 @@ import (
 
 // Event types emitted by the audit subsystem.
 const (
-	EventSafetyDecision         = "safety.decision"
-	EventSafetyApproval         = "safety.approval"
-	EventPolicyChange           = "safety.policy_change"
-	EventSafetyViolation        = "safety.violation"
-	EventSystemAuth             = "system.auth"
-	EventLicenseLegacyRejected  = "license.legacy_format_rejected"
+	EventSafetyDecision            = "safety.decision"
+	EventSafetyApproval            = "safety.approval"
+	EventPolicyChange              = "safety.policy_change"
+	EventSafetyViolation           = "safety.violation"
+	EventSystemAuth                = "system.auth"
+	EventLicenseLegacyRejected     = "license.legacy_format_rejected"
+	EventMCPToolApproval           = "mcp.tool_approval"
+	EventMCPToolDenied             = "mcp.tool_denied"
+	EventMCPToolInvocation         = "mcp.tool_invocation"
+	EventMCPToolOutboundInvocation = "mcp.tool_outbound_invocation"
+	EventMCPSignatureInvalid       = "mcp.signature_invalid"
+	EventWorkerTrustChange         = "worker_trust_change"
+	EventTopicRegistered           = "topic_registered"
+	EventTopicUnregistered         = "topic_unregistered"
+	EventShadowEval                = "shadow_eval"
 )
 
 // Severity levels for SIEM events.
@@ -53,6 +62,9 @@ type SIEMEvent struct {
 	PolicyVersion string            `json:"policy_version,omitempty"`
 	Identity      string            `json:"identity,omitempty"`
 	Extra         map[string]string `json:"extra,omitempty"`
+	Seq           int64             `json:"seq,omitempty"`
+	PrevHash      string            `json:"prev_hash,omitempty"`
+	EventHash     string            `json:"event_hash,omitempty"`
 }
 
 // Exporter sends batches of SIEM events to an external system.

@@ -58,7 +58,7 @@ func complianceExportEntitledMaxEvents(entitlements licensing.Entitlements) int 
 // the same way /api/v1/audit/export/health does; non-entitled callers
 // receive the licensing.TierLimitHTTPError payload for consistency.
 func (s *server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermAuditExport, []string{"admin"}, s.configSvc) {
 		return
 	}
 	tenant, err := s.resolveTenant(r, "")

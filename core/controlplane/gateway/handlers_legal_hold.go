@@ -45,8 +45,7 @@ func (s *server) requireLegalHoldEntitlement(w http.ResponseWriter) bool {
 // handleCreateLegalHold creates a legal hold on a tenant's audit data.
 // POST /api/v1/audit/legal-hold
 func (s *server) handleCreateLegalHold(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, PermLegalHoldWrite, "admin") {
 		return
 	}
 	if s.requireLegalHoldEntitlement(w) {
@@ -97,8 +96,7 @@ func (s *server) handleCreateLegalHold(w http.ResponseWriter, r *http.Request) {
 // handleListLegalHolds lists legal holds, optionally filtered by tenant.
 // GET /api/v1/audit/legal-holds
 func (s *server) handleListLegalHolds(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, PermLegalHoldRead, "admin") {
 		return
 	}
 	if s.requireLegalHoldEntitlement(w) {
@@ -122,8 +120,7 @@ func (s *server) handleListLegalHolds(w http.ResponseWriter, r *http.Request) {
 // handleReleaseLegalHold releases a legal hold. Does NOT delete retained data.
 // DELETE /api/v1/audit/legal-hold/{id}
 func (s *server) handleReleaseLegalHold(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, PermLegalHoldWrite, "admin") {
 		return
 	}
 	if s.requireLegalHoldEntitlement(w) {

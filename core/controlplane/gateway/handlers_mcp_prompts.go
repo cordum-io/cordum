@@ -20,8 +20,7 @@ import (
 // empty as "no prompts configured" rather than as an error, matching
 // the tools endpoint contract.
 func (s *server) handleListMCPPrompts(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermMCPRead, "admin") {
 		return
 	}
 	runtime := s.getMCPRuntime()

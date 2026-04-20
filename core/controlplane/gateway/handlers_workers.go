@@ -24,8 +24,7 @@ import (
 // emitted through the tenant audit chain (task-2497391e) so SOC2
 // tooling can reconstruct who revoked which worker when.
 func (s *server) handleRevokeWorkerSession(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, PermWorkersWrite, "admin") {
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
@@ -490,7 +489,6 @@ func (s *server) resolveWorkerTrust(ctx context.Context, workerID string) schedu
 	}
 	return state
 }
-
 
 // poolUtilization calculates the utilization ratio for a pool snapshot.
 // Returns 0 if the pool has no capacity.

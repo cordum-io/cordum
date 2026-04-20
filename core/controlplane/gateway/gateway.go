@@ -21,6 +21,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/artifacts"
@@ -39,6 +40,7 @@ import (
 	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
+	"github.com/cordum/cordum/core/policyshadow"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/telemetry"
 	"github.com/gorilla/websocket"
@@ -161,9 +163,15 @@ type server struct {
 	rbacStore         *RBACStore
 	permChecker       *PermissionChecker
 
-	auditExporter  audit.AuditSender
-	legalHoldStore *audit.LegalHoldStore
-	statusCacheObj *statusCache
+	auditExporter     audit.AuditSender
+	auditChainer      *audit.Chainer
+	legalHoldStore    *audit.LegalHoldStore
+	statusCacheObj    *statusCache
+	policyShadowStore *policyshadow.Store
+	mcpDenyRing       *denyEventRing
+	sessionIssuer     *scheduler.SessionTokenIssuer
+	trustResolver     *scheduler.TrustResolver
+	heartbeatMode     scheduler.HeartbeatMode
 
 	apiRL    rateLimiter
 	publicRL rateLimiter
@@ -621,8 +629,13 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 		rbacStore:             rbacStore,
 		permChecker:           permChecker,
 		auditExporter:         auditSender,
+		auditChainer:          audit.NewChainer(jobStore.Client(), ""),
 		legalHoldStore:        initLegalHoldStore(cfg.RedisURL),
 		statusCacheObj:        newStatusCache(2 * time.Second),
+		policyShadowStore:     policyshadow.NewStore(configSvc),
+		mcpDenyRing:           newDenyEventRing(500),
+		trustResolver:         scheduler.NewTrustResolver(jobStore.Client()),
+		heartbeatMode:         scheduler.ParseHeartbeatMode(os.Getenv(scheduler.EnvHeartbeatMode)),
 		shutdownCh:            make(chan struct{}),
 	}
 	s.syncApprovalQueueDepth(context.Background())
@@ -935,6 +948,9 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("PUT /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleUpdateAgent))
 	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleDeleteAgent))
 	mux.HandleFunc("GET /api/v1/agents/{id}/stats", s.instrumented("/api/v1/agents/{id}/stats", s.handleAgentStats))
+	mux.HandleFunc("POST /api/v1/agents/{id}/delegate", s.instrumented("/api/v1/agents/{id}/delegate", s.handleDelegateAgent))
+	mux.HandleFunc("POST /api/v1/agents/verify-delegation", s.instrumented("/api/v1/agents/verify-delegation", s.handleVerifyDelegation))
+	mux.HandleFunc("POST /api/v1/agents/revoke-delegation", s.instrumented("/api/v1/agents/revoke-delegation", s.handleRevokeDelegation))
 
 	mux.HandleFunc("GET /api/v1/pools", s.instrumented("/api/v1/pools", s.handleListPools))
 	mux.HandleFunc("GET /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleGetPool))

@@ -716,7 +716,7 @@ func (s *server) handleListJobDecisions(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.memStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermMemoryRead, []string{"admin"}, s.memStore) {
 		return
 	}
 

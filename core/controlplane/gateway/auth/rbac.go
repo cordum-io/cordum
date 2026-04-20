@@ -19,29 +19,54 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	PermAdminAll       = "admin.*"
-	PermJobsRead       = "jobs.read"
-	PermJobsWrite      = "jobs.write"
-	PermJobsApprove    = "jobs.approve"
-	PermAgentsRead     = "agents.read"
-	PermAgentsWrite    = "agents.write"
-	PermWorkflowsRead  = "workflows.read"
-	PermWorkflowsWrite = "workflows.write"
-	PermWorkersRead    = "workers.read"
-	PermConfigRead     = "config.read"
-	PermConfigWrite    = "config.write"
-	PermAuditRead      = "audit.read"
-	PermPacksInstall   = "packs.install"
-	PermPacksUninstall = "packs.uninstall"
-	PermPolicyRead     = "policy.read"
-	PermPolicyWrite    = "policy.write"
-	PermGovernanceRead = "governance.read"
-	PermSchemasRead    = "schemas.read"
-	PermSchemasWrite   = "schemas.write"
-	PermUsersRead      = "users.read"
-	PermUsersWrite     = "users.write"
-	PermRolesRead      = "roles.read"
-	PermRolesWrite     = "roles.write"
+	PermAdminAll               = "admin.*"
+	PermJobsRead               = "jobs.read"
+	PermJobsWrite              = "jobs.write"
+	PermJobsApprove            = "jobs.approve"
+	PermAgentsRead             = "agents.read"
+	PermAgentsWrite            = "agents.write"
+	PermAgentsDelegate         = "agents.delegate"
+	PermWorkflowsRead          = "workflows.read"
+	PermWorkflowsWrite         = "workflows.write"
+	PermWorkersRead            = "workers.read"
+	PermWorkersWrite           = "workers.write"
+	PermConfigRead             = "config.read"
+	PermConfigWrite            = "config.write"
+	PermAuditRead              = "audit.read"
+	PermAuditExport            = "audit.export"
+	PermAuditVerify            = "audit.verify"
+	PermAPIKeysRead            = "apiKeys.read"
+	PermAPIKeysWrite           = "apiKeys.write"
+	PermDLQRead                = "dlq.read"
+	PermDLQWrite               = "dlq.write"
+	PermMemoryRead             = "memory.read"
+	PermLegalHoldRead          = "legalHold.read"
+	PermLegalHoldWrite         = "legalHold.write"
+	PermLicenseRead            = "license.read"
+	PermLocksRead              = "locks.read"
+	PermMCPRead                = "mcp.read"
+	PermMCPVerify              = "mcp.verify"
+	PermPacksInstall           = "packs.install"
+	PermPacksUninstall         = "packs.uninstall"
+	PermPacksRead              = "packs.read"
+	PermPacksVerify            = "packs.verify"
+	PermPolicyRead             = "policy.read"
+	PermPolicyWrite            = "policy.write"
+	PermPoolsWrite             = "pools.write"
+	PermTelemetryRead          = "telemetry.read"
+	PermTelemetryWrite         = "telemetry.write"
+	PermTelemetryExport        = "telemetry.export"
+	PermTopicsRead             = "topics.read"
+	PermTopicsWrite            = "topics.write"
+	PermWorkerCredentialsRead  = "workerCredentials.read"
+	PermWorkerCredentialsWrite = "workerCredentials.write"
+	PermGovernanceRead         = "governance.read"
+	PermSchemasRead            = "schemas.read"
+	PermSchemasWrite           = "schemas.write"
+	PermUsersRead              = "users.read"
+	PermUsersWrite             = "users.write"
+	PermRolesRead              = "roles.read"
+	PermRolesWrite             = "roles.write"
 
 	// Eval dataset permissions gate the phase-2 governance-regression
 	// pipeline. They are namespaced under `evals.datasets.*` so the
@@ -56,13 +81,24 @@ const (
 var AllPermissions = []string{
 	PermAdminAll,
 	PermJobsRead, PermJobsWrite, PermJobsApprove,
-	PermAgentsRead, PermAgentsWrite,
+	PermAgentsRead, PermAgentsWrite, PermAgentsDelegate,
 	PermWorkflowsRead, PermWorkflowsWrite,
-	PermWorkersRead,
+	PermWorkersRead, PermWorkersWrite,
 	PermConfigRead, PermConfigWrite,
-	PermAuditRead,
-	PermPacksInstall, PermPacksUninstall,
+	PermAuditRead, PermAuditExport, PermAuditVerify,
+	PermAPIKeysRead, PermAPIKeysWrite,
+	PermDLQRead, PermDLQWrite,
+	PermMemoryRead,
+	PermLegalHoldRead, PermLegalHoldWrite,
+	PermLicenseRead,
+	PermLocksRead,
+	PermMCPRead, PermMCPVerify,
+	PermPacksInstall, PermPacksUninstall, PermPacksRead, PermPacksVerify,
 	PermPolicyRead, PermPolicyWrite,
+	PermPoolsWrite,
+	PermTelemetryRead, PermTelemetryWrite, PermTelemetryExport,
+	PermTopicsRead, PermTopicsWrite,
+	PermWorkerCredentialsRead, PermWorkerCredentialsWrite,
 	PermGovernanceRead,
 	PermSchemasRead, PermSchemasWrite,
 	PermUsersRead, PermUsersWrite,
@@ -104,6 +140,8 @@ func DefaultRoles() []*RoleDefinition {
 				PermJobsRead, PermJobsWrite, PermJobsApprove,
 				PermWorkflowsRead, PermWorkflowsWrite,
 				PermWorkersRead,
+				PermLocksRead,
+				PermTopicsRead,
 				PermPacksInstall, PermPacksUninstall,
 				PermSchemasRead, PermSchemasWrite,
 				PermPolicyRead,
@@ -123,6 +161,8 @@ func DefaultRoles() []*RoleDefinition {
 				PermJobsRead,
 				PermWorkflowsRead,
 				PermWorkersRead,
+				PermLocksRead,
+				PermTopicsRead,
 				PermConfigRead,
 				PermAuditRead,
 				PermSchemasRead,
@@ -148,6 +188,8 @@ var basicRolePermissions = map[string][]string{
 		PermJobsRead, PermJobsWrite, PermJobsApprove,
 		PermWorkflowsRead, PermWorkflowsWrite,
 		PermWorkersRead,
+		PermLocksRead,
+		PermTopicsRead,
 		PermPacksInstall, PermPacksUninstall,
 		PermSchemasRead, PermSchemasWrite,
 		PermPolicyRead,
@@ -159,6 +201,8 @@ var basicRolePermissions = map[string][]string{
 		PermJobsRead,
 		PermWorkflowsRead,
 		PermWorkersRead,
+		PermLocksRead,
+		PermTopicsRead,
 		PermConfigRead,
 		PermAuditRead,
 		PermSchemasRead,

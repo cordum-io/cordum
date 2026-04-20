@@ -958,7 +958,7 @@ func managedKeyToResponse(mk *ManagedKey) apiKeyResponse {
 
 // handleListKeys handles GET /api/v1/auth/keys.
 func (s *server) handleListKeys(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.keyStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermAPIKeysRead, []string{"admin"}, s.keyStore) {
 		return
 	}
 
@@ -985,7 +985,7 @@ func (s *server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 
 // handleCreateKey handles POST /api/v1/auth/keys.
 func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.keyStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermAPIKeysWrite, []string{"admin"}, s.keyStore) {
 		return
 	}
 
@@ -1066,7 +1066,7 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 
 // handleRevokeKey handles DELETE /api/v1/auth/keys/{id}.
 func (s *server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.keyStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermAPIKeysWrite, []string{"admin"}, s.keyStore) {
 		return
 	}
 

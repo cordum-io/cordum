@@ -38,16 +38,16 @@ const (
 
 // MCPOutboundEntry is a single row in the outbound call log.
 type MCPOutboundEntry struct {
-	TimestampMs      int64  `json:"ts_ms"`
-	StreamID         string `json:"stream_id"`
-	AgentID          string `json:"agent_id"`
-	ToolName         string `json:"tool_name"`
-	TargetServer     string `json:"target_server"`
-	SignatureStatus  string `json:"signature_status"`
-	SignatureKeyID   string `json:"signature_key_id,omitempty"`
-	LatencyMs        int    `json:"latency_ms,omitempty"`
-	ResultType       string `json:"result_type,omitempty"`
-	EventHash        string `json:"event_hash,omitempty"`
+	TimestampMs     int64  `json:"ts_ms"`
+	StreamID        string `json:"stream_id"`
+	AgentID         string `json:"agent_id"`
+	ToolName        string `json:"tool_name"`
+	TargetServer    string `json:"target_server"`
+	SignatureStatus string `json:"signature_status"`
+	SignatureKeyID  string `json:"signature_key_id,omitempty"`
+	LatencyMs       int    `json:"latency_ms,omitempty"`
+	ResultType      string `json:"result_type,omitempty"`
+	EventHash       string `json:"event_hash,omitempty"`
 }
 
 // MCPOutboundResponse is the paginated outbound log payload.
@@ -72,7 +72,7 @@ type MCPOutboundResponse struct {
 // Response: MCPOutboundResponse. Admin-gated + tenant-scoped.
 func (s *server) handleMCPOutbound(w http.ResponseWriter, r *http.Request) {
 	client := s.redisClient()
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, client) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermMCPRead, []string{"admin"}, client) {
 		return
 	}
 	tenant, err := s.resolveTenant(r, "")

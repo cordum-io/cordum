@@ -255,7 +255,7 @@ func resetShadowSummaryCache() {
 // (tenant, bundle, window) so dashboard polling is cheap.
 func (s *server) handleShadowResultsSummary(w http.ResponseWriter, r *http.Request) {
 	client := s.redisClient()
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, client) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, client) {
 		return
 	}
 	tenant, err := s.resolveTenant(r, "")
@@ -400,7 +400,7 @@ var validShadowDiffFilters = map[string]struct{}{
 // once new events arrive, caching would serve stale pages).
 func (s *server) handleShadowResultsComparisons(w http.ResponseWriter, r *http.Request) {
 	client := s.redisClient()
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, client) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, client) {
 		return
 	}
 	tenant, err := s.resolveTenant(r, "")
@@ -556,12 +556,12 @@ func isValidStreamID(id string) bool {
 // zero-filled bucket carries zero counts with a ts_ms on the bucket
 // boundary.
 type ShadowTimeseriesBucket struct {
-	TsMs                int64 `json:"ts_ms"`
-	Escalated           int64 `json:"escalated"`
-	Relaxed             int64 `json:"relaxed"`
-	ApprovalDiffer      int64 `json:"approval_differ"`
-	Unchanged           int64 `json:"unchanged"`
-	Total               int64 `json:"total"`
+	TsMs           int64 `json:"ts_ms"`
+	Escalated      int64 `json:"escalated"`
+	Relaxed        int64 `json:"relaxed"`
+	ApprovalDiffer int64 `json:"approval_differ"`
+	Unchanged      int64 `json:"unchanged"`
+	Total          int64 `json:"total"`
 }
 
 // ShadowTimeseriesResponse is the wrapper for timeseries payloads.
@@ -605,7 +605,7 @@ const shadowTimeseriesMaxBuckets = 2000
 // that callers re-query frequently, and the scan is bounded already.
 func (s *server) handleShadowResultsTimeseries(w http.ResponseWriter, r *http.Request) {
 	client := s.redisClient()
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, client) {
+	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, client) {
 		return
 	}
 	tenant, err := s.resolveTenant(r, "")

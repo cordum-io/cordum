@@ -38,19 +38,21 @@ var validAgentStatuses = map[string]bool{
 
 // AgentIdentity is the canonical agent identity resource stored in Redis.
 type AgentIdentity struct {
-	ID                  string   `json:"id"`
-	Name                string   `json:"name"`
-	Description         string   `json:"description,omitempty"`
-	Owner               string   `json:"owner"`
-	Team                string   `json:"team,omitempty"`
-	RiskTier            string   `json:"risk_tier"`
-	AllowedTopics       []string `json:"allowed_topics,omitempty"`
-	AllowedPools        []string `json:"allowed_pools,omitempty"`
-	AllowedTools        []string `json:"allowed_tools,omitempty"`
-	DataClassifications []string `json:"data_classifications,omitempty"`
-	Status              string   `json:"status"`
-	CreatedAt           string   `json:"created_at"`
-	UpdatedAt           string   `json:"updated_at"`
+	ID                       string   `json:"id"`
+	TenantID                 string   `json:"tenant_id,omitempty"`
+	Name                     string   `json:"name"`
+	Description              string   `json:"description,omitempty"`
+	Owner                    string   `json:"owner"`
+	Team                     string   `json:"team,omitempty"`
+	RiskTier                 string   `json:"risk_tier"`
+	AllowedTopics            []string `json:"allowed_topics,omitempty"`
+	AllowedPools             []string `json:"allowed_pools,omitempty"`
+	AllowedTools             []string `json:"allowed_tools,omitempty"`
+	PreapprovedMutatingTools []string `json:"preapproved_mutating_tools,omitempty"`
+	DataClassifications      []string `json:"data_classifications,omitempty"`
+	Status                   string   `json:"status"`
+	CreatedAt                string   `json:"created_at"`
+	UpdatedAt                string   `json:"updated_at"`
 }
 
 // AgentIdentityFilter controls list filtering.
@@ -344,6 +346,9 @@ func (s *AgentIdentityStore) Update(ctx context.Context, id string, updates Agen
 	if updates.AllowedTools != nil {
 		existing.AllowedTools = updates.AllowedTools
 	}
+	if updates.PreapprovedMutatingTools != nil {
+		existing.PreapprovedMutatingTools = updates.PreapprovedMutatingTools
+	}
 	if updates.DataClassifications != nil {
 		existing.DataClassifications = updates.DataClassifications
 	}
@@ -473,6 +478,7 @@ func validateAgentIdentity(a AgentIdentity) error {
 
 func normalizeAgentIdentity(a AgentIdentity) AgentIdentity {
 	a.ID = strings.TrimSpace(a.ID)
+	a.TenantID = strings.TrimSpace(a.TenantID)
 	a.Name = strings.TrimSpace(a.Name)
 	a.Description = strings.TrimSpace(a.Description)
 	a.Owner = strings.TrimSpace(a.Owner)
@@ -482,6 +488,7 @@ func normalizeAgentIdentity(a AgentIdentity) AgentIdentity {
 	a.AllowedTopics = normalizeStringSlice(a.AllowedTopics)
 	a.AllowedPools = normalizeStringSlice(a.AllowedPools)
 	a.AllowedTools = normalizeStringSlice(a.AllowedTools)
+	a.PreapprovedMutatingTools = normalizeStringSlice(a.PreapprovedMutatingTools)
 	a.DataClassifications = normalizeStringSlice(a.DataClassifications)
 	return a
 }
