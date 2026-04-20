@@ -1136,7 +1136,9 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 	defer ticker.Stop()
 
 	reload := func(trigger string) {
-		slog.Info("safety-kernel: policy reload triggered", "trigger", trigger)
+		if trigger != "poll" {
+			slog.Info("safety-kernel: policy reload triggered", "trigger", trigger)
+		}
 
 		policy, snapshot, customBundleCount, err := loader.Load(ctx)
 		if err != nil {

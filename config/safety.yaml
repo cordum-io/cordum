@@ -136,32 +136,10 @@ rules:
     decision: require_approval
     reason: "Direct API access to B2B topics requires human approval."
 
-  - id: b2b-governance-evaluate-allow
-    match:
-      topics:
-        - job.b2b.governance-evaluate
-    decision: allow_with_constraints
-    reason: "B2B governance evaluator checks spend thresholds."
-    constraints:
-      budgets:
-        max_runtime_ms: 30000
-
-  - id: b2b-procurement-pay-allow
-    match:
-      topics:
-        - job.b2b.procurement-pay
-    decision: allow_with_constraints
-    reason: "Payment processor issues purchase order."
-    constraints:
-      budgets:
-        max_runtime_ms: 30000
-
-  - id: b2b-vendor-email-allow
-    match:
-      topics:
-        - job.b2b.vendor-email
-    decision: allow
-    reason: "Vendor email sends confirmation."
+  # Pack-specific B2B workflow execution rules are installed as signed
+  # config-service bundles (for example secops/peax-demo). Keep the base file
+  # free of those IDs so the kernel does not emit duplicate-ID warnings on
+  # every reload when those bundles are active.
 
   # Visa governance — allow synthetic topics used by the governance-evaluator
   # worker for direct Safety Kernel content scanning via gRPC.
@@ -184,101 +162,17 @@ rules:
     reason: "Workflow approval gates require explicit human authorization."
 
   # =========================================================================
-  # CordClaw — pre-dispatch governance for OpenClaw agents
+  # CordClaw — only keep base fallback rules that are not shipped by the
+  # signed cordclaw/safety bundle. The bundle provides the deny/approval/
+  # constraint/read/search rules; duplicating them here caused noisy
+  # duplicate-ID warnings on every policy reload.
   # =========================================================================
-  - id: cordclaw-deny-destructive
-    match:
-      topics: ["job.cordclaw.exec"]
-      risk_tags: ["destructive"]
-    decision: deny
-    reason: "Destructive commands (rm -rf, mkfs, dd) are blocked by policy."
-
-  - id: cordclaw-deny-secrets-access
-    match:
-      topics: ["job.cordclaw.file-read", "job.cordclaw.file-write"]
-      risk_tags: ["secrets"]
-    decision: deny
-    reason: "Access to credential and key files is blocked by policy."
-
-  - id: cordclaw-deny-cloud-infra
-    match:
-      topics: ["job.cordclaw.exec"]
-      risk_tags: ["cloud", "infrastructure"]
-    decision: deny
-    reason: "Cloud infrastructure commands require explicit policy override."
-
-  - id: cordclaw-deny-remote-access
-    match:
-      topics: ["job.cordclaw.exec"]
-      risk_tags: ["remote-access"]
-    decision: deny
-    reason: "Remote access commands (ssh/scp) are blocked by policy."
-
-  - id: cordclaw-approve-outbound-messages
-    match:
-      topics: ["job.cordclaw.message-send"]
-      risk_tags: ["external"]
-    decision: require_approval
-    reason: "Outbound messages to external channels require human approval."
-
-  - id: cordclaw-approve-package-install
-    match:
-      topics: ["job.cordclaw.exec"]
-      risk_tags: ["package-install"]
-    decision: require_approval
-    reason: "Package installation requires human approval."
-
-  - id: cordclaw-approve-cron
-    match:
-      topics: ["job.cordclaw.cron-create"]
-    decision: require_approval
-    reason: "Creating autonomous scheduled tasks requires human approval."
-
-  - id: cordclaw-approve-code-deploy
-    match:
-      topics: ["job.cordclaw.exec"]
-      risk_tags: ["code-deploy"]
-    decision: require_approval
-    reason: "Code deployment operations (for example git push) require review."
-
-  - id: cordclaw-constrain-exec
-    match:
-      topics: ["job.cordclaw.exec"]
-      risk_tags: ["exec"]
-    decision: allow_with_constraints
-    constraints:
-      sandbox:
-        isolated: true
-      budgets:
-        max_runtime_ms: 30000
-    reason: "Shell execution allowed in a sandboxed environment with 30s timeout."
-
-  - id: cordclaw-constrain-browser
-    match:
-      topics: ["job.cordclaw.browser", "job.cordclaw.browser-action"]
-    decision: allow_with_constraints
-    constraints:
-      budgets:
-        max_runtime_ms: 60000
-    reason: "Browser actions are allowed with a 60s timeout."
-
-  - id: cordclaw-allow-read
-    match:
-      topics: ["job.cordclaw.file-read"]
-    decision: allow
-    reason: "File reads are allowed by default."
 
   - id: cordclaw-allow-write
     match:
       topics: ["job.cordclaw.file-write"]
     decision: allow
     reason: "Workspace file writes are allowed by default."
-
-  - id: cordclaw-allow-search
-    match:
-      topics: ["job.cordclaw.web-search", "job.cordclaw.web-fetch"]
-    decision: allow
-    reason: "Web search and fetch actions are allowed by default."
 
   - id: cordclaw-allow-memory
     match:
