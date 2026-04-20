@@ -43,7 +43,9 @@ import {
   Hash,
   Menu,
   X,
+  FlaskConical,
 } from "lucide-react";
+import { FEATURE_FLAGS } from "@/config/flags";
 
 /*
  * Navigation Structure — Revision v2
@@ -87,6 +89,9 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
     items: [
       { path: "/govern/overview", label: "Policy Studio", icon: Shield },
       { path: "/govern/quarantine", label: "Quarantine", icon: ShieldAlert, badge: "quarantine" },
+      ...(FEATURE_FLAGS.evalsPage
+        ? [{ path: "/evals", label: "Evals", icon: FlaskConical } as NavItem]
+        : []),
     ],
   },
   {

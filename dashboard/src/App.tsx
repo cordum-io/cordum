@@ -11,6 +11,7 @@ import { useRequireAuth } from "./hooks/useAuth";
 import { useEventStream } from "./hooks/useEventStream";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastBridge } from "./components/ToastBridge";
+import { FEATURE_FLAGS } from "./config/flags";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -63,6 +64,9 @@ const GovernPolicyOverviewPage = lazy(() => import("./pages/govern/PolicyOvervie
 const GovernTenantDetailPage = lazy(() => import("./pages/govern/TenantDetailPage"));
 const GovernBundleDetailPage = lazy(() => import("./pages/govern/BundleDetailPage"));
 const GovernQuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"));
+const EvalsPage = lazy(() => import("./pages/EvalsPage"));
+const EvalDatasetDetailPage = lazy(() => import("./pages/EvalDatasetDetailPage"));
+const EvalRunDetailPage = lazy(() => import("./pages/EvalRunDetailPage"));
 
 // Policy Studio tab redirects — canonical `/govern/<tab>` aliases land on
 // the tabbed overview with the right tab/mode pre-selected. These are not
@@ -139,6 +143,13 @@ function ProtectedRoutes() {
           <Route path="/govern/quarantine" element={<GovernQuarantinePage />} />
           <Route path="/govern/replay" element={<PolicyTabRedirect tab="evaluation" mode="replay" />} />
           <Route path="/govern/analytics" element={<PolicyTabRedirect tab="evaluation" mode="analytics" />} />
+          {FEATURE_FLAGS.evalsPage && (
+            <>
+              <Route path="/evals" element={<EvalsPage />} />
+              <Route path="/evals/:datasetId" element={<EvalDatasetDetailPage />} />
+              <Route path="/evals/runs/:runId" element={<EvalRunDetailPage />} />
+            </>
+          )}
 
           {/* EXTEND */}
           <Route path="/packs" element={<PacksPage />} />

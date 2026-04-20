@@ -15,4 +15,15 @@ export const FEATURE_FLAGS = {
     !isProd &&
     !isTest &&
     import.meta.env.VITE_GOVERNANCE_TIMELINE_MOCKS !== "false",
+  // Evals page ships dark until the three backend sibling tasks land
+  // (task-f34c528f dataset store, task-08a86cc0 extraction pipeline,
+  // task-42b98ec6 runner) AND ops flip this on. Opt-in via env var so
+  // internal previews can flip it without a redeploy.
+  evalsPage: !isProd || import.meta.env.VITE_EVALS_PAGE === "true",
+  // Dev-only msw handlers so operators can demo Evals locally before
+  // the backend routes are live. Never true in prod or test runs.
+  evalsPageMocks:
+    !isProd &&
+    !isTest &&
+    import.meta.env.VITE_EVALS_PAGE_MOCKS !== "false",
 } as const;
