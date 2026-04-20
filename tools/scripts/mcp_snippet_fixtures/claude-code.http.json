@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "cordum": {
+      "type": "",
+      "url": "",
+      "headers": {
+        "Authorization": "",
+        "X-Tenant-ID": ""
+      }
+    }
+  }
+}

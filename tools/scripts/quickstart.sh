@@ -4,13 +4,14 @@
 #
 # Usage:
 #   ./tools/scripts/quickstart.sh [--clean] [--artifacts-dir DIR] [--skip-build]
-#                                 [--skip-smoke] [--health-timeout N]
+#                                 [--skip-smoke] [--skip-doctor] [--health-timeout N]
 #
 # Flags:
 #   --clean           Tear down existing stack (compose down -v) before starting
 #   --artifacts-dir   Directory for deploy artifacts (logs, status snapshots)
 #   --skip-build      Reuse existing images (do not rebuild)
-#   --skip-smoke      Skip the post-deploy smoke test
+#   --skip-smoke      Skip the post-deploy smoke test (also skips doctor)
+#   --skip-doctor     Skip the post-deploy `cordumctl doctor` verification
 #   --health-timeout  Seconds to wait for health readiness (default: 120)
 #
 # This script auto-creates .env, generates credentials, and starts the full
@@ -215,6 +216,7 @@ CLEAN=0
 ARTIFACTS_DIR=""
 SKIP_BUILD=${CORDUM_SKIP_BUILD:-0}
 SKIP_SMOKE=0
+SKIP_DOCTOR=0
 HEALTH_TIMEOUT=120
 
 while [[ $# -gt 0 ]]; do
@@ -223,6 +225,7 @@ while [[ $# -gt 0 ]]; do
     --artifacts-dir) ARTIFACTS_DIR="$2"; shift 2 ;;
     --skip-build)    SKIP_BUILD=1; shift ;;
     --skip-smoke)    SKIP_SMOKE=1; shift ;;
+    --skip-doctor)   SKIP_DOCTOR=1; shift ;;
     --health-timeout) HEALTH_TIMEOUT="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,/^# =====/{ /^#/s/^# //p }' "${BASH_SOURCE[0]}"
@@ -378,6 +381,30 @@ else
   echo ""
   log "running smoke test"
   CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" ./tools/scripts/platform_smoke.sh
+fi
+
+# --- Doctor (install verification) ---
+# Optional final check — runs only when `cordumctl` is on PATH so fresh
+# clones that haven't built the CLI yet still finish quickstart cleanly.
+# --skip-smoke implies --skip-doctor so users who asked to skip
+# verification get a uniformly verification-free run.
+if [[ "${SKIP_SMOKE}" == "1" || "${SKIP_DOCTOR}" == "1" ]]; then
+  log "skipping doctor verification"
+elif ! command -v cordumctl >/dev/null 2>&1; then
+  log "cordumctl not on PATH — skipping doctor (build it with: make build SERVICE=cordumctl)"
+else
+  echo ""
+  log "running cordumctl doctor (post-install verification)"
+  doctor_env=(CORDUM_API_KEY="${API_KEY}" CORDUM_TENANT_ID="${TENANT_ID}")
+  if [[ -n "${TLS_CA}" ]]; then
+    doctor_env+=(CORDUM_GATEWAY="https://127.0.0.1:8081")
+    env "${doctor_env[@]}" cordumctl doctor --timeout 30 --cacert ./certs/ca/ca.crt || \
+      log "cordumctl doctor reported issues — see docs/troubleshooting/install.md"
+  else
+    doctor_env+=(CORDUM_GATEWAY="http://127.0.0.1:8081")
+    env "${doctor_env[@]}" cordumctl doctor --timeout 30 || \
+      log "cordumctl doctor reported issues — see docs/troubleshooting/install.md"
+  fi
 fi
 
 echo ""

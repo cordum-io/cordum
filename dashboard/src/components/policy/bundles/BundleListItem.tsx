@@ -1,6 +1,7 @@
-import { ArrowRight, Clock, Hash, FileText } from "lucide-react";
+import { ArrowRight, Clock, Hash, FileText, CopyCheck } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { SignatureBadge } from "@/components/SignatureBadge";
 import type { PolicyBundle } from "@/api/types";
 
 function formatUpdatedAt(iso: string): string {
@@ -47,11 +48,39 @@ export function BundleListItem({ bundle, canPublish, onOpen }: BundleListItemPro
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <SignatureBadge
+            signed={bundle.signed ?? "unknown"}
+            publicKeyId={bundle.signature?.key_id}
+            size="sm"
+            data-testid="bundle-signature-badge"
+          />
           <StatusBadge variant={getBundleStatusVariant(bundle.status)}>
             {bundle.status ?? "unknown"}
           </StatusBadge>
           {bundle.enabled === false && (
             <StatusBadge variant="muted">disabled</StatusBadge>
+          )}
+          {bundle.shadow ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpen(bundle.id);
+              }}
+              className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider text-amber-400 transition-colors hover:bg-amber-500/20"
+              aria-label="Shadow policy active — open shadow tab"
+              data-testid="bundle-shadow-badge"
+            >
+              <CopyCheck className="h-3 w-3" />
+              Shadow
+            </button>
+          ) : (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground"
+              data-testid="bundle-no-shadow-badge"
+            >
+              No shadow
+            </span>
           )}
         </div>
       </div>

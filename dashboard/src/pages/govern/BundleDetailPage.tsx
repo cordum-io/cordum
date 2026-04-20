@@ -15,11 +15,14 @@ import { BundleDiffView } from "@/components/policy/bundles/BundleDiffView";
 import { BundleSnapshotHistory } from "@/components/policy/bundles/BundleSnapshotHistory";
 import { BundlePublishDialog } from "@/components/policy/bundles/BundlePublishDialog";
 import { BundleRollbackDialog } from "@/components/policy/bundles/BundleRollbackDialog";
+import { BundleShadowTab } from "@/components/policy/bundles/BundleShadowTab";
+import { BundleSignatureSection } from "@/components/policy/bundles/BundleSignatureSection";
+import { PromoteShadowDialog } from "@/components/policy/PromoteShadowDialog";
 import { usePolicyBundle, useUpdatePolicyBundle, usePublishPolicy, useRollbackPolicy } from "@/hooks/usePolicies";
 import { usePolicyAccess } from "@/hooks/usePolicyAccess";
 import type { GlobalPolicyParseIssue } from "@/types/policy";
 
-export const BUNDLE_DETAIL_TABS = ["yaml", "preview", "diff", "history"] as const;
+export const BUNDLE_DETAIL_TABS = ["yaml", "preview", "diff", "history", "shadow"] as const;
 
 export function decodeBundleId(encoded: string): string {
   return decodeURIComponent(encoded).replaceAll("~", "/");
@@ -61,6 +64,7 @@ export default function BundleDetailPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   const [rollbackSnapshotId, setRollbackSnapshotId] = useState<string | null>(null);
+  const [promoteOpen, setPromoteOpen] = useState(false);
 
   // Auto-switch to yaml tab for draft bundles (unless URL specifies a tab)
   useEffect(() => {
@@ -249,6 +253,8 @@ export default function BundleDetailPage() {
             }
           />
 
+          <BundleSignatureSection bundle={bundle} />
+
           {policyAccess.isReadOnly && (
             <InfoBanner variant="warning">
               You have read-only access. YAML, diff, and snapshot history are visible but editing, publishing, and rollback are restricted.
@@ -320,6 +326,14 @@ export default function BundleDetailPage() {
                 onRollback={(snapshotId) => setRollbackSnapshotId(snapshotId)}
               />
             )}
+            {activeTab === "shadow" && (
+              <BundleShadowTab
+                bundleID={bundleId}
+                activeContent={serverContent}
+                canEdit={policyAccess.canEdit}
+                onOpenPromote={() => setPromoteOpen(true)}
+              />
+            )}
           </div>
 
           <BundlePublishDialog
@@ -336,6 +350,14 @@ export default function BundleDetailPage() {
             loading={rollbackPolicy.isPending}
             onClose={() => setRollbackSnapshotId(null)}
             onConfirm={() => void handleRollbackConfirm()}
+          />
+
+          <PromoteShadowDialog
+            open={promoteOpen}
+            bundleID={bundleId}
+            bundleName={bundle.name || bundle.id}
+            activeContent={serverContent}
+            onClose={() => setPromoteOpen(false)}
           />
         </>
       )}

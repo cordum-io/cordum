@@ -594,6 +594,14 @@ export interface BundleSnapshot {
   rule_count?: number;
 }
 
+export interface PolicyBundleSignature {
+  algorithm: string;
+  key_id: string;
+  value: string;
+  hash: string;
+  signed_bytes: number;
+}
+
 export interface PolicyBundle {
   id: string;
   bundle_id?: string;
@@ -617,6 +625,16 @@ export interface PolicyBundle {
   rule_count?: number;
   eval_count_24h?: number;
   last_triggered?: string;
+  // shadow summary surfaces when the gateway detail response carries a
+  // /shadow sidecar. Absent = no shadow active for this bundle.
+  shadow?: ShadowPolicySummary | null;
+  // Signature fields sourced from the bundle's _signature map attached
+  // server-side by handlers_policy_bundles_signing.go. Missing when the
+  // bundle predates the signing pipeline or when the detail endpoint
+  // has not yet been extended to surface the _signature entry. UI
+  // surfaces default to 'unknown' badge when absent.
+  signed?: boolean;
+  signature?: PolicyBundleSignature;
 }
 
 export interface PolicyPublishRequest {
@@ -786,7 +804,29 @@ export interface Worker {
   cpuLoad?: number;
   gpuUtilization?: number;
   memoryLoad?: number;
+  // Heartbeat demotion (phase-2 boundary hardening). `online` is the
+  // authoritative dispatch-eligibility signal backed by the worker's
+  // session token; lastHeartbeat + heartbeatAgeSeconds are telemetry
+  // only — never gate UX behaviour on them.
+  online?: boolean;
+  sessionValid?: boolean;
+  sessionExpMs?: number;
+  sessionRevoked?: boolean;
+  sessionState?: WorkerSessionState;
+  lastHeartbeatAt?: string;
+  heartbeatAgeSeconds?: number;
 }
+
+/**
+ * WorkerSessionState mirrors the scheduler TrustReason* constants.
+ * Surfaced on /api/v1/workers for dashboards + external consumers.
+ */
+export type WorkerSessionState =
+  | "valid"
+  | "no_session"
+  | "session_expired"
+  | "session_revoked"
+  | "trust_store_unready";
 
 export interface Pool {
   name: string;
@@ -1374,6 +1414,31 @@ export interface McpResource {
   mimeType: string;
 }
 
+export interface McpPromptArgument {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+export interface McpPrompt {
+  name: string;
+  description: string;
+  arguments: McpPromptArgument[];
+  // modelClass hints at the model tier the prompt is tuned for —
+  // e.g. 'small' for straightforward rewriting, 'reasoning' for the
+  // policy-migration helper that has to navigate grammar diffs.
+  // Rendered on the catalogue card.
+  modelClass: "small" | "reasoning";
+  // safetyDisclaimer is true for prompts whose rendered output
+  // operators should simulate before applying (draft_safety_rule +
+  // policy_migration_helper). Gets a distinct amber chip on the card.
+  safetyDisclaimer: boolean;
+  // docsHref links to the long-form catalogue entry in
+  // docs/mcp/prompts.md so operators can jump straight to the
+  // argument-schema + example-output deep-dive.
+  docsHref: string;
+}
+
 export interface McpStatus {
   running: boolean;
   connectedClients: number;
@@ -1504,6 +1569,145 @@ export interface AgentRegistryEntry {
 // ---------------------------------------------------------------------------
 // Setup Wizard
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Governance health — Command Center composite score.
+// Matches core/governance.HealthScore / HealthFactor on the wire.
+// ---------------------------------------------------------------------------
+
+export type GovernanceGrade = "A" | "B" | "C" | "D" | "F";
+
+export interface GovernanceHealthFactor {
+  score: number;
+  weight: number;
+  raw?: unknown;
+  notes?: string;
+}
+
+export interface GovernanceHealth {
+  score: number;
+  grade: GovernanceGrade;
+  generated_at: string;
+  factors: Record<string, GovernanceHealthFactor>;
+  truncated_at_max?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Policy shadow mode (mirrors core/policyshadow wire types)
+// ---------------------------------------------------------------------------
+
+export interface ShadowPolicy {
+  shadow_bundle_id: string;
+  bundle_id: string;
+  tenant_id: string;
+  content: string;
+  created_at: string;
+  activated_at: string;
+  created_by?: string;
+  metadata?: Record<string, string>;
+}
+
+export interface ShadowPolicySummary {
+  shadow_bundle_id: string;
+  bundle_id: string;
+  tenant_id: string;
+  created_by?: string;
+  created_at: string;
+  activated_at: string;
+}
+
+export interface ShadowResultsSummary {
+  total_evaluated: number;
+  escalated_count: number;
+  relaxed_count: number;
+  approval_differ_count: number;
+  unchanged_count: number;
+  first_evaluated_at?: string;
+  last_evaluated_at?: string;
+}
+
+export type ShadowDiff =
+  | "escalated"
+  | "relaxed"
+  | "approval_differ"
+  | "unchanged";
+
+export interface ShadowComparisonEntry {
+  ts_ms: number;
+  job_id: string;
+  agent_id: string;
+  active_verdict: string;
+  shadow_verdict: string;
+  diff: ShadowDiff;
+  active_rule_id?: string;
+  shadow_rule_id?: string;
+  latency_ms?: number;
+  seq?: number;
+}
+
+export interface ShadowComparisonsResponse {
+  entries: ShadowComparisonEntry[];
+  next_cursor?: string;
+  truncated_at_max?: boolean;
+}
+
+export interface ShadowTimeseriesBucket {
+  ts_ms: number;
+  escalated: number;
+  relaxed: number;
+  approval_differ: number;
+  unchanged: number;
+  total: number;
+}
+
+export interface ShadowTimeseriesResponse {
+  buckets: ShadowTimeseriesBucket[];
+  window_ms: number;
+}
+
+// ---------------------------------------------------------------------------
+// MCP governance dashboard
+// ---------------------------------------------------------------------------
+
+export type SignatureStatus = "verified" | "unverified" | "invalid";
+
+export interface MCPUsageCell {
+  agent_id: string;
+  tool_name: string;
+  count: number;
+  allow_count: number;
+  deny_count: number;
+  approval_required_count: number;
+  p50_latency_ms: number;
+  p99_latency_ms: number;
+  last_invoked_at_ms: number;
+}
+
+export interface MCPUsageResponse {
+  cells: MCPUsageCell[];
+  total_calls: number;
+  window_ms: number;
+  truncated_at_max: boolean;
+}
+
+export interface MCPOutboundEntry {
+  ts_ms: number;
+  stream_id: string;
+  agent_id: string;
+  tool_name: string;
+  target_server: string;
+  signature_status: SignatureStatus;
+  signature_key_id?: string;
+  latency_ms?: number;
+  result_type?: string;
+  event_hash?: string;
+}
+
+export interface MCPOutboundResponse {
+  entries: MCPOutboundEntry[];
+  next_cursor?: string;
+  truncated_at_max: boolean;
+}
 
 export interface SetupStatus {
   setup_complete: boolean;

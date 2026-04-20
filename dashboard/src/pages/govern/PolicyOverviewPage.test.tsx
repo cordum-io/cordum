@@ -25,6 +25,32 @@ vi.mock("@/hooks/usePolicies", () => ({
   usePolicyBundles: () => ({ data: { items: [] }, isLoading: false }),
   usePolicyRules: () => ({ data: { items: [] }, isLoading: false }),
 }));
+vi.mock("@/hooks/useAuditChainVerify", () => ({
+  useAuditChainVerify: () => ({
+    data: undefined,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+    dataUpdatedAt: 0,
+  }),
+}));
+vi.mock("@/hooks/useAuditVerify", () => ({
+  useAuditVerify: () => ({
+    data: undefined,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+    dataUpdatedAt: 0,
+  }),
+  useTriggerAuditVerify: () => () => {},
+}));
+vi.mock("@/hooks/usePermission", () => ({
+  usePermission: () => ({ allowed: true, userRoles: ["admin"] }),
+  useIsAdmin: () => true,
+}));
+vi.mock("@/hooks/useAuth", () => ({
+  useAuth: () => ({ tenantId: "default" }),
+}));
 vi.mock("@/hooks/usePageTitle", () => ({ usePageTitle: () => {} }));
 vi.mock("@/pages/govern/InputRulesPage", () => ({ default: () => <div>Input rules content</div> }));
 vi.mock("@/pages/govern/OutputRulesPage", () => ({ default: () => <div>Output rules content</div> }));
@@ -133,5 +159,21 @@ describe("PolicyOverviewPage tab rendering", () => {
   it("falls back to overview for invalid tab params", async () => {
     await renderPage("nonexistent");
     expect(getActiveLabels()).toContain("Overview");
+  });
+
+  it("mounts the ChainIntegrityWidget inside the Overview tab content", () => {
+    renderPage("overview");
+    const widget = container.querySelector(
+      "[data-testid=chain-integrity-widget]",
+    );
+    expect(widget).not.toBeNull();
+    // With the default (data: undefined, not loading, not error) mock
+    // the widget lands in its not_checked state.
+    expect(widget?.getAttribute("data-state")).toBe("not_checked");
+  });
+
+  it("does NOT mount the GapAlertBanner when verify data is absent or ok", () => {
+    renderPage("overview");
+    expect(container.querySelector("[data-testid=gap-alert-banner]")).toBeNull();
   });
 });

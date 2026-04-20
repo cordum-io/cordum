@@ -61,20 +61,41 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, PermWorkersRead, "admin") {
 		return
 	}
-	// Prefer Redis snapshot (consistent across all replicas).
-	workers, err := s.workersFromRedisSnapshot()
-	if err == nil && workers != nil {
+	// Prefer Redis snapshot (consistent across all replicas). The
+	// response shape layers session authority (online, session_valid,
+	// session_exp_ms, session_revoked, session_state) over the existing
+	// heartbeat telemetry fields. Legacy clients that read only the
+	// heartbeat-era fields (worker_id, pool, active_jobs, …) keep
+	// type-checking; new consumers get the demotion-era authority
+	// signal via "online".
+	snap, err := s.snapshotFromRedis()
+	if err == nil && snap != nil {
+		items := make([]map[string]any, 0, len(snap.Workers))
+		for _, ws := range snap.Workers {
+			items = append(items, s.workerStatusFromSummary(r.Context(), ws, snap.CapturedAt))
+		}
 		w.Header().Set("Content-Type", "application/json")
-		writeJSON(w, map[string]any{"items": workerSummariesToHeartbeats(workers)})
+		writeJSON(w, map[string]any{"items": items})
 		return
 	}
 	if err != nil {
 		slog.Warn("worker snapshot read failed, falling back to in-memory", "error", err)
 	}
 	// Fallback: in-memory heartbeat map (local replica only).
-	out := s.activeWorkersSnapshot(time.Now().UTC())
+	now := time.Now().UTC()
+	hbs := s.activeWorkersSnapshot(now)
+	items := make([]map[string]any, 0, len(hbs))
+	s.workerMu.RLock()
+	seenCopy := make(map[string]time.Time, len(s.workerSeen))
+	for id, t := range s.workerSeen {
+		seenCopy[id] = t
+	}
+	s.workerMu.RUnlock()
+	for _, hb := range hbs {
+		items = append(items, s.workerStatusResponse(r.Context(), hb, seenCopy[hb.GetWorkerId()]))
+	}
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, map[string]any{"items": out})
+	writeJSON(w, map[string]any{"items": items})
 }
 
 func (s *server) activeWorkersSnapshot(now time.Time) []*pb.Heartbeat {

@@ -162,7 +162,92 @@ cordumctl status                          # show tier, expiry, usage vs limits
 # Health & status
 cordumctl status
 cordumctl status --json                   # machine-readable output
+cordumctl doctor                          # post-install / pre-upgrade verification
+cordumctl doctor --json                   # machine-readable; wire into CI health gates
+cordumctl doctor --strict                 # treat warns as fails (exit 1 on any non-ok)
+cordumctl doctor --fix                    # interactive prompts per failing check
 ```
+
+### `cordumctl doctor` — install verification
+
+Runs a sequence of independent checks against a live deploy and reports
+an actionable summary. Safe to run anytime — every probe is read-only
+unless the operator opts in via `--fix`.
+
+**When to run:**
+
+| Situation | Command |
+|-----------|---------|
+| Right after `quickstart.sh` | `cordumctl doctor` (first green run = install succeeded) |
+| CI health gate | `cordumctl doctor --json \| jq .exitCode` |
+| Pre-upgrade sanity | `cordumctl doctor --strict` on the current version |
+| Post-upgrade verification | `cordumctl doctor` + `cordumctl doctor --json` saved as artefact |
+| Incident response | `cordumctl doctor --verbose` — full `DETAIL` per check + the fix hints |
+
+**Checks shipped:**
+
+| ID | What it tests | Fail fix |
+|----|---------------|----------|
+| `gateway_reachable` | `GET {gateway}/readyz` returns 200 | `docker compose up -d api-gateway` |
+| `gateway_auth` | `GET /api/v1/status` with API key returns 200 | `export CORDUM_API_KEY=<your-key>` |
+| `nats_connected` | `/api/v1/status` reports NATS connected | `docker compose logs nats` |
+| `redis_ok` | `/api/v1/status` reports Redis OK | `docker compose logs redis` |
+| `workers_registered` | `/api/v1/status` reports ≥1 worker | `cordumctl pack install ./demo/quickstart/pack` |
+| `build_info` | gateway build version is not `dev`/empty | `docker compose pull && docker compose up -d` |
+| `service_{scheduler,safety-kernel,context-engine,workflow-engine,mcp,dashboard}` | per-service readyz reachable from host | `docker compose logs <service>` |
+| `demo_pack_installed` | quickstart demo pack present | `cordumctl pack install ./demo/quickstart/pack` |
+| `policy_bundle_loaded` | ≥1 enabled policy bundle | `cordumctl policy activate <bundle-id>` |
+| `version_skew` | cordumctl build matches gateway build | `docker compose pull && docker compose up -d` |
+| `tls_cert_expiry` | `./certs/ca/ca.crt` valid >7 days | `cordumctl generate-certs --force --days 365` |
+
+**State → exit-code mapping:**
+
+| State | Meaning | Default exit | `--strict` exit |
+|-------|---------|--------------|-----------------|
+| `ok` | Check passed | 0 | 0 |
+| `warn` | Non-fatal (unpinned image, missing demo pack, &c.) | 0 | 1 |
+| `fail` | Something actually broken | 1 | 1 |
+| `skip` | Precondition unmet (no API key, gateway down, service port not exposed) | 0 | 0 |
+
+Exit code 2 is reserved for usage errors (unknown flag, `--fix` and `--json` combined, &c.).
+
+**`--json` output schema:**
+
+```json
+{
+  "checks": [
+    {
+      "id": "nats_connected",
+      "label": "NATS connected",
+      "state": "fail",
+      "detail": "gateway reports NATS disconnected",
+      "fix": "docker compose logs nats  (verify NATS_TOKEN + nats service health)"
+    }
+  ],
+  "summary": { "ok": 12, "warn": 1, "fail": 1, "skip": 2 },
+  "exitCode": 1
+}
+```
+
+**`--fix` mode semantics:**
+
+* Walks each `fail` check whose `fix` string is non-empty.
+* Prints the suggested command and prompts `[y/N/a]` — default is skip.
+* `y` runs the command via the platform shell, captures output, then
+  re-runs the check to confirm the repair.
+* `a` aborts all remaining fixes.
+* If the fix contains a destructive substring (`--force`, `down -v`,
+  `reset --hard`, `rm -rf`, `dropdb`, `DELETE FROM`) the operator must
+  type `yes` at a second confirmation before the fix runs.
+* `--fix` refuses to combine with `--json` (the interactive prompts
+  would corrupt the machine-readable output).
+
+**Required privileges:** the user running `cordumctl doctor` needs:
+
+* Read access to the gateway (`CORDUM_API_KEY`, tenant).
+* Read access to `./certs/ca/ca.crt` if TLS expiry check should run.
+* With `--fix`: permission to run the commands embedded in `fix`
+  strings (typically `docker compose` + `cordumctl` subcommands).
 
 ## Redis Operations
 

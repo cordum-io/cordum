@@ -1,0 +1,60 @@
+# Contributor override for local rebuilds.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# Or via make:
+#   make dev-up
+#
+# Every Cordum-authored service is re-pinned to a local :dev tag and forced
+# through the existing `build:` context. Upstream images (nats, redis) are
+# untouched — they should never be rebuilt locally. This override is the
+# escape hatch for contributors; the default path (`docker compose up -d`)
+# still pulls pre-built images from ghcr.io.
+
+services:
+  context-engine:
+    image: cordum/context-engine:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cordum-context-engine
+
+  safety-kernel:
+    image: cordum/safety-kernel:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cordum-safety-kernel
+
+  scheduler:
+    image: cordum/scheduler:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cordum-scheduler
+
+  api-gateway:
+    image: cordum/api-gateway:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cordum-api-gateway
+
+  workflow-engine:
+    image: cordum/workflow-engine:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: cordum-workflow-engine
+
+  dashboard:
+    image: cordum/dashboard:dev
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile

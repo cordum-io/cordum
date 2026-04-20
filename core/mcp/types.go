@@ -15,6 +15,8 @@ const (
 	MethodResourcesList     = "resources/list"
 	MethodResourcesRead     = "resources/read"
 	MethodResourceTemplates = "resources/templates/list"
+	MethodPromptsList       = "prompts/list"
+	MethodPromptsGet        = "prompts/get"
 )
 
 // JSONRPCMessage is a transport-level envelope for JSON-RPC 2.0 payloads.
@@ -28,6 +30,20 @@ type JSONRPCMessage struct {
 
 	// Transport metadata (not serialized on wire).
 	sessionID string
+	// identity is the agent identity the transport resolved for this
+	// message. It flows through the dispatcher so tools/list and
+	// tools/call can filter by scope without a side channel. nil when
+	// the transport could not resolve one.
+	identity *AgentIdentity
+	// requestCtx carries the ORIGINAL request context from the HTTP
+	// transport so the dispatcher sees the full set of ctx values the
+	// gateway middleware installed — tenant (mcp.WithTenant),
+	// MCPCallMetadata (for the approval gate), approval_id, and any
+	// future request-scoped keys. Nil when the transport did not
+	// attach a ctx (tests, stdio). handleMessage falls back to
+	// context.Background() with just the identity pulled from msg in
+	// that case.
+	requestCtx context.Context
 }
 
 // JSONRPCRequest is a standard JSON-RPC 2.0 request object.
@@ -85,6 +101,7 @@ type InitializeResult struct {
 type ServerCapabilities struct {
 	Tools     *ToolsCapability     `json:"tools,omitempty"`
 	Resources *ResourcesCapability `json:"resources,omitempty"`
+	Prompts   *PromptsCapability   `json:"prompts,omitempty"`
 	Logging   map[string]any       `json:"logging,omitempty"`
 }
 
@@ -98,11 +115,93 @@ type ResourcesCapability struct {
 	ListChanged bool `json:"listChanged,omitempty"`
 }
 
+// PromptsCapability describes prompt-related capabilities. MCP clients
+// consult this to decide whether to render the server's prompts in
+// their prompt catalogue.
+type PromptsCapability struct {
+	ListChanged bool `json:"listChanged,omitempty"`
+}
+
+// Prompt is an MCP prompt descriptor — a templated input the client
+// can request by name. Arguments are filled in by the client; the
+// server renders the final PromptMessage chain.
+type Prompt struct {
+	Name        string           `json:"name"`
+	Description string           `json:"description,omitempty"`
+	Arguments   []PromptArgument `json:"arguments,omitempty"`
+}
+
+// PromptArgument describes one input the client must (or may) supply
+// when requesting a prompt.
+type PromptArgument struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+}
+
+// PromptMessage is one chat-shaped message in a rendered prompt.
+// Mirrors the MCP spec: role in {"user","assistant","system"}, content
+// is either a text block or a content-block list.
+type PromptMessage struct {
+	Role    string      `json:"role"`
+	Content PromptBlock `json:"content"`
+}
+
+// PromptBlock is a single content block inside a PromptMessage. The
+// MCP spec supports text + image + resource-ref; text is the dominant
+// case for Cordum's shipped prompts.
+type PromptBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+// PromptGetParams is the request body for prompts/get.
+type PromptGetParams struct {
+	Name      string            `json:"name"`
+	Arguments map[string]string `json:"arguments,omitempty"`
+}
+
+// PromptListResult is the response body for prompts/list.
+type PromptListResult struct {
+	Prompts []Prompt `json:"prompts"`
+}
+
+// PromptGetResult is the response body for prompts/get.
+type PromptGetResult struct {
+	Description string          `json:"description,omitempty"`
+	Messages    []PromptMessage `json:"messages"`
+}
+
 // Tool is an MCP tool descriptor.
 type Tool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	InputSchema map[string]any `json:"inputSchema,omitempty"`
+
+	// RequiresApproval, when true, gates every tools/call invocation behind
+	// a human approval. Omitted from the JSON wire format when false so
+	// external MCP clients see a clean tool descriptor.
+	RequiresApproval bool `json:"requiresApproval,omitempty"`
+
+	// ApprovalScope is an opaque tag the runtime tool-policy config
+	// matches against. When set, runtime rules can flip the approval
+	// gate without a code change.
+	ApprovalScope string `json:"approvalScope,omitempty"`
+
+	// Tags are free-form labels consumed by scope-filter rules and
+	// surfaced in the dashboard tool-catalogue.
+	Tags []string `json:"tags,omitempty"`
+
+	// RiskTier declares the minimum actor risk tier required to see or
+	// call this tool. Valid values: "low", "medium", "high", "critical".
+	// An empty string is treated as "high" (fail-closed).
+	RiskTier string `json:"riskTier,omitempty"`
+
+	// DataClassifications labels the data sensitivities this tool may
+	// access (e.g. "pii", "phi", "secrets"). An agent identity's
+	// DataClassifications must be a superset for the tool to be
+	// visible/callable.
+	DataClassifications []string `json:"dataClassifications,omitempty"`
 }
 
 // ToolListResult is the result payload for tools/list.

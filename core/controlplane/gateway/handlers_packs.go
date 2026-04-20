@@ -325,6 +325,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 	}
 	if len(registeredTopicNames) > 0 {
 		s.publishConfigChanged("system", "topics")
+		s.emitTopicRegisteredAudit(ctx, manifest.Metadata.ID, registeredTopicNames, opts.InstalledBy)
 	}
 	if packCredential != nil {
 		s.publishConfigChanged("system", "workers")
@@ -420,6 +421,7 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(names) > 0 {
 			s.publishConfigChanged("system", "topics")
+			s.emitTopicUnregisteredAudit(r.Context(), packID, names, packOpActor(r))
 		}
 	}
 	if s.workerCredentialStore != nil {

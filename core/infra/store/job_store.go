@@ -162,13 +162,44 @@ func normalizeTimestampMicrosUpper(ts int64) int64 {
 	}
 }
 
+// hashApprovalJobRequest computes the canonical hash used by the
+// approval-repair classifier. Identical to scheduler.HashJobRequest —
+// intentionally duplicated here because the store package cannot
+// import scheduler without a cycle. Any change must land in both
+// sites; the `TestHashParity_StoreAndScheduler` regression test
+// pins them together.
+//
+// The canonical form strips mutable fields (approval_* labels,
+// bus.LabelBusMsgID, scheduler-injected env keys) and roundtrips
+// through protojson so proto unknown fields are dropped — matching
+// what SetJobRequest persists into Redis. Without the protojson
+// roundtrip the scheduler's in-memory hash and the reconciler's
+// Redis-read hash would diverge whenever the in-memory proto
+// carried unknown fields, falsely tripping the StaleRequest
+// classifier and auto-invalidating brand-new approvals.
 func hashApprovalJobRequest(req *pb.JobRequest) (string, error) {
 	if req == nil {
 		return "", fmt.Errorf("job request required")
 	}
+	clone, err := canonicalApprovalJobRequest(req)
+	if err != nil {
+		return "", err
+	}
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(clone)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func canonicalApprovalJobRequest(req *pb.JobRequest) (*pb.JobRequest, error) {
+	if req == nil {
+		return nil, fmt.Errorf("job request required")
+	}
 	clone, ok := proto.Clone(req).(*pb.JobRequest)
 	if !ok || clone == nil {
-		return "", fmt.Errorf("job request clone failed")
+		return nil, fmt.Errorf("job request clone failed")
 	}
 	if clone.Labels != nil {
 		for key := range clone.Labels {
@@ -187,12 +218,17 @@ func hashApprovalJobRequest(req *pb.JobRequest) (string, error) {
 			clone.Env = nil
 		}
 	}
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(clone)
+	marshalOpts := protojson.MarshalOptions{EmitUnpopulated: true}
+	raw, err := marshalOpts.Marshal(clone)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("canonical approval job request marshal: %w", err)
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	out := &pb.JobRequest{}
+	unmarshalOpts := protojson.UnmarshalOptions{DiscardUnknown: true}
+	if err := unmarshalOpts.Unmarshal(raw, out); err != nil {
+		return nil, fmt.Errorf("canonical approval job request unmarshal: %w", err)
+	}
+	return out, nil
 }
 
 // RedisJobStore implements model.JobStore backed by Redis.
@@ -2090,6 +2126,16 @@ func ClassifyApprovalRepair(snapshot ApprovalRepairSnapshot, opts ApprovalRepair
 	}
 
 	if snapshot.SafetyRecord.JobHash != "" && snapshot.RequestHash != "" && snapshot.RequestHash != snapshot.SafetyRecord.JobHash {
+		// The hashes only differ when the canonical JobRequest body
+		// genuinely changed between safety-decision time and now. The
+		// scheduler's preMutationHash path (engine.go checkSafetyDecision)
+		// captures the hash BEFORE attachEffectiveConfig / applyConstraints
+		// mutate req.Env, and the reconciler re-hashes the stored
+		// (pre-mutation) JobRequest, so any mismatch here is an actual
+		// user-visible request drift. An earlier version of this branch
+		// added a 60s wall-clock grace to hide false positives from a
+		// broken canonicaliser; that masking is no longer needed and
+		// would silently weaken legitimate StaleRequest detection.
 		plan.Kind = ApprovalRepairInvalidateStaleRequest
 		plan.Repairable = true
 		plan.Reason = "job request changed since the approval request was created"
