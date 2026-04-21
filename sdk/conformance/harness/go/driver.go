@@ -438,6 +438,9 @@ func mergeCursor(path, cursor string) string {
 
 func nextCursorFromBody(body map[string]any) string {
 	for _, key := range []string{"nextCursor", "cursor"} {
+		if raw, ok := body["next_cursor"].(string); ok && strings.TrimSpace(raw) != "" {
+			return raw
+		}
 		if raw, ok := body[key].(string); ok && strings.TrimSpace(raw) != "" {
 			return raw
 		}
@@ -515,6 +518,74 @@ func parseStreamEvents(text string) ([]streamEvent, error) {
 		events = append(events, streamEvent{Type: eventType, Data: data})
 	}
 	return events, nil
+}
+
+func inferErrorStatus(class string) int {
+	switch class {
+	case "AuthenticationError":
+		return 401
+	case "AuthorizationError":
+		return 403
+	case "NotFoundError":
+		return 404
+	case "ValidationError":
+		return 400
+	case "ConflictError":
+		return 409
+	case "RateLimitError":
+		return 429
+	case "ServerError", "RetryExhaustedError":
+		return 500
+	default:
+		return 0
+	}
+}
+
+func selectJSONPath(root any, expr string) (any, error) {
+	if !strings.HasPrefix(expr, "$") {
+		return nil, fmt.Errorf("path must start with $: %s", expr)
+	}
+	if expr == "$" {
+		return root, nil
+	}
+	parts := strings.Split(strings.TrimPrefix(expr, "$"), ".")
+	cur := root
+	for _, rawPart := range parts {
+		if rawPart == "" {
+			continue
+		}
+		bracket := strings.Index(rawPart, "[")
+		if bracket >= 0 && strings.HasSuffix(rawPart, "]") {
+			name := rawPart[:bracket]
+			idxStr := rawPart[bracket+1 : len(rawPart)-1]
+			if name != "" {
+				mapping, ok := cur.(map[string]any)
+				if !ok {
+					return nil, fmt.Errorf("cannot index %s on %T", name, cur)
+				}
+				cur = mapping[name]
+			}
+			items, ok := cur.([]any)
+			if !ok {
+				return nil, fmt.Errorf("%s: not an array", rawPart)
+			}
+			index := 0
+			if _, err := fmt.Sscanf(idxStr, "%d", &index); err != nil {
+				return nil, fmt.Errorf("bad array index %s", idxStr)
+			}
+			if index < 0 || index >= len(items) {
+				return nil, fmt.Errorf("index %d out of range (len=%d)", index, len(items))
+			}
+			cur = items[index]
+			continue
+		}
+		mapping, ok := cur.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("cannot descend into %s on %T", rawPart, cur)
+		}
+		cur = mapping[rawPart]
+	}
+	return cur, nil
 }
 
 func truncate(b []byte, n int) string {

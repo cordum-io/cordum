@@ -104,14 +104,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Install Python SDK from workspace path (if present)
+      - name: Require Python SDK workspace
+        run: test -f sdk/python/pyproject.toml
+      - name: Install Python SDK from workspace path
         run: |
-          if [ -f sdk/python/pyproject.toml ]; then
-            python -m pip install --upgrade pip
-            python -m pip install -e sdk/python
-          else
-            echo "::warning::sdk/python is absent; harness falls back to raw-HTTP driver."
-          fi
+          python -m pip install --upgrade pip
+          python -m pip install -e sdk/python
       - name: Download simulator binary
         uses: actions/download-artifact@v4
         with:
@@ -148,13 +146,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - name: Install TypeScript SDK from workspace path (if present)
+      - name: Require TypeScript SDK workspace
+        run: test -f sdk/typescript/package.json
+      - name: Install TypeScript SDK from workspace path
         run: |
-          if [ -f sdk/typescript/package.json ]; then
-            (cd sdk/typescript && npm ci && npm run build)
-          else
-            echo "::warning::sdk/typescript is absent; harness falls back to raw-HTTP driver."
-          fi
+          (cd sdk/typescript && npm ci && npm run build)
       - name: Download simulator binary
         uses: actions/download-artifact@v4
         with:

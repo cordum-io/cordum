@@ -1,16 +1,20 @@
-// HTTP driver for the TypeScript harness. Uses native fetch (Node 18+)
-// so there are zero external deps. Parity with the Go/Python drivers
-// is the north star: identical retry rules, identical wildcard
-// grading, identical $vars.* substitution.
+import {
+  ApiKeyAuth,
+  BearerTokenAuth,
+  CordumClient,
+  RetryExhaustedError,
+} from "../../../../typescript/dist/index.mjs";
 
-import { diff, resolveVars, selectJSONPath, inferErrorStatus } from './diff.mjs';
-import { OPERATION_MAP } from './operation_map.mjs';
+import { diff, resolveVars, selectJSONPath, inferErrorStatus } from "./diff.mjs";
+import { OPERATION_MAP } from "./operation_map.mjs";
 
-const DEFAULT_TIMEOUT_MS = 10_000;
+class AnonymousAuth {
+  applyHeaders() {}
+}
 
 export class Driver {
   constructor({ baseUrl, apiKey, tenant }) {
-    this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.apiKey = apiKey;
     this.tenant = tenant;
     this.vars = {};
@@ -23,70 +27,90 @@ export class Driver {
 
   async runFixture(fx) {
     this.resetVars();
-    for (let idx = 0; idx < fx.steps.length; idx++) {
+    for (let idx = 0; idx < fx.steps.length; idx += 1) {
       const step = fx.steps[idx];
-      const kind = step.kind || 'request';
+      const kind = step.kind || "request";
       try {
-        if (kind === 'sleep') {
-          await new Promise((r) => setTimeout(r, step.durationMs || 0));
+        if (kind === "sleep") {
+          await new Promise((resolve) => setTimeout(resolve, step.durationMs || 0));
           continue;
         }
-        if (kind === 'request' || kind === 'assert_error' || kind === 'stream' || kind === 'paginate') {
-          await this._dispatch(fx, step);
+        if (["request", "assert_error", "stream", "paginate"].includes(kind)) {
+          await this.#dispatch(fx, step);
           continue;
         }
         throw new Error(`unknown step kind ${JSON.stringify(kind)}`);
       } catch (err) {
-        const op = step.operationId || '';
+        const op = step.operationId || "";
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`step ${idx} (${kind} ${op}): ${msg}`);
       }
     }
   }
 
-  async _dispatch(fx, step) {
-    const op = step.operationId;
-    const route = OPERATION_MAP[op];
-    if (!route) throw new Error(`unknown operationId ${JSON.stringify(op)}`);
-    let [method, path] = route;
-    const pathParams = step.pathParams || {};
-    for (const [k, v] of Object.entries(pathParams)) {
-      path = path.replaceAll(`{${k}}`, this._resolveStr(v));
+  async #dispatch(fx, step) {
+    const route = OPERATION_MAP[step.operationId];
+    if (!route) {
+      throw new Error(`unknown operationId ${JSON.stringify(step.operationId)}`);
     }
-    const query = this._buildQuery(step.query || {});
-    const url = this.baseUrl + path + (query ? `?${query}` : '');
-
-    let body = null;
-    if (step.body !== undefined && step.body !== null) {
-      body = JSON.stringify(resolveVars(step.body, this.vars));
+    const [method, routePath] = route;
+    let path = routePath;
+    for (const [key, value] of Object.entries(step.pathParams || {})) {
+      path = path.replaceAll(`{${key}}`, this.#resolveStr(value));
     }
 
-    const headers = this._buildHeaders(fx, step, body !== null);
-    const { status, responseHeaders, bodyText } = await this._sendWithRetry(
-      method, url, headers, body, step,
-    );
+    const headers = this.#buildHeaders(fx, step);
+    const query = this.#buildQuery(step.query || {});
+    const body = step.body !== undefined && step.body !== null ? resolveVars(step.body, this.vars) : undefined;
 
-    if (step.kind === 'stream') {
-      this._assertStream(bodyText, step);
-      return;
+    const client = this.#buildClient(fx.setup?.auth, step.auth);
+    try {
+      if (step.kind === "stream") {
+        await this.#assertStream(client, step);
+        return;
+      }
+      if (step.kind === "paginate") {
+        await this.#assertPaginate(client, method, path, headers, query, step);
+        return;
+      }
+
+      let response;
+      try {
+        response = await client.requestRawDetailed(method, path, {
+          headers,
+          query,
+          body,
+        });
+      } catch (err) {
+        if (step.kind !== "assert_error") {
+          throw err;
+        }
+        await this.#assertError(err, step);
+        return;
+      }
+
+      if (step.kind === "assert_error") {
+        const expected = step.expect?.errorClass || step.errorClass || "error";
+        throw new Error(`expected ${expected} but request succeeded`);
+      }
+
+      const expect = step.expect || {};
+      const expectedStatus = expect.status || 0;
+      if (expectedStatus && response.status !== expectedStatus) {
+        throw new Error(`status=${response.status} want ${expectedStatus}; body=${response.text.slice(0, 240)}`);
+      }
+      this.#assertResponse(response, step);
+    } finally {
+      client.close();
     }
+  }
 
+  #assertResponse(response, step) {
     const expect = step.expect || {};
-    const expectedStatus = expect.status || inferErrorStatus(step.errorClass || '');
-    if (expectedStatus && status !== expectedStatus) {
-      const snippet = bodyText.slice(0, 240);
-      throw new Error(`status=${status} want ${expectedStatus}; body=${snippet}`);
-    }
+    const parsed = response.data ?? null;
 
-    if (step.kind === 'assert_error') {
-      // Status check + envelope parse already happened; keep the
-      // raw-HTTP harness behavior identical to Go/Python.
-      return;
-    }
-
-    const parsed = bodyText ? JSON.parse(bodyText) : null;
     if (expect.body !== undefined && expect.body !== null) {
-      diff(parsed, expect.body, '$');
+      diff(parsed, expect.body, "$");
     }
     for (const [pathExpr, expected] of Object.entries(expect.bodyMatches || {})) {
       const selected = selectJSONPath(parsed, pathExpr);
@@ -97,105 +121,181 @@ export class Driver {
     }
   }
 
-  _buildHeaders(fx, step, hasBody) {
+  async #assertError(err, step) {
+    const expect = step.expect || {};
+    const expectedClass = expect.errorClass || step.errorClass || "";
+    const actualClass = err instanceof RetryExhaustedError ? "RetryExhaustedError" : err?.constructor?.name || "Error";
+    if (expectedClass && actualClass !== expectedClass) {
+      throw new Error(`errorClass=${actualClass} want ${expectedClass}`);
+    }
+
+    const expectedStatus = expect.status || inferErrorStatus(expectedClass);
+    const actualStatus = typeof err?.status === "number" ? err.status : undefined;
+    if (expectedStatus && actualStatus !== expectedStatus) {
+      throw new Error(`status=${actualStatus} want ${expectedStatus}`);
+    }
+
+    let payload = err?.payload;
+    if (payload === undefined && err instanceof RetryExhaustedError && err.lastError instanceof Response) {
+      payload = await err.lastError.clone().json().catch(async () => err.lastError.clone().text());
+    }
+    for (const [selector, expected] of Object.entries(expect.fields || {})) {
+      const pathExpr = selector.startsWith("$") ? selector : `$.${selector}`;
+      const selected = selectJSONPath(payload, pathExpr);
+      diff(selected, expected, pathExpr);
+    }
+  }
+
+  async #assertPaginate(client, method, path, headers, query, step) {
+    const maxPages = step.maxPages || 10;
+    let currentQuery = { ...query };
+    let pageCount = 0;
+    let totalItems = 0;
+
+    while (pageCount < maxPages) {
+      const response = await client.requestRawDetailed(method, path, {
+        headers,
+        query: currentQuery,
+      });
+      pageCount += 1;
+      const body = response.data;
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        throw new Error(`paginate response is ${typeof body}, want object`);
+      }
+      const items = body.items;
+      if (!Array.isArray(items)) {
+        throw new Error("paginate response missing items array");
+      }
+      totalItems += items.length;
+      const cursor = body.nextCursor || body.cursor;
+      const normalizedCursor = cursor || body.next_cursor;
+      if (!normalizedCursor) {
+        break;
+      }
+      currentQuery = { ...query, cursor: normalizedCursor };
+    }
+
+    this.#assertCount("pageCount", pageCount, step.expect?.pageCount);
+    this.#assertCount("totalItems", totalItems, step.expect?.totalItems);
+  }
+
+  async #assertStream(client, step) {
+    const maxEvents = step.maxEvents || (step.expect?.events?.length ?? 0);
+    const events = [];
+    for await (const event of client.streamEvents()) {
+      events.push(event);
+      if (maxEvents && events.length >= maxEvents) {
+        break;
+      }
+    }
+
+    if (!events.length) {
+      throw new Error("stream body carries no SSE frames");
+    }
+
+    const expectedEvents = step.expect?.events || [];
+    if (events.length < expectedEvents.length) {
+      throw new Error(`stream events=${events.length} want >=${expectedEvents.length}`);
+    }
+    expectedEvents.forEach((expected, index) => {
+      const actual = events[index];
+      if (actual.event !== expected.type) {
+        throw new Error(`stream event ${index} type=${actual.event} want ${expected.type}`);
+      }
+      diff(actual.data, expected.data, `$.events[${index}].data`);
+    });
+  }
+
+  #buildClient(setupAuth, stepAuth) {
+    const auth = stepAuth !== undefined ? stepAuth : setupAuth;
+    if (auth === null || auth === undefined) {
+      return new CordumClient({
+        baseUrl: this.baseUrl,
+        auth: this.apiKey,
+        retryPolicy: { maxRetries: 2, jitter: false },
+      });
+    }
+
+    const kind = auth.kind;
+    const value = this.#resolveStr(auth.value || "");
+    if (kind === "apiKey") {
+      return new CordumClient({
+        baseUrl: this.baseUrl,
+        auth: new ApiKeyAuth(value),
+        retryPolicy: { maxRetries: 2, jitter: false },
+      });
+    }
+    if (kind === "bearer") {
+      return new CordumClient({
+        baseUrl: this.baseUrl,
+        auth: new BearerTokenAuth(value),
+        retryPolicy: { maxRetries: 2, jitter: false },
+      });
+    }
+    if (kind === "none") {
+      return new CordumClient({
+        baseUrl: this.baseUrl,
+        auth: new AnonymousAuth(),
+        retryPolicy: { maxRetries: 2, jitter: false },
+      });
+    }
+      return new CordumClient({
+        baseUrl: this.baseUrl,
+        auth: this.apiKey,
+        retryPolicy: { maxRetries: 2, jitter: false },
+      });
+  }
+
+  #buildHeaders(fx, step) {
     const headers = {};
-    const setup = fx.setup || {};
-    for (const [k, v] of Object.entries(setup.headers || {})) {
-      headers[k] = this._resolveStr(v);
+    for (const [key, value] of Object.entries(fx.setup?.headers || {})) {
+      headers[key] = this.#resolveStr(value);
     }
-    for (const [k, v] of Object.entries(step.headers || {})) {
-      headers[k] = this._resolveStr(v);
-    }
-    this._applyAuth(headers, setup.auth, step.auth);
-    if (hasBody && !headers['Content-Type']) {
-      headers['Content-Type'] = 'application/json';
+    for (const [key, value] of Object.entries(step.headers || {})) {
+      headers[key] = this.#resolveStr(value);
     }
     return headers;
   }
 
-  _applyAuth(headers, setupAuth, stepAuth) {
-    const auth = stepAuth !== undefined ? stepAuth : setupAuth;
-    if (auth === null || auth === undefined) {
-      headers['X-API-Key'] = this.apiKey;
+  #buildQuery(raw) {
+    const resolved = {};
+    for (const [key, value] of Object.entries(raw)) {
+      resolved[key] = resolveVars(value, this.vars);
+    }
+    return resolved;
+  }
+
+  #resolveStr(value) {
+    if (typeof value !== "string") {
+      return value === null || value === undefined ? "" : String(value);
+    }
+    if (!value.startsWith("$vars.")) {
+      return value;
+    }
+    const key = value.slice("$vars.".length);
+    return Object.prototype.hasOwnProperty.call(this.vars, key) ? String(this.vars[key]) : "";
+  }
+
+  #assertCount(name, actual, expected) {
+    if (expected === null || expected === undefined) {
       return;
     }
-    const kind = auth.kind;
-    const value = this._resolveStr(auth.value || '');
-    if (kind === 'apiKey') {
-      if (value) headers['X-API-Key'] = value;
-    } else if (kind === 'bearer') {
-      if (value) headers['Authorization'] = `Bearer ${value}`;
-    } else if (kind === 'none') {
-      // no auth header
-    } else {
-      headers['X-API-Key'] = this.apiKey;
+    if (typeof expected === "number") {
+      if (actual !== expected) {
+        throw new Error(`${name}=${actual} want ${expected}`);
+      }
+      return;
     }
-  }
-
-  _buildQuery(raw) {
-    const entries = Object.entries(raw);
-    if (!entries.length) return '';
-    const params = new URLSearchParams();
-    for (const [k, v] of entries) {
-      params.set(k, String(resolveVars(v, this.vars)));
+    if (typeof expected === "string" && expected.startsWith(">=")) {
+      const want = Number(expected.slice(2).trim());
+      if (actual < want) {
+        throw new Error(`${name}=${actual} want >=${want}`);
+      }
+      return;
     }
-    return params.toString();
-  }
-
-  _resolveStr(s) {
-    if (typeof s !== 'string') return s === null || s === undefined ? '' : String(s);
-    if (!s.startsWith('$vars.')) return s;
-    const key = s.slice('$vars.'.length);
-    return Object.prototype.hasOwnProperty.call(this.vars, key) ? String(this.vars[key]) : '';
-  }
-
-  async _sendWithRetry(method, url, headers, body, step) {
-    const maxAttempts = 3;
-    const retryable = ['GET', 'HEAD', 'PUT', 'DELETE'].includes(method)
-      || (method === 'POST' && 'Idempotency-Key' in headers);
-    const kind = step.kind || 'request';
-    let last = null;
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const result = await this._sendOnce(method, url, headers, body);
-      last = result;
-      if (kind === 'assert_error') break;
-      if (!retryable) break;
-      if (![429, 500, 503, 504].includes(result.status)) break;
-      if (attempt === maxAttempts - 1) break;
-      const retryAfter = result.responseHeaders['retry-after'] || '';
-      const delayMs = /^\d+$/.test(retryAfter) ? Number(retryAfter) * 100 : 20;
-      await new Promise((r) => setTimeout(r, delayMs));
-    }
-    return last;
-  }
-
-  async _sendOnce(method, url, headers, body) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
-    try {
-      const resp = await fetch(url, {
-        method,
-        headers,
-        body: body || undefined,
-        signal: controller.signal,
-      });
-      const text = await resp.text();
-      const responseHeaders = {};
-      resp.headers.forEach((v, k) => { responseHeaders[k.toLowerCase()] = v; });
-      return { status: resp.status, responseHeaders, bodyText: text };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  _assertStream(bodyText, step) {
-    const eventCount = step.eventCount || 0;
-    const frames = (bodyText.match(/\ndata:/g) || []).length;
-    if (eventCount && frames < eventCount) {
-      throw new Error(`stream events=${frames} want >=${eventCount}`);
-    }
-    if (frames === 0 && !bodyText.includes('event:')) {
-      throw new Error(`stream body carries no SSE frames: ${bodyText.slice(0, 200)}`);
+    const want = Number(expected);
+    if (actual !== want) {
+      throw new Error(`${name}=${actual} want ${want}`);
     }
   }
 }

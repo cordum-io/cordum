@@ -15,23 +15,80 @@ func AuditEntryToSIEM(entry PolicyAuditEntry, tenantID string) audit.SIEMEvent {
 	if ts.IsZero() {
 		ts = time.Now().UTC()
 	}
+	eventType := ClassifyAuditAction(entry.Action)
+	severity := ClassifyAuditSeverity(entry.Action)
+	extra := map[string]string{}
+	if resourceType := strings.TrimSpace(entry.ResourceType); resourceType != "" {
+		extra["resource_type"] = resourceType
+	}
+	if resourceID := strings.TrimSpace(entry.ResourceID); resourceID != "" {
+		extra["resource_id"] = resourceID
+	}
+	if resourceName := strings.TrimSpace(entry.ResourceName); resourceName != "" {
+		extra["resource_name"] = resourceName
+		if strings.EqualFold(strings.TrimSpace(entry.ResourceType), "job") {
+			extra["topic"] = resourceName
+		}
+	}
+	if role := strings.TrimSpace(entry.Role); role != "" {
+		extra["role"] = role
+	}
+	if authSource := strings.TrimSpace(string(entry.AuthSource)); authSource != "" {
+		extra["auth_source"] = authSource
+	}
+	for key, value := range entry.Extra {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		extra[key] = value
+	}
+	if len(extra) == 0 {
+		extra = nil
+	}
+	if eventType == audit.EventSafetyDecision {
+		severity = safetyDecisionSeverity(strings.TrimSpace(entry.Decision), severity)
+	}
 	return audit.SIEMEvent{
 		Timestamp:     ts,
-		EventType:     ClassifyAuditAction(entry.Action),
-		Severity:      ClassifyAuditSeverity(entry.Action),
+		EventType:     eventType,
+		Severity:      severity,
 		TenantID:      tenantID,
 		AgentID:       entry.AgentID,
 		AgentName:     entry.AgentName,
 		AgentRiskTier: entry.AgentRiskTier,
 		Action:        entry.Action,
+		Decision:      strings.TrimSpace(entry.Decision),
+		MatchedRule:   strings.TrimSpace(entry.MatchedRule),
+		PolicyVersion: strings.TrimSpace(entry.PolicyVersion),
 		Identity:      entry.ActorID,
-		Reason:        entry.Message,
-		Extra: map[string]string{
-			"resource_type": entry.ResourceType,
-			"resource_id":   entry.ResourceID,
-			"role":          entry.Role,
-			"auth_source":   string(entry.AuthSource),
-		},
+		Reason:        firstNonEmpty(strings.TrimSpace(entry.Reason), strings.TrimSpace(entry.Message)),
+		Extra:         extra,
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func safetyDecisionSeverity(decision string, fallback string) string {
+	switch strings.TrimSpace(strings.ToLower(decision)) {
+	case "deny":
+		return audit.SeverityHigh
+	case "require_approval", "throttle":
+		return audit.SeverityMedium
+	case "constrain":
+		return audit.SeverityLow
+	case "allow":
+		return audit.SeverityInfo
+	default:
+		return fallback
 	}
 }
 

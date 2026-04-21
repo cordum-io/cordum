@@ -297,7 +297,7 @@ export function IncidentExtractionDialog({ open, onOpenChange }: IncidentExtract
         </Button>
         <Button
           variant="default"
-          type="submit"
+          type="button"
           loading={isSubmitting || mutation.isPending}
           onClick={handleSubmit(onSubmit)}
         >

@@ -313,22 +313,6 @@
     box-shadow: 0 10px 24px rgba(18, 25, 28, 0.08);
   }
 
-  /* Attention card — premium Mac elevated card */
-  .attention-card {
-    border-radius: 14px;
-    border: 1px solid var(--border);
-    background: var(--surface-glass);
-    padding: 12px 14px;
-    box-shadow: 0 10px 22px rgba(18, 25, 28, 0.08);
-    transition:
-      transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-      box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  .attention-card:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 14px 28px rgba(18, 25, 28, 0.1);
-  }
-
   /* List row — Mac rounded row with hover lift */
   .list-row {
     border-radius: 10px;
@@ -351,14 +335,6 @@
   .surface-inset {
     @apply bg-secondary/50 border border-border/40 rounded-xl;
     box-shadow: inset 0 1px 3px 0 rgb(0 0 0 / 0.03);
-  }
-
-  /* Glass panel — frosted Mac glass */
-  .glass-panel {
-    background: var(--surface-glass);
-    backdrop-filter: blur(14px);
-    border: 1px solid rgba(255, 255, 255, 0.7);
-    box-shadow: 0 6px 18px rgba(18, 25, 28, 0.06);
   }
 
   /* Dot grid background */
@@ -463,20 +439,12 @@
   from { opacity: 0; transform: scale(0.95); }
   to { opacity: 1; transform: scale(1); }
 }
-@keyframes pulse-scan {
-  0% { box-shadow: 0 0 0 0 rgba(15, 127, 122, 0.4); }
-  70% { box-shadow: 0 0 0 12px rgba(15, 127, 122, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(15, 127, 122, 0); }
-}
 @keyframes slideIn {
   from { transform: translateY(-20px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
 .animate-rise {
   animation: rise-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-.animate-scan {
-  animation: pulse-scan 2.8s ease-out infinite;
 }
 .animate-slide-in {
   animation: slide-in-right 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -520,7 +488,6 @@
   .animate-slide-in,
   .animate-fade-in,
   .animate-scale-in,
-  .animate-scan,
   .status-pulse {
     animation: none !important;
   }
@@ -578,9 +545,6 @@
 .dark .surface-card:hover {
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
 }
-.dark .attention-card:hover {
-  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.4);
-}
 .dark .list-row:hover {
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
 }
@@ -597,10 +561,6 @@
 .dark ::-webkit-scrollbar-thumb:hover {
   background: rgba(229, 239, 236, 0.2);
 }
-.dark .glass-panel {
-  border-color: rgba(229, 239, 236, 0.08);
-}
-
 /* ---------------------------------------------------------------------------
    Workflow Studio — ReactFlow overrides
    Match the dashboard instrument-panel aesthetic.

@@ -25,7 +25,7 @@ The suite is the executable version of that promise.
 | `SPEC.md` | Fixture format reference — what a step looks like, what `$any$`/`$timestamp$`/`$uuid$` mean, how `extract` flows data between steps. |
 | `fixtures/**/*.json` | The actual test scenarios, grouped by DoD domain (agents/jobs/workflows/policies/audit/auth/errors/idempotency). |
 | `simulator/` | Shared Go gateway simulator binary. Serves the operationIds referenced by fixtures from an in-memory store; scenarios program deterministic responses (e.g. "fail twice, then succeed" for retry fixtures). |
-| `harness/{go,python,typescript}/` | Per-language test runners. Each spawns the simulator, walks fixtures, dispatches through the public SDK surface, diffs responses, emits JUnit XML. |
+| `harness/{go,python,typescript}/` | Per-language test runners. Each spawns the simulator, walks fixtures, instantiates the real SDK package for that language, dispatches through its shipped auth/retry/error layers, diffs responses, emits JUnit XML. |
 | `parity/` | Cross-harness diff-parity tests. Invokes each harness's `diff-cli` with identical inputs and asserts byte-identical verdicts — catches the #1 conformance bug class (diff implementations silently disagreeing). |
 | `docs/` | `grading.md`, `wildcards.md`, `authoring-fixtures.md`, `known-divergences.md`. |
 | `reports/` | Per-run JUnit XML + an aggregated `summary.md` matrix. `reports/*.xml` is `.gitignore`d; `summary.md` is committed so regressions show up in PR diffs. |
@@ -62,16 +62,10 @@ See `docs/authoring-fixtures.md` for the full walk-through. In short:
 
 ## Phasing notes
 
-This suite lands incrementally:
-
-- **Step 1 (this commit):** contracts + schemas + documentation.
-- **Step 2:** fixture library.
-- **Step 3:** Go gateway simulator.
-- **Steps 4–6:** Go, Python, TypeScript harnesses (each can land
-  independently; the harness gracefully skips in CI when its SDK
-  workspace isn't present yet).
-- **Steps 7–10:** unified runner, CI wiring, parity tests, green-matrix
-  landing.
+This suite landed incrementally, but the final state is stricter:
+every language job now **requires** its SDK workspace and fails fast if
+the Go/Python/TypeScript package is absent. A green matrix only counts
+when all three harnesses exercised their real SDKs.
 
 ## Epic rail
 

@@ -122,8 +122,22 @@ function buildListRunsQuery(datasetId: string, args: UseEvalRunsArgs, cursor?: s
 }
 
 export function useEvalRuns(datasetId: string | undefined, args: UseEvalRunsArgs = {}) {
+  // Destructure args into scalar queryKey entries so React Query dedupes
+  // across re-renders. Passing the `args` object by reference makes every
+  // render a fresh key (new literal every render) → refetch churn that
+  // masquerades as a live stream. Scalars only; arrays/objects here would
+  // hit the same trap.
   return useInfiniteQuery<EvalRunsPage, Error>({
-    queryKey: ["evals", "runs", datasetId, args],
+    queryKey: [
+      "evals",
+      "runs",
+      datasetId,
+      args.since ?? null,
+      args.until ?? null,
+      args.minScore ?? null,
+      args.hasRegression ?? null,
+      args.limit ?? null,
+    ],
     enabled: !!datasetId,
     queryFn: async ({ pageParam }) => {
       const cursor = typeof pageParam === "string" ? pageParam : undefined;

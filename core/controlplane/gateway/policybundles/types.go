@@ -85,22 +85,27 @@ type OutputRuleToggleRequest struct {
 }
 
 type PolicyAuditEntry struct {
-	ID             string          `json:"id"`
-	Action         string          `json:"action"`
-	ResourceType   string          `json:"resource_type,omitempty"`
-	ResourceID     string          `json:"resource_id,omitempty"`
-	ResourceName   string          `json:"resource_name,omitempty"`
-	ActorID        string          `json:"actor_id,omitempty"`
-	Role           string          `json:"role,omitempty"`
-	AuthSource     auth.AuthSource `json:"auth_source,omitempty"`
-	AgentID        string          `json:"agent_id,omitempty"`
-	AgentName      string          `json:"agent_name,omitempty"`
-	AgentRiskTier  string          `json:"agent_risk_tier,omitempty"`
-	BundleIDs      []string        `json:"bundle_ids,omitempty"`
-	Message        string          `json:"message,omitempty"`
-	SnapshotBefore string          `json:"snapshot_before,omitempty"`
-	SnapshotAfter  string          `json:"snapshot_after,omitempty"`
-	CreatedAt      string          `json:"created_at"`
+	ID             string            `json:"id"`
+	Action         string            `json:"action"`
+	ResourceType   string            `json:"resource_type,omitempty"`
+	ResourceID     string            `json:"resource_id,omitempty"`
+	ResourceName   string            `json:"resource_name,omitempty"`
+	ActorID        string            `json:"actor_id,omitempty"`
+	Role           string            `json:"role,omitempty"`
+	AuthSource     auth.AuthSource   `json:"auth_source,omitempty"`
+	AgentID        string            `json:"agent_id,omitempty"`
+	AgentName      string            `json:"agent_name,omitempty"`
+	AgentRiskTier  string            `json:"agent_risk_tier,omitempty"`
+	BundleIDs      []string          `json:"bundle_ids,omitempty"`
+	Message        string            `json:"message,omitempty"`
+	Reason         string            `json:"reason,omitempty"`
+	Decision       string            `json:"decision,omitempty"`
+	MatchedRule    string            `json:"matched_rule,omitempty"`
+	PolicyVersion  string            `json:"policy_version,omitempty"`
+	Extra          map[string]string `json:"extra,omitempty"`
+	SnapshotBefore string            `json:"snapshot_before,omitempty"`
+	SnapshotAfter  string            `json:"snapshot_after,omitempty"`
+	CreatedAt      string            `json:"created_at"`
 }
 
 type PolicyRuleSource struct {

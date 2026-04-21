@@ -40,10 +40,11 @@ func StreamJob(mux *http.ServeMux, eng *engine.Engine) {
 func writeStreamFrames(w http.ResponseWriter, eng *engine.Engine) {
 	// Three deterministic frames; the run_and_stream_events fixture
 	// asserts exact event names + data payloads.
+	runID := eng.NextID("run")
 	frames := []engine.StreamEvent{
-		{ID: "1", Event: "run.started", Data: `{"run_id":"$any$","status":"running"}`},
-		{ID: "2", Event: "run.progress", Data: `{"run_id":"$any$","status":"running","percent":50}`},
-		{ID: "3", Event: "run.completed", Data: `{"run_id":"$any$","status":"succeeded"}`},
+		{ID: "1", Event: "run.started", Data: `{"id":"` + runID + `"}`},
+		{ID: "2", Event: "step.started", Data: `{"name":"echo"}`},
+		{ID: "3", Event: "run.completed", Data: `{"status":"succeeded"}`},
 	}
 	_ = engine.WriteSSEFrames(w, frames)
 }

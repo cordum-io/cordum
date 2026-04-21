@@ -396,7 +396,7 @@ func TestStreamEmitsThreeFrames(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(body)
-	for _, event := range []string{"run.started", "run.progress", "run.completed"} {
+	for _, event := range []string{"run.started", "step.started", "run.completed"} {
 		if !strings.Contains(got, event) {
 			t.Errorf("stream missing event=%q in body=%q", event, got)
 		}

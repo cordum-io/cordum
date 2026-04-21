@@ -1,12 +1,13 @@
 package main
 
 // operationRoute maps a fixture's operationId to the (method, path)
-// pair the harness dispatches against the simulator. This table is
-// authored by hand rather than generated from the OpenAPI spec so
-// the harness can ship ahead of the Go SDK growing per-operationId
-// methods for every surface. Step 9's parity test proves the Python
-// and TypeScript equivalents resolve the same operationIds to the
-// same method+path — divergence there is a blocker.
+// pair the harness dispatches through the public SDK request surface.
+// This table is authored by hand rather than generated from the
+// OpenAPI spec so the three harnesses stay byte-identical even while
+// their ergonomic namespace facades evolve independently. Step 9's
+// parity test proves the Python and TypeScript equivalents resolve the
+// same operationIds to the same method+path — divergence there is a
+// blocker.
 //
 // Path placeholders like `{id}` are substituted from the fixture's
 // pathParams block at dispatch time.

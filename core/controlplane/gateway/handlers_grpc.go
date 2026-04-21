@@ -213,17 +213,17 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 
 	// Resolve agent context for audit events (same as HTTP path).
 	grpcAgentID, grpcAgentName, grpcAgentRiskTier := s.resolveAgentForAudit(ctx, payloadReq.Labels["agent_id"])
+	actorForAudit, roleForAudit := "anonymous", "none"
+	if ac := auth.FromContext(ctx); ac != nil {
+		actorForAudit, roleForAudit = ac.PrincipalID, ac.Role
+	}
 
 	if policyResult.Denied {
 		reason := "policy denied"
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		actorForAudit, roleForAudit := "anonymous", "none"
-		if ac := auth.FromContext(ctx); ac != nil {
-			actorForAudit, roleForAudit = ac.PrincipalID, ac.Role
-		}
-		s.appendAuditEntryWithAgent(ctx, "submit_denied", "job", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy denied: "+reason, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(ctx, "submit_denied", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy denied: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return nil, status.Error(codes.PermissionDenied, reason)
 	}
 	if policyResult.Throttled {
@@ -231,21 +231,12 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		actorForAudit, roleForAudit := "anonymous", "none"
-		if ac := auth.FromContext(ctx); ac != nil {
-			actorForAudit, roleForAudit = ac.PrincipalID, ac.Role
-		}
-		s.appendAuditEntryWithAgent(ctx, "submit_throttled", "job", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy throttled: "+reason, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(ctx, "submit_throttled", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy throttled: "+reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return nil, status.Error(codes.ResourceExhausted, reason)
 	}
 	if policyResult.ApprovalRequired {
 		slog.Info("submit-time policy requires approval",
 			"job_id", jobID, "topic", payloadReq.Topic, "reason", policyResult.Reason)
-		actorForAudit, roleForAudit := "anonymous", "none"
-		if ac := auth.FromContext(ctx); ac != nil {
-			actorForAudit, roleForAudit = ac.PrincipalID, ac.Role
-		}
-		s.appendAuditEntryWithAgent(ctx, "submit_approval_required", "job", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy requires approval: "+policyResult.Reason, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 
 		// Reserve idempotency key to prevent duplicate approval jobs.
 		if key != "" && s.jobStore != nil {
@@ -352,6 +343,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 			}
 			s.syncApprovalQueueDepth(ctx)
 		}
+		s.appendSubmitSafetyDecisionAudit(ctx, "submit_approval_required", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit-time policy requires approval: "+policyResult.Reason, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 		return &pb.SubmitJobResponse{
 			JobId:   jobID,
 			TraceId: traceID,
@@ -500,6 +492,7 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 		"traceId", traceID,
 		"topic", payloadReq.Topic,
 	)
+	s.appendSubmitSafetyDecisionAudit(ctx, "submit", jobID, payloadReq.Topic, actorForAudit, roleForAudit, "submit job "+jobID, policyResult, payloadReq.Labels, grpcAgentID, grpcAgentName, grpcAgentRiskTier)
 	return &pb.SubmitJobResponse{JobId: jobID, TraceId: traceID}, nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/auth/delegation"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/golang-jwt/jwt/v5"
@@ -74,6 +75,80 @@ func TestHandleSubmitJobHTTPInjectsDelegationContextIntoPolicyCheck(t *testing.T
 	}
 	if got := safetyClient.lastReq.GetLabels()["_delegation.jti"]; got == "" {
 		t.Fatal("delegation jti label should be present")
+	}
+}
+
+func TestHandleSubmitJobHTTPEmitsDelegationExtrasOnSafetyDecisionAudit(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	setDelegationKeys(t)
+	sink := &recordingAuditSender{}
+	s.auditExporter = sink
+
+	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
+		t.Fatalf("LinkWorker() error = %v", err)
+	}
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read", "write"}, []string{"job.test"})
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
+
+	service, err := s.delegationTokenService()
+	if err != nil {
+		t.Fatalf("delegationTokenService() error = %v", err)
+	}
+	token, _, err := service.IssueDelegationToken(context.Background(), delegation.IssueRequest{
+		Tenant:            "default",
+		DelegatingAgentID: "agent-a",
+		TargetAgentID:     "agent-b",
+		AllowedActions:    []string{"read"},
+		AllowedTopics:     []string{"job.test"},
+	})
+	if err != nil {
+		t.Fatalf("IssueDelegationToken() error = %v", err)
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"prompt":"hello","topic":"job.test","delegation_token":"`+token+`"}`)), &auth.AuthContext{
+		Tenant:      "default",
+		PrincipalID: "worker-b",
+		Role:        "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var decisionEvent *audit.SIEMEvent
+	for i := range sink.events {
+		ev := &sink.events[i]
+		if ev.EventType == audit.EventSafetyDecision && ev.Action == "submit" {
+			decisionEvent = ev
+			break
+		}
+	}
+	if decisionEvent == nil {
+		t.Fatalf("expected safety.decision audit event, got %#v", sink.events)
+	}
+	if decisionEvent.Decision != "allow" {
+		t.Fatalf("decision = %q, want allow", decisionEvent.Decision)
+	}
+	if decisionEvent.Extra["topic"] != "job.test" {
+		t.Fatalf("topic extra = %q, want job.test", decisionEvent.Extra["topic"])
+	}
+	wantExtras := map[string]string{
+		"delegation.depth":         "1",
+		"delegation.root_issuer":   "agent-a",
+		"delegation.parent_issuer": "agent-a",
+		"delegation.chain":         "agent-a",
+	}
+	for key, want := range wantExtras {
+		if got := decisionEvent.Extra[key]; got != want {
+			t.Fatalf("extra[%q] = %q, want %q", key, got, want)
+		}
+	}
+	if got := decisionEvent.Extra["delegation.jti"]; got == "" {
+		t.Fatal("delegation.jti should be present on safety decision audit event")
 	}
 }
 

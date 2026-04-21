@@ -7,9 +7,9 @@ name = "cordum-sdk-conformance-harness"
 version = "0.0.0"
 description = "Python conformance harness for the Cordum SDK test suite. Internal tool — NOT published."
 requires-python = ">=3.9"
-# Zero third-party deps: harness uses stdlib only. Parity with Go
-# harness is the goal; adding e.g. pytest or httpx would make the
-# matching wildcards diverge.
+# The harness itself stays tiny, but it expects the real `cordum-sdk`
+# package to be installed from the workspace so requests go through the
+# shipped auth/retry/error layers.
 dependencies = []
 
 [tool.setuptools.packages.find]

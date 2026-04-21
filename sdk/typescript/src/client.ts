@@ -183,7 +183,7 @@ export class CordumClient {
     });
   }
 
-  public async requestDetailed<TData = unknown>(
+  public async requestRawDetailed<TData = unknown>(
     method: HttpMethod,
     path: string,
     options: RequestDetailedOptions = {},
@@ -208,17 +208,19 @@ export class CordumClient {
       body = JSON.stringify(options.body);
     }
 
-    const response = await this.#requestFetch(url, {
+    const init: RequestInit = {
       method,
       headers,
-      body,
-      signal: options.signal,
-    });
+      ...(body !== undefined ? { body } : {}),
+      ...(options.signal !== undefined ? { signal: options.signal } : {}),
+    };
+
+    const response = await this.#requestFetch(url, init);
 
     if (response.status === 401 && allowAuthRefresh && this.supportsUnauthorizedRefresh()) {
       const refreshed = await this.#auth.handleUnauthorizedResponse?.(response);
       if (refreshed) {
-        return this.requestDetailed<TData>(method, path, options, false);
+        return this.requestRawDetailed<TData>(method, path, options, false);
       }
     }
 
@@ -235,12 +237,12 @@ export class CordumClient {
     };
   }
 
-  public async request<TData = unknown>(
+  public async requestRaw<TData = unknown>(
     method: HttpMethod,
     path: string,
     options: RequestDetailedOptions = {},
   ): Promise<TData | undefined> {
-    const response = await this.requestDetailed<TData>(method, path, options);
+    const response = await this.requestRawDetailed<TData>(method, path, options);
     return response.data;
   }
 

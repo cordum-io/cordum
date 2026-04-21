@@ -1620,7 +1620,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendAuditEntryWithAgent(r.Context(), "submit_denied", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy denied: "+reason, submitAgentID, submitAgentName, submitAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_denied", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy denied: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 		writeErrorJSON(w, http.StatusForbidden, reason)
 		return
 	}
@@ -1629,7 +1629,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendAuditEntryWithAgent(r.Context(), "submit_throttled", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy throttled: "+reason, submitAgentID, submitAgentName, submitAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_throttled", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy throttled: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 		w.Header().Set("Retry-After", "30")
 		writeErrorJSON(w, http.StatusTooManyRequests, reason)
 		return
@@ -1642,7 +1642,6 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	if policyResult.ApprovalRequired {
 		slog.Info("submit-time policy requires approval",
 			"job_id", jobID, "topic", req.Topic, "reason", policyResult.Reason)
-		s.appendAuditEntryWithAgent(r.Context(), "submit_approval_required", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy requires approval: "+policyResult.Reason, submitAgentID, submitAgentName, submitAgentRiskTier)
 
 		// Reserve idempotency key to prevent duplicate approval jobs.
 		if key != "" && s.jobStore != nil {
@@ -1763,6 +1762,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			s.syncApprovalQueueDepth(r.Context())
 		}
+		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_approval_required", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy requires approval: "+policyResult.Reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 
 		w.Header().Set("X-Trace-Id", traceID)
 		w.Header().Set("Content-Type", "application/json")
@@ -1929,7 +1929,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		"topic", req.Topic,
 	)
 
-	s.appendAuditEntryNamed(r.Context(), "submit", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit job "+jobID)
+	s.appendSubmitSafetyDecisionAudit(r.Context(), "submit", jobID, req.Topic, policyActorID(r), policyRole(r), "submit job "+jobID, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 	w.Header().Set("X-Trace-Id", traceID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{

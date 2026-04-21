@@ -1,6 +1,6 @@
 module github.com/cordum/cordum-sdk-conformance-harness-go
 
-go 1.24
+go 1.24.0
 
 require github.com/cordum/cordum/sdk v0.0.0
 
