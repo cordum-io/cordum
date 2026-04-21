@@ -18,6 +18,8 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Tabs } from "@/components/ui/Tabs";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { SkeletonCard } from "@/components/ui/Skeleton";
+import { ChainIntegrityWidget } from "@/components/ChainIntegrityWidget";
+import { GapAlertBanner } from "@/components/GapAlertBanner";
 import {
   PostureSummary,
   PolicyFilterBar,
@@ -45,6 +47,12 @@ const LazyReplayTab = lazy(() => import("@/pages/govern/ReplayPage")) as React.L
 const LazyAnalyticsTab = lazy(() => import("@/pages/govern/PolicyAnalyticsPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
 const LazyBundlesTab = lazy(() => import("@/pages/govern/BundlesPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
 const LazyScopeTab = lazy(() => import("@/pages/govern/TenantsPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
+const LazyApprovalAnalyticsWidget = lazy(() =>
+  import("@/components/governance/ApprovalAnalyticsWidget").then((m) => ({
+    default: m.ApprovalAnalyticsWidget,
+  })),
+);
+import { FEATURE_FLAGS } from "@/config/flags";
 
 // ---------------------------------------------------------------------------
 // Tab definitions
@@ -210,7 +218,14 @@ function OverviewTabContent() {
 
   return (
     <div className="space-y-6">
+      <GapAlertBanner tenant="default" />
+      <ChainIntegrityWidget tenant="default" />
       <PostureSummary bundles={bundles} allRules={allRules} />
+      {FEATURE_FLAGS.approvalAnalytics && (
+        <Suspense fallback={null}>
+          <LazyApprovalAnalyticsWidget context="governance" defaultWindow="7d" />
+        </Suspense>
+      )}
       <PolicyFilterBar
         searchText={searchText}
         onSearchChange={setSearchText}

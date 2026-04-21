@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
 )
@@ -179,7 +180,7 @@ func TestEnterpriseEntitlementMatrixRepresentativeGatewayFeatureGates(t *testing
 				entitlements.AgentIdentity = false
 			},
 			request: func() *http.Request {
-				return withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &AuthContext{
+				return withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &auth.AuthContext{
 					Tenant:      "default",
 					Role:        "admin",
 					PrincipalID: "admin-user",

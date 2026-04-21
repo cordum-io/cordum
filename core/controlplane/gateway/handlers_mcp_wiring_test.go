@@ -26,14 +26,14 @@ func TestMCPProdBoot_RegistersCordumURIResources(t *testing.T) {
 	}
 	templates := registry.ListTemplates()
 	want := map[string]bool{
-		"cordum://jobs/{id}":               false,
-		"cordum://runs/{id}":               false,
-		"cordum://runs/{id}/timeline":      false,
-		"cordum://workflows/{id}":          false,
-		"cordum://packs/{id}":              false,
-		"cordum://topics/{name}":           false,
-		"cordum://agents/{id}":             false,
-		"cordum://audit/{tenant}/{seq}":    false,
+		"cordum://jobs/{id}":            false,
+		"cordum://runs/{id}":            false,
+		"cordum://runs/{id}/timeline":   false,
+		"cordum://workflows/{id}":       false,
+		"cordum://packs/{id}":           false,
+		"cordum://topics/{name}":        false,
+		"cordum://agents/{id}":          false,
+		"cordum://audit/{tenant}/{seq}": false,
 	}
 	for _, tmpl := range templates {
 		if _, ok := want[tmpl.URITemplate]; ok {
@@ -93,7 +93,7 @@ type wiringBridge struct{}
 func (*wiringBridge) SubmitJob(context.Context, mcp.SubmitJobInput) (*mcp.SubmitJobOutput, error) {
 	return nil, nil
 }
-func (*wiringBridge) CancelJob(context.Context, string, string) error   { return nil }
+func (*wiringBridge) CancelJob(context.Context, string, string) error { return nil }
 func (*wiringBridge) TriggerWorkflow(context.Context, mcp.TriggerWorkflowInput) (*mcp.TriggerOutput, error) {
 	return nil, nil
 }

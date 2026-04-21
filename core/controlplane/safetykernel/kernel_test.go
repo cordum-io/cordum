@@ -378,7 +378,7 @@ func TestEvaluateExplainSimulate(t *testing.T) {
 			"default": {AllowTopics: []string{"job.*"}},
 		},
 	}
-	srv.setPolicy(policy, "snap-1")
+	srv.setPolicy(context.Background(), policy, "snap-1")
 
 	req := &pb.PolicyCheckRequest{
 		JobId:  "job-9",
@@ -400,7 +400,7 @@ func TestEvaluateExplainSimulate(t *testing.T) {
 func TestListSnapshotsTracksHistory(t *testing.T) {
 	srv := &server{}
 	for i := 0; i < 12; i++ {
-		srv.setPolicy(nil, fmt.Sprintf("snap-%d", i))
+		srv.setPolicy(context.Background(), nil, fmt.Sprintf("snap-%d", i))
 	}
 
 	resp, err := srv.ListSnapshots(context.Background(), &pb.ListSnapshotsRequest{})
@@ -515,7 +515,7 @@ func TestWatchPolicy_ContextCancel(t *testing.T) {
 	loader := &policyLoader{source: policyPath}
 
 	srv := &server{}
-	srv.setPolicy(&config.SafetyPolicy{}, "initial")
+	srv.setPolicy(context.Background(), &config.SafetyPolicy{}, "initial")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -544,7 +544,7 @@ func TestWatchPolicyNotificationTrigger(t *testing.T) {
 	}
 
 	srv := &server{}
-	srv.setPolicy(&config.SafetyPolicy{
+	srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		DefaultTenant: "default",
 		Tenants: map[string]config.TenantPolicy{
 			"default": {AllowTopics: []string{"job.default.*"}},
@@ -675,9 +675,9 @@ func newTestRedisServer(t *testing.T) (*server, *miniredis.Miniredis) {
 func TestSnapshotHistoryRedis(t *testing.T) {
 	srv, mr := newTestRedisServer(t)
 
-	srv.setPolicy(nil, "snap-a")
-	srv.setPolicy(nil, "snap-b")
-	srv.setPolicy(nil, "snap-c")
+	srv.setPolicy(context.Background(), nil, "snap-a")
+	srv.setPolicy(context.Background(), nil, "snap-b")
+	srv.setPolicy(context.Background(), nil, "snap-c")
 
 	// Verify Redis has 3 entries in newest-first order.
 	vals, err := mr.List(snapshotHistoryKey)
@@ -708,7 +708,7 @@ func TestSnapshotHistoryTrim(t *testing.T) {
 	srv, mr := newTestRedisServer(t)
 
 	for i := 0; i < 12; i++ {
-		srv.setPolicy(nil, fmt.Sprintf("snap-%d", i))
+		srv.setPolicy(context.Background(), nil, fmt.Sprintf("snap-%d", i))
 	}
 
 	// Verify Redis list trimmed to 10.
@@ -731,8 +731,8 @@ func TestSnapshotHistoryTrim(t *testing.T) {
 func TestSnapshotHistoryRedisFallback(t *testing.T) {
 	// No Redis — local slice is the fallback.
 	srv := &server{}
-	srv.setPolicy(nil, "local-a")
-	srv.setPolicy(nil, "local-b")
+	srv.setPolicy(context.Background(), nil, "local-a")
+	srv.setPolicy(context.Background(), nil, "local-b")
 
 	resp, err := srv.ListSnapshots(context.Background(), &pb.ListSnapshotsRequest{})
 	if err != nil {
@@ -749,9 +749,9 @@ func TestSnapshotHistoryRedisFallback(t *testing.T) {
 func TestSnapshotHistoryOrder(t *testing.T) {
 	srv, _ := newTestRedisServer(t)
 
-	srv.setPolicy(nil, "first")
-	srv.setPolicy(nil, "second")
-	srv.setPolicy(nil, "third")
+	srv.setPolicy(context.Background(), nil, "first")
+	srv.setPolicy(context.Background(), nil, "second")
+	srv.setPolicy(context.Background(), nil, "third")
 
 	resp, err := srv.ListSnapshots(context.Background(), &pb.ListSnapshotsRequest{})
 	if err != nil {
@@ -798,7 +798,7 @@ func TestEvaluateNilPolicyDeniesFailClosed(t *testing.T) {
 func TestEvaluateNilPolicyAfterSetPolicyNilDenies(t *testing.T) {
 	// Explicitly calling setPolicy(nil, "") should result in deny.
 	srv := &server{}
-	srv.setPolicy(nil, "")
+	srv.setPolicy(context.Background(), nil, "")
 
 	req := &pb.PolicyCheckRequest{
 		JobId:  "job-explicit-nil",
@@ -828,7 +828,7 @@ func TestEvaluateAllErrorClassesDeny(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := &server{}
 			if tt.policy != nil {
-				srv.setPolicy(tt.policy, "test")
+				srv.setPolicy(context.Background(), tt.policy, "test")
 			}
 			req := &pb.PolicyCheckRequest{
 				JobId:  "job-err",
@@ -1053,7 +1053,7 @@ func TestEvaluateDecisionReasonMetadata(t *testing.T) {
 			srv := &server{}
 			snap := "snap-meta"
 			if tt.policy != nil {
-				srv.setPolicy(tt.policy, snap)
+				srv.setPolicy(context.Background(), tt.policy, snap)
 			}
 			resp, err := srv.evaluate(context.Background(), tt.req, "check")
 			if err != nil {
@@ -1102,7 +1102,7 @@ func TestCachedDecisionNotServedAfterPolicyNil(t *testing.T) {
 		DefaultDecision: "allow",
 		DefaultTenant:   "default",
 	}
-	srv.setPolicy(policy, "snap-cached")
+	srv.setPolicy(context.Background(), policy, "snap-cached")
 
 	req := &pb.PolicyCheckRequest{
 		JobId:  "job-cached",
@@ -1140,7 +1140,7 @@ func TestEvaluatePanicRecoveryReturnsDeny(t *testing.T) {
 			"default": {AllowTopics: []string{"job.*"}},
 		},
 	}
-	srv.setPolicy(policy, "snap-panic")
+	srv.setPolicy(context.Background(), policy, "snap-panic")
 
 	// Inject a panic via the test hook.
 	origHook := policyEvalTestHook
@@ -1177,7 +1177,7 @@ func TestEvaluatePanicRecoveryWithNilMapAccess(t *testing.T) {
 			"default": {AllowTopics: []string{"job.*"}},
 		},
 	}
-	srv.setPolicy(policy, "snap-nilmap")
+	srv.setPolicy(context.Background(), policy, "snap-nilmap")
 
 	origHook := policyEvalTestHook
 	policyEvalTestHook = func() {
@@ -1215,7 +1215,7 @@ func TestEvaluateDefaultDecisionIsDeny(t *testing.T) {
 		DefaultDecision: "unknown_decision_value",
 		DefaultTenant:   "default",
 	}
-	srv.setPolicy(policy, "snap-default")
+	srv.setPolicy(context.Background(), policy, "snap-default")
 
 	req := &pb.PolicyCheckRequest{
 		JobId:  "job-default",
@@ -1250,7 +1250,7 @@ func TestWatchPolicyReloadFailureKeepsOldPolicy(t *testing.T) {
 			"prod": {AllowTopics: []string{"job.prod.*"}},
 		},
 	}
-	srv.setPolicy(initialPolicy, "initial-snap")
+	srv.setPolicy(context.Background(), initialPolicy, "initial-snap")
 
 	// Corrupt the policy file so reload fails.
 	if err := os.WriteFile(policyPath, []byte("invalid:\n  - [broken"), 0o600); err != nil {
@@ -1443,7 +1443,7 @@ func newTestServerWithVelocity(t *testing.T, policy *config.SafetyPolicy, snapsh
 		cacheMaxSize:    100,
 	}
 	if policy != nil {
-		srv.setPolicy(policy, snapshot)
+		srv.setPolicy(context.Background(), policy, snapshot)
 	}
 	return srv, mr
 }
@@ -1602,7 +1602,7 @@ func TestVelocityBundleRule_RedisUnavailable_FailClosed(t *testing.T) {
 		cache:           map[string]cacheEntry{},
 		cacheMaxSize:    100,
 	}
-	srv.setPolicy(policy, "snap-velocity-failclosed")
+	srv.setPolicy(context.Background(), policy, "snap-velocity-failclosed")
 
 	// Close Redis to simulate unavailability.
 	mr.Close()
@@ -1635,7 +1635,7 @@ func TestVelocityBundleRule_RedisUnavailable_FailOpenOverride(t *testing.T) {
 		cache:           map[string]cacheEntry{},
 		cacheMaxSize:    100,
 	}
-	srv.setPolicy(policy, "snap-velocity-failopen")
+	srv.setPolicy(context.Background(), policy, "snap-velocity-failopen")
 
 	// Close Redis to simulate unavailability.
 	mr.Close()
@@ -1669,7 +1669,7 @@ func TestVelocityBundleRule_RedisError_NoRuleLeakInLogs(t *testing.T) {
 		cache:           map[string]cacheEntry{},
 		cacheMaxSize:    100,
 	}
-	srv.setPolicy(policy, "snap-velocity-logleak")
+	srv.setPolicy(context.Background(), policy, "snap-velocity-logleak")
 
 	// Capture slog output.
 	var logBuf bytes.Buffer
@@ -1708,7 +1708,7 @@ func TestVelocityBundleRule_NilChecker_FailOpen(t *testing.T) {
 		cache:        map[string]cacheEntry{},
 		cacheMaxSize: 100,
 	}
-	srv.setPolicy(policy, "snap-velocity-nilchecker")
+	srv.setPolicy(context.Background(), policy, "snap-velocity-nilchecker")
 
 	req := &pb.PolicyCheckRequest{
 		JobId:  "job-nilchecker",
@@ -1784,7 +1784,7 @@ func TestVelocityBundleRule_PolicyReloadActivatesVelocity(t *testing.T) {
 	}
 
 	// Simulate bundle reload that introduces velocity rules.
-	srv.setPolicy(bundleVelocityPolicy(), "snap-with-velocity")
+	srv.setPolicy(context.Background(), bundleVelocityPolicy(), "snap-with-velocity")
 
 	// Now velocity should be active: 3 allows, 4th denied.
 	sessionID := "sess-post-reload"
@@ -1865,7 +1865,7 @@ func TestConcurrentEvaluateAndSetPolicy(t *testing.T) {
 	}
 
 	srv := &server{}
-	srv.setPolicy(policyA, "snap-a")
+	srv.setPolicy(context.Background(), policyA, "snap-a")
 
 	const (
 		numEvaluators = 50
@@ -1881,9 +1881,9 @@ func TestConcurrentEvaluateAndSetPolicy(t *testing.T) {
 	go func() {
 		for i := 0; i < numReloads; i++ {
 			if i%2 == 0 {
-				srv.setPolicy(policyB, "snap-b")
+				srv.setPolicy(context.Background(), policyB, "snap-b")
 			} else {
-				srv.setPolicy(policyA, "snap-a")
+				srv.setPolicy(context.Background(), policyA, "snap-a")
 			}
 		}
 		close(done)
@@ -2141,7 +2141,7 @@ func TestRiskTagSpoofing_DerivedTagsOverrideClient(t *testing.T) {
 	srv := &server{
 		tagDeriverRegistry: tagRegistry,
 	}
-	srv.setPolicyWithBundleCount(policy, "test-snapshot", 0)
+	srv.setPolicyWithBundleCount(context.Background(), policy, "test-snapshot", 0)
 
 	// RED-TEAM SCENARIO: $500 transfer with spoofed risk_tags=["low"].
 	// Without the fix: the "low" tag matches bank-transfer-allow → ALLOW (bypass!)
@@ -2208,7 +2208,7 @@ func TestRiskTagSpoofing_ReviewAmount(t *testing.T) {
 	registerBuiltinTagDerivers(tagRegistry)
 
 	srv := &server{tagDeriverRegistry: tagRegistry}
-	srv.setPolicyWithBundleCount(policy, "test-snapshot", 0)
+	srv.setPolicyWithBundleCount(context.Background(), policy, "test-snapshot", 0)
 
 	req := &pb.PolicyCheckRequest{
 		JobId:  "job-review-1",
@@ -2264,7 +2264,7 @@ func TestRiskTagSpoofing_LegitLowAmount(t *testing.T) {
 	registerBuiltinTagDerivers(tagRegistry)
 
 	srv := &server{tagDeriverRegistry: tagRegistry}
-	srv.setPolicyWithBundleCount(policy, "test-snapshot", 0)
+	srv.setPolicyWithBundleCount(context.Background(), policy, "test-snapshot", 0)
 
 	req := &pb.PolicyCheckRequest{
 		JobId:  "job-legit-1",
@@ -2316,7 +2316,7 @@ func TestRiskTagSpoofing_TopicWithoutDeriver(t *testing.T) {
 	registerBuiltinTagDerivers(tagRegistry)
 
 	srv := &server{tagDeriverRegistry: tagRegistry}
-	srv.setPolicyWithBundleCount(policy, "test-snapshot", 0)
+	srv.setPolicyWithBundleCount(context.Background(), policy, "test-snapshot", 0)
 
 	// No deriver for job.cordclaw.exec → client tags used as-is.
 	req := &pb.PolicyCheckRequest{
@@ -2366,7 +2366,7 @@ func TestRiskTagSpoofing_MissingPayload(t *testing.T) {
 	registerBuiltinTagDerivers(tagRegistry)
 
 	srv := &server{tagDeriverRegistry: tagRegistry}
-	srv.setPolicyWithBundleCount(policy, "test-snapshot", 0)
+	srv.setPolicyWithBundleCount(context.Background(), policy, "test-snapshot", 0)
 
 	// No payload content at all → deriver fails-closed → "blocked" tag.
 	req := &pb.PolicyCheckRequest{
@@ -2408,7 +2408,7 @@ func TestRiskTagSpoofing_NilTagDeriverRegistry(t *testing.T) {
 
 	// No tag deriver registry — should not panic.
 	srv := &server{}
-	srv.setPolicyWithBundleCount(policy, "test-snapshot", 0)
+	srv.setPolicyWithBundleCount(context.Background(), policy, "test-snapshot", 0)
 
 	req := &pb.PolicyCheckRequest{
 		JobId:  "job-nil-1",
@@ -2459,7 +2459,7 @@ func TestDefaultTopicRestriction_Integration(t *testing.T) {
 	}
 
 	srv := &server{}
-	srv.setPolicyWithBundleCount(policy, "test-snapshot", 0)
+	srv.setPolicyWithBundleCount(context.Background(), policy, "test-snapshot", 0)
 
 	// Internal probe with _internal label → ALLOW.
 	internalReq := &pb.PolicyCheckRequest{
@@ -2546,7 +2546,7 @@ func TestPromptInjectionScanning_Integration(t *testing.T) {
 	srv := &server{
 		scanners: loadOutputScanners(),
 	}
-	srv.setPolicyWithBundleCount(policy, "test-snapshot", 0)
+	srv.setPolicyWithBundleCount(context.Background(), policy, "test-snapshot", 0)
 
 	// RED-TEAM SCENARIO #4: injection prompt that should be caught.
 	injectionReq := &pb.PolicyCheckRequest{
@@ -2599,5 +2599,27 @@ func TestPromptInjectionScanning_Integration(t *testing.T) {
 	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN {
 		t.Fatalf("bypass governance not caught: expected REQUIRE_HUMAN, got %v",
 			resp.GetDecision().String())
+	}
+}
+
+// TestSetPolicyRejectsNilContext guards the nil-ctx rail on the lock-contention
+// path. The Redis snapshot write and cache-invalidation sequence derive their
+// deadlines from the caller's ctx; orphaning to context.Background() would let
+// a hung Redis round-trip outlive the reload goroutine. The caller MUST pass
+// a non-nil ctx and the function MUST return an error instead of silently
+// falling back — that rail is enforced here.
+func TestSetPolicyRejectsNilContext(t *testing.T) {
+	srv := &server{
+		cacheTTL:     time.Minute,
+		cache:        map[string]cacheEntry{},
+		cacheMaxSize: 100,
+	}
+	//nolint:staticcheck // SA1012 — passing nil is the behaviour under test.
+	if err := srv.setPolicy(nil, nil, "should-not-apply"); err == nil {
+		t.Fatal("setPolicy(nil ctx) must return an error, got nil")
+	}
+	//nolint:staticcheck // SA1012 — passing nil is the behaviour under test.
+	if err := srv.setPolicyWithBundleCount(nil, nil, "should-not-apply", 0); err == nil {
+		t.Fatal("setPolicyWithBundleCount(nil ctx) must return an error, got nil")
 	}
 }

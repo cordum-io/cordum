@@ -67,11 +67,11 @@ func TestAgentIdentityPreapprovalLookup_RealStore(t *testing.T) {
 	lookup := newAgentIdentityPreapprovalLookup(s)
 
 	cases := []struct {
-		name    string
-		tenant  string
-		agent   string
-		tool    string
-		want    bool
+		name   string
+		tenant string
+		agent  string
+		tool   string
+		want   bool
 	}{
 		{"ci bot preapproved install", "acme", "ci-bot", "cordum_install_pack", true},
 		{"ci bot preapproved create_workflow", "acme", "ci-bot", "cordum_create_workflow", true},

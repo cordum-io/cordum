@@ -33,25 +33,6 @@ func putSignedBundle(t *testing.T, s *server, id, content string) *httptest.Resp
 	return rec
 }
 
-// getBundleDetail reads a bundle via the HTTP handler for assertions.
-func getBundleDetail(t *testing.T, s *server, id string) map[string]any {
-	t.Helper()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/policy/bundles/"+id, nil)
-	req.Header.Set("X-Tenant-ID", "default")
-	req.Header.Set("X-Principal-Role", "admin")
-	req.SetPathValue("id", id)
-	rec := httptest.NewRecorder()
-	s.handleGetPolicyBundle(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("get bundle: %d %s", rec.Code, rec.Body.String())
-	}
-	var out map[string]any
-	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
-		t.Fatalf("decode detail: %v", err)
-	}
-	return out
-}
-
 // loadRawBundle reads the bundle directly from the config store so tests
 // can inspect the `_signature` sibling, which the GET handler does not
 // expose.

@@ -24,9 +24,6 @@ import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { EntitlementGate } from "@/components/EntitlementGate";
 import { useAgentIdentities } from "@/hooks/useAgentIdentities";
 import type { AgentIdentity } from "@/api/types";
-import { TierLimitBar } from "@/components/TierLimitBar";
-import { UpgradePrompt } from "@/components/UpgradePrompt";
-import { useLicenseUsage } from "@/hooks/useLicense";
 import { useWorkers } from "@/hooks/useWorkers";
 import { PoolGroupedView } from "@/components/agents/PoolGroupedView";
 import { WorkerDetailDrawer } from "@/components/agents/WorkerDetailDrawer";
@@ -68,8 +65,6 @@ export default function AgentsPage() {
   const idleCount = allWorkers.filter((w) => w.status === "idle").length;
   const busyCount = allWorkers.filter((w) => w.status === "busy").length;
   const offlineCount = allWorkers.filter((w) => w.status === "offline").length;
-  const { data: licenseUsage } = useLicenseUsage();
-  const workerMetric = licenseUsage?.usage?.workers;
 
   // Sort: offline agents go to the bottom
   const statusOrder: Record<string, number> = { busy: 0, idle: 1, draining: 2, offline: 3 };
@@ -126,21 +121,6 @@ export default function AgentsPage() {
           </Button>
         }
       />
-
-      {workerMetric && (
-        <div className="space-y-3">
-          <TierLimitBar
-            label="Workers"
-            metric={workerMetric}
-            detail={
-              typeof workerMetric.registered === "number" && typeof workerMetric.connected === "number"
-                ? `${workerMetric.registered.toLocaleString()} registered · ${workerMetric.connected.toLocaleString()} connected`
-                : "Registered and connected workers count toward the active tier."
-            }
-          />
-          <UpgradePrompt label="Workers" metric={workerMetric} plan={licenseUsage?.plan} />
-        </div>
-      )}
 
       {(poolFilter || topicFilter) && (
         <div className="instrument-card flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

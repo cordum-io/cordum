@@ -355,7 +355,7 @@ func TestHandleAuditExport_LimitAndTruncation(t *testing.T) {
 // other separators.
 func TestSanitiseFilenameSegment_BlocksPathTraversal(t *testing.T) {
 	cases := map[string]string{
-		"default":     "default",
+		"default": "default",
 		// Path traversal: both slashes replaced; dot allowed (legitimate
 		// in subdomain-style tenant IDs) but cannot reconstruct a ".."
 		// traversal because the surrounding slashes are gone.

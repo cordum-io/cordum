@@ -47,9 +47,6 @@ const (
 	// chainStreamFieldEvent is the Redis Stream field holding the canonical
 	// event JSON. Matches the literal used by chainAppendScript.
 	chainStreamFieldEvent = "event"
-	// chainStreamFieldSeq is the Redis Stream field holding the integer
-	// sequence number. Matches the literal used by chainAppendScript.
-	chainStreamFieldSeq = "seq"
 )
 
 // Sentinel errors returned by Chainer. Exported so callers can distinguish

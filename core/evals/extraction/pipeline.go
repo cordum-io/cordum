@@ -54,7 +54,7 @@ type topicMatcher struct {
 
 func (s *Service) preview(ctx context.Context, req ExtractionRequest) (ExtractionResult, error) {
 	start := time.Now()
-	defer extractionDuration.Observe(time.Since(start).Seconds())
+	defer func() { extractionDuration.Observe(time.Since(start).Seconds()) }()
 
 	matcher, err := compileTopicMatcher(req.TopicPattern)
 	if err != nil {

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -169,5 +171,124 @@ func TestRunEvalsExtractRejectsInvalidVerdict(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown decision verdict") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunEvalsRunWaitPollsUntilComplete(t *testing.T) {
+	var gotPostPath string
+	var gotPostBody map[string]any
+	var getCount int
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/api/v1/evals/datasets/"):
+			gotPostPath = r.URL.Path
+			if err := json.NewDecoder(r.Body).Decode(&gotPostBody); err != nil {
+				t.Fatalf("decode run body: %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"run_id":"run-123","status":"pending","poll_url":"/api/v1/evals/runs/run-123"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/evals/runs/run-123":
+			getCount++
+			w.Header().Set("Content-Type", "application/json")
+			if getCount == 1 {
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = w.Write([]byte(`{"run_id":"run-123","status":"running","dataset_id":"dataset-1","dataset_name":"pack-a","dataset_version":1,"tenant":"default","started_at":"2026-04-21T00:00:00Z"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"run_id":"run-123","dataset_id":"dataset-1","dataset_name":"pack-a","dataset_version":1,"tenant":"default","policy_snapshot":"snap-1","started_at":"2026-04-21T00:00:00Z","completed_at":"2026-04-21T00:00:02Z","summary":{"total":2,"passed":2,"failed":0,"regressions":0,"errored":0,"score_percent":100}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	stdout := captureStdout(t, func() {
+		if err := runEvalsRun([]string{
+			"--gateway", srv.URL,
+			"--dataset", "dataset-1",
+			"--use-current",
+			"--wait",
+		}); err != nil {
+			t.Fatalf("runEvalsRun returned error: %v", err)
+		}
+	})
+
+	if gotPostPath != "/api/v1/evals/datasets/dataset-1/run" {
+		t.Fatalf("unexpected post path: %q", gotPostPath)
+	}
+	if gotPostBody["use_current_policy"] != true {
+		t.Fatalf("expected use_current_policy=true, got %+v", gotPostBody)
+	}
+	for _, want := range []string{
+		"run_id: run-123",
+		"dataset_id: dataset-1",
+		"dataset_name: pack-a",
+		"passed: 2",
+		"regressions: 0",
+		"score_percent: 100.00",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("expected output to contain %q, got %q", want, stdout)
+		}
+	}
+	if getCount < 2 {
+		t.Fatalf("expected at least 2 polls, got %d", getCount)
+	}
+}
+
+func TestRunEvalsRunRejectsRegressionResult(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"run_id":"run-456","dataset_id":"dataset-1","dataset_name":"pack-b","dataset_version":2,"tenant":"default","policy_snapshot":"snap-2","started_at":"2026-04-21T00:00:00Z","completed_at":"2026-04-21T00:00:01Z","summary":{"total":3,"passed":1,"failed":1,"regressions":1,"errored":0,"score_percent":33.33}}`))
+	}))
+	defer srv.Close()
+
+	err := runEvalsRun([]string{
+		"--gateway", srv.URL,
+		"--dataset", "dataset-1",
+		"--use-current",
+	})
+	if err == nil {
+		t.Fatal("expected regression error")
+	}
+	if !strings.Contains(err.Error(), "detected 1 regression") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunEvalsRunReadsCandidateContentFromFile(t *testing.T) {
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "candidate.yaml")
+	if err := os.WriteFile(policyPath, []byte("rules:\n  - id: allow-all\n    match:\n      topics:\n        - job.*\n    decision: allow\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"run_id":"run-789","status":"pending","poll_url":"/api/v1/evals/runs/run-789"}`))
+	}))
+	defer srv.Close()
+
+	stdout := captureStdout(t, func() {
+		if err := runEvalsRun([]string{
+			"--gateway", srv.URL,
+			"--dataset", "dataset-1",
+			"--candidate-content", "@" + policyPath,
+		}); err != nil {
+			t.Fatalf("runEvalsRun returned error: %v", err)
+		}
+	})
+
+	if gotBody["candidate_content"] == nil || !strings.Contains(gotBody["candidate_content"].(string), "allow-all") {
+		t.Fatalf("expected candidate content from file, got %+v", gotBody)
+	}
+	if !strings.Contains(stdout, "status: pending") {
+		t.Fatalf("expected pending output, got %q", stdout)
 	}
 }

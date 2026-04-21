@@ -3,10 +3,13 @@ package gateway
 import (
 	"net/http"
 	"strings"
+
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/licensing"
 )
 
 func (s *server) handleGetLicense(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermLicenseRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermLicenseRead, "admin") {
 		return
 	}
 
@@ -30,6 +33,9 @@ func (s *server) handleReloadLicense(w http.ResponseWriter, r *http.Request) {
 		writeForbidden(w, r, err)
 		return
 	}
+	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionLicenseRotate) {
+		return
+	}
 
 	resolver := s.entitlementResolver()
 	if resolver == nil {
@@ -50,7 +56,7 @@ func (s *server) handleReloadLicense(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGetLicenseUsage(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermLicenseRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermLicenseRead, "admin") {
 		return
 	}
 

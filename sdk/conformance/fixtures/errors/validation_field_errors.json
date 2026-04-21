@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "name": "errors.validation_field_errors",
+  "description": "Submit a job with a missing required field. SDK MUST raise ValidationError whose fields surface the underlying `error.details.field_errors[]` payload.",
+  "tags": ["errors", "validation"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "assert_error",
+      "operationId": "submitJob",
+      "body": {
+        "topic": "",
+        "prompt": ""
+      },
+      "expect": {
+        "errorClass": "ValidationError",
+        "status": 400,
+        "fields": {
+          "error.code": "validation_failed"
+        }
+      }
+    }
+  ]
+}

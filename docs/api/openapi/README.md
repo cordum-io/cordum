@@ -1,17 +1,15 @@
-# OpenAPI Specs
+# OpenAPI
 
-This directory contains two OpenAPI specifications for the Cordum platform:
+This directory contains the **canonical** Cordum HTTP OpenAPI spec:
 
-| File | Source | Description |
-|------|--------|-------------|
-| `cordum-rest.yaml` | Hand-maintained | OpenAPI 3.0.3 spec for all REST/HTTP endpoints |
-| `cordum.swagger.json` | Generated from protobufs | gRPC gateway swagger spec |
+| File | Role |
+|------|------|
+| `cordum-api.yaml` | Source-of-truth OpenAPI 3.0.3 spec for the gateway HTTP surface |
+| `index.html` | Single-spec Swagger UI wrapper for browsing `cordum-api.yaml` locally |
 
-## Viewing the specs
+## Viewing the spec
 
-Open `index.html` in a browser. A dropdown at the top lets you switch between the REST spec and the gRPC gateway spec.
-
-To serve locally:
+Open `index.html` in a browser, or serve the directory locally:
 
 ```bash
 cd docs/api/openapi
@@ -19,38 +17,27 @@ python -m http.server 8000
 # Open http://localhost:8000
 ```
 
-## Generating the gRPC spec
+## Validating the canonical spec
 
 ```bash
 make openapi
 ```
 
-This runs `protoc` with the `openapiv2` plugin and emits `cordum.swagger.json`.
+`make openapi` now runs Redocly lint against `docs/api/openapi/cordum-api.yaml`.
+It does **not** regenerate secondary Swagger artifacts.
 
-## Maintaining the REST spec
+## Maintaining the canonical HTTP spec
 
-`cordum-rest.yaml` is manually maintained. When gateway routes change:
+When gateway routes or schemas change:
 
-1. Check `core/controlplane/gateway/gateway_core.go` for route registrations
-2. Check handler files (`gateway_jobs.go`, `gateway_mcp.go`, etc.) for request/response shapes
-3. Update the relevant path and schema entries in `cordum-rest.yaml`
-4. Validate:
+1. Check `core/controlplane/gateway/gateway.go` and the relevant handler files
+   for the live HTTP surface.
+2. Update `docs/api/openapi/cordum-api.yaml`.
+3. Validate with `make openapi`.
+4. When auditing route/spec coverage, also run:
    ```bash
-   python -c "import yaml; yaml.safe_load(open('docs/api/openapi/cordum-rest.yaml'))"
+   go run ./tools/openapi-audit --spec docs/api/openapi/cordum-api.yaml --gateway-dir core/controlplane/gateway
    ```
 
-### Structure of cordum-rest.yaml
-
-- **info** — title, version, description
-- **tags** — 18 logical groups (Auth, Jobs, Workflows, Policy, etc.)
-- **paths** — 75 endpoint definitions with operationId, parameters, requestBody, responses
-- **components/securitySchemes** — `apiKey` (X-API-Key header) and `bearerAuth` (JWT)
-- **components/schemas** — 57 reusable schema definitions
-
-### Adding a new endpoint
-
-1. Add the path under the appropriate comment section
-2. Use an existing schema or define a new one under `components/schemas`
-3. Tag it with the correct group
-4. Set `operationId` to a unique camelCase identifier
-5. Run the YAML validation command above
+There is no longer a separate hand-maintained REST spec or protobuf-generated
+Swagger JSON in this directory.

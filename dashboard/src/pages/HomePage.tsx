@@ -3,7 +3,7 @@
  * Revision v2: Balanced KPIs (2 ops + 2 governance)
  * "Orchestration sells. Governance seals. Both are Cordum."
  */
-import { useState, useMemo } from "react";
+import { Suspense, lazy, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -43,7 +43,15 @@ import {
   Radio,
 } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
-import { GovernanceHealthIndicator } from "@/components/home/GovernanceHealthIndicator";
+import { FEATURE_FLAGS } from "@/config/flags";
+
+// Approval analytics is a heavy widget (two queries + DataTable). Lazy-
+// mount so the Command Center first paint doesn't block on it.
+const ApprovalAnalyticsWidget = lazy(() =>
+  import("@/components/governance/ApprovalAnalyticsWidget").then((m) => ({
+    default: m.ApprovalAnalyticsWidget,
+  })),
+);
 import { useStatus } from "@/hooks/useStatus";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { ChartTooltip } from "@/components/ui/ChartTooltip";
@@ -424,12 +432,13 @@ export default function HomePage() {
         )}
       </motion.div>
 
-      {/* Governance health score — composite 0-100 aggregate of denial
-          rate, approval latency p95, policy coverage, chain integrity.
-          Admin-only; widget renders nothing for non-admin callers and
-          lazy-fetches independently of the KPI strip so it never blocks
-          first paint. See core/governance/health.go for the scoring. */}
-      <GovernanceHealthIndicator />
+      {/* Approval analytics — above-the-fold so bottlenecks surface before
+          other ops widgets. Flag-gated until sibling backend lands. */}
+      {FEATURE_FLAGS.approvalAnalytics && (
+        <Suspense fallback={null}>
+          <ApprovalAnalyticsWidget context="command-center" defaultWindow="24h" />
+        </Suspense>
+      )}
 
       {/* Onboarding checklist — shown for new users with zero data */}
       {showOnboarding &&

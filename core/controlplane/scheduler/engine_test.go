@@ -213,6 +213,14 @@ func (s *fakeJobStore) SetState(_ context.Context, jobID string, state JobState)
 	return nil
 }
 
+func (s *fakeJobStore) SetStateWithContext(ctx context.Context, jobID string, state JobState, _ *model.StateEventContext) error {
+	return s.SetState(ctx, jobID, state)
+}
+
+func (s *fakeJobStore) GetJobEvents(_ context.Context, _ string) ([]model.JobEvent, error) {
+	return nil, nil
+}
+
 func (s *fakeJobStore) GetState(_ context.Context, jobID string) (JobState, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

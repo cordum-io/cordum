@@ -5,17 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/cordum/cordum/core/auth/delegation"
-	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 var errDelegationAgentRequired = errors.New("delegation token requires an authenticated agent identity")
 
 func (s *server) applySubmitDelegation(ctx context.Context, tenant, agentID, token string, labels map[string]string, meta *pb.JobMetadata) (map[string]string, error) {
+	return s.applySubmitDelegationWithAudience(ctx, tenant, agentID, token, "", labels, meta)
+}
+
+// applySubmitDelegationWithAudience allows the caller to pass an
+// explicit audience agent id that overrides the submitting-agent
+// default. When audienceOverride is empty, the authenticated
+// submitting agent id is used (the common case — the token was
+// issued TO this caller).
+func (s *server) applySubmitDelegationWithAudience(ctx context.Context, tenant, agentID, token, audienceOverride string, labels map[string]string, meta *pb.JobMetadata) (map[string]string, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return labels, nil
@@ -24,46 +31,29 @@ func (s *server) applySubmitDelegation(ctx context.Context, tenant, agentID, tok
 	if agentID == "" {
 		return nil, errDelegationAgentRequired
 	}
+	expectedAudience := strings.TrimSpace(audienceOverride)
+	if expectedAudience == "" {
+		expectedAudience = agentID
+	}
 	service, err := s.delegationTokenService()
 	if err != nil {
 		return nil, fmt.Errorf("delegation token service unavailable: %w", err)
 	}
-	verified, err := service.VerifyDelegationToken(ctx, token, agentID)
+	verified, err := service.VerifyDelegationToken(ctx, token, expectedAudience)
 	if err != nil {
 		return nil, err
 	}
 	if tenant != "" && verified.Tenant != "" && !strings.EqualFold(verified.Tenant, tenant) {
 		return nil, fmt.Errorf("delegation token tenant mismatch")
 	}
-	if labels == nil {
-		labels = map[string]string{}
-	}
-	rootIssuer, issuerChain := delegationIssuers(verified.DelegationChain)
-	labels[config.LabelDelegationDepth] = strconv.Itoa(verified.ChainDepth)
-	if rootIssuer != "" {
-		labels[config.LabelDelegationIssuer] = rootIssuer
-	}
-	if len(issuerChain) > 0 {
-		labels[config.LabelDelegationIssuerChain] = strings.Join(issuerChain, ",")
-	}
-	if len(verified.AllowedActions) > 0 {
-		labels[config.LabelDelegationScope] = strings.Join(verified.AllowedActions, ",")
-	}
-	if verified.Subject != "" {
-		labels[config.LabelDelegationSubject] = verified.Subject
-	}
+	delegationCtx := projectVerifiedDelegationContext(verified)
+	labels = applyDelegationContextLabels(labels, delegationCtx, verified.Subject)
 	if meta != nil {
 		if meta.Labels == nil {
 			meta.Labels = map[string]string{}
 		}
-		for _, key := range []string{
-			config.LabelDelegationDepth,
-			config.LabelDelegationIssuer,
-			config.LabelDelegationIssuerChain,
-			config.LabelDelegationScope,
-			config.LabelDelegationSubject,
-		} {
-			if value := strings.TrimSpace(labels[key]); value != "" {
+		for key, value := range labels {
+			if strings.HasPrefix(key, "_delegation.") && strings.TrimSpace(value) != "" {
 				meta.Labels[key] = value
 			}
 		}
@@ -71,43 +61,45 @@ func (s *server) applySubmitDelegation(ctx context.Context, tenant, agentID, tok
 	return labels, nil
 }
 
+// submitDelegationErrorStatus maps delegation verify errors to HTTP status
+// codes per the plan's taxonomy so callers can branch on shape without
+// parsing messages:
+//
+//   - 401 Unauthorized     — malformed / bad_signature / unknown_kid / not_yet_valid
+//                            (the token cannot be trusted as a cryptographic object)
+//   - 403 Forbidden        — expired / revoked / audience_mismatch / tenant mismatch
+//                            (the token is a valid object but its authorisation
+//                            has lapsed or was granted to a different audience)
+//   - 422 Unprocessable    — chain_too_deep / scope_exceeded
+//                            (the token is cryptographically valid but violates
+//                            policy envelope constraints)
+//   - 400 Bad Request      — missing authenticated agent identity
+//   - 503 Service Unavail  — delegation service not configured / unreachable
+//
+// Returns (status, errorCode). The errorCode string is the delegation
+// taxonomy keyword (e.g. "expired") so clients can branch on it
+// without scraping human-readable messages.
 func submitDelegationErrorStatus(err error) (int, string) {
 	switch {
 	case err == nil:
 		return http.StatusOK, ""
 	case errors.Is(err, errDelegationAgentRequired):
 		return http.StatusBadRequest, err.Error()
-	default:
-		if code := delegation.ErrorCode(err); code != "" {
+	}
+	if code := delegation.ErrorCode(err); code != "" {
+		switch code {
+		case "malformed", "bad_signature", "unknown_kid", "not_yet_valid":
+			return http.StatusUnauthorized, code
+		case "expired", "revoked", "audience_mismatch":
+			return http.StatusForbidden, code
+		case "chain_too_deep", "scope_exceeded":
+			return http.StatusUnprocessableEntity, code
+		default:
 			return http.StatusForbidden, code
 		}
-		if strings.Contains(strings.ToLower(err.Error()), "tenant mismatch") {
-			return http.StatusForbidden, "delegation token tenant mismatch"
-		}
-		return http.StatusServiceUnavailable, "delegation token service unavailable"
 	}
-}
-
-func delegationIssuers(chain []delegation.ChainLink) (string, []string) {
-	if len(chain) == 0 {
-		return "", nil
+	if strings.Contains(strings.ToLower(err.Error()), "tenant mismatch") {
+		return http.StatusForbidden, "delegation token tenant mismatch"
 	}
-	out := make([]string, 0, len(chain))
-	seen := make(map[string]struct{}, len(chain))
-	for _, link := range chain {
-		issuer := strings.TrimSpace(link.IssuedBy)
-		if issuer == "" {
-			continue
-		}
-		key := strings.ToLower(issuer)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, issuer)
-	}
-	if len(out) == 0 {
-		return "", nil
-	}
-	return out[0], out
+	return http.StatusServiceUnavailable, "delegation token service unavailable"
 }

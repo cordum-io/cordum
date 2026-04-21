@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -80,7 +81,7 @@ type MCPUsageResponse struct {
 // Response: MCPUsageResponse. Admin-gated, tenant-scoped.
 func (s *server) handleMCPUsage(w http.ResponseWriter, r *http.Request) {
 	client := s.redisClient()
-	if !s.requireStoreAndPermissionOrRole(w, r, PermMCPRead, []string{"admin"}, client) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermMCPRead, []string{"admin"}, client) {
 		return
 	}
 	tenant, err := s.resolveTenant(r, "")

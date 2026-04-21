@@ -64,6 +64,14 @@ func (s *fakeReconcileStore) SetState(_ context.Context, jobID string, state Job
 	return nil
 }
 
+func (s *fakeReconcileStore) SetStateWithContext(ctx context.Context, jobID string, state JobState, _ *model.StateEventContext) error {
+	return s.SetState(ctx, jobID, state)
+}
+
+func (s *fakeReconcileStore) GetJobEvents(_ context.Context, _ string) ([]model.JobEvent, error) {
+	return nil, nil
+}
+
 func (s *fakeReconcileStore) GetState(_ context.Context, jobID string) (JobState, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

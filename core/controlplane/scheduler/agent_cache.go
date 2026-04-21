@@ -118,10 +118,7 @@ func (r *AgentResolver) agentIDFromCredential(workerID string) string {
 	if !ok {
 		return ""
 	}
-	// Newer credentials do not embed agent IDs. Keep the lookup as an explicit
-	// legacy fallback without fabricating a synthetic mapping.
-	_ = cred
-	return ""
+	return strings.TrimSpace(cred.AgentID)
 }
 
 func unlinkedAgent() AgentInfo {

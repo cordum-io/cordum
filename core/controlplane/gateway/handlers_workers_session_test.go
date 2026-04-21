@@ -244,6 +244,7 @@ func TestHandleGetWorker_StoreUnreadyWhenNoResolver(t *testing.T) {
 	// so operators can tell "I haven't wired it yet" from "resolver
 	// exists but says no session".
 	s, _, _ := newTestGateway(t)
+	s.trustResolver = nil
 	seedSnapshot(t, s, testSnapshot())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/workers/w1", nil)
@@ -528,6 +529,7 @@ func TestHandleGetWorkers_ConcurrentReadsStableResponse(t *testing.T) {
 
 func TestHandleGetWorkers_NoResolverPreservesLegacyHeartbeatSemantics(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	s.trustResolver = nil
 	seedSnapshot(t, s, testSnapshot())
 
 	req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/workers", nil))

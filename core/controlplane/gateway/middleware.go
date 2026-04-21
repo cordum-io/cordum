@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/env"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/licensing"
@@ -152,7 +153,6 @@ type redisRateLimiter struct {
 const (
 	rateLimitRedisTimeout = 200 * time.Millisecond
 	rateLimitKeyPrefix    = "cordum:rl:"
-	rateLimitWindowSec    = 1 // 1-second sliding window
 	rateLimitTTLSec       = 2 // 2× window for clock-skew safety
 )
 
@@ -310,16 +310,16 @@ func requestHostname(hostport string) string {
 	return hostport
 }
 
-func apiKeyUnaryInterceptor(auth AuthProvider) grpc.UnaryServerInterceptor {
+func apiKeyUnaryInterceptor(provider auth.AuthProvider) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if auth == nil {
+		if provider == nil {
 			return handler(ctx, req)
 		}
-		authCtx, err := auth.AuthenticateGRPC(ctx)
+		authCtx, err := provider.AuthenticateGRPC(ctx)
 		if err != nil {
 			return nil, status.Error(codes.Unauthenticated, "unauthorized")
 		}
-		ctx = context.WithValue(ctx, authContextKey{}, authCtx)
+		ctx = context.WithValue(ctx, auth.ContextKey{}, authCtx)
 		return handler(ctx, req)
 	}
 }
@@ -329,7 +329,7 @@ var grpcPublicMethods = map[string]bool{
 	"/grpc.health.v1.Health/Watch": true,
 }
 
-func rateLimitUnaryInterceptor(auth AuthProvider, apiRL, publicRL rateLimiter) grpc.UnaryServerInterceptor {
+func rateLimitUnaryInterceptor(auth auth.AuthProvider, apiRL, publicRL rateLimiter) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if apiRL == nil && publicRL == nil {
 			return handler(ctx, req)
@@ -353,7 +353,7 @@ func rateLimitUnaryInterceptor(auth AuthProvider, apiRL, publicRL rateLimiter) g
 func grpcRateLimitKey(ctx context.Context) string {
 	// SECURITY: The rate limiter runs after auth, so prefer the authenticated
 	// tenant. Fall back to client IP if auth context is missing.
-	if authCtx := authFromContext(ctx); authCtx != nil && strings.TrimSpace(authCtx.Tenant) != "" {
+	if authCtx := auth.FromContext(ctx); authCtx != nil && strings.TrimSpace(authCtx.Tenant) != "" {
 		return "tenant:" + strings.TrimSpace(authCtx.Tenant)
 	}
 	if ip := grpcClientIP(ctx); ip != "" {
@@ -386,7 +386,7 @@ func grpcClientIP(ctx context.Context) string {
 	return strings.TrimSpace(peerInfo.Addr.String())
 }
 
-func rateLimitMiddleware(auth AuthProvider, apiRL, publicRL rateLimiter, next http.Handler) http.Handler {
+func rateLimitMiddleware(auth auth.AuthProvider, apiRL, publicRL rateLimiter, next http.Handler) http.Handler {
 	if apiRL == nil && publicRL == nil {
 		return next
 	}
@@ -426,7 +426,7 @@ func rateLimitMiddleware(auth AuthProvider, apiRL, publicRL rateLimiter, next ht
 func rateLimitKey(r *http.Request) string {
 	// SECURITY: The rate limiter runs after auth, so prefer the authenticated
 	// tenant. Fall back to client IP if auth context is missing.
-	if authCtx := authFromRequest(r); authCtx != nil && strings.TrimSpace(authCtx.Tenant) != "" {
+	if authCtx := auth.FromRequest(r); authCtx != nil && strings.TrimSpace(authCtx.Tenant) != "" {
 		return "tenant:" + strings.TrimSpace(authCtx.Tenant)
 	}
 	if ip := clientIP(r); ip != "" {
@@ -467,7 +467,7 @@ var maxPublicPaths = map[string]bool{
 }
 
 var maxPublicPathPrefixes = []string{
-	scimBasePath,
+	auth.SCIMBasePath,
 }
 
 func publicPathWithinCeiling(path string) bool {
@@ -484,11 +484,11 @@ func publicPathWithinCeiling(path string) bool {
 
 // isAllowedPublicPath returns true only when BOTH the provider AND the
 // hardcoded ceiling agree the path is public.
-func isAllowedPublicPath(auth AuthProvider, path string) bool {
+func isAllowedPublicPath(provider auth.AuthProvider, path string) bool {
 	if !publicPathWithinCeiling(path) {
 		return false
 	}
-	if pp, ok := auth.(PublicPathProvider); ok {
+	if pp, ok := provider.(auth.PublicPathProvider); ok {
 		return pp.IsPublicPath(path)
 	}
 	return false
@@ -496,8 +496,8 @@ func isAllowedPublicPath(auth AuthProvider, path string) bool {
 
 // apiKeyMiddleware enforces API key auth and injects auth context.
 // An optional auditSender emits audit events on authentication failures.
-func apiKeyMiddleware(auth AuthProvider, next http.Handler, auditSender ...audit.AuditSender) http.Handler {
-	if auth == nil {
+func apiKeyMiddleware(provider auth.AuthProvider, next http.Handler, auditSender ...audit.AuditSender) http.Handler {
+	if provider == nil {
 		return next
 	}
 	var aSender audit.AuditSender
@@ -509,11 +509,11 @@ func apiKeyMiddleware(auth AuthProvider, next http.Handler, auditSender ...audit
 			next.ServeHTTP(w, r)
 			return
 		}
-		if isAllowedPublicPath(auth, r.URL.Path) {
+		if isAllowedPublicPath(provider, r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		authCtx, err := auth.AuthenticateHTTP(r)
+		authCtx, err := provider.AuthenticateHTTP(r)
 		if err != nil {
 			if aSender != nil {
 				aSender.Send(audit.SIEMEvent{
@@ -537,7 +537,7 @@ func apiKeyMiddleware(auth AuthProvider, next http.Handler, auditSender ...audit
 			"principal", authCtx.PrincipalID,
 			"authSource", string(authCtx.AuthSource),
 		)
-		ctx := context.WithValue(r.Context(), authContextKey{}, authCtx)
+		ctx := context.WithValue(r.Context(), auth.ContextKey{}, authCtx)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -592,7 +592,7 @@ func auditReadMiddleware(sender audit.AuditSender, sampleRate float64, next http
 		}
 
 		if shouldAudit {
-			authCtx, _ := r.Context().Value(authContextKey{}).(*AuthContext)
+			authCtx, _ := r.Context().Value(auth.ContextKey{}).(*auth.AuthContext)
 			identity := ""
 			tenantID := ""
 			if authCtx != nil {
@@ -618,7 +618,7 @@ func auditReadMiddleware(sender audit.AuditSender, sampleRate float64, next http
 	})
 }
 
-func tenantMiddleware(auth AuthProvider, next http.Handler) http.Handler {
+func tenantMiddleware(provider auth.AuthProvider, next http.Handler) http.Handler {
 	if next == nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "not found")
@@ -629,7 +629,7 @@ func tenantMiddleware(auth AuthProvider, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if isAllowedPublicPath(auth, r.URL.Path) {
+		if isAllowedPublicPath(provider, r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -639,7 +639,7 @@ func tenantMiddleware(auth AuthProvider, next http.Handler) http.Handler {
 			return
 		}
 		loggerFromContext(r.Context()).Debug("tenant resolved", "tenantId", tenantID)
-		if authCtx := authFromRequest(r); authCtx != nil && authCtx.Tenant != "" && !authCtx.AllowCrossTenant {
+		if authCtx := auth.FromRequest(r); authCtx != nil && authCtx.Tenant != "" && !authCtx.AllowCrossTenant {
 			if strings.TrimSpace(authCtx.Tenant) != tenantID {
 				writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
 				return
@@ -789,7 +789,7 @@ func tracingMiddlewareWithProvider(tp oteltrace.TracerProvider, next http.Handle
 		if tenant := strings.TrimSpace(r.Header.Get("X-Tenant-ID")); tenant != "" {
 			span.SetAttributes(attribute.String("cordum.tenant", tenant))
 		}
-		if ac := authFromRequest(r); ac != nil && ac.PrincipalID != "" {
+		if ac := auth.FromRequest(r); ac != nil && ac.PrincipalID != "" {
 			span.SetAttributes(attribute.String("cordum.principal_id", ac.PrincipalID))
 		}
 		// Agent identity is resolved authoritatively at the handler level

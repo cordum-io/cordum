@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
@@ -311,7 +312,7 @@ func (s *server) syncApprovalQueueDepth(ctx context.Context) {
 }
 
 func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermWorkflowsWrite, []string{"admin"}, s.workflowEng) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermWorkflowsWrite, []string{"admin"}, s.workflowEng) {
 		return
 	}
 	runID, ok := requirePathParam(w, r, "run_id")
@@ -362,7 +363,7 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermJobsApprove, []string{"admin"}, s.jobStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore) {
 		return
 	}
 	s.syncApprovalQueueDepth(r.Context())
@@ -742,7 +743,7 @@ func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.Appr
 }
 
 func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermJobsApprove, []string{"admin"}, s.jobStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore) {
 		return
 	}
 	var body approvalRepairRequest
@@ -899,7 +900,7 @@ func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermJobsApprove, []string{"admin"}, s.jobStore, s.bus) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore, s.bus) {
 		return
 	}
 	var body struct {
@@ -1214,7 +1215,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermJobsApprove, []string{"admin"}, s.jobStore, s.bus) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore, s.bus) {
 		return
 	}
 	var body struct {
@@ -1434,7 +1435,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 // combining blast radius, prior approvals, rollback hints, policy snapshot
 // summary, time remaining, and parsed constraints in one response.
 func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermJobsApprove, []string{"admin"}, s.jobStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore) {
 		return
 	}
 	jobID, ok := requirePathParam(w, r, "job_id")

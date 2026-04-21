@@ -99,7 +99,7 @@ func TestBreakGlass_GraceStateLicenseRotateSucceeds(t *testing.T) {
 	}
 	logOutput := logs.String()
 	for _, needle := range []string{
-		`"principal":"admin-1"`,
+		`"principal":"admin"`,
 		`"route":"/api/v1/license/reload"`,
 		`"state":"grace"`,
 		`"decision":"allow"`,

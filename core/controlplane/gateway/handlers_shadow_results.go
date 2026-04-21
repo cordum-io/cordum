@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -255,7 +256,7 @@ func resetShadowSummaryCache() {
 // (tenant, bundle, window) so dashboard polling is cheap.
 func (s *server) handleShadowResultsSummary(w http.ResponseWriter, r *http.Request) {
 	client := s.redisClient()
-	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, client) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, client) {
 		return
 	}
 	tenant, err := s.resolveTenant(r, "")
@@ -400,7 +401,7 @@ var validShadowDiffFilters = map[string]struct{}{
 // once new events arrive, caching would serve stale pages).
 func (s *server) handleShadowResultsComparisons(w http.ResponseWriter, r *http.Request) {
 	client := s.redisClient()
-	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, client) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, client) {
 		return
 	}
 	tenant, err := s.resolveTenant(r, "")
@@ -605,7 +606,7 @@ const shadowTimeseriesMaxBuckets = 2000
 // that callers re-query frequently, and the scan is bounded already.
 func (s *server) handleShadowResultsTimeseries(w http.ResponseWriter, r *http.Request) {
 	client := s.redisClient()
-	if !s.requireStoreAndPermissionOrRole(w, r, PermPolicyRead, []string{"admin"}, client) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, client) {
 		return
 	}
 	tenant, err := s.resolveTenant(r, "")

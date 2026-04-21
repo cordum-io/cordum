@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/auth/delegation"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
 )
@@ -113,12 +114,12 @@ func TestHandleDelegateAgentRequiresMatchingPrincipalOrAdmin(t *testing.T) {
 		entitlements.RBAC = true
 	})
 	setDelegationKeys(t)
-	putTestRole(t, s, "delegator", PermAgentsDelegate)
+	putTestRole(t, s, "delegator", auth.PermAgentsDelegate)
 
 	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.alpha"})
 	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.alpha"})
 
-	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-a/delegate", strings.NewReader(`{"target_agent_id":"agent-b","allowed_actions":["read"],"allowed_topics":["job.alpha"]}`)), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-a/delegate", strings.NewReader(`{"target_agent_id":"agent-b","allowed_actions":["read"],"allowed_topics":["job.alpha"]}`)), &auth.AuthContext{
 		Tenant:      "default",
 		PrincipalID: "someone-else",
 		Role:        "delegator",
@@ -315,5 +316,52 @@ func TestHandleVerifyAndRevokeDelegationStructuredVerdicts(t *testing.T) {
 
 	if len(sink.events) < 3 {
 		t.Fatalf("expected verify+revoke audit events, got %d", len(sink.events))
+	}
+}
+
+// TestHandleDelegateAgentRejectsOverflowTTL guards the `ttl_seconds`
+// multiplication overflow path. Without the pre-multiplication bound,
+// `time.Duration(req.TTLSeconds) * time.Second` wraps int64 nanoseconds
+// into a negative duration that would sneak past the service-layer
+// maxTTL check (which tests `ttl > maxTTL`) and mint a token with
+// unbounded lifetime.
+func TestHandleDelegateAgentRejectsOverflowTTL(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	setTestEntitlements(t, s, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
+		entitlements.AgentIdentity = true
+	})
+	setDelegationKeys(t)
+
+	delegating := createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.alpha"})
+	target := createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.alpha"})
+
+	// math.MaxInt64 would overflow int64 nanoseconds when multiplied by
+	// time.Second; the handler must reject before the multiplication.
+	body := bytes.NewBufferString(`{"target_agent_id":"` + target.ID + `","allowed_actions":["read"],"allowed_topics":["job.alpha"],"ttl_seconds":9223372036854775000}`)
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+delegating.ID+"/delegate", body))
+	req.SetPathValue("id", delegating.ID)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleDelegateAgent(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on overflow ttl_seconds, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "ttl_seconds") {
+		t.Fatalf("expected ttl_seconds error message, got: %s", rec.Body.String())
+	}
+
+	// One-year-plus-one-second is also rejected — 1 year is the documented
+	// pre-multiplication cap.
+	body = bytes.NewBufferString(`{"target_agent_id":"` + target.ID + `","allowed_actions":["read"],"allowed_topics":["job.alpha"],"ttl_seconds":31536001}`)
+	req = adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+delegating.ID+"/delegate", body))
+	req.SetPathValue("id", delegating.ID)
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+
+	s.handleDelegateAgent(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on >1yr ttl_seconds, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

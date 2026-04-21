@@ -39,7 +39,6 @@ const (
 	mcpApprovalKeyPrefix      = "mcp:approvals:"
 	mcpApprovalIndexKeyPrefix = "mcp:approvals:idx:"
 	mcpApprovalDefaultTTL     = 5 * time.Minute
-	mcpApprovalEventSubject   = "sys.approval.created"
 
 	// mcpArgsMaxBytes caps the args blob we persist on an approval
 	// record. Oversize payloads are replaced with a truncation marker
@@ -514,7 +513,7 @@ func (s *MCPApprovalStore) consumeRecord(ctx context.Context, id string) (bool, 
 func (s *MCPApprovalStore) Resolve(ctx context.Context, id string, decision model.ApprovalDecision, resolverID, reason string) (*MCPApprovalRecord, error) {
 	key := mcpApprovalKey(id)
 	var (
-		result    *MCPApprovalRecord
+		result     *MCPApprovalRecord
 		resolveErr error
 	)
 	txFn := func(tx *redis.Tx) error {

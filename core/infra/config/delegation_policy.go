@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -10,6 +11,8 @@ const (
 	LabelDelegationDepth       = "_delegation.depth"
 	LabelDelegationIssuer      = "_delegation.issuer"
 	LabelDelegationIssuerChain = "_delegation.issuer_chain"
+	LabelDelegationParentIssuer = "_delegation.parent_issuer"
+	LabelDelegationJTI         = "_delegation.jti"
 	LabelDelegationScope       = "_delegation.scope"
 	LabelDelegationSubject     = "_delegation.subject"
 )
@@ -18,10 +21,147 @@ const (
 // policy evaluation. The gateway verifies the JWT and serializes only the
 // fields the kernel needs for policy rules.
 type DelegationContext struct {
-	Depth       int
-	IssuerChain []string
-	Scope       []string
-	RootIssuer  string
+	Depth        int
+	IssuerChain  []string
+	Scope        []string
+	RootIssuer   string
+	ParentIssuer string
+	JTI          string
+}
+
+// DelegationMatch is the structured rule-match block under
+// PolicyRule.Match.Delegation. Every field is optional; the
+// rule-evaluator treats the zero value as "delegation-neutral" and
+// (per the DoD) allows non-delegated requests to pass delegation
+// rules by default. ForbidDelegated flips that to "direct-only".
+type DelegationMatch struct {
+	// MaxDepth matches when delegation==nil OR delegation.Depth
+	// <= *MaxDepth. A pointer (not int) so the zero value and
+	// "MaxDepth==0 means allow only direct calls" are
+	// distinguishable.
+	MaxDepth *int `yaml:"max_depth,omitempty"`
+	// Issuers matches when delegation==nil OR every id in the
+	// chain is in this allowlist. Strictest interpretation —
+	// relax via RequireIssuer (root-only) if operators want.
+	Issuers []string `yaml:"issuers,omitempty"`
+	// RequireIssuer matches when delegation==nil OR
+	// delegation.RootIssuer == RequireIssuer.
+	RequireIssuer string `yaml:"require_issuer,omitempty"`
+	// RequiredScope matches when delegation==nil OR
+	// RequiredScope ⊆ delegation.Scope (set-subset).
+	RequiredScope []string `yaml:"required_scope,omitempty"`
+	// ForbidDelegated=true matches ONLY non-delegated requests
+	// (delegation==nil). Lets operators write "this rule fires
+	// only on direct calls" rules without inverting the match
+	// logic elsewhere.
+	ForbidDelegated bool `yaml:"forbid_delegated,omitempty"`
+}
+
+// agentIDRegex is the validation pattern for issuer and
+// require-issuer values. Mirrors the existing agent-identity
+// naming convention used across the RBAC surface.
+var agentIDRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_\-\.]{0,127}$`)
+
+// Validate checks the structural integrity of a DelegationMatch
+// block before it reaches evaluation. Returns a typed error so the
+// policy-parse path can reject malformed bundles at load time.
+func (m *DelegationMatch) Validate() error {
+	if m == nil {
+		return nil
+	}
+	if m.MaxDepth != nil && *m.MaxDepth < 0 {
+		return fmt.Errorf("delegation.max_depth must be >= 0, got %d", *m.MaxDepth)
+	}
+	seen := make(map[string]struct{}, len(m.Issuers))
+	for _, id := range m.Issuers {
+		trim := strings.TrimSpace(id)
+		if trim == "" {
+			return fmt.Errorf("delegation.issuers must not contain empty ids")
+		}
+		if !agentIDRegex.MatchString(trim) {
+			return fmt.Errorf("delegation.issuers: invalid agent id %q", trim)
+		}
+		if _, dup := seen[trim]; dup {
+			return fmt.Errorf("delegation.issuers: duplicate agent id %q", trim)
+		}
+		seen[trim] = struct{}{}
+	}
+	if trim := strings.TrimSpace(m.RequireIssuer); trim != "" && !agentIDRegex.MatchString(trim) {
+		return fmt.Errorf("delegation.require_issuer: invalid agent id %q", m.RequireIssuer)
+	}
+	if len(m.RequiredScope) > 0 {
+		for _, s := range m.RequiredScope {
+			if strings.TrimSpace(s) == "" {
+				return fmt.Errorf("delegation.required_scope must not contain empty values")
+			}
+		}
+	}
+	return nil
+}
+
+// evaluateDelegationMatch applies the six DoD match semantics:
+//
+//  1. ForbidDelegated=true matches ONLY when delegation==nil.
+//  2. delegation==nil with only non-Forbid fields set → neutral
+//     (matches) — "no-delegation = direct call = passes all
+//     delegation rules" per the DoD.
+//  3. MaxDepth: matches when *MaxDepth >= delegation.Depth.
+//  4. Issuers: matches when every id in delegation.IssuerChain
+//     ∈ allowlist.
+//  5. RequireIssuer: matches when delegation.RootIssuer == it.
+//  6. RequiredScope: matches when the required set ⊆
+//     delegation.Scope (both canonicalised before comparison so
+//     [read,write] and [write,read] evaluate equivalently).
+//
+// A match helper returns true when the rule should FIRE for the
+// given (match, delegation) pair — consistent with the existing
+// PolicyMatch semantics throughout this package.
+func evaluateDelegationMatch(match *DelegationMatch, delegation *DelegationContext) bool {
+	if match == nil {
+		return true
+	}
+	// ForbidDelegated flips the direct-vs-delegated decision.
+	if match.ForbidDelegated {
+		return delegation == nil
+	}
+	// delegation==nil with non-Forbid fields set: the rule is
+	// neutral — per DoD, direct calls pass every delegation rule.
+	if delegation == nil {
+		return true
+	}
+	// Structured checks — every failing sub-field short-circuits.
+	if match.MaxDepth != nil && delegation.Depth > *match.MaxDepth {
+		return false
+	}
+	if len(match.Issuers) > 0 {
+		allowed := make(map[string]struct{}, len(match.Issuers))
+		for _, id := range match.Issuers {
+			allowed[strings.TrimSpace(id)] = struct{}{}
+		}
+		for _, chainID := range delegation.IssuerChain {
+			if _, ok := allowed[strings.TrimSpace(chainID)]; !ok {
+				return false
+			}
+		}
+	}
+	if req := strings.TrimSpace(match.RequireIssuer); req != "" {
+		if !strings.EqualFold(strings.TrimSpace(delegation.RootIssuer), req) {
+			return false
+		}
+	}
+	if len(match.RequiredScope) > 0 {
+		have := make(map[string]struct{}, len(delegation.Scope))
+		for _, s := range delegation.Scope {
+			have[strings.ToLower(strings.TrimSpace(s))] = struct{}{}
+		}
+		for _, required := range match.RequiredScope {
+			key := strings.ToLower(strings.TrimSpace(required))
+			if _, ok := have[key]; !ok {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // DelegationContextFromLabels reconstructs a delegation context from reserved
@@ -42,11 +182,17 @@ func DelegationContextFromLabels(labels map[string]string) *DelegationContext {
 	if len(issuerChain) == 0 && rootIssuer != "" {
 		issuerChain = []string{rootIssuer}
 	}
+	parentIssuer := strings.TrimSpace(labels[LabelDelegationParentIssuer])
+	if parentIssuer == "" && len(issuerChain) > 0 {
+		parentIssuer = issuerChain[len(issuerChain)-1]
+	}
 	return &DelegationContext{
-		Depth:       depth,
-		IssuerChain: issuerChain,
-		Scope:       normalizeDelegationList(labels[LabelDelegationScope]),
-		RootIssuer:  rootIssuer,
+		Depth:        depth,
+		IssuerChain:  issuerChain,
+		Scope:        normalizeDelegationList(labels[LabelDelegationScope]),
+		RootIssuer:   rootIssuer,
+		ParentIssuer: parentIssuer,
+		JTI:          strings.TrimSpace(labels[LabelDelegationJTI]),
 	}
 }
 

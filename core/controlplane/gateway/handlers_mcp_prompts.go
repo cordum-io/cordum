@@ -3,6 +3,7 @@ package gateway
 import (
 	"net/http"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/mcp"
 )
 
@@ -20,7 +21,7 @@ import (
 // empty as "no prompts configured" rather than as an error, matching
 // the tools endpoint contract.
 func (s *server) handleListMCPPrompts(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermMCPRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermMCPRead, "admin") {
 		return
 	}
 	runtime := s.getMCPRuntime()

@@ -91,7 +91,7 @@ help:
 	@echo "  make test-integration   Run integration tests (requires Docker)"
 	@echo "  make coverage           Full coverage report"
 	@echo "  make coverage-core      Core coverage check (80% minimum)"
-	@echo "  make openapi            Regenerate protobuf swagger + validate cordum-api.yaml"
+	@echo "  make openapi            Validate cordum-api.yaml (Redocly lint)"
 	@echo "  make docker SERVICE=X   Build Docker image for a service"
 	@echo "  make smoke              Run platform smoke tests"
 	@echo "  make verify-images      Verify published GHCR images (pull + cosign + multi-arch)"

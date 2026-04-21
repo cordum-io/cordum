@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/licensing"
 )
 
@@ -58,7 +59,7 @@ func complianceExportEntitledMaxEvents(entitlements licensing.Entitlements) int 
 // the same way /api/v1/audit/export/health does; non-entitled callers
 // receive the licensing.TierLimitHTTPError payload for consistency.
 func (s *server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermAuditExport, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermAuditExport, []string{"admin"}, s.configSvc) {
 		return
 	}
 	tenant, err := s.resolveTenant(r, "")

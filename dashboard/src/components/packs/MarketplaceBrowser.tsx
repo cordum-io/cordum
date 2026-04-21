@@ -57,6 +57,12 @@ function MarketplaceCard({
   onInstall: (pack: MarketplacePack, version: string) => void;
   installing: boolean;
 }) {
+  // Seed the version picker to the latest version for this pack. The
+  // parent keys cards by pack id, so a new pack produces a new instance
+  // and we re-seed naturally; within the same pack, a user's picked
+  // version sticks across marketplace refreshes by design. If the picked
+  // version goes away (rare: marketplace dropped a version), we fall
+  // back to the group's latest below to avoid a blank card.
   const [selectedVersion, setSelectedVersion] = useState(group.versions[0]);
   const pack = group.allByVersion.get(selectedVersion) ?? group.latest;
   const description = pack.description ?? "";

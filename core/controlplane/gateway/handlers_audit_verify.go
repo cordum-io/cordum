@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -48,7 +49,7 @@ const (
 // that distinguishes routine log-expiry from real integrity failures.
 func (s *server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 	client := s.redisClient()
-	if !s.requireStoreAndPermissionOrRole(w, r, PermAuditVerify, []string{"admin"}, client) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermAuditVerify, []string{"admin"}, client) {
 		return
 	}
 

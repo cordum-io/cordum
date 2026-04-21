@@ -58,14 +58,14 @@ Use the generated SDK under `sdk/` or the protobufs in `core/protocol/pb/v1`.
 For message types and envelopes, see `docs/AGENT_PROTOCOL.md` and the CAP repo
 (`github.com/cordum-io/cap/v2`).
 
-## OpenAPI (generated)
+## OpenAPI (canonical)
 
-Generate OpenAPI specs from the protobufs:
+Validate the canonical HTTP OpenAPI spec:
 
 ```bash
 make openapi
 ```
 
-Output is written to `docs/api/openapi/` (merged as `cordum.swagger.json`).
-When docs are published, the Swagger UI lives at `docs/api/openapi/` and the
-raw spec at `docs/api/openapi/cordum.swagger.json`.
+The source of truth is `docs/api/openapi/cordum-api.yaml`. When docs are
+published, the Swagger UI lives at `docs/api/openapi/` and loads that single
+canonical spec.

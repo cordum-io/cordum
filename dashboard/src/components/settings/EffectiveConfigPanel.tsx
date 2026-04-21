@@ -18,6 +18,12 @@ function ScopeSelector({
   params: EffectiveConfigParams;
   onApply: (params: EffectiveConfigParams) => void;
 }) {
+  // Seed scope inputs from the parent's current scope exactly once. This is
+  // a draft-form: the user edits locally and then commits via "Apply Scope"
+  // which updates the parent params. We intentionally ignore subsequent
+  // prop updates so a background query refresh can't overwrite an in-flight
+  // edit. If a caller ever needs to force-reset the form, that requires an
+  // explicit key-remount at the call site.
   const [orgId, setOrgId] = useState(params.orgId ?? "");
   const [teamId, setTeamId] = useState(params.teamId ?? "");
   const [workflowId, setWorkflowId] = useState(params.workflowId ?? "");

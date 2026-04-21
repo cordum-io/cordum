@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/infra/artifacts"
@@ -58,7 +59,7 @@ func safeUnmarshal(data []byte, v any, field, jobID string) bool {
 // --- Handlers ---
 
 func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermWorkersRead, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
 		return
 	}
 	// Prefer Redis snapshot (consistent across all replicas). The
@@ -130,6 +131,10 @@ func (s *server) activeWorkersSnapshot(now time.Time) []*pb.Heartbeat {
 }
 
 func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionSystemStatus) {
+		return
+	}
+
 	// Check cache first — avoids repeated Redis PING + snapshot reads on
 	// every dashboard poll (dashboard polls /api/v1/status every 5-10s).
 	if cached := s.statusCacheObj.Get(); cached != nil {
@@ -348,7 +353,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "job store unavailable")
 		return
 	}
-	if !s.requirePermissionOrRole(w, r, PermJobsRead) {
+	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead) {
 		return
 	}
 	limit, _ := parsePagination(r, 50)
@@ -436,7 +441,7 @@ func (s *server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermJobsRead) {
+	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead) {
 		return
 	}
 	id, ok := requirePathParam(w, r, "id")
@@ -694,7 +699,7 @@ func (s *server) handleListJobDecisions(w http.ResponseWriter, r *http.Request) 
 		writeErrorJSON(w, http.StatusServiceUnavailable, "job store unavailable")
 		return
 	}
-	if !s.requirePermissionOrRole(w, r, PermJobsRead) {
+	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead) {
 		return
 	}
 	id, ok := requirePathParam(w, r, "id")
@@ -716,7 +721,7 @@ func (s *server) handleListJobDecisions(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, PermMemoryRead, []string{"admin"}, s.memStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermMemoryRead, []string{"admin"}, s.memStore) {
 		return
 	}
 
@@ -757,7 +762,7 @@ func (s *server) handleGetMemory(w http.ResponseWriter, r *http.Request) {
 		ptr = store.PointerForKey(key)
 	}
 
-	if auth := authFromRequest(r); auth != nil {
+	if auth := auth.FromRequest(r); auth != nil {
 		slog.Info("memory read", "tenant", auth.Tenant, "principal", auth.PrincipalID, "key", key, "ptr", ptr)
 	} else {
 		slog.Info("memory read", "tenant", "", "principal", "", "key", key, "ptr", ptr)
@@ -1013,14 +1018,14 @@ func (s *server) handlePutArtifact(w http.ResponseWriter, r *http.Request) {
 		Retention:   parseRetention(req.Retention),
 		Labels:      req.Labels,
 	}
-	auth := authFromRequest(r)
-	tenant := strings.TrimSpace(headerValue(r, "X-Tenant-ID"))
+	authCtx := auth.FromRequest(r)
+	tenant := strings.TrimSpace(auth.HeaderValue(r, "X-Tenant-ID"))
 	allowCrossTenant := false
-	if auth != nil {
-		if auth.Tenant != "" {
-			tenant = strings.TrimSpace(auth.Tenant)
+	if authCtx != nil {
+		if authCtx.Tenant != "" {
+			tenant = strings.TrimSpace(authCtx.Tenant)
 		}
-		allowCrossTenant = auth.AllowCrossTenant
+		allowCrossTenant = authCtx.AllowCrossTenant
 	}
 	if tenant != "" {
 		if meta.Labels == nil {
@@ -1082,14 +1087,14 @@ func (s *server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	auth := authFromRequest(r)
-	tenant := strings.TrimSpace(headerValue(r, "X-Tenant-ID"))
+	authCtx := auth.FromRequest(r)
+	tenant := strings.TrimSpace(auth.HeaderValue(r, "X-Tenant-ID"))
 	allowCrossTenant := false
-	if auth != nil {
-		if auth.Tenant != "" {
-			tenant = strings.TrimSpace(auth.Tenant)
+	if authCtx != nil {
+		if authCtx.Tenant != "" {
+			tenant = strings.TrimSpace(authCtx.Tenant)
 		}
-		allowCrossTenant = auth.AllowCrossTenant
+		allowCrossTenant = authCtx.AllowCrossTenant
 	}
 	if tenant != "" && !allowCrossTenant {
 		labelTenant := strings.TrimSpace(meta.Labels["tenant_id"])
@@ -1107,7 +1112,7 @@ func (s *server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermJobsWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin") {
 		return
 	}
 	id, ok := requirePathParam(w, r, "id")
@@ -1197,7 +1202,7 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "job store or bus unavailable")
 		return
 	}
-	if !s.requirePermissionOrRole(w, r, PermJobsWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin") {
 		return
 	}
 	jobID, ok := requirePathParam(w, r, "id")
@@ -1357,9 +1362,9 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	// RBAC: custom roles may submit when they hold jobs.write. When advanced
 	// RBAC is disabled, preserve the historical admin/user fallback.
-	if !s.requirePermissionOrRole(w, r, PermJobsWrite, "admin", "user") {
+	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		actorID, role := "anonymous", "none"
-		if ac := authFromRequest(r); ac != nil {
+		if ac := auth.FromRequest(r); ac != nil {
 			actorID, role = ac.PrincipalID, ac.Role
 		}
 		s.appendAuditEntryNamed(r.Context(), "submit_denied", "job", "", "", actorID, role, "job submit denied: permission or role check failed")
@@ -1568,6 +1573,12 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			meta.Labels["agent_id"] = agent.ID
 		}
+	}
+
+	if req.Labels, err = s.applySubmitDelegationWithAudience(r.Context(), orgID, req.Labels["agent_id"], req.DelegationToken, req.DelegationAudienceAgentID, req.Labels, meta); err != nil {
+		status, message := submitDelegationErrorStatus(err)
+		writeErrorJSON(w, status, message)
+		return
 	}
 
 	// Inject job content into labels so the safety kernel's tag deriver can

@@ -16,6 +16,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/mcp"
 	mcpresources "github.com/cordum/cordum/core/mcp/resources"
@@ -92,12 +93,20 @@ func (s *server) registerMCPRoutes(mux *http.ServeMux) error {
 		// store first so a CI bot with PreapprovedMutatingTools set
 		// can skip the human-approval step. Audit still fires; see
 		// MarkApprovalPreapproved in core/mcp/audit_invocation.go.
-		gate := NewGatewayApprovalGate(approvalStore).(*gatewayApprovalGate)
-		if s.agentIdentityStore != nil {
-			gate.preapproval = newAgentIdentityPreapprovalLookup(s.agentIdentityStore)
+		rawGate := NewGatewayApprovalGate(approvalStore)
+		if gate, ok := rawGate.(*gatewayApprovalGate); ok {
+			if s.agentIdentityStore != nil {
+				gate.preapproval = newAgentIdentityPreapprovalLookup(s.agentIdentityStore)
+			}
+			toolRegistry.SetApprovalGate(gate)
+			slog.Info("mcp approval gate enabled", "preapproval", gate.preapproval != nil)
+		} else {
+			// Future-proof: if NewGatewayApprovalGate is ever swapped to a
+			// different concrete, we still install the gate but skip the
+			// preapproval lookup rather than panic.
+			toolRegistry.SetApprovalGate(rawGate)
+			slog.Warn("mcp approval gate enabled but preapproval lookup unavailable: unexpected concrete type")
 		}
-		toolRegistry.SetApprovalGate(gate)
-		slog.Info("mcp approval gate enabled", "preapproval", gate.preapproval != nil)
 	} else {
 		slog.Warn("mcp approval gate disabled: redis client unavailable — RequiresApproval tools will not be gated")
 	}
@@ -234,7 +243,7 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		ctx := context.WithValue(r.Context(), authContextKey{}, authCtx)
+		ctx := context.WithValue(r.Context(), auth.ContextKey{}, authCtx)
 		r = r.WithContext(ctx)
 
 		tenantID := tenantFromRequest(r)
@@ -303,7 +312,7 @@ func (s *server) resolveMCPIdentity(r *http.Request) *mcp.AgentIdentity {
 		}
 		return mcpIdentityFromStore(identity)
 	}
-	authCtx := authFromContext(ctx)
+	authCtx := auth.FromContext(ctx)
 	if authCtx == nil {
 		return nil
 	}
@@ -675,7 +684,11 @@ func (s *server) getMCPRuntime() *mcpRuntimeState {
 	if !ok {
 		return nil
 	}
-	state, _ := raw.(*mcpRuntimeState)
+	state, ok := raw.(*mcpRuntimeState)
+	if !ok {
+		slog.Error("mcp runtime state: sync.Map held unexpected type; returning nil")
+		return nil
+	}
 	return state
 }
 
@@ -1084,7 +1097,7 @@ func (s *server) invokeMCPAnyHandler(
 }
 
 func (s *server) mcpTenantFromContext(ctx context.Context) string {
-	if auth := authFromContext(ctx); auth != nil {
+	if auth := auth.FromContext(ctx); auth != nil {
 		if tenant := strings.TrimSpace(auth.Tenant); tenant != "" {
 			return tenant
 		}

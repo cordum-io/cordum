@@ -58,11 +58,20 @@ func TestHandleSubmitJobHTTPInjectsDelegationContextIntoPolicyCheck(t *testing.T
 	if got := safetyClient.lastReq.GetLabels()["_delegation.depth"]; got != "1" {
 		t.Fatalf("delegation depth label = %q, want 1", got)
 	}
-	if got := safetyClient.lastReq.GetLabels()["_delegation.issuer"]; got != "cordum" {
-		t.Fatalf("delegation issuer label = %q, want cordum", got)
+	if got := safetyClient.lastReq.GetLabels()["_delegation.issuer"]; got != "agent-a" {
+		t.Fatalf("delegation issuer label = %q, want agent-a", got)
+	}
+	if got := safetyClient.lastReq.GetLabels()["_delegation.issuer_chain"]; got != "agent-a" {
+		t.Fatalf("delegation issuer_chain label = %q, want agent-a", got)
+	}
+	if got := safetyClient.lastReq.GetLabels()["_delegation.parent_issuer"]; got != "agent-a" {
+		t.Fatalf("delegation parent_issuer label = %q, want agent-a", got)
 	}
 	if got := safetyClient.lastReq.GetLabels()["_delegation.scope"]; got != "read" {
 		t.Fatalf("delegation scope label = %q, want read", got)
+	}
+	if got := safetyClient.lastReq.GetLabels()["_delegation.jti"]; got == "" {
+		t.Fatal("delegation jti label should be present")
 	}
 }
 

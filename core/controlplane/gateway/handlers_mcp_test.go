@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/mcp"
 )
 
@@ -21,21 +22,21 @@ type mcpTestAuth struct {
 	tenant string
 }
 
-func (a mcpTestAuth) AuthenticateHTTP(r *http.Request) (*AuthContext, error) {
+func (a mcpTestAuth) AuthenticateHTTP(r *http.Request) (*auth.AuthContext, error) {
 	if strings.TrimSpace(r.Header.Get("X-API-Key")) != a.apiKey {
 		return nil, errors.New("unauthorized")
 	}
-	return &AuthContext{
+	return &auth.AuthContext{
 		APIKey:      a.apiKey,
 		Tenant:      a.tenant,
 		PrincipalID: "tester",
 		Role:        "admin",
-		AuthSource:  AuthSourceAPIKey,
+		AuthSource:  auth.AuthSourceAPIKey,
 	}, nil
 }
 
-func (a mcpTestAuth) AuthenticateGRPC(context.Context) (*AuthContext, error) {
-	return &AuthContext{Tenant: a.tenant}, nil
+func (a mcpTestAuth) AuthenticateGRPC(context.Context) (*auth.AuthContext, error) {
+	return &auth.AuthContext{Tenant: a.tenant}, nil
 }
 
 func (a mcpTestAuth) RequireRole(*http.Request, ...string) error { return nil }

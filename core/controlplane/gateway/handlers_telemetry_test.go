@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/telemetry"
 )
 
@@ -36,14 +37,14 @@ func TestTelemetryHandlersReturnDataForAdmin(t *testing.T) {
 	s.auth = &tenantStrictAuth{tenant: "default", role: "admin"}
 	seedTelemetryCollector(t, s)
 
-	statusReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/telemetry/status", nil), &AuthContext{Tenant: "default", Role: "admin"})
+	statusReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/telemetry/status", nil), &auth.AuthContext{Tenant: "default", Role: "admin"})
 	statusRec := httptest.NewRecorder()
 	s.handleGetTelemetryStatus(statusRec, statusReq)
 	if statusRec.Code != http.StatusOK {
 		t.Fatalf("status code = %d, body=%s", statusRec.Code, statusRec.Body.String())
 	}
 
-	inspectReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/telemetry/inspect", nil), &AuthContext{Tenant: "default", Role: "admin"})
+	inspectReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/telemetry/inspect", nil), &auth.AuthContext{Tenant: "default", Role: "admin"})
 	inspectRec := httptest.NewRecorder()
 	s.handleGetTelemetryInspect(inspectRec, inspectReq)
 	if inspectRec.Code != http.StatusOK {
@@ -57,7 +58,7 @@ func TestTelemetryHandlersReturnDataForAdmin(t *testing.T) {
 		t.Fatalf("expected schema_version in inspect payload, got %+v", payload)
 	}
 
-	exportReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/telemetry/export", nil), &AuthContext{Tenant: "default", Role: "admin"})
+	exportReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/telemetry/export", nil), &auth.AuthContext{Tenant: "default", Role: "admin"})
 	exportRec := httptest.NewRecorder()
 	s.handleGetTelemetryExport(exportRec, exportReq)
 	if exportRec.Code != http.StatusOK {
@@ -67,7 +68,7 @@ func TestTelemetryHandlersReturnDataForAdmin(t *testing.T) {
 		t.Fatal("expected export content disposition header")
 	}
 
-	usageReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/telemetry/usage", nil), &AuthContext{Tenant: "default", Role: "admin"})
+	usageReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/telemetry/usage", nil), &auth.AuthContext{Tenant: "default", Role: "admin"})
 	usageRec := httptest.NewRecorder()
 	s.handleGetTelemetryUsage(usageRec, usageReq)
 	if usageRec.Code != http.StatusOK {
@@ -87,7 +88,7 @@ func TestTelemetryHandlersRequireAdmin(t *testing.T) {
 	s.auth = &tenantStrictAuth{tenant: "default", role: "viewer"}
 	seedTelemetryCollector(t, s)
 
-	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/telemetry/status", nil), &AuthContext{Tenant: "default", Role: "viewer"})
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/telemetry/status", nil), &auth.AuthContext{Tenant: "default", Role: "viewer"})
 	rec := httptest.NewRecorder()
 	s.handleGetTelemetryStatus(rec, req)
 	if rec.Code != http.StatusForbidden {

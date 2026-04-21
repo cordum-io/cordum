@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
@@ -61,8 +62,8 @@ func bindEvalExtractionRoutes(t *testing.T, s *server) *http.ServeMux {
 	return mux
 }
 
-func extractionAuthCtx(tenant, role string) *AuthContext {
-	return &AuthContext{
+func extractionAuthCtx(tenant, role string) *auth.AuthContext {
+	return &auth.AuthContext{
 		Tenant:      tenant,
 		Role:        role,
 		PrincipalID: "extractor@" + tenant,
@@ -330,9 +331,9 @@ func TestHandleCreateDatasetFromIncidentsRBACDenied(t *testing.T) {
 	setTestEntitlements(t, s, licensing.PlanEnterprise, func(ent *licensing.Entitlements) {
 		ent.RBAC = true
 	})
-	if err := s.rbacStore.PutRole(context.Background(), &RoleDefinition{
+	if err := s.rbacStore.PutRole(context.Background(), &auth.RoleDefinition{
 		Name:        "governance-only",
-		Permissions: []string{PermGovernanceRead},
+		Permissions: []string{auth.PermGovernanceRead},
 	}); err != nil {
 		t.Fatalf("PutRole() error = %v", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -105,6 +106,9 @@ func scanLocks(ctx context.Context, rdb redis.UniversalClient, pattern string, l
 func (s *server) handleAdminLocks(w http.ResponseWriter, r *http.Request) {
 	if err := s.requireRole(r, "admin"); err != nil {
 		writeForbidden(w, r, err)
+		return
+	}
+	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionAdminLocksRead) {
 		return
 	}
 

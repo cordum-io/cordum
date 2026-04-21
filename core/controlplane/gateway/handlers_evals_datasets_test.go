@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 )
@@ -22,16 +23,12 @@ func bindEvalDatasetRoutes(t *testing.T, s *server) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/evals/datasets", s.handleCreateEvalDataset)
 	mux.HandleFunc("GET /api/v1/evals/datasets", s.handleListEvalDatasets)
-	mux.HandleFunc("GET /api/v1/evals/datasets/by-name/{name}", s.handleListEvalDatasetVersions)
-	mux.HandleFunc("GET /api/v1/evals/datasets/by-name/{name}/versions/{version}", s.handleGetEvalDatasetByNameVersion)
-	mux.HandleFunc("GET /api/v1/evals/datasets/{id}", s.handleGetEvalDataset)
-	mux.HandleFunc("PUT /api/v1/evals/datasets/{id}", s.handleUpdateEvalDataset)
-	mux.HandleFunc("DELETE /api/v1/evals/datasets/{id}", s.handleDeleteEvalDataset)
+	mux.HandleFunc("/api/v1/evals/datasets/", s.handleEvalDatasetSubroutes)
 	return mux
 }
 
-func evalAuthCtx(tenant, role string) *AuthContext {
-	return &AuthContext{
+func evalAuthCtx(tenant, role string) *auth.AuthContext {
+	return &auth.AuthContext{
 		Tenant:      tenant,
 		Role:        role,
 		PrincipalID: "tester@" + tenant,
@@ -518,6 +515,31 @@ func TestEvalDatasetListByNameSortsDesc(t *testing.T) {
 	}
 }
 
+func TestEvalDatasetSubroutesPreferByNameOverRunHistory(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	mux := bindEvalDatasetRoutes(t, s)
+
+	if rr := evalPostCreate(t, mux, evalCreateBody("runs", 1, 1), "admin"); rr.Code != http.StatusCreated {
+		t.Fatalf("seed runs dataset: %d %s", rr.Code, rr.Body.String())
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/evals/datasets/by-name/runs", nil),
+		evalAuthCtx(testEvalTenant, "viewer"))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("by-name runs: %d %s", rr.Code, rr.Body.String())
+	}
+
+	var resp evalDatasetVersionsResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].Name != "runs" || resp.Items[0].Version != 1 {
+		t.Fatalf("unexpected versions response: %+v", resp.Items)
+	}
+}
+
 func TestEvalDatasetByNameVersionReturnsExactMatch(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	mux := bindEvalDatasetRoutes(t, s)
@@ -645,7 +667,7 @@ func TestEvalDatasetHandlersRequireTenant(t *testing.T) {
 	mux := bindEvalDatasetRoutes(t, s)
 
 	// An auth context without a tenant (tenantFromRequest returns "").
-	noTenant := &AuthContext{Role: "admin", PrincipalID: "alice"}
+	noTenant := &auth.AuthContext{Role: "admin", PrincipalID: "alice"}
 
 	routes := []struct {
 		name   string

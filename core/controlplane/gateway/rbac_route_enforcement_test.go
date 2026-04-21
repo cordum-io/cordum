@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/licensing"
 )
 
@@ -17,7 +18,7 @@ func putTestRole(t *testing.T, s *server, name string, permissions ...string) {
 		t.Fatal("rbac store unavailable")
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	if err := s.rbacStore.PutRole(context.Background(), &RoleDefinition{
+	if err := s.rbacStore.PutRole(context.Background(), &auth.RoleDefinition{
 		Name:        name,
 		Description: "test role",
 		Permissions: permissions,
@@ -36,9 +37,9 @@ func TestRBACRoutePermissions_ConfigAndSchema(t *testing.T) {
 		entitlements.RBAC = true
 		entitlements.AgentIdentity = true
 	})
-	putTestRole(t, s, "config-reader", PermConfigRead, PermSchemasRead)
+	putTestRole(t, s, "config-reader", auth.PermConfigRead, auth.PermSchemasRead)
 
-	getReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/config?scope=system&scope_id=default", nil), &AuthContext{
+	getReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/config?scope=system&scope_id=default", nil), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "config-reader",
 		PrincipalID: "reader-1",
@@ -49,7 +50,7 @@ func TestRBACRoutePermissions_ConfigAndSchema(t *testing.T) {
 		t.Fatalf("config read status = %d, want %d body=%s", getRR.Code, http.StatusOK, getRR.Body.String())
 	}
 
-	setReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/config", bytes.NewBufferString(`{"feature":"on"}`)), &AuthContext{
+	setReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/config", bytes.NewBufferString(`{"feature":"on"}`)), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "config-reader",
 		PrincipalID: "reader-1",
@@ -61,7 +62,7 @@ func TestRBACRoutePermissions_ConfigAndSchema(t *testing.T) {
 		t.Fatalf("config write status = %d, want %d body=%s", setRR.Code, http.StatusForbidden, setRR.Body.String())
 	}
 
-	listSchemasReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/schemas", nil), &AuthContext{
+	listSchemasReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/schemas", nil), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "config-reader",
 		PrincipalID: "reader-1",
@@ -72,7 +73,7 @@ func TestRBACRoutePermissions_ConfigAndSchema(t *testing.T) {
 		t.Fatalf("schema list status = %d, want %d body=%s", listSchemasRR.Code, http.StatusOK, listSchemasRR.Body.String())
 	}
 
-	registerSchemaReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/schemas", bytes.NewBufferString(`{"id":"sample","schema":{"type":"object"}}`)), &AuthContext{
+	registerSchemaReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/schemas", bytes.NewBufferString(`{"id":"sample","schema":{"type":"object"}}`)), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "config-reader",
 		PrincipalID: "reader-1",
@@ -92,9 +93,9 @@ func TestRBACRoutePermissions_PolicyAndAudit(t *testing.T) {
 		entitlements.RBAC = true
 		entitlements.AuditExport = true
 	})
-	putTestRole(t, s, "policy-auditor", PermPolicyRead, PermAuditRead)
+	putTestRole(t, s, "policy-auditor", auth.PermPolicyRead, auth.PermAuditRead)
 
-	listBundlesReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/policy/bundles", nil), &AuthContext{
+	listBundlesReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/policy/bundles", nil), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "policy-auditor",
 		PrincipalID: "auditor-1",
@@ -105,7 +106,7 @@ func TestRBACRoutePermissions_PolicyAndAudit(t *testing.T) {
 		t.Fatalf("policy bundles status = %d, want %d body=%s", listBundlesRR.Code, http.StatusOK, listBundlesRR.Body.String())
 	}
 
-	putBundleReq := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/policy/bundles/sample", bytes.NewBufferString(`{"content":"package main\nallow = true"}`)), &AuthContext{
+	putBundleReq := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/policy/bundles/sample", bytes.NewBufferString(`{"content":"package main\nallow = true"}`)), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "policy-auditor",
 		PrincipalID: "auditor-1",
@@ -118,7 +119,7 @@ func TestRBACRoutePermissions_PolicyAndAudit(t *testing.T) {
 		t.Fatalf("policy bundle write status = %d, want %d body=%s", putBundleRR.Code, http.StatusForbidden, putBundleRR.Body.String())
 	}
 
-	auditReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/export/config", nil), &AuthContext{
+	auditReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/export/config", nil), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "policy-auditor",
 		PrincipalID: "auditor-1",
@@ -137,9 +138,9 @@ func TestRBACRoutePermissions_ApprovalsAndAgents(t *testing.T) {
 		entitlements.RBAC = true
 		entitlements.AgentIdentity = true
 	})
-	putTestRole(t, s, "reviewer", PermJobsApprove, PermAgentsRead)
+	putTestRole(t, s, "reviewer", auth.PermJobsApprove, auth.PermAgentsRead)
 
-	adminCreateReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewBufferString(`{"name":"rbac-agent","owner":"admin","risk_tier":"low"}`)), &AuthContext{
+	adminCreateReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewBufferString(`{"name":"rbac-agent","owner":"admin","risk_tier":"low"}`)), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "admin",
 		PrincipalID: "admin-1",
@@ -151,7 +152,7 @@ func TestRBACRoutePermissions_ApprovalsAndAgents(t *testing.T) {
 		t.Fatalf("admin agent create status = %d, want %d body=%s", adminCreateRR.Code, http.StatusCreated, adminCreateRR.Body.String())
 	}
 
-	approvalsReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/approvals", nil), &AuthContext{
+	approvalsReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/approvals", nil), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "reviewer",
 		PrincipalID: "reviewer-1",
@@ -162,7 +163,7 @@ func TestRBACRoutePermissions_ApprovalsAndAgents(t *testing.T) {
 		t.Fatalf("approval list status = %d, want %d body=%s", approvalsRR.Code, http.StatusOK, approvalsRR.Body.String())
 	}
 
-	listAgentsReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &AuthContext{
+	listAgentsReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "reviewer",
 		PrincipalID: "reviewer-1",
@@ -173,7 +174,7 @@ func TestRBACRoutePermissions_ApprovalsAndAgents(t *testing.T) {
 		t.Fatalf("agent list status = %d, want %d body=%s", listAgentsRR.Code, http.StatusOK, listAgentsRR.Body.String())
 	}
 
-	createAgentReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewBufferString(`{"name":"blocked-agent","owner":"reviewer","risk_tier":"low"}`)), &AuthContext{
+	createAgentReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewBufferString(`{"name":"blocked-agent","owner":"reviewer","risk_tier":"low"}`)), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "reviewer",
 		PrincipalID: "reviewer-1",
@@ -192,9 +193,9 @@ func TestRBACRoutePermissions_BackwardCompatibilityWhenDisabled(t *testing.T) {
 	setTestEntitlements(t, s, licensing.PlanTeam, func(entitlements *licensing.Entitlements) {
 		entitlements.RBAC = false
 	})
-	putTestRole(t, s, "config-reader", PermConfigRead, PermSchemasRead)
+	putTestRole(t, s, "config-reader", auth.PermConfigRead, auth.PermSchemasRead)
 
-	getReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/config?scope=system&scope_id=default", nil), &AuthContext{
+	getReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/config?scope=system&scope_id=default", nil), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "config-reader",
 		PrincipalID: "reader-1",
@@ -205,7 +206,7 @@ func TestRBACRoutePermissions_BackwardCompatibilityWhenDisabled(t *testing.T) {
 		t.Fatalf("rbac-off config read status = %d, want %d body=%s", getRR.Code, http.StatusForbidden, getRR.Body.String())
 	}
 
-	adminReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/config?scope=system&scope_id=default", nil), &AuthContext{
+	adminReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/config?scope=system&scope_id=default", nil), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "admin",
 		PrincipalID: "admin-1",

@@ -61,7 +61,7 @@ func newIntegrationFixture(t *testing.T, shadowContent string) (*server, *captur
 		t.Fatalf("parse active: %v", err)
 	}
 	srv := &server{policy: active}
-	srv.setPolicyWithBundleCount(active, "snapshot-active", 0)
+	srv.setPolicyWithBundleCount(context.Background(), active, "snapshot-active", 0)
 
 	store, cleanupStore := newShadowTestStore(t)
 	if shadowContent != "" {
@@ -238,7 +238,7 @@ func TestShadowIntegration_QueueOverflowDropsWithoutActiveLatencyImpact(t *testi
 	// the single worker backs up immediately.
 	active, _ := config.ParseSafetyPolicy([]byte(activeAllowFooPolicy))
 	srv := &server{policy: active}
-	srv.setPolicyWithBundleCount(active, "snapshot-active", 0)
+	srv.setPolicyWithBundleCount(context.Background(), active, "snapshot-active", 0)
 
 	store, cleanupStore := newShadowTestStore(t)
 	defer cleanupStore()

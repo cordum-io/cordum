@@ -462,7 +462,11 @@ export interface WorkflowStep {
   delay_sec?: number;
   delay_until?: string;
   route_labels?: Record<string, string>;
-  /** Legacy config bag — kept for backward compat during migration */
+  /** Free-form configuration bag for step types whose knobs do not
+   *  fit under the typed fields above (scheduler-specific delays,
+   *  pack-specific tuning). Consumers read from the typed fields
+   *  first and fall back to this bag only when the knob is
+   *  genuinely step-type-specific. */
   config?: Record<string, unknown>;
   // Run-time fields (present when viewing runs)
   status?: RunStatus;
@@ -572,7 +576,10 @@ export interface PolicyRule {
   created_by?: string;
   created_at?: string;
   updated_at?: string;
-  // Legacy compat
+  // Legacy-bundle import fields — populated when loading YAML
+  // bundles that predate the canonical PolicyRule shape.
+  // `dashboard/src/lib/policy-bundle.ts` reads these during import;
+  // new bundles never write them.
   matchCriteria?: Record<string, unknown>;
   decisionType?: SafetyDecisionType;
   reason?: string;
@@ -1804,4 +1811,46 @@ export interface ExtractIncidentsPreview {
   dedupedCount: number;
   warnings: string[];
   datasetId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Approval analytics — governance-overview widget + Command Center widget.
+// Backed by `GET /api/v1/governance/approvals/analytics`.
+// ---------------------------------------------------------------------------
+
+export type ApprovalAnalyticsWindow = "24h" | "7d" | "30d";
+export type ApprovalAnalyticsGroupBy = "overall" | "rule" | "agent" | "topic";
+
+export interface ApprovalAnalyticsSummary {
+  total: number;
+  approved: number;
+  rejected: number;
+  expired: number;
+  autoResolved: number;
+  manualResolved: number;
+  // Percentile fields are null when no approvals resolved in the
+  // window — distinguishes "no data" from "resolved in 0 s".
+  avgTimeToApproveSeconds: number | null;
+  p50: number | null;
+  p90: number | null;
+  p99: number | null;
+}
+
+export interface ApprovalAnalyticsGroup {
+  key: string;
+  label: string;
+  total: number;
+  approved: number;
+  rejected: number;
+  expired: number;
+  autoCount: number;
+  manualCount: number;
+  avgTtarSeconds: number | null;
+  p90Seconds: number | null;
+}
+
+export interface ApprovalAnalyticsResponse {
+  window: { since: string; until: string };
+  summary: ApprovalAnalyticsSummary;
+  groups?: ApprovalAnalyticsGroup[];
 }

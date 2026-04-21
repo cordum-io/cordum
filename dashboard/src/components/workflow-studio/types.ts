@@ -38,7 +38,11 @@ export interface UnifiedNodeData {
   delay_sec?: number;
   delay_until?: string;
   route_labels?: Record<string, string>;
-  /** Legacy config bag */
+  /** Free-form configuration bag for step types whose knobs do not
+   *  fit under the typed fields above. Mirrors `WorkflowStep.config`
+   *  in `dashboard/src/api/types.ts`; consumers read from the typed
+   *  fields first and fall back to this bag for step-type-specific
+   *  settings. */
   config?: Record<string, unknown>;
 
   // --- Run overlay fields (present when a run is selected) ---

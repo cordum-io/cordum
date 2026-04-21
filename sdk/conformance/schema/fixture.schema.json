@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cordum.io/schemas/sdk-conformance-fixture/v1.json",
+  "title": "Cordum SDK Conformance Fixture",
+  "description": "Language-agnostic declarative test scenario. See SPEC.md for the normative reference.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "name", "steps"],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Always 1 for this release. A future v2 schema would bump this so migrations stage cleanly."
+    },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "description": "Dot-separated stable identifier. Unique across all fixtures."
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_\\-:]*$" },
+      "uniqueItems": true
+    },
+    "setup": { "$ref": "#/$defs/setup" },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" }
+    }
+  },
+  "$defs": {
+    "setup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "auth": { "$ref": "#/$defs/auth" },
+        "headers": { "$ref": "#/$defs/headers" }
+      }
+    },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["apiKey", "bearer", "none"] },
+        "value": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "enum": ["apiKey", "bearer"] } }, "required": ["kind"] },
+          "then": { "required": ["value"] }
+        }
+      ]
+    },
+    "headers": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "step": {
+      "oneOf": [
+        { "$ref": "#/$defs/requestStep" },
+        { "$ref": "#/$defs/assertErrorStep" },
+        { "$ref": "#/$defs/sleepStep" },
+        { "$ref": "#/$defs/streamStep" },
+        { "$ref": "#/$defs/paginateStep" }
+      ]
+    },
+    "requestStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operationId", "expect"],
+      "properties": {
+        "kind": { "const": "request" },
+        "operationId": { "type": "string", "minLength": 1 },
+        "auth": { "$ref": "#/$defs/auth" },
+        "headers": { "$ref": "#/$defs/headers" },
+        "pathParams": { "type": "object", "additionalProperties": true },
+        "query": { "type": "object", "additionalProperties": true },
+        "body": { "not": { "type": "null" } },
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+            "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+            "body": { "not": { "type": "null" } },
+            "bodyMatches": { "type": "object", "additionalProperties": { "type": "string" } }
+          }
+        },
+        "extract": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "assertErrorStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operationId", "expect"],
+      "properties": {
+        "kind": { "const": "assert_error" },
+        "operationId": { "type": "string", "minLength": 1 },
+        "auth": { "$ref": "#/$defs/auth" },
+        "headers": { "$ref": "#/$defs/headers" },
+        "pathParams": { "type": "object", "additionalProperties": true },
+        "query": { "type": "object", "additionalProperties": true },
+        "body": { "not": { "type": "null" } },
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["errorClass"],
+          "properties": {
+            "errorClass": {
+              "enum": [
+                "ValidationError",
+                "AuthenticationError",
+                "AuthorizationError",
+                "NotFoundError",
+                "ConflictError",
+                "RateLimitError",
+                "ServerError",
+                "RetryExhaustedError",
+                "NetworkError",
+                "TimeoutError"
+              ]
+            },
+            "status": { "type": "integer", "minimum": 100, "maximum": 599 },
+            "fields": { "type": "object", "additionalProperties": true }
+          }
+        }
+      }
+    },
+    "sleepStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "durationMs"],
+      "properties": {
+        "kind": { "const": "sleep" },
+        "durationMs": { "type": "integer", "minimum": 1, "maximum": 60000 }
+      }
+    },
+    "streamStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operationId", "expect"],
+      "properties": {
+        "kind": { "const": "stream" },
+        "operationId": { "type": "string", "minLength": 1 },
+        "auth": { "$ref": "#/$defs/auth" },
+        "headers": { "$ref": "#/$defs/headers" },
+        "pathParams": { "type": "object", "additionalProperties": true },
+        "query": { "type": "object", "additionalProperties": true },
+        "maxEvents": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "maxDurationMs": { "type": "integer", "minimum": 1, "maximum": 60000 },
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["events"],
+          "properties": {
+            "events": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": true,
+                "required": ["type"],
+                "properties": {
+                  "type": { "type": "string" },
+                  "data": { "not": { "type": "null" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "paginateStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "operationId", "expect"],
+      "properties": {
+        "kind": { "const": "paginate" },
+        "operationId": { "type": "string", "minLength": 1 },
+        "auth": { "$ref": "#/$defs/auth" },
+        "headers": { "$ref": "#/$defs/headers" },
+        "query": { "type": "object", "additionalProperties": true },
+        "maxPages": { "type": "integer", "minimum": 1, "maximum": 50 },
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pageCount": { "type": "string", "pattern": "^(>=|<=|=)[0-9]+$" },
+            "totalItems": { "type": "string", "pattern": "^(>=|<=|=)[0-9]+$" },
+            "allItemsMatch": { "type": "object", "additionalProperties": true }
+          }
+        }
+      }
+    }
+  }
+}

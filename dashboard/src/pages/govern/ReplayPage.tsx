@@ -510,7 +510,12 @@ export default function ReplayPage({
   const replayMutation = useReplayPolicy();
   const result = replayMutation.data;
 
-  // Form state
+  // Form state — seeded once from the inbound URL (deep-link into the
+  // replay page). We do not re-sync from searchParams after mount: once
+  // the user starts editing the form we must not wipe their input just
+  // because the URL changed (e.g. the browser pushed a history entry as
+  // other controls updated). A URL change that should reset the form is
+  // handled by the caller via a routed remount.
   const [from, setFrom] = useState(
     searchParams.get("from") || defaultFrom(),
   );

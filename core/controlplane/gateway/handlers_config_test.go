@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 )
 
@@ -27,8 +28,8 @@ func TestDeleteSchemaForbiddenWithoutAdmin(t *testing.T) {
 	req.SetPathValue("id", "test-schema")
 
 	// Inject auth context with viewer role (not admin).
-	authCtx := &AuthContext{Role: "viewer", Tenant: "default"}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	authCtx := &auth.AuthContext{Role: "viewer", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 
 	rec := httptest.NewRecorder()
 	s.handleDeleteSchema(rec, req)
@@ -58,8 +59,8 @@ func TestDeleteSchemaAllowedForAdmin(t *testing.T) {
 	req.SetPathValue("id", "test-schema")
 
 	// Inject auth context with admin role.
-	authCtx := &AuthContext{Role: "admin", Tenant: "default"}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	authCtx := &auth.AuthContext{Role: "admin", Tenant: "default"}
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 
 	rec := httptest.NewRecorder()
 	s.handleDeleteSchema(rec, req)

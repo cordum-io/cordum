@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "name": "workflows.crud",
+  "description": "Create a workflow, GET it, list it, delete it.",
+  "tags": ["workflows", "happy-path", "mutating"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "request",
+      "operationId": "createWorkflow",
+      "body": {
+        "name": "conformance-workflow",
+        "steps": [
+          {
+            "id": "s1",
+            "name": "echo",
+            "type": "job",
+            "topic": "job.echo",
+            "input": { "message": "hello" }
+          }
+        ]
+      },
+      "expect": {
+        "status": 201,
+        "bodyMatches": { "$.id": "$any$" }
+      },
+      "extract": { "workflowId": "$.id" }
+    },
+    {
+      "kind": "request",
+      "operationId": "getWorkflow",
+      "pathParams": { "id": "$vars.workflowId" },
+      "expect": {
+        "status": 200,
+        "body": { "name": "conformance-workflow" }
+      }
+    },
+    {
+      "kind": "request",
+      "operationId": "listWorkflows",
+      "expect": {
+        "status": 200,
+        "bodyMatches": { "$.items": "$any$" }
+      }
+    },
+    {
+      "kind": "request",
+      "operationId": "deleteWorkflow",
+      "pathParams": { "id": "$vars.workflowId" },
+      "expect": { "status": 204 }
+    }
+  ]
+}

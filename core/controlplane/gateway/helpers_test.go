@@ -17,6 +17,7 @@ import (
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
@@ -206,25 +207,25 @@ func (c *stubSafetyClient) recordReq(req *pb.PolicyCheckRequest) {
 
 type testAuthProvider struct{}
 
-func (testAuthProvider) AuthenticateHTTP(*http.Request) (*AuthContext, error) {
+func (testAuthProvider) AuthenticateHTTP(*http.Request) (*auth.AuthContext, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (testAuthProvider) AuthenticateGRPC(context.Context) (*AuthContext, error) {
+func (testAuthProvider) AuthenticateGRPC(context.Context) (*auth.AuthContext, error) {
 	return nil, errors.New("not implemented")
 }
 
 func (testAuthProvider) RequireRole(r *http.Request, roles ...string) error {
-	auth := authFromRequest(r)
-	if auth == nil {
+	authCtx := auth.FromRequest(r)
+	if authCtx == nil {
 		return errors.New("authentication required")
 	}
-	role := normalizeRole(auth.Role)
+	role := auth.NormalizeRole(authCtx.Role)
 	if role == "" {
 		return errors.New("role required")
 	}
 	for _, candidate := range roles {
-		if normalizeRole(candidate) == role {
+		if auth.NormalizeRole(candidate) == role {
 			return nil
 		}
 	}
@@ -232,13 +233,13 @@ func (testAuthProvider) RequireRole(r *http.Request, roles ...string) error {
 }
 
 func (testAuthProvider) ResolveTenant(r *http.Request, requested, fallback string) (string, error) {
-	auth := authFromRequest(r)
+	authCtx := auth.FromRequest(r)
 	requested = strings.TrimSpace(requested)
 	authTenant := ""
 	allowCrossTenant := false
-	if auth != nil {
-		authTenant = strings.TrimSpace(auth.Tenant)
-		allowCrossTenant = auth.AllowCrossTenant
+	if authCtx != nil {
+		authTenant = strings.TrimSpace(authCtx.Tenant)
+		allowCrossTenant = authCtx.AllowCrossTenant
 	}
 	switch {
 	case requested == "" && authTenant != "":
@@ -253,28 +254,28 @@ func (testAuthProvider) ResolveTenant(r *http.Request, requested, fallback strin
 }
 
 func (testAuthProvider) RequireTenantAccess(r *http.Request, tenant string) error {
-	auth := authFromRequest(r)
+	authCtx := auth.FromRequest(r)
 	tenant = strings.TrimSpace(tenant)
 	if tenant == "" {
 		return errors.New("tenant required")
 	}
-	if auth == nil {
+	if authCtx == nil {
 		return nil
 	}
-	authTenant := strings.TrimSpace(auth.Tenant)
-	if auth.AllowCrossTenant || authTenant == "" || authTenant == tenant {
+	authTenant := strings.TrimSpace(authCtx.Tenant)
+	if authCtx.AllowCrossTenant || authTenant == "" || authTenant == tenant {
 		return nil
 	}
 	return errors.New("tenant access denied")
 }
 
 func (testAuthProvider) ResolvePrincipal(r *http.Request, requested string) (string, error) {
-	auth := authFromRequest(r)
+	authCtx := auth.FromRequest(r)
 	requested = strings.TrimSpace(requested)
-	if auth == nil {
+	if authCtx == nil {
 		return requested, nil
 	}
-	principal := strings.TrimSpace(auth.PrincipalID)
+	principal := strings.TrimSpace(authCtx.PrincipalID)
 	switch {
 	case requested == "":
 		return principal, nil
@@ -336,7 +337,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	if err != nil {
 		t.Fatalf("config svc: %v", err)
 	}
-	rbacStore, err := NewRBACStore(redisURL)
+	rbacStore, err := auth.NewRBACStore(redisURL)
 	if err != nil {
 		t.Fatalf("rbac store: %v", err)
 	}
@@ -378,8 +379,9 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 		workerCredentialStore: workercredentials.NewService(configSvc),
 		agentIdentityStore:    store.NewAgentIdentityStoreFromClient(jobStore.Client()),
 		evalDatasetStore:      store.NewEvalDatasetStoreFromClient(jobStore.Client()),
+		evalRunStore:          store.NewEvalRunStoreFromClient(jobStore.Client()),
 		rbacStore:             rbacStore,
-		permChecker:           NewPermissionChecker(rbacStore, func() licensing.Entitlements { return entitlements.Entitlements() }),
+		permChecker:           auth.NewPermissionChecker(rbacStore, func() licensing.Entitlements { return entitlements.Entitlements() }),
 		dlqStore:              dlqStore,
 		artifactStore:         artifactStore,
 		lockStore:             lockStore,
@@ -525,7 +527,7 @@ func TestSubmitJobHTTP_SpoofedInternalLabel_RequiresApproval(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Tenant-ID", "default")
-	req = withAuth(req, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "attacker"})
+	req = withAuth(req, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "attacker"})
 	rec := httptest.NewRecorder()
 
 	s.handleSubmitJobHTTP(rec, req)
@@ -573,7 +575,7 @@ func TestSubmitJobHTTP_PromptInjection_RequiresApproval(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Tenant-ID", "default")
-	req = withAuth(req, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "attacker"})
+	req = withAuth(req, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "attacker"})
 	rec := httptest.NewRecorder()
 
 	s.handleSubmitJobHTTP(rec, req)
@@ -609,7 +611,7 @@ func TestSubmitJobHTTP_B2BPathTraversal_RequiresApproval(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Tenant-ID", "default")
-	req = withAuth(req, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "attacker"})
+	req = withAuth(req, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "attacker"})
 	rec := httptest.NewRecorder()
 
 	s.handleSubmitJobHTTP(rec, req)
@@ -647,7 +649,7 @@ func TestSubmitJobHTTP_BankValidatorDangerousOverride_RequiresApproval(t *testin
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Tenant-ID", "default")
-	req = withAuth(req, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "attacker"})
+	req = withAuth(req, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "attacker"})
 	rec := httptest.NewRecorder()
 
 	s.handleSubmitJobHTTP(rec, req)
@@ -695,7 +697,7 @@ func TestSubmitJobHTTP_AgentLinkedCredential_AuditContainsAgentID(t *testing.T) 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", body)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Tenant-ID", "default")
-	req = withAuth(req, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "audit-worker"})
+	req = withAuth(req, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "audit-worker"})
 	rec := httptest.NewRecorder()
 
 	s.handleSubmitJobHTTP(rec, req)

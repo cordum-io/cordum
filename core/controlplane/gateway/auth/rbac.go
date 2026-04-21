@@ -75,6 +75,9 @@ const (
 	PermEvalsDatasetsRead   = "evals.datasets.read"
 	PermEvalsDatasetsWrite  = "evals.datasets.write"
 	PermEvalsDatasetsDelete = "evals.datasets.delete"
+	PermEvalsRunsExecute    = "evals.runs.execute"
+	PermEvalsRunsRead       = "evals.runs.read"
+	PermEvalsRunsDelete     = "evals.runs.delete"
 )
 
 // AllPermissions is the canonical list of permissions for validation.
@@ -104,6 +107,7 @@ var AllPermissions = []string{
 	PermUsersRead, PermUsersWrite,
 	PermRolesRead, PermRolesWrite,
 	PermEvalsDatasetsRead, PermEvalsDatasetsWrite, PermEvalsDatasetsDelete,
+	PermEvalsRunsExecute, PermEvalsRunsRead, PermEvalsRunsDelete,
 }
 
 // ---------------------------------------------------------------------------

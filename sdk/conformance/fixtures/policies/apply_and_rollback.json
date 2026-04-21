@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "name": "policies.apply_and_rollback",
+  "description": "Publish a new policy version, then rollback to the prior version. Both operations return the resulting policy version number.",
+  "tags": ["policies", "mutating"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "request",
+      "operationId": "publishPolicy",
+      "body": {
+        "note": "conformance-test publish",
+        "dry_run": false
+      },
+      "expect": {
+        "status": 200,
+        "bodyMatches": {
+          "$.version": "$int$",
+          "$.published_at": "$timestamp$"
+        }
+      },
+      "extract": { "newVersion": "$.version" }
+    },
+    {
+      "kind": "request",
+      "operationId": "rollbackPolicy",
+      "body": {
+        "target_version": 1,
+        "note": "conformance-test rollback"
+      },
+      "expect": {
+        "status": 200,
+        "bodyMatches": { "$.version": "$int$" }
+      }
+    }
+  ]
+}

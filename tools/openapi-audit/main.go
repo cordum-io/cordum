@@ -316,6 +316,21 @@ func diff(routes []Route, ops []SpecOp, anyMethod map[string]bool) ([]Route, []S
 		return missing[i].Method < missing[j].Method
 	})
 
+	// Collect any-method prefix roots so sub-path ops can be considered
+	// covered when they share a prefix with an x-any-method route. This is
+	// the gateway's "sub-mux dispatch" pattern: a single catch-all
+	// HandleFunc at `/api/v1/foo/` dispatches internally to concrete
+	// `/api/v1/foo/{id}`, `/api/v1/foo/by-name/{name}` ops because Go's
+	// strict mux refuses to register ambiguous sibling patterns. Each
+	// dispatched op is still documented separately; the prefix only
+	// signals "coverage is delegated".
+	var anyPrefixes []string
+	for np := range specAnyMethod {
+		if strings.HasSuffix(np, "/") {
+			anyPrefixes = append(anyPrefixes, np)
+		}
+	}
+
 	var unrouted []SpecOp
 	for _, op := range ops {
 		np := normalisePath(op.Path)
@@ -323,6 +338,19 @@ func diff(routes []Route, ops []SpecOp, anyMethod map[string]bool) ([]Route, []S
 			continue
 		}
 		if routeMethods[np][op.Method] != (Route{}) {
+			continue
+		}
+		// Op is covered by a prefix-level any-method route when its path
+		// starts with the prefix (the prefix itself counts as routed via
+		// its own any-method declaration earlier in this loop).
+		covered := false
+		for _, prefix := range anyPrefixes {
+			if strings.HasPrefix(np, prefix) {
+				covered = true
+				break
+			}
+		}
+		if covered {
 			continue
 		}
 		unrouted = append(unrouted, op)

@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/policyshadow"
 )
 
@@ -19,17 +20,17 @@ import (
 // allowed list, it returns an error (which handlers map to 403).
 type roleEnforcingAuth struct{}
 
-func (roleEnforcingAuth) AuthenticateHTTP(r *http.Request) (*AuthContext, error) {
-	if ac := authFromRequest(r); ac != nil {
+func (roleEnforcingAuth) AuthenticateHTTP(r *http.Request) (*auth.AuthContext, error) {
+	if ac := auth.FromRequest(r); ac != nil {
 		return ac, nil
 	}
 	return nil, errors.New("unauthorized")
 }
-func (roleEnforcingAuth) AuthenticateGRPC(context.Context) (*AuthContext, error) {
-	return &AuthContext{Tenant: "default"}, nil
+func (roleEnforcingAuth) AuthenticateGRPC(context.Context) (*auth.AuthContext, error) {
+	return &auth.AuthContext{Tenant: "default"}, nil
 }
 func (roleEnforcingAuth) RequireRole(r *http.Request, roles ...string) error {
-	ac := authFromRequest(r)
+	ac := auth.FromRequest(r)
 	if ac == nil {
 		return errors.New("auth required")
 	}
@@ -101,16 +102,16 @@ func shadowRequest(method, bundleID, tenant, body string) *http.Request {
 	req := httptest.NewRequest(method, "/api/v1/policy/bundles/"+bundleID+"/shadow", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Tenant-ID", tenant)
-	authCtx := &AuthContext{Role: "admin", Tenant: tenant}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	authCtx := &auth.AuthContext{Role: "admin", Tenant: tenant}
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 	req.SetPathValue("id", bundleID)
 	return req
 }
 
 func shadowRequestRole(method, bundleID, tenant, role, body string) *http.Request {
 	req := shadowRequest(method, bundleID, tenant, body)
-	authCtx := &AuthContext{Role: role, Tenant: tenant}
-	return req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	authCtx := &auth.AuthContext{Role: role, Tenant: tenant}
+	return req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 }
 
 func TestPolicyShadow_ActivateGetDelete(t *testing.T) {

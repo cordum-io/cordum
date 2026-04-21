@@ -11,10 +11,21 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/auth/delegation"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 )
 
 const delegationIssueLimitPerMinute = 60
+
+// maxDelegationTTLSeconds caps `ttl_seconds` on the delegation-issue handler
+// before it is multiplied into time.Duration. Without this bound a caller
+// could submit `ttl_seconds=math.MaxInt64` and wrap the `int64 * time.Second`
+// multiplication past the int64 nanosecond range — the resulting negative
+// duration would silently bypass the service-layer `maxTTL` check (which
+// tests `ttl > maxTTL`) and mint an already-expired-or-far-future token. We
+// cap at one year here; the service layer's configured maxTTL still applies
+// and will reject anything smaller than that bound with its own 400 error.
+const maxDelegationTTLSeconds int64 = 365 * 24 * 60 * 60
 
 type delegateTokenRequest struct {
 	TargetAgentID  string   `json:"target_agent_id"`
@@ -75,11 +86,11 @@ func (r gatewayDelegationPermissionsResolver) ResolveAgentPermissions(ctx contex
 }
 
 func (s *server) handleDelegateAgent(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermAgentsDelegate, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermAgentsDelegate, "admin") {
 		s.emitDelegationAudit(r, "issue", tenantFromRequest(r), "", "", "", 0, "denied", errors.New("access denied"))
 		return
 	}
-	authCtx := authFromRequest(r)
+	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "authentication required")
 		return
@@ -107,6 +118,14 @@ func (s *server) handleDelegateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TTLSeconds < 0 {
 		writeErrorJSON(w, http.StatusBadRequest, "ttl_seconds must be non-negative")
+		return
+	}
+	if req.TTLSeconds > maxDelegationTTLSeconds {
+		// Enforce the pre-multiplication bound so `time.Duration(foo) *
+		// time.Second` cannot overflow int64 nanoseconds and return a
+		// negative duration that would sneak past the service-layer
+		// maxTTL guard.
+		writeErrorJSON(w, http.StatusBadRequest, "ttl_seconds exceeds maximum (1 year)")
 		return
 	}
 
@@ -170,7 +189,7 @@ func (s *server) handleDelegateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleVerifyDelegation(w http.ResponseWriter, r *http.Request) {
-	if authFromRequest(r) == nil {
+	if auth.FromRequest(r) == nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
@@ -219,7 +238,7 @@ func (s *server) handleVerifyDelegation(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *server) handleRevokeDelegation(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, PermAgentsDelegate, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermAgentsDelegate, "admin") {
 		s.emitDelegationAudit(r, "revoke", tenantFromRequest(r), "", "", "", 0, "denied", errors.New("access denied"))
 		return
 	}

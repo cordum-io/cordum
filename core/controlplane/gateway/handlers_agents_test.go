@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
@@ -36,7 +37,7 @@ func TestCreateAgent(t *testing.T) {
 		"allowed_topics": ["job.fraud-detection.process"],
 		"data_classifications": ["pii", "financial"]
 	}`)
-	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "admin",
 		PrincipalID: "admin-user",
@@ -107,7 +108,7 @@ func TestCreateAgentValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewBufferString(tt.body)), &AuthContext{
+			req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewBufferString(tt.body)), &auth.AuthContext{
 				Tenant: "default",
 				Role:   "admin",
 			})
@@ -127,7 +128,7 @@ func TestAgentIdentityHandlersRequireEntitlement(t *testing.T) {
 		entitlements.AgentIdentity = false
 	})
 
-	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "admin",
 		PrincipalID: "admin-user",
@@ -154,7 +155,7 @@ func TestListAgents(t *testing.T) {
 	// Create 3 agents
 	for _, name := range []string{"agent-a", "agent-b", "agent-c"} {
 		body := bytes.NewBufferString(`{"name":"` + name + `","owner":"admin","risk_tier":"low"}`)
-		req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &AuthContext{
+		req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &auth.AuthContext{
 			Tenant: "default",
 			Role:   "admin",
 		})
@@ -167,7 +168,7 @@ func TestListAgents(t *testing.T) {
 	}
 
 	// List all
-	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -195,7 +196,7 @@ func TestGetAgent(t *testing.T) {
 
 	// Create an agent
 	body := bytes.NewBufferString(`{"name":"get-me","owner":"admin","risk_tier":"medium"}`)
-	createReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &AuthContext{
+	createReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -209,7 +210,7 @@ func TestGetAgent(t *testing.T) {
 	}
 
 	// GET by ID
-	getReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+created.ID, nil), &AuthContext{
+	getReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+created.ID, nil), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -230,7 +231,7 @@ func TestGetAgent(t *testing.T) {
 	}
 
 	// GET nonexistent
-	notFoundReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/nonexistent", nil), &AuthContext{
+	notFoundReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/nonexistent", nil), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -249,7 +250,7 @@ func TestDeleteAgent(t *testing.T) {
 
 	// Create an agent
 	body := bytes.NewBufferString(`{"name":"delete-me","owner":"admin","risk_tier":"low"}`)
-	createReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &AuthContext{
+	createReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -263,7 +264,7 @@ func TestDeleteAgent(t *testing.T) {
 	}
 
 	// DELETE
-	delReq := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/agents/"+created.ID, nil), &AuthContext{
+	delReq := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/agents/"+created.ID, nil), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "admin",
 		PrincipalID: "admin-user",
@@ -277,7 +278,7 @@ func TestDeleteAgent(t *testing.T) {
 	}
 
 	// Verify soft-deleted (GET should still return it with status=revoked)
-	getReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+created.ID, nil), &AuthContext{
+	getReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+created.ID, nil), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -302,7 +303,7 @@ func TestDeleteAgentNotFound(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableAgentIdentityEntitlement(t, s)
 
-	req := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/agents/nonexistent", nil), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/agents/nonexistent", nil), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -320,7 +321,7 @@ func TestUpdateAgentNotFound(t *testing.T) {
 	enableAgentIdentityEntitlement(t, s)
 
 	body := bytes.NewBufferString(`{"name":"updated"}`)
-	req := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/nonexistent", body), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/nonexistent", body), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -340,7 +341,7 @@ func TestUpdateAgent(t *testing.T) {
 
 	// Create
 	body := bytes.NewBufferString(`{"name":"original","owner":"admin","risk_tier":"low","team":"eng"}`)
-	createReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &AuthContext{
+	createReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -355,7 +356,7 @@ func TestUpdateAgent(t *testing.T) {
 
 	// Update
 	updateBody := bytes.NewBufferString(`{"name":"updated","risk_tier":"critical"}`)
-	updateReq := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+created.ID, updateBody), &AuthContext{
+	updateReq := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+created.ID, updateBody), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "admin",
 		PrincipalID: "admin-user",
@@ -442,7 +443,7 @@ func TestAgentStatsHighVolume(t *testing.T) {
 	}
 
 	// Call the stats endpoint.
-	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+agent.ID+"/stats", nil), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+agent.ID+"/stats", nil), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -505,7 +506,7 @@ func TestListAgentsIncludesLastActive(t *testing.T) {
 	rc.Set(ctx, "job:state:la-job-1", string(model.JobStateSucceeded), 0)
 
 	// List agents — both should appear, only A should have last_active.
-	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})

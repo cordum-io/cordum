@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "name": "policies.list_and_get_bundle",
+  "description": "List policy bundles and fetch one by id. Simulator seeds a `default` bundle at boot.",
+  "tags": ["policies", "read-only"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "request",
+      "operationId": "listPolicyBundles",
+      "expect": {
+        "status": 200,
+        "bodyMatches": { "$.items": "$any$" }
+      }
+    },
+    {
+      "kind": "request",
+      "operationId": "getPolicyBundle",
+      "pathParams": { "id": "default" },
+      "expect": {
+        "status": 200,
+        "body": { "id": "default" },
+        "bodyMatches": { "$.rules": "$any$" }
+      }
+    }
+  ]
+}

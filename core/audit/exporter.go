@@ -45,9 +45,13 @@ const (
 	// and outcome for SIEM correlation of egress activity.
 	EventMCPToolOutboundInvocation = "mcp.tool_outbound_invocation"
 	EventMCPSignatureInvalid       = "mcp.signature_invalid"
-	EventWorkerTrustChange         = "worker_trust_change"
-	EventTopicRegistered           = "topic_registered"
-	EventTopicUnregistered         = "topic_unregistered"
+	// EventHeartbeatDisagreement is emitted while heartbeat demotion is in
+	// warn mode and session-token authority disagrees with legacy heartbeat
+	// recency for the same worker liveness decision.
+	EventHeartbeatDisagreement = "heartbeat_disagreement"
+	EventWorkerTrustChange     = "worker_trust_change"
+	EventTopicRegistered       = "topic_registered"
+	EventTopicUnregistered     = "topic_unregistered"
 	// EventLicenseLegacyRejected is emitted when the licensing layer
 	// rejects a pre-GA top-level features/limits envelope instead of
 	// silently migrating it to the current schema.

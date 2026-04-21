@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
@@ -62,6 +63,8 @@ type submitJobRequest struct {
 	MaxOutputTokens    int64             `json:"max_output_tokens"`
 	MaxTotalTokens     int64             `json:"max_total_tokens"`
 	DeadlineMs         int64             `json:"deadline_ms"`
+	DelegationToken            string `json:"delegation_token,omitempty"`
+	DelegationAudienceAgentID string `json:"delegation_audience_agent_id,omitempty"`
 }
 
 type policyMetaRequest struct {
@@ -572,7 +575,7 @@ func tenantFromRequest(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	if tenant := headerValue(r, "X-Tenant-ID"); tenant != "" {
+	if tenant := auth.HeaderValue(r, "X-Tenant-ID"); tenant != "" {
 		return tenant
 	}
 	if websocket.IsWebSocketUpgrade(r) {
@@ -584,7 +587,7 @@ func tenantFromRequest(r *http.Request) string {
 		}
 	}
 	// Fall back to auth context tenant (e.g. from session token)
-	if authCtx := authFromRequest(r); authCtx != nil && authCtx.Tenant != "" {
+	if authCtx := auth.FromRequest(r); authCtx != nil && authCtx.Tenant != "" {
 		return authCtx.Tenant
 	}
 	return ""
@@ -1242,22 +1245,22 @@ func (s *server) requirePermissionOrRole(w http.ResponseWriter, r *http.Request,
 		return true
 	}
 
-	if s != nil && s.auth != nil && s.permChecker != nil && RBACEntitled(s.currentEntitlements()) {
+	if s != nil && s.auth != nil && s.permChecker != nil && auth.RBACEntitled(s.currentEntitlements()) {
 		if err := s.permChecker.RequirePermission(r, permission); err != nil {
 			writeForbidden(w, r, err)
 			return false
 		}
-		return true
+		return s.requireLicensePermission(w, r, permission)
 	}
 
 	if len(legacyRoles) == 0 {
-		return true
+		return s.requireLicensePermission(w, r, permission)
 	}
 	if err := s.requireRole(r, legacyRoles...); err != nil {
 		writeForbidden(w, r, err)
 		return false
 	}
-	return true
+	return s.requireLicensePermission(w, r, permission)
 }
 
 func (s *server) requireFeatureEntitlement(w http.ResponseWriter, feature, message string) bool {
@@ -1325,7 +1328,7 @@ func requirePathParam(w http.ResponseWriter, r *http.Request, name string) (stri
 // stored on the job and compared against the approver identity.
 // Format: "apikey:<sha256-prefix-8>|principal:<principal_id>"
 func submitterIdentity(r *http.Request) string {
-	ac := authFromRequest(r)
+	ac := auth.FromRequest(r)
 	if ac == nil {
 		return ""
 	}
@@ -1364,7 +1367,7 @@ func extractIdentityPart(identity, prefix string) string {
 // submitterIdentityFromContext builds the same composite identity from a
 // context (for gRPC handlers).
 func submitterIdentityFromContext(ctx context.Context) string {
-	ac := authFromContext(ctx)
+	ac := auth.FromContext(ctx)
 	if ac == nil {
 		return ""
 	}

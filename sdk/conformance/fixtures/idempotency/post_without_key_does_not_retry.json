@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "name": "idempotency.post_without_key_does_not_retry",
+  "description": "POST WITHOUT Idempotency-Key: simulator 500s; SDK MUST NOT retry (mutating-without-idempotency is dangerous). Asserts RetryExhaustedError with attempt_count=1 on the surfaced error.",
+  "tags": ["idempotency", "retry-safety", "mutating"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "assert_error",
+      "operationId": "submitJob",
+      "headers": {
+        "X-Conformance-Script": "server-500-one-shot"
+      },
+      "body": {
+        "topic": "job.echo",
+        "prompt": "no idempotency key"
+      },
+      "expect": {
+        "errorClass": "ServerError",
+        "status": 500,
+        "fields": {
+          "error.code": "internal_error"
+        }
+      }
+    }
+  ]
+}

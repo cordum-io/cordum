@@ -295,4 +295,3 @@ func TestIndexPrunesTerminalEntries(t *testing.T) {
 		}
 	}
 }
-

@@ -200,7 +200,8 @@ func TestHandleAuditVerify_EmptyChain(t *testing.T) {
 // audit.
 func TestHandleAuditVerify_NoChainerAndNoEventsIs503(t *testing.T) {
 	s, _, _ := newTestGateway(t)
-	// s.auditChainer left nil on purpose; no seeded events either.
+	s.auditChainer = nil
+	// auditChainer left nil on purpose; no seeded events either.
 	req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/verify?tenant=default", nil))
 	rec := httptest.NewRecorder()
 	s.handleAuditVerify(rec, req)

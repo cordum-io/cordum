@@ -44,4 +44,4 @@ Policy rules can match on agent identity attributes when workers are linked to a
   reason: "High-risk agents require human approval."
 ```
 
-See [API Reference](/api-reference/rest-api) for agent identity CRUD endpoints.
+See [API Reference](/api-reference/full-reference) for agent identity CRUD endpoints.

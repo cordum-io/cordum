@@ -161,8 +161,8 @@ describe("PolicyOverviewPage tab rendering", () => {
     expect(getActiveLabels()).toContain("Overview");
   });
 
-  it("mounts the ChainIntegrityWidget inside the Overview tab content", () => {
-    renderPage("overview");
+  it("mounts the ChainIntegrityWidget inside the Overview tab content", async () => {
+    await renderPage("overview");
     const widget = container.querySelector(
       "[data-testid=chain-integrity-widget]",
     );
@@ -172,8 +172,8 @@ describe("PolicyOverviewPage tab rendering", () => {
     expect(widget?.getAttribute("data-state")).toBe("not_checked");
   });
 
-  it("does NOT mount the GapAlertBanner when verify data is absent or ok", () => {
-    renderPage("overview");
+  it("does NOT mount the GapAlertBanner when verify data is absent or ok", async () => {
+    await renderPage("overview");
     expect(container.querySelector("[data-testid=gap-alert-banner]")).toBeNull();
   });
 });
