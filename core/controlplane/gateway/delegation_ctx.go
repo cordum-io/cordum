@@ -26,12 +26,12 @@ func projectVerifiedDelegationContext(verified delegation.VerifiedToken) *config
 	}
 
 	ctx := &config.DelegationContext{
-		Depth:       verified.ChainDepth,
-		IssuerChain: issuerChain,
-		Scope:       append([]string(nil), verified.AllowedActions...),
-		RootIssuer:  issuerChain[0],
+		Depth:        verified.ChainDepth,
+		IssuerChain:  issuerChain,
+		Scope:        append([]string(nil), verified.AllowedActions...),
+		RootIssuer:   issuerChain[0],
 		ParentIssuer: issuerChain[len(issuerChain)-1],
-		JTI:         strings.TrimSpace(verified.JTI),
+		JTI:          strings.TrimSpace(verified.JTI),
 	}
 	return ctx
 }

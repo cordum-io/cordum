@@ -8,13 +8,13 @@ import (
 )
 
 const (
-	LabelDelegationDepth       = "_delegation.depth"
-	LabelDelegationIssuer      = "_delegation.issuer"
-	LabelDelegationIssuerChain = "_delegation.issuer_chain"
+	LabelDelegationDepth        = "_delegation.depth"
+	LabelDelegationIssuer       = "_delegation.issuer"
+	LabelDelegationIssuerChain  = "_delegation.issuer_chain"
 	LabelDelegationParentIssuer = "_delegation.parent_issuer"
-	LabelDelegationJTI         = "_delegation.jti"
-	LabelDelegationScope       = "_delegation.scope"
-	LabelDelegationSubject     = "_delegation.subject"
+	LabelDelegationJTI          = "_delegation.jti"
+	LabelDelegationScope        = "_delegation.scope"
+	LabelDelegationSubject      = "_delegation.subject"
 )
 
 // DelegationContext carries verified delegation metadata from the gateway into

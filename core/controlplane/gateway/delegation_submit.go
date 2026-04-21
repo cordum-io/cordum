@@ -66,13 +66,13 @@ func (s *server) applySubmitDelegationWithAudience(ctx context.Context, tenant, 
 // parsing messages:
 //
 //   - 401 Unauthorized     — malformed / bad_signature / unknown_kid / not_yet_valid
-//                            (the token cannot be trusted as a cryptographic object)
+//     (the token cannot be trusted as a cryptographic object)
 //   - 403 Forbidden        — expired / revoked / audience_mismatch / tenant mismatch
-//                            (the token is a valid object but its authorisation
-//                            has lapsed or was granted to a different audience)
+//     (the token is a valid object but its authorisation
+//     has lapsed or was granted to a different audience)
 //   - 422 Unprocessable    — chain_too_deep / scope_exceeded
-//                            (the token is cryptographically valid but violates
-//                            policy envelope constraints)
+//     (the token is cryptographically valid but violates
+//     policy envelope constraints)
 //   - 400 Bad Request      — missing authenticated agent identity
 //   - 503 Service Unavail  — delegation service not configured / unreachable
 //

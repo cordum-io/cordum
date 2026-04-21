@@ -6,9 +6,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/auth/delegation"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestHandleSubmitJobHTTPInjectsDelegationContextIntoPolicyCheck(t *testing.T) {
@@ -117,4 +119,175 @@ func TestHandleSubmitJobHTTPRejectsDelegationAudienceMismatch(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "audience_mismatch") {
 		t.Fatalf("expected audience_mismatch body, got %s", rec.Body.String())
 	}
+}
+
+func TestHandleSubmitJobHTTPWithoutDelegationLeavesContextUnset(t *testing.T) {
+	s, _, safetyClient := newTestGateway(t)
+	enableTestAuth(s)
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"prompt":"hello","topic":"job.test"}`)), &auth.AuthContext{
+		Tenant:      "default",
+		PrincipalID: "worker-b",
+		Role:        "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if safetyClient.lastReq == nil {
+		t.Fatal("expected policy check request to be captured")
+	}
+	for _, key := range []string{
+		"_delegation.depth",
+		"_delegation.issuer",
+		"_delegation.issuer_chain",
+		"_delegation.parent_issuer",
+		"_delegation.scope",
+		"_delegation.jti",
+	} {
+		if got := safetyClient.lastReq.GetLabels()[key]; got != "" {
+			t.Fatalf("%s = %q, want empty for direct call", key, got)
+		}
+	}
+}
+
+func TestHandleSubmitJobHTTPRejectsMalformedDelegationToken(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	setDelegationKeys(t)
+
+	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
+		t.Fatalf("LinkWorker() error = %v", err)
+	}
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"prompt":"hello","topic":"job.test","delegation_token":"not-a-jwt"}`)), &auth.AuthContext{
+		Tenant:      "default",
+		PrincipalID: "worker-b",
+		Role:        "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "malformed") {
+		t.Fatalf("expected malformed body, got %s", rec.Body.String())
+	}
+}
+
+func TestHandleSubmitJobHTTPRejectsRevokedDelegationToken(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	setDelegationKeys(t)
+
+	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
+		t.Fatalf("LinkWorker() error = %v", err)
+	}
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.test"})
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
+
+	service, err := s.delegationTokenService()
+	if err != nil {
+		t.Fatalf("delegationTokenService() error = %v", err)
+	}
+	token, claims, err := service.IssueDelegationToken(context.Background(), delegation.IssueRequest{
+		Tenant:            "default",
+		DelegatingAgentID: "agent-a",
+		TargetAgentID:     "agent-b",
+		AllowedActions:    []string{"read"},
+		AllowedTopics:     []string{"job.test"},
+	})
+	if err != nil {
+		t.Fatalf("IssueDelegationToken() error = %v", err)
+	}
+	if err := delegation.NewRedisRevocationStoreFromClient(s.jobStore.Client()).Revoke(context.Background(), claims.ID, time.Now().UTC().Add(time.Hour)); err != nil {
+		t.Fatalf("Revoke() error = %v", err)
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"prompt":"hello","topic":"job.test","delegation_token":"`+token+`"}`)), &auth.AuthContext{
+		Tenant:      "default",
+		PrincipalID: "worker-b",
+		Role:        "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "revoked") {
+		t.Fatalf("expected revoked body, got %s", rec.Body.String())
+	}
+}
+
+func TestHandleSubmitJobHTTPRejectsExpiredDelegationToken(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	signingKey := setDelegationKeys(t)
+
+	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
+		t.Fatalf("LinkWorker() error = %v", err)
+	}
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.test"})
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
+
+	now := time.Now().UTC().Add(-2 * time.Hour)
+	expiresAt := now.Add(-15 * time.Minute)
+	token := signDelegationToken(t, signingKey, delegation.DelegationClaims{
+		Tenant:         "default",
+		AllowedActions: []string{"read"},
+		AllowedTopics:  []string{"job.test"},
+		DelegationChain: []delegation.ChainLink{{
+			AgentID:   "agent-a",
+			IssuedAt:  now.Format(time.RFC3339Nano),
+			ExpiresAt: expiresAt.Format(time.RFC3339Nano),
+			JTI:       "expired-link",
+			IssuedBy:  "cordum",
+		}},
+		ChainDepth: 1,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "cordum",
+			Subject:   "agent-a",
+			Audience:  jwt.ClaimStrings{"agent-b"},
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			NotBefore: jwt.NewNumericDate(now.Add(-time.Minute)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			ID:        "expired-link",
+		},
+	})
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"prompt":"hello","topic":"job.test","delegation_token":"`+token+`"}`)), &auth.AuthContext{
+		Tenant:      "default",
+		PrincipalID: "worker-b",
+		Role:        "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "expired") {
+		t.Fatalf("expected expired body, got %s", rec.Body.String())
+	}
+}
+
+func signDelegationToken(t *testing.T, signingKey delegation.SigningKey, claims delegation.DelegationClaims) string {
+	t.Helper()
+
+	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
+	token.Header["kid"] = signingKey.KID
+	signed, err := token.SignedString(signingKey.PrivateKey)
+	if err != nil {
+		t.Fatalf("SignedString() error = %v", err)
+	}
+	return signed
 }

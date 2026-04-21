@@ -50,7 +50,7 @@ func TestApplyDelegationContextLabelsIncludesParentAndJTI(t *testing.T) {
 	}, "agent-b")
 
 	want := map[string]string{
-		"existing":                          "ok",
+		"existing":                         "ok",
 		config.LabelDelegationDepth:        "2",
 		config.LabelDelegationIssuer:       "agent-a",
 		config.LabelDelegationIssuerChain:  "agent-a,agent-b",
