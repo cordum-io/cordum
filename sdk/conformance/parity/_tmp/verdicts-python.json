@@ -1,0 +1,149 @@
+[
+  {
+    "name": "exact-string",
+    "passed": true,
+    "error": "",
+    "want_pass": true,
+    "agreed_with_want": true
+  },
+  {
+    "name": "exact-string-mismatch",
+    "passed": false,
+    "error": "$: want 'world', got 'hello'",
+    "want_pass": false,
+    "agreed_with_want": true
+  },
+  {
+    "name": "any-wildcard-on-string",
+    "passed": true,
+    "error": "",
+    "want_pass": true,
+    "agreed_with_want": true
+  },
+  {
+    "name": "any-wildcard-on-int",
+    "passed": true,
+    "error": "",
+    "want_pass": true,
+    "agreed_with_want": true
+  },
+  {
+    "name": "any-wildcard-on-object",
+    "passed": true,
+    "error": "",
+    "want_pass": true,
+    "agreed_with_want": true
+  },
+  {
+    "name": "any-wildcard-on-null",
+    "passed": true,
+    "error": "",
+    "want_pass": true,
+    "agreed_with_want": true
+  },
+  {
+    "name": "timestamp-valid-rfc3339",
+    "passed": true,
+    "error": "",
+    "want_pass": true,
+    "agreed_with_want": true
+  },
+  {
+    "name": "timestamp-valid-offset",
+    "passed": true,
+    "error": "",
+    "want_pass": true,
+    "agreed_with_want": true
+  },
+  {
+    "name": "timestamp-invalid",
+    "passed": false,
+    "error": "$: 'not-a-date' is not an RFC3339 timestamp: Invalid isoformat string: 'not-a-date'",
+    "want_pass": false,
+    "agreed_with_want": true
+  },
+  {
+    "name": "int-wildcard-valid",
+    "passed": true,
+    "error": "",
+    "want_pass": true,
+    "agreed_with_want": true
+  },
+  {
+    "name": "int-wildcard-float-fails",
+    "passed": false,
+    "error": "$: $int$ expects integer, got 3.14",
+    "want_pass": false,
+    "agreed_with_want": true
+  },
+  {
+    "name": "int-wildcard-rejects-bool",
+    "passed": false,
+    "error": "$: $int$ expects integer, got bool",
+    "want_pass": false,
+    "agreed_with_want": true
+  },
+  {
+    "name": "uuid-valid",
+    "passed": true,
+    "error": "",
+    "want_pass": true,
+    "agreed_with_want": true
+  },
+  {
+    "name": "uuid-invalid",
+    "passed": false,
+    "error": "$: 'not-a-uuid' is not a UUID",
+    "want_pass": false,
+    "agreed_with_want": true
+  },
+  {
+    "name": "unknown-wildcard",
+    "passed": false,
+    "error": "$: want '$zzz$', got 'x'",
+    "want_pass": false,
+    "agreed_with_want": true
+  },
+  {
+    "name": "nested-object-extra-keys-ok",
+    "passed": true,
+    "error": "",
+    "want_pass": true,
+    "agreed_with_want": true
+  },
+  {
+    "name": "object-missing-key",
+    "passed": false,
+    "error": "$.b: expected key missing from response",
+    "want_pass": false,
+    "agreed_with_want": true
+  },
+  {
+    "name": "array-length-mismatch",
+    "passed": false,
+    "error": "$: length mismatch (want 2, got 3)",
+    "want_pass": false,
+    "agreed_with_want": true
+  },
+  {
+    "name": "array-element-wildcard",
+    "passed": true,
+    "error": "",
+    "want_pass": true,
+    "agreed_with_want": true
+  },
+  {
+    "name": "null-matches-null",
+    "passed": true,
+    "error": "",
+    "want_pass": true,
+    "agreed_with_want": true
+  },
+  {
+    "name": "null-vs-object",
+    "passed": false,
+    "error": "$: want object, got NoneType",
+    "want_pass": false,
+    "agreed_with_want": true
+  }
+]

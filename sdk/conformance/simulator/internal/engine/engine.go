@@ -68,12 +68,15 @@ type Job struct {
 	UpdatedAt string            `json:"updatedAt"`
 }
 
-// Workflow CRUD + run state.
+// Workflow CRUD + run state. Steps is `any` so the simulator accepts
+// both the map-keyed form (`{"approve": {...}}`) and the array-keyed
+// form (`[{"id":"s1",...},...]`) — fixtures declare whichever shape
+// matches their scenario.
 type Workflow struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	Steps     map[string]any `json:"steps"`
-	CreatedAt string         `json:"created_at"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Steps     any    `json:"steps"`
+	CreatedAt string `json:"created_at"`
 }
 
 type WorkflowRun struct {
@@ -85,11 +88,12 @@ type WorkflowRun struct {
 
 // PolicyBundle pair mirrors the gateway's bundle surface.
 type PolicyBundle struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Version   int    `json:"version"`
-	Digest    string `json:"digest"`
-	UpdatedAt string `json:"updated_at"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Version     int    `json:"version"`
+	Digest      string `json:"digest"`
+	UpdatedAt   string `json:"updated_at"`
+	PublishedAt string `json:"published_at,omitempty"`
 }
 
 // AuditEvent is paginated in `audit/list_paginated.json`.
@@ -103,11 +107,15 @@ type AuditEvent struct {
 }
 
 // Session represents a login/bearer-token pair minted by POST /auth/login.
+// Both `token` and `session_token` are emitted so fixtures + SDKs that
+// expect either form stay compatible.
 type Session struct {
-	Token     string `json:"session_token"`
-	Principal string `json:"principal"`
-	Tenant    string `json:"tenant"`
-	ExpiresAt string `json:"expires_at"`
+	Token        string `json:"token"`
+	SessionToken string `json:"session_token"`
+	UserID       string `json:"user_id"`
+	Principal    string `json:"principal"`
+	Tenant       string `json:"tenant"`
+	ExpiresAt    string `json:"expires_at"`
 }
 
 // Engine holds every piece of state the simulator needs to serve the
@@ -345,12 +353,14 @@ func (e *Engine) PublishBundle(id, name string) *PolicyBundle {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.PolicyVersion++
+	ts := e.Timestamp(int64(e.PolicyVersion))
 	bundle := &PolicyBundle{
-		ID:        id,
-		Name:      name,
-		Version:   e.PolicyVersion,
-		Digest:    fakeDigest(id, e.PolicyVersion),
-		UpdatedAt: e.Timestamp(int64(e.PolicyVersion)),
+		ID:          id,
+		Name:        name,
+		Version:     e.PolicyVersion,
+		Digest:      fakeDigest(id, e.PolicyVersion),
+		UpdatedAt:   ts,
+		PublishedAt: ts,
 	}
 	e.PolicyBundles[id] = bundle
 	return bundle
@@ -367,9 +377,11 @@ func (e *Engine) RollbackBundle(id string, targetVersion int) (*PolicyBundle, bo
 		return nil, false
 	}
 	e.PolicyVersion++
+	ts := e.Timestamp(int64(e.PolicyVersion))
 	b.Version = e.PolicyVersion
 	b.Digest = fakeDigest(id+":rollback", e.PolicyVersion)
-	b.UpdatedAt = e.Timestamp(int64(e.PolicyVersion))
+	b.UpdatedAt = ts
+	b.PublishedAt = ts
 	_ = targetVersion
 	return b, true
 }

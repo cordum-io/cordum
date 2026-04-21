@@ -3,7 +3,7 @@ import { derivePolicyAccess } from "@/hooks/usePolicyAccess";
 import { APP_SHELL_NAV_SECTIONS } from "@/components/layout/AppShell";
 
 describe("GOVERN navigation shape", () => {
-  it("reduces the GOVERN navigation shell to Policy Studio and Quarantine", () => {
+  it("keeps the dark-launched Delegations nav hidden until the feature flag is enabled", () => {
     const governSection = APP_SHELL_NAV_SECTIONS.find((section) => section.label === "Govern");
     expect(governSection?.items.map((item) => item.label)).toEqual([
       "Policy Studio",

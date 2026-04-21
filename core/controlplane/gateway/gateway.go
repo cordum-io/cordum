@@ -960,7 +960,9 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("PUT /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleUpdateAgent))
 	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleDeleteAgent))
 	mux.HandleFunc("GET /api/v1/agents/{id}/stats", s.instrumented("/api/v1/agents/{id}/stats", s.handleAgentStats))
+	mux.HandleFunc("GET /api/v1/agents/{id}/delegations", s.instrumented("/api/v1/agents/{id}/delegations", s.handleListAgentDelegations))
 	mux.HandleFunc("POST /api/v1/agents/{id}/delegate", s.instrumented("/api/v1/agents/{id}/delegate", s.handleDelegateAgent))
+	mux.HandleFunc("GET /api/v1/delegations", s.instrumented("/api/v1/delegations", s.handleListDelegations))
 	mux.HandleFunc("POST /api/v1/agents/verify-delegation", s.instrumented("/api/v1/agents/verify-delegation", s.handleVerifyDelegation))
 	mux.HandleFunc("POST /api/v1/agents/revoke-delegation", s.instrumented("/api/v1/agents/revoke-delegation", s.handleRevokeDelegation))
 

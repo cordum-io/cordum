@@ -147,6 +147,22 @@ these entries into a versioned release note and reset this file.
   guidance lives in [`docs/auth/delegation.md`](../auth/delegation.md), and the
   canonical HTTP contract is now captured in
   [`docs/api/openapi/cordum-api.yaml`](../api/openapi/cordum-api.yaml).
+- **Delegation chain evaluation in Safety Kernel (`PolicyRule.Match.delegation`):**
+  Policy authors can now gate rules on delegation chain properties via a
+  structured YAML block with `max_depth`, `issuers` (allowlist),
+  `require_issuer` (root pin), `required_scope` (subset check), and
+  `forbid_delegated` (direct-call gate). Direct calls (no token) remain
+  delegation-neutral per the load-bearing "No delegation = direct call,
+  passes all delegation rules" rail, except when `forbid_delegated: true`
+  explicitly opts into direct-only matching. A new Prometheus counter
+  `safety_rule_delegation_match_total{field,outcome}` surfaces per-field
+  rejection counts. The `DelegationAuditExtras` helper projects verified
+  context into SIEMEvent `Extra` keys (`delegation.depth`,
+  `delegation.root_issuer`, `delegation.parent_issuer`, `delegation.chain`,
+  `delegation.jti`) while deliberately omitting the full scope list to
+  respect the 8 KiB syslog line limit. See
+  [`docs/auth/delegation.md#policy-rules`](../auth/delegation.md#policy-rules)
+  for YAML schema, worked examples, and the troubleshooting matrix.
 - **Policy Decision Log API (`/api/v1/governance/decisions`):**
   governance-native read surface for policy outcomes, including matched
   rule, verdict, reason, constraints, approval status/decision,

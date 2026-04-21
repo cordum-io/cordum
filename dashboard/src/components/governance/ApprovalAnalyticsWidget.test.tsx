@@ -150,15 +150,18 @@ describe("ApprovalAnalyticsWidget", () => {
     cleanup();
   });
 
-  it("renders all four KPI tiles with realistic values when data loads", () => {
+  it("renders approval-rate and breakdown metrics when data loads", () => {
     hookState.overall.data = fullSummary();
     hookState.grouped.data = groupedData();
     const { container, cleanup } = renderWidget();
     expect(container.textContent).toContain("Total approvals");
     expect(container.textContent).toContain("42");
+    expect(container.textContent).toContain("Approval rate");
+    expect(container.textContent).toContain("71%");
     expect(container.textContent).toContain("Avg time to approve");
     expect(container.textContent).toContain("Auto vs manual");
     expect(container.textContent).toContain("p90 latency");
+    expect(container.textContent).toContain("rule-slow");
     cleanup();
   });
 
@@ -193,6 +196,46 @@ describe("ApprovalAnalyticsWidget", () => {
     const { container, cleanup } = renderWidget();
     const badges = container.querySelectorAll('[role="status"][aria-label="bottleneck"]');
     expect(badges.length).toBe(0);
+    cleanup();
+  });
+
+  it("renders per-group approval-rate column in the bottleneck table", () => {
+    hookState.overall.data = fullSummary();
+    hookState.grouped.data = groupedData();
+    const { container, cleanup } = renderWidget();
+    // rule-slow: 10/12 ≈ 83%; rule-fast: 20/20 = 100%
+    const labels = Array.from(container.querySelectorAll('[aria-label^="approval rate"]')).map(
+      (el) => el.getAttribute("aria-label"),
+    );
+    expect(labels).toContain("approval rate 83%");
+    expect(labels).toContain("approval rate 100%");
+    cleanup();
+  });
+
+  it("renders approval-rate as — when a group has zero total", () => {
+    hookState.overall.data = fullSummary();
+    hookState.grouped.data = {
+      ...groupedData(),
+      groups: [
+        {
+          key: "rule-empty",
+          label: "rule-empty",
+          total: 0,
+          approved: 0,
+          rejected: 0,
+          expired: 0,
+          autoCount: 0,
+          manualCount: 0,
+          avgTtarSeconds: null,
+          p90Seconds: null,
+        },
+      ],
+    };
+    const { container, cleanup } = renderWidget();
+    const labels = Array.from(container.querySelectorAll('[aria-label^="approval rate"]')).map(
+      (el) => el.getAttribute("aria-label"),
+    );
+    expect(labels).toContain("approval rate —");
     cleanup();
   });
 

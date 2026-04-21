@@ -43,7 +43,6 @@ import {
   Radio,
 } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
-import { FEATURE_FLAGS } from "@/config/flags";
 
 // Approval analytics is a heavy widget (two queries + DataTable). Lazy-
 // mount so the Command Center first paint doesn't block on it.
@@ -433,12 +432,11 @@ export default function HomePage() {
       </motion.div>
 
       {/* Approval analytics — above-the-fold so bottlenecks surface before
-          other ops widgets. Flag-gated until sibling backend lands. */}
-      {FEATURE_FLAGS.approvalAnalytics && (
-        <Suspense fallback={null}>
-          <ApprovalAnalyticsWidget context="command-center" defaultWindow="24h" />
-        </Suspense>
-      )}
+          other ops widgets. Always mounted; the widget owns empty/error
+          handling when the backend has no data yet. */}
+      <Suspense fallback={null}>
+        <ApprovalAnalyticsWidget context="command-center" defaultWindow="24h" />
+      </Suspense>
 
       {/* Onboarding checklist — shown for new users with zero data */}
       {showOnboarding &&

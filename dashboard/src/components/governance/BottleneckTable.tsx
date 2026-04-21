@@ -26,6 +26,14 @@ function formatCount(value: number): string {
   return value.toLocaleString();
 }
 
+// formatGroupApprovalRate mirrors the widget-level formatApprovalRate.
+// Returns "—" when total is 0 to keep the "no data" vs "0%" distinction
+// consistent across the KPI strip and the per-group table.
+function formatGroupApprovalRate(approved: number, total: number): string {
+  if (total <= 0) return "—";
+  return `${Math.round((approved / total) * 100)}%`;
+}
+
 const headerLabel: Record<BottleneckTableProps["variant"], string> = {
   rule: "Rule",
   agent: "Agent",
@@ -91,6 +99,20 @@ export function BottleneckTable({ groups, summaryAvgSeconds, variant }: Bottlene
       render: (row: ApprovalAnalyticsGroup) => (
         <span className="font-mono text-xs text-muted-foreground">
           {formatSeconds(row.p90Seconds)}
+        </span>
+      ),
+    },
+    {
+      key: "approvalRate",
+      header: "Approval rate",
+      width: "7rem",
+      align: "right" as const,
+      render: (row: ApprovalAnalyticsGroup) => (
+        <span
+          className="font-mono text-xs"
+          aria-label={`approval rate ${formatGroupApprovalRate(row.approved, row.total)}`}
+        >
+          {formatGroupApprovalRate(row.approved, row.total)}
         </span>
       ),
     },

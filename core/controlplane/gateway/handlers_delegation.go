@@ -60,8 +60,14 @@ type verifyDelegationResponse struct {
 }
 
 type revokeDelegationRequest struct {
-	JTI    string `json:"jti"`
-	Reason string `json:"reason,omitempty"`
+	JTI     string `json:"jti"`
+	Reason  string `json:"reason,omitempty"`
+	Cascade *bool  `json:"cascade,omitempty"`
+}
+
+type revokeDelegationResponse struct {
+	JTI           string `json:"jti"`
+	CascadedCount int    `json:"cascaded_count"`
 }
 
 type gatewayDelegationPermissionsResolver struct {
@@ -183,6 +189,12 @@ func (s *server) handleDelegateAgent(w http.ResponseWriter, r *http.Request) {
 		ChainDepth: claims.ChainDepth,
 		JTI:        claims.ID,
 	}
+	if listStore := s.delegationListStore(); listStore != nil {
+		if err := listStore.RecordIssuedToken(r.Context(), delegationIssuedView(tenant, claims, req.TargetAgentID)); err != nil {
+			writeInternalError(w, r, "record delegation token", err)
+			return
+		}
+	}
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, resp)
 	s.emitDelegationAudit(r, "issue", tenant, delegatingAgentID, req.TargetAgentID, claims.ID, claims.ChainDepth, "ok", nil)
@@ -256,14 +268,100 @@ func (s *server) handleRevokeDelegation(w http.ResponseWriter, r *http.Request) 
 		writeErrorJSON(w, http.StatusServiceUnavailable, "service unavailable")
 		return
 	}
-	revocations := delegation.NewRedisRevocationStoreFromClient(s.jobStore.Client())
-	if err := revocations.Revoke(r.Context(), req.JTI, time.Now().UTC().Add(24*time.Hour)); err != nil {
-		writeInternalError(w, r, "revoke delegation token", err)
-		s.emitDelegationAudit(r, "revoke", tenantFromRequest(r), "", "", req.JTI, 0, "error", err)
+	tenant := tenantFromRequest(r)
+	listStore := s.delegationListStore()
+	if listStore == nil {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "service unavailable")
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
-	s.emitDelegationAudit(r, "revoke", tenantFromRequest(r), "", "", req.JTI, 0, "ok", nil)
+	rootView, ok, err := listStore.Get(r.Context(), req.JTI)
+	if err != nil {
+		writeInternalError(w, r, "load delegation token", err)
+		s.emitDelegationAudit(r, "revoke", tenant, "", "", req.JTI, 0, "error", err)
+		return
+	}
+	if !ok || !strings.EqualFold(strings.TrimSpace(rootView.Tenant), tenant) {
+		writeErrorJSON(w, http.StatusNotFound, "delegation token not found")
+		s.emitDelegationAudit(r, "revoke", tenant, "", "", req.JTI, 0, "denied", delegation.ErrNotFound)
+		return
+	}
+	revocations := delegation.NewRedisRevocationStoreFromClient(s.jobStore.Client())
+	revokedAt := time.Now().UTC()
+	cascade := req.Cascade == nil || *req.Cascade
+	result, err := revocations.CascadeRevoke(r.Context(), req.JTI, strings.TrimSpace(req.Reason), revokedAt, cascade)
+	if err != nil {
+		switch {
+		case errors.Is(err, delegation.ErrNotFound):
+			writeErrorJSON(w, http.StatusNotFound, "delegation token not found")
+		case errors.Is(err, delegation.ErrCascadeTooDeep):
+			writeErrorJSON(w, http.StatusUnprocessableEntity, "delegation cascade too deep")
+		default:
+			writeInternalError(w, r, "revoke delegation token", err)
+		}
+		s.emitDelegationAudit(r, "revoke", tenant, "", "", req.JTI, rootView.ChainDepth, "error", err)
+		return
+	}
+	writeJSON(w, revokeDelegationResponse{
+		JTI:           req.JTI,
+		CascadedCount: result.CascadedCount,
+	})
+	s.emitDelegationAudit(r, "revoke", tenant, "", "", req.JTI, rootView.ChainDepth, "ok", nil)
+	if result.CascadedCount > 0 {
+		s.emitDelegationCascadeAudit(r, tenant, req.JTI, result.CascadedCount, strings.TrimSpace(req.Reason))
+	}
+	for _, revokedJTI := range result.RevokedJTIs {
+		if revokedJTI == req.JTI {
+			continue
+		}
+		s.emitDelegationRevokedAudit(r, tenant, req.JTI, revokedJTI, strings.TrimSpace(req.Reason))
+	}
+}
+
+func (s *server) emitDelegationCascadeAudit(r *http.Request, tenant, rootJTI string, cascadedCount int, reason string) {
+	if s == nil || s.auditExporter == nil || cascadedCount <= 0 {
+		return
+	}
+	extra := map[string]string{
+		"root_jti":       strings.TrimSpace(rootJTI),
+		"cascaded_count": strconv.Itoa(cascadedCount),
+	}
+	if trim := strings.TrimSpace(reason); trim != "" {
+		extra["reason"] = trim
+	}
+	s.auditExporter.Send(audit.SIEMEvent{
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventSystemAuth,
+		Severity:  audit.SeverityInfo,
+		TenantID:  tenant,
+		Action:    "delegation.revoked_cascade",
+		Reason:    "delegation revoke cascaded",
+		Identity:  policyActorID(r),
+		Extra:     extra,
+	})
+}
+
+func (s *server) emitDelegationRevokedAudit(r *http.Request, tenant, rootJTI, jti, reason string) {
+	if s == nil || s.auditExporter == nil {
+		return
+	}
+	extra := map[string]string{
+		"jti":      strings.TrimSpace(jti),
+		"root_jti": strings.TrimSpace(rootJTI),
+		"outcome":  "ok",
+	}
+	if trim := strings.TrimSpace(reason); trim != "" {
+		extra["reason"] = trim
+	}
+	s.auditExporter.Send(audit.SIEMEvent{
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventSystemAuth,
+		Severity:  audit.SeverityInfo,
+		TenantID:  tenant,
+		Action:    "delegation.revoked",
+		Reason:    "delegation revoked",
+		Identity:  policyActorID(r),
+		Extra:     extra,
+	})
 }
 
 func (s *server) delegationTokenService() (*delegation.TokenService, error) {
@@ -345,6 +443,36 @@ func delegationIssueMessage(err error) string {
 		return code
 	}
 	return "delegation issue failed"
+}
+
+func (s *server) delegationListStore() *delegation.RedisListStore {
+	if s == nil || s.jobStore == nil {
+		return nil
+	}
+	return delegation.NewRedisListStoreFromClient(s.jobStore.Client())
+}
+
+func delegationIssuedView(tenant string, claims delegation.DelegationClaims, audience string) delegation.DelegationView {
+	rootIssuer := strings.TrimSpace(claims.Subject)
+	if len(claims.DelegationChain) > 0 {
+		if first := strings.TrimSpace(claims.DelegationChain[0].AgentID); first != "" {
+			rootIssuer = first
+		}
+	}
+	return delegation.DelegationView{
+		JTI:            strings.TrimSpace(claims.ID),
+		Tenant:         strings.TrimSpace(tenant),
+		Issuer:         rootIssuer,
+		Subject:        strings.TrimSpace(claims.Subject),
+		Audience:       strings.TrimSpace(audience),
+		AllowedActions: append([]string(nil), claims.AllowedActions...),
+		AllowedTopics:  append([]string(nil), claims.AllowedTopics...),
+		Chain:          append([]delegation.ChainLink(nil), claims.DelegationChain...),
+		ChainDepth:     claims.ChainDepth,
+		IssuedAt:       claims.IssuedAt.Time.UTC(),
+		ExpiresAt:      claims.ExpiresAt.Time.UTC(),
+		ParentJTI:      strings.TrimSpace(claims.ParentTokenJTI),
+	}
 }
 
 func (s *server) emitDelegationAudit(r *http.Request, action, tenant, agentID, target, jti string, chainDepth int, outcome string, err error) {

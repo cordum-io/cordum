@@ -4,6 +4,8 @@ import {
   deriveApprovalActionability,
   deriveApprovalStatus,
   mapApprovalItem,
+  mapDelegationListResponse,
+  mapDelegationView,
   mapDLQEntry,
   mapGovernanceDecision,
   mapHeartbeatToWorker,
@@ -37,6 +39,53 @@ describe("api/transform mappings", () => {
     expect(job.capabilities).toEqual(["cap.read", "cap.write"]);
     expect(job.output_safety?.decision).toBe("QUARANTINE");
     expect(job.updatedAt).toContain("T");
+  });
+
+  it("maps delegation views with defensive null-coalescing", () => {
+    const delegation = mapDelegationView({
+      jti: "dlg-1",
+      issuer: "agent-a",
+      subject: "agent-a",
+      audience: "agent-b",
+      allowed_actions: ["read"],
+      allowed_topics: undefined,
+      chain: [
+        {
+          agent_id: "agent-a",
+          issued_at: "2026-04-21T00:00:00Z",
+          expires_at: "2026-04-21T01:00:00Z",
+          jti: "dlg-1",
+          issued_by: "cordum",
+        },
+      ],
+      chain_depth: 1,
+      issued_at: "2026-04-21T00:00:00Z",
+      expires_at: "2026-04-21T01:00:00Z",
+      revoked: undefined,
+    });
+
+    expect(delegation.allowedActions).toEqual(["read"]);
+    expect(delegation.allowedTopics).toEqual([]);
+    expect(delegation.chain[0]).toEqual({
+      agentId: "agent-a",
+      issuedAt: "2026-04-21T00:00:00Z",
+      expiresAt: "2026-04-21T01:00:00Z",
+      jti: "dlg-1",
+      parentJti: undefined,
+      issuedBy: "cordum",
+    });
+    expect(delegation.revoked).toBe(false);
+  });
+
+  it("maps delegation list responses and next cursor safely", () => {
+    const response = mapDelegationListResponse({
+      items: [{ jti: "dlg-1", issuer: "agent-a", subject: "agent-a", audience: "agent-b" }],
+      next_cursor: "cur-2",
+    });
+
+    expect(response.items).toHaveLength(1);
+    expect(response.items[0]?.allowedActions).toEqual([]);
+    expect(response.nextCursor).toBe("cur-2");
   });
 
   it("maps job detail fields on top of base job mapping", () => {

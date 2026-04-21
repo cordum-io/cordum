@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useConfigStore } from "@/state/config";
 import { useUiStore } from "@/state/ui";
+import { FEATURE_FLAGS } from "@/config/flags";
 import { useApprovals } from "@/hooks/useApprovals";
 import { useDLQ } from "@/hooks/useDLQ";
 import { useLicense } from "@/hooks/useLicense";
@@ -38,6 +39,7 @@ import {
   ExternalLink,
   Shield,
   ShieldAlert,
+  KeyRound,
   Package,
   Database,
   Hash,
@@ -86,6 +88,9 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
     label: "Govern",
     items: [
       { path: "/govern/overview", label: "Policy Studio", icon: Shield },
+      ...(FEATURE_FLAGS.delegationDashboard
+        ? [{ path: "/delegations", label: "Delegations", icon: KeyRound }]
+        : []),
       { path: "/govern/quarantine", label: "Quarantine", icon: ShieldAlert, badge: "quarantine" },
     ],
   },

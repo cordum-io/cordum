@@ -1,0 +1,17 @@
+{
+  "name": "@cordum/sdk-conformance-harness",
+  "private": true,
+  "version": "0.0.0",
+  "description": "TypeScript conformance harness for the Cordum SDK test suite. Internal tool — not published.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/main.mjs",
+    "test": "node --test tests/diff.test.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {},
+  "dependencies": {},
+  "engines": {
+    "node": ">=18"
+  }
+}

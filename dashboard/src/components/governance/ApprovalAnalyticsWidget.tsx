@@ -54,6 +54,17 @@ function formatRatio(auto: number, manual: number): string {
   return `${autoPct}% auto · ${100 - autoPct}% manual`;
 }
 
+// formatApprovalRate renders approved / total as an integer-rounded
+// percentage, or "—" when total is 0. The null distinction matters:
+// "0%" means "nothing approved in a non-empty window"; "—" means
+// "no sample set yet to reason about". Callers pass total, not
+// total-of-resolved, so pending approvals drag the rate down — which
+// is the right signal for a reviewer backlog.
+function formatApprovalRate(approved: number, total: number): string {
+  if (total <= 0) return "—";
+  return `${Math.round((approved / total) * 100)}%`;
+}
+
 export function ApprovalAnalyticsWidget({
   context = "command-center",
   className,
@@ -122,7 +133,7 @@ export function ApprovalAnalyticsWidget({
         ) : (
           <>
             <div
-              className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
+              className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5"
               role="group"
               aria-label="Approval analytics KPIs"
             >
@@ -130,6 +141,15 @@ export function ApprovalAnalyticsWidget({
                 label="Total approvals"
                 value={summary.total.toLocaleString()}
                 helperText={`${summary.approved} approved · ${summary.rejected} rejected`}
+              />
+              <StatTile
+                label="Approval rate"
+                value={formatApprovalRate(summary.approved, summary.total)}
+                helperText={
+                  summary.total === 0
+                    ? "no data"
+                    : `${summary.approved} of ${summary.total} approved`
+                }
               />
               <StatTile
                 label="Avg time to approve"

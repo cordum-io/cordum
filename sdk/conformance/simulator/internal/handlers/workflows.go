@@ -30,8 +30,8 @@ func Workflows(mux *http.ServeMux, eng *engine.Engine) {
 			})
 		case http.MethodPost:
 			var req struct {
-				Name  string         `json:"name"`
-				Steps map[string]any `json:"steps"`
+				Name  string `json:"name"`
+				Steps any    `json:"steps"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				engine.WriteError(w, http.StatusBadRequest, "invalid_json", "request body is not JSON", nil)

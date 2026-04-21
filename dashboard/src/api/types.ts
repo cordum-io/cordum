@@ -1728,6 +1728,47 @@ export interface SetupStatus {
 }
 
 // ---------------------------------------------------------------------------
+// Delegations
+// ---------------------------------------------------------------------------
+
+export type DelegationStatus = "active" | "revoked" | "expired" | "all";
+
+export interface DelegationChainLink {
+  agentId: string;
+  issuedAt: string;
+  expiresAt: string;
+  jti: string;
+  parentJti?: string;
+  issuedBy: string;
+}
+
+export interface DelegationView {
+  jti: string;
+  issuer: string;
+  subject: string;
+  audience: string;
+  allowedActions: string[];
+  allowedTopics: string[];
+  chain: DelegationChainLink[];
+  chainDepth: number;
+  issuedAt: string;
+  expiresAt: string;
+  revoked: boolean;
+  revokedAt?: string;
+  revokedReason?: string;
+}
+
+export interface DelegationListResponse {
+  items: DelegationView[];
+  nextCursor?: string;
+}
+
+export interface RevokeDelegationResult {
+  jti: string;
+  cascadedCount: number;
+}
+
+// ---------------------------------------------------------------------------
 // Evals
 // ---------------------------------------------------------------------------
 

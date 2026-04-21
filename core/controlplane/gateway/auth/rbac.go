@@ -26,6 +26,7 @@ const (
 	PermAgentsRead             = "agents.read"
 	PermAgentsWrite            = "agents.write"
 	PermAgentsDelegate         = "agents.delegate"
+	PermDelegationRead         = "delegation.read"
 	PermWorkflowsRead          = "workflows.read"
 	PermWorkflowsWrite         = "workflows.write"
 	PermWorkersRead            = "workers.read"
@@ -84,7 +85,7 @@ const (
 var AllPermissions = []string{
 	PermAdminAll,
 	PermJobsRead, PermJobsWrite, PermJobsApprove,
-	PermAgentsRead, PermAgentsWrite, PermAgentsDelegate,
+	PermAgentsRead, PermAgentsWrite, PermAgentsDelegate, PermDelegationRead,
 	PermWorkflowsRead, PermWorkflowsWrite,
 	PermWorkersRead, PermWorkersWrite,
 	PermConfigRead, PermConfigWrite,
@@ -150,6 +151,7 @@ func DefaultRoles() []*RoleDefinition {
 				PermSchemasRead, PermSchemasWrite,
 				PermPolicyRead,
 				PermGovernanceRead,
+				PermDelegationRead,
 				PermAuditRead,
 				PermConfigRead,
 			},
@@ -172,6 +174,7 @@ func DefaultRoles() []*RoleDefinition {
 				PermSchemasRead,
 				PermPolicyRead,
 				PermGovernanceRead,
+				PermDelegationRead,
 			},
 			BuiltIn:   true,
 			CreatedAt: now,
@@ -198,6 +201,7 @@ var basicRolePermissions = map[string][]string{
 		PermSchemasRead, PermSchemasWrite,
 		PermPolicyRead,
 		PermGovernanceRead,
+		PermDelegationRead,
 		PermAuditRead,
 		PermConfigRead,
 	},
@@ -212,6 +216,7 @@ var basicRolePermissions = map[string][]string{
 		PermSchemasRead,
 		PermPolicyRead,
 		PermGovernanceRead,
+		PermDelegationRead,
 	},
 }
 

@@ -23,6 +23,23 @@ func Jobs(mux *http.ServeMux, eng *engine.Engine) {
 		}
 		switch r.Method {
 		case http.MethodGet:
+			script := engine.ScriptForRequest(r)
+			key := engine.RouteKey(r)
+			if eng.ShouldFire(script, key) {
+				switch script {
+				case engine.ScriptRateLimitOnce:
+					w.Header().Set("Retry-After", "1")
+					engine.WriteError(w, http.StatusTooManyRequests, "rate_limited", "scripted rate limit", map[string]any{
+						"retry_after_seconds": 1,
+					})
+					return
+				case engine.ScriptServer500Once,
+					engine.ScriptServer500OneShot,
+					engine.ScriptServer500ThreeTimes:
+					engine.WriteError(w, http.StatusInternalServerError, "internal_error", "scripted failure", nil)
+					return
+				}
+			}
 			items := eng.ListJobs()
 			status := strings.TrimSpace(r.URL.Query().Get("status"))
 			topic := strings.TrimSpace(r.URL.Query().Get("topic"))
@@ -138,7 +155,10 @@ func Jobs(mux *http.ServeMux, eng *engine.Engine) {
 				engine.WriteError(w, http.StatusNotFound, "not_found", "job not found: "+id, map[string]any{"resource": "job"})
 				return
 			}
-			engine.WriteJSON(w, http.StatusOK, job)
+			// Cancel returns 204 No Content per the fixture contract —
+			// the follow-up GET is what observes the new `cancelled`
+			// state.
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		// GET /jobs/{id}

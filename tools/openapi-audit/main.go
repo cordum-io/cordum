@@ -196,7 +196,11 @@ type specDoc struct {
 // loadSpecOps returns a slice of SpecOp and a map of path -> anyMethod flag.
 // An op appearing under an x-any-method path is still enumerated as
 // "<method> <path>" for each declared method so the diff can assert both
-// directions accurately.
+// directions accurately. `x-subroute-dispatch: true` is a companion
+// extension for Go 1.22 sub-mux dispatch: it lets the canonical collection
+// path (for example `/api/v1/evals/datasets`) declare that an internal
+// catch-all route exists at `/api/v1/evals/datasets/` without forcing the
+// OpenAPI document to model an invalid trailing-slash path.
 func loadSpecOps(specPath string) ([]SpecOp, map[string]bool, error) {
 	data, err := os.ReadFile(specPath)
 	if err != nil {
@@ -219,6 +223,15 @@ func loadSpecOps(specPath string) ([]SpecOp, map[string]bool, error) {
 			case "x-any-method":
 				if node.Content[i+1].Value == "true" {
 					anyMethod[path] = true
+				}
+				continue
+			case "x-subroute-dispatch":
+				if node.Content[i+1].Value == "true" {
+					dispatchPath := path
+					if !strings.HasSuffix(dispatchPath, "/") {
+						dispatchPath += "/"
+					}
+					anyMethod[dispatchPath] = true
 				}
 				continue
 			case "get", "post", "put", "patch", "delete", "head", "options", "trace":

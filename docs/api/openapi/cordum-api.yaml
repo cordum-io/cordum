@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Cordum HTTP API
-  version: '2026-04-21.1'
+  version: '2026-04-21.2'
   description: Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
   contact:
     name: Cordum Team
@@ -69,6 +69,8 @@ tags:
   description: Governance-native observability — policy decisions, approval analytics
 - name: Agents
   description: Agent identities, delegation, and runtime statistics
+- name: Delegation
+  description: Delegation token issuance, verification, listing, and revocation
 - name: Evals
   description: Evaluation dataset curation, incident extraction, and policy replay runs
 security:
@@ -4374,6 +4376,7 @@ paths:
       summary: Issue a delegation token from one agent to another
       tags:
       - Agents
+      - Delegation
       parameters:
       - name: id
         in: path
@@ -4435,6 +4438,7 @@ paths:
       summary: Verify a delegation token for an expected audience
       tags:
       - Agents
+      - Delegation
       parameters:
       - $ref: '#/components/parameters/TenantID'
       requestBody:
@@ -4470,8 +4474,7 @@ paths:
                   delegation_chain:
                     type: array
                     items:
-                      type: object
-                      additionalProperties: true
+                      $ref: '#/components/schemas/DelegationChainLink'
                   error_code: {type: string}
         '400':
           $ref: '#/components/responses/BadRequest'
@@ -4483,8 +4486,10 @@ paths:
     post:
       operationId: revokeDelegationToken
       summary: Revoke a delegation token by JTI
+      description: By default revoking a token cascades to every downstream delegation that extended it. Set `cascade=false` for narrow-scoped revocation.
       tags:
       - Agents
+      - Delegation
       parameters:
       - $ref: '#/components/parameters/TenantID'
       requestBody:
@@ -4497,9 +4502,157 @@ paths:
               properties:
                 jti: {type: string}
                 reason: {type: string}
+                cascade:
+                  type: boolean
+                  default: true
+                  description: When true, revoke downstream delegations that extended this token.
       responses:
-        '204':
+        '200':
           description: Delegation token revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jti, cascaded_count]
+                properties:
+                  jti:
+                    type: string
+                  cascaded_count:
+                    type: integer
+                    description: Number of downstream delegations revoked in addition to the root token.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/agents/{id}/delegations:
+    get:
+      operationId: listDelegationsForAgent
+      summary: List delegation tokens issued by a specific agent
+      tags:
+      - Agents
+      - Delegation
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [active, revoked, expired, all]
+      - name: scope
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: before_expiry
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: since_issued
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: until_issued
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Delegation token page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/delegations:
+    get:
+      operationId: listDelegations
+      summary: List delegation tokens for the current tenant
+      tags:
+      - Agents
+      - Delegation
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [active, revoked, expired, all]
+      - name: scope
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: before_expiry
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: since_issued
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: until_issued
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Delegation token page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationListResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -4878,16 +5031,6 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/evals/datasets/:
-    # The trailing-slash prefix is a Go 1.22 mux catch-all that dispatches
-    # internally to /api/v1/evals/datasets/by-name/{name}, /{id},
-    # /{id}/run, and /{id}/runs. Go's mux rejects those patterns at
-    # register time as mutually ambiguous (both could bind to
-    # `/datasets/by-name/runs`), so the gateway owns a single prefix slot
-    # and switches on path structure. Every dispatched operation is
-    # documented separately below; x-any-method here tells openapi-audit
-    # the prefix is intentional dispatch glue, not an un-spec'd endpoint.
-    x-any-method: true
   /api/v1/evals/datasets/from-incidents:
     post:
       operationId: createEvalDatasetFromIncidents
@@ -4954,6 +5097,14 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/evals/datasets:
+    # The gateway registers an internal Go 1.22 catch-all at
+    # `/api/v1/evals/datasets/` and dispatches to `/by-name/{name}`,
+    # `/{id}`, `/{id}/run`, and `/{id}/runs` from there because ServeMux
+    # rejects those sibling patterns as ambiguous. The public API surface
+    # is the canonical collection path plus the concrete child paths below;
+    # `x-subroute-dispatch` tells openapi-audit about the internal prefix
+    # route without modeling an invalid trailing-slash OpenAPI path.
+    x-subroute-dispatch: true
     get:
       operationId: listEvalDatasets
       summary: List eval datasets
@@ -5768,6 +5919,80 @@ components:
           nullable: true
         p90_seconds:
           type: number
+          nullable: true
+    DelegationChainLink:
+      type: object
+      required: [agent_id, issued_at, expires_at, jti, issued_by]
+      properties:
+        agent_id:
+          type: string
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        jti:
+          type: string
+        parent_jti:
+          type: string
+          nullable: true
+        issued_by:
+          type: string
+    DelegationView:
+      type: object
+      required: [jti, issuer, subject, audience, chain_depth, issued_at, expires_at, revoked]
+      properties:
+        jti:
+          type: string
+        issuer:
+          type: string
+          description: Root issuer for the delegation chain.
+        subject:
+          type: string
+          description: Agent that issued the token.
+        audience:
+          type: string
+          description: Target agent the token was minted for.
+        allowed_actions:
+          type: array
+          items:
+            type: string
+        allowed_topics:
+          type: array
+          items:
+            type: string
+        chain:
+          type: array
+          items:
+            $ref: '#/components/schemas/DelegationChainLink'
+        chain_depth:
+          type: integer
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked:
+          type: boolean
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_reason:
+          type: string
+          nullable: true
+    DelegationListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DelegationView'
+        next_cursor:
+          type: string
           nullable: true
     Error:
       type: object

@@ -52,6 +52,9 @@ import type {
   ApprovalAnalyticsGroup,
   ApprovalAnalyticsResponse,
   ApprovalAnalyticsSummary,
+  DelegationChainLink,
+  DelegationListResponse,
+  DelegationView,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -1897,6 +1900,37 @@ export interface BackendApprovalAnalyticsResponse {
   groups?: BackendApprovalAnalyticsGroup[];
 }
 
+export interface BackendDelegationChainLink {
+  agent_id?: string;
+  issued_at?: string;
+  expires_at?: string;
+  jti?: string;
+  parent_jti?: string;
+  issued_by?: string;
+}
+
+export interface BackendDelegationView {
+  jti?: string;
+  issuer?: string;
+  subject?: string;
+  audience?: string;
+  allowed_actions?: string[];
+  allowed_topics?: string[];
+  chain?: BackendDelegationChainLink[];
+  chain_depth?: number;
+  issued_at?: string;
+  expires_at?: string;
+  revoked?: boolean;
+  revoked_at?: string;
+  revoked_reason?: string;
+}
+
+export interface BackendDelegationListResponse {
+  items?: BackendDelegationView[];
+  next_cursor?: string | null;
+  nextCursor?: string | null;
+}
+
 function coerceOptionalNumber(raw: unknown): number | null {
   if (raw === null || raw === undefined) return null;
   const num = typeof raw === "number" ? raw : Number(raw);
@@ -1951,6 +1985,50 @@ export function mapApprovalAnalytics(
     groups: Array.isArray(raw.groups)
       ? raw.groups.map(mapApprovalAnalyticsGroup)
       : undefined,
+  };
+}
+
+export function mapDelegationChainLink(
+  raw: BackendDelegationChainLink,
+): DelegationChainLink {
+  return {
+    agentId: raw.agent_id ?? "",
+    issuedAt: raw.issued_at ?? "",
+    expiresAt: raw.expires_at ?? "",
+    jti: raw.jti ?? "",
+    parentJti: raw.parent_jti || undefined,
+    issuedBy: raw.issued_by ?? "",
+  };
+}
+
+export function mapDelegationView(raw: BackendDelegationView): DelegationView {
+  return {
+    jti: raw.jti ?? "",
+    issuer: raw.issuer ?? "",
+    subject: raw.subject ?? "",
+    audience: raw.audience ?? "",
+    allowedActions: Array.isArray(raw.allowed_actions)
+      ? raw.allowed_actions.filter((value): value is string => typeof value === "string")
+      : [],
+    allowedTopics: Array.isArray(raw.allowed_topics)
+      ? raw.allowed_topics.filter((value): value is string => typeof value === "string")
+      : [],
+    chain: Array.isArray(raw.chain) ? raw.chain.map(mapDelegationChainLink) : [],
+    chainDepth: typeof raw.chain_depth === "number" ? raw.chain_depth : 0,
+    issuedAt: raw.issued_at ?? "",
+    expiresAt: raw.expires_at ?? "",
+    revoked: raw.revoked ?? false,
+    revokedAt: raw.revoked_at || undefined,
+    revokedReason: raw.revoked_reason || undefined,
+  };
+}
+
+export function mapDelegationListResponse(
+  raw: BackendDelegationListResponse,
+): DelegationListResponse {
+  return {
+    items: Array.isArray(raw.items) ? raw.items.map(mapDelegationView) : [],
+    nextCursor: raw.next_cursor ?? raw.nextCursor ?? undefined,
   };
 }
 

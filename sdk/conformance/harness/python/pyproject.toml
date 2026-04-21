@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cordum-sdk-conformance-harness"
+version = "0.0.0"
+description = "Python conformance harness for the Cordum SDK test suite. Internal tool — NOT published."
+requires-python = ">=3.9"
+# Zero third-party deps: harness uses stdlib only. Parity with Go
+# harness is the goal; adding e.g. pytest or httpx would make the
+# matching wildcards diverge.
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["conformance*"]

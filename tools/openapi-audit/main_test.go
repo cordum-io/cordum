@@ -319,6 +319,36 @@ func TestDiff_AnyMethodRouteCoversEverySpecOp(t *testing.T) {
 	}
 }
 
+func TestLoadSpecOps_SubrouteDispatchMarksTrailingSlashPrefix(t *testing.T) {
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "spec.yaml")
+	mustWrite(t, specPath, `
+openapi: 3.0.3
+info: {title: t, version: "1"}
+paths:
+  /datasets:
+    x-subroute-dispatch: true
+    get: {summary: list}
+  /datasets/{id}/runs:
+    get: {summary: list runs}
+`)
+	ops, anyMethod, err := loadSpecOps(specPath)
+	if err != nil {
+		t.Fatalf("loadSpecOps: %v", err)
+	}
+	if !anyMethod["/datasets/"] {
+		t.Fatalf("expected x-subroute-dispatch to register /datasets/ as delegated prefix, got %+v", anyMethod)
+	}
+	routes := []Route{
+		{Method: "get", Path: "/datasets"},
+		{Method: "", Path: "/datasets/"},
+	}
+	_, unrouted := diff(routes, ops, anyMethod)
+	if len(unrouted) != 0 {
+		t.Fatalf("expected delegated prefix route to cover child spec ops, got %+v", unrouted)
+	}
+}
+
 // --- helpers ---
 
 func mustWrite(t *testing.T, path, contents string) {

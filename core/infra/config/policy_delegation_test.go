@@ -380,3 +380,158 @@ rules:
 		})
 	}
 }
+
+// TestDelegationMatchDenyCallback asserts the observer callback fires with
+// the expected `field` label for every sub-field that can short-circuit a
+// rule — this is the seam safetykernel's metrics use for per-field
+// Prometheus counters.
+func TestDelegationMatchDenyCallback(t *testing.T) {
+	zero := 0
+	maxOne := 1
+
+	type rejectedBy struct{ field string }
+	tests := []struct {
+		name       string
+		match      *DelegationMatch
+		delegation *DelegationContext
+		wantField  string
+	}{
+		{
+			name:       "forbid_delegated",
+			match:      &DelegationMatch{ForbidDelegated: true},
+			delegation: &DelegationContext{Depth: 1, IssuerChain: []string{"a"}},
+			wantField:  "forbid_delegated",
+		},
+		{
+			name:       "max_depth",
+			match:      &DelegationMatch{MaxDepth: &zero},
+			delegation: &DelegationContext{Depth: 1, IssuerChain: []string{"a"}},
+			wantField:  "max_depth",
+		},
+		{
+			name:       "issuers",
+			match:      &DelegationMatch{Issuers: []string{"a"}},
+			delegation: &DelegationContext{Depth: 1, IssuerChain: []string{"x"}},
+			wantField:  "issuers",
+		},
+		{
+			name:       "require_issuer",
+			match:      &DelegationMatch{RequireIssuer: "a"},
+			delegation: &DelegationContext{Depth: 1, RootIssuer: "b", IssuerChain: []string{"b"}},
+			wantField:  "require_issuer",
+		},
+		{
+			name:       "required_scope",
+			match:      &DelegationMatch{RequiredScope: []string{"write"}},
+			delegation: &DelegationContext{Depth: 1, Scope: []string{"read"}, IssuerChain: []string{"a"}, RootIssuer: "a"},
+			wantField:  "required_scope",
+		},
+		{
+			name:       "max_depth_multi_field_short_circuits_on_depth",
+			match:      &DelegationMatch{MaxDepth: &maxOne, Issuers: []string{"a"}},
+			delegation: &DelegationContext{Depth: 2, IssuerChain: []string{"a", "a"}},
+			wantField:  "max_depth",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var captured []rejectedBy
+			SetDelegationMatchDenyCallback(func(field string) {
+				captured = append(captured, rejectedBy{field: field})
+			})
+			t.Cleanup(func() { SetDelegationMatchDenyCallback(nil) })
+
+			if evaluateDelegationMatch(tc.match, tc.delegation) {
+				t.Fatalf("evaluateDelegationMatch should have rejected")
+			}
+			if len(captured) != 1 {
+				t.Fatalf("callback called %d times, want 1", len(captured))
+			}
+			if captured[0].field != tc.wantField {
+				t.Fatalf("field = %q, want %q", captured[0].field, tc.wantField)
+			}
+		})
+	}
+}
+
+// TestDelegationMatchDenyCallbackNotCalledOnMatch asserts the callback does
+// NOT fire when a rule matches. Counting matches on the deny counter would
+// balloon dashboards with noise.
+func TestDelegationMatchDenyCallbackNotCalledOnMatch(t *testing.T) {
+	var called int
+	SetDelegationMatchDenyCallback(func(field string) { called++ })
+	t.Cleanup(func() { SetDelegationMatchDenyCallback(nil) })
+
+	// nil delegation passes every non-Forbid rule → no callback.
+	_ = evaluateDelegationMatch(&DelegationMatch{MaxDepth: func() *int { i := 0; return &i }()}, nil)
+	// nil match is neutral → no callback.
+	_ = evaluateDelegationMatch(nil, &DelegationContext{Depth: 1})
+	// Forbid + direct call is a match → no callback.
+	_ = evaluateDelegationMatch(&DelegationMatch{ForbidDelegated: true}, nil)
+
+	if called != 0 {
+		t.Fatalf("callback fired %d times on matches; should be 0", called)
+	}
+}
+
+// TestDelegationAuditExtras verifies the projection from DelegationContext
+// to the SIEMEvent.Extra map. The scope list is deliberately omitted so a
+// single safety-decision event stays under the 8 KiB syslog line limit.
+func TestDelegationAuditExtras(t *testing.T) {
+	if got := DelegationAuditExtras(nil); got != nil {
+		t.Fatalf("DelegationAuditExtras(nil) = %v, want nil", got)
+	}
+
+	ctx := &DelegationContext{
+		Depth:        2,
+		IssuerChain:  []string{"finance-bot", "agent-a"},
+		RootIssuer:   "finance-bot",
+		ParentIssuer: "agent-a",
+		Scope:        []string{"read", "write"}, // must NOT appear in Extras
+		JTI:          "jti-123",
+	}
+	got := DelegationAuditExtras(ctx)
+	wantPairs := map[string]string{
+		"delegation.depth":         "2",
+		"delegation.root_issuer":   "finance-bot",
+		"delegation.parent_issuer": "agent-a",
+		"delegation.chain":         "finance-bot,agent-a",
+		"delegation.jti":           "jti-123",
+	}
+	for k, v := range wantPairs {
+		if got[k] != v {
+			t.Errorf("Extras[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+	if _, present := got["delegation.scope"]; present {
+		t.Fatalf("Extras must NOT include delegation.scope (syslog size rail)")
+	}
+	if got["delegation.depth"] == "" {
+		t.Fatal("depth must always be emitted, even zero-valued")
+	}
+}
+
+func TestDelegationAuditExtras_OmitsBlankFields(t *testing.T) {
+	ctx := &DelegationContext{Depth: 0}
+	got := DelegationAuditExtras(ctx)
+	if got["delegation.depth"] != "0" {
+		t.Fatalf("depth=0 should be emitted verbatim; got %q", got["delegation.depth"])
+	}
+	for _, key := range []string{"delegation.root_issuer", "delegation.parent_issuer", "delegation.chain", "delegation.jti"} {
+		if _, ok := got[key]; ok {
+			t.Errorf("key %q should be omitted when the source field is empty", key)
+		}
+	}
+}
+
+func TestDelegationAuditExtras_TrimsChainAndSkipsBlanks(t *testing.T) {
+	ctx := &DelegationContext{
+		Depth:       3,
+		IssuerChain: []string{"finance-bot", "  ", "agent-a"},
+	}
+	got := DelegationAuditExtras(ctx)
+	if got["delegation.chain"] != "finance-bot,agent-a" {
+		t.Fatalf("chain should drop blanks; got %q", got["delegation.chain"])
+	}
+}

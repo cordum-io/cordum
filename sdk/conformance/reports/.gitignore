@@ -1,0 +1,4 @@
+# Per-run JUnit XML reports are ephemeral — the aggregated summary.md
+# + summary.json are what gets committed so regressions show up in
+# PR diffs. Per-harness XMLs stay out of source.
+*.xml

@@ -26,9 +26,9 @@ export const FEATURE_FLAGS = {
     !isProd &&
     !isTest &&
     import.meta.env.VITE_EVALS_PAGE_MOCKS !== "false",
-  // Approval analytics widget ships dark in prod until the backend
-  // endpoint (gateway handler + Policy Decision Log) is fully in tree
-  // and exercised. Opt-in via VITE_APPROVAL_ANALYTICS=true so internal
-  // previews can flip it without a redeploy.
-  approvalAnalytics: !isProd || import.meta.env.VITE_APPROVAL_ANALYTICS === "true",
+  // Delegation dashboard remains dark until the issuance, kernel, and
+  // job-submit delegation flows are all in tree and the Phase 1-2 moat
+  // is proven. Opt-in explicitly for previews.
+  delegationDashboard:
+    import.meta.env.VITE_DELEGATION_DASHBOARD === "true",
 } as const;

@@ -103,6 +103,44 @@ func TestShadowEvalDurationBucketsCoverRealisticRange(t *testing.T) {
 	t.Fatal("duration histogram not found in gathered metrics")
 }
 
+// TestSafetyRuleDelegationMatchMetricRegistered asserts the delegation
+// deny counter is present in the default registry with a zero-baseline
+// series for every known deny field, so rate() queries on dashboards
+// don't suffer from "series first appears on incident" stair-steps.
+func TestSafetyRuleDelegationMatchMetricRegistered(t *testing.T) {
+	t.Parallel()
+	gathered, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	seenFields := map[string]bool{}
+	for _, mf := range gathered {
+		if mf.GetName() != "safety_rule_delegation_match_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			var field, outcome string
+			for _, lp := range m.GetLabel() {
+				switch lp.GetName() {
+				case "field":
+					field = lp.GetValue()
+				case "outcome":
+					outcome = lp.GetValue()
+				}
+			}
+			if outcome == "deny" {
+				seenFields[field] = true
+			}
+		}
+	}
+	wantFields := []string{"forbid_delegated", "max_depth", "issuers", "require_issuer", "required_scope"}
+	for _, want := range wantFields {
+		if !seenFields[want] {
+			t.Errorf("metric safety_rule_delegation_match_total{field=%q,outcome=\"deny\"} not pre-materialised", want)
+		}
+	}
+}
+
 func formatFloat(f float64) string {
 	// Rough but readable; we only need substring matches for the test.
 	switch {

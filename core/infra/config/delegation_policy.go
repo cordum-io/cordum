@@ -116,13 +116,45 @@ func (m *DelegationMatch) Validate() error {
 // A match helper returns true when the rule should FIRE for the
 // given (match, delegation) pair — consistent with the existing
 // PolicyMatch semantics throughout this package.
+// delegationMatchDenyCallback, when set by an observer package, is invoked
+// exactly once per evaluateDelegationMatch call that rejects a rule. The
+// `field` argument names the sub-field that short-circuited the rule
+// (forbid_delegated|max_depth|issuers|require_issuer|required_scope). The
+// callback seam keeps this package metric-library-agnostic — safetykernel's
+// metrics.go wires it to the Prometheus counter.
+var delegationMatchDenyCallback func(field string)
+
+// SetDelegationMatchDenyCallback registers (or clears, when passed nil)
+// the observer invoked whenever evaluateDelegationMatch rejects a rule.
+// Exported so safetykernel's metrics bootstrap can inject its Prometheus
+// collector without importing from this package at evaluator-run time.
+func SetDelegationMatchDenyCallback(cb func(field string)) {
+	delegationMatchDenyCallback = cb
+}
+
+// DelegationMatchDenyFields enumerates the sub-field names that
+// evaluateDelegationMatch may report when a rule is rejected. Exposed so
+// observer packages can pre-register label values with their collector and
+// so tests can enumerate expected values without hard-coding strings.
+var DelegationMatchDenyFields = [...]string{
+	"forbid_delegated",
+	"max_depth",
+	"issuers",
+	"require_issuer",
+	"required_scope",
+}
+
 func evaluateDelegationMatch(match *DelegationMatch, delegation *DelegationContext) bool {
 	if match == nil {
 		return true
 	}
 	// ForbidDelegated flips the direct-vs-delegated decision.
 	if match.ForbidDelegated {
-		return delegation == nil
+		if delegation == nil {
+			return true
+		}
+		reportDelegationDeny("forbid_delegated")
+		return false
 	}
 	// delegation==nil with non-Forbid fields set: the rule is
 	// neutral — per DoD, direct calls pass every delegation rule.
@@ -131,6 +163,7 @@ func evaluateDelegationMatch(match *DelegationMatch, delegation *DelegationConte
 	}
 	// Structured checks — every failing sub-field short-circuits.
 	if match.MaxDepth != nil && delegation.Depth > *match.MaxDepth {
+		reportDelegationDeny("max_depth")
 		return false
 	}
 	if len(match.Issuers) > 0 {
@@ -140,12 +173,14 @@ func evaluateDelegationMatch(match *DelegationMatch, delegation *DelegationConte
 		}
 		for _, chainID := range delegation.IssuerChain {
 			if _, ok := allowed[strings.TrimSpace(chainID)]; !ok {
+				reportDelegationDeny("issuers")
 				return false
 			}
 		}
 	}
 	if req := strings.TrimSpace(match.RequireIssuer); req != "" {
 		if !strings.EqualFold(strings.TrimSpace(delegation.RootIssuer), req) {
+			reportDelegationDeny("require_issuer")
 			return false
 		}
 	}
@@ -157,11 +192,55 @@ func evaluateDelegationMatch(match *DelegationMatch, delegation *DelegationConte
 		for _, required := range match.RequiredScope {
 			key := strings.ToLower(strings.TrimSpace(required))
 			if _, ok := have[key]; !ok {
+				reportDelegationDeny("required_scope")
 				return false
 			}
 		}
 	}
 	return true
+}
+
+func reportDelegationDeny(field string) {
+	if cb := delegationMatchDenyCallback; cb != nil {
+		cb(field)
+	}
+}
+
+// DelegationAuditExtras projects a verified DelegationContext into the
+// SIEMEvent.Extra map keys the audit trail should carry at safety-decision
+// emission time. Returns nil when the context is nil (direct call — no
+// delegation keys to emit). The scope list is deliberately omitted so a
+// single event stays under the 8 KiB syslog line limit; full scope is
+// captured in the decision log via the sibling policy-decision-log task.
+func DelegationAuditExtras(ctx *DelegationContext) map[string]string {
+	if ctx == nil {
+		return nil
+	}
+	out := map[string]string{
+		"delegation.depth": strconv.Itoa(ctx.Depth),
+	}
+	if root := strings.TrimSpace(ctx.RootIssuer); root != "" {
+		out["delegation.root_issuer"] = root
+	}
+	if parent := strings.TrimSpace(ctx.ParentIssuer); parent != "" {
+		out["delegation.parent_issuer"] = parent
+	}
+	if len(ctx.IssuerChain) > 0 {
+		trimmed := make([]string, 0, len(ctx.IssuerChain))
+		for _, id := range ctx.IssuerChain {
+			id = strings.TrimSpace(id)
+			if id != "" {
+				trimmed = append(trimmed, id)
+			}
+		}
+		if len(trimmed) > 0 {
+			out["delegation.chain"] = strings.Join(trimmed, ",")
+		}
+	}
+	if jti := strings.TrimSpace(ctx.JTI); jti != "" {
+		out["delegation.jti"] = jti
+	}
+	return out
 }
 
 // DelegationContextFromLabels reconstructs a delegation context from reserved

@@ -50,6 +50,20 @@ export interface CordumClientOptions {
   logger?: Pick<Console, "debug" | "warn" | "error">;
 }
 
+export interface RequestDetailedOptions {
+  query?: Record<string, unknown>;
+  headers?: Record<string, string>;
+  body?: unknown;
+  signal?: AbortSignal;
+}
+
+export interface RequestDetailedResponse<TData = unknown> {
+  status: number;
+  headers: Headers;
+  data: TData | undefined;
+  text: string;
+}
+
 type SessionAuthLike = AuthProvider & {
   handleUnauthorizedResponse?(response: Response): Promise<boolean>;
 };
@@ -59,6 +73,7 @@ export class CordumClient {
   readonly #auth: SessionAuthLike;
   readonly #raw: CordumFetchClient;
   readonly #rootAbortController = new AbortController();
+  readonly #requestFetch: typeof globalThis.fetch;
   readonly #streamFetch: typeof globalThis.fetch;
   readonly #logger: Pick<Console, "debug" | "warn" | "error"> | undefined;
   #closed = false;
@@ -92,6 +107,7 @@ export class CordumClient {
     });
     const authFetch = withAuth(timeoutFetch, this.#auth);
     const composedFetch = createRetryFetch(authFetch, options.retryPolicy);
+    this.#requestFetch = composedFetch;
     this.#raw = createGeneratedClient({
       baseUrl: options.baseUrl,
       fetch: composedFetch,
@@ -165,6 +181,67 @@ export class CordumClient {
       rootSignal: this.#rootAbortController.signal,
       ...options,
     });
+  }
+
+  public async requestDetailed<TData = unknown>(
+    method: HttpMethod,
+    path: string,
+    options: RequestDetailedOptions = {},
+    allowAuthRefresh = true,
+  ): Promise<RequestDetailedResponse<TData>> {
+    if (this.#closed) {
+      throw new DOMException("Cordum client closed", "AbortError");
+    }
+
+    const url = new URL(path, this.#baseUrl);
+    for (const [key, value] of Object.entries(options.query ?? {})) {
+      if (value === undefined || value === null) {
+        continue;
+      }
+      url.searchParams.set(key, String(value));
+    }
+
+    const headers = new Headers(options.headers ?? {});
+    let body: string | undefined;
+    if (options.body !== undefined) {
+      headers.set("content-type", headers.get("content-type") ?? "application/json");
+      body = JSON.stringify(options.body);
+    }
+
+    const response = await this.#requestFetch(url, {
+      method,
+      headers,
+      body,
+      signal: options.signal,
+    });
+
+    if (response.status === 401 && allowAuthRefresh && this.supportsUnauthorizedRefresh()) {
+      const refreshed = await this.#auth.handleUnauthorizedResponse?.(response);
+      if (refreshed) {
+        return this.requestDetailed<TData>(method, path, options, false);
+      }
+    }
+
+    if (!response.ok) {
+      await raiseForStatus(response);
+    }
+
+    const parsed = await parseResponseBody<TData>(response);
+    return {
+      status: response.status,
+      headers: response.headers,
+      data: parsed.data,
+      text: parsed.text,
+    };
+  }
+
+  public async request<TData = unknown>(
+    method: HttpMethod,
+    path: string,
+    options: RequestDetailedOptions = {},
+  ): Promise<TData | undefined> {
+    const response = await this.requestDetailed<TData>(method, path, options);
+    return response.data;
   }
 
   private createJobsNamespace() {
@@ -458,4 +535,28 @@ function createErrorResponse(response: Response, payload: unknown): Response {
     statusText: response.statusText,
     headers,
   });
+}
+
+async function parseResponseBody<TData>(response: Response): Promise<{ data: TData | undefined; text: string }> {
+  if (response.status === 204) {
+    return { data: undefined, text: "" };
+  }
+
+  const text = await response.text();
+  if (!text) {
+    return { data: undefined, text };
+  }
+
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (contentType.includes("application/json")) {
+    return {
+      data: JSON.parse(text) as TData,
+      text,
+    };
+  }
+
+  return {
+    data: text as TData,
+    text,
+  };
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/cordum/cordum/core/infra/env"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
+	"github.com/cordum/cordum/core/infra/tlsutil"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
@@ -853,6 +854,21 @@ func initJetStreamEnabled() bool {
 	}
 }
 
+// firstLeaf returns the parsed leaf certificate from a tls.Certificate, or
+// nil if tls.LoadX509KeyPair somehow didn't populate the chain. Used only
+// for metric emission; failing silently here is fine because the actual
+// keypair loaded successfully — metrics are observability, not correctness.
+func firstLeaf(cert tls.Certificate) *x509.Certificate {
+	if len(cert.Certificate) == 0 {
+		return nil
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return nil
+	}
+	return leaf
+}
+
 func natsTLSConfigFromEnv() (*tls.Config, error) {
 	caPath := strings.TrimSpace(os.Getenv(envNATSTLSCA))
 	certPath := strings.TrimSpace(os.Getenv(envNATSTLSCert))
@@ -900,6 +916,29 @@ func natsTLSConfigFromEnv() (*tls.Config, error) {
 		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
 		if err != nil {
 			return nil, fmt.Errorf("nats tls keypair: %w", err)
+		}
+		// Verify the client cert actually chains to the configured CA BEFORE
+		// we hand it to nats.Connect. Without this check, a CA/client drift
+		// (e.g. CA rotated without regenerating client cert) surfaces only
+		// as "remote error: tls: certificate required" from the server — the
+		// operator has no signal what's wrong. ChainError prints both cert
+		// DNs, both validity windows, and the exact cordumctl command to fix.
+		chainValid := true
+		if caPath != "" && !insecure {
+			if verr := tlsutil.VerifyChain(certPath, caPath, tlsutil.RoleClient); verr != nil {
+				chainValid = false
+				// Emit metrics before failing so a one-off restart loop
+				// still leaves a measurable signal in /metrics. The gauge
+				// goes to 0 and Grafana fires, even though this goroutine
+				// is about to return err and crash the service.
+				if leaf := firstLeaf(cert); leaf != nil {
+					tlsutil.EmitCertMetrics("nats", "client", certPath, leaf.NotAfter, false)
+				}
+				return nil, fmt.Errorf("nats tls: %w", verr)
+			}
+		}
+		if leaf := firstLeaf(cert); leaf != nil {
+			tlsutil.EmitCertMetrics("nats", "client", certPath, leaf.NotAfter, chainValid)
 		}
 		cfg.Certificates = []tls.Certificate{cert}
 	}

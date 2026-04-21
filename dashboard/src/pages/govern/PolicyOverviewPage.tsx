@@ -52,7 +52,6 @@ const LazyApprovalAnalyticsWidget = lazy(() =>
     default: m.ApprovalAnalyticsWidget,
   })),
 );
-import { FEATURE_FLAGS } from "@/config/flags";
 
 // ---------------------------------------------------------------------------
 // Tab definitions
@@ -221,11 +220,9 @@ function OverviewTabContent() {
       <GapAlertBanner tenant="default" />
       <ChainIntegrityWidget tenant="default" />
       <PostureSummary bundles={bundles} allRules={allRules} />
-      {FEATURE_FLAGS.approvalAnalytics && (
-        <Suspense fallback={null}>
-          <LazyApprovalAnalyticsWidget context="governance" defaultWindow="7d" />
-        </Suspense>
-      )}
+      <Suspense fallback={null}>
+        <LazyApprovalAnalyticsWidget context="governance" defaultWindow="7d" />
+      </Suspense>
       <PolicyFilterBar
         searchText={searchText}
         onSearchChange={setSearchText}

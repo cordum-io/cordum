@@ -49,10 +49,12 @@ func Auth(mux *http.ServeMux, eng *engine.Engine) {
 		sum := sha256.Sum256([]byte("sess:" + req.Username + ":" + req.Tenant))
 		token := "sess_" + hex.EncodeToString(sum[:12])
 		sess := &engine.Session{
-			Token:     token,
-			Principal: req.Username,
-			Tenant:    req.Tenant,
-			ExpiresAt: eng.Timestamp(900),
+			Token:        token,
+			SessionToken: token,
+			UserID:       req.Username,
+			Principal:    req.Username,
+			Tenant:       req.Tenant,
+			ExpiresAt:    eng.Timestamp(900),
 		}
 		eng.Mu().Lock()
 		eng.Sessions[token] = sess

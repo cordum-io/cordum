@@ -35,6 +35,7 @@ const JobDetailPage = lazy(() => import("./pages/JobDetailPage"));
 const AgentsPage = lazy(() => import("./pages/AgentsPage"));
 const AgentDetailPage = lazy(() => import("./pages/AgentDetailPage"));
 const AgentIdentityDetailPage = lazy(() => import("./pages/AgentIdentityDetailPage"));
+const DelegationsPage = lazy(() => import("./pages/DelegationsPage"));
 const ApprovalsPage = lazy(() => import("./pages/ApprovalsPage"));
 const ApprovalDetailPage = lazy(() => import("./pages/approvals/ApprovalDetailPage"));
 const WorkflowsPage = lazy(() => import("./pages/WorkflowsPage"));
@@ -119,6 +120,9 @@ function ProtectedRoutes() {
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/agents/:id" element={<AgentDetailPage />} />
           <Route path="/agents/identity/:id" element={<AgentIdentityDetailPage />} />
+          {FEATURE_FLAGS.delegationDashboard && (
+            <Route path="/delegations" element={<DelegationsPage />} />
+          )}
           <Route path="/jobs" element={<JobsPage />} />
           <Route path="/jobs/:id" element={<JobDetailPage />} />
 
