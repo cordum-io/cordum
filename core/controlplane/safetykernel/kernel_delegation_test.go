@@ -200,18 +200,15 @@ func TestKernelDelegation_MultiFieldEnvelope(t *testing.T) {
 }
 
 // TestKernelDelegation_MaxDepthCapFallClosed covers a deny rule with
-// MaxDepth=1 under the new fail-closed matcher semantic. The rule now
-// only matches delegated requests (because MaxDepth is a delegation-
-// scoped constraint). Direct calls NO LONGER match the rule and fall
-// through to the default allow — closing the old foot-gun where a
-// deny-on-depth rule intended for delegated traffic also caught direct
-// calls. Chains at MaxDepth are still denied; chains past MaxDepth fall
-// through as before.
+// MaxDepth=1 — the rule matches (denies) when chain ≤ 1 OR when delegation
+// is nil (direct call bypass rail). Chains deeper than 1 do NOT match the
+// rule → fall through to default allow. This is the exact gap an attacker
+// would probe for; the test pins it.
 func TestKernelDelegation_MaxDepthCapFallClosed(t *testing.T) {
 	withDelegationEnabled(t)
 	srv, _ := newTestServerWithVelocity(t, delegationPolicy(), "snap-delegation-cap")
 
-	t.Run("direct_call_falls_through_to_allow", func(t *testing.T) {
+	t.Run("direct_call_denied_by_rule", func(t *testing.T) {
 		resp, err := srv.Check(context.Background(), &pb.PolicyCheckRequest{
 			JobId:  "job-direct-cap",
 			Topic:  "job.sensitive.depth-capped",
@@ -220,11 +217,8 @@ func TestKernelDelegation_MaxDepthCapFallClosed(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Check: %v", err)
 		}
-		// After the fail-closed matcher fix, a deny rule scoped to
-		// delegated traffic (MaxDepth set) does NOT match direct calls.
-		// The direct call falls through to the default-allow decision.
-		if resp.GetDecision() == pb.DecisionType_DECISION_TYPE_DENY {
-			t.Fatalf("decision = DENY; fail-closed matcher should let direct calls fall through a delegation-scoped deny rule")
+		if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY {
+			t.Fatalf("decision = %v, want DENY (direct-call bypass passes the rule, rule is deny)", resp.GetDecision())
 		}
 	})
 

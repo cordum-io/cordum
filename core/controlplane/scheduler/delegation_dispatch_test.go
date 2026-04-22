@@ -38,11 +38,10 @@ func setSchedulerDelegationKeys(t *testing.T) delegation.SigningKey {
 
 func createSchedulerDelegationAgent(t *testing.T, agentStore *infraStore.AgentIdentityStore, tenant, id string, actions, topics []string) {
 	t.Helper()
-	_ = tenant // AgentIdentity has no TenantID field today; tenant
-	// scoping is enforced at the gateway middleware, not at the
-	// agent-identity store layer.
+
 	if _, err := agentStore.Create(context.Background(), infraStore.AgentIdentity{
 		ID:            id,
+		TenantID:      tenant,
 		Name:          id,
 		Owner:         "admin",
 		RiskTier:      "low",

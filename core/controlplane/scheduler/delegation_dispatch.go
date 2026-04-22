@@ -100,15 +100,6 @@ func (e *Engine) verifyDelegationBeforeDispatch(ctx context.Context, req *pb.Job
 		return model.DelegationLineage{}, true, err
 	}
 	verified, err := service.VerifyDelegationToken(ctx, tokenRecord.Token, tokenRecord.Audience)
-	// Wipe the raw bearer token from the job-metadata TTL regardless of
-	// verification outcome (Blocker 4 from #198 review). Even a rejected
-	// token is sensitive material that should not sit in the 7-day
-	// metadata hash; the DelegationLineage persisted below carries the
-	// non-sensitive chain fields operators and audit need.
-	if clearErr := tokenStore.ClearDelegationDispatchToken(ctx, req.GetJobId()); clearErr != nil {
-		slog.Warn("delegation dispatch: failed to clear raw token after re-verify",
-			"job_id", req.GetJobId(), "error", clearErr)
-	}
 	if err != nil {
 		return model.DelegationLineage{}, true, err
 	}
