@@ -17,8 +17,8 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.marketplace_pack import MarketplacePack
   from ..models.marketplace_catalog_catalogs_item import MarketplaceCatalogCatalogsItem
+  from ..models.marketplace_pack import MarketplacePack
 
 
 
@@ -45,8 +45,8 @@ class MarketplaceCatalog:
 
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.marketplace_pack import MarketplacePack
         from ..models.marketplace_catalog_catalogs_item import MarketplaceCatalogCatalogsItem
+        from ..models.marketplace_pack import MarketplacePack
         catalogs: Union[Unset, List[Dict[str, Any]]] = UNSET
         if not isinstance(self.catalogs, Unset):
             catalogs = []
@@ -91,8 +91,8 @@ class MarketplaceCatalog:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.marketplace_pack import MarketplacePack
         from ..models.marketplace_catalog_catalogs_item import MarketplaceCatalogCatalogsItem
+        from ..models.marketplace_pack import MarketplacePack
         d = src_dict.copy()
         catalogs = []
         _catalogs = d.pop("catalogs", UNSET)
