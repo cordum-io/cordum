@@ -228,28 +228,6 @@ func (s *server) workersFromRedisSnapshot() ([]registry.WorkerSummary, error) {
 	return snap.Workers, nil
 }
 
-// workerSummariesToHeartbeats converts snapshot summaries to the Heartbeat
-// protobuf format used by the workers API, preserving the API contract.
-func workerSummariesToHeartbeats(workers []registry.WorkerSummary) []*pb.Heartbeat {
-	out := make([]*pb.Heartbeat, len(workers))
-	for i, w := range workers {
-		out[i] = &pb.Heartbeat{
-			WorkerId:        w.WorkerID,
-			Pool:            w.Pool,
-			ActiveJobs:      w.ActiveJobs,
-			MaxParallelJobs: w.MaxParallelJobs,
-			Capabilities:    w.Capabilities,
-			CpuLoad:         w.CpuLoad,
-			GpuUtilization:  w.GpuUtilization,
-			MemoryLoad:      w.MemoryLoad,
-			Region:          w.Region,
-			Type:            w.Type,
-			Labels:          w.Labels,
-		}
-	}
-	return out
-}
-
 // Close releases resources owned by the server, notably the user store
 // connection. It is safe to call with a nil userStore.
 func (s *server) Close() {
@@ -1091,6 +1069,10 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("POST /api/v1/mcp/verify-signature", s.instrumented("/api/v1/mcp/verify-signature", s.handleMCPVerifySignature))
 	mux.HandleFunc("GET /api/v1/mcp/outbound", s.instrumented("/api/v1/mcp/outbound", s.handleMCPOutbound))
 	mux.HandleFunc("GET /api/v1/mcp/usage", s.instrumented("/api/v1/mcp/usage", s.handleMCPUsage))
+	// MCP tool visibility (dashboard consumes these via src/hooks/useAgentTools.ts):
+	mux.HandleFunc("GET /api/v1/mcp/tools", s.instrumented("/api/v1/mcp/tools", s.handleListMCPTools))
+	mux.HandleFunc("GET /api/v1/agents/{id}/tools", s.instrumented("/api/v1/agents/{id}/tools", s.handleAgentToolVisibility))
+	mux.HandleFunc("GET /api/v1/agents/{id}/denied-events", s.instrumented("/api/v1/agents/{id}/denied-events", s.handleAgentDeniedEvents))
 
 	// 12. Policy endpoints
 	mux.HandleFunc("POST /api/v1/policy/evaluate", s.instrumented("/api/v1/policy/evaluate", s.handlePolicyEvaluate))

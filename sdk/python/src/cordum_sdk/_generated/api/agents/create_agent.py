@@ -17,9 +17,12 @@ from typing import Dict
 def _get_kwargs(
     *,
     body: CreateAgentBody,
+    x_tenant_id: str,
 
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
+    headers["X-Tenant-ID"] = x_tenant_id
+
 
 
     
@@ -57,6 +60,12 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
     if response.status_code == 403:
         response_403 = cast(Any, None)
         return response_403
+    if response.status_code == 409:
+        response_409 = cast(Any, None)
+        return response_409
+    if response.status_code == 503:
+        response_503 = cast(Any, None)
+        return response_503
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -76,11 +85,13 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateAgentBody,
+    x_tenant_id: str,
 
 ) -> Response[Union[Any, CreateAgentResponse201]]:
     """ Create an agent identity
 
     Args:
+        x_tenant_id (str):
         body (CreateAgentBody):
 
     Raises:
@@ -94,6 +105,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+x_tenant_id=x_tenant_id,
 
     )
 
@@ -107,11 +119,13 @@ def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateAgentBody,
+    x_tenant_id: str,
 
 ) -> Optional[Union[Any, CreateAgentResponse201]]:
     """ Create an agent identity
 
     Args:
+        x_tenant_id (str):
         body (CreateAgentBody):
 
     Raises:
@@ -126,6 +140,7 @@ def sync(
     return sync_detailed(
         client=client,
 body=body,
+x_tenant_id=x_tenant_id,
 
     ).parsed
 
@@ -133,11 +148,13 @@ async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateAgentBody,
+    x_tenant_id: str,
 
 ) -> Response[Union[Any, CreateAgentResponse201]]:
     """ Create an agent identity
 
     Args:
+        x_tenant_id (str):
         body (CreateAgentBody):
 
     Raises:
@@ -151,6 +168,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+x_tenant_id=x_tenant_id,
 
     )
 
@@ -164,11 +182,13 @@ async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateAgentBody,
+    x_tenant_id: str,
 
 ) -> Optional[Union[Any, CreateAgentResponse201]]:
     """ Create an agent identity
 
     Args:
+        x_tenant_id (str):
         body (CreateAgentBody):
 
     Raises:
@@ -183,5 +203,6 @@ async def asyncio(
     return (await asyncio_detailed(
         client=client,
 body=body,
+x_tenant_id=x_tenant_id,
 
     )).parsed

@@ -29,7 +29,7 @@ func TestParseRiskTier(t *testing.T) {
 func TestRiskTierOrdering(t *testing.T) {
 	t.Parallel()
 
-	if !(RiskTierLow < RiskTierMedium && RiskTierMedium < RiskTierHigh && RiskTierHigh < RiskTierCritical) {
+	if RiskTierLow >= RiskTierMedium || RiskTierMedium >= RiskTierHigh || RiskTierHigh >= RiskTierCritical {
 		t.Fatalf("risk tier ordering broken")
 	}
 }

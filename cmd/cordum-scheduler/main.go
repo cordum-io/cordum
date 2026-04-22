@@ -384,8 +384,7 @@ func main() {
 		WithSchemaRegistry(schemaRegistry).
 		WithEntitlements(entitlementResolver).
 		WithContextClient(jobStore.Client()).
-		WithSaga(sagaManager).
-		WithAgentResolver(scheduler.NewAgentResolver(workerCredentialCache, store.NewAgentIdentityStoreFromClient(sagaRedis)))
+		WithSaga(sagaManager)
 	if dlqStore != nil {
 		engine.WithDLQSink(&redisDLQSink{
 			store:    dlqStore,

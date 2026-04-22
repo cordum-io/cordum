@@ -2067,7 +2067,7 @@ func TestSetStateWithContext_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create job store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 	jobID := "job-evt-1"
@@ -2128,7 +2128,7 @@ func TestSetStateWithContext_NilCtx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create job store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 	jobID := "job-evt-nil"
@@ -2161,7 +2161,7 @@ func TestSetState_StillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create job store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 	jobID := "job-evt-legacy"
@@ -2201,7 +2201,7 @@ func TestGetJobEvents_NonExistentJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create job store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	events, err := store.GetJobEvents(context.Background(), "job-does-not-exist")
 	if err != nil {
@@ -2221,7 +2221,7 @@ func TestGetJobEvents_ChronologicalOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create job store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 	jobID := "job-evt-order"
@@ -2266,7 +2266,7 @@ func TestGetJobEvents_MixedFormats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create job store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
 	jobID := "job-evt-mixed"

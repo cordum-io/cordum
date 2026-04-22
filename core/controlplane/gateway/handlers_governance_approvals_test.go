@@ -20,7 +20,6 @@ import (
 // override below.
 type approvalAnalyticsStore struct {
 	stubDecisionLogStore
-	approvals map[string]model.ApprovalRecord
 }
 
 // writeApprovalRecords primes the test's jobStore-equivalent. We

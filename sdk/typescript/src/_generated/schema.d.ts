@@ -42,13 +42,16 @@ export interface paths {
     "/api/v1/agents/{id}": {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
             path: {
                 id: string;
             };
             cookie?: never;
         };
-        /** Get an agent identity */
+        /** Get one agent identity */
         get: operations["getAgent"];
         /** Update an agent identity */
         put: operations["updateAgent"];
@@ -60,19 +63,128 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/{id}/delegate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Issue a delegation token from one agent to another */
+        post: operations["issueDelegationToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/{id}/delegations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List delegation tokens issued by a specific agent */
+        get: operations["listDelegationsForAgent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/{id}/denied-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recent mcp_tool_denied events for an agent identity
+         * @description Returns up to 50 of the most recent `mcp_tool_denied` audit events for the identity from the gateway's in-memory ring. Feeds the dashboard "recent denials" panel without requiring a SIEM pipeline.
+         */
+        get: operations["getAgentDeniedEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/{id}/stats": {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                id: string;
-            };
+            path?: never;
             cookie?: never;
         };
-        /** Get per-agent statistics */
+        /** Get per-agent runtime statistics */
         get: operations["getAgentStats"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/{id}/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List MCP tools visible to a specific agent identity
+         * @description Returns the subset of the MCP tool catalogue this agent identity can call after applying the identity-aware filter (risk tier + data classification). A revoked or suspended identity returns an empty list with an advisory `note` field rather than failing.
+         */
+        get: operations["getAgentToolVisibility"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/revoke-delegation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke a delegation token by JTI
+         * @description By default revoking a token cascades to every downstream delegation that extended it. Set `cascade=false` for narrow-scoped revocation.
+         */
+        post: operations["revokeDelegationToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/verify-delegation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify a delegation token for an expected audience */
+        post: operations["verifyDelegationToken"];
         delete?: never;
         options?: never;
         head?: never;
@@ -519,6 +631,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/delegations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List delegation tokens for the current tenant */
+        get: operations["listDelegations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/dlq": {
         parameters: {
             query?: never;
@@ -579,6 +708,206 @@ export interface paths {
         };
         /** List DLQ entries (paginated) */
         get: operations["listDLQPaginated"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evals/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List eval datasets */
+        get: operations["listEvalDatasets"];
+        put?: never;
+        /** Create a curated eval dataset */
+        post: operations["createEvalDataset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evals/datasets/{id}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get one eval dataset */
+        get: operations["getEvalDataset"];
+        /** Create a successor version from an existing dataset */
+        put: operations["createEvalDatasetSuccessor"];
+        post?: never;
+        /** Delete an eval dataset */
+        delete: operations["deleteEvalDataset"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evals/datasets/{id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run an eval dataset against the active or candidate policy
+         * @description Synchronous for ≤500 entries (returns 200 with full result), asynchronous for larger datasets (returns 202 with run_id; poll GET /evals/runs/{runId}).
+         */
+        post: operations["runEvalDataset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evals/datasets/{id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List historical runs for one eval dataset */
+        get: operations["listEvalRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evals/datasets/by-name/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List versions for an eval dataset family */
+        get: operations["listEvalDatasetVersions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evals/datasets/by-name/{name}/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a dataset by name and version */
+        get: operations["getEvalDatasetByNameVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evals/datasets/from-incidents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Derive an eval dataset from governance incidents */
+        post: operations["createEvalDatasetFromIncidents"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/evals/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        /** Get one eval run */
+        get: operations["getEvalRun"];
+        put?: never;
+        post?: never;
+        /** Delete a historical eval run */
+        delete: operations["deleteEvalRun"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/governance/approvals/analytics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Approval analytics (time-to-approve, auto vs manual, bottlenecks)
+         * @description Aggregated approval KPIs for the requested window. Consumes the
+         *     Policy Decision Log as the source of truth, pairs each
+         *     require_approval verdict with its ApprovalRecord, and computes
+         *     per-group breakdowns sorted with the slowest approvers first so
+         *     bottlenecks surface at the top.
+         *
+         *     Requires the `governance.read` permission.
+         *
+         *     Responses are memoised per `(tenant, window, group_by, limit)`
+         *     tuple for 30 seconds so dashboards can poll without thrashing
+         *     the decision-log index.
+         */
+        get: operations["getApprovalAnalytics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/governance/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Query the governance decision log */
+        get: operations["listGovernanceDecisions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -864,6 +1193,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/mcp/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List MCP tool-call approvals */
+        get: operations["listMcpApprovals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mcp/approvals/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one MCP approval record */
+        get: operations["getMcpApproval"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mcp/approvals/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve an MCP tool-call approval request */
+        post: operations["approveMcpApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mcp/approvals/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject an MCP tool-call approval request */
+        post: operations["rejectMcpApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/mcp/message": {
         parameters: {
             query?: never;
@@ -875,6 +1272,26 @@ export interface paths {
         put?: never;
         /** Send a JSON-RPC 2.0 message to MCP server */
         post: operations["mcpMessageV1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mcp/outbound": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List outbound MCP signed-call events
+         * @description Walks the tenant's audit chain stream and returns observed outbound MCP calls, filtered by time range + subject. Admin-only.
+         */
+        get: operations["listMcpOutbound"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -913,6 +1330,66 @@ export interface paths {
         get: operations["mcpStatusV1"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mcp/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List MCP tools visible to an agent or the full catalogue
+         * @description Returns the MCP tool catalogue. Without an `agent_id` query parameter, returns the unfiltered admin view. With `agent_id`, returns the subset of tools the identity is entitled to call after applying the MCP risk- tier and data-classification filter.
+         */
+        get: operations["listMcpTools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mcp/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Outbound MCP usage buckets from the audit chain
+         * @description Walks the tenant's audit chain and buckets outbound MCP calls by subject, method, and tool for usage analytics. Admin-only.
+         */
+        get: operations["getMcpUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mcp/verify-signature": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify an outbound MCP signature (admin-gated)
+         * @description Verify an ECDSA signature over an MCP request against the trusted-key store. Admin-only. See docs/mcp/outbound-signing.md.
+         */
+        post: operations["verifyMcpSignature"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2167,6 +2644,45 @@ export interface components {
             scopes?: string[];
             usageCount?: number;
         };
+        ApprovalAnalyticsGroup: {
+            approved: number;
+            auto_count: number;
+            avg_ttar_seconds?: number | null;
+            expired: number;
+            /** @description Group identifier (rule id, agent id, or topic string). */
+            key: string;
+            label: string;
+            manual_count: number;
+            p90_seconds?: number | null;
+            rejected: number;
+            total: number;
+        };
+        ApprovalAnalyticsResponse: {
+            groups?: components["schemas"]["ApprovalAnalyticsGroup"][];
+            summary: components["schemas"]["ApprovalAnalyticsSummary"];
+            window: {
+                /** Format: date-time */
+                since: string;
+                /** Format: date-time */
+                until: string;
+            };
+        };
+        ApprovalAnalyticsSummary: {
+            approved: number;
+            /** @description Resolutions driven by lifecycle events (expire/invalidate/repair), not human decision. */
+            auto_resolved: number;
+            /** @description Null when no approvals resolved in the window — distinguishes "no data" from "all resolved in 0 s". */
+            avg_time_to_approve_seconds?: number | null;
+            expired: number;
+            /** @description Resolutions where a human approver entered approve or reject. */
+            manual_resolved: number;
+            p50?: number | null;
+            p90?: number | null;
+            p99?: number | null;
+            rejected: number;
+            /** @description Total decisions with verdict=require_approval in the window (includes still-pending). */
+            total: number;
+        };
         ApprovalDecisionRequest: {
             note?: string;
             reason: string;
@@ -2299,6 +2815,64 @@ export interface components {
             tenant?: string;
             username: string;
         };
+        DelegationChainLink: {
+            agent_id: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: date-time */
+            issued_at: string;
+            issued_by: string;
+            jti: string;
+            parent_jti?: string | null;
+        };
+        DelegationLineageChainLink: {
+            agent_id?: string;
+            /** Format: date-time */
+            expires_at?: string;
+            /** Format: date-time */
+            issued_at?: string;
+            jti?: string;
+            parent_jti?: string;
+        };
+        DelegationLineageView: {
+            audience?: string;
+            chain?: components["schemas"]["DelegationLineageChainLink"][];
+            chain_depth?: number;
+            /** Format: date-time */
+            expires_at?: string;
+            jti?: string;
+            parent_issuer?: string;
+            reverified_at_dispatch?: boolean;
+            root_issuer?: string;
+            scope?: string[];
+            /** Format: int64 */
+            verified_at?: number;
+        };
+        DelegationListResponse: {
+            items: components["schemas"]["DelegationView"][];
+            next_cursor?: string | null;
+        };
+        DelegationView: {
+            allowed_actions?: string[];
+            allowed_topics?: string[];
+            /** @description Target agent the token was minted for. */
+            audience: string;
+            chain?: components["schemas"]["DelegationChainLink"][];
+            chain_depth: number;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: date-time */
+            issued_at: string;
+            /** @description Root issuer for the delegation chain. */
+            issuer: string;
+            jti: string;
+            revoked: boolean;
+            /** Format: date-time */
+            revoked_at?: string | null;
+            revoked_reason?: string | null;
+            /** @description Agent that issued the token. */
+            subject: string;
+        };
         DLQEntry: {
             error?: string;
             /** Format: date-time */
@@ -2320,8 +2894,119 @@ export interface components {
             /** @description HTTP status code */
             status: number;
         };
+        EvalEntryResult: {
+            actual_decision?: string;
+            /** @enum {string} */
+            drift_direction: "escalated" | "relaxed" | "unchanged";
+            entry_id: string;
+            error?: string;
+            expected_decision?: string;
+            input?: {
+                [key: string]: unknown;
+            };
+            reason?: string;
+            rule_id?: string;
+            /**
+             * @description regression = expected was deny/require_approval/throttle/allow_with_constraints AND actual is allow
+             * @enum {string}
+             */
+            status: "pass" | "fail" | "regression" | "error";
+        };
+        EvalRunAcceptedResponse: {
+            /** Format: date-time */
+            completed_at?: string;
+            dataset_id?: string;
+            dataset_name?: string;
+            dataset_version?: number;
+            error?: string;
+            policy_snapshot?: string;
+            poll_url?: string;
+            /** Format: uuid */
+            run_id: string;
+            /** Format: date-time */
+            started_at?: string;
+            /** @enum {string} */
+            status: "pending" | "running" | "failed";
+            tenant?: string;
+        };
+        EvalRunRequest: {
+            candidate_bundle_id?: string;
+            candidate_content?: string;
+            max_entries?: number;
+            use_current_policy?: boolean;
+        };
+        EvalRunResult: {
+            /** Format: date-time */
+            completed_at: string;
+            dataset_id: string;
+            dataset_name: string;
+            dataset_version: number;
+            entries: components["schemas"]["EvalEntryResult"][];
+            policy_snapshot: string;
+            /** Format: uuid */
+            run_id: string;
+            /** Format: date-time */
+            started_at: string;
+            summary: components["schemas"]["EvalRunSummary"];
+            tenant: string;
+        };
+        EvalRunsResponse: {
+            items: components["schemas"]["EvalRunResult"][];
+            next_cursor?: string;
+        };
+        EvalRunSummary: {
+            errored: number;
+            failed: number;
+            passed: number;
+            regressions: number;
+            /** Format: float */
+            score_percent?: number | null;
+            total: number;
+        };
         GenericObject: {
             [key: string]: unknown;
+        };
+        /**
+         * @description Pack-signature verification outcome computed by the gateway at
+         *     install time. Never client-supplied — the gateway discards any
+         *     `verification` field on the install payload and computes its own.
+         *     Pre-existing installs default to {signed: false} when this object
+         *     is absent.
+         */
+        InstalledPackVerification: {
+            /**
+             * @description True when a valid Cordum counter-signature envelope
+             *     (pack.yaml.sig.cordum) is present and verified against the
+             *     embedded Cordum counter-signing key.
+             */
+            has_cordum_counter_sig?: boolean;
+            /** @description Key id of the Ed25519 public key that verified the pack. */
+            kid?: string;
+            /** @description Canonical manifest version that was signed. */
+            pack_signature_version?: number;
+            /** @description Publisher identifier derived from the trusted key's metadata. */
+            publisher_id?: string;
+            /**
+             * @description Algorithm advertised by the verified envelope. Always ed25519 today.
+             * @enum {string}
+             */
+            signature_algorithm?: "ed25519";
+            /**
+             * @description True when the gateway successfully verified the pack against
+             *     a trusted publisher key at install time.
+             */
+            signed: boolean;
+            /**
+             * Format: date-time
+             * @description RFC3339 timestamp of the server-side verification.
+             */
+            verified_at?: string;
+            /**
+             * @description Non-fatal warnings the gateway wants to surface alongside the
+             *     verification outcome (for example, "pack accepted unsigned —
+             *     gateway strict mode disabled").
+             */
+            warnings?: string[];
         };
         JobDetail: components["schemas"]["JobSummary"] & {
             adapter_id?: string;
@@ -2332,6 +3017,7 @@ export interface components {
             /** Format: date-time */
             created_at?: string;
             decisions?: components["schemas"]["SafetyDecision"][] | null;
+            delegation?: components["schemas"]["DelegationLineageView"];
             error?: string | null;
             labels?: {
                 [key: string]: string;
@@ -2517,6 +3203,12 @@ export interface components {
             status?: "ACTIVE" | "INACTIVE" | "UNINSTALLED" | "ERROR";
             /** Format: date-time */
             updated_at?: string;
+            /**
+             * @description Server-verified pack signature state. Pre-existing installs
+             *     from before signature verification shipped read as absent;
+             *     clients SHOULD render an absent value as {signed: false}.
+             */
+            verification?: components["schemas"]["InstalledPackVerification"];
             version?: string;
         };
         PackVerification: {
@@ -3194,44 +3886,82 @@ export interface operations {
     };
     listAgents: {
         parameters: {
-            query?: never;
-            header?: never;
+            query?: {
+                cursor?: string;
+                limit?: number;
+                risk_tier?: string;
+                status?: string;
+                team?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Agents */
+            /** @description Agent identity page */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
-                        [key: string]: unknown;
+                        cursor?: string;
+                        items?: {
+                            allowed_pools?: string[];
+                            allowed_tools?: string[];
+                            allowed_topics?: string[];
+                            created_at?: string;
+                            data_classifications?: string[];
+                            description?: string;
+                            id?: string;
+                            /** Format: int64 */
+                            last_active?: number;
+                            name?: string;
+                            owner?: string;
+                            risk_tier?: string;
+                            status?: string;
+                            team?: string;
+                            updated_at?: string;
+                        }[];
                     };
                 };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     createAgent: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
             path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
                 "application/json": {
-                    [key: string]: unknown;
+                    allowed_pools?: string[];
+                    allowed_tools?: string[];
+                    allowed_topics?: string[];
+                    data_classifications?: string[];
+                    description?: string;
+                    name: string;
+                    owner: string;
+                    risk_tier: string;
+                    team?: string;
                 };
             };
         };
         responses: {
-            /** @description Created */
+            /** @description Agent identity created */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -3245,12 +3975,17 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     getAgent: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
             path: {
                 id: string;
             };
@@ -3258,7 +3993,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Agent */
+            /** @description Agent identity */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3272,12 +4007,16 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     updateAgent: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
             path: {
                 id: string;
             };
@@ -3286,12 +4025,21 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    [key: string]: unknown;
+                    allowed_pools?: string[];
+                    allowed_tools?: string[];
+                    allowed_topics?: string[];
+                    data_classifications?: string[];
+                    description?: string;
+                    name?: string;
+                    owner?: string;
+                    risk_tier?: string;
+                    status?: string;
+                    team?: string;
                 };
             };
         };
         responses: {
-            /** @description Updated */
+            /** @description Agent identity updated */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3306,12 +4054,16 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     deleteAgent: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
             path: {
                 id: string;
             };
@@ -3319,7 +4071,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Deleted */
+            /** @description Agent identity deleted */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -3329,12 +4081,73 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
-    getAgentStats: {
+    issueDelegationToken: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    allowed_actions?: string[];
+                    allowed_topics?: string[];
+                    parent_token?: string;
+                    target_agent_id: string;
+                    /** Format: int64 */
+                    ttl_seconds?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Delegation token issued */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        chain_depth?: number;
+                        expires_at?: string;
+                        jti?: string;
+                        kid?: string;
+                        token?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listDelegationsForAgent: {
+        parameters: {
+            query?: {
+                before_expiry?: string;
+                cursor?: string;
+                limit?: number;
+                scope?: string;
+                since_issued?: string;
+                status?: "active" | "revoked" | "expired" | "all";
+                until_issued?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
             path: {
                 id: string;
             };
@@ -3342,7 +4155,65 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Stats */
+            /** @description Delegation token page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DelegationListResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAgentDeniedEvents: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Most recent denial records for the agent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getAgentStats: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Runtime statistics for the requested agent */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3356,6 +4227,124 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAgentToolVisibility: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tool list filtered for the agent identity */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    revokeDelegationToken: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description When true, revoke downstream delegations that extended this token.
+                     * @default true
+                     */
+                    cascade?: boolean;
+                    jti: string;
+                    reason?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Delegation token revoked */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Number of downstream delegations revoked in addition to the root token. */
+                        cascaded_count: number;
+                        jti: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    verifyDelegationToken: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    expected_audience?: string;
+                    token: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Delegation verification result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        allowed_actions?: string[];
+                        allowed_topics?: string[];
+                        aud?: string;
+                        chain_depth?: number;
+                        delegation_chain?: components["schemas"]["DelegationChainLink"][];
+                        error_code?: string;
+                        sub?: string;
+                        valid?: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     listApprovals: {
@@ -4255,6 +5244,41 @@ export interface operations {
             500: components["responses"]["InternalServerError"];
         };
     };
+    listDelegations: {
+        parameters: {
+            query?: {
+                before_expiry?: string;
+                cursor?: string;
+                limit?: number;
+                scope?: string;
+                since_issued?: string;
+                status?: "active" | "revoked" | "expired" | "all";
+                until_issued?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Delegation token page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DelegationListResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     listDLQ: {
         parameters: {
             query?: {
@@ -4370,6 +5394,578 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             500: components["responses"]["InternalServerError"];
+        };
+    };
+    listEvalDatasets: {
+        parameters: {
+            query?: {
+                created_after?: string;
+                created_before?: string;
+                cursor?: string;
+                limit?: number;
+                name_prefix?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Eval dataset page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items?: {
+                            [key: string]: unknown;
+                        }[];
+                        next_cursor?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createEvalDataset: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    description?: string;
+                    entries: {
+                        expected_decision?: string;
+                        id?: string;
+                        input?: {
+                            [key: string]: unknown;
+                        };
+                        metadata?: {
+                            [key: string]: string;
+                        };
+                        notes?: string;
+                        rule_id?: string;
+                        source?: string;
+                        source_ref?: string;
+                    }[];
+                    name: string;
+                    version: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Eval dataset created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getEvalDataset: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Eval dataset */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createEvalDatasetSuccessor: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    description?: string;
+                    entries?: {
+                        [key: string]: unknown;
+                    }[];
+                    version?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Successor dataset created */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    deleteEvalDataset: {
+        parameters: {
+            query?: {
+                force?: boolean;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dataset deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    runEvalDataset: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["EvalRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Run completed synchronously */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunResult"];
+                };
+            };
+            /** @description Run accepted for asynchronous processing */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunAcceptedResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listEvalRuns: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                has_regression?: boolean;
+                limit?: number;
+                min_score?: number;
+                since?: string;
+                until?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Run history page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listEvalDatasetVersions: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dataset versions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items?: {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getEvalDatasetByNameVersion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                name: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Eval dataset */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createEvalDatasetFromIncidents: {
+        parameters: {
+            query?: {
+                dry_run?: boolean;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    agent_id?: string;
+                    description?: string;
+                    dry_run?: boolean;
+                    max_entries?: number;
+                    name: string;
+                    rule_id?: string;
+                    since?: string;
+                    tenant?: string;
+                    topic?: string;
+                    until?: string;
+                    verdicts?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Dry-run extraction result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Eval dataset created from incidents */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getEvalRun: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Completed run result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunResult"];
+                };
+            };
+            /** @description Run is still pending or running */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunAcceptedResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    deleteEvalRun: {
+        parameters: {
+            query?: {
+                force?: boolean;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Eval run deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getApprovalAnalytics: {
+        parameters: {
+            query?: {
+                /** @description Breakdown axis; `overall` returns only the window-wide summary. */
+                group_by?: "overall" | "rule" | "agent" | "topic";
+                /** @description Top-N rows per group (bounded at 50). Ignored when `group_by=overall`. */
+                limit?: number;
+                /** @description Inclusive lower bound (RFC3339 or unix milliseconds). Defaults to 24h before `until`. */
+                since?: string;
+                /** @description Exclusive upper bound (RFC3339 or unix milliseconds). Defaults to now. */
+                until?: string;
+                /** @description Shorthand for `since`/`until` (wins when supplied). One of `24h`, `7d`, `30d`. */
+                window?: "24h" | "7d" | "30d";
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Approval analytics response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalAnalyticsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description Decision log store unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listGovernanceDecisions: {
+        parameters: {
+            query?: {
+                agent_id?: string;
+                cursor?: string;
+                limit?: number;
+                rule_id?: string;
+                since?: string;
+                topic?: string;
+                until?: string;
+                verdict?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Governance decision page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items?: {
+                            agent_id?: string;
+                            approval_decision?: string;
+                            approval_status?: string;
+                            constraints?: {
+                                [key: string]: unknown;
+                            };
+                            job_id?: string;
+                            matched_rule?: string;
+                            policy_version?: string;
+                            reason?: string;
+                            timestamp?: string;
+                            topic?: string;
+                            verdict?: string;
+                        }[];
+                        next_cursor?: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     healthCheckV1: {
@@ -4885,6 +6481,145 @@ export interface operations {
             502: components["responses"]["BadGateway"];
         };
     };
+    listMcpApprovals: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+                status?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description MCP approval page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items?: {
+                            [key: string]: unknown;
+                        }[];
+                        /** Format: uint64 */
+                        next_cursor?: number;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getMcpApproval: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description MCP approval record */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    approveMcpApproval: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ApprovalDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description MCP approval resolved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    rejectMcpApproval: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ApprovalDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description MCP approval resolved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     mcpMessageV1: {
         parameters: {
             query?: never;
@@ -4911,6 +6646,39 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listMcpOutbound: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+                since?: string;
+                until?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Outbound MCP event page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             503: components["responses"]["ServiceUnavailable"];
@@ -4965,6 +6733,99 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+        };
+    };
+    listMcpTools: {
+        parameters: {
+            query?: {
+                agent_id?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tool list for the requested scope */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getMcpUsage: {
+        parameters: {
+            query?: {
+                group_by?: "subject" | "method" | "tool";
+                since?: string;
+                until?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Usage buckets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    verifyMcpSignature: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Verification verdict */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     getMemory: {
@@ -7608,12 +9469,6 @@ export interface operations {
     };
 }
 export enum ApiPaths {
-    listAgents = "/api/v1/agents",
-    createAgent = "/api/v1/agents",
-    getAgent = "/api/v1/agents/{id}",
-    updateAgent = "/api/v1/agents/{id}",
-    deleteAgent = "/api/v1/agents/{id}",
-    getAgentStats = "/api/v1/agents/{id}/stats",
     getAuthConfig = "/api/v1/auth/config",
     login = "/api/v1/auth/login",
     getSession = "/api/v1/auth/session",
@@ -7752,5 +9607,40 @@ export enum ApiPaths {
     replayPolicyDecisions = "/api/v1/policy/replay",
     mcpSSEV1 = "/api/v1/mcp/sse",
     mcpMessageV1 = "/api/v1/mcp/message",
-    mcpStatusV1 = "/api/v1/mcp/status"
+    listAgents = "/api/v1/agents",
+    createAgent = "/api/v1/agents",
+    getAgent = "/api/v1/agents/{id}",
+    updateAgent = "/api/v1/agents/{id}",
+    deleteAgent = "/api/v1/agents/{id}",
+    getAgentStats = "/api/v1/agents/{id}/stats",
+    issueDelegationToken = "/api/v1/agents/{id}/delegate",
+    verifyDelegationToken = "/api/v1/agents/verify-delegation",
+    revokeDelegationToken = "/api/v1/agents/revoke-delegation",
+    listDelegationsForAgent = "/api/v1/agents/{id}/delegations",
+    listDelegations = "/api/v1/delegations",
+    listGovernanceDecisions = "/api/v1/governance/decisions",
+    listMcpApprovals = "/api/v1/mcp/approvals",
+    getMcpApproval = "/api/v1/mcp/approvals/{id}",
+    approveMcpApproval = "/api/v1/mcp/approvals/{id}/approve",
+    rejectMcpApproval = "/api/v1/mcp/approvals/{id}/reject",
+    verifyMcpSignature = "/api/v1/mcp/verify-signature",
+    listMcpOutbound = "/api/v1/mcp/outbound",
+    getMcpUsage = "/api/v1/mcp/usage",
+    listMcpTools = "/api/v1/mcp/tools",
+    getAgentToolVisibility = "/api/v1/agents/{id}/tools",
+    getAgentDeniedEvents = "/api/v1/agents/{id}/denied-events",
+    createEvalDatasetFromIncidents = "/api/v1/evals/datasets/from-incidents",
+    listEvalDatasets = "/api/v1/evals/datasets",
+    createEvalDataset = "/api/v1/evals/datasets",
+    listEvalDatasetVersions = "/api/v1/evals/datasets/by-name/{name}",
+    getEvalDatasetByNameVersion = "/api/v1/evals/datasets/by-name/{name}/versions/{version}",
+    getEvalDataset = "/api/v1/evals/datasets/{id}",
+    createEvalDatasetSuccessor = "/api/v1/evals/datasets/{id}",
+    deleteEvalDataset = "/api/v1/evals/datasets/{id}",
+    runEvalDataset = "/api/v1/evals/datasets/{id}/run",
+    listEvalRuns = "/api/v1/evals/datasets/{id}/runs",
+    getEvalRun = "/api/v1/evals/runs/{run_id}",
+    deleteEvalRun = "/api/v1/evals/runs/{run_id}",
+    mcpStatusV1 = "/api/v1/mcp/status",
+    getApprovalAnalytics = "/api/v1/governance/approvals/analytics"
 }

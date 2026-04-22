@@ -19,8 +19,8 @@ if TYPE_CHECKING:
   from ..models.get_approval_context_response_200_blast_radius import GetApprovalContextResponse200BlastRadius
   from ..models.get_approval_context_response_200_prior_approvals_item import GetApprovalContextResponse200PriorApprovalsItem
   from ..models.get_approval_context_response_200_constraints_type_0 import GetApprovalContextResponse200ConstraintsType0
-  from ..models.get_approval_context_response_200_policy_snapshot_summary import GetApprovalContextResponse200PolicySnapshotSummary
   from ..models.get_approval_context_response_200_approval import GetApprovalContextResponse200Approval
+  from ..models.get_approval_context_response_200_policy_snapshot_summary import GetApprovalContextResponse200PolicySnapshotSummary
 
 
 
@@ -58,8 +58,8 @@ class GetApprovalContextResponse200:
         from ..models.get_approval_context_response_200_blast_radius import GetApprovalContextResponse200BlastRadius
         from ..models.get_approval_context_response_200_prior_approvals_item import GetApprovalContextResponse200PriorApprovalsItem
         from ..models.get_approval_context_response_200_constraints_type_0 import GetApprovalContextResponse200ConstraintsType0
-        from ..models.get_approval_context_response_200_policy_snapshot_summary import GetApprovalContextResponse200PolicySnapshotSummary
         from ..models.get_approval_context_response_200_approval import GetApprovalContextResponse200Approval
+        from ..models.get_approval_context_response_200_policy_snapshot_summary import GetApprovalContextResponse200PolicySnapshotSummary
         approval: Union[Unset, Dict[str, Any]] = UNSET
         if not isinstance(self.approval, Unset):
             approval = self.approval.to_dict()
@@ -126,8 +126,8 @@ class GetApprovalContextResponse200:
         from ..models.get_approval_context_response_200_blast_radius import GetApprovalContextResponse200BlastRadius
         from ..models.get_approval_context_response_200_prior_approvals_item import GetApprovalContextResponse200PriorApprovalsItem
         from ..models.get_approval_context_response_200_constraints_type_0 import GetApprovalContextResponse200ConstraintsType0
-        from ..models.get_approval_context_response_200_policy_snapshot_summary import GetApprovalContextResponse200PolicySnapshotSummary
         from ..models.get_approval_context_response_200_approval import GetApprovalContextResponse200Approval
+        from ..models.get_approval_context_response_200_policy_snapshot_summary import GetApprovalContextResponse200PolicySnapshotSummary
         d = src_dict.copy()
         _approval = d.pop("approval", UNSET)
         approval: Union[Unset, GetApprovalContextResponse200Approval]

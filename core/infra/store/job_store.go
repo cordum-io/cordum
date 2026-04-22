@@ -2674,6 +2674,20 @@ func (s *RedisJobStore) ResolveApproval(ctx context.Context, params ApprovalReso
 		if resolvedRecord.PublishTarget != "" {
 			fields[metaFieldApprovalPublishTarget] = string(resolvedRecord.PublishTarget)
 		}
+		// On approve, rotate the SafetyDecisionRecord.PolicySnapshot to the
+		// snapshot under which the human actually approved. The gateway has
+		// already refreshed params.PolicySnapshot to the current snapshot if
+		// it detected drift, so anchoring the stored safety record here keeps
+		// the scheduler's fast-path comparison against safety.PolicySnapshot
+		// aligned with the approval_snapshot label written onto the request.
+		if params.Decision == model.ApprovalDecisionApprove && strings.TrimSpace(resolvedRecord.PolicySnapshot) != "" {
+			fields[metaFieldSafetySnapshot] = resolvedRecord.PolicySnapshot
+			// Keep the returned SafetyRecord aligned with what we just wrote
+			// to Redis. Callers (e.g. the approval publish step) that read
+			// ApprovalResolutionResult.SafetyRecord.PolicySnapshot must see
+			// the rotated snapshot, not the pre-rotation value.
+			safetyRecord.PolicySnapshot = resolvedRecord.PolicySnapshot
+		}
 		if len(req.Labels) > 0 {
 			if labelsJSON, err := json.Marshal(req.Labels); err == nil {
 				fields[metaFieldLabels] = string(labelsJSON)

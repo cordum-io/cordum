@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
@@ -310,7 +312,7 @@ func (s *server) syncApprovalQueueDepth(ctx context.Context) {
 }
 
 func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.workflowEng) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermWorkflowsWrite, []string{"admin"}, s.workflowEng) {
 		return
 	}
 	runID, ok := requirePathParam(w, r, "run_id")
@@ -361,7 +363,7 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.jobStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore) {
 		return
 	}
 	s.syncApprovalQueueDepth(r.Context())
@@ -741,7 +743,7 @@ func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.Appr
 }
 
 func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.jobStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore) {
 		return
 	}
 	var body approvalRepairRequest
@@ -898,7 +900,7 @@ func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.jobStore, s.bus) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore, s.bus) {
 		return
 	}
 	var body struct {
@@ -1046,6 +1048,26 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictStaleRequest, "approval job hash unavailable")}
 			return nil
 		}
+		// Lock in the JobHash to match what the reconciler will compute from
+		// the currently stored request. Without this, drift between the
+		// scheduler's post-mutation hash (computed after effective-config /
+		// constraints were attached to req.Env) and the reconciler's
+		// hashApprovalJobRequest(stored-req) can cause the approval to be
+		// auto-invalidated as stale_request after a successful approve.
+		if lockedHash, err := scheduler.HashJobRequest(req); err == nil && lockedHash != "" {
+			if lockedHash != safetyRecord.JobHash {
+				safetyRecord.JobHash = lockedHash
+				if err := s.jobStore.SetSafetyDecision(ctx, jobID, safetyRecord); err != nil {
+					// Fail the approval: proceeding would publish a job with a
+					// newer JobHash than the stored SafetyDecisionRecord, which
+					// the reconciler would auto-invalidate as stale_request.
+					s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r),
+						fmt.Sprintf("failed to persist locked job hash: %v", err))
+					result = handlerResult{http.StatusServiceUnavailable, "failed to persist approval state"}
+					return nil
+				}
+			}
+		}
 		topic := strings.TrimSpace(req.GetTopic())
 		isWorkflowGate := topic == capsdk.SubjectApprovalGate || topic == capsdk.SubjectWorkflowApprovalGate
 		if !isWorkflowGate && req.Labels != nil && strings.EqualFold(strings.TrimSpace(req.Labels["gate_type"]), "workflow_approval") {
@@ -1081,13 +1103,126 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}
 			if snapshotBase(currentSnapshot) != snapshotBase(policySnapshot) {
-				// Policy changed since the approval was created. The human is
-				// explicitly choosing to approve after reviewing the request —
-				// refresh the snapshot and proceed. Audit trail records the
-				// discrepancy for compliance.
-				s.appendAuditEntryNamed(ctx, "approve_snapshot_refreshed", "job", jobID, "", policyActorID(r), policyRole(r),
-					fmt.Sprintf("policy snapshot refreshed during approval (was=%s now=%s)", snapshotBase(policySnapshot), snapshotBase(currentSnapshot)))
-				policySnapshot = currentSnapshot
+				// Policy changed since the approval was created. Re-evaluate
+				// the CURRENT policy against the stored request before
+				// admitting the human approval — without this check, a job
+				// that the pre-drift policy merely gate-required can be
+				// dispatched under the post-drift policy even when that
+				// policy now denies it outright (TOCTOU). We only admit the
+				// approval if the fresh decision is still approval-gated or
+				// plain allow; DENY / THROTTLE / anything else fails closed
+				// and the request must be resubmitted.
+				defaultTenant := strings.TrimSpace(s.tenant)
+				if defaultTenant == "" {
+					defaultTenant = "default"
+				}
+				freshMeta := &policyMetaRequest{}
+				if req.Meta != nil {
+					freshMeta.TenantId = req.Meta.TenantId
+					freshMeta.ActorId = req.Meta.ActorId
+					freshMeta.ActorType = req.Meta.ActorType.String()
+					freshMeta.IdempotencyKey = req.Meta.IdempotencyKey
+					freshMeta.Capability = req.Meta.Capability
+					freshMeta.RiskTags = append([]string{}, req.Meta.RiskTags...)
+					freshMeta.Requires = append([]string{}, req.Meta.Requires...)
+					freshMeta.PackId = req.Meta.PackId
+					freshMeta.Labels = req.Meta.Labels
+				}
+				// Use the ORIGINAL requester principal, not the approver. A
+				// principal-sensitive policy must be re-run against the
+				// identity that submitted the job; evaluating against the
+				// approver (who is typically an admin) would mask policies
+				// whose effect depends on the actor.
+				requesterPrincipal := strings.TrimSpace(req.GetPrincipalId())
+				if requesterPrincipal == "" && req.Meta != nil {
+					requesterPrincipal = strings.TrimSpace(req.Meta.ActorId)
+				}
+				if requesterPrincipal == "" {
+					// Fail closed. Evaluating under the approver's identity can
+					// admit a request that the current (principal-sensitive)
+					// policy would have denied for the original submitter when
+					// the approver happens to be more privileged. Force the
+					// request to be resubmitted so the fresh policy sees the
+					// real principal on a request that carries it.
+					msg := "original requester identity unavailable; resubmit under current policy"
+					s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), msg)
+					result = handlerResult{
+						http.StatusConflict,
+						approvalConflictPayload(http.StatusConflict, model.ApprovalConflictStaleSnapshot, msg),
+					}
+					return nil
+				}
+				freshCheck, freshErr := buildPolicyCheckRequest(ctx, &policyCheckRequest{
+					JobId:       jobID,
+					Topic:       req.GetTopic(),
+					Tenant:      strings.TrimSpace(req.TenantId),
+					WorkflowId:  strings.TrimSpace(req.WorkflowId),
+					Priority:    req.Priority.String(),
+					PrincipalId: requesterPrincipal,
+					Labels:      req.Labels,
+					Budget:      req.Budget,
+					MemoryId:    strings.TrimSpace(req.MemoryId),
+					Meta:        freshMeta,
+				}, s.configSvc, defaultTenant)
+				if freshErr != nil {
+					s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r),
+						fmt.Sprintf("approval drift re-evaluation build failed: %v", freshErr))
+					result = handlerResult{http.StatusInternalServerError, "approval drift re-evaluation failed"}
+					return nil
+				}
+				freshResp, freshEvalErr := s.safetyClient.Check(ctx, freshCheck)
+				if freshEvalErr != nil || freshResp == nil {
+					s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r),
+						fmt.Sprintf("approval drift re-evaluation call failed: %v", freshEvalErr))
+					result = handlerResult{http.StatusBadGateway, "approval drift re-evaluation failed"}
+					return nil
+				}
+				freshDecision := freshResp.GetDecision()
+				switch freshDecision {
+				case pb.DecisionType_DECISION_TYPE_ALLOW,
+					pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
+					pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN:
+					// Fresh policy still admits this request (possibly with
+					// approval). Persist the FULL re-evaluated decision so
+					// the scheduler's fast-path sees the current rule / reason /
+					// constraints, not a hybrid of old decision + new snapshot.
+					// ApprovalRef and JobHash are preserved (approval identity
+					// is still this job); ApprovalRevision is bumped so
+					// downstream consumers can detect the drift.
+					s.appendAuditEntryNamed(ctx, "approve_snapshot_refreshed", "job", jobID, "", policyActorID(r), policyRole(r),
+						fmt.Sprintf("policy snapshot refreshed during approval (was=%s now=%s decision=%s rule=%s)",
+							snapshotBase(policySnapshot), snapshotBase(currentSnapshot), freshDecision.String(), freshResp.GetRuleId()))
+					policySnapshot = currentSnapshot
+					safetyRecord.Decision = mapDecisionTypeToSafety(freshDecision)
+					safetyRecord.Reason = freshResp.GetReason()
+					safetyRecord.RuleID = freshResp.GetRuleId()
+					safetyRecord.Constraints = freshResp.GetConstraints()
+					safetyRecord.Remediations = freshResp.GetRemediations()
+					safetyRecord.PolicySnapshot = currentSnapshot
+					safetyRecord.ApprovalRequired = freshDecision == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
+					safetyRecord.CheckedAt = time.Now().UnixMicro()
+					safetyRecord.ApprovalRevision++
+					if err := s.jobStore.SetSafetyDecision(ctx, jobID, safetyRecord); err != nil {
+						// Persisting the re-evaluated decision is on the
+						// critical path — continuing would ship a job whose
+						// stored safety record still reflects the pre-drift
+						// policy. Fail closed and let the caller retry.
+						s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r),
+							fmt.Sprintf("failed to persist refreshed safety decision: %v", err))
+						result = handlerResult{http.StatusServiceUnavailable, "failed to persist refreshed safety decision"}
+						return nil
+					}
+				default:
+					// DENY / THROTTLE / UNSPECIFIED — the drifted policy no
+					// longer permits this request at all. Fail closed and
+					// surface a stale-snapshot conflict so the caller
+					// resubmits under current policy.
+					reason := fmt.Sprintf("policy drift denies this request under current snapshot (was=%s now=%s decision=%s)",
+						snapshotBase(policySnapshot), snapshotBase(currentSnapshot), freshDecision.String())
+					s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), reason)
+					result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictStaleSnapshot, reason)}
+					return nil
+				}
 			}
 		}
 		reason := strings.TrimSpace(body.Reason)
@@ -1113,9 +1248,17 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// approval_snapshot binds the resubmitted JobRequest to the exact
+		// PolicySnapshot this approval was admitted against (including any
+		// drift-refresh above). The scheduler's approval fast-path requires
+		// this label to match the stored SafetyDecisionRecord.PolicySnapshot
+		// before short-circuiting to SafetyAllow — blocking the TOCTOU where
+		// an approval granted under policy v1 would dispatch against policy v2
+		// without re-evaluation.
 		labelUpdates := map[string]string{
-			"approval_granted": "true",
-			bus.LabelBusMsgID:  "approval:" + jobID,
+			"approval_granted":  "true",
+			"approval_snapshot": policySnapshot,
+			bus.LabelBusMsgID:   "approval:" + jobID,
 		}
 		if reason != "" {
 			labelUpdates["approval_reason"] = reason
@@ -1199,7 +1342,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.jobStore, s.bus) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore, s.bus) {
 		return
 	}
 	var body struct {
@@ -1419,7 +1562,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 // combining blast radius, prior approvals, rollback hints, policy snapshot
 // summary, time remaining, and parsed constraints in one response.
 func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.jobStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore) {
 		return
 	}
 	jobID, ok := requirePathParam(w, r, "job_id")
@@ -1467,18 +1610,18 @@ func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
 
 	// Build the approval item (same shape as list endpoint).
 	approvalItem := map[string]any{
-		"job_id":              jobID,
-		"state":               string(state),
-		"decision":            safetyRecord.Decision,
-		"policy_snapshot":     safetyRecord.PolicySnapshot,
-		"policy_rule_id":      safetyRecord.RuleID,
-		"policy_reason":       safetyRecord.Reason,
-		"constraints":         safetyRecord.Constraints,
-		"approval_required":   safetyRecord.ApprovalRequired,
-		"approval_ref":        safetyRecord.ApprovalRef,
-		"approval_status":     approvalRecord.Status,
+		"job_id":                 jobID,
+		"state":                  string(state),
+		"decision":               safetyRecord.Decision,
+		"policy_snapshot":        safetyRecord.PolicySnapshot,
+		"policy_rule_id":         safetyRecord.RuleID,
+		"policy_reason":          safetyRecord.Reason,
+		"constraints":            safetyRecord.Constraints,
+		"approval_required":      safetyRecord.ApprovalRequired,
+		"approval_ref":           safetyRecord.ApprovalRef,
+		"approval_status":        approvalRecord.Status,
 		"approval_actionability": approvalRecord.Actionability,
-		"approval_decision":   approvalRecord.Decision,
+		"approval_decision":      approvalRecord.Decision,
 	}
 	if approvalErr == nil && approvalRecord.ApprovedBy != "" {
 		approvalItem["resolved_by"] = approvalRecord.ApprovedBy
@@ -1587,13 +1730,13 @@ func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]any{
-		"approval":                 approvalItem,
-		"blast_radius":             blastRadius,
-		"prior_approvals":          s.queryPriorApprovals(ctx, jobTopic, jobTenant, 10),
-		"rollback_hint":            rollbackHint,
-		"policy_snapshot_summary":  buildPolicySnapshotSummary(safetyRecord),
-		"time_remaining_ms":        timeRemainingMs,
-		"constraints":              constraintsParsed,
+		"approval":                approvalItem,
+		"blast_radius":            blastRadius,
+		"prior_approvals":         s.queryPriorApprovals(ctx, jobTopic, jobTenant, 10),
+		"rollback_hint":           rollbackHint,
+		"policy_snapshot_summary": buildPolicySnapshotSummary(safetyRecord),
+		"time_remaining_ms":       timeRemainingMs,
+		"constraints":             constraintsParsed,
 	}
 
 	priorCount := len(response["prior_approvals"].([]map[string]any))
@@ -1754,12 +1897,12 @@ func (s *server) queryPriorApprovals(ctx context.Context, topic, tenant string, 
 		}
 
 		results = append(results, map[string]any{
-			"job_id":      id,
-			"topic":       jobTopic,
-			"tenant":      jobTenant,
-			"decision":    meta["approval_decision"],
-			"resolved_by": meta["approval_by"],
-			"resolved_at": approvedAt,
+			"job_id":       id,
+			"topic":        jobTopic,
+			"tenant":       jobTenant,
+			"decision":     meta["approval_decision"],
+			"resolved_by":  meta["approval_by"],
+			"resolved_at":  approvedAt,
 			"was_approved": wasApproved,
 		})
 	}

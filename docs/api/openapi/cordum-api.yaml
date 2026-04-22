@@ -77,142 +77,6 @@ security:
 - apiKey: []
 - bearerAuth: []
 paths:
-  # Agent Identity CRUD. The full request / response schemas ship in a
-  # follow-up OpenAPI authoring pass; for now each op carries a minimal
-  # shape that satisfies the conformance-fixture validator (which keys
-  # off operationId + status) without overspecifying the body contract.
-  /api/v1/agents:
-    get:
-      operationId: listAgents
-      summary: List agent identities
-      tags: [Agents]
-      responses:
-        '200':
-          description: Agents
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-    post:
-      operationId: createAgent
-      summary: Create an agent identity
-      tags: [Agents]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-  /api/v1/agents/{id}:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-    get:
-      operationId: getAgent
-      summary: Get an agent identity
-      tags: [Agents]
-      responses:
-        '200':
-          description: Agent
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    put:
-      operationId: updateAgent
-      summary: Update an agent identity
-      tags: [Agents]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-      responses:
-        '200':
-          description: Updated
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    delete:
-      operationId: deleteAgent
-      summary: Delete an agent identity
-      tags: [Agents]
-      responses:
-        '204':
-          description: Deleted
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /api/v1/agents/{id}/stats:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-    get:
-      operationId: getAgentStats
-      summary: Get per-agent statistics
-      tags: [Agents]
-      responses:
-        '200':
-          description: Stats
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
   /api/v1/auth/config:
     get:
       operationId: getAuthConfig
@@ -5172,6 +5036,108 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/mcp/tools:
+    get:
+      operationId: listMcpTools
+      summary: List MCP tools visible to an agent or the full catalogue
+      description: >-
+        Returns the MCP tool catalogue. Without an `agent_id` query parameter,
+        returns the unfiltered admin view. With `agent_id`, returns the subset
+        of tools the identity is entitled to call after applying the MCP risk-
+        tier and data-classification filter.
+      tags:
+      - MCP
+      security:
+      - apiKey: []
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: agent_id
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Tool list for the requested scope
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/v1/agents/{id}/tools:
+    get:
+      operationId: getAgentToolVisibility
+      summary: List MCP tools visible to a specific agent identity
+      description: >-
+        Returns the subset of the MCP tool catalogue this agent identity can
+        call after applying the identity-aware filter (risk tier + data
+        classification). A revoked or suspended identity returns an empty
+        list with an advisory `note` field rather than failing.
+      tags:
+      - MCP
+      security:
+      - apiKey: []
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Tool list filtered for the agent identity
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/agents/{id}/denied-events:
+    get:
+      operationId: getAgentDeniedEvents
+      summary: Recent mcp_tool_denied events for an agent identity
+      description: >-
+        Returns up to 50 of the most recent `mcp_tool_denied` audit events
+        for the identity from the gateway's in-memory ring. Feeds the
+        dashboard "recent denials" panel without requiring a SIEM pipeline.
+      tags:
+      - MCP
+      security:
+      - apiKey: []
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Most recent denial records for the agent
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/v1/evals/datasets/from-incidents:
     post:
       operationId: createEvalDatasetFromIncidents

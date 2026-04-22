@@ -118,18 +118,6 @@ func (c *filterCache) put(id *AgentIdentity, tools []Tool) {
 	c.mu.Unlock()
 }
 
-// clear drops every entry. Used by tests and by SetConfig when a
-// version bump alone isn't sufficient (defensive — bumpVersion already
-// makes old entries unreachable via keyFor).
-func (c *filterCache) clear() {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.entries = make(map[string]filterCacheEntry)
-	c.mu.Unlock()
-}
-
 // keyFor produces a stable cache key over everything that affects the
 // filter output: identity fields + config version. A nil identity
 // produces a deterministic "empty" key so the fail-closed result is

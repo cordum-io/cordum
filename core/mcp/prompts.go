@@ -494,7 +494,7 @@ func isValidApprovalsWindow(w string) bool {
 	if w == "" {
 		return false
 	}
-	if !(strings.HasSuffix(w, "h") || strings.HasSuffix(w, "d")) {
+	if !strings.HasSuffix(w, "h") && !strings.HasSuffix(w, "d") {
 		return false
 	}
 	num := w[:len(w)-1]

@@ -210,6 +210,9 @@ jobs:
     - name: Generate API key
       run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
 
+    - name: Generate Redis password
+      run: echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> $GITHUB_ENV
+
     - name: Generate TLS certificates
       run: |
         go run ./cmd/cordumctl generate-certs --dir ./certs
@@ -238,12 +241,14 @@ jobs:
         done
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
 
     - name: Run Go integration tests
       run: go test -v -tags=integration -timeout 5m ./...
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
-        REDIS_URL: rediss://:cordum-dev@localhost:6379
+        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+        REDIS_URL: rediss://:${{ env.REDIS_PASSWORD }}@localhost:6379
         REDIS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
         REDIS_TLS_INSECURE: "false"
         NATS_URL: tls://localhost:4222
@@ -267,12 +272,13 @@ jobs:
         fi
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
         NATS_URL: tls://localhost:4222
         NATS_TOKEN: cordum-dev-token
         NATS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
         NATS_TLS_CERT: ${{ github.workspace }}/certs/client/tls.crt
         NATS_TLS_KEY: ${{ github.workspace }}/certs/client/tls.key
-        REDIS_URL: rediss://:cordum-dev@localhost:6379
+        REDIS_URL: rediss://:${{ env.REDIS_PASSWORD }}@localhost:6379
         REDIS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
         REDIS_TLS_CERT: ${{ github.workspace }}/certs/client/tls.crt
         REDIS_TLS_KEY: ${{ github.workspace }}/certs/client/tls.key

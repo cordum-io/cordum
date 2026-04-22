@@ -18,8 +18,8 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.job_summary import JobSummary
   from ..models.approval_item_constraints_type_0 import ApprovalItemConstraintsType0
+  from ..models.job_summary import JobSummary
 
 
 
@@ -58,8 +58,8 @@ class ApprovalItem:
 
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.job_summary import JobSummary
         from ..models.approval_item_constraints_type_0 import ApprovalItemConstraintsType0
+        from ..models.job_summary import JobSummary
         job: Union[Unset, Dict[str, Any]] = UNSET
         if not isinstance(self.job, Unset):
             job = self.job.to_dict()
@@ -147,8 +147,8 @@ class ApprovalItem:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.job_summary import JobSummary
         from ..models.approval_item_constraints_type_0 import ApprovalItemConstraintsType0
+        from ..models.job_summary import JobSummary
         d = src_dict.copy()
         _job = d.pop("job", UNSET)
         job: Union[Unset, JobSummary]

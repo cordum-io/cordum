@@ -21,10 +21,13 @@ import (
 const ShadowScope configsvc.Scope = "policy_shadow"
 
 // maxPutAttempts is the retry budget for ETag-guarded Put/Delete calls.
-// Concurrent writes are rare (admin operations) so 3 attempts with
-// small jitter is plenty; more than that suggests a systemic
-// contention issue worth surfacing as an error.
-const maxPutAttempts = 3
+// Concurrent writes are rare (admin operations), but the ConcurrentPutSameBundle
+// torture test fires 8 racers at the same tenant+bundle — at 3 attempts the
+// last loser can exhaust its budget before converging. 10 comfortably absorbs
+// that worst case while still surfacing a real systemic contention issue
+// (it would take 10 concurrent admins writing to the exact same bundle to
+// saturate, which indicates a deeper operational problem worth the error).
+const maxPutAttempts = 10
 
 // Store persists shadow policies on top of configsvc. One configsvc
 // document holds all shadows for a tenant (Data keyed by bundle ID)
@@ -35,10 +38,6 @@ type Store struct {
 	// clock is overridden in tests so created_at/activated_at are
 	// deterministic. Defaults to time.Now().UTC().
 	clock func() time.Time
-
-	// rng drives retry jitter. Defaults to a lazily-seeded source so
-	// tests can inject a deterministic stream if they want.
-	rng *rand.Rand
 }
 
 // StoreOption configures a Store at construction.
@@ -58,8 +57,6 @@ func NewStore(cfg *configsvc.Service, opts ...StoreOption) *Store {
 	s := &Store{
 		cfg:   cfg,
 		clock: func() time.Time { return time.Now().UTC() },
-		// #nosec G404 -- jitter only, not a security-sensitive RNG.
-		rng: rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -290,9 +287,12 @@ func decodeShadow(raw any) (*ShadowPolicy, bool) {
 }
 
 // sleepWithJitter blocks for up to ~20ms then returns. Respects ctx
-// cancellation so shutdown is prompt.
+// cancellation so shutdown is prompt. Uses the package-level rand
+// source which is goroutine-safe; the custom *rand.Rand field this
+// replaced raced under concurrent Put calls on the race-detector CI.
 func (s *Store) sleepWithJitter(ctx context.Context) error {
-	d := time.Duration(s.rng.Intn(20)+5) * time.Millisecond
+	// #nosec G404 -- jitter only, not a security-sensitive RNG.
+	d := time.Duration(rand.Intn(20)+5) * time.Millisecond
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

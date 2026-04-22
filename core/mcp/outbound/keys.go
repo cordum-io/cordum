@@ -120,7 +120,7 @@ func parsePrivateKey(raw string) (*ecdsa.PrivateKey, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%w: %v", ErrInvalidPrivateKey, err)
 			}
-			if k.PublicKey.Curve != elliptic.P256() {
+			if k.Curve != elliptic.P256() {
 				return nil, fmt.Errorf("%w: not P-256", ErrInvalidPrivateKey)
 			}
 			return k, nil
@@ -130,7 +130,7 @@ func parsePrivateKey(raw string) (*ecdsa.PrivateKey, error) {
 				return nil, fmt.Errorf("%w: %v", ErrInvalidPrivateKey, err)
 			}
 			ec, ok := parsed.(*ecdsa.PrivateKey)
-			if !ok || ec.PublicKey.Curve != elliptic.P256() {
+			if !ok || ec.Curve != elliptic.P256() {
 				return nil, fmt.Errorf("%w: not P-256 ecdsa", ErrInvalidPrivateKey)
 			}
 			return ec, nil
@@ -146,13 +146,13 @@ func parsePrivateKey(raw string) (*ecdsa.PrivateKey, error) {
 		}
 	}
 	if k, err := x509.ParseECPrivateKey(data); err == nil {
-		if k.PublicKey.Curve != elliptic.P256() {
+		if k.Curve != elliptic.P256() {
 			return nil, fmt.Errorf("%w: not P-256", ErrInvalidPrivateKey)
 		}
 		return k, nil
 	}
 	if parsed, err := x509.ParsePKCS8PrivateKey(data); err == nil {
-		if ec, ok := parsed.(*ecdsa.PrivateKey); ok && ec.PublicKey.Curve == elliptic.P256() {
+		if ec, ok := parsed.(*ecdsa.PrivateKey); ok && ec.Curve == elliptic.P256() {
 			return ec, nil
 		}
 	}

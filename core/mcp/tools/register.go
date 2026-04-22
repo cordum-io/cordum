@@ -191,7 +191,7 @@ func (c *GatewayClient) FetchAgentIdentity(ctx context.Context, agentID string) 
 	if err != nil {
 		return nil, fmt.Errorf("fetch agent identity: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
 	}

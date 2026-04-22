@@ -15,8 +15,8 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.workflow_step_retry import WorkflowStepRetry
   from ..models.workflow_step_config import WorkflowStepConfig
+  from ..models.workflow_step_retry import WorkflowStepRetry
 
 
 
@@ -49,8 +49,8 @@ class WorkflowStep:
 
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.workflow_step_retry import WorkflowStepRetry
         from ..models.workflow_step_config import WorkflowStepConfig
+        from ..models.workflow_step_retry import WorkflowStepRetry
         id = self.id
 
         type = self.type
@@ -97,8 +97,8 @@ class WorkflowStep:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.workflow_step_retry import WorkflowStepRetry
         from ..models.workflow_step_config import WorkflowStepConfig
+        from ..models.workflow_step_retry import WorkflowStepRetry
         d = src_dict.copy()
         id = d.pop("id")
 

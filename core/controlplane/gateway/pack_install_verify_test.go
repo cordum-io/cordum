@@ -159,7 +159,7 @@ func TestGatewayVerify_PublisherMetadataFromRedis(t *testing.T) {
 	}
 	defer mr.Close()
 	client := redis.NewUniversalClient(&redis.UniversalOptions{Addrs: []string{mr.Addr()}})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	root, kid, pub := writeGatewayTestPack(t, true)
 	if err := client.Set(context.Background(), gatewayTrustedKeysRedisPrefix+kid, base64.StdEncoding.EncodeToString(pub), 0).Err(); err != nil {
@@ -229,7 +229,7 @@ func TestGatewayVerify_StrictFlagFlippedViaRedis(t *testing.T) {
 	}
 	defer mr.Close()
 	client := redis.NewUniversalClient(&redis.UniversalOptions{Addrs: []string{mr.Addr()}})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	root, _, _ := writeGatewayTestPack(t, false)
 
@@ -259,7 +259,7 @@ func TestGatewayVerify_TrustedKeyFromRedis(t *testing.T) {
 	}
 	defer mr.Close()
 	client := redis.NewUniversalClient(&redis.UniversalOptions{Addrs: []string{mr.Addr()}})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	root, kid, pub := writeGatewayTestPack(t, true)
 	if err := client.Set(context.Background(), gatewayTrustedKeysRedisPrefix+kid, base64.StdEncoding.EncodeToString(pub), 0).Err(); err != nil {

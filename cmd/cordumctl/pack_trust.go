@@ -349,7 +349,7 @@ func decodePackPublicKeyBytes(raw []byte) (string, ed25519.PublicKey, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }()
 	if _, err := tmp.Write(raw); err != nil {
 		_ = tmp.Close()
 		return "", nil, err

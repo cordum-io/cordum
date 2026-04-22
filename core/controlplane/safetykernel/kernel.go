@@ -308,6 +308,20 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		tagDeriverRegistry: tagRegistry,
 	}
 
+	// Phase-2 shadow dual-evaluation: constructs the shadow loader +
+	// evaluator and attaches them to srv via SetShadowEvaluator so
+	// evaluate() can Submit active decisions without a nil-panic. When
+	// configsvc or NATS is unavailable setupShadowEvaluation returns
+	// (nil, nil) and the kernel still boots with shadow eval as a no-op
+	// — see shadow_eval.go for the fallback chain.
+	shadowLoader, shadowEvaluator := setupShadowEvaluation(srv, loader, natsBus)
+	if shadowEvaluator != nil {
+		defer shadowEvaluator.Close()
+	}
+	if shadowLoader != nil {
+		defer shadowLoader.Close()
+	}
+
 	// Lifecycle context for background goroutines — cancelled when Run returns.
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	defer lifecycleCancel()

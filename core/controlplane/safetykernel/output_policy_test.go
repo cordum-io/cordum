@@ -89,7 +89,7 @@ func TestCheckOutputScansSecretContent(t *testing.T) {
 	srv := &server{
 		scanners: defaultOutputScanners(),
 	}
-	srv.setPolicy(context.Background(), &config.SafetyPolicy{
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
 		OutputRules: []config.OutputPolicyRule{
 			{
@@ -128,7 +128,7 @@ func TestCheckOutputMatchesOutputSizeLimit(t *testing.T) {
 	srv := &server{
 		scanners: defaultOutputScanners(),
 	}
-	srv.setPolicy(context.Background(), &config.SafetyPolicy{
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
 		OutputRules: []config.OutputPolicyRule{
 			{
@@ -159,7 +159,7 @@ func TestCheckOutputDisabledPolicyReturnsAllow(t *testing.T) {
 	srv := &server{
 		scanners: defaultOutputScanners(),
 	}
-	srv.setPolicy(context.Background(), &config.SafetyPolicy{
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		OutputPolicy: config.OutputPolicyConfig{Enabled: false, FailMode: "open"},
 		OutputRules: []config.OutputPolicyRule{
 			{
@@ -314,7 +314,7 @@ func TestCheckOutputDereferencesResultPointer(t *testing.T) {
 		scanners:     defaultOutputScanners(),
 		resultClient: resultClient,
 	}
-	srv.setPolicy(context.Background(), &config.SafetyPolicy{
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
 		OutputRules: []config.OutputPolicyRule{
 			{
@@ -345,7 +345,7 @@ func TestCheckOutputKeywordMatching(t *testing.T) {
 	srv := &server{
 		scanners: defaultOutputScanners(),
 	}
-	srv.setPolicy(context.Background(), &config.SafetyPolicy{
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
 		OutputRules: []config.OutputPolicyRule{
 			{
@@ -391,7 +391,7 @@ func TestCheckOutputContentTypeFilter(t *testing.T) {
 	srv := &server{
 		scanners: defaultOutputScanners(),
 	}
-	srv.setPolicy(context.Background(), &config.SafetyPolicy{
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
 		OutputRules: []config.OutputPolicyRule{
 			{
@@ -438,7 +438,7 @@ func TestEvaluateOutputDirect(t *testing.T) {
 	srv := &server{
 		scanners: defaultOutputScanners(),
 	}
-	srv.setPolicy(context.Background(), &config.SafetyPolicy{
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
 		OutputRules: []config.OutputPolicyRule{
 			{
@@ -495,7 +495,7 @@ func TestEvaluateOutputKeywordAndContentType(t *testing.T) {
 	srv := &server{
 		scanners: defaultOutputScanners(),
 	}
-	srv.setPolicy(context.Background(), &config.SafetyPolicy{
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
 		OutputRules: []config.OutputPolicyRule{
 			{
@@ -613,7 +613,7 @@ func TestContentTruncationFinding(t *testing.T) {
 	srv := &server{
 		scanners: defaultOutputScanners(),
 	}
-	srv.setPolicy(context.Background(), &config.SafetyPolicy{
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
 		OutputRules: []config.OutputPolicyRule{
 			{
@@ -686,7 +686,7 @@ func BenchmarkCheckOutputFastPath(b *testing.B) {
 	srv := &server{
 		scanners: defaultOutputScanners(),
 	}
-	srv.setPolicy(context.Background(), &config.SafetyPolicy{
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
 		OutputRules: []config.OutputPolicyRule{
 			{

@@ -23,7 +23,7 @@ func TestChainer_HeadPoisonExhaustsCAS(t *testing.T) {
 	}
 	defer srv.Close()
 	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	chainer := NewChainer(client, "")
 
 	ctx := context.Background()
@@ -90,7 +90,7 @@ func TestChainer_AppendLeavesEventCleanOnRetryFailure(t *testing.T) {
 	}
 	defer srv.Close()
 	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	chainer := NewChainer(client, "")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -130,7 +130,7 @@ func TestVerifyChain_CrossWindowLinkageDetectsMutation(t *testing.T) {
 	}
 	defer srv.Close()
 	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	chainer := NewChainer(client, "")
 
 	ctx := context.Background()

@@ -97,18 +97,18 @@ func filterMCPToolList(list *sdk.MCPToolList, needle string) *sdk.MCPToolList {
 func renderMCPToolList(out io.Writer, list *sdk.MCPToolList) {
 	if list == nil || len(list.Tools) == 0 {
 		if list != nil && list.Note != "" {
-			fmt.Fprintln(out, "note:", list.Note)
+			_, _ = fmt.Fprintln(out, "note:", list.Note)
 		}
-		fmt.Fprintln(out, "No MCP tools visible.")
+		_, _ = fmt.Fprintln(out, "No MCP tools visible.")
 		return
 	}
 	header := "  Full registry"
 	if list.Filtered {
 		header = fmt.Sprintf("  Filtered for agent %s", list.AgentID)
 	}
-	fmt.Fprintln(out, header)
+	_, _ = fmt.Fprintln(out, header)
 	if list.Note != "" {
-		fmt.Fprintln(out, "  note:", list.Note)
+		_, _ = fmt.Fprintln(out, "  note:", list.Note)
 	}
 
 	const (
@@ -122,10 +122,10 @@ func renderMCPToolList(out io.Writer, list *sdk.MCPToolList) {
 		strings.Repeat("-", tierW+2) + "+" +
 		strings.Repeat("-", clsW+2) + "+" +
 		strings.Repeat("-", apvW+2) + "+"
-	fmt.Fprintln(out, hr)
-	fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s |\n",
+	_, _ = fmt.Fprintln(out, hr)
+	_, _ = fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s |\n",
 		nameW, "Name", tierW, "Tier", clsW, "Classifications", apvW, "Approval")
-	fmt.Fprintln(out, hr)
+	_, _ = fmt.Fprintln(out, hr)
 	for _, t := range list.Tools {
 		tier := t.RiskTier
 		if tier == "" {
@@ -135,14 +135,14 @@ func renderMCPToolList(out io.Writer, list *sdk.MCPToolList) {
 		if t.RequiresApproval {
 			apv = "required"
 		}
-		fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s |\n",
+		_, _ = fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s |\n",
 			nameW, truncateASCII(t.Name, nameW),
 			tierW, truncateASCII(tier, tierW),
 			clsW, truncateASCII(strings.Join(t.DataClassifications, ","), clsW),
 			apvW, truncateASCII(apv, apvW))
 	}
-	fmt.Fprintln(out, hr)
-	fmt.Fprintf(out, "  %d tool(s)\n", len(list.Tools))
+	_, _ = fmt.Fprintln(out, hr)
+	_, _ = fmt.Fprintf(out, "  %d tool(s)\n", len(list.Tools))
 }
 
 func runMCPPending(args []string) {
@@ -295,7 +295,7 @@ func runMCPResolve(args []string, verb string) {
 // only so MSYS/Windows consoles render correctly.
 func renderMCPApprovalList(out io.Writer, items []sdk.MCPApproval) {
 	if len(items) == 0 {
-		fmt.Fprintln(out, "No MCP approvals match the current filter.")
+		_, _ = fmt.Fprintln(out, "No MCP approvals match the current filter.")
 		return
 	}
 	// Approval IDs are 32 hex chars. Widen the column so operators can
@@ -314,19 +314,19 @@ func renderMCPApprovalList(out io.Writer, items []sdk.MCPApproval) {
 		strings.Repeat("-", agentW+2) + "+" +
 		strings.Repeat("-", statusW+2) + "+" +
 		strings.Repeat("-", hashW+2) + "+"
-	fmt.Fprintln(out, hr)
-	fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s | %-*s |\n",
+	_, _ = fmt.Fprintln(out, hr)
+	_, _ = fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s | %-*s |\n",
 		idW, "Approval ID", toolW, "Tool", agentW, "Agent", statusW, "Status", hashW, "Args hash")
-	fmt.Fprintln(out, hr)
+	_, _ = fmt.Fprintln(out, hr)
 	for _, it := range items {
-		fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s | %-*s |\n",
+		_, _ = fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s | %-*s |\n",
 			idW, truncateASCII(it.ID, idW),
 			toolW, truncateASCII(it.ToolName, toolW),
 			agentW, truncateASCII(it.AgentID, agentW),
 			statusW, truncateASCII(it.Status, statusW),
 			hashW, truncateASCII(shortHex(it.ArgsHash, 8), hashW))
 	}
-	fmt.Fprintln(out, hr)
+	_, _ = fmt.Fprintln(out, hr)
 }
 
 func truncateASCII(s string, n int) string {

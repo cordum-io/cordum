@@ -38,7 +38,7 @@ func TestServiceRunValidatesRequiredDependencies(t *testing.T) {
 	if _, err := nilSvc.Validate(ExtractionRequest{}); err == nil || !strings.Contains(err.Error(), "extractor is nil") {
 		t.Fatalf("Validate(nil) error = %v", err)
 	}
-	if _, err := nilSvc.Run(nil, ExtractionRequest{}); err == nil || !strings.Contains(err.Error(), "extractor is nil") {
+	if _, err := nilSvc.Run(context.TODO(), ExtractionRequest{}); err == nil || !strings.Contains(err.Error(), "extractor is nil") {
 		t.Fatalf("Run(nil) error = %v", err)
 	}
 

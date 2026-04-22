@@ -14,8 +14,8 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.dry_run_workflow_body_environment import DryRunWorkflowBodyEnvironment
   from ..models.dry_run_workflow_body_input import DryRunWorkflowBodyInput
+  from ..models.dry_run_workflow_body_environment import DryRunWorkflowBodyEnvironment
 
 
 
@@ -38,8 +38,8 @@ class DryRunWorkflowBody:
 
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.dry_run_workflow_body_environment import DryRunWorkflowBodyEnvironment
         from ..models.dry_run_workflow_body_input import DryRunWorkflowBodyInput
+        from ..models.dry_run_workflow_body_environment import DryRunWorkflowBodyEnvironment
         input_: Union[Unset, Dict[str, Any]] = UNSET
         if not isinstance(self.input_, Unset):
             input_ = self.input_.to_dict()
@@ -64,8 +64,8 @@ class DryRunWorkflowBody:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.dry_run_workflow_body_environment import DryRunWorkflowBodyEnvironment
         from ..models.dry_run_workflow_body_input import DryRunWorkflowBodyInput
+        from ..models.dry_run_workflow_body_environment import DryRunWorkflowBodyEnvironment
         d = src_dict.copy()
         _input_ = d.pop("input", UNSET)
         input_: Union[Unset, DryRunWorkflowBodyInput]

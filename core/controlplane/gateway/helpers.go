@@ -26,6 +26,7 @@ import (
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
@@ -353,6 +354,27 @@ func stripReservedLabels(labels map[string]string) map[string]string {
 		clean[k] = v
 	}
 	return clean
+}
+
+// mapDecisionTypeToSafety converts a wire-level pb.DecisionType into the
+// model.SafetyDecision enum used on SafetyDecisionRecord. Used by paths that
+// translate a fresh PolicyCheckResponse back onto the persisted record
+// (approval drift re-evaluation, policy replay, etc.).
+func mapDecisionTypeToSafety(d pb.DecisionType) model.SafetyDecision {
+	switch d {
+	case pb.DecisionType_DECISION_TYPE_ALLOW:
+		return model.SafetyAllow
+	case pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS:
+		return model.SafetyAllowWithConstraints
+	case pb.DecisionType_DECISION_TYPE_DENY:
+		return model.SafetyDeny
+	case pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN:
+		return model.SafetyRequireApproval
+	case pb.DecisionType_DECISION_TYPE_THROTTLE:
+		return model.SafetyThrottle
+	default:
+		return model.SafetyUnavailable
+	}
 }
 
 // maxContentLabelBytes is the maximum payload size to include in policy check

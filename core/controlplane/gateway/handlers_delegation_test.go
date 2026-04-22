@@ -154,6 +154,7 @@ func TestHandleDelegateAgentCrossTenantAndScopeErrors(t *testing.T) {
 	// continues to exercise the scope-subset enforcement — the exact
 	// attack that matters at the delegation wire path.
 
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read", "write"}, []string{"job.alpha"})
 	createDelegationAgent(t, s, "default", "agent-b", []string{"read", "write"}, []string{"job.alpha"})
 	createDelegationAgent(t, s, "default", "agent-c", []string{"read"}, []string{"job.alpha"})
 

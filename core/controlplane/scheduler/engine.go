@@ -669,6 +669,53 @@ func (e *Engine) emitHeartbeatDisagreement(jobID, topic string, disagreement Hea
 	})
 }
 
+// emitApprovalRevisionMismatch records a SIEM event when the approval
+// fast-path refuses to short-circuit to SafetyAllow because the
+// approval_snapshot label on the resubmitted JobRequest does not match
+// (base-compared) the PolicySnapshot currently stored on the job's
+// SafetyDecisionRecord. Callers fall through to a full safety re-check;
+// this event gives SIEM operators a tamper/stale-approval signal
+// independent of whether the subsequent re-check allows or denies.
+func (e *Engine) emitApprovalRevisionMismatch(req *pb.JobRequest, stored, asserted string) {
+	if e == nil || req == nil {
+		return
+	}
+	jobID := strings.TrimSpace(req.GetJobId())
+	topic := strings.TrimSpace(req.GetTopic())
+	if e.dispatchAuditSink == nil {
+		return
+	}
+	ctx := e.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	extra := map[string]string{
+		"stored_snapshot":   stored,
+		"asserted_snapshot": asserted,
+	}
+	if topic != "" {
+		extra["topic"] = topic
+	}
+	// Canonical tenant source is req.TenantId (set by the gateway from the
+	// authenticated principal). Fall back to the "tenant" label only when
+	// the request body omits it, so SIEM alerts are scoped correctly.
+	tenant := strings.TrimSpace(req.TenantId)
+	if tenant == "" && req.Labels != nil {
+		tenant = strings.TrimSpace(req.Labels["tenant"])
+	}
+	e.dispatchAuditSink.Emit(ctx, audit.SIEMEvent{
+		Timestamp:     time.Now().UTC(),
+		EventType:     audit.EventApprovalRevisionMismatch,
+		Severity:      audit.SeverityHigh,
+		TenantID:      tenant,
+		JobID:         jobID,
+		Action:        "scheduler.approval_fast_path_reject",
+		Reason:        "approval_snapshot label does not match stored PolicySnapshot",
+		PolicyVersion: snapshotBase(stored),
+		Extra:         extra,
+	})
+}
+
 // HandlePacketWithContext is the context-aware version of HandlePacket.
 // It receives trace context extracted from NATS headers and threads it
 // through to processJob for distributed tracing continuity.
@@ -1189,11 +1236,12 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 			}
 		}
 
-		if currentState == "" {
+		switch currentState {
+		case "":
 			if err := e.setJobState(jobID, JobStatePending); err != nil {
 				return RetryAfter(err, retryDelayStore)
 			}
-		} else if currentState == JobStateScheduled {
+		case JobStateScheduled:
 			if inc, ok := e.jobStore.(interface {
 				IncrAttempts(context.Context, string) error
 			}); ok {
@@ -1895,7 +1943,7 @@ func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobReque
 		safetySpan.SetAttributes(attribute.String("cordum.job_id", strings.TrimSpace(req.JobId)))
 	}
 
-	record, err := e.checkSafetyDecision(req)
+	record, err := e.checkSafetyDecision(ctx, req)
 	if err != nil {
 		safetySpan.SetStatus(otelcodes.Error, err.Error())
 		safetySpan.RecordError(err)
@@ -1908,7 +1956,14 @@ func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobReque
 	return record, err
 }
 
-func (e *Engine) checkSafetyDecision(req *pb.JobRequest, _ ...string) (SafetyDecisionRecord, error) {
+// checkSafetyDecision evaluates safety for a job. The caller's ctx MUST be the
+// lock-fenced context from withJobLock — any state mutations derived from this
+// call (notably the approval fast-path SetSafetyDecision) must be cancelled
+// when the lock is lost to prevent stale-lock writes racing a takeover handler.
+func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
+	if ctx == nil {
+		ctx = e.ctx
+	}
 	record := SafetyDecisionRecord{}
 	if req == nil {
 		return record, fmt.Errorf("missing job request")
@@ -1926,32 +1981,67 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest, _ ...string) (SafetyDec
 	}
 	if approved {
 		if e.jobStore != nil {
-			ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+			storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 			defer cancel()
-			prev, err := e.jobStore.GetSafetyDecision(ctx, jobID)
+			prev, err := e.jobStore.GetSafetyDecision(storeCtx, jobID)
 			if err == nil && (prev.ApprovalRequired || prev.Decision == SafetyRequireApproval) && prev.JobHash != "" {
 				hash, err := HashJobRequest(req)
 				if err == nil && hash == prev.JobHash {
-					record = SafetyDecisionRecord{
-						Decision:       SafetyAllow,
-						Reason:         "approval granted",
-						CheckedAt:      time.Now().UTC().UnixNano() / int64(time.Microsecond),
-						Constraints:    prev.Constraints,
-						PolicySnapshot: prev.PolicySnapshot,
-						RuleID:         prev.RuleID,
-						JobHash:        prev.JobHash,
-					}
-					if e.jobStore != nil {
-						ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
-						defer cancel()
-						if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
-							return record, err
+					// Bind the fast-path to the PolicySnapshot this approval
+					// was admitted against. The gateway stamps approval_snapshot
+					// onto the resubmitted request when it resolves the
+					// approval; we compare it (base only, to ignore config-
+					// overlay churn) against the stored safety record's
+					// PolicySnapshot — which ResolveApproval rotates to the
+					// human-approved snapshot on approve. A mismatch means the
+					// stored safety decision drifted after admission (reconciler
+					// invalidated it, or the label predates this binding), so
+					// we fall through to a full safety check instead of
+					// short-circuiting to SafetyAllow.
+					asserted := strings.TrimSpace(req.Labels["approval_snapshot"])
+					stored := strings.TrimSpace(prev.PolicySnapshot)
+					// Workflow approval gates (sys.approval.gate /
+					// sys.workflow.approval.gate) carry no policy decision —
+					// SafetyBasic returns an empty PolicySnapshot for them.
+					// There is no TOCTOU concern to bind to, so skip the
+					// snapshot match for gate topics. Regular jobs still
+					// require the binding.
+					isGate := isApprovalGateTopic(strings.TrimSpace(req.GetTopic()))
+					if !isGate && (asserted == "" || stored == "" || snapshotBase(asserted) != snapshotBase(stored)) {
+						e.emitApprovalRevisionMismatch(req, stored, asserted)
+						slog.Warn("approval fast-path rejected: policy snapshot mismatch",
+							"job_id", jobID,
+							"stored_snapshot", stored,
+							"asserted_snapshot", asserted,
+						)
+					} else {
+						record = SafetyDecisionRecord{
+							Decision:       SafetyAllow,
+							Reason:         "approval granted",
+							CheckedAt:      time.Now().UTC().UnixNano() / int64(time.Microsecond),
+							Constraints:    prev.Constraints,
+							PolicySnapshot: prev.PolicySnapshot,
+							RuleID:         prev.RuleID,
+							JobHash:        prev.JobHash,
 						}
-						e.appendDecisionLog(req, record)
+						if e.jobStore != nil {
+							// Derive the store-op timeout from the caller's
+							// lock-fenced ctx, NOT e.ctx. If the lock is lost
+							// mid-evaluation the fenced ctx is cancelled and
+							// this write must not complete after the takeover
+							// handler has already mutated the job state.
+							writeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
+							defer cancel()
+							if err := e.jobStore.SetSafetyDecision(writeCtx, jobID, record); err != nil {
+								return record, err
+							}
+							e.appendDecisionLog(req, record)
+						}
+						return record, nil
 					}
-					return record, nil
+				} else {
+					slog.Warn("approval label ignored (hash mismatch)", "job_id", jobID)
 				}
-				slog.Warn("approval label ignored (hash mismatch)", "job_id", jobID)
 			} else {
 				slog.Warn("approval label ignored (no approval record)", "job_id", jobID)
 			}
@@ -1970,7 +2060,7 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest, _ ...string) (SafetyDec
 		}, e.ctx.Err()
 	}
 
-	safetyCtx, safetyCancel := context.WithTimeout(e.ctx, safetyCheckTimeout)
+	safetyCtx, safetyCancel := context.WithTimeout(ctx, safetyCheckTimeout)
 	defer safetyCancel()
 
 	record, err := e.safety.Check(safetyCtx, req)

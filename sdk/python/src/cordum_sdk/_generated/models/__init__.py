@@ -2,10 +2,15 @@
 
 from .admin_lock import AdminLock
 from .api_key_info import APIKeyInfo
+from .approval_analytics_group import ApprovalAnalyticsGroup
+from .approval_analytics_response import ApprovalAnalyticsResponse
+from .approval_analytics_response_window import ApprovalAnalyticsResponseWindow
+from .approval_analytics_summary import ApprovalAnalyticsSummary
 from .approval_decision_request import ApprovalDecisionRequest
 from .approval_item import ApprovalItem
 from .approval_item_constraints_type_0 import ApprovalItemConstraintsType0
 from .approval_item_decision import ApprovalItemDecision
+from .approve_mcp_approval_response_200 import ApproveMcpApprovalResponse200
 from .artifact_detail import ArtifactDetail
 from .artifact_detail_metadata import ArtifactDetailMetadata
 from .artifact_detail_metadata_labels import ArtifactDetailMetadataLabels
@@ -26,12 +31,28 @@ from .create_artifact_request import CreateArtifactRequest
 from .create_artifact_request_labels import CreateArtifactRequestLabels
 from .create_artifact_response import CreateArtifactResponse
 from .create_bundle_snapshot_body import CreateBundleSnapshotBody
+from .create_eval_dataset_body import CreateEvalDatasetBody
+from .create_eval_dataset_body_entries_item import CreateEvalDatasetBodyEntriesItem
+from .create_eval_dataset_body_entries_item_input import CreateEvalDatasetBodyEntriesItemInput
+from .create_eval_dataset_body_entries_item_metadata import CreateEvalDatasetBodyEntriesItemMetadata
+from .create_eval_dataset_from_incidents_body import CreateEvalDatasetFromIncidentsBody
+from .create_eval_dataset_from_incidents_response_200 import CreateEvalDatasetFromIncidentsResponse200
+from .create_eval_dataset_from_incidents_response_201 import CreateEvalDatasetFromIncidentsResponse201
+from .create_eval_dataset_response_201 import CreateEvalDatasetResponse201
+from .create_eval_dataset_successor_body import CreateEvalDatasetSuccessorBody
+from .create_eval_dataset_successor_body_entries_item import CreateEvalDatasetSuccessorBodyEntriesItem
+from .create_eval_dataset_successor_response_200 import CreateEvalDatasetSuccessorResponse200
 from .create_legal_hold_body import CreateLegalHoldBody
 from .create_pool_body import CreatePoolBody
 from .create_topic_body import CreateTopicBody
 from .create_user_request import CreateUserRequest
 from .create_worker_credential_body import CreateWorkerCredentialBody
 from .create_workflow_response_201 import CreateWorkflowResponse201
+from .delegation_chain_link import DelegationChainLink
+from .delegation_lineage_chain_link import DelegationLineageChainLink
+from .delegation_lineage_view import DelegationLineageView
+from .delegation_list_response import DelegationListResponse
+from .delegation_view import DelegationView
 from .delete_role_response_200 import DeleteRoleResponse200
 from .dlq_entry import DLQEntry
 from .drain_pool_body import DrainPoolBody
@@ -40,9 +61,23 @@ from .dry_run_workflow_body import DryRunWorkflowBody
 from .dry_run_workflow_body_environment import DryRunWorkflowBodyEnvironment
 from .dry_run_workflow_body_input import DryRunWorkflowBodyInput
 from .error import Error
+from .eval_entry_result import EvalEntryResult
+from .eval_entry_result_drift_direction import EvalEntryResultDriftDirection
+from .eval_entry_result_input import EvalEntryResultInput
+from .eval_entry_result_status import EvalEntryResultStatus
+from .eval_run_accepted_response import EvalRunAcceptedResponse
+from .eval_run_accepted_response_status import EvalRunAcceptedResponseStatus
+from .eval_run_request import EvalRunRequest
+from .eval_run_result import EvalRunResult
+from .eval_run_summary import EvalRunSummary
+from .eval_runs_response import EvalRunsResponse
 from .generic_object import GenericObject
+from .get_agent_denied_events_response_200 import GetAgentDeniedEventsResponse200
 from .get_agent_response_200 import GetAgentResponse200
 from .get_agent_stats_response_200 import GetAgentStatsResponse200
+from .get_agent_tool_visibility_response_200 import GetAgentToolVisibilityResponse200
+from .get_approval_analytics_group_by import GetApprovalAnalyticsGroupBy
+from .get_approval_analytics_window import GetApprovalAnalyticsWindow
 from .get_approval_context_response_200 import GetApprovalContextResponse200
 from .get_approval_context_response_200_approval import GetApprovalContextResponse200Approval
 from .get_approval_context_response_200_blast_radius import GetApprovalContextResponse200BlastRadius
@@ -51,7 +86,12 @@ from .get_approval_context_response_200_policy_snapshot_summary import GetApprov
 from .get_approval_context_response_200_policy_snapshot_summary_matched_rule import GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule
 from .get_approval_context_response_200_prior_approvals_item import GetApprovalContextResponse200PriorApprovalsItem
 from .get_config_scope import GetConfigScope
+from .get_eval_dataset_by_name_version_response_200 import GetEvalDatasetByNameVersionResponse200
+from .get_eval_dataset_response_200 import GetEvalDatasetResponse200
 from .get_license_response_200 import GetLicenseResponse200
+from .get_mcp_approval_response_200 import GetMcpApprovalResponse200
+from .get_mcp_usage_group_by import GetMcpUsageGroupBy
+from .get_mcp_usage_response_200 import GetMcpUsageResponse200
 from .get_memory_response_200 import GetMemoryResponse200
 from .get_output_policy_stats_response_200 import GetOutputPolicyStatsResponse200
 from .get_run_chat_response_200 import GetRunChatResponse200
@@ -59,6 +99,10 @@ from .get_telemetry_status_response_200 import GetTelemetryStatusResponse200
 from .get_velocity_rule_stats_response_200 import GetVelocityRuleStatsResponse200
 from .get_worker_jobs_response_200 import GetWorkerJobsResponse200
 from .install_pack_body import InstallPackBody
+from .installed_pack_verification import InstalledPackVerification
+from .installed_pack_verification_signature_algorithm import InstalledPackVerificationSignatureAlgorithm
+from .issue_delegation_token_body import IssueDelegationTokenBody
+from .issue_delegation_token_response_201 import IssueDelegationTokenResponse201
 from .job_detail import JobDetail
 from .job_detail_labels import JobDetailLabels
 from .job_detail_result_type_0 import JobDetailResultType0
@@ -76,12 +120,26 @@ from .license_info import LicenseInfo
 from .license_info_limits import LicenseInfoLimits
 from .list_admin_locks_response_200 import ListAdminLocksResponse200
 from .list_agents_response_200 import ListAgentsResponse200
+from .list_agents_response_200_items_item import ListAgentsResponse200ItemsItem
 from .list_all_workflow_runs_response_200 import ListAllWorkflowRunsResponse200
 from .list_api_keys_response_200 import ListAPIKeysResponse200
 from .list_approvals_response_200 import ListApprovalsResponse200
 from .list_bundle_snapshots_response_200 import ListBundleSnapshotsResponse200
+from .list_delegations_for_agent_status import ListDelegationsForAgentStatus
+from .list_delegations_status import ListDelegationsStatus
 from .list_dlq_paginated_response_200 import ListDLQPaginatedResponse200
+from .list_eval_dataset_versions_response_200 import ListEvalDatasetVersionsResponse200
+from .list_eval_dataset_versions_response_200_items_item import ListEvalDatasetVersionsResponse200ItemsItem
+from .list_eval_datasets_response_200 import ListEvalDatasetsResponse200
+from .list_eval_datasets_response_200_items_item import ListEvalDatasetsResponse200ItemsItem
+from .list_governance_decisions_response_200 import ListGovernanceDecisionsResponse200
+from .list_governance_decisions_response_200_items_item import ListGovernanceDecisionsResponse200ItemsItem
+from .list_governance_decisions_response_200_items_item_constraints import ListGovernanceDecisionsResponse200ItemsItemConstraints
 from .list_jobs_response_200 import ListJobsResponse200
+from .list_mcp_approvals_response_200 import ListMcpApprovalsResponse200
+from .list_mcp_approvals_response_200_items_item import ListMcpApprovalsResponse200ItemsItem
+from .list_mcp_outbound_response_200 import ListMcpOutboundResponse200
+from .list_mcp_tools_response_200 import ListMcpToolsResponse200
 from .list_packs_response_200 import ListPacksResponse200
 from .list_policy_bundles_response_200 import ListPolicyBundlesResponse200
 from .list_policy_rules_response_200 import ListPolicyRulesResponse200
@@ -145,6 +203,7 @@ from .post_chat_request_role import PostChatRequestRole
 from .publish_policy_request import PublishPolicyRequest
 from .put_role_response_200 import PutRoleResponse200
 from .reject_job_response_200 import RejectJobResponse200
+from .reject_mcp_approval_response_200 import RejectMcpApprovalResponse200
 from .release_lock_response_200 import ReleaseLockResponse200
 from .reload_license_response_200 import ReloadLicenseResponse200
 from .remediate_job_body import RemediateJobBody
@@ -153,6 +212,8 @@ from .rerun_workflow_body import RerunWorkflowBody
 from .rerun_workflow_response_200 import RerunWorkflowResponse200
 from .reset_user_password_body import ResetUserPasswordBody
 from .retry_dlq_entry_response_200 import RetryDLQEntryResponse200
+from .revoke_delegation_token_body import RevokeDelegationTokenBody
+from .revoke_delegation_token_response_200 import RevokeDelegationTokenResponse200
 from .role_definition import RoleDefinition
 from .role_detail_response import RoleDetailResponse
 from .role_list_response import RoleListResponse
@@ -200,6 +261,10 @@ from .update_user_request import UpdateUserRequest
 from .velocity_rule import VelocityRule
 from .velocity_rule_match import VelocityRuleMatch
 from .velocity_stats import VelocityStats
+from .verify_delegation_token_body import VerifyDelegationTokenBody
+from .verify_delegation_token_response_200 import VerifyDelegationTokenResponse200
+from .verify_mcp_signature_body import VerifyMcpSignatureBody
+from .verify_mcp_signature_response_200 import VerifyMcpSignatureResponse200
 from .worker_credential import WorkerCredential
 from .worker_credential_issue import WorkerCredentialIssue
 from .worker_runtime import WorkerRuntime
@@ -214,10 +279,15 @@ from .workflow_step_retry import WorkflowStepRetry
 __all__ = (
     "AdminLock",
     "APIKeyInfo",
+    "ApprovalAnalyticsGroup",
+    "ApprovalAnalyticsResponse",
+    "ApprovalAnalyticsResponseWindow",
+    "ApprovalAnalyticsSummary",
     "ApprovalDecisionRequest",
     "ApprovalItem",
     "ApprovalItemConstraintsType0",
     "ApprovalItemDecision",
+    "ApproveMcpApprovalResponse200",
     "ArtifactDetail",
     "ArtifactDetailMetadata",
     "ArtifactDetailMetadataLabels",
@@ -238,12 +308,28 @@ __all__ = (
     "CreateArtifactRequestLabels",
     "CreateArtifactResponse",
     "CreateBundleSnapshotBody",
+    "CreateEvalDatasetBody",
+    "CreateEvalDatasetBodyEntriesItem",
+    "CreateEvalDatasetBodyEntriesItemInput",
+    "CreateEvalDatasetBodyEntriesItemMetadata",
+    "CreateEvalDatasetFromIncidentsBody",
+    "CreateEvalDatasetFromIncidentsResponse200",
+    "CreateEvalDatasetFromIncidentsResponse201",
+    "CreateEvalDatasetResponse201",
+    "CreateEvalDatasetSuccessorBody",
+    "CreateEvalDatasetSuccessorBodyEntriesItem",
+    "CreateEvalDatasetSuccessorResponse200",
     "CreateLegalHoldBody",
     "CreatePoolBody",
     "CreateTopicBody",
     "CreateUserRequest",
     "CreateWorkerCredentialBody",
     "CreateWorkflowResponse201",
+    "DelegationChainLink",
+    "DelegationLineageChainLink",
+    "DelegationLineageView",
+    "DelegationListResponse",
+    "DelegationView",
     "DeleteRoleResponse200",
     "DLQEntry",
     "DrainPoolBody",
@@ -252,9 +338,23 @@ __all__ = (
     "DryRunWorkflowBodyEnvironment",
     "DryRunWorkflowBodyInput",
     "Error",
+    "EvalEntryResult",
+    "EvalEntryResultDriftDirection",
+    "EvalEntryResultInput",
+    "EvalEntryResultStatus",
+    "EvalRunAcceptedResponse",
+    "EvalRunAcceptedResponseStatus",
+    "EvalRunRequest",
+    "EvalRunResult",
+    "EvalRunsResponse",
+    "EvalRunSummary",
     "GenericObject",
+    "GetAgentDeniedEventsResponse200",
     "GetAgentResponse200",
     "GetAgentStatsResponse200",
+    "GetAgentToolVisibilityResponse200",
+    "GetApprovalAnalyticsGroupBy",
+    "GetApprovalAnalyticsWindow",
     "GetApprovalContextResponse200",
     "GetApprovalContextResponse200Approval",
     "GetApprovalContextResponse200BlastRadius",
@@ -263,14 +363,23 @@ __all__ = (
     "GetApprovalContextResponse200PolicySnapshotSummaryMatchedRule",
     "GetApprovalContextResponse200PriorApprovalsItem",
     "GetConfigScope",
+    "GetEvalDatasetByNameVersionResponse200",
+    "GetEvalDatasetResponse200",
     "GetLicenseResponse200",
+    "GetMcpApprovalResponse200",
+    "GetMcpUsageGroupBy",
+    "GetMcpUsageResponse200",
     "GetMemoryResponse200",
     "GetOutputPolicyStatsResponse200",
     "GetRunChatResponse200",
     "GetTelemetryStatusResponse200",
     "GetVelocityRuleStatsResponse200",
     "GetWorkerJobsResponse200",
+    "InstalledPackVerification",
+    "InstalledPackVerificationSignatureAlgorithm",
     "InstallPackBody",
+    "IssueDelegationTokenBody",
+    "IssueDelegationTokenResponse201",
     "JobDetail",
     "JobDetailLabels",
     "JobDetailResultType0",
@@ -288,12 +397,26 @@ __all__ = (
     "LicenseInfoLimits",
     "ListAdminLocksResponse200",
     "ListAgentsResponse200",
+    "ListAgentsResponse200ItemsItem",
     "ListAllWorkflowRunsResponse200",
     "ListAPIKeysResponse200",
     "ListApprovalsResponse200",
     "ListBundleSnapshotsResponse200",
+    "ListDelegationsForAgentStatus",
+    "ListDelegationsStatus",
     "ListDLQPaginatedResponse200",
+    "ListEvalDatasetsResponse200",
+    "ListEvalDatasetsResponse200ItemsItem",
+    "ListEvalDatasetVersionsResponse200",
+    "ListEvalDatasetVersionsResponse200ItemsItem",
+    "ListGovernanceDecisionsResponse200",
+    "ListGovernanceDecisionsResponse200ItemsItem",
+    "ListGovernanceDecisionsResponse200ItemsItemConstraints",
     "ListJobsResponse200",
+    "ListMcpApprovalsResponse200",
+    "ListMcpApprovalsResponse200ItemsItem",
+    "ListMcpOutboundResponse200",
+    "ListMcpToolsResponse200",
     "ListPacksResponse200",
     "ListPolicyBundlesResponse200",
     "ListPolicyRulesResponse200",
@@ -357,6 +480,7 @@ __all__ = (
     "PublishPolicyRequest",
     "PutRoleResponse200",
     "RejectJobResponse200",
+    "RejectMcpApprovalResponse200",
     "ReleaseLockResponse200",
     "ReloadLicenseResponse200",
     "RemediateJobBody",
@@ -365,6 +489,8 @@ __all__ = (
     "RerunWorkflowResponse200",
     "ResetUserPasswordBody",
     "RetryDLQEntryResponse200",
+    "RevokeDelegationTokenBody",
+    "RevokeDelegationTokenResponse200",
     "RoleDefinition",
     "RoleDetailResponse",
     "RoleListResponse",
@@ -412,6 +538,10 @@ __all__ = (
     "VelocityRule",
     "VelocityRuleMatch",
     "VelocityStats",
+    "VerifyDelegationTokenBody",
+    "VerifyDelegationTokenResponse200",
+    "VerifyMcpSignatureBody",
+    "VerifyMcpSignatureResponse200",
     "WorkerCredential",
     "WorkerCredentialIssue",
     "WorkerRuntime",

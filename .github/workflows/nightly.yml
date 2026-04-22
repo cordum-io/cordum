@@ -39,6 +39,9 @@ jobs:
     - name: Generate API key
       run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
 
+    - name: Generate Redis password
+      run: echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> $GITHUB_ENV
+
     - name: Generate TLS certificates
       # Relax permissions so non-root containers in docker-compose can
       # read the generated cert + key files mounted from the workspace.
@@ -67,6 +70,7 @@ jobs:
         done
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
 
     - name: Run all production gates (1-17)
       run: bash tools/scripts/production_gate.sh --skip-rebuild
@@ -123,6 +127,9 @@ jobs:
     - name: Generate API key
       run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
 
+    - name: Generate Redis password
+      run: echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> $GITHUB_ENV
+
     - name: Generate TLS certificates
       # Relax permissions so non-root containers in docker-compose can
       # read the generated cert + key files mounted from the workspace.
@@ -151,6 +158,7 @@ jobs:
         done
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
 
     - name: Run strict production gate
       run: bash tools/scripts/production_gate.sh --skip-rebuild --strict
@@ -205,6 +213,9 @@ jobs:
     - name: Generate API key
       run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
 
+    - name: Generate Redis password
+      run: echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> $GITHUB_ENV
+
     - name: Generate TLS certificates
       # Relax permissions so non-root containers in docker-compose can
       # read the generated cert + key files mounted from the workspace.
@@ -233,11 +244,13 @@ jobs:
         done
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
 
     - name: Run soak test
       run: bash tools/scripts/soak_test.sh
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
         SOAK_DURATION_MINUTES: ${{ inputs.soak_duration || '60' }}
 
     - name: Upload soak results
