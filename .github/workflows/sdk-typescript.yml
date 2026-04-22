@@ -54,7 +54,11 @@ jobs:
           cache-dependency-path: sdk/typescript/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        # --no-optional skips platform-specific optional deps (like
+        # @rolldown/binding-wasm32-wasi's nested @emnapi/core) that
+        # otherwise fail npm ci when the lockfile was generated on a
+        # different host OS / arch than the CI runner.
+        run: npm ci --no-optional
 
       - name: Typecheck
         run: npm run typecheck
@@ -95,7 +99,11 @@ jobs:
           cache-dependency-path: sdk/typescript/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        # --no-optional skips platform-specific optional deps (like
+        # @rolldown/binding-wasm32-wasi's nested @emnapi/core) that
+        # otherwise fail npm ci when the lockfile was generated on a
+        # different host OS / arch than the CI runner.
+        run: npm ci --no-optional
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium firefox webkit
@@ -130,7 +138,11 @@ jobs:
           cache-dependency-path: sdk/typescript/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        # --no-optional skips platform-specific optional deps (like
+        # @rolldown/binding-wasm32-wasi's nested @emnapi/core) that
+        # otherwise fail npm ci when the lockfile was generated on a
+        # different host OS / arch than the CI runner.
+        run: npm ci --no-optional
 
       - name: Build publish artifact
         run: npm run build
