@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
 import json
+import logging
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, Dict, Optional, Union
