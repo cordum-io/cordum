@@ -669,6 +669,52 @@ func (e *Engine) emitHeartbeatDisagreement(jobID, topic string, disagreement Hea
 	})
 }
 
+// emitApprovalRevisionMismatch records a SIEM event when the approval
+// fast-path refuses to short-circuit to SafetyAllow because the
+// approval_snapshot label on the resubmitted JobRequest does not match
+// (base-compared) the PolicySnapshot currently stored on the job's
+// SafetyDecisionRecord. Callers fall through to a full safety re-check;
+// this event gives SIEM operators a tamper/stale-approval signal
+// independent of whether the subsequent re-check allows or denies.
+func (e *Engine) emitApprovalRevisionMismatch(req *pb.JobRequest, stored, asserted string) {
+	if e == nil || req == nil {
+		return
+	}
+	jobID := strings.TrimSpace(req.GetJobId())
+	topic := strings.TrimSpace(req.GetTopic())
+	if e.dispatchAuditSink == nil {
+		return
+	}
+	ctx := e.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	extra := map[string]string{
+		"stored_snapshot":   stored,
+		"asserted_snapshot": asserted,
+	}
+	if topic != "" {
+		extra["topic"] = topic
+	}
+	tenant := ""
+	if req.Labels != nil {
+		if t := strings.TrimSpace(req.Labels["tenant"]); t != "" {
+			tenant = t
+		}
+	}
+	e.dispatchAuditSink.Emit(ctx, audit.SIEMEvent{
+		Timestamp:     time.Now().UTC(),
+		EventType:     audit.EventApprovalRevisionMismatch,
+		Severity:      audit.SeverityHigh,
+		TenantID:      tenant,
+		JobID:         jobID,
+		Action:        "scheduler.approval_fast_path_reject",
+		Reason:        "approval_snapshot label does not match stored PolicySnapshot",
+		PolicyVersion: snapshotBase(stored),
+		Extra:         extra,
+	})
+}
+
 // HandlePacketWithContext is the context-aware version of HandlePacket.
 // It receives trace context extracted from NATS headers and threads it
 // through to processJob for distributed tracing continuity.
@@ -1932,26 +1978,49 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest, _ ...string) (SafetyDec
 			if err == nil && (prev.ApprovalRequired || prev.Decision == SafetyRequireApproval) && prev.JobHash != "" {
 				hash, err := HashJobRequest(req)
 				if err == nil && hash == prev.JobHash {
-					record = SafetyDecisionRecord{
-						Decision:       SafetyAllow,
-						Reason:         "approval granted",
-						CheckedAt:      time.Now().UTC().UnixNano() / int64(time.Microsecond),
-						Constraints:    prev.Constraints,
-						PolicySnapshot: prev.PolicySnapshot,
-						RuleID:         prev.RuleID,
-						JobHash:        prev.JobHash,
-					}
-					if e.jobStore != nil {
-						ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
-						defer cancel()
-						if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
-							return record, err
+					// Bind the fast-path to the PolicySnapshot this approval
+					// was admitted against. The gateway stamps approval_snapshot
+					// onto the resubmitted request when it resolves the
+					// approval; we compare it (base only, to ignore config-
+					// overlay churn) against the stored safety record's
+					// PolicySnapshot — which ResolveApproval rotates to the
+					// human-approved snapshot on approve. A mismatch means the
+					// stored safety decision drifted after admission (reconciler
+					// invalidated it, or the label predates this binding), so
+					// we fall through to a full safety check instead of
+					// short-circuiting to SafetyAllow.
+					asserted := strings.TrimSpace(req.Labels["approval_snapshot"])
+					stored := strings.TrimSpace(prev.PolicySnapshot)
+					if asserted == "" || stored == "" || snapshotBase(asserted) != snapshotBase(stored) {
+						e.emitApprovalRevisionMismatch(req, stored, asserted)
+						slog.Warn("approval fast-path rejected: policy snapshot mismatch",
+							"job_id", jobID,
+							"stored_snapshot", stored,
+							"asserted_snapshot", asserted,
+						)
+					} else {
+						record = SafetyDecisionRecord{
+							Decision:       SafetyAllow,
+							Reason:         "approval granted",
+							CheckedAt:      time.Now().UTC().UnixNano() / int64(time.Microsecond),
+							Constraints:    prev.Constraints,
+							PolicySnapshot: prev.PolicySnapshot,
+							RuleID:         prev.RuleID,
+							JobHash:        prev.JobHash,
 						}
-						e.appendDecisionLog(req, record)
+						if e.jobStore != nil {
+							ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+							defer cancel()
+							if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
+								return record, err
+							}
+							e.appendDecisionLog(req, record)
+						}
+						return record, nil
 					}
-					return record, nil
+				} else {
+					slog.Warn("approval label ignored (hash mismatch)", "job_id", jobID)
 				}
-				slog.Warn("approval label ignored (hash mismatch)", "job_id", jobID)
 			} else {
 				slog.Warn("approval label ignored (no approval record)", "job_id", jobID)
 			}

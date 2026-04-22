@@ -296,7 +296,7 @@ func (r *Reconciler) handleApprovalRepairs(ctx context.Context, now time.Time) {
 			classifyOpts := infraStore.ApprovalRepairClassifyOptions{}
 			if currentSnapshot != "" {
 				storedSnap := snapshot.SafetyRecord.PolicySnapshot
-				if storedSnap != "" && reconcilerSnapshotBase(currentSnapshot) != reconcilerSnapshotBase(storedSnap) {
+				if storedSnap != "" && snapshotBase(currentSnapshot) != snapshotBase(storedSnap) {
 					classifyOpts.StaleSnapshot = true
 				}
 			}
@@ -345,10 +345,12 @@ func autoApplyApprovalRepair(plan infraStore.ApprovalRepairPlan) bool {
 	}
 }
 
-// reconcilerSnapshotBase returns the base policy hash from a combined snapshot
-// string. Combined snapshots have the form "base|cfg:hash"; this extracts just
-// "base" so that config-overlay changes don't affect staleness detection.
-func reconcilerSnapshotBase(snap string) string {
+// snapshotBase returns the base policy hash from a combined snapshot string.
+// Combined snapshots have the form "base|cfg:hash"; this extracts just "base"
+// so that config-overlay changes don't affect approval-binding comparisons.
+// Shared by the reconciler's stale-snapshot detection and the engine's
+// approval fast-path revision check.
+func snapshotBase(snap string) string {
 	if i := strings.Index(snap, "|"); i >= 0 {
 		return snap[:i]
 	}
