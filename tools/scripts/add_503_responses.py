@@ -47,10 +47,23 @@ def process(lines: list[str]) -> tuple[list[str], int]:
         # Detect start of a responses: block at any indent.
         if stripped == "responses:":
             base_indent = len(line) - len(line.lstrip(" "))
-            inner_indent = base_indent + 2
-            status_indent = inner_indent + 2
             out.append(line)
             i += 1
+
+            # Detect the actual inner indent step from the first
+            # non-blank child line. YAML specs in this tree use 2-space
+            # indent but other projects (or future refactors) may not;
+            # inferring keeps the patcher tolerant of style.
+            inner_indent = base_indent + 2
+            status_indent = inner_indent + 2
+            for probe in lines[i:]:
+                if probe.strip() == "":
+                    continue
+                probe_indent = len(probe) - len(probe.lstrip(" "))
+                if probe_indent > base_indent:
+                    inner_indent = probe_indent
+                    status_indent = inner_indent + (inner_indent - base_indent)
+                break
 
             block: list[str] = []
             while i < len(lines):
