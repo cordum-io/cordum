@@ -46,6 +46,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify tag matches package.json version (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/sdk-ts-v')
+        shell: bash
+        run: |
+          TAG_VER="${GITHUB_REF_NAME#sdk-ts-v}"
+          FILE_VER=$(node -p "require('./package.json').version")
+          if [ "$TAG_VER" != "$FILE_VER" ]; then
+            echo "::error::tag=$TAG_VER but package.json version=$FILE_VER"
+            exit 1
+          fi
+          echo "tag $TAG_VER matches package.json version"
+
       - name: Set up Node ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
