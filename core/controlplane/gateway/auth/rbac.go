@@ -39,6 +39,13 @@ const (
 	PermUsersWrite     = "users.write"
 	PermRolesRead      = "roles.read"
 	PermRolesWrite     = "roles.write"
+	// PermDelegationImpersonate authorises a caller to submit a job with a
+	// delegation audience agent that differs from the caller's own
+	// authenticated agent identity. This amounts to impersonating a
+	// different audience at delegation-verification time and must be
+	// restricted to operators explicitly trusted to relay tokens on
+	// behalf of other agents.
+	PermDelegationImpersonate = "delegation.impersonate"
 )
 
 // AllPermissions is the canonical list of permissions for validation.
@@ -54,6 +61,7 @@ var AllPermissions = []string{
 	PermSchemasRead, PermSchemasWrite,
 	PermUsersRead, PermUsersWrite,
 	PermRolesRead, PermRolesWrite,
+	PermDelegationImpersonate,
 }
 
 // ---------------------------------------------------------------------------

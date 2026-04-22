@@ -12,6 +12,7 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/auth/delegation"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -463,6 +464,64 @@ func TestHandleSubmitJobHTTPRejectsExpiredDelegationToken(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "expired") {
 		t.Fatalf("expected expired body, got %s", rec.Body.String())
+	}
+}
+
+// TestHandleSubmitJobHTTPRejectsAudienceOverrideWithoutImpersonatePermission
+// verifies the delegation_audience_agent_id field cannot be used to widen
+// identity at token-verification time. A caller whose auth-derived agent
+// identity differs from the requested audience must hold
+// PermDelegationImpersonate (or the admin legacy role); otherwise the
+// submit is rejected 403 and an audit event is recorded.
+func TestHandleSubmitJobHTTPRejectsAudienceOverrideWithoutImpersonatePermission(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	setDelegationKeys(t)
+	setTestEntitlements(t, s, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
+		entitlements.RBAC = true
+		entitlements.AgentIdentity = true
+	})
+
+	// Relay worker is bound to agent-b, but will try to submit with
+	// delegation_audience_agent_id=agent-c (impersonation attempt).
+	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
+		t.Fatalf("LinkWorker() error = %v", err)
+	}
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.test"})
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
+	createDelegationAgent(t, s, "default", "agent-c", []string{"read"}, []string{"job.test"})
+
+	// Role holds jobs.write (so the outer gate passes) but NOT
+	// delegation.impersonate, so the audience override gate must fire.
+	putTestRole(t, s, "relay", auth.PermJobsWrite)
+
+	service, err := s.delegationTokenService()
+	if err != nil {
+		t.Fatalf("delegationTokenService() error = %v", err)
+	}
+	token, _, err := service.IssueDelegationToken(context.Background(), delegation.IssueRequest{
+		Tenant:            "default",
+		DelegatingAgentID: "agent-a",
+		TargetAgentID:     "agent-c",
+		AllowedActions:    []string{"read"},
+		AllowedTopics:     []string{"job.test"},
+	})
+	if err != nil {
+		t.Fatalf("IssueDelegationToken() error = %v", err)
+	}
+
+	body := `{"prompt":"hello","topic":"job.test","delegation_token":"` + token + `","delegation_audience_agent_id":"agent-c"}`
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(body)), &auth.AuthContext{
+		Tenant:      "default",
+		PrincipalID: "worker-b",
+		Role:        "relay",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s want 403", rec.Code, rec.Body.String())
 	}
 }
 
