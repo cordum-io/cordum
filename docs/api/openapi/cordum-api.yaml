@@ -3532,6 +3532,128 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/audit/verify:
+    get:
+      operationId: verifyAuditChain
+      summary: Verify audit chain integrity
+      description: |
+        Walks the tenant's audit stream and attests integrity of the hash chain. Reports
+        `status=ok` on a contiguous chain, `status=gap` with classification when seq numbers are
+        missing (retention-trimmed vs suspected tampering), and `status=tamper` on a broken hash
+        link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
+        integrity report surface, not event retrieval.
+      tags:
+      - AuditExport
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: tenant
+        in: query
+        description: Tenant id (must match caller scope)
+        schema:
+          type: string
+      - name: since
+        in: query
+        description: Inclusive lower bound on event time (unix ms)
+        schema:
+          type: integer
+          format: int64
+      - name: until
+        in: query
+        description: Inclusive upper bound on event time (unix ms)
+        schema:
+          type: integer
+          format: int64
+      - name: limit
+        in: query
+        description: Max events to read (default 10000, max 100000)
+        schema:
+          type: integer
+          format: int32
+      responses:
+        '200':
+          description: Chain integrity report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenericObject'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          description: Audit chainer not installed; integrity cannot be attested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/audit/export:
+    get:
+      operationId: exportAuditCompliance
+      summary: Stream compliance audit export
+      description: |
+        Streams a compliance-shaped audit export (ndjson or csv) for a bounded time window.
+        Admin-only; gated by the `siem_export` or `audit_export` entitlement. The response is
+        retention-aware: windows older than the configured retention + skew are rejected. The
+        body carries SOC2 mapping columns when the operator has configured a mapping table.
+      tags:
+      - AuditExport
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: from
+        in: query
+        description: Inclusive lower bound (RFC3339 timestamp)
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        description: Exclusive upper bound (RFC3339 timestamp)
+        schema:
+          type: string
+          format: date-time
+      - name: format
+        in: query
+        description: Output format
+        schema:
+          type: string
+          enum:
+          - ndjson
+          - csv
+          default: ndjson
+      - name: max_events
+        in: query
+        description: Cap on events emitted (clamped to entitlement ceiling)
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '200':
+          description: Streaming compliance export body (ndjson or csv)
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+            text/csv:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/TierLimit'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          description: Audit stream unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/audit/export/health:
     get:
       operationId: getAuditExportHealth
