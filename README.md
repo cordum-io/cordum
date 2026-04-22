@@ -72,13 +72,13 @@ A single `hello, operator!` workflow fans out to three topics and
 exercises every safety-kernel decision class in under 30 seconds:
 
 ```
-  +--------------------+--------------------------+--------------------+---------
-  | Step               | Topic                    | Verdict            | Reason
-  +--------------------+--------------------------+--------------------+---------
-  | greet              | job.demo-quickstart.greet           | ALLOW              | Safe…
-  | attempt_delete     | job.demo-quickstart.delete-all      | DENY               | Block…
-  | escalate_admin     | job.demo-quickstart.admin           | REQUIRE_APPROVAL   | Sign…
-  +--------------------+--------------------------+--------------------+---------
+  +--------------------+----------------------------------+--------------------+---------
+  | Step               | Topic                            | Verdict            | Reason
+  +--------------------+----------------------------------+--------------------+---------
+  | greet              | job.demo-quickstart.greet        | ALLOW              | Safe…
+  | attempt_delete     | job.demo-quickstart.delete-all   | DENY               | Block…
+  | escalate_admin     | job.demo-quickstart.admin        | REQUIRE_APPROVAL   | Sign…
+  +--------------------+----------------------------------+--------------------+---------
 ```
 
 Full walkthrough, rule-by-rule explanation, and extension recipe:
