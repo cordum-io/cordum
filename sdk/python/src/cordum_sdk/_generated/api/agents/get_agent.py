@@ -15,9 +15,14 @@ from typing import Dict
 
 def _get_kwargs(
     id: str,
+    *,
+    x_tenant_id: str,
 
 ) -> Dict[str, Any]:
-    
+    headers: Dict[str, Any] = {}
+    headers["X-Tenant-ID"] = x_tenant_id
+
+
 
     
 
@@ -29,6 +34,7 @@ def _get_kwargs(
     }
 
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -48,6 +54,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
     if response.status_code == 404:
         response_404 = cast(Any, None)
         return response_404
+    if response.status_code == 503:
+        response_503 = cast(Any, None)
+        return response_503
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -67,12 +76,14 @@ def sync_detailed(
     id: str,
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: str,
 
 ) -> Response[Union[Any, GetAgentResponse200]]:
-    """ Get an agent identity
+    """ Get one agent identity
 
     Args:
         id (str):
+        x_tenant_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -85,6 +96,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         id=id,
+x_tenant_id=x_tenant_id,
 
     )
 
@@ -98,12 +110,14 @@ def sync(
     id: str,
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: str,
 
 ) -> Optional[Union[Any, GetAgentResponse200]]:
-    """ Get an agent identity
+    """ Get one agent identity
 
     Args:
         id (str):
+        x_tenant_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -117,6 +131,7 @@ def sync(
     return sync_detailed(
         id=id,
 client=client,
+x_tenant_id=x_tenant_id,
 
     ).parsed
 
@@ -124,12 +139,14 @@ async def asyncio_detailed(
     id: str,
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: str,
 
 ) -> Response[Union[Any, GetAgentResponse200]]:
-    """ Get an agent identity
+    """ Get one agent identity
 
     Args:
         id (str):
+        x_tenant_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -142,6 +159,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         id=id,
+x_tenant_id=x_tenant_id,
 
     )
 
@@ -155,12 +173,14 @@ async def asyncio(
     id: str,
     *,
     client: Union[AuthenticatedClient, Client],
+    x_tenant_id: str,
 
 ) -> Optional[Union[Any, GetAgentResponse200]]:
-    """ Get an agent identity
+    """ Get one agent identity
 
     Args:
         id (str):
+        x_tenant_id (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -174,5 +194,6 @@ async def asyncio(
     return (await asyncio_detailed(
         id=id,
 client=client,
+x_tenant_id=x_tenant_id,
 
     )).parsed

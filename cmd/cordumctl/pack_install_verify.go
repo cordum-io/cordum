@@ -112,7 +112,7 @@ func VerifyInstallBundle(bundleDir, packID string, opts PackVerificationOptions)
 		if opts.Strict && !opts.Force {
 			return nil, ErrNoVerifyRequiresForce
 		}
-		fmt.Fprintf(opts.Stderr, "WARNING: --no-verify set; pack %q signature will NOT be checked. This is unsafe for production.\n", packID)
+		_, _ = fmt.Fprintf(opts.Stderr, "WARNING: --no-verify set; pack %q signature will NOT be checked. This is unsafe for production.\n", packID)
 		return &PackVerificationResult{
 			Signed:             false,
 			SignatureAlgorithm: signing.AlgorithmEd25519,
@@ -127,7 +127,7 @@ func VerifyInstallBundle(bundleDir, packID string, opts PackVerificationOptions)
 		if opts.Strict {
 			return nil, fmt.Errorf("%w: pack %q (set CORDUM_PACK_STRICT=false, --strict=false, or sign the pack with `cordumctl pack sign`)", ErrUnsignedPackInStrict, packID)
 		}
-		fmt.Fprintf(opts.Stderr, "WARNING: pack %q is unsigned. Install proceeding in non-strict mode.\n", packID)
+		_, _ = fmt.Fprintf(opts.Stderr, "WARNING: pack %q is unsigned. Install proceeding in non-strict mode.\n", packID)
 		// When --require-cordum-sig is set on an unsigned pack the
 		// operator's intent is explicit: they want Cordum-counter-sig
 		// proof. Unsigned packs can't carry it, so fail even outside

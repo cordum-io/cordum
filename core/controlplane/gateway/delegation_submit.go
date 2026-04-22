@@ -16,10 +16,6 @@ import (
 
 var errDelegationAgentRequired = errors.New("delegation token requires an authenticated agent identity")
 
-func (s *server) applySubmitDelegation(ctx context.Context, tenant, agentID, token string, labels map[string]string, meta *pb.JobMetadata) (map[string]string, error) {
-	return s.applySubmitDelegationWithAudience(ctx, tenant, agentID, token, "", labels, meta)
-}
-
 func submitDelegationExpectedAudience(agentID, audienceOverride string) string {
 	expectedAudience := strings.TrimSpace(audienceOverride)
 	if expectedAudience == "" {

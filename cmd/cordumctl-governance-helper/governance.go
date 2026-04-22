@@ -383,7 +383,7 @@ func (s natsGovernanceSubscriber) Subscribe(handler func([]byte) error) error {
 	if err != nil {
 		return err
 	}
-	s.conn.Flush()
+	_ = s.conn.Flush()
 	return s.conn.LastError()
 }
 

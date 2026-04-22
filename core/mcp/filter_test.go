@@ -65,9 +65,8 @@ func TestFilterForIdentity_RiskTierCeiling(t *testing.T) {
 	}
 	got := toolNames(FilterForIdentity(filterCatalog, id))
 	// medium can call low+medium. high, critical, and untagged (defaults high) are denied.
-	want := []string{"fs.read", "fs.write", "jobs.submit", "pii.read"}
 	// pii.read requires pii classification which this identity doesn't have.
-	want = []string{"fs.read", "fs.write", "jobs.submit"}
+	want := []string{"fs.read", "fs.write", "jobs.submit"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("risk-tier filter: want %v, got %v", want, got)
 	}

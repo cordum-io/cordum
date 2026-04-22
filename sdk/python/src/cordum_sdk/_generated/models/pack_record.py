@@ -13,9 +13,12 @@ from ..types import UNSET, Unset
 from dateutil.parser import isoparse
 from typing import cast
 from typing import cast, Union
+from typing import Dict
 from typing import Union
 import datetime
 
+if TYPE_CHECKING:
+  from ..models.installed_pack_verification import InstalledPackVerification
 
 
 
@@ -36,6 +39,12 @@ class PackRecord:
             author (Union[None, Unset, str]):
             installed_at (Union[Unset, datetime.datetime]):
             updated_at (Union[Unset, datetime.datetime]):
+            verification (Union[Unset, InstalledPackVerification]): Pack-signature verification outcome computed by the
+                gateway at
+                install time. Never client-supplied — the gateway discards any
+                `verification` field on the install payload and computes its own.
+                Pre-existing installs default to {signed: false} when this object
+                is absent.
      """
 
     id: Union[Unset, str] = UNSET
@@ -46,10 +55,12 @@ class PackRecord:
     author: Union[None, Unset, str] = UNSET
     installed_at: Union[Unset, datetime.datetime] = UNSET
     updated_at: Union[Unset, datetime.datetime] = UNSET
+    verification: Union[Unset, 'InstalledPackVerification'] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
     def to_dict(self) -> Dict[str, Any]:
+        from ..models.installed_pack_verification import InstalledPackVerification
         id = self.id
 
         name = self.name
@@ -81,6 +92,10 @@ class PackRecord:
         if not isinstance(self.updated_at, Unset):
             updated_at = self.updated_at.isoformat()
 
+        verification: Union[Unset, Dict[str, Any]] = UNSET
+        if not isinstance(self.verification, Unset):
+            verification = self.verification.to_dict()
+
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -102,6 +117,8 @@ class PackRecord:
             field_dict["installed_at"] = installed_at
         if updated_at is not UNSET:
             field_dict["updated_at"] = updated_at
+        if verification is not UNSET:
+            field_dict["verification"] = verification
 
         return field_dict
 
@@ -109,6 +126,7 @@ class PackRecord:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
+        from ..models.installed_pack_verification import InstalledPackVerification
         d = src_dict.copy()
         id = d.pop("id", UNSET)
 
@@ -166,6 +184,16 @@ class PackRecord:
 
 
 
+        _verification = d.pop("verification", UNSET)
+        verification: Union[Unset, InstalledPackVerification]
+        if isinstance(_verification,  Unset):
+            verification = UNSET
+        else:
+            verification = InstalledPackVerification.from_dict(_verification)
+
+
+
+
         pack_record = cls(
             id=id,
             name=name,
@@ -175,6 +203,7 @@ class PackRecord:
             author=author,
             installed_at=installed_at,
             updated_at=updated_at,
+            verification=verification,
         )
 
 

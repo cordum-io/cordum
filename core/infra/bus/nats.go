@@ -923,10 +923,8 @@ func natsTLSConfigFromEnv() (*tls.Config, error) {
 		// as "remote error: tls: certificate required" from the server — the
 		// operator has no signal what's wrong. ChainError prints both cert
 		// DNs, both validity windows, and the exact cordumctl command to fix.
-		chainValid := true
 		if caPath != "" && !insecure {
 			if verr := tlsutil.VerifyChain(certPath, caPath, tlsutil.RoleClient); verr != nil {
-				chainValid = false
 				// Emit metrics before failing so a one-off restart loop
 				// still leaves a measurable signal in /metrics. The gauge
 				// goes to 0 and Grafana fires, even though this goroutine
@@ -937,8 +935,10 @@ func natsTLSConfigFromEnv() (*tls.Config, error) {
 				return nil, fmt.Errorf("nats tls: %w", verr)
 			}
 		}
+		// Chain verified (or skipped when caPath/insecure bypass it) — emit
+		// the success gauge so freshness/expiry dashboards stay green.
 		if leaf := firstLeaf(cert); leaf != nil {
-			tlsutil.EmitCertMetrics("nats", "client", certPath, leaf.NotAfter, chainValid)
+			tlsutil.EmitCertMetrics("nats", "client", certPath, leaf.NotAfter, true)
 		}
 		cfg.Certificates = []tls.Certificate{cert}
 	}

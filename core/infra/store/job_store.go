@@ -2682,6 +2682,11 @@ func (s *RedisJobStore) ResolveApproval(ctx context.Context, params ApprovalReso
 		// aligned with the approval_snapshot label written onto the request.
 		if params.Decision == model.ApprovalDecisionApprove && strings.TrimSpace(resolvedRecord.PolicySnapshot) != "" {
 			fields[metaFieldSafetySnapshot] = resolvedRecord.PolicySnapshot
+			// Keep the returned SafetyRecord aligned with what we just wrote
+			// to Redis. Callers (e.g. the approval publish step) that read
+			// ApprovalResolutionResult.SafetyRecord.PolicySnapshot must see
+			// the rotated snapshot, not the pre-rotation value.
+			safetyRecord.PolicySnapshot = resolvedRecord.PolicySnapshot
 		}
 		if len(req.Labels) > 0 {
 			if labelsJSON, err := json.Marshal(req.Labels); err == nil {

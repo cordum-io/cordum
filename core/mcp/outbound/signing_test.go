@@ -226,7 +226,7 @@ func TestLoadPrivateKeyFromEnv_Roundtrip(t *testing.T) {
 	if id != "test-k" {
 		t.Errorf("id = %q want test-k", id)
 	}
-	if got == nil || got.PublicKey.X.Cmp(priv.PublicKey.X) != 0 || got.PublicKey.Y.Cmp(priv.PublicKey.Y) != 0 {
+	if got == nil || got.X.Cmp(priv.X) != 0 || got.Y.Cmp(priv.Y) != 0 {
 		t.Error("loaded key differs from original")
 	}
 }

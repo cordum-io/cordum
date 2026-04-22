@@ -696,11 +696,12 @@ func (e *Engine) emitApprovalRevisionMismatch(req *pb.JobRequest, stored, assert
 	if topic != "" {
 		extra["topic"] = topic
 	}
-	tenant := ""
-	if req.Labels != nil {
-		if t := strings.TrimSpace(req.Labels["tenant"]); t != "" {
-			tenant = t
-		}
+	// Canonical tenant source is req.TenantId (set by the gateway from the
+	// authenticated principal). Fall back to the "tenant" label only when
+	// the request body omits it, so SIEM alerts are scoped correctly.
+	tenant := strings.TrimSpace(req.TenantId)
+	if tenant == "" && req.Labels != nil {
+		tenant = strings.TrimSpace(req.Labels["tenant"])
 	}
 	e.dispatchAuditSink.Emit(ctx, audit.SIEMEvent{
 		Timestamp:     time.Now().UTC(),
@@ -1235,11 +1236,12 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 			}
 		}
 
-		if currentState == "" {
+		switch currentState {
+		case "":
 			if err := e.setJobState(jobID, JobStatePending); err != nil {
 				return RetryAfter(err, retryDelayStore)
 			}
-		} else if currentState == JobStateScheduled {
+		case JobStateScheduled:
 			if inc, ok := e.jobStore.(interface {
 				IncrAttempts(context.Context, string) error
 			}); ok {
@@ -1941,7 +1943,7 @@ func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobReque
 		safetySpan.SetAttributes(attribute.String("cordum.job_id", strings.TrimSpace(req.JobId)))
 	}
 
-	record, err := e.checkSafetyDecision(req)
+	record, err := e.checkSafetyDecision(ctx, req)
 	if err != nil {
 		safetySpan.SetStatus(otelcodes.Error, err.Error())
 		safetySpan.RecordError(err)
@@ -1954,7 +1956,14 @@ func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobReque
 	return record, err
 }
 
-func (e *Engine) checkSafetyDecision(req *pb.JobRequest, _ ...string) (SafetyDecisionRecord, error) {
+// checkSafetyDecision evaluates safety for a job. The caller's ctx MUST be the
+// lock-fenced context from withJobLock — any state mutations derived from this
+// call (notably the approval fast-path SetSafetyDecision) must be cancelled
+// when the lock is lost to prevent stale-lock writes racing a takeover handler.
+func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
+	if ctx == nil {
+		ctx = e.ctx
+	}
 	record := SafetyDecisionRecord{}
 	if req == nil {
 		return record, fmt.Errorf("missing job request")
@@ -1972,9 +1981,9 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest, _ ...string) (SafetyDec
 	}
 	if approved {
 		if e.jobStore != nil {
-			ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+			storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 			defer cancel()
-			prev, err := e.jobStore.GetSafetyDecision(ctx, jobID)
+			prev, err := e.jobStore.GetSafetyDecision(storeCtx, jobID)
 			if err == nil && (prev.ApprovalRequired || prev.Decision == SafetyRequireApproval) && prev.JobHash != "" {
 				hash, err := HashJobRequest(req)
 				if err == nil && hash == prev.JobHash {
@@ -1991,7 +2000,14 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest, _ ...string) (SafetyDec
 					// short-circuiting to SafetyAllow.
 					asserted := strings.TrimSpace(req.Labels["approval_snapshot"])
 					stored := strings.TrimSpace(prev.PolicySnapshot)
-					if asserted == "" || stored == "" || snapshotBase(asserted) != snapshotBase(stored) {
+					// Workflow approval gates (sys.approval.gate /
+					// sys.workflow.approval.gate) carry no policy decision —
+					// SafetyBasic returns an empty PolicySnapshot for them.
+					// There is no TOCTOU concern to bind to, so skip the
+					// snapshot match for gate topics. Regular jobs still
+					// require the binding.
+					isGate := isApprovalGateTopic(strings.TrimSpace(req.GetTopic()))
+					if !isGate && (asserted == "" || stored == "" || snapshotBase(asserted) != snapshotBase(stored)) {
 						e.emitApprovalRevisionMismatch(req, stored, asserted)
 						slog.Warn("approval fast-path rejected: policy snapshot mismatch",
 							"job_id", jobID,
@@ -2009,9 +2025,14 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest, _ ...string) (SafetyDec
 							JobHash:        prev.JobHash,
 						}
 						if e.jobStore != nil {
-							ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+							// Derive the store-op timeout from the caller's
+							// lock-fenced ctx, NOT e.ctx. If the lock is lost
+							// mid-evaluation the fenced ctx is cancelled and
+							// this write must not complete after the takeover
+							// handler has already mutated the job state.
+							writeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 							defer cancel()
-							if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
+							if err := e.jobStore.SetSafetyDecision(writeCtx, jobID, record); err != nil {
 								return record, err
 							}
 							e.appendDecisionLog(req, record)
@@ -2039,7 +2060,7 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest, _ ...string) (SafetyDec
 		}, e.ctx.Err()
 	}
 
-	safetyCtx, safetyCancel := context.WithTimeout(e.ctx, safetyCheckTimeout)
+	safetyCtx, safetyCancel := context.WithTimeout(ctx, safetyCheckTimeout)
 	defer safetyCancel()
 
 	record, err := e.safety.Check(safetyCtx, req)

@@ -15,8 +15,8 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.policy_analytics_response_200_time_range import PolicyAnalyticsResponse200TimeRange
   from ..models.policy_analytics_response_200_summary import PolicyAnalyticsResponse200Summary
+  from ..models.policy_analytics_response_200_time_range import PolicyAnalyticsResponse200TimeRange
   from ..models.policy_analytics_response_200_rules_item import PolicyAnalyticsResponse200RulesItem
 
 
@@ -42,8 +42,8 @@ class PolicyAnalyticsResponse200:
 
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.policy_analytics_response_200_time_range import PolicyAnalyticsResponse200TimeRange
         from ..models.policy_analytics_response_200_summary import PolicyAnalyticsResponse200Summary
+        from ..models.policy_analytics_response_200_time_range import PolicyAnalyticsResponse200TimeRange
         from ..models.policy_analytics_response_200_rules_item import PolicyAnalyticsResponse200RulesItem
         time_range: Union[Unset, Dict[str, Any]] = UNSET
         if not isinstance(self.time_range, Unset):
@@ -80,8 +80,8 @@ class PolicyAnalyticsResponse200:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.policy_analytics_response_200_time_range import PolicyAnalyticsResponse200TimeRange
         from ..models.policy_analytics_response_200_summary import PolicyAnalyticsResponse200Summary
+        from ..models.policy_analytics_response_200_time_range import PolicyAnalyticsResponse200TimeRange
         from ..models.policy_analytics_response_200_rules_item import PolicyAnalyticsResponse200RulesItem
         d = src_dict.copy()
         _time_range = d.pop("time_range", UNSET)

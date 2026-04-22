@@ -143,26 +143,26 @@ func TestSafetyRuleDelegationMatchMetricRegistered(t *testing.T) {
 
 func formatFloat(f float64) string {
 	// Rough but readable; we only need substring matches for the test.
-	switch {
-	case f == 0.001:
+	switch f {
+	case 0.001:
 		return "0.001"
-	case f == 0.005:
+	case 0.005:
 		return "0.005"
-	case f == 0.01:
+	case 0.01:
 		return "0.01"
-	case f == 0.025:
+	case 0.025:
 		return "0.025"
-	case f == 0.05:
+	case 0.05:
 		return "0.05"
-	case f == 0.1:
+	case 0.1:
 		return "0.1"
-	case f == 0.25:
+	case 0.25:
 		return "0.25"
-	case f == 0.5:
+	case 0.5:
 		return "0.5"
-	case f == 1:
+	case 1:
 		return "1"
-	case f == 5:
+	case 5:
 		return "5"
 	default:
 		return ""

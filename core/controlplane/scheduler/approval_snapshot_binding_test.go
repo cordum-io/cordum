@@ -80,7 +80,7 @@ func TestCheckSafetyDecision_ApprovalFastPathRequiresSnapshotBinding(t *testing.
 		engine, sink, jobStore, req := newFixture(t, "job-accept")
 		req.Labels["approval_snapshot"] = snapshotV2 + "|cfg:any-overlay"
 
-		rec, err := engine.checkSafetyDecision(req)
+		rec, err := engine.checkSafetyDecision(context.Background(), req)
 		if err != nil {
 			t.Fatalf("checkSafetyDecision returned unexpected error: %v", err)
 		}
@@ -111,7 +111,7 @@ func TestCheckSafetyDecision_ApprovalFastPathRequiresSnapshotBinding(t *testing.
 		engine, sink, _, req := newFixture(t, "job-missing")
 		// No approval_snapshot label (old gateway, pre-binding payload).
 
-		rec, err := engine.checkSafetyDecision(req)
+		rec, err := engine.checkSafetyDecision(context.Background(), req)
 		// checkSafetyDecision falls through to SafetyBasic which
 		// happily allows this job; the important assertion is that
 		// the fast-path did NOT short-circuit and the mismatch event
@@ -149,7 +149,7 @@ func TestCheckSafetyDecision_ApprovalFastPathRequiresSnapshotBinding(t *testing.
 		// not be honored by the fast-path.
 		req.Labels["approval_snapshot"] = snapshotV1
 
-		rec, err := engine.checkSafetyDecision(req)
+		rec, err := engine.checkSafetyDecision(context.Background(), req)
 		if err != nil {
 			t.Fatalf("checkSafetyDecision returned unexpected error: %v", err)
 		}

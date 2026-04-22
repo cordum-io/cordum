@@ -29,7 +29,7 @@ func newStubGateway(t *testing.T, status int, response map[string]any) (*httptes
 		captured.method = r.Method
 		captured.path = r.URL.RequestURI()
 		captured.header = r.Header.Clone()
-		defer r.Body.Close()
+		defer func() { _ = r.Body.Close() }()
 		raw, _ := io.ReadAll(r.Body)
 		if len(raw) > 0 {
 			_ = json.Unmarshal(raw, &captured.body)

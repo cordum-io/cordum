@@ -25,7 +25,7 @@ func TestRenderVerdictTableOrdersByExpectedSteps(t *testing.T) {
 	if posGreet == -1 || posDelete == -1 || posAdmin == -1 {
 		t.Fatalf("missing rows in output:\n%s", out)
 	}
-	if !(posGreet < posDelete && posDelete < posAdmin) {
+	if posGreet >= posDelete || posDelete >= posAdmin {
 		t.Errorf("rows not in canonical order — greet=%d delete=%d admin=%d\n%s",
 			posGreet, posDelete, posAdmin, out)
 	}

@@ -105,7 +105,7 @@ func pickBestTool(prompt string, index map[string]string) string {
 
 func tokenize(s string) []string {
 	out := strings.FieldsFunc(s, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
 	})
 	filtered := out[:0]
 	for _, t := range out {

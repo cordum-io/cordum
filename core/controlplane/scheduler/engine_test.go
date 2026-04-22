@@ -1295,8 +1295,9 @@ func TestProcessJobApprovalGateApprovedAutoCompletes(t *testing.T) {
 		JobId: "job-gate-2",
 		Topic: capsdk.SubjectApprovalGate,
 		Labels: map[string]string{
-			"approval_granted": "true",
-			"gate_type":        "workflow_approval",
+			"approval_granted":  "true",
+			"approval_snapshot": workflowGateSnapshot,
+			"gate_type":         "workflow_approval",
 		},
 	}
 	jobHash, err := HashJobRequest(req)
@@ -1371,7 +1372,8 @@ func TestProcessJobApprovalGatePublishFailureReturnsRetryableError(t *testing.T)
 		JobId: "job-gate-4",
 		Topic: capsdk.SubjectApprovalGate,
 		Labels: map[string]string{
-			"approval_granted": "true",
+			"approval_granted":  "true",
+			"approval_snapshot": workflowGateSnapshot,
 		},
 	}
 	jobHash, err := HashJobRequest(req)
@@ -1471,8 +1473,9 @@ func TestApprovalGateTopicStillAutoCompletes(t *testing.T) {
 			JobId: jobID,
 			Topic: topic,
 			Labels: map[string]string{
-				"approval_granted": "true",
-				"gate_type":        "workflow_approval",
+				"approval_granted":  "true",
+				"approval_snapshot": workflowGateSnapshot,
+				"gate_type":         "workflow_approval",
 			},
 		}
 		jobHash, err := HashJobRequest(req)
@@ -1773,7 +1776,7 @@ func TestCheckSafetyDecision_EngineShutdown_DeniesImmediately(t *testing.T) {
 	// Simulate engine shutdown by cancelling the engine context.
 	engine.cancel()
 
-	record, err := engine.checkSafetyDecision(req, "")
+	record, err := engine.checkSafetyDecision(context.Background(), req)
 	if err == nil {
 		t.Fatal("expected error during shutdown, got nil")
 	}
@@ -2582,7 +2585,7 @@ func TestCheckSafetyDecisionAppendsDecisionLog(t *testing.T) {
 				Labels:   map[string]string{"agent_id": "agent-123"},
 			}
 
-			record, err := engine.checkSafetyDecision(req)
+			record, err := engine.checkSafetyDecision(context.Background(), req)
 			if err != nil {
 				t.Fatalf("checkSafetyDecision() error = %v", err)
 			}
@@ -2643,8 +2646,9 @@ func TestCheckSafetyDecisionApprovalGrantedAppendsDecisionLog(t *testing.T) {
 		Topic:    "job.test",
 		TenantId: "tenant-a",
 		Labels: map[string]string{
-			"approval_granted": "true",
-			"agent_id":         "agent-approved",
+			"approval_granted":  "true",
+			"approval_snapshot": "snap-approved|sha256:abc",
+			"agent_id":          "agent-approved",
 		},
 	}
 	jobHash, err := HashJobRequest(req)
@@ -2660,7 +2664,7 @@ func TestCheckSafetyDecisionApprovalGrantedAppendsDecisionLog(t *testing.T) {
 		CheckedAt:        time.Date(2026, time.April, 20, 10, 0, 0, 0, time.UTC).UnixNano() / int64(time.Microsecond),
 	}
 
-	record, err := engine.checkSafetyDecision(req)
+	record, err := engine.checkSafetyDecision(context.Background(), req)
 	if err != nil {
 		t.Fatalf("checkSafetyDecision() error = %v", err)
 	}
@@ -2759,7 +2763,7 @@ func TestCheckSafetyDecisionShutdownDeniesNotFailOpen(t *testing.T) {
 	// Cancel the engine context to simulate shutdown
 	engine.cancel()
 
-	record, err := engine.checkSafetyDecision(req, "")
+	record, err := engine.checkSafetyDecision(context.Background(), req)
 	if err == nil {
 		t.Fatal("expected error from checkSafetyDecision during shutdown, got nil")
 	}

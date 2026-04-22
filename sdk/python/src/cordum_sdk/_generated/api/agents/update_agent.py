@@ -18,9 +18,12 @@ def _get_kwargs(
     id: str,
     *,
     body: UpdateAgentBody,
+    x_tenant_id: str,
 
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
+    headers["X-Tenant-ID"] = x_tenant_id
+
 
 
     
@@ -61,6 +64,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
     if response.status_code == 404:
         response_404 = cast(Any, None)
         return response_404
+    if response.status_code == 503:
+        response_503 = cast(Any, None)
+        return response_503
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -81,12 +87,14 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: UpdateAgentBody,
+    x_tenant_id: str,
 
 ) -> Response[Union[Any, UpdateAgentResponse200]]:
     """ Update an agent identity
 
     Args:
         id (str):
+        x_tenant_id (str):
         body (UpdateAgentBody):
 
     Raises:
@@ -101,6 +109,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         id=id,
 body=body,
+x_tenant_id=x_tenant_id,
 
     )
 
@@ -115,12 +124,14 @@ def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: UpdateAgentBody,
+    x_tenant_id: str,
 
 ) -> Optional[Union[Any, UpdateAgentResponse200]]:
     """ Update an agent identity
 
     Args:
         id (str):
+        x_tenant_id (str):
         body (UpdateAgentBody):
 
     Raises:
@@ -136,6 +147,7 @@ def sync(
         id=id,
 client=client,
 body=body,
+x_tenant_id=x_tenant_id,
 
     ).parsed
 
@@ -144,12 +156,14 @@ async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: UpdateAgentBody,
+    x_tenant_id: str,
 
 ) -> Response[Union[Any, UpdateAgentResponse200]]:
     """ Update an agent identity
 
     Args:
         id (str):
+        x_tenant_id (str):
         body (UpdateAgentBody):
 
     Raises:
@@ -164,6 +178,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         id=id,
 body=body,
+x_tenant_id=x_tenant_id,
 
     )
 
@@ -178,12 +193,14 @@ async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     body: UpdateAgentBody,
+    x_tenant_id: str,
 
 ) -> Optional[Union[Any, UpdateAgentResponse200]]:
     """ Update an agent identity
 
     Args:
         id (str):
+        x_tenant_id (str):
         body (UpdateAgentBody):
 
     Raises:
@@ -199,5 +216,6 @@ async def asyncio(
         id=id,
 client=client,
 body=body,
+x_tenant_id=x_tenant_id,
 
     )).parsed

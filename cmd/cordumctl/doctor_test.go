@@ -932,9 +932,6 @@ func TestRunInteractiveFixes_EOFIsSkip(t *testing.T) {
 	if updated[0].State != stateFail {
 		t.Fatalf("EOF must preserve fail state, got %+v", updated[0])
 	}
-	if !errors.Is(nil, errors.New("")) {
-		// silence import linter: ensure `errors` import is used.
-	}
 	_ = errors.New
 }
 

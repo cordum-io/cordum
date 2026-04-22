@@ -79,20 +79,20 @@ func renderAuditVerifyTable(out io.Writer, r *sdk.AuditVerifyResult, tenant stri
 	if tenant == "" {
 		tenant = "(default)"
 	}
-	fmt.Fprintf(out, "Audit chain verification — tenant %s\n", tenant)
-	fmt.Fprintf(out, "  status:                 %s\n", r.Status)
-	fmt.Fprintf(out, "  events checked:         %d\n", r.TotalEvents)
-	fmt.Fprintf(out, "  events verified:        %d\n", r.VerifiedEvents)
+	_, _ = fmt.Fprintf(out, "Audit chain verification — tenant %s\n", tenant)
+	_, _ = fmt.Fprintf(out, "  status:                 %s\n", r.Status)
+	_, _ = fmt.Fprintf(out, "  events checked:         %d\n", r.TotalEvents)
+	_, _ = fmt.Fprintf(out, "  events verified:        %d\n", r.VerifiedEvents)
 	if r.FirstSeq > 0 || r.LastSeq > 0 {
-		fmt.Fprintf(out, "  seq range observed:     %d..%d\n", r.FirstSeq, r.LastSeq)
+		_, _ = fmt.Fprintf(out, "  seq range observed:     %d..%d\n", r.FirstSeq, r.LastSeq)
 	}
-	fmt.Fprintf(out, "  retention boundary:     seq %d\n", r.RetentionBoundarySeq)
+	_, _ = fmt.Fprintf(out, "  retention boundary:     seq %d\n", r.RetentionBoundarySeq)
 	if r.RetentionWindowHours > 0 {
-		fmt.Fprintf(out, "  retention window:       %.1f hours\n", r.RetentionWindowHours)
+		_, _ = fmt.Fprintf(out, "  retention window:       %.1f hours\n", r.RetentionWindowHours)
 	}
 
 	if len(r.Gaps) == 0 {
-		fmt.Fprintln(out, "  gaps:                   none")
+		_, _ = fmt.Fprintln(out, "  gaps:                   none")
 		return
 	}
 
@@ -113,18 +113,18 @@ func renderAuditVerifyTable(out io.Writer, r *sdk.AuditVerifyResult, tenant stri
 			missing = append(missing, g)
 		}
 	}
-	fmt.Fprintf(out, "  gaps:                   %d total\n", len(r.Gaps))
+	_, _ = fmt.Fprintf(out, "  gaps:                   %d total\n", len(r.Gaps))
 	if len(trimmed) > 0 {
-		fmt.Fprintf(out, "    retention_trimmed:    %d  %s\n", len(trimmed), formatGapSeqs(trimmed))
+		_, _ = fmt.Fprintf(out, "    retention_trimmed:    %d  %s\n", len(trimmed), formatGapSeqs(trimmed))
 	}
 	if len(missing) > 0 {
-		fmt.Fprintf(out, "    missing (tampering):  %d  %s\n", len(missing), formatGapSeqs(missing))
+		_, _ = fmt.Fprintf(out, "    missing (tampering):  %d  %s\n", len(missing), formatGapSeqs(missing))
 	}
 	if len(mismatched) > 0 {
-		fmt.Fprintf(out, "    hash_mismatch:        %d  %s\n", len(mismatched), formatGapSeqs(mismatched))
+		_, _ = fmt.Fprintf(out, "    hash_mismatch:        %d  %s\n", len(mismatched), formatGapSeqs(mismatched))
 	}
 	if len(outOfOrder) > 0 {
-		fmt.Fprintf(out, "    out_of_order:         %d  %s\n", len(outOfOrder), formatGapSeqs(outOfOrder))
+		_, _ = fmt.Fprintf(out, "    out_of_order:         %d  %s\n", len(outOfOrder), formatGapSeqs(outOfOrder))
 	}
 }
 

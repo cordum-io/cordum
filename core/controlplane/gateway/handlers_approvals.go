@@ -1058,7 +1058,13 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			if lockedHash != safetyRecord.JobHash {
 				safetyRecord.JobHash = lockedHash
 				if err := s.jobStore.SetSafetyDecision(ctx, jobID, safetyRecord); err != nil {
-					slog.Warn("approve: failed to lock in job hash", "job_id", jobID, "error", err)
+					// Fail the approval: proceeding would publish a job with a
+					// newer JobHash than the stored SafetyDecisionRecord, which
+					// the reconciler would auto-invalidate as stale_request.
+					s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r),
+						fmt.Sprintf("failed to persist locked job hash: %v", err))
+					result = handlerResult{http.StatusServiceUnavailable, "failed to persist approval state"}
+					return nil
 				}
 			}
 		}
@@ -1187,7 +1193,14 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					safetyRecord.CheckedAt = time.Now().UnixMicro()
 					safetyRecord.ApprovalRevision++
 					if err := s.jobStore.SetSafetyDecision(ctx, jobID, safetyRecord); err != nil {
-						slog.Warn("approve: failed to persist re-evaluated safety decision", "job_id", jobID, "error", err)
+						// Persisting the re-evaluated decision is on the
+						// critical path — continuing would ship a job whose
+						// stored safety record still reflects the pre-drift
+						// policy. Fail closed and let the caller retry.
+						s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r),
+							fmt.Sprintf("failed to persist refreshed safety decision: %v", err))
+						result = handlerResult{http.StatusServiceUnavailable, "failed to persist refreshed safety decision"}
+						return nil
 					}
 				default:
 					// DENY / THROTTLE / UNSPECIFIED — the drifted policy no

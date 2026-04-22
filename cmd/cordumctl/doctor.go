@@ -77,12 +77,10 @@ type doctorEnv struct {
 	apiKey      string
 	tenant      string
 	caCert      string
-	insecure    bool
 	skipWorkers bool
 	serviceURL  map[string]string
 	httpClient  *http.Client
 	status      *gatewayStatusResponse // lazily populated by the gateway_auth check
-	statusErr   error
 }
 
 const (
@@ -166,7 +164,6 @@ func buildDoctorEnv(fs *flagSet, skipWorkers bool, serviceURLRaw string) (*docto
 		apiKey:      strings.TrimSpace(*fs.apiKey),
 		tenant:      strings.TrimSpace(*fs.tenant),
 		caCert:      strings.TrimSpace(*fs.cacert),
-		insecure:    fs.insecure != nil && *fs.insecure,
 		skipWorkers: skipWorkers,
 		serviceURL:  parseServiceURLOverrides(serviceURLRaw),
 		httpClient:  hc,
@@ -287,7 +284,7 @@ func probeServiceReadyz(ctx context.Context, env *doctorEnv, p serviceProbe, url
 			Fix:    p.fix,
 		}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return checkResult{State: stateOK, Detail: fmt.Sprintf("GET %s %d", url, resp.StatusCode)}
 	}
@@ -339,7 +336,7 @@ func checkGatewayReachable(ctx context.Context, env *doctorEnv) checkResult {
 			Fix:    "docker compose up -d api-gateway  (or check gateway_addr + TLS trust)",
 		}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return checkResult{
 			State:  stateFail,
@@ -370,7 +367,7 @@ func checkGatewayAuth(ctx context.Context, env *doctorEnv) checkResult {
 	if err != nil {
 		return checkResult{State: stateFail, Detail: err.Error(), Fix: "docker compose logs api-gateway"}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized {
 		return checkResult{
 			State:  stateFail,
@@ -668,7 +665,7 @@ func doctorGetJSON(ctx context.Context, env *doctorEnv, path string, out any) (i
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 			return resp.StatusCode, fmt.Errorf("decode body: %w", err)
@@ -912,40 +909,40 @@ func runInteractiveFixes(
 		if r.State != stateFail || strings.TrimSpace(r.Fix) == "" {
 			continue
 		}
-		fmt.Fprintf(stdout, "\n[FIX] %s (%s)\n", r.Label, r.ID)
-		fmt.Fprintf(stdout, "      detail: %s\n", r.Detail)
-		fmt.Fprintf(stdout, "      suggested: %s\n", r.Fix)
+		_, _ = fmt.Fprintf(stdout, "\n[FIX] %s (%s)\n", r.Label, r.ID)
+		_, _ = fmt.Fprintf(stdout, "      detail: %s\n", r.Detail)
+		_, _ = fmt.Fprintf(stdout, "      suggested: %s\n", r.Fix)
 		if isDestructiveFix(r.Fix) {
-			fmt.Fprintf(stdout, "      WARNING: suggested fix contains a potentially destructive flag.\n")
+			_, _ = fmt.Fprintf(stdout, "      WARNING: suggested fix contains a potentially destructive flag.\n")
 		}
-		fmt.Fprint(stdout, "      run now? [y/N/a] ")
+		_, _ = fmt.Fprint(stdout, "      run now? [y/N/a] ")
 		resp, readErr := readPromptLine(reader)
 		if readErr != nil {
-			fmt.Fprintln(stdout, "      (no input — skipping)")
+			_, _ = fmt.Fprintln(stdout, "      (no input — skipping)")
 			continue
 		}
 		choice := strings.ToLower(strings.TrimSpace(resp))
 		switch choice {
 		case "a":
-			fmt.Fprintln(stdout, "      aborting remaining fixes.")
+			_, _ = fmt.Fprintln(stdout, "      aborting remaining fixes.")
 			abort = true
 			continue
 		case "y", "yes":
 			if isDestructiveFix(r.Fix) {
-				fmt.Fprint(stdout, "      destructive — confirm with 'yes' to proceed: ")
+				_, _ = fmt.Fprint(stdout, "      destructive — confirm with 'yes' to proceed: ")
 				confirm, cerr := readPromptLine(reader)
 				if cerr != nil || strings.ToLower(strings.TrimSpace(confirm)) != "yes" {
-					fmt.Fprintln(stdout, "      confirmation declined — skipping.")
+					_, _ = fmt.Fprintln(stdout, "      confirmation declined — skipping.")
 					continue
 				}
 			}
-			fmt.Fprintf(stdout, "      running: %s\n", r.Fix)
+			_, _ = fmt.Fprintf(stdout, "      running: %s\n", r.Fix)
 			out, runErr := run(ctx, r.Fix)
 			if trimmed := strings.TrimSpace(out); trimmed != "" {
-				fmt.Fprintln(stdout, indentLines(trimmed, "        "))
+				_, _ = fmt.Fprintln(stdout, indentLines(trimmed, "        "))
 			}
 			if runErr != nil {
-				fmt.Fprintf(stdout, "      fix failed: %v\n", runErr)
+				_, _ = fmt.Fprintf(stdout, "      fix failed: %v\n", runErr)
 				continue
 			}
 			if c, ok := byID[r.ID]; ok {
@@ -958,7 +955,7 @@ func runInteractiveFixes(
 				if updated[i].Label == "" {
 					updated[i].Label = c.label
 				}
-				fmt.Fprintf(stdout, "      re-run: %s\n", updated[i].State)
+				_, _ = fmt.Fprintf(stdout, "      re-run: %s\n", updated[i].State)
 			}
 		default:
 			// "", "n", "no" → default skip, leave result as-is.
@@ -1051,7 +1048,7 @@ func emitHuman(w *os.File, results []checkResult, verbose bool) {
 // tests can render against a bytes.Buffer without isatty detection.
 func emitHumanTo(w io.Writer, useColor bool, results []checkResult, verbose bool) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "CHECK\tSTATE\tDETAIL\tFIX")
+	_, _ = fmt.Fprintln(tw, "CHECK\tSTATE\tDETAIL\tFIX")
 	// Stable order so human output is diff-friendly across runs.
 	ordered := append([]checkResult(nil), results...)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
@@ -1064,10 +1061,10 @@ func emitHumanTo(w io.Writer, useColor bool, results []checkResult, verbose bool
 		if !verbose && len(detail) > 80 {
 			detail = detail[:77] + "..."
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.ID, state, detail, r.Fix)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", r.ID, state, detail, r.Fix)
 	}
 	_ = tw.Flush()
-	fmt.Fprintf(w, "\n%d checks: %d ok, %d warn, %d fail, %d skip\n",
+	_, _ = fmt.Fprintf(w, "\n%d checks: %d ok, %d warn, %d fail, %d skip\n",
 		len(results),
 		countByState(results, stateOK),
 		countByState(results, stateWarn),

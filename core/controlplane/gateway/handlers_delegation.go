@@ -500,8 +500,8 @@ func delegationIssuedView(tenant string, claims delegation.DelegationClaims, aud
 		AllowedTopics:  append([]string(nil), claims.AllowedTopics...),
 		Chain:          append([]delegation.ChainLink(nil), claims.DelegationChain...),
 		ChainDepth:     claims.ChainDepth,
-		IssuedAt:       claims.IssuedAt.Time.UTC(),
-		ExpiresAt:      claims.ExpiresAt.Time.UTC(),
+		IssuedAt:       claims.IssuedAt.UTC(),
+		ExpiresAt:      claims.ExpiresAt.UTC(),
 		ParentJTI:      strings.TrimSpace(claims.ParentTokenJTI),
 	}
 }

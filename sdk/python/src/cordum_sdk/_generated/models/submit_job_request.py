@@ -16,8 +16,8 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.submit_job_request_labels import SubmitJobRequestLabels
   from ..models.submit_job_request_context import SubmitJobRequestContext
+  from ..models.submit_job_request_labels import SubmitJobRequestLabels
 
 
 
@@ -91,8 +91,8 @@ class SubmitJobRequest:
 
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.submit_job_request_labels import SubmitJobRequestLabels
         from ..models.submit_job_request_context import SubmitJobRequestContext
+        from ..models.submit_job_request_labels import SubmitJobRequestLabels
         prompt = self.prompt
 
         topic = self.topic
@@ -230,8 +230,8 @@ class SubmitJobRequest:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.submit_job_request_labels import SubmitJobRequestLabels
         from ..models.submit_job_request_context import SubmitJobRequestContext
+        from ..models.submit_job_request_labels import SubmitJobRequestLabels
         d = src_dict.copy()
         prompt = d.pop("prompt")
 

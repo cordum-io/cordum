@@ -12,7 +12,7 @@ func TestEvaluate_DelegationPredicatesFromLabels(t *testing.T) {
 	t.Setenv(envDelegationPolicyEnabled, "true")
 
 	srv := &server{}
-	srv.setPolicy(context.Background(), &config.SafetyPolicy{
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		DefaultDecision: "allow",
 		Rules: []config.PolicyRule{
 			{
@@ -49,7 +49,7 @@ func TestEvaluate_DelegationPredicatesFeatureFlagOff(t *testing.T) {
 	t.Setenv(envDelegationPolicyEnabled, "false")
 
 	srv := &server{}
-	srv.setPolicy(context.Background(), &config.SafetyPolicy{
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
 		DefaultDecision: "allow",
 		Rules: []config.PolicyRule{
 			{

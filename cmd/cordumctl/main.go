@@ -65,6 +65,14 @@ func main() {
 		runAuditCmd(args)
 	case "evals":
 		runEvalsCmd(args)
+	case "auth":
+		runAuthCmd(args)
+	case "doctor":
+		runDoctorCmd(args)
+	case "delegation":
+		runDelegationCmd(args)
+	case "governance":
+		runGovernanceCmd(args)
 	default:
 		usage()
 		os.Exit(1)

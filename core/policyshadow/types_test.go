@@ -22,7 +22,7 @@ func TestNewShadowBundleID_FormatAndUniqueness(t *testing.T) {
 			t.Fatalf("id %q suffix len = %d, want %d", id, len(suffix), shadowBundleIDHexLen)
 		}
 		for _, r := range suffix {
-			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 				t.Fatalf("id %q has non-hex char %q", id, r)
 			}
 		}

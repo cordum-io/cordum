@@ -160,7 +160,7 @@ func (s *server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 		if opts.Format == audit.ComplianceExportFormatJSON {
 			_ = writeJSONLineErr(w, werr)
 		} else {
-			fmt.Fprintf(w, "# cordum-error: %s\n", strings.ReplaceAll(werr.Error(), "\n", " "))
+			_, _ = fmt.Fprintf(w, "# cordum-error: %s\n", strings.ReplaceAll(werr.Error(), "\n", " "))
 		}
 		slog.Error("compliance export failed",
 			"tenant", tenant,

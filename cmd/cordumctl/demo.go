@@ -226,28 +226,28 @@ func renderVerdictTable(out io.Writer, rows []demoVerdict) {
 		})
 	}
 
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "  Demo verdicts")
-	fmt.Fprintln(out, hr)
-	fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s |\n",
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintln(out, "  Demo verdicts")
+	_, _ = fmt.Fprintln(out, hr)
+	_, _ = fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s |\n",
 		stepW, "Step", topicW, "Topic", verdictW, "Verdict", reasonW, "Reason")
-	fmt.Fprintln(out, hr)
+	_, _ = fmt.Fprintln(out, hr)
 	for _, row := range rendered {
 		verdict := row.Verdict
 		if verdict == "" {
 			verdict = "PENDING"
 		}
-		fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s |\n",
+		_, _ = fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s |\n",
 			stepW, demoTruncate(row.StepID, stepW),
 			topicW, demoTruncate(row.Topic, topicW),
 			verdictW, demoTruncate(verdict, verdictW),
 			reasonW, demoTruncate(row.Reason, reasonW))
 	}
-	fmt.Fprintln(out, hr)
+	_, _ = fmt.Fprintln(out, hr)
 
 	for _, row := range rendered {
 		if row.Verdict == "REQUIRE_APPROVAL" && row.JobID != "" {
-			fmt.Fprintf(out, "\n  To approve %s: cordumctl approval job %s --approve\n",
+			_, _ = fmt.Fprintf(out, "\n  To approve %s: cordumctl approval job %s --approve\n",
 				row.StepID, row.JobID)
 		}
 	}

@@ -400,10 +400,6 @@ func (s *EvalRunStore) GCExpired(ctx context.Context, tenant string) (int, error
 		return 0, fmt.Errorf("gc eval runs: %w", err)
 	}
 	stale := make([]any, 0)
-	staleWithDataset := make([]struct {
-		id        string
-		datasetID string
-	}, 0)
 	for _, id := range ids {
 		exists, err := s.client.Exists(ctx, evalRunRecordKey(tenant, id)).Result()
 		if err != nil {
@@ -411,10 +407,6 @@ func (s *EvalRunStore) GCExpired(ctx context.Context, tenant string) (int, error
 		}
 		if exists == 0 {
 			stale = append(stale, id)
-			staleWithDataset = append(staleWithDataset, struct {
-				id        string
-				datasetID string
-			}{id: id})
 		}
 	}
 	if len(stale) == 0 {

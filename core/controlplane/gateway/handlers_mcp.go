@@ -531,18 +531,6 @@ func (s *server) setMCPInvocationAuditor(a mcp.ToolInvocationAuditor) {
 	gatewayMCPAuditor.Store(s, a)
 }
 
-func (s *server) getMCPInvocationAuditor() mcp.ToolInvocationAuditor {
-	if s == nil {
-		return nil
-	}
-	if raw, ok := gatewayMCPAuditor.Load(s); ok {
-		if a, _ := raw.(mcp.ToolInvocationAuditor); a != nil {
-			return a
-		}
-	}
-	return nil
-}
-
 // mcpArgumentRedactionConfigKey is the configsvc key the gateway reads
 // to pull policy-bundle-sourced MCP argument-redaction rules. Stored
 // as a JSON blob matching the LoadRulesFromPolicyBundle envelope.

@@ -212,11 +212,11 @@ func TestSafetyCheckDefenseTimeout(t *testing.T) {
 	engine := NewEngine(&fakeBus{}, slow, newTestRegistry(t), NewNaiveStrategy(), store, nil)
 
 	start := time.Now()
-	record, err := engine.checkSafetyDecision(&pb.JobRequest{
+	record, err := engine.checkSafetyDecision(context.Background(), &pb.JobRequest{
 		JobId:    "job-timeout",
 		Topic:    "job.test",
 		TenantId: "default",
-	}, "")
+	})
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -253,11 +253,11 @@ func TestSafetyCheck_TimeoutCancelsContext(t *testing.T) {
 	engine := NewEngine(&fakeBus{}, tracker, newTestRegistry(t), NewNaiveStrategy(), store, nil)
 
 	start := time.Now()
-	record, _ := engine.checkSafetyDecision(&pb.JobRequest{
+	record, _ := engine.checkSafetyDecision(context.Background(), &pb.JobRequest{
 		JobId:    "job-ctx-cancel",
 		Topic:    "job.test",
 		TenantId: "default",
-	}, "")
+	})
 	elapsed := time.Since(start)
 
 	if record.Decision != SafetyUnavailable {

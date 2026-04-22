@@ -113,7 +113,7 @@ type Signer struct {
 // than P-256 is rejected at construction — a mistyped curve at boot
 // is far easier to debug than a verifier rejecting every request.
 func NewSigner(key *ecdsa.PrivateKey, keyID string) (*Signer, error) {
-	if key == nil || key.PublicKey.Curve != elliptic.P256() {
+	if key == nil || key.Curve != elliptic.P256() {
 		return nil, ErrInvalidPrivateKey
 	}
 	keyID = strings.TrimSpace(keyID)

@@ -223,18 +223,18 @@ func tlsConfigFromEnv(existing *tls.Config) (*tls.Config, error) {
 		// Chain-verify so CA-rotated-without-client drift surfaces with a
 		// rich error (issuer DNs, validity windows, remediation) instead of
 		// bubbling up as an opaque "certificate required" handshake failure.
-		chainValid := true
 		if caPath != "" && !insecure {
 			if verr := tlsutil.VerifyChain(certPath, caPath, tlsutil.RoleClient); verr != nil {
-				chainValid = false
 				if leaf := firstLeafFromTLSCert(cert); leaf != nil {
 					tlsutil.EmitCertMetrics("redis", "client", certPath, leaf.NotAfter, false)
 				}
 				return nil, fmt.Errorf("redis tls: %w", verr)
 			}
 		}
+		// Chain verified (or skipped when caPath/insecure bypass it) — emit
+		// the success gauge so freshness/expiry dashboards stay green.
 		if leaf := firstLeafFromTLSCert(cert); leaf != nil {
-			tlsutil.EmitCertMetrics("redis", "client", certPath, leaf.NotAfter, chainValid)
+			tlsutil.EmitCertMetrics("redis", "client", certPath, leaf.NotAfter, true)
 		}
 		cfg.Certificates = []tls.Certificate{cert}
 	}
