@@ -296,9 +296,13 @@ func TestShadowIntegration_QueueOverflowDropsWithoutActiveLatencyImpact(t *testi
 // after Close returns, no goroutines should remain blocked on the
 // worker-pool's queue. Run under goroutine-count delta rather than the
 // race detector (unavailable on this platform).
+//
+// NOT t.Parallel(): this test measures runtime.NumGoroutine() on the
+// whole process. Under t.Parallel() sibling tests concurrently spawn
+// fixture goroutines, which leak into this test's "after" count and
+// produce false-positive leak reports. Running serially lets the
+// before/after delta reflect only THIS fixture's workers.
 func TestShadowIntegration_CloseDrainsWorkerPool(t *testing.T) {
-	t.Parallel()
-
 	before := runtime.NumGoroutine()
 
 	srv, sender, cleanup := newIntegrationFixture(t, shadowDenyFooPolicy)
