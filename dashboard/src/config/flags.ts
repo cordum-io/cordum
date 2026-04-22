@@ -2,12 +2,14 @@ const isProd = import.meta.env.PROD === true;
 const isTest = import.meta.env.MODE === "test";
 
 export const FEATURE_FLAGS = {
-  // Governance Timeline ships on by default in every environment. The
-  // prior prod-default-off flag was a brownout shim while the backend
-  // `/api/v1/governance/decisions` endpoint was merging — that endpoint
-  // is live now, so the Job / Run detail pages expose the Governance
-  // tab unconditionally.
-  governanceTimeline: true,
+  // Governance Timeline depends on the backend
+  // `/api/v1/governance/decisions` endpoint landing in split/platform.
+  // Keep it on in dev so local previews exercise the timeline, but
+  // prod stays dark until ops explicitly flip it on via the env var —
+  // this prevents a split-order race where the dashboard PR merges
+  // before the backend endpoint is live.
+  governanceTimeline:
+    !isProd || import.meta.env.VITE_GOVERNANCE_TIMELINE === "true",
   // Fixture mocks remain dev-only so a developer without a running
   // gateway can still exercise the timeline locally. Never true in prod
   // or test runs.
