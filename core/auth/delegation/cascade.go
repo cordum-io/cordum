@@ -37,47 +37,57 @@ if redis.call("EXISTS", tokenPrefix .. root) == 0 then
   return {}
 end
 
-local queue = {root}
-local depthQueue = {0}
-local head = 1
-local seen = {}
-local revoked = {}
+-- Phase 1: pre-walk the cascade graph depth-first to determine the
+-- full set of descendants to revoke and verify none exceeds maxDepth.
+-- This is a separate pass from the mutation loop so a depth violation
+-- fails CLOSED — no partial revocations — instead of revoking the
+-- first maxDepth levels and then erroring out mid-walk.
+local toRevoke = {root}
+local seenPre = {[root] = true}
 
-while head <= #queue do
-  local current = queue[head]
-  local depth = depthQueue[head]
-  head = head + 1
-
-  if not seen[current] then
-    seen[current] = true
-    local tokenKey = tokenPrefix .. current
-    local tenant = redis.call("HGET", tokenKey, "tenant")
-
-    redis.call("SET", revokedPrefix .. current, "1", "EX", ttlSeconds)
-    redis.call("HSET", tokenKey,
-      "revoked", "1",
-      "revoked_at", revokedAt,
-      "revoked_reason", reason
-    )
-    if tenant and tenant ~= "" then
-      redis.call("ZREM", activePrefix .. tenant, current)
-    end
-    table.insert(revoked, current)
-
-    if cascade then
-      local children = redis.call("SMEMBERS", childrenPrefix .. current)
-      table.sort(children)
-      if depth >= maxDepth and #children > 0 then
+if cascade then
+  local preQueue = {root}
+  local preDepth = {0}
+  local preHead = 1
+  while preHead <= #preQueue do
+    local node = preQueue[preHead]
+    local depth = preDepth[preHead]
+    preHead = preHead + 1
+    if depth >= maxDepth then
+      local children = redis.call("SMEMBERS", childrenPrefix .. node)
+      if #children > 0 then
         return redis.error_reply("cascade depth exceeded")
       end
+    else
+      local children = redis.call("SMEMBERS", childrenPrefix .. node)
+      table.sort(children)
       for _, child in ipairs(children) do
-        if not seen[child] then
-          table.insert(queue, child)
-          table.insert(depthQueue, depth + 1)
+        if not seenPre[child] then
+          seenPre[child] = true
+          table.insert(toRevoke, child)
+          table.insert(preQueue, child)
+          table.insert(preDepth, depth + 1)
         end
       end
     end
   end
+end
+
+-- Phase 2: the cascade fits under maxDepth — revoke every node.
+local revoked = {}
+for _, current in ipairs(toRevoke) do
+  local tokenKey = tokenPrefix .. current
+  local tenant = redis.call("HGET", tokenKey, "tenant")
+  redis.call("SET", revokedPrefix .. current, "1", "EX", ttlSeconds)
+  redis.call("HSET", tokenKey,
+    "revoked", "1",
+    "revoked_at", revokedAt,
+    "revoked_reason", reason
+  )
+  if tenant and tenant ~= "" then
+    redis.call("ZREM", activePrefix .. tenant, current)
+  end
+  table.insert(revoked, current)
 end
 
 return revoked

@@ -129,9 +129,9 @@ func TestEvaluateDelegationMatch(t *testing.T) {
 			want: false,
 		},
 		{
-			name:  "direct call bypasses max depth",
+			name:  "direct call fails closed when max depth is set",
 			match: &DelegationMatch{MaxDepth: &zero},
-			want:  true,
+			want:  false,
 		},
 		{
 			name:  "max depth rejects deeper chain",
@@ -144,19 +144,29 @@ func TestEvaluateDelegationMatch(t *testing.T) {
 			want: false,
 		},
 		{
-			name:  "direct call bypasses issuer allowlist",
+			name:  "direct call fails closed when issuer allowlist is set",
 			match: &DelegationMatch{Issuers: []string{"agent-a"}},
-			want:  true,
+			want:  false,
 		},
 		{
-			name:  "direct call bypasses require issuer",
+			name:  "direct call fails closed when require issuer is set",
 			match: &DelegationMatch{RequireIssuer: "finance-bot"},
+			want:  false,
+		},
+		{
+			name:  "direct call fails closed when required scope is set",
+			match: &DelegationMatch{RequiredScope: []string{"read"}},
+			want:  false,
+		},
+		{
+			name:  "direct call admitted when delegation_required is explicitly false",
+			match: &DelegationMatch{RequiredScope: []string{"read"}, DelegationRequired: boolPtr(false)},
 			want:  true,
 		},
 		{
-			name:  "direct call bypasses required scope",
-			match: &DelegationMatch{RequiredScope: []string{"read"}},
-			want:  true,
+			name:  "direct call rejected when delegation_required is explicitly true",
+			match: &DelegationMatch{DelegationRequired: boolPtr(true)},
+			want:  false,
 		},
 		{
 			name:  "issuer allowlist accepts every chain member",
@@ -543,3 +553,8 @@ func TestDelegationAuditExtras_TrimsAudienceAndExpiry(t *testing.T) {
 		t.Fatalf("audience should be trimmed; got %q", got["delegation.audience"])
 	}
 }
+
+// boolPtr is a local convenience for taking the address of a bool
+// literal in test-case table entries. Keeps the Delegation matcher
+// table readable without scattering `func() *bool { ... }` boilerplate.
+func boolPtr(b bool) *bool { return &b }

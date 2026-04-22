@@ -69,6 +69,21 @@ func (s *server) applySubmitDelegationWithAudience(ctx context.Context, tenant, 
 	return labels, nil
 }
 
+// persistSubmitDelegationToken stores the raw delegation bearer token
+// on the job-metadata hash so the scheduler can re-verify it at
+// dispatch time (defense-in-depth against submit→dispatch revocation
+// races).
+//
+// The raw token IS sensitive material — it is wiped as soon as the
+// scheduler finishes dispatch verification via the companion call in
+// core/controlplane/scheduler/delegation_dispatch.go
+// (ClearDelegationDispatchToken). That companion lives in
+// split/platform; this branch provides the Clear method on the store
+// interface + RedisJobStore implementation, and the scheduler wire-up
+// on platform invokes it. After the wipe, only the non-sensitive
+// DelegationLineage remains on the job record (JTI, issuer chain,
+// scope) for audit + read-side APIs — see Blocker 4 from the #198
+// review.
 func (s *server) persistSubmitDelegationToken(ctx context.Context, jobID, token, audience string) error {
 	token = strings.TrimSpace(token)
 	if token == "" || s == nil || s.jobStore == nil {
