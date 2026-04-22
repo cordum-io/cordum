@@ -297,14 +297,12 @@ func parseLicense(data []byte) (*License, error) {
 		return nil, fmt.Errorf("compact license payload: %w", err)
 	}
 
+	if isLegacyLicenseEnvelope(raw.Payload) {
+		return nil, ErrUnsupportedLegacyLicenseFormat
+	}
+
 	var claims Claims
-	if isLegacyClaims(raw.Payload) {
-		var legacy legacyClaims
-		if err := json.Unmarshal(raw.Payload, &legacy); err != nil {
-			return nil, fmt.Errorf("parse legacy claims: %w", err)
-		}
-		claims = migrateLegacyClaims(legacy)
-	} else if err := json.Unmarshal(raw.Payload, &claims); err != nil {
+	if err := json.Unmarshal(raw.Payload, &claims); err != nil {
 		return nil, fmt.Errorf("parse claims: %w", err)
 	}
 

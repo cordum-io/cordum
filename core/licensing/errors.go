@@ -17,6 +17,12 @@ var (
 	ErrLicenseExpired          = errors.New("license expired")
 	ErrInvalidPublicKey        = errors.New("invalid public key")
 	ErrTierLimitExceeded       = errors.New("tier limit exceeded")
+	// ErrUnsupportedLegacyLicenseFormat is returned by the loader when
+	// the license payload matches the pre-GA top-level features/limits
+	// envelope. The migration layer was removed in the pre-GA legacy
+	// sweep (no external adopters); operators must regenerate the
+	// license in the current schema.
+	ErrUnsupportedLegacyLicenseFormat = errors.New("unsupported legacy license format")
 )
 
 // GraceError captures grace-window metadata after signature verification succeeds.
