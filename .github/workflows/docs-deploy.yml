@@ -43,7 +43,7 @@ jobs:
             --offline
             --no-progress
             --max-concurrency 32
-            --base .
+            --root-dir ${{ github.workspace }}/docs-site
             --exclude-path docs-site/versioned_docs
             'docs/**/*.md'
             'docs-site/docs/**/*.md'
