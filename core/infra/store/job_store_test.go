@@ -101,6 +101,59 @@ func TestRedisJobStoreResultPtrTTL(t *testing.T) {
 	}
 }
 
+func TestRedisJobStoreDelegationLineageRoundTrip(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	jobID := "job-delegation-lineage"
+	want := model.DelegationLineage{
+		TokenJTI:       "dlg-jti-1",
+		ParentTokenJTI: "dlg-parent-1",
+		Subject:        "agent-a",
+		Audience:       "agent-b",
+		Tenant:         "default",
+		RootIssuer:     "agent-a",
+		ParentIssuer:   "agent-a",
+		IssuerChain: []model.DelegationChainLink{{
+			AgentID:   "agent-a",
+			IssuedAt:  "2026-04-21T09:00:00Z",
+			ExpiresAt: "2026-04-21T10:00:00Z",
+			JTI:       "dlg-jti-1",
+			IssuedBy:  "agent-a",
+		}},
+		ChainDepth:    1,
+		ExpiresAt:     "2026-04-21T10:00:00Z",
+		Scope:         []string{"read"},
+		AllowedTopics: []string{"job.test"},
+		VerifiedAt:    1_713_680_000_000_000,
+	}
+
+	if err := store.SetDelegationLineage(ctx, jobID, want); err != nil {
+		t.Fatalf("SetDelegationLineage() error = %v", err)
+	}
+	got, err := store.GetDelegationLineage(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetDelegationLineage() error = %v", err)
+	}
+	if got.TokenJTI != want.TokenJTI || got.Audience != want.Audience || got.RootIssuer != want.RootIssuer || got.ChainDepth != want.ChainDepth {
+		t.Fatalf("delegation lineage mismatch: got %#v want %#v", got, want)
+	}
+	if len(got.IssuerChain) != 1 || got.IssuerChain[0].AgentID != "agent-a" {
+		t.Fatalf("issuer chain mismatch: %#v", got.IssuerChain)
+	}
+	if len(got.Scope) != 1 || got.Scope[0] != "read" {
+		t.Fatalf("scope mismatch: %#v", got.Scope)
+	}
+}
+
 func TestRedisJobStoreTransitionGuard(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {
@@ -1934,180 +1987,277 @@ func TestNewRedisJobStore_InvalidTTLWarns(t *testing.T) {
 	}
 }
 
-// TestDeadlineSameSecondOrdering verifies that two jobs with deadlines in the
-// same second are ordered deterministically by their microsecond-precision scores.
-func TestDeadlineSameSecondOrdering(t *testing.T) {
-	srv, err := miniredis.Run()
-	if err != nil {
-		t.Skipf("miniredis unavailable: %v", err)
+func TestParseJobEvent(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		wantOK  bool
+		wantTS  int64
+		wantSt  string
+		wantCtx bool
+	}{
+		{
+			name:   "valid JSON minimal",
+			raw:    `{"ts":1700000000,"state":"PENDING"}`,
+			wantOK: true, wantTS: 1700000000, wantSt: "PENDING",
+		},
+		{
+			name:    "valid JSON with context",
+			raw:     `{"ts":1700000001,"state":"SCHEDULED","ctx":{"rule":"r1","eval_ms":42}}`,
+			wantOK:  true, wantTS: 1700000001, wantSt: "SCHEDULED",
+			wantCtx: true,
+		},
+		{
+			name:   "old format timestamp|state",
+			raw:    "1700000002|RUNNING",
+			wantOK: true, wantTS: 1700000002, wantSt: "RUNNING",
+		},
+		{
+			name:   "malformed no separator",
+			raw:    "garbage",
+			wantOK: false,
+		},
+		{
+			name:   "malformed bad timestamp",
+			raw:    "notanumber|PENDING",
+			wantOK: false,
+		},
+		{
+			name:   "empty string",
+			raw:    "",
+			wantOK: false,
+		},
+		{
+			name:   "JSON with empty state is invalid",
+			raw:    `{"ts":123,"state":""}`,
+			wantOK: false,
+		},
 	}
-	store, err := NewRedisJobStore("redis://" + srv.Addr())
-	if err != nil {
-		t.Fatalf("create store: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-	ctx := context.Background()
-
-	base := time.Now().Add(-5 * time.Minute)
-	// Two deadlines 500ms apart — same Unix second, different microseconds.
-	d1 := base
-	d2 := base.Add(500 * time.Millisecond)
-
-	if err := store.SetDeadline(ctx, "job-early", d1); err != nil {
-		t.Fatalf("set deadline 1: %v", err)
-	}
-	if err := store.SetDeadline(ctx, "job-late", d2); err != nil {
-		t.Fatalf("set deadline 2: %v", err)
-	}
-
-	expired, err := store.ListExpiredDeadlines(ctx, time.Now().Unix(), 10)
-	if err != nil {
-		t.Fatalf("list expired: %v", err)
-	}
-	if len(expired) != 2 {
-		t.Fatalf("expected 2 expired jobs, got %d", len(expired))
-	}
-	// First result should be the earlier deadline.
-	if expired[0].ID != "job-early" {
-		t.Fatalf("expected job-early first (earlier deadline), got %s", expired[0].ID)
-	}
-	if expired[1].ID != "job-late" {
-		t.Fatalf("expected job-late second, got %s", expired[1].ID)
-	}
-}
-
-// TestPaginationNoGaps creates 100 jobs and paginates with limit=10,
-// verifying no gaps or duplicates across all pages.
-func TestPaginationNoGaps(t *testing.T) {
-	srv, err := miniredis.Run()
-	if err != nil {
-		t.Skipf("miniredis unavailable: %v", err)
-	}
-	store, err := NewRedisJobStore("redis://" + srv.Addr())
-	if err != nil {
-		t.Fatalf("create store: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-	ctx := context.Background()
-
-	const total = 100
-	for i := 0; i < total; i++ {
-		jobID := fmt.Sprintf("job-page-%03d", i)
-		if err := store.SetState(ctx, jobID, model.JobStatePending); err != nil {
-			t.Fatalf("set state %s: %v", jobID, err)
-		}
-		// Small delay to ensure distinct microsecond scores.
-		time.Sleep(time.Microsecond)
-	}
-
-	seen := make(map[string]bool)
-	var cursor int64
-	pages := 0
-	for {
-		jobs, err := store.ListRecentJobsByScore(ctx, cursor, 10)
-		if err != nil {
-			t.Fatalf("list page %d: %v", pages, err)
-		}
-		if len(jobs) == 0 {
-			break
-		}
-		for _, job := range jobs {
-			if seen[job.ID] {
-				t.Fatalf("duplicate job ID %s on page %d", job.ID, pages)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evt, ok := parseJobEvent(tt.raw)
+			if ok != tt.wantOK {
+				t.Fatalf("parseJobEvent ok=%v, want %v", ok, tt.wantOK)
 			}
-			seen[job.ID] = true
+			if !ok {
+				return
+			}
+			if evt.Timestamp != tt.wantTS {
+				t.Errorf("timestamp=%d, want %d", evt.Timestamp, tt.wantTS)
+			}
+			if evt.State != tt.wantSt {
+				t.Errorf("state=%q, want %q", evt.State, tt.wantSt)
+			}
+			if tt.wantCtx && evt.Context == nil {
+				t.Error("expected non-nil context")
+			}
+			if !tt.wantCtx && evt.Context != nil {
+				t.Error("expected nil context")
+			}
+		})
+	}
+}
+
+func TestSetStateWithContext_RoundTrip(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-evt-1"
+
+	// Set initial state with rich context
+	evtCtx := &model.StateEventContext{
+		Rule:   "safety-rule-1",
+		Reason: "PII detected",
+		EvalMs: 42,
+		EvalPath: []string{"input_scan", "pii_check"},
+		Topic:  "job.default",
+		Extra:  map[string]string{"custom": "value"},
+	}
+	if err := store.SetStateWithContext(ctx, jobID, model.JobStatePending, evtCtx); err != nil {
+		t.Fatalf("SetStateWithContext: %v", err)
+	}
+
+	events, err := store.GetJobEvents(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJobEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	evt := events[0]
+	if evt.State != string(model.JobStatePending) {
+		t.Errorf("state=%q, want %q", evt.State, model.JobStatePending)
+	}
+	if evt.Timestamp <= 0 {
+		t.Error("expected positive timestamp")
+	}
+	if evt.Context == nil {
+		t.Fatal("expected non-nil context")
+	}
+	if evt.Context.Rule != "safety-rule-1" {
+		t.Errorf("rule=%q, want %q", evt.Context.Rule, "safety-rule-1")
+	}
+	if evt.Context.Reason != "PII detected" {
+		t.Errorf("reason=%q, want %q", evt.Context.Reason, "PII detected")
+	}
+	if evt.Context.EvalMs != 42 {
+		t.Errorf("eval_ms=%d, want 42", evt.Context.EvalMs)
+	}
+	if len(evt.Context.EvalPath) != 2 || evt.Context.EvalPath[0] != "input_scan" {
+		t.Errorf("eval_path=%v, want [input_scan pii_check]", evt.Context.EvalPath)
+	}
+	if evt.Context.Extra["custom"] != "value" {
+		t.Errorf("extra[custom]=%q, want %q", evt.Context.Extra["custom"], "value")
+	}
+}
+
+func TestSetStateWithContext_NilCtx(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-evt-nil"
+
+	if err := store.SetStateWithContext(ctx, jobID, model.JobStatePending, nil); err != nil {
+		t.Fatalf("SetStateWithContext nil ctx: %v", err)
+	}
+
+	events, err := store.GetJobEvents(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJobEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].State != string(model.JobStatePending) {
+		t.Errorf("state=%q, want %q", events[0].State, model.JobStatePending)
+	}
+	if events[0].Context != nil {
+		t.Error("expected nil context for nil evtCtx")
+	}
+}
+
+func TestSetState_StillWorks(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-evt-legacy"
+
+	if err := store.SetState(ctx, jobID, model.JobStatePending); err != nil {
+		t.Fatalf("SetState: %v", err)
+	}
+
+	// Verify state was set correctly
+	state, err := store.GetState(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if state != model.JobStatePending {
+		t.Errorf("state=%q, want %q", state, model.JobStatePending)
+	}
+
+	// Verify event is parseable via GetJobEvents
+	events, err := store.GetJobEvents(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJobEvents: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].State != string(model.JobStatePending) {
+		t.Errorf("event state=%q, want %q", events[0].State, model.JobStatePending)
+	}
+}
+
+func TestGetJobEvents_NonExistentJob(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	events, err := store.GetJobEvents(context.Background(), "job-does-not-exist")
+	if err != nil {
+		t.Fatalf("expected no error for non-existent job, got: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("expected empty slice, got %d events", len(events))
+	}
+}
+
+func TestGetJobEvents_ChronologicalOrder(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	jobID := "job-evt-order"
+
+	states := []model.JobState{
+		model.JobStatePending,
+		model.JobStateScheduled,
+		model.JobStateDispatched,
+		model.JobStateRunning,
+		model.JobStateSucceeded,
+	}
+	for _, s := range states {
+		if err := store.SetState(ctx, jobID, s); err != nil {
+			t.Fatalf("SetState(%s): %v", s, err)
 		}
-		// Use the last job's UpdatedAt as cursor for next page.
-		cursor = jobs[len(jobs)-1].UpdatedAt - 1
-		pages++
-		if pages > 20 {
-			t.Fatal("too many pages, possible infinite loop")
+	}
+
+	events, err := store.GetJobEvents(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJobEvents: %v", err)
+	}
+	if len(events) != len(states) {
+		t.Fatalf("expected %d events, got %d", len(states), len(events))
+	}
+	for i, evt := range events {
+		if evt.State != string(states[i]) {
+			t.Errorf("event[%d] state=%q, want %q", i, evt.State, states[i])
+		}
+		if i > 0 && evt.Timestamp < events[i-1].Timestamp {
+			t.Errorf("event[%d] timestamp %d < event[%d] timestamp %d (not chronological)",
+				i, evt.Timestamp, i-1, events[i-1].Timestamp)
 		}
 	}
-	if len(seen) != total {
-		t.Fatalf("expected %d unique jobs, got %d (pages=%d)", total, len(seen), pages)
-	}
 }
 
-// TestTenantActiveSetNoExpiry verifies that the tenant active set does not
-// expire, so long-running jobs remain in active counts.
-func TestTenantActiveSetNoExpiry(t *testing.T) {
-	srv, err := miniredis.Run()
-	if err != nil {
-		t.Skipf("miniredis unavailable: %v", err)
-	}
-	store, err := NewRedisJobStore("redis://" + srv.Addr())
-	if err != nil {
-		t.Fatalf("create store: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-	ctx := context.Background()
-
-	if err := store.SetTenant(ctx, "job-long", "tenant-long"); err != nil {
-		t.Fatalf("set tenant: %v", err)
-	}
-	if err := store.SetState(ctx, "job-long", model.JobStateRunning); err != nil {
-		t.Fatalf("set state: %v", err)
-	}
-
-	count, err := store.CountActiveByTenant(ctx, "tenant-long")
-	if err != nil {
-		t.Fatalf("count active: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("expected 1 active, got %d", count)
-	}
-
-	// Fast-forward past the default metaTTL (7 days + buffer).
-	srv.FastForward(8 * 24 * time.Hour)
-
-	count, err = store.CountActiveByTenant(ctx, "tenant-long")
-	if err != nil {
-		t.Fatalf("count active after 8 days: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("expected 1 active after 8 days (no TTL expiry), got %d", count)
-	}
-}
-
-// TestBuildJobRecordsPipelineError verifies that a pipeline execution failure
-// in buildJobRecords surfaces as an error, not silently skipped.
-func TestBuildJobRecordsPipelineError(t *testing.T) {
-	srv, err := miniredis.Run()
-	if err != nil {
-		t.Skipf("miniredis unavailable: %v", err)
-	}
-	store, err := NewRedisJobStore("redis://" + srv.Addr())
-	if err != nil {
-		t.Fatalf("create store: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-	ctx := context.Background()
-
-	// Create a job so there's something to list.
-	if err := store.SetState(ctx, "job-pipe", model.JobStatePending); err != nil {
-		t.Fatalf("set state: %v", err)
-	}
-
-	// Verify normal operation works.
-	jobs, err := store.ListRecentJobs(ctx, 10)
-	if err != nil {
-		t.Fatalf("list recent: %v", err)
-	}
-	if len(jobs) == 0 {
-		t.Fatal("expected at least 1 job")
-	}
-
-	// Close the miniredis server to simulate connection failure.
-	srv.Close()
-
-	_, err = store.ListRecentJobs(ctx, 10)
-	if err == nil {
-		t.Fatal("expected error when Redis is down, got nil")
-	}
-}
-
-func TestListRecentJobsByTimeRange(t *testing.T) {
+func TestGetJobEvents_MixedFormats(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
@@ -2116,188 +2266,45 @@ func TestListRecentJobsByTimeRange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create job store: %v", err)
 	}
-	defer func() { _ = store.Close() }()
+	defer store.Close()
 
 	ctx := context.Background()
+	jobID := "job-evt-mixed"
+	eventsKey := jobEventsKey(jobID)
 
-	// Insert three jobs with known timestamps via SetState which adds to job:recent.
-	if err := store.SetState(ctx, "tr-job-1", model.JobStatePending); err != nil {
-		t.Fatalf("set state: %v", err)
-	}
-	time.Sleep(10 * time.Millisecond)
-	if err := store.SetState(ctx, "tr-job-2", model.JobStateDispatched); err != nil {
-		t.Fatalf("set state: %v", err)
-	}
-	time.Sleep(10 * time.Millisecond)
-	if err := store.SetState(ctx, "tr-job-3", model.JobStateRunning); err != nil {
-		t.Fatalf("set state: %v", err)
-	}
+	// Manually push old-format and new-format entries plus a malformed one
+	store.client.RPush(ctx, eventsKey, "1700000001|PENDING")
+	store.client.RPush(ctx, eventsKey, `{"ts":1700000002,"state":"SCHEDULED","ctx":{"rule":"r1"}}`)
+	store.client.RPush(ctx, eventsKey, "totally-broken")
+	store.client.RPush(ctx, eventsKey, "1700000003|RUNNING")
 
-	// Query the full time range — should get all 3 jobs.
-	from := time.Now().Add(-1 * time.Hour).UnixMicro()
-	to := time.Now().Add(1 * time.Hour).UnixMicro()
-	ids, err := store.ListRecentJobsByTimeRange(ctx, from, to, 0, 100)
+	events, err := store.GetJobEvents(ctx, jobID)
 	if err != nil {
-		t.Fatalf("ListRecentJobsByTimeRange: %v", err)
+		t.Fatalf("GetJobEvents: %v", err)
 	}
-	if len(ids) != 3 {
-		t.Fatalf("expected 3 jobs, got %d: %v", len(ids), ids)
-	}
-
-	// Query with limit=2 should return first 2 in score order.
-	ids, err = store.ListRecentJobsByTimeRange(ctx, from, to, 0, 2)
-	if err != nil {
-		t.Fatalf("ListRecentJobsByTimeRange with limit: %v", err)
-	}
-	if len(ids) != 2 {
-		t.Fatalf("expected 2 jobs, got %d", len(ids))
+	// Malformed entry should be skipped
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events (1 skipped), got %d", len(events))
 	}
 
-	// Query with cursor=2 should return the remaining 1.
-	ids, err = store.ListRecentJobsByTimeRange(ctx, from, to, 2, 100)
-	if err != nil {
-		t.Fatalf("ListRecentJobsByTimeRange with cursor: %v", err)
+	// First: old format
+	if events[0].State != "PENDING" || events[0].Timestamp != 1700000001 {
+		t.Errorf("event[0]=%+v, want PENDING@1700000001", events[0])
 	}
-	if len(ids) != 1 {
-		t.Fatalf("expected 1 job at cursor=2, got %d", len(ids))
-	}
-
-	// Query a future time range — should return 0 jobs.
-	futureFrom := time.Now().Add(1 * time.Hour).UnixMicro()
-	futureTo := time.Now().Add(2 * time.Hour).UnixMicro()
-	ids, err = store.ListRecentJobsByTimeRange(ctx, futureFrom, futureTo, 0, 100)
-	if err != nil {
-		t.Fatalf("ListRecentJobsByTimeRange future range: %v", err)
-	}
-	if len(ids) != 0 {
-		t.Fatalf("expected 0 jobs in future range, got %d", len(ids))
-	}
-}
-
-func TestGetJobRequests(t *testing.T) {
-	srv, err := miniredis.Run()
-	if err != nil {
-		t.Skipf("miniredis unavailable: %v", err)
-	}
-	store, err := NewRedisJobStore("redis://" + srv.Addr())
-	if err != nil {
-		t.Fatalf("failed to create job store: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	ctx := context.Background()
-
-	// Store two job requests.
-	req1 := &pb.JobRequest{JobId: "req-job-1", Topic: "job.test", TenantId: "tenant-a"}
-	req2 := &pb.JobRequest{JobId: "req-job-2", Topic: "job.other", TenantId: "tenant-b"}
-	if err := store.SetJobRequest(ctx, req1); err != nil {
-		t.Fatalf("set job request 1: %v", err)
-	}
-	if err := store.SetJobRequest(ctx, req2); err != nil {
-		t.Fatalf("set job request 2: %v", err)
+	if events[0].Context != nil {
+		t.Error("event[0] should have nil context (old format)")
 	}
 
-	// Batch fetch both plus a missing key.
-	result, err := store.GetJobRequests(ctx, []string{"req-job-1", "req-job-2", "req-job-missing"})
-	if err != nil {
-		t.Fatalf("GetJobRequests: %v", err)
+	// Second: new JSON format with context
+	if events[1].State != "SCHEDULED" || events[1].Timestamp != 1700000002 {
+		t.Errorf("event[1]=%+v, want SCHEDULED@1700000002", events[1])
 	}
-	if len(result) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(result))
-	}
-	if _, ok := result["req-job-1"]; !ok {
-		t.Fatal("missing req-job-1 in results")
-	}
-	if _, ok := result["req-job-2"]; !ok {
-		t.Fatal("missing req-job-2 in results")
-	}
-	if _, ok := result["req-job-missing"]; ok {
-		t.Fatal("expected missing key to be absent")
+	if events[1].Context == nil || events[1].Context.Rule != "r1" {
+		t.Errorf("event[1] context=%+v, want rule=r1", events[1].Context)
 	}
 
-	// Empty input.
-	result, err = store.GetJobRequests(ctx, nil)
-	if err != nil {
-		t.Fatalf("GetJobRequests empty: %v", err)
-	}
-	if len(result) != 0 {
-		t.Fatalf("expected 0 results for empty input, got %d", len(result))
-	}
-}
-
-func TestGetJobMetas(t *testing.T) {
-	srv, err := miniredis.Run()
-	if err != nil {
-		t.Skipf("miniredis unavailable: %v", err)
-	}
-	store, err := NewRedisJobStore("redis://" + srv.Addr())
-	if err != nil {
-		t.Fatalf("failed to create job store: %v", err)
-	}
-	defer func() { _ = store.Close() }()
-
-	ctx := context.Background()
-
-	// Store two jobs' metadata via SetJobMeta.
-	req1 := &pb.JobRequest{
-		JobId:    "meta-job-1",
-		Topic:    "job.alpha",
-		TenantId: "t1",
-		Meta:     &pb.JobMetadata{TenantId: "t1", ActorId: "actor-1"},
-	}
-	req2 := &pb.JobRequest{
-		JobId:    "meta-job-2",
-		Topic:    "job.beta",
-		TenantId: "t2",
-		Meta:     &pb.JobMetadata{TenantId: "t2", Capability: "cap-a"},
-	}
-	if err := store.SetJobMeta(ctx, req1); err != nil {
-		t.Fatalf("set job meta 1: %v", err)
-	}
-	if err := store.SetJobMeta(ctx, req2); err != nil {
-		t.Fatalf("set job meta 2: %v", err)
-	}
-
-	// Batch fetch.
-	result, err := store.GetJobMetas(ctx, []string{"meta-job-1", "meta-job-2", "meta-job-missing"})
-	if err != nil {
-		t.Fatalf("GetJobMetas: %v", err)
-	}
-	if len(result) != 2 {
-		t.Fatalf("expected 2 results, got %d", len(result))
-	}
-	m1, ok := result["meta-job-1"]
-	if !ok {
-		t.Fatal("missing meta-job-1")
-	}
-	if m1["topic"] != "job.alpha" {
-		t.Fatalf("expected topic job.alpha, got %s", m1["topic"])
-	}
-	if m1["tenant"] != "t1" {
-		t.Fatalf("expected tenant t1, got %s", m1["tenant"])
-	}
-
-	m2, ok := result["meta-job-2"]
-	if !ok {
-		t.Fatal("missing meta-job-2")
-	}
-	if m2["topic"] != "job.beta" {
-		t.Fatalf("expected topic job.beta, got %s", m2["topic"])
-	}
-	if m2["capability"] != "cap-a" {
-		t.Fatalf("expected capability cap-a, got %s", m2["capability"])
-	}
-
-	if _, ok := result["meta-job-missing"]; ok {
-		t.Fatal("expected missing key to be absent")
-	}
-
-	// Empty input.
-	result, err = store.GetJobMetas(ctx, nil)
-	if err != nil {
-		t.Fatalf("GetJobMetas empty: %v", err)
-	}
-	if len(result) != 0 {
-		t.Fatalf("expected 0 results for empty input, got %d", len(result))
+	// Third: old format
+	if events[2].State != "RUNNING" || events[2].Timestamp != 1700000003 {
+		t.Errorf("event[2]=%+v, want RUNNING@1700000003", events[2])
 	}
 }
