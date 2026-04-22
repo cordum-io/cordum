@@ -114,9 +114,13 @@ control plane, not the bus protocol.
 
 ## Historical tag anomalies
 
-For reference, these non-conforming tags exist and should not be replicated:
+For reference, this non-conforming tag exists and should not be replicated:
 
-- `V0.9.9.1` — wrong case, 4 version parts. Kept for release traceability of
-  commit `9595637e`. Use `v0.9.9` as the sibling semver tag going forward.
-- Never add a 4-part version again — use patch + metadata (`v1.2.3+hotfix1`)
-  if a sub-patch distinction is needed.
+- `V0.9.9.1` — wrong case, four version parts. Points at commit `9595637e`
+  (fix #191). Left in place for release traceability. Do **not** retroactively
+  add a `v0.9.9` sibling tag: `.github/workflows/docker.yml` triggers on any
+  `v*` tag and would rebuild images at an old commit, potentially rolling the
+  `:latest` tag backwards in ghcr and Docker Hub.
+- Going forward, never ship a four-part version tag. If you need a sub-patch
+  distinction (e.g. a cherry-pick into a release), use SemVer metadata —
+  `v1.2.3+hotfix1` — and ensure the publish workflow's regex matches.
