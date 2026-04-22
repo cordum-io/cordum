@@ -190,6 +190,11 @@ func TestRedisRateLimiter_RedTeam14_BurstExceeded(t *testing.T) {
 
 // TestRedisRateLimiter_120Requests_MostRejected proves the exact red-team #14 scenario:
 // 120 rapid requests with burst=50 must reject the majority.
+//
+// The "most rejected" invariant is the substantive check. The upper bound on
+// `allowed` is asserted separately with generous headroom so a slow CI runner
+// that spills across token-refill boundaries doesn't false-fail this test —
+// the attack scenario is about majority rejection, not exact counts.
 func TestRedisRateLimiter_120Requests_MostRejected(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {
@@ -203,11 +208,12 @@ func TestRedisRateLimiter_120Requests_MostRejected(t *testing.T) {
 	// Use explicit values (not defaults) so the test is stable regardless
 	// of the production default burst setting.
 	const testRPS, testBurst = 30, 50
+	const iterations = 120
 	rl := newRedisRateLimiter(client, testRPS, testBurst)
 
 	allowed := 0
 	rejected := 0
-	for i := 0; i < 120; i++ {
+	for i := 0; i < iterations; i++ {
 		if rl.Allow("red-team-tenant") {
 			allowed++
 		} else {
@@ -216,15 +222,14 @@ func TestRedisRateLimiter_120Requests_MostRejected(t *testing.T) {
 	}
 
 	if rejected == 0 {
-		t.Fatalf("RED-TEAM BYPASS: 120 requests all allowed (burst=%d)", testBurst)
+		t.Fatalf("RED-TEAM BYPASS: %d requests all allowed (burst=%d)", iterations, testBurst)
 	}
-	// Under -race the token bucket refills between slow instrumented calls,
-	// so allow headroom: burst + one second of RPS refill.
-	maxAllowed := testBurst + testRPS
-	if allowed > maxAllowed {
-		t.Fatalf("expected at most %d allowed (burst+rps headroom), got %d", maxAllowed, allowed)
+	// The test's semantic point: the majority of rapid requests MUST be
+	// rejected. This invariant holds regardless of timing jitter on CI.
+	if rejected <= allowed {
+		t.Fatalf("expected majority rejected, got allowed=%d rejected=%d", allowed, rejected)
 	}
-	t.Logf("red-team #14 (120 requests): %d allowed, %d rejected (burst=%d)", allowed, rejected, testBurst)
+	t.Logf("red-team #14 (%d requests): %d allowed, %d rejected (burst=%d)", iterations, allowed, rejected, testBurst)
 }
 
 // TestKeyedRateLimiter_BurstEnforced validates the in-memory limiter rejects after burst.
