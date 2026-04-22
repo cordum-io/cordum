@@ -184,8 +184,14 @@ func (d *EvalDataset) Validate() error {
 	if err != nil {
 		return fmt.Errorf("eval dataset serialize probe: %w", err)
 	}
-	if size > MaxEvalDatasetBytes {
-		return fmt.Errorf("eval dataset serialized size %d exceeds cap %d bytes", size, MaxEvalDatasetBytes)
+	// Reserve headroom for store-assigned fields the caller hasn't populated
+	// yet: ID (ULID-ish, ~26B), CreatedAt / UpdatedAt (RFC3339, ~30B each),
+	// EntryCount (int, ~20B), ContentHash (hex, ~64B), plus the JSON
+	// envelope (quotes, commas, keys). 256 bytes gives comfortable slack
+	// without materially tightening the usable size for payloads.
+	const storeAssignedHeadroomBytes = 256
+	if size+storeAssignedHeadroomBytes > MaxEvalDatasetBytes {
+		return fmt.Errorf("eval dataset serialized size %d (plus %d bytes store headroom) exceeds cap %d bytes", size, storeAssignedHeadroomBytes, MaxEvalDatasetBytes)
 	}
 
 	return nil

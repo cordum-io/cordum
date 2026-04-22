@@ -3,6 +3,7 @@ package delegation
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ func TestRedisRevocationStoreCascadeRevoke(t *testing.T) {
 	listStore := NewRedisListStoreFromClient(revocations.client)
 	now := time.Now().UTC()
 
-	recordDelegationToken(t, listStore, DelegationView{
+	recordDelegationToken(t, listStore, revocations, DelegationView{
 		JTI:            "dlg-root",
 		Tenant:         "default",
 		Issuer:         "agent-a",
@@ -27,7 +28,7 @@ func TestRedisRevocationStoreCascadeRevoke(t *testing.T) {
 		IssuedAt:       now.Add(-3 * time.Minute),
 		ExpiresAt:      now.Add(time.Hour),
 	})
-	recordDelegationToken(t, listStore, DelegationView{
+	recordDelegationToken(t, listStore, revocations, DelegationView{
 		JTI:            "dlg-child",
 		Tenant:         "default",
 		Issuer:         "agent-a",
@@ -41,7 +42,7 @@ func TestRedisRevocationStoreCascadeRevoke(t *testing.T) {
 		ExpiresAt:      now.Add(time.Hour),
 		ParentJTI:      "dlg-root",
 	})
-	recordDelegationToken(t, listStore, DelegationView{
+	recordDelegationToken(t, listStore, revocations, DelegationView{
 		JTI:            "dlg-grandchild",
 		Tenant:         "default",
 		Issuer:         "agent-a",
@@ -86,7 +87,7 @@ func TestRedisRevocationStoreCascadeRevokeWithoutCascade(t *testing.T) {
 	listStore := NewRedisListStoreFromClient(revocations.client)
 	now := time.Now().UTC()
 
-	recordDelegationToken(t, listStore, DelegationView{
+	recordDelegationToken(t, listStore, revocations, DelegationView{
 		JTI:            "dlg-root",
 		Tenant:         "default",
 		Subject:        "agent-a",
@@ -97,7 +98,7 @@ func TestRedisRevocationStoreCascadeRevokeWithoutCascade(t *testing.T) {
 		IssuedAt:       now.Add(-time.Minute),
 		ExpiresAt:      now.Add(time.Hour),
 	})
-	recordDelegationToken(t, listStore, DelegationView{
+	recordDelegationToken(t, listStore, revocations, DelegationView{
 		JTI:            "dlg-child",
 		Tenant:         "default",
 		Subject:        "agent-b",
@@ -135,7 +136,7 @@ func TestRedisRevocationStoreCascadeRevokeCycleSafe(t *testing.T) {
 	listStore := NewRedisListStoreFromClient(revocations.client)
 	now := time.Now().UTC()
 
-	recordDelegationToken(t, listStore, DelegationView{
+	recordDelegationToken(t, listStore, revocations, DelegationView{
 		JTI:            "dlg-a",
 		Tenant:         "default",
 		Subject:        "agent-a",
@@ -147,7 +148,7 @@ func TestRedisRevocationStoreCascadeRevokeCycleSafe(t *testing.T) {
 		ExpiresAt:      now.Add(time.Hour),
 		ParentJTI:      "dlg-b",
 	})
-	recordDelegationToken(t, listStore, DelegationView{
+	recordDelegationToken(t, listStore, revocations, DelegationView{
 		JTI:            "dlg-b",
 		Tenant:         "default",
 		Subject:        "agent-b",
@@ -174,7 +175,7 @@ func TestRedisRevocationStoreCascadeRevokeEvalErrorIsAtomic(t *testing.T) {
 	listStore := NewRedisListStoreFromClient(revocations.client)
 	now := time.Now().UTC()
 
-	recordDelegationToken(t, listStore, DelegationView{
+	recordDelegationToken(t, listStore, revocations, DelegationView{
 		JTI:            "dlg-root",
 		Tenant:         "default",
 		Subject:        "agent-a",
@@ -185,7 +186,7 @@ func TestRedisRevocationStoreCascadeRevokeEvalErrorIsAtomic(t *testing.T) {
 		IssuedAt:       now.Add(-time.Minute),
 		ExpiresAt:      now.Add(time.Hour),
 	})
-	recordDelegationToken(t, listStore, DelegationView{
+	recordDelegationToken(t, listStore, revocations, DelegationView{
 		JTI:            "dlg-child",
 		Tenant:         "default",
 		Subject:        "agent-b",
@@ -223,10 +224,21 @@ func TestRedisRevocationStoreCascadeRevokeEvalErrorIsAtomic(t *testing.T) {
 	}
 }
 
-func recordDelegationToken(t *testing.T, store *RedisListStore, view DelegationView) {
+// recordDelegationToken writes the token view via the list store AND
+// seeds the parent→child edge that CascadeRevoke walks. The list store's
+// RecordIssuedToken only persists the view itself; the child-set at
+// delegationChildrenKey(parentJTI) is owned by the revocation store
+// and must be populated separately for the cascade to reach past the
+// root. The helper takes both stores so callers can't forget.
+func recordDelegationToken(t *testing.T, listStore *RedisListStore, revocations *RedisRevocationStore, view DelegationView) {
 	t.Helper()
-	if err := store.RecordIssuedToken(context.Background(), view); err != nil {
+	if err := listStore.RecordIssuedToken(context.Background(), view); err != nil {
 		t.Fatalf("RecordIssuedToken(%s) error = %v", view.JTI, err)
+	}
+	if parent := strings.TrimSpace(view.ParentJTI); parent != "" && revocations != nil {
+		if err := revocations.RecordChildDelegation(context.Background(), parent, view.JTI); err != nil {
+			t.Fatalf("RecordChildDelegation(parent=%s child=%s) error = %v", parent, view.JTI, err)
+		}
 	}
 }
 

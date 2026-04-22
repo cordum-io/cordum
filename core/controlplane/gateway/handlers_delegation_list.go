@@ -35,7 +35,11 @@ func (s *server) handleListAgentDelegations(w http.ResponseWriter, r *http.Reque
 	}
 	page, err := store.ListByAgent(r.Context(), tenant, agentID, filter, cursor, limit)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		// The parse layer already returned 400 on invalid input; any
+		// error surfacing here is a store / Redis failure that the
+		// client did not cause. Return 503 so operators + clients can
+		// distinguish "bad request" from "infrastructure broken".
+		writeServiceUnavailable(w, r, "list agent delegations", err)
 		return
 	}
 	writeJSON(w, delegationListResponse{Items: page.Items, NextCursor: page.NextCursor})
@@ -57,16 +61,34 @@ func (s *server) handleListDelegations(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := store.ListAll(r.Context(), tenant, filter, cursor, limit)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeServiceUnavailable(w, r, "list delegations", err)
 		return
 	}
 	writeJSON(w, delegationListResponse{Items: page.Items, NextCursor: page.NextCursor})
 }
 
+// validDelegationStatuses enumerates the status filter values the list
+// store knows how to interpret (plus the empty value, which is the
+// "no filter" sentinel). Kept in sync with matchesDelegationFilter in
+// core/auth/delegation/list_store.go — unknown values would silently
+// match nothing there, which would masquerade as a valid empty page.
+var validDelegationStatuses = map[string]struct{}{
+	"":        {},
+	"all":     {},
+	"active":  {},
+	"revoked": {},
+	"expired": {},
+}
+
 func parseDelegationListParams(w http.ResponseWriter, r *http.Request) (delegation.DelegationListFilter, int, string, bool) {
 	q := r.URL.Query()
+	status := strings.ToLower(strings.TrimSpace(q.Get("status")))
+	if _, valid := validDelegationStatuses[status]; !valid {
+		writeErrorJSON(w, http.StatusBadRequest, "status must be one of: all, active, revoked, expired")
+		return delegation.DelegationListFilter{}, 0, "", false
+	}
 	filter := delegation.DelegationListFilter{
-		Status: strings.TrimSpace(q.Get("status")),
+		Status: status,
 		Scope:  strings.TrimSpace(q.Get("scope")),
 	}
 	if raw := strings.TrimSpace(q.Get("before_expiry")); raw != "" {

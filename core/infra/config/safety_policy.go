@@ -222,6 +222,16 @@ type PolicyMatch struct {
 	LabelThreshold           map[string]float64  `yaml:"label_threshold,omitempty"` // deny when label value > threshold
 	SecretsPresent           *bool               `yaml:"secrets_present,omitempty"`
 	MCP                      MCPPolicy           `yaml:"mcp"`
+	// Predicate is an expression-based fallback used when structured
+	// match fields can't express the intent (for example, checking
+	// that a delegation scope contains a specific action). The DSL is
+	// evaluated by the safety kernel; the config package only parses
+	// and validates the string shape.
+	Predicate string `yaml:"predicate,omitempty"`
+	// Delegation captures rule-level matching against the request's
+	// delegation chain — depth, issuer allowlist, required scope,
+	// etc. Zero value is delegation-neutral.
+	Delegation *DelegationMatch `yaml:"delegation,omitempty"`
 }
 
 type PolicyConstraints struct {
@@ -298,6 +308,11 @@ type PolicyInput struct {
 	Meta           PolicyMeta
 	SecretsPresent bool
 	MCP            MCPRequest
+	// Delegation carries the verified delegation chain for the request,
+	// or nil for a direct (non-delegated) call. Populated upstream by
+	// the token verifier; evaluateDelegationMatch consults it when a
+	// rule specifies match.delegation constraints.
+	Delegation *DelegationContext
 }
 
 // PolicyMeta captures structured job metadata for policy checks.
