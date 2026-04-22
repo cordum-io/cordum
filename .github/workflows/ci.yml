@@ -45,7 +45,16 @@ jobs:
         flags: unittests
         name: codecov-umbrella
 
+    # Benchmarks + their storage step are advisory (continue-on-error).
+    # They're informational performance tracking, not a correctness
+    # gate — flakes (e.g. occasional benchmark panics on shared CI
+    # runners, or the action's gh-pages auto-push tripping on a dirty
+    # working tree after `> benchmark_raw.txt` creates an untracked
+    # file) should not block merges. The benchmark-action writes to a
+    # separate gh-pages branch, so skipping a run has no impact on
+    # code correctness.
     - name: Run benchmarks
+      continue-on-error: true
       run: |
         go test -run=^$ -bench=. -benchmem ./... > benchmark_raw.txt
         # Keep only valid Go benchmark output lines (results + header).
@@ -55,8 +64,9 @@ jobs:
 
     - name: Check benchmark output
       id: benchmark_check
+      continue-on-error: true
       run: |
-        if grep -q '^Benchmark' benchmark.txt; then
+        if [ -f benchmark.txt ] && grep -q '^Benchmark' benchmark.txt; then
           echo "has_benchmark=true" >> $GITHUB_OUTPUT
         else
           echo "has_benchmark=false" >> $GITHUB_OUTPUT
@@ -64,6 +74,7 @@ jobs:
 
     - name: Store benchmark result
       uses: benchmark-action/github-action-benchmark@v1
+      continue-on-error: true
       if: github.ref == 'refs/heads/main' && steps.benchmark_check.outputs.has_benchmark == 'true'
       with:
         tool: 'go'
