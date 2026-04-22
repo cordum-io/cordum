@@ -49,20 +49,30 @@ PY
 }
 
 # validate_shape <block-json> <fixture-json> <label>
-# Enumerates every scalar path in the fixture and asserts the block has
-# a value at that path. Present-but-null is treated as missing.
+# Enumerates EVERY path in the fixture (leaf + container) and asserts
+# the block has a value at that path AND the value's JSON type matches
+# the fixture's. Catches both missing required keys and type drifts
+# (e.g. a stringified "true" where the fixture declares a boolean).
 validate_shape() {
   local block="$1" fixture="$2" label="$3"
   local missing
   missing="$(jq -nr --argjson b "${block}" --argjson f "${fixture}" '
-    [ $f | paths(scalars) ] as $paths
+    [ $f | paths ] as $paths
     | $paths[]
     | . as $p
-    | select( ($b | getpath($p)) == null )
-    | $p | map(tostring) | join(".")
+    | ($f | getpath($p)) as $expected
+    | ($b | getpath($p)) as $actual
+    | select(
+        $actual == null or
+        (($expected | type) != ($actual | type))
+      )
+    | ($p | map(tostring) | join(".")) as $k
+    | if $actual == null then "\($k) (missing)"
+      else "\($k) (expected \($expected | type), got \($actual | type))"
+      end
   ')"
   if [[ -n "${missing}" ]]; then
-    echo "${label}: missing required keys:" >&2
+    echo "${label}: required-shape violations:" >&2
     echo "${missing}" | sed 's/^/    - /' >&2
     return 1
   fi
