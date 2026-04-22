@@ -59,6 +59,30 @@ func TestPackManifestParses(t *testing.T) {
 	if len(manifest.Overlays.Policy) != 1 {
 		t.Errorf("expected exactly 1 policy overlay, got %d", len(manifest.Overlays.Policy))
 	}
+
+	// The pools overlay is the load-bearing half of this PR: without it
+	// `pack install` leaves the dispatch pools unchanged and the demo
+	// never runs. Pin its declaration so future edits to pack.yaml
+	// either keep the overlay or explicitly update this assertion.
+	if len(manifest.Overlays.Config) != 1 {
+		t.Fatalf("expected exactly 1 config overlay, got %d", len(manifest.Overlays.Config))
+	}
+	pools := manifest.Overlays.Config[0]
+	if pools.Name != "pools" {
+		t.Errorf("config overlay name = %q, want pools", pools.Name)
+	}
+	if pools.Scope != "system" {
+		t.Errorf("config overlay scope = %q, want system", pools.Scope)
+	}
+	if pools.Key != "pools" {
+		t.Errorf("config overlay key = %q, want pools", pools.Key)
+	}
+	if pools.Strategy != "json_merge_patch" {
+		t.Errorf("config overlay strategy = %q, want json_merge_patch", pools.Strategy)
+	}
+	if pools.Path != "overlays/pools.patch.yaml" {
+		t.Errorf("config overlay path = %q, want overlays/pools.patch.yaml", pools.Path)
+	}
 }
 
 // TestPolicyFragmentParses runs the embedded fragment through the same
