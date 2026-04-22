@@ -44,7 +44,15 @@ type DelegationDispatchToken struct {
 // DelegationDispatchTokenStore is an optional extension implemented by stores
 // that can persist the raw delegation token required for dispatch-time
 // re-verification.
+//
+// Callers MUST invoke ClearDelegationDispatchToken as soon as dispatch-time
+// verification completes (whether it admits or rejects the job) so the raw
+// bearer token does not sit in the job-metadata TTL where it could be
+// recovered via admin tooling, backups, or operator access. The persisted
+// DelegationLineage continues to carry the non-sensitive chain metadata
+// (JTI, issuer chain, scope) for audit and read-side APIs after the wipe.
 type DelegationDispatchTokenStore interface {
 	SetDelegationDispatchToken(ctx context.Context, jobID string, token DelegationDispatchToken) error
 	GetDelegationDispatchToken(ctx context.Context, jobID string) (DelegationDispatchToken, error)
+	ClearDelegationDispatchToken(ctx context.Context, jobID string) error
 }
