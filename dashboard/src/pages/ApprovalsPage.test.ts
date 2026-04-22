@@ -1,6 +1,7 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Approval } from "@/api/types";
 import { FOCUSABLE_SELECTOR } from "@/hooks/useDialogA11y";
@@ -132,12 +133,26 @@ function renderPage() {
   document.body.appendChild(container);
   const root = createRoot(container);
 
+  // ApprovalsPage composes McpApprovalsSection which uses React Query via
+  // useMcpApprovals. Wrap in a real QueryClientProvider (prod-shape) with
+  // retry disabled so the test runs deterministically without a backend.
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0, staleTime: 0 },
+      mutations: { retry: false },
+    },
+  });
+
   act(() => {
     root.render(
       React.createElement(
-        MemoryRouter,
-        { initialEntries: ["/approvals"] },
-        React.createElement(ApprovalsPage),
+        QueryClientProvider,
+        { client: queryClient },
+        React.createElement(
+          MemoryRouter,
+          { initialEntries: ["/approvals"] },
+          React.createElement(ApprovalsPage),
+        ),
       ),
     );
   });
@@ -146,6 +161,7 @@ function renderPage() {
     container,
     cleanup: () => {
       act(() => root.unmount());
+      queryClient.clear();
       container.remove();
     },
   };
