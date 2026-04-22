@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "name": "idempotency.post_with_key_retries",
+  "description": "POST with Idempotency-Key: simulator 500s the first call then 200s the retry; SDK MUST retry and MUST reuse the same Idempotency-Key header on the retry (the sim asserts header equality across attempts).",
+  "tags": ["idempotency", "retry", "mutating"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "request",
+      "operationId": "submitJob",
+      "headers": {
+        "Idempotency-Key": "conformance-idem-01",
+        "X-Conformance-Script": "server-500-once"
+      },
+      "body": {
+        "topic": "job.echo",
+        "prompt": "idempotent retry check"
+      },
+      "expect": {
+        "status": 202,
+        "bodyMatches": { "$.job_id": "$any$" }
+      }
+    }
+  ]
+}

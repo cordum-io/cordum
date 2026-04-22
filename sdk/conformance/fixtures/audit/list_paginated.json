@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "audit.list_paginated",
+  "description": "Walk the audit log via cursor pagination across ≥2 pages. Simulator seeds 25+ events and the harness walks them in pages of 10.",
+  "tags": ["audit", "pagination", "read-only"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "paginate",
+      "operationId": "getPolicyAudit",
+      "query": { "limit": 10 },
+      "maxPages": 3,
+      "expect": {
+        "pageCount": ">=2",
+        "totalItems": ">=15"
+      }
+    }
+  ]
+}

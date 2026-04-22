@@ -33,7 +33,7 @@ helm install cordum cordum/cordum -n cordum --create-namespace \
   --set dashboard.env.tenantId=default
 ```
 
-Note: the chart defaults to the image tags in `values.yaml` (currently `v0.9.7`)
+Note: the chart defaults to the image tags in `values.yaml` (currently `v0.1.4`)
 and pulls from GHCR. Override `global.image.tag` and `dashboard.image.tag` if
 your registry uses different tags.
 
@@ -44,7 +44,7 @@ Common overrides:
 ```bash
 helm install cordum ./cordum-helm \
   -n cordum --create-namespace \
-  --set global.image.tag=v0.9.7 \
+  --set global.image.tag=v0.1.4 \
   --set secrets.apiKey=$(openssl rand -hex 32) \
   --set redis.auth.password=$(openssl rand -hex 32) \
   --set gateway.env.tenantId=default \
@@ -106,16 +106,17 @@ build and load images into kind, then override tags:
 ```bash
 docker compose build
 
-for svc in api-gateway scheduler safety-kernel workflow-engine context-engine dashboard; do
-  docker tag "cordum-cordum-${svc}:latest" "ghcr.io/cordum-io/cordum/${svc}:dev"
+for svc in api-gateway scheduler safety-kernel workflow-engine context-engine; do
+  docker tag "cordum-cordum-${svc}:latest" "ghcr.io/cordum-io/cordum/control-plane:dev-${svc}"
 done
+docker tag cordum-cordum-dashboard:latest ghcr.io/cordum-io/cordum/dashboard:dev
 
 kind load docker-image --name cordum \
-  ghcr.io/cordum-io/cordum/api-gateway:dev \
-  ghcr.io/cordum-io/cordum/scheduler:dev \
-  ghcr.io/cordum-io/cordum/safety-kernel:dev \
-  ghcr.io/cordum-io/cordum/workflow-engine:dev \
-  ghcr.io/cordum-io/cordum/context-engine:dev \
+  ghcr.io/cordum-io/cordum/control-plane:dev-api-gateway \
+  ghcr.io/cordum-io/cordum/control-plane:dev-scheduler \
+  ghcr.io/cordum-io/cordum/control-plane:dev-safety-kernel \
+  ghcr.io/cordum-io/cordum/control-plane:dev-workflow-engine \
+  ghcr.io/cordum-io/cordum/control-plane:dev-context-engine \
   ghcr.io/cordum-io/cordum/dashboard:dev
 
 helm upgrade --install cordum ./cordum-helm -n cordum --create-namespace \

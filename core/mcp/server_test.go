@@ -8,6 +8,16 @@ import (
 	"time"
 )
 
+// testAdminIdentity returns an identity that sees every tool.
+func testAdminIdentity() *AgentIdentity {
+	return &AgentIdentity{
+		ID:                  "test-admin",
+		RiskTier:            "critical",
+		AllowedTools:        []string{"*"},
+		DataClassifications: []string{"pii", "phi", "secrets"},
+	}
+}
+
 type channelTransport struct {
 	in   chan *JSONRPCMessage
 	out  chan *JSONRPCMessage
@@ -119,9 +129,10 @@ func TestToolsList(t *testing.T) {
 	errCh := startServer(t, srv, transport)
 
 	transport.in <- &JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      json.RawMessage(`"tools-list"`),
-		Method:  MethodToolsList,
+		JSONRPC:  JSONRPCVersion,
+		ID:       json.RawMessage(`"tools-list"`),
+		Method:   MethodToolsList,
+		identity: testAdminIdentity(),
 	}
 	resp := awaitResponse(t, transport.out)
 	if resp.Error != nil {

@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "name": "workflows.run_and_stream_events",
+  "description": "Start a workflow run, then consume the SSE stream for run lifecycle events. Streaming fixtures are Node-only in the TS harness (jsdom cannot drive fetch-stream).",
+  "tags": ["workflows", "streaming", "runtime:go", "runtime:python", "runtime:ts-node"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "request",
+      "operationId": "createWorkflow",
+      "body": {
+        "name": "stream-workflow",
+        "steps": [
+          {
+            "id": "s1",
+            "name": "echo",
+            "type": "job",
+            "topic": "job.echo",
+            "input": { "message": "stream" }
+          }
+        ]
+      },
+      "expect": {
+        "status": 201,
+        "bodyMatches": { "$.id": "$any$" }
+      },
+      "extract": { "workflowId": "$.id" }
+    },
+    {
+      "kind": "request",
+      "operationId": "startWorkflowRun",
+      "pathParams": { "id": "$vars.workflowId" },
+      "body": { "input": {} },
+      "expect": {
+        "status": 202,
+        "bodyMatches": { "$.run_id": "$any$" }
+      },
+      "extract": { "runId": "$.run_id" }
+    },
+    {
+      "kind": "stream",
+      "operationId": "streamJob",
+      "pathParams": { "id": "$vars.runId" },
+      "maxEvents": 3,
+      "maxDurationMs": 5000,
+      "expect": {
+        "events": [
+          { "type": "run.started", "data": { "id": "$any$" } },
+          { "type": "step.started", "data": { "name": "echo" } },
+          { "type": "run.completed", "data": { "status": "succeeded" } }
+        ]
+      }
+    }
+  ]
+}

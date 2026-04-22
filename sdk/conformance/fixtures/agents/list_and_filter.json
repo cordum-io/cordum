@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "name": "agents.list_and_filter",
+  "description": "List agents and filter by risk_tier. Simulator seeds three fixtures at boot — two low-tier, one high-tier.",
+  "tags": ["agents", "happy-path"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "request",
+      "operationId": "listAgents",
+      "query": { "limit": 50 },
+      "expect": {
+        "status": 200,
+        "bodyMatches": {
+          "$.items": "$any$"
+        }
+      }
+    },
+    {
+      "kind": "request",
+      "operationId": "listAgents",
+      "query": { "risk_tier": "high", "limit": 50 },
+      "expect": {
+        "status": 200,
+        "bodyMatches": {
+          "$.items": "$any$"
+        }
+      }
+    }
+  ]
+}

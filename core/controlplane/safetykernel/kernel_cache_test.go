@@ -209,6 +209,33 @@ func TestDecisionCacheMaxSizeEnvParsing(t *testing.T) {
 	}
 }
 
+// TestResolveDecisionCacheMax exercises the non-positive guard. cacheMax<=0
+// is a silent-data-loss path — zero disables the cache and pushes every
+// decision to the evaluator, negative is a programmer typo that must never
+// reach runtime — so both must fall through to the documented default.
+func TestResolveDecisionCacheMax(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{"positive override honored", "500", 500},
+		{"zero falls back to default", "0", defaultDecisionCacheMaxSize},
+		{"negative falls back to default", "-1", defaultDecisionCacheMaxSize},
+		{"large negative falls back", "-2147483648", defaultDecisionCacheMaxSize},
+		{"invalid int falls back", "not-a-number", defaultDecisionCacheMaxSize},
+		{"empty falls back", "", defaultDecisionCacheMaxSize},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(envDecisionCacheMaxSize, tc.raw)
+			if got := resolveDecisionCacheMax(); got != tc.want {
+				t.Fatalf("resolveDecisionCacheMax(%q) = %d, want %d", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDecisionCacheTTLPreservedWithBound(t *testing.T) {
 	srv := &server{
 		cacheTTL:     25 * time.Millisecond,
@@ -258,7 +285,7 @@ func TestCacheInvalidatedOnPolicyChange(t *testing.T) {
 		cache:        map[string]cacheEntry{},
 		cacheMaxSize: 100,
 	}
-	srv.setPolicy(policyA, "snapA")
+	srv.setPolicy(context.Background(), policyA, "snapA")
 
 	req := &pb.PolicyCheckRequest{
 		JobId:  "job-1",
@@ -276,7 +303,7 @@ func TestCacheInvalidatedOnPolicyChange(t *testing.T) {
 	}
 
 	// Change to policy B — should invalidate cache.
-	srv.setPolicy(policyB, "snapB")
+	srv.setPolicy(context.Background(), policyB, "snapB")
 
 	// Second evaluation with same request — must see DENY (not stale cache).
 	resp2, err := srv.evaluate(context.Background(), req, "check")
@@ -301,7 +328,7 @@ func TestCacheHitSamePolicyVersion(t *testing.T) {
 		cache:        map[string]cacheEntry{},
 		cacheMaxSize: 100,
 	}
-	srv.setPolicy(policy, "snap1")
+	srv.setPolicy(context.Background(), policy, "snap1")
 
 	key := "test-key"
 	resp := &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}
@@ -331,7 +358,7 @@ func TestSetPolicyBumpsVersion(t *testing.T) {
 
 	// Each setPolicy call bumps version by 1.
 	for i := uint64(1); i <= 5; i++ {
-		srv.setPolicy(nil, fmt.Sprintf("snap%d", i))
+		srv.setPolicy(context.Background(), nil, fmt.Sprintf("snap%d", i))
 		if v := srv.policyVersion.Load(); v != i {
 			t.Fatalf("expected version %d after %d calls, got %d", i, i, v)
 		}
@@ -344,7 +371,7 @@ func TestCacheEntriesCarryVersion(t *testing.T) {
 		cache:        map[string]cacheEntry{},
 		cacheMaxSize: 100,
 	}
-	srv.setPolicy(nil, "snap1") // version = 1
+	srv.setPolicy(context.Background(), nil, "snap1") // version = 1
 
 	key := "versioned-key"
 	resp := &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}
@@ -362,7 +389,7 @@ func TestCacheEntriesCarryVersion(t *testing.T) {
 	}
 
 	// Bump to version 2.
-	srv.setPolicy(nil, "snap2") // version = 2, cache cleared
+	srv.setPolicy(context.Background(), nil, "snap2") // version = 2, cache cleared
 
 	// The cache was cleared by setPolicy, so the entry should be gone.
 	if got := srv.getCachedDecision(key); got != nil {
@@ -382,7 +409,7 @@ func TestCacheClearedOnSetPolicy(t *testing.T) {
 		cache:        map[string]cacheEntry{},
 		cacheMaxSize: 100,
 	}
-	srv.setPolicy(nil, "snap1") // version = 1
+	srv.setPolicy(context.Background(), nil, "snap1") // version = 1
 
 	// Populate cache.
 	for i := 0; i < 10; i++ {
@@ -400,7 +427,7 @@ func TestCacheClearedOnSetPolicy(t *testing.T) {
 	}
 
 	// Policy change should clear cache entirely.
-	srv.setPolicy(nil, "snap2")
+	srv.setPolicy(context.Background(), nil, "snap2")
 
 	srv.cacheMu.Lock()
 	size = len(srv.cache)
@@ -416,7 +443,7 @@ func TestCacheVersionMismatchDeletesEntry(t *testing.T) {
 		cache:        map[string]cacheEntry{},
 		cacheMaxSize: 100,
 	}
-	srv.setPolicy(nil, "snap1") // version = 1
+	srv.setPolicy(context.Background(), nil, "snap1") // version = 1
 
 	key := "stale-key"
 	resp := &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}
@@ -516,7 +543,7 @@ func TestCacheBypassedForVelocityPolicies(t *testing.T) {
 		resultClient:    client,
 		velocityChecker: newVelocityChecker(client),
 	}
-	srv.setPolicy(policy, "snap-cache-velocity")
+	srv.setPolicy(context.Background(), policy, "snap-cache-velocity")
 
 	// Make 3 requests — first 2 should allow (within limit), 3rd should deny.
 	for i := 1; i <= 3; i++ {
@@ -561,7 +588,7 @@ func TestCacheStillWorksForNonVelocityPolicies(t *testing.T) {
 		cache:        map[string]cacheEntry{},
 		cacheMaxSize: 100,
 	}
-	srv.setPolicy(policy, "snap-no-velocity")
+	srv.setPolicy(context.Background(), policy, "snap-no-velocity")
 
 	req := &pb.PolicyCheckRequest{
 		JobId:  "job-cached",
@@ -655,7 +682,7 @@ func TestPolicyCacheTOCTOU(t *testing.T) {
 		cache:        map[string]cacheEntry{},
 		cacheMaxSize: 1000,
 	}
-	srv.setPolicy(policyAllow, "snap-allow")
+	srv.setPolicy(context.Background(), policyAllow, "snap-allow")
 
 	req := &pb.PolicyCheckRequest{
 		JobId:  "job-toctou",
@@ -695,7 +722,7 @@ func TestPolicyCacheTOCTOU(t *testing.T) {
 	}
 
 	// Reload policy to deny.
-	srv.setPolicy(policyDeny, "snap-deny")
+	srv.setPolicy(context.Background(), policyDeny, "snap-deny")
 
 	// After reload, all evaluations must return DENY — no stale ALLOW.
 	for i := 0; i < 100; i++ {

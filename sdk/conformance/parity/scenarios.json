@@ -1,0 +1,149 @@
+[
+  {
+    "name": "exact-string",
+    "actual": "hello",
+    "expected": "hello",
+    "want_pass": true,
+    "reason": "equal strings pass"
+  },
+  {
+    "name": "exact-string-mismatch",
+    "actual": "hello",
+    "expected": "world",
+    "want_pass": false,
+    "reason": "unequal strings fail"
+  },
+  {
+    "name": "any-wildcard-on-string",
+    "actual": "whatever",
+    "expected": "$any$",
+    "want_pass": true,
+    "reason": "$any$ matches any string"
+  },
+  {
+    "name": "any-wildcard-on-int",
+    "actual": 42,
+    "expected": "$any$",
+    "want_pass": true,
+    "reason": "$any$ matches any number"
+  },
+  {
+    "name": "any-wildcard-on-object",
+    "actual": {"k": "v"},
+    "expected": "$any$",
+    "want_pass": true,
+    "reason": "$any$ matches any object"
+  },
+  {
+    "name": "any-wildcard-on-null",
+    "actual": null,
+    "expected": "$any$",
+    "want_pass": true,
+    "reason": "$any$ matches null"
+  },
+  {
+    "name": "timestamp-valid-rfc3339",
+    "actual": "2026-01-01T00:00:00Z",
+    "expected": "$timestamp$",
+    "want_pass": true,
+    "reason": "ISO-8601 Z suffix parses"
+  },
+  {
+    "name": "timestamp-valid-offset",
+    "actual": "2026-01-01T00:00:00+00:00",
+    "expected": "$timestamp$",
+    "want_pass": true,
+    "reason": "explicit offset parses"
+  },
+  {
+    "name": "timestamp-invalid",
+    "actual": "not-a-date",
+    "expected": "$timestamp$",
+    "want_pass": false,
+    "reason": "non-ISO string fails"
+  },
+  {
+    "name": "int-wildcard-valid",
+    "actual": 42,
+    "expected": "$int$",
+    "want_pass": true,
+    "reason": "integer passes"
+  },
+  {
+    "name": "int-wildcard-float-fails",
+    "actual": 3.14,
+    "expected": "$int$",
+    "want_pass": false,
+    "reason": "non-integer float fails"
+  },
+  {
+    "name": "int-wildcard-rejects-bool",
+    "actual": true,
+    "expected": "$int$",
+    "want_pass": false,
+    "reason": "boolean NEVER accepted as int (Python bool subclass guard)"
+  },
+  {
+    "name": "uuid-valid",
+    "actual": "550e8400-e29b-41d4-a716-446655440000",
+    "expected": "$uuid$",
+    "want_pass": true,
+    "reason": "UUID v4 shape passes"
+  },
+  {
+    "name": "uuid-invalid",
+    "actual": "not-a-uuid",
+    "expected": "$uuid$",
+    "want_pass": false,
+    "reason": "non-UUID fails"
+  },
+  {
+    "name": "unknown-wildcard",
+    "actual": "x",
+    "expected": "$zzz$",
+    "want_pass": false,
+    "reason": "unknown wildcards fail every harness"
+  },
+  {
+    "name": "nested-object-extra-keys-ok",
+    "actual": {"id": "abc", "name": "alpha", "status": "active", "extra": "ignored"},
+    "expected": {"name": "alpha", "status": "active", "id": "$any$"},
+    "want_pass": true,
+    "reason": "actual may carry extra keys"
+  },
+  {
+    "name": "object-missing-key",
+    "actual": {"a": 1},
+    "expected": {"a": 1, "b": "$any$"},
+    "want_pass": false,
+    "reason": "expected key missing from actual fails"
+  },
+  {
+    "name": "array-length-mismatch",
+    "actual": ["a", "b", "c"],
+    "expected": ["a", "b"],
+    "want_pass": false,
+    "reason": "ordered-array length mismatch fails"
+  },
+  {
+    "name": "array-element-wildcard",
+    "actual": ["a", "b"],
+    "expected": ["a", "$any$"],
+    "want_pass": true,
+    "reason": "per-element wildcard applies"
+  },
+  {
+    "name": "null-matches-null",
+    "actual": null,
+    "expected": null,
+    "want_pass": true,
+    "reason": "null only matches null"
+  },
+  {
+    "name": "null-vs-object",
+    "actual": null,
+    "expected": {"k": "v"},
+    "want_pass": false,
+    "reason": "null does not match object"
+  }
+]

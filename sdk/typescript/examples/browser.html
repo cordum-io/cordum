@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cordum SDK browser example</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; }
+      pre { background: #111827; color: #e5e7eb; padding: 1rem; border-radius: 0.75rem; overflow: auto; }
+    </style>
+  </head>
+  <body>
+    <h1>@cordum/sdk browser example</h1>
+    <p>Served locally, this page calls <code>http://localhost:8080</code> with <code>X-API-Key</code> and <code>X-Tenant-ID</code>.</p>
+    <h2>Jobs</h2>
+    <pre id="jobs">loading jobs…</pre>
+    <h2>First stream event</h2>
+    <pre id="stream">waiting for stream…</pre>
+
+    <script type="module">
+      import { runBrowserExample } from "./browser.mjs";
+
+      const jobsTarget = document.querySelector("#jobs");
+      const streamTarget = document.querySelector("#stream");
+
+      runBrowserExample({ jobsTarget, streamTarget }).catch((error) => {
+        const message = `error: ${String(error)}`;
+        if (jobsTarget) jobsTarget.textContent = message;
+        if (streamTarget) streamTarget.textContent = message;
+      });
+    </script>
+  </body>
+</html>

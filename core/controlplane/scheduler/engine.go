@@ -15,21 +15,22 @@ import (
 	"sync/atomic"
 
 	capvalidate "github.com/cordum-io/cap/v2/sdk/go"
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/config"
+	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	infraSchema "github.com/cordum/cordum/core/infra/schema"
 	infraStore "github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
-	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
 	oteltrace "go.opentelemetry.io/otel/trace"
-	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
@@ -83,11 +84,13 @@ type Engine struct {
 	registry                WorkerRegistry
 	strategy                SchedulingStrategy
 	jobStore                JobStore
+	decisionLog             model.DecisionLogStore
 	dlqSink                 DLQSink
 	metrics                 Metrics
 	config                  ConfigProvider
 	topicRegistry           *topicregistry.Service
 	workerCredentialCache   *WorkerCredentialCache
+	sessionMiddleware       *SessionTokenMiddleware
 	agentResolver           *AgentResolver
 	workerAttestation       WorkerAttestationMode
 	workerReadinessRequired bool
@@ -97,6 +100,9 @@ type Engine struct {
 	entitlements            *licensing.EntitlementResolver
 	contextClient           redis.UniversalClient // optional, for loading payloads referenced by ContextPtr
 	failModeResolver        *FailModeResolver
+	dispatchGate            *DispatchGate
+	dispatchAuditSink       AuditSink
+	trustMetrics            *WorkerTrustMetrics
 	otelMetrics             otelMetricsBridge     // optional OTEL dual-emission bridge
 	counterClient           redis.UniversalClient // optional, for operational counters shared across services
 	stopped                 atomic.Bool
@@ -261,6 +267,7 @@ func NewEngine(bus Bus, safety SafetyChecker, registry WorkerRegistry, strategy 
 		registry:                registry,
 		strategy:                strategy,
 		jobStore:                jobStore,
+		decisionLog:             NoopDecisionLogStore{},
 		metrics:                 metrics,
 		contextClient:           contextClient,
 		workerAttestation:       ParseWorkerAttestationMode(os.Getenv("WORKER_ATTESTATION")),
@@ -280,6 +287,36 @@ func (e *Engine) WithConfig(cfg ConfigProvider) *Engine {
 // WithTopicRegistry wires the canonical topic registry used for direct bus validation.
 func (e *Engine) WithTopicRegistry(registry *topicregistry.Service) *Engine {
 	e.topicRegistry = registry
+	return e
+}
+
+// WithDispatchGate wires the optional session-authority dispatch gate used by
+// the heartbeat-demotion rollout. Nil preserves legacy heartbeat-TTL semantics.
+func (e *Engine) WithDispatchGate(gate *DispatchGate) *Engine {
+	if e == nil {
+		return nil
+	}
+	e.dispatchGate = gate
+	return e
+}
+
+// WithDispatchAuditSink wires the audit sink used for heartbeat disagreement
+// events emitted during warn-mode dispatch.
+func (e *Engine) WithDispatchAuditSink(sink AuditSink) *Engine {
+	if e == nil {
+		return nil
+	}
+	e.dispatchAuditSink = sink
+	return e
+}
+
+// WithTrustMetrics wires the optional trust metrics bridge used by the
+// heartbeat-demotion rollout.
+func (e *Engine) WithTrustMetrics(metrics *WorkerTrustMetrics) *Engine {
+	if e == nil {
+		return nil
+	}
+	e.trustMetrics = metrics
 	return e
 }
 
@@ -562,6 +599,76 @@ func (e *Engine) Start() error {
 	return nil
 }
 
+func (e *Engine) eligibleWorkers(ctx context.Context) (map[string]*pb.Heartbeat, []HeartbeatDisagreement) {
+	if e == nil || e.registry == nil {
+		return map[string]*pb.Heartbeat{}, nil
+	}
+	if ctx == nil {
+		ctx = e.ctx
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if e.dispatchGate == nil {
+		return e.registry.Snapshot(), nil
+	}
+	return e.dispatchGate.EligibleWorkers(ctx, e.registry)
+}
+
+func (e *Engine) recordDispatchDisagreements(jobID, topic string, disagreements []HeartbeatDisagreement) {
+	if len(disagreements) == 0 {
+		return
+	}
+	for _, disagreement := range disagreements {
+		e.emitHeartbeatDisagreement(jobID, topic, disagreement)
+	}
+}
+
+func (e *Engine) emitHeartbeatDisagreement(jobID, topic string, disagreement HeartbeatDisagreement) {
+	if e == nil {
+		return
+	}
+	slog.Error("heartbeat/session disagreement during dispatch",
+		"job_id", jobID,
+		"topic", topic,
+		"worker_id", disagreement.WorkerID,
+		"tenant", disagreement.Tenant,
+		"jti", disagreement.JTI,
+		"direction", disagreement.Direction,
+		"session_auth_alive", disagreement.SessionAuthAlive,
+		"heartbeat_alive", disagreement.HeartbeatAlive,
+	)
+	if e.dispatchAuditSink == nil {
+		return
+	}
+	ctx := e.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	extra := map[string]string{
+		"worker_id":          disagreement.WorkerID,
+		"tenant":             disagreement.Tenant,
+		"jti":                disagreement.JTI,
+		"direction":          disagreement.Direction,
+		"session_auth_alive": fmt.Sprintf("%t", disagreement.SessionAuthAlive),
+		"heartbeat_alive":    fmt.Sprintf("%t", disagreement.HeartbeatAlive),
+	}
+	if topic != "" {
+		extra["topic"] = topic
+	}
+	e.dispatchAuditSink.Emit(ctx, audit.SIEMEvent{
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventHeartbeatDisagreement,
+		Severity:  audit.SeverityMedium,
+		TenantID:  disagreement.Tenant,
+		AgentID:   disagreement.WorkerID,
+		JobID:     jobID,
+		Action:    "dispatch.heartbeat_disagreement",
+		Reason:    disagreement.Direction,
+		Extra:     extra,
+	})
+}
+
 // HandlePacketWithContext is the context-aware version of HandlePacket.
 // It receives trace context extracted from NATS headers and threads it
 // through to processJob for distributed tracing continuity.
@@ -615,6 +722,9 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 		if hb == nil {
 			return nil
 		}
+		if !e.verifySessionToken(p, hb.GetWorkerId(), "heartbeat") {
+			return nil
+		}
 		if !e.allowWorkerHeartbeat(p, hb) {
 			return nil
 		}
@@ -627,6 +737,9 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 			"pool", hb.Pool,
 		)
 		e.registry.UpdateHeartbeat(hb)
+		if e.trustMetrics != nil {
+			e.trustMetrics.ObserveHeartbeat(hb)
+		}
 		if e.counterClient != nil {
 			ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
 			e.persistWorkerCount(ctx)
@@ -680,6 +793,9 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 		if res == nil {
 			return nil
 		}
+		if !e.verifySessionToken(p, res.GetWorkerId(), "job_result") {
+			return nil
+		}
 		if err := capvalidate.ValidateJobResult(res); err != nil {
 			slog.Warn("invalid job result rejected",
 				"job_id", res.GetJobId(),
@@ -701,6 +817,9 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 	case *pb.BusPacket_JobCancel:
 		cancelReq := payload.JobCancel
 		if cancelReq == nil {
+			return nil
+		}
+		if !e.verifySessionToken(p, strings.TrimSpace(cancelReq.GetRequestedBy()), "job_cancel") {
 			return nil
 		}
 		slog.Info("job cancel received",
@@ -795,6 +914,43 @@ func (e *Engine) handleConfigChangedPacket(p *pb.BusPacket) (err error) {
 
 func (e *Engine) workerAttestationMode() WorkerAttestationMode {
 	return e.workerAttestation.Normalized()
+}
+
+func (e *Engine) verifySessionToken(packet *pb.BusPacket, workerID, packetType string) bool {
+	if e == nil || e.sessionMiddleware == nil {
+		return true
+	}
+	ctx := e.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	result := e.sessionMiddleware.Verify(ctx, workerID, packet)
+	switch result.Verdict {
+	case TokenVerdictPass, TokenVerdictWarnMissing:
+		if result.Err != nil {
+			slog.Warn("session token missing; admitting packet",
+				"packet_type", packetType,
+				"worker_id", workerID,
+				"mode", e.sessionMiddleware.Mode().String(),
+				"error", result.Err,
+			)
+		}
+		return true
+	case TokenVerdictRejectMissing, TokenVerdictRejectInvalid:
+		fields := []any{
+			"packet_type", packetType,
+			"worker_id", workerID,
+			"mode", e.sessionMiddleware.Mode().String(),
+			"verdict", result.Verdict.String(),
+		}
+		if result.Err != nil {
+			fields = append(fields, "error", result.Err)
+		}
+		slog.Error("session token rejected inbound packet", fields...)
+		return false
+	default:
+		return true
+	}
 }
 
 func (e *Engine) allowWorkerHeartbeat(packet *pb.BusPacket, hb *pb.Heartbeat) bool {
@@ -994,8 +1150,8 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 							dlqStatus = pb.JobStatus_JOB_STATUS_DENIED
 						}
 						if dlqErr := e.emitDLQWithRetry(jobID, topic, dlqStatus, "terminal state redelivery", "redelivery_dlq_retry"); dlqErr != nil {
-								slog.Error("dlq emit failed on terminal redelivery", "job_id", jobID, "topic", topic, "error", dlqErr)
-							}
+							slog.Error("dlq emit failed on terminal redelivery", "job_id", jobID, "topic", topic, "error", dlqErr)
+						}
 					}
 					return nil
 				}
@@ -1036,6 +1192,16 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 		if currentState == "" {
 			if err := e.setJobState(jobID, JobStatePending); err != nil {
 				return RetryAfter(err, retryDelayStore)
+			}
+		} else if currentState == JobStateScheduled {
+			if inc, ok := e.jobStore.(interface {
+				IncrAttempts(context.Context, string) error
+			}); ok {
+				ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
+				if err := inc.IncrAttempts(ctx, jobID); err != nil {
+					slog.Warn("attempt counter increment failed on scheduled replay", "job_id", jobID, "error", err)
+				}
+				cancel()
 			}
 		}
 
@@ -1162,6 +1328,49 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	}
 
 	e.attachEffectiveConfig(req)
+
+	verifyCtx, verifyCancel := context.WithTimeout(lockCtx, storeOpTimeout)
+	lineage, hasDelegation, delegationErr := e.verifyDelegationBeforeDispatch(verifyCtx, req)
+	verifyCancel()
+	if delegationErr != nil {
+		reason, reasonCode, retry := classifyDelegationDispatchError(delegationErr)
+		slog.Warn("delegation dispatch verification failed",
+			"job_id", jobID,
+			"topic", topic,
+			"reason_code", reasonCode,
+			"error", delegationErr,
+		)
+		if retry {
+			return RetryAfter(delegationErr, retryDelayStore)
+		}
+		if hasDelegation {
+			e.emitDelegationDispatchFailureAudit(lockCtx, req, reasonCode)
+		}
+		if hasDelegation && e.jobStore != nil {
+			ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
+			failureReason := reason
+			if reasonCode != "" {
+				failureReason = reasonCode
+			}
+			if err := e.jobStore.SetFailureReason(ctx, jobID, failureReason); err != nil {
+				slog.Warn("failed to persist delegation dispatch failure reason", "job_id", jobID, "error", err)
+			}
+			cancel()
+		}
+		if err := e.setJobState(jobID, JobStateFailed); err != nil {
+			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
+			return RetryAfter(err, retryDelayStore)
+		}
+		e.incJobsCompleted(topic, pb.JobStatus_JOB_STATUS_FAILED.String())
+		if err := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED, reason, reasonCode); err != nil {
+			slog.Error("dlq emit failed, retrying", "job_id", jobID, "error", err)
+			return RetryAfter(err, retryDelayPublish)
+		}
+		return nil
+	}
+	if hasDelegation {
+		e.emitDelegationLineageAudit(lockCtx, req, lineage)
+	}
 
 	record, err := e.checkSafetyDecisionTraced(lockCtx, req)
 	if err != nil {
@@ -1362,7 +1571,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		}
 	}
 
-	workers := e.registry.Snapshot()
+	workers, disagreements := e.eligibleWorkers(lockCtx)
+	e.recordDispatchDisagreements(jobID, topic, disagreements)
 	var readiness map[string]WorkerReadiness
 	if e.workerReadinessRequired {
 		readiness = e.registry.ReadinessSnapshot()
@@ -1376,7 +1586,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	var subject string
 	for dispatchAttempt := range maxDispatchRetries {
 		if dispatchAttempt > 0 {
-			workers = e.registry.Snapshot()
+			workers, disagreements = e.eligibleWorkers(lockCtx)
+			e.recordDispatchDisagreements(jobID, topic, disagreements)
 			if e.workerReadinessRequired {
 				readiness = e.registry.ReadinessSnapshot()
 			}
@@ -1386,8 +1597,21 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			break
 		}
 		workerID := extractWorkerFromSubject(subject)
-		if workerID == "" || e.registry.IsAlive(workerID) {
+		if workerID == "" {
 			break
+		}
+		if e.dispatchGate == nil {
+			if e.registry.IsAlive(workerID) {
+				break
+			}
+		} else {
+			eligible, disagreement := e.dispatchGate.IsWorkerEligible(lockCtx, workerID, e.registry.IsAlive)
+			if disagreement != nil {
+				e.recordDispatchDisagreements(jobID, topic, []HeartbeatDisagreement{*disagreement})
+			}
+			if eligible {
+				break
+			}
 		}
 		slog.Warn("stale worker detected, retrying dispatch",
 			"job_id", jobID,
@@ -1684,7 +1908,7 @@ func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobReque
 	return record, err
 }
 
-func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, error) {
+func (e *Engine) checkSafetyDecision(req *pb.JobRequest, _ ...string) (SafetyDecisionRecord, error) {
 	record := SafetyDecisionRecord{}
 	if req == nil {
 		return record, fmt.Errorf("missing job request")
@@ -1723,6 +1947,7 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, 
 						if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
 							return record, err
 						}
+						e.appendDecisionLog(req, record)
 					}
 					return record, nil
 				}
@@ -1778,8 +2003,20 @@ func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, 
 		if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
 			return record, err
 		}
+		e.appendDecisionLog(req, record)
 	}
 	return record, err
+}
+
+func (e *Engine) appendDecisionLog(req *pb.JobRequest, record SafetyDecisionRecord) {
+	if e == nil || e.decisionLog == nil || req == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+	defer cancel()
+	if err := e.decisionLog.AppendDecision(ctx, buildDecisionLogRecord(req, record)); err != nil {
+		slog.Warn("decision log append failed", "job_id", strings.TrimSpace(req.GetJobId()), "error", err)
+	}
 }
 
 func (e *Engine) handleJobResult(res *pb.JobResult) error {

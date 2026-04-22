@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -13,11 +14,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/mcp"
 	mcpresources "github.com/cordum/cordum/core/mcp/resources"
 	mcptools "github.com/cordum/cordum/core/mcp/tools"
 )
+
+// mcpAgentIDHeader is the request header that identifies the calling
+// MCP agent. The gateway uses it (with a principal-ID fallback) to
+// populate MCPCallMetadata so the approval gate can log who is asking.
+const mcpAgentIDHeader = "X-Agent-Id"
 
 type mcpGatewayConfig struct {
 	Enabled   bool
@@ -32,7 +41,11 @@ type mcpRuntimeState struct {
 	httpTransport    *mcp.HTTPTransport
 	toolRegistry     *mcp.ToolRegistry
 	resourceRegistry *mcp.ResourceRegistry
+	promptRegistry   *mcp.PromptRegistry
 	server           *mcp.MCPServer
+	approvalStore    *MCPApprovalStore
+	approvalHandler  *mcpApprovalHandler
+	sweeperStop      chan struct{}
 }
 
 var gatewayMCPState sync.Map // map[*server]*mcpRuntimeState
@@ -67,26 +80,128 @@ func (s *server) registerMCPRoutes(mux *http.ServeMux) error {
 	toolRegistry.SetConfig(cfg.Raw)
 	resourceRegistry.SetConfig(cfg.Raw)
 
-	if err := mcptools.RegisterWithBridge(toolRegistry, s.newMCPServiceBridge()); err != nil {
+	// Per-tool approval gate. Requires a working Redis client — on dev
+	// deploys without one we skip wiring and the registry falls back to
+	// permissive behaviour. Production refuses to start without Redis
+	// elsewhere, so reaching this path in prod means degraded mode.
+	var approvalStore *MCPApprovalStore
+	var approvalHandler *mcpApprovalHandler
+	if client := s.redisClient(); client != nil {
+		approvalStore = NewMCPApprovalStore(client).WithAuditHook(s.mcpApprovalAuditHook())
+		approvalHandler = newMCPApprovalHandler(approvalStore)
+		// Scope-preapproval lookup — gate consults the agent identity
+		// store first so a CI bot with PreapprovedMutatingTools set
+		// can skip the human-approval step. Audit still fires; see
+		// MarkApprovalPreapproved in core/mcp/audit_invocation.go.
+		rawGate := NewGatewayApprovalGate(approvalStore)
+		if gate, ok := rawGate.(*gatewayApprovalGate); ok {
+			if s.agentIdentityStore != nil {
+				gate.preapproval = newAgentIdentityPreapprovalLookup(s.agentIdentityStore)
+			}
+			toolRegistry.SetApprovalGate(gate)
+			slog.Info("mcp approval gate enabled", "preapproval", gate.preapproval != nil)
+		} else {
+			// Future-proof: if NewGatewayApprovalGate is ever swapped to a
+			// different concrete, we still install the gate but skip the
+			// preapproval lookup rather than panic.
+			toolRegistry.SetApprovalGate(rawGate)
+			slog.Warn("mcp approval gate enabled but preapproval lookup unavailable: unexpected concrete type")
+		}
+	} else {
+		slog.Warn("mcp approval gate disabled: redis client unavailable — RequiresApproval tools will not be gated")
+	}
+
+	serviceBridge := s.newMCPServiceBridge()
+	if err := mcptools.RegisterWithBridge(toolRegistry, serviceBridge); err != nil {
 		return fmt.Errorf("register mcp tools: %w", err)
 	}
 	if err := mcpresources.RegisterWithBridge(resourceRegistry, s.newMCPDataBridge()); err != nil {
 		return fmt.Errorf("register mcp resources: %w", err)
 	}
+	// cordum:// URI templates — 8 resource types (jobs, runs, runs/timeline,
+	// workflows, packs, topics, agents, audit/{tenant}/{seq}) that let
+	// MCP clients dereference Cordum records by stable URI. Must run on
+	// the production bootstrap (not just in tests) or resources/list
+	// omits the templates and dereference returns 404 — QA reopen fix
+	// for task-466b6a6a.
+	if err := mcp.RegisterCordumURIResources(resourceRegistry, serviceBridge); err != nil {
+		return fmt.Errorf("register cordum:// resources: %w", err)
+	}
+	// mcp.tool_called audit hook. Every successful tools/call emits a
+	// SIEMEvent through the gateway's audit exporter so it lands in the
+	// Merkle chain. Without this wire-up the epic rail "Audit every
+	// tool call via SIEMEvent mcp_tool_called" is violated — another
+	// QA reopen fix.
+	if hook := s.mcpToolCallAuditHook(); hook != nil {
+		toolRegistry.WithToolCallAudit(hook)
+		slog.Info("mcp tool-call audit hook enabled")
+	}
+	// Scope filter + deny auditor must be wired before Serve starts so
+	// the very first tools/call produces an audit trail and respects
+	// AllowedTools / RiskTier / DataClassifications. Without this the
+	// HTTP gateway is a filter-less bypass around the core feature.
+	if auditor := s.newMCPDenyAuditor(); auditor != nil {
+		toolRegistry.SetDenyAuditor(auditor)
+	}
+	toolRegistry.SetScopeEnforcement(true)
+	// Rich per-invocation auditor. Emits mcp.tool_invocation (inbound)
+	// and mcp.tool_outbound_invocation for every terminal tools/call
+	// with args_redacted, result_summary, latency_ms, approval_status.
+	// Pairs with the DenyAuditor (denial-only) and the approval gate
+	// audit hook to reconstruct the full lifecycle.
+	var invocationAuditor mcp.ToolInvocationAuditor
+	if s.auditExporter != nil {
+		// Redactor merges DefaultRedactionRules (baseline secrets) with
+		// any rules advertised by the active policy bundle at
+		// `policy.mcp.argument_redaction.rules`. mergeMCPRedactor is
+		// called again from a reload goroutine so bundle rotations
+		// take effect without a gateway restart. Without the merge
+		// the auditor ran with built-in heuristics only — QA reopen
+		// fix for the DoD "Arguments redacted per policy rules".
+		redactor := s.buildMCPArgumentRedactor(context.Background())
+		invocationAuditor = mcp.NewToolInvocationAuditor(s.auditExporter, redactor)
+		s.setMCPInvocationAuditor(invocationAuditor)
+		go s.runMCPRedactionReload(invocationAuditor)
+		slog.Info("mcp tool-invocation auditor enabled",
+			"event_types", "mcp.tool_invocation,mcp.tool_outbound_invocation",
+		)
+	}
+	slog.Info("mcp scope enforcement enabled",
+		"mode", "http",
+		"filter", "AllowedTools+RiskTier+DataClassifications",
+	)
 
+	// Register first-party prompts (draft_safety_rule, explain_denial,
+	// summarize_approvals, policy_migration_helper) so prompts/list
+	// returns them to any MCP client connected to the HTTP gateway.
+	// Registration failure is logged but non-fatal — the server still
+	// serves tools + resources without prompts, and operators have a
+	// greppable signal to diagnose.
+	promptRegistry := mcp.NewPromptRegistry()
+	if err := mcp.RegisterAllPrompts(promptRegistry); err != nil {
+		slog.Error("mcp prompt registration failed; prompts/list will be empty", "error", err)
+	}
 	mcpServer := mcp.NewServer(transport, toolRegistry, resourceRegistry, mcp.ServerConfig{
 		Name:            "cordum",
 		Version:         buildinfo.Version,
 		ProtocolVersion: mcp.DefaultProtocolVersion,
 		RequestTimeout:  30 * time.Second,
-	})
+	}).WithAuditor(invocationAuditor).WithPrompts(promptRegistry)
+	sweeperStop := make(chan struct{})
+	if approvalStore != nil {
+		go runMCPApprovalSweeper(approvalStore, sweeperStop)
+	}
 	s.setMCPRuntime(&mcpRuntimeState{
 		startedAt:        time.Now().UTC(),
 		transport:        cfg.Transport,
 		httpTransport:    transport,
 		toolRegistry:     toolRegistry,
 		resourceRegistry: resourceRegistry,
+		promptRegistry:   promptRegistry,
 		server:           mcpServer,
+		approvalStore:    approvalStore,
+		approvalHandler:  approvalHandler,
+		sweeperStop:      sweeperStop,
 	})
 	go func() {
 		if err := mcpServer.Serve(); err != nil {
@@ -96,6 +211,7 @@ func (s *server) registerMCPRoutes(mux *http.ServeMux) error {
 	if s.shutdownCh != nil {
 		go func() {
 			<-s.shutdownCh
+			close(sweeperStop)
 			if err := transport.Close(); err != nil {
 				slog.Warn("mcp transport close failed", "error", err)
 			}
@@ -127,7 +243,7 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		ctx := context.WithValue(r.Context(), authContextKey{}, authCtx)
+		ctx := context.WithValue(r.Context(), auth.ContextKey{}, authCtx)
 		r = r.WithContext(ctx)
 
 		tenantID := tenantFromRequest(r)
@@ -141,7 +257,133 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
+		// Stash MCP call metadata so the approval gate (wired into the
+		// ToolRegistry) can evaluate per-tool approval policy without
+		// knowing about gateway identity types. Tenant + principal come
+		// from the auth context; agent_id prefers the X-Agent-Id header
+		// and falls back to the principal so the self-approval guard
+		// has something to compare against.
+		agentID := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader))
+		if agentID == "" {
+			agentID = strings.TrimSpace(authCtx.PrincipalID)
+		}
+		mcpCtx := WithMCPCallMetadata(r.Context(), MCPCallMetadata{
+			Tenant:    tenantID,
+			AgentID:   agentID,
+			Principal: strings.TrimSpace(authCtx.PrincipalID),
+		})
+		// Also stash tenant for the mcp.tool_called audit hook, which
+		// reads ctx via mcp.TenantFromContext (a separate ctx key from
+		// MCPCallMetadata so core/mcp stays free of gateway-specific
+		// identity types).
+		mcpCtx = mcp.WithTenant(mcpCtx, tenantID)
+		r = r.WithContext(mcpCtx)
+		// Attach *mcp.AgentIdentity so ToolRegistry.ListTools and the
+		// scope filter can evaluate the caller's AllowedTools /
+		// RiskTier / DataClassifications. Without this the HTTP
+		// transport sees msg.identity=nil and every tool list comes
+		// back empty — which is the fail-closed outcome QA flagged.
+		if identity := s.resolveMCPIdentity(r); identity != nil {
+			r = r.WithContext(mcp.ContextWithIdentity(r.Context(), identity))
+		}
 		next(w, r)
+	}
+}
+
+// resolveMCPIdentity looks up the agent identity for this MCP request.
+// Resolution order:
+//  1. X-Agent-Id header (explicit — matches the documented contract).
+//  2. auth-principal fallback via agent_by_worker reverse index, so
+//     credentialled workers inherit their linked identity without
+//     needing to send the header explicitly.
+//
+// Returns nil when no identity could be resolved; ToolRegistry treats
+// a nil identity as fail-closed (zero tools visible, all calls denied).
+// Revoked/suspended identities also resolve to nil.
+func (s *server) resolveMCPIdentity(r *http.Request) *mcp.AgentIdentity {
+	if s == nil || s.agentIdentityStore == nil {
+		return nil
+	}
+	ctx := r.Context()
+	if id := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader)); id != "" {
+		identity, err := s.agentIdentityStore.Get(ctx, id)
+		if err != nil || identity == nil {
+			return nil
+		}
+		return mcpIdentityFromStore(identity)
+	}
+	authCtx := auth.FromContext(ctx)
+	if authCtx == nil {
+		return nil
+	}
+	principal := strings.TrimSpace(authCtx.PrincipalID)
+	if principal == "" {
+		return nil
+	}
+	identity, err := s.agentIdentityStore.GetByWorkerID(ctx, principal)
+	if err != nil || identity == nil {
+		return nil
+	}
+	return mcpIdentityFromStore(identity)
+}
+
+// runMCPApprovalSweeper expires PENDING MCP approvals whose TTL has
+// passed. Runs in a dedicated goroutine started by registerMCPRoutes.
+// Sweep interval is 30s — matching the cadence of the existing
+// job-approval reaper.
+func runMCPApprovalSweeper(store *MCPApprovalStore, stop <-chan struct{}) {
+	if store == nil {
+		return
+	}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			swept, err := store.SweepExpired(ctx, time.Now())
+			cancel()
+			if err != nil {
+				slog.Warn("mcp approval sweeper failed", "error", err)
+				continue
+			}
+			if swept > 0 {
+				slog.Info("mcp approval sweeper transitioned expired records", "count", swept)
+			}
+		}
+	}
+}
+
+// mcpToolCallAuditHook returns a ToolCallAuditHook that forwards every
+// successful tools/call into the gateway's audit exporter. Nil-safe:
+// when the exporter is not configured the hook returns nil so
+// dev/stdio deploys don't emit duplicate logs. The hook itself sits
+// inside core/mcp and invokes IdentityFromContext + TenantFromContext
+// on the ctx the registry provides; middleware must stash both values
+// for the Extra fields to populate.
+func (s *server) mcpToolCallAuditHook() mcp.ToolCallAuditHook {
+	if s == nil || s.auditExporter == nil {
+		return nil
+	}
+	sender := s.auditExporter
+	return func(event audit.SIEMEvent) {
+		sender.Send(event)
+	}
+}
+
+// mcpApprovalAuditHook bridges MCPApprovalStore lifecycle events into
+// the gateway's audit exporter. Nil-safe: when the exporter is not
+// configured the hook returns a no-op so dev deploys work without
+// audit plumbing.
+func (s *server) mcpApprovalAuditHook() MCPAuditHook {
+	if s == nil || s.auditExporter == nil {
+		return nil
+	}
+	sender := s.auditExporter
+	return func(event audit.SIEMEvent) {
+		sender.Send(event)
 	}
 }
 
@@ -277,6 +519,152 @@ func (s *server) handleMCPStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
+// gatewayMCPAuditor stores the live *mcp.ToolInvocationAuditor per
+// server so the redaction-reload goroutine can call SetRedactor on it
+// without the auditor bleeding into every handler signature.
+var gatewayMCPAuditor sync.Map
+
+func (s *server) setMCPInvocationAuditor(a mcp.ToolInvocationAuditor) {
+	if s == nil || a == nil {
+		return
+	}
+	gatewayMCPAuditor.Store(s, a)
+}
+
+func (s *server) getMCPInvocationAuditor() mcp.ToolInvocationAuditor {
+	if s == nil {
+		return nil
+	}
+	if raw, ok := gatewayMCPAuditor.Load(s); ok {
+		if a, _ := raw.(mcp.ToolInvocationAuditor); a != nil {
+			return a
+		}
+	}
+	return nil
+}
+
+// mcpArgumentRedactionConfigKey is the configsvc key the gateway reads
+// to pull policy-bundle-sourced MCP argument-redaction rules. Stored
+// as a JSON blob matching the LoadRulesFromPolicyBundle envelope.
+// Admins rotate rules by writing this key; the reload goroutine picks
+// them up within mcpRedactionReloadInterval.
+const (
+	mcpArgumentRedactionConfigScope = "gateway"
+	mcpArgumentRedactionConfigKey   = "mcp.argument_redaction"
+	mcpRedactionReloadInterval      = 30 * time.Second
+)
+
+// buildMCPArgumentRedactor returns a redactor whose rules are the
+// baseline defaults merged with any policy-bundle overrides present
+// in configsvc. When configsvc is unavailable or the key is empty,
+// falls back to DefaultRedactor() — the auditor is never left with
+// an empty rule set.
+func (s *server) buildMCPArgumentRedactor(ctx context.Context) mcp.ArgumentRedactor {
+	defaults := mcp.DefaultRedactionRules()
+	overrides := s.loadMCPPolicyRedactionRules(ctx)
+	if len(overrides) == 0 {
+		return mcp.NewPolicyRedactor(defaults)
+	}
+	return mcp.NewPolicyRedactor(mcp.MergeRedactionRules(defaults, overrides))
+}
+
+// loadMCPPolicyRedactionRules pulls the configsvc document carrying
+// the MCP argument-redaction rules, re-marshals it, and decodes it
+// through LoadRulesFromPolicyBundle. Any failure path (no configsvc,
+// missing document, malformed payload) returns nil so the caller
+// merges with defaults only.
+func (s *server) loadMCPPolicyRedactionRules(ctx context.Context) []mcp.RedactionRule {
+	raw, err := s.loadMCPPolicyRedactionRaw(ctx)
+	if err != nil || len(raw) == 0 {
+		return nil
+	}
+	rules, err := mcp.LoadRulesFromPolicyBundle(raw)
+	if err != nil {
+		slog.Warn("mcp redaction rules malformed; using defaults only",
+			"scope", mcpArgumentRedactionConfigScope,
+			"key", mcpArgumentRedactionConfigKey,
+			"error", err,
+		)
+		return nil
+	}
+	return rules
+}
+
+// loadMCPPolicyRedactionRaw returns the policy-bundle JSON bytes for
+// the MCP argument-redaction document, or (nil, nil) when absent.
+// Factored for the change-detection path.
+func (s *server) loadMCPPolicyRedactionRaw(ctx context.Context) ([]byte, error) {
+	if s == nil || s.configSvc == nil {
+		return nil, nil
+	}
+	doc, err := s.configSvc.Get(ctx, configsvc.Scope(mcpArgumentRedactionConfigScope), mcpArgumentRedactionConfigKey)
+	if err != nil {
+		// Missing key is not an error — fall back to defaults silently.
+		return nil, nil
+	}
+	if doc == nil || len(doc.Data) == 0 {
+		return nil, nil
+	}
+	// Re-marshal the decoded document so LoadRulesFromPolicyBundle
+	// can parse it via its tolerant envelope (either
+	// policy.mcp.argument_redaction.rules or top-level rules).
+	return json.Marshal(doc.Data)
+}
+
+// runMCPRedactionReload polls configsvc every
+// mcpRedactionReloadInterval and calls auditor.SetRedactor when the
+// loaded rules change. Runs until the gateway shuts down. Without
+// this loop a new policy bundle would not take effect until the
+// gateway restarted — violating the "Agent identity changes must
+// immediately affect tool availability" class of rail.
+func (s *server) runMCPRedactionReload(a mcp.ToolInvocationAuditor) {
+	type setRedactor interface {
+		SetRedactor(mcp.ArgumentRedactor)
+	}
+	setter, ok := a.(setRedactor)
+	if !ok {
+		return
+	}
+	ticker := time.NewTicker(mcpRedactionReloadInterval)
+	defer ticker.Stop()
+	var lastHash string
+	for {
+		select {
+		case <-s.shutdownCh:
+			return
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			raw, err := s.configSvcGetRaw(ctx)
+			cancel()
+			if err != nil {
+				continue
+			}
+			hash := fnvHash(raw)
+			if hash == lastHash {
+				continue
+			}
+			lastHash = hash
+			redactor := s.buildMCPArgumentRedactor(context.Background())
+			setter.SetRedactor(redactor)
+			slog.Info("mcp argument-redaction rules reloaded", "rules_bytes", len(raw))
+		}
+	}
+}
+
+// configSvcGetRaw is a thin wrapper so runMCPRedactionReload stays
+// testable without reaching into configsvc directly.
+func (s *server) configSvcGetRaw(ctx context.Context) ([]byte, error) {
+	return s.loadMCPPolicyRedactionRaw(ctx)
+}
+
+// fnvHash is the 64-bit FNV-1a of the input, hex-encoded. Used only
+// for change detection; not a security primitive.
+func fnvHash(b []byte) string {
+	h := fnv.New64a()
+	h.Write(b)
+	return strconv.FormatUint(h.Sum64(), 16)
+}
+
 func (s *server) setMCPRuntime(state *mcpRuntimeState) {
 	if s == nil {
 		return
@@ -296,7 +684,11 @@ func (s *server) getMCPRuntime() *mcpRuntimeState {
 	if !ok {
 		return nil
 	}
-	state, _ := raw.(*mcpRuntimeState)
+	state, ok := raw.(*mcpRuntimeState)
+	if !ok {
+		slog.Error("mcp runtime state: sync.Map held unexpected type; returning nil")
+		return nil
+	}
 	return state
 }
 
@@ -705,7 +1097,7 @@ func (s *server) invokeMCPAnyHandler(
 }
 
 func (s *server) mcpTenantFromContext(ctx context.Context) string {
-	if auth := authFromContext(ctx); auth != nil {
+	if auth := auth.FromContext(ctx); auth != nil {
 		if tenant := strings.TrimSpace(auth.Tenant); tenant != "" {
 			return tenant
 		}

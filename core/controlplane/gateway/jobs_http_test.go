@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	infraSchema "github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
@@ -348,7 +349,7 @@ func TestHandleSubmitJobHTTPViewerDenied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleSubmitJobHTTP(rec, req)
@@ -377,7 +378,7 @@ func TestHandleSubmitJobHTTPAdminAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleSubmitJobHTTP(rec, req)
@@ -406,7 +407,7 @@ func TestHandleSubmitJobHTTPUserAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleSubmitJobHTTP(rec, req)
@@ -435,7 +436,7 @@ func TestHandleSubmitJobHTTPOperatorAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticate: %v", err)
 	}
-	req = req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	req = req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 	rec := httptest.NewRecorder()
 
 	s.handleSubmitJobHTTP(rec, req)
@@ -894,6 +895,161 @@ func TestGetJob_AttemptCount_FallsThroughToDLQ(t *testing.T) {
 	}
 	if int(attemptsVal) != 3 {
 		t.Errorf("expected attempts=3 (from DLQ fallback), got %d", int(attemptsVal))
+	}
+}
+
+func TestGetJob_DelegatedJobIncludesDelegation(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	jobID := "job-delegated"
+
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStateScheduled); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	_ = s.jobStore.SetTopic(ctx, jobID, "job.test")
+	_ = s.jobStore.SetTenant(ctx, jobID, "default")
+	if err := s.jobStore.SetJobRequest(ctx, &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "job.test",
+		TenantId: "default",
+		Labels: map[string]string{
+			"agent_id": "agent-b",
+		},
+	}); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	if err := s.jobStore.SetDelegationLineage(ctx, jobID, model.DelegationLineage{
+		TokenJTI:     "dlg-123",
+		Audience:     "agent-b",
+		RootIssuer:   "agent-a",
+		ParentIssuer: "agent-b",
+		ChainDepth:   2,
+		IssuerChain: []model.DelegationChainLink{
+			{AgentID: "agent-a", IssuedAt: "2026-04-21T12:00:00Z", ExpiresAt: "2026-04-21T13:00:00Z", JTI: "dlg-root"},
+			{AgentID: "agent-b", IssuedAt: "2026-04-21T12:05:00Z", ExpiresAt: "2026-04-21T13:00:00Z", JTI: "dlg-123", ParentJTI: "dlg-root"},
+		},
+		Scope:      []string{"read"},
+		ExpiresAt:  "2026-04-21T13:00:00Z",
+		VerifiedAt: 1713701100000000,
+	}); err != nil {
+		t.Fatalf("set delegation lineage: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID, nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("id", jobID)
+	rec := httptest.NewRecorder()
+	s.handleGetJob(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	rawDelegation, ok := resp["delegation"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected delegation object, got %T (%v)", resp["delegation"], resp["delegation"])
+	}
+	if rawDelegation["jti"] != "dlg-123" {
+		t.Fatalf("delegation.jti = %v, want dlg-123", rawDelegation["jti"])
+	}
+	if rawDelegation["audience"] != "agent-b" {
+		t.Fatalf("delegation.audience = %v, want agent-b", rawDelegation["audience"])
+	}
+	if rawDelegation["root_issuer"] != "agent-a" {
+		t.Fatalf("delegation.root_issuer = %v, want agent-a", rawDelegation["root_issuer"])
+	}
+	if rawDelegation["parent_issuer"] != "agent-b" {
+		t.Fatalf("delegation.parent_issuer = %v, want agent-b", rawDelegation["parent_issuer"])
+	}
+	if rawDelegation["expires_at"] != "2026-04-21T13:00:00Z" {
+		t.Fatalf("delegation.expires_at = %v, want 2026-04-21T13:00:00Z", rawDelegation["expires_at"])
+	}
+	if rawDelegation["reverified_at_dispatch"] != true {
+		t.Fatalf("delegation.reverified_at_dispatch = %v, want true", rawDelegation["reverified_at_dispatch"])
+	}
+	if got, ok := rawDelegation["verified_at"].(float64); !ok || int64(got) != 1713701100000000 {
+		t.Fatalf("delegation.verified_at = %v, want 1713701100000000", rawDelegation["verified_at"])
+	}
+	chain, ok := rawDelegation["chain"].([]any)
+	if !ok || len(chain) != 2 {
+		t.Fatalf("delegation.chain = %#v, want 2 entries", rawDelegation["chain"])
+	}
+	scope, ok := rawDelegation["scope"].([]any)
+	if !ok || len(scope) != 1 || scope[0] != "read" {
+		t.Fatalf("delegation.scope = %#v, want [read]", rawDelegation["scope"])
+	}
+}
+
+func TestGetJob_NonDelegatedJobOmitsDelegation(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	jobID := "job-no-delegation"
+
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	_ = s.jobStore.SetTopic(ctx, jobID, "job.test")
+	_ = s.jobStore.SetTenant(ctx, jobID, "default")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID, nil)
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("id", jobID)
+	rec := httptest.NewRecorder()
+	s.handleGetJob(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if _, ok := resp["delegation"]; ok {
+		t.Fatalf("expected delegation to be omitted, got %#v", resp["delegation"])
+	}
+}
+
+func TestGetJob_DelegatedJobCrossTenantForbidden(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	ctx := context.Background()
+	jobID := "job-delegated-tenant-b"
+
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStateScheduled); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	_ = s.jobStore.SetTopic(ctx, jobID, "job.test")
+	_ = s.jobStore.SetTenant(ctx, jobID, "tenant-b")
+	if err := s.jobStore.SetDelegationLineage(ctx, jobID, model.DelegationLineage{
+		TokenJTI:   "dlg-tenant-b",
+		Audience:   "agent-b",
+		RootIssuer: "agent-a",
+		ChainDepth: 1,
+		IssuerChain: []model.DelegationChainLink{
+			{AgentID: "agent-a", JTI: "dlg-tenant-b"},
+		},
+		VerifiedAt: 1713701100000000,
+	}); err != nil {
+		t.Fatalf("set delegation lineage: %v", err)
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/jobs/"+jobID, nil), &auth.AuthContext{
+		Tenant:      "tenant-a",
+		PrincipalID: "operator-a",
+		Role:        "admin",
+	})
+	req.Header.Set("X-Tenant-ID", "tenant-a")
+	req.SetPathValue("id", jobID)
+	rec := httptest.NewRecorder()
+	s.handleGetJob(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

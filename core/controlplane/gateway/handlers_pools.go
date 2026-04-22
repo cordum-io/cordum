@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/pools"
 	"github.com/cordum/cordum/core/infra/config"
 )
@@ -132,8 +133,7 @@ type createPoolRequest struct {
 }
 
 func (s *server) handleCreatePool(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermPoolsWrite, "admin") {
 		return
 	}
 	name := strings.TrimSpace(r.PathValue("name"))
@@ -208,8 +208,7 @@ type updatePoolRequest struct {
 }
 
 func (s *server) handleUpdatePool(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermPoolsWrite, "admin") {
 		return
 	}
 	name := strings.TrimSpace(r.PathValue("name"))
@@ -280,8 +279,7 @@ func (s *server) handleUpdatePool(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermPoolsWrite, "admin") {
 		return
 	}
 	name := strings.TrimSpace(r.PathValue("name"))
@@ -348,8 +346,7 @@ type drainPoolRequest struct {
 }
 
 func (s *server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermPoolsWrite, "admin") {
 		return
 	}
 	name := strings.TrimSpace(r.PathValue("name"))
@@ -423,8 +420,7 @@ func (s *server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (s *server) handleAddTopicToPool(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermPoolsWrite, "admin") {
 		return
 	}
 	name := strings.TrimSpace(r.PathValue("name"))
@@ -479,8 +475,7 @@ func (s *server) handleAddTopicToPool(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 func (s *server) handleRemoveTopicFromPool(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermPoolsWrite, "admin") {
 		return
 	}
 	name := strings.TrimSpace(r.PathValue("name"))

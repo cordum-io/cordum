@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "name": "errors.not_found",
+  "description": "GET a non-existent resource. SDK MUST raise NotFoundError with status 404.",
+  "tags": ["errors", "not-found"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "assert_error",
+      "operationId": "getAgent",
+      "pathParams": { "id": "does-not-exist" },
+      "expect": {
+        "errorClass": "NotFoundError",
+        "status": 404,
+        "fields": {
+          "error.code": "not_found",
+          "error.details.resource": "agent"
+        }
+      }
+    }
+  ]
+}

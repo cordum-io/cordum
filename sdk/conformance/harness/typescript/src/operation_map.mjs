@@ -1,0 +1,40 @@
+// operationId -> [method, path] — byte-identical to the Go
+// harness's operation_map.go and the Python harness's
+// conformance/_operation_map.py. The step-9 parity runner asserts
+// this invariant.
+export const OPERATION_MAP = {
+  // Agents
+  createAgent: ['POST', '/api/v1/agents'],
+  listAgents:  ['GET',  '/api/v1/agents'],
+  getAgent:    ['GET',  '/api/v1/agents/{id}'],
+  updateAgent: ['PUT',  '/api/v1/agents/{id}'],
+  deleteAgent: ['DELETE', '/api/v1/agents/{id}'],
+
+  // Jobs
+  submitJob: ['POST', '/api/v1/jobs'],
+  listJobs:  ['GET',  '/api/v1/jobs'],
+  getJob:    ['GET',  '/api/v1/jobs/{id}'],
+  cancelJob: ['POST', '/api/v1/jobs/{id}/cancel'],
+
+  // Workflows
+  createWorkflow:   ['POST',   '/api/v1/workflows'],
+  getWorkflow:      ['GET',    '/api/v1/workflows/{id}'],
+  listWorkflows:    ['GET',    '/api/v1/workflows'],
+  deleteWorkflow:   ['DELETE', '/api/v1/workflows/{id}'],
+  startWorkflowRun: ['POST',   '/api/v1/workflows/{id}/runs'],
+
+  // Policies
+  listPolicyBundles: ['GET',  '/api/v1/policy/bundles'],
+  getPolicyBundle:   ['GET',  '/api/v1/policy/bundles/{id}'],
+  publishPolicy:     ['POST', '/api/v1/policy/publish'],
+  rollbackPolicy:    ['POST', '/api/v1/policy/rollback'],
+  getPolicyAudit:    ['GET',  '/api/v1/policy/audit'],
+
+  // Auth
+  login:         ['POST', '/api/v1/auth/login'],
+  getSession:    ['GET',  '/api/v1/auth/session'],
+  getAuthConfig: ['GET',  '/api/v1/auth/config'],
+
+  // Streaming
+  streamJob: ['GET', '/api/v1/stream'],
+};

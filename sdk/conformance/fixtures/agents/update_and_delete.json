@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "name": "agents.update_and_delete",
+  "description": "Create → PATCH risk_tier and description → DELETE. Verifies PUT/PATCH update semantics and a 204 delete.",
+  "tags": ["agents", "happy-path", "mutating"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "request",
+      "operationId": "createAgent",
+      "body": {
+        "name": "beta",
+        "owner": "ops@acme",
+        "risk_tier": "low"
+      },
+      "expect": {
+        "status": 201,
+        "bodyMatches": { "$.id": "$any$" }
+      },
+      "extract": { "agentId": "$.id" }
+    },
+    {
+      "kind": "request",
+      "operationId": "updateAgent",
+      "pathParams": { "id": "$vars.agentId" },
+      "body": {
+        "risk_tier": "medium",
+        "description": "Risk raised after scope audit"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "risk_tier": "medium",
+          "description": "Risk raised after scope audit"
+        }
+      }
+    },
+    {
+      "kind": "request",
+      "operationId": "deleteAgent",
+      "pathParams": { "id": "$vars.agentId" },
+      "expect": {
+        "status": 204
+      }
+    }
+  ]
+}

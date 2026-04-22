@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/redis/go-redis/v9"
 )
@@ -212,7 +213,7 @@ func TestRollbackSchemaAndWorkflow(t *testing.T) {
 
 func TestRunPolicySimulation(t *testing.T) {
 	s, _, _ := newTestGateway(t)
-	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{Tenant: "override", PrincipalID: "actor-1"})
+	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{Tenant: "override", PrincipalID: "actor-1"})
 
 	test := packPolicySimulation{Name: "sim", Request: packPolicySimulationRequest{Topic: "job.default"}}
 	decision, reason, err := s.runPolicySimulation(ctx, test, "pack")

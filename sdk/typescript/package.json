@@ -1,0 +1,79 @@
+{
+  "name": "@cordum/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the Cordum control plane.",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup && node -e \"const fs=require('node:fs');fs.writeFileSync('dist/package.json',JSON.stringify({type:'commonjs'},null,2)+'\\n')\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --ext .ts,.tsx,.cts,.mts",
+    "test": "vitest run",
+    "generate": "node ./scripts/generate.mjs",
+    "check:generated": "node ./scripts/check-generated.mjs",
+    "prepare": "npm run build",
+    "size": "size-limit",
+    "check:no-node-builtins": "node ./scripts/check-no-node-builtins.mjs",
+    "test:browser": "npm run build && npm --prefix test-browser install && playwright test -c test-browser/playwright.config.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cordum-io/cordum.git",
+    "directory": "sdk/typescript"
+  },
+  "homepage": "https://github.com/cordum-io/cordum/tree/main/sdk/typescript",
+  "bugs": {
+    "url": "https://github.com/cordum-io/cordum/issues"
+  },
+  "license": "BUSL-1.1",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "size-limit": [
+    {
+      "path": "dist/index.mjs",
+      "limit": "15 KB"
+    }
+  ],
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@size-limit/file": "^12.1.0",
+    "@types/node": "^20.17.30",
+    "@typescript-eslint/eslint-plugin": "^8.46.2",
+    "@typescript-eslint/parser": "^8.46.2",
+    "eslint": "^9.25.1",
+    "jsdom": "^29.0.2",
+    "msw": "^2.10.5",
+    "openapi-fetch": "^0.10.6",
+    "openapi-typescript": "^7.8.0",
+    "prettier": "^3.5.3",
+    "size-limit": "^12.1.0",
+    "ts-morph": "^28.0.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.3",
+    "vite": "^8.0.9",
+    "vitest": "^1.6.1"
+  },
+  "msw": {
+    "workerDirectory": [
+      "test-browser\\public"
+    ]
+  }
+}

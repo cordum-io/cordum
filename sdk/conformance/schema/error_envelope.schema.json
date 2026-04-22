@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cordum.io/schemas/gateway-error-envelope/v1.json",
+  "title": "Cordum Gateway Error Envelope",
+  "description": "The canonical shape of every error response body returned by Cordum's gateway. Locked so drift surfaces as a conformance-suite failure, not a silent per-SDK parsing bug.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["error"],
+  "properties": {
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Machine-readable error code. snake_case, stable across versions. SDKs map this to typed error classes via a shared table documented in docs/wildcards.md."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Operator-facing message. Never used for programmatic branching — code is the SSOT."
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Structured per-error context. Well-known sub-shapes:\n- field_errors: [{field, code, message}] for ValidationError\n- resource: string for NotFoundError / ConflictError\n- retry_after_seconds: integer for RateLimitError\n- trace_id: string (always present when the server-side chain is enabled)"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "error": {
+        "code": "validation_failed",
+        "message": "name is required",
+        "details": {
+          "field_errors": [
+            { "field": "name", "code": "required", "message": "name is required" }
+          ]
+        }
+      }
+    },
+    {
+      "error": {
+        "code": "not_found",
+        "message": "agent not found",
+        "details": { "resource": "agent", "trace_id": "tr-01h7m9ab" }
+      }
+    },
+    {
+      "error": {
+        "code": "rate_limited",
+        "message": "too many requests",
+        "details": { "retry_after_seconds": 3 }
+      }
+    }
+  ]
+}

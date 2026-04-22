@@ -15,9 +15,11 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
+	"github.com/cordum/cordum/core/policyshadow"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
 	"gopkg.in/yaml.v3"
@@ -29,7 +31,7 @@ type policyBundleSimulateRequest struct {
 }
 
 func (s *server) handlePolicyBundles(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundles, updatedAt, err := s.loadPolicyBundles(r.Context())
@@ -47,7 +49,7 @@ func (s *server) handlePolicyBundles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundles, _, err := s.loadPolicyBundles(r.Context())
@@ -110,7 +112,7 @@ func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePolicyOutputRules(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundles, _, err := s.loadPolicyBundles(r.Context())
@@ -173,8 +175,7 @@ func (s *server) handlePolicyOutputRules(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *server) handlePolicyOutputStats(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermPolicyRead, "admin") {
 		return
 	}
 
@@ -259,7 +260,7 @@ func (s *server) handlePolicyOutputStats(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	ruleID := strings.TrimSpace(r.PathValue("id"))
@@ -368,7 +369,7 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundleID := bundleIDFromRequest(r)
@@ -401,12 +402,34 @@ func (s *server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: strings.TrimSpace(stringFromAny(bundle["created_at"])),
 		UpdatedAt: strings.TrimSpace(stringFromAny(bundle["updated_at"])),
 	}
+	// Enrich with the current shadow summary (if any) so the detail API
+	// surfaces what would run against live traffic. Absent shadow stays
+	// nil and is omitted from the JSON body — backward-compatible for
+	// existing clients that don't know the field.
+	enriched := policyBundleDetailWithShadow{policyBundleDetail: resp}
+	if s.policyShadowStore != nil {
+		tenantID := strings.TrimSpace(tenantFromRequest(r))
+		if tenantID != "" {
+			if sp, err := s.policyShadowStore.Get(r.Context(), tenantID, bundleID); err == nil && sp != nil {
+				enriched.Shadow = sp.Summary()
+			}
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, resp)
+	writeJSON(w, enriched)
+}
+
+// policyBundleDetailWithShadow embeds the canonical policyBundleDetail
+// and adds the optional Shadow summary. Keeping the field here (not on
+// the shared policybundles type) avoids pulling core/policyshadow into
+// the policybundles package just for a JSON tag.
+type policyBundleDetailWithShadow struct {
+	policyBundleDetail
+	Shadow *policyshadow.ShadowPolicySummary `json:"shadow,omitempty"`
 }
 
 func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundleID := bundleIDFromRequest(r)
@@ -461,6 +484,16 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Sign the bundle content BEFORE persisting so the signature and the
+	// content land in Redis atomically. When CORDUM_POLICY_STRICT != off
+	// and no key is configured, this short-circuits with a 503 and a
+	// remediation hint so the operator knows exactly what to fix.
+	outcome := signPolicyBundleContent(r.Context(), []byte(content))
+	if outcome.Status != 0 {
+		writeErrorJSON(w, outcome.Status, outcome.Message)
+		return
+	}
+
 	now := time.Now().UTC().Format(time.RFC3339)
 	bundle, _ := bundles[bundleID].(map[string]any)
 	if bundle == nil {
@@ -478,6 +511,13 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	if body.Enabled != nil {
 		bundle["enabled"] = *body.Enabled
 	}
+	if outcome.Signature != nil {
+		bundle[policyBundleSignatureKey] = outcome.Signature
+	} else {
+		// strict=off with no key: drop any stale signature so the bundle
+		// does not carry one that no longer matches the current content.
+		delete(bundle, policyBundleSignatureKey)
+	}
 	bundles[bundleID] = bundle
 	doc.Data[policyConfigKey] = bundles
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
@@ -486,14 +526,25 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	}
 	s.appendAuditEntryNamed(r.Context(), "edit", "policy", bundleID, bundleID, policyActorID(r), policyRole(r), "edit policy bundle "+bundleID)
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, map[string]any{
+	response := map[string]any{
 		"id":         bundleID,
 		"updated_at": now,
-	})
+	}
+	// Surface the signature envelope when the gateway signed the content
+	// so MCP callers (core/mcp/bridge_mutating.go UpdatePolicyBundle) can
+	// return signed=true + key_id without a second round trip. The map
+	// shape matches signatureToMap — {algorithm, key_id, value, hash,
+	// signed_bytes} — which is the same shape persisted under _signature
+	// in Redis, so wire format stays symmetric between PUT response,
+	// GET bundle, and kernel reload.
+	if outcome.Signature != nil {
+		response["signature"] = outcome.Signature
+	}
+	writeJSON(w, response)
 }
 
 func (s *server) handleDeletePolicyBundle(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundleID := bundleIDFromRequest(r)
@@ -535,7 +586,7 @@ func (s *server) handleDeletePolicyBundle(w http.ResponseWriter, r *http.Request
 }
 
 func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	bundleID := bundleIDFromRequest(r)
@@ -601,7 +652,7 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	var body policyPublishRequest
@@ -681,7 +732,7 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	var body policyRollbackRequest
@@ -749,7 +800,7 @@ func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *server) handleListPolicyAudit(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	limit := parseAuditLimit(r.URL.Query().Get("limit"))
@@ -937,7 +988,7 @@ func timestampFromMicros(value int64) string {
 }
 
 func (s *server) handleListPolicyBundleSnapshots(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	snapshots, _, err := s.loadPolicySnapshots(r.Context())
@@ -959,7 +1010,7 @@ func (s *server) handleListPolicyBundleSnapshots(w http.ResponseWriter, r *http.
 }
 
 func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
 	var body struct {
@@ -1006,7 +1057,7 @@ func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *htt
 }
 
 func (s *server) handleGetPolicyBundleSnapshot(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	snapshotID := strings.TrimSpace(r.PathValue("id"))

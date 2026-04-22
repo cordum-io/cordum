@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "errors.rate_limit_retry_after",
+  "description": "Simulator returns 429 + Retry-After: 1 for the first request; SDK MUST sleep for the hinted interval and retry, succeeding on the second attempt. The fixture asserts a single successful response — the retry is the SDK's job.",
+  "tags": ["errors", "retry", "rate-limit"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "request",
+      "operationId": "listJobs",
+      "headers": { "X-Conformance-Script": "rate-limit-once" },
+      "query": { "limit": 10 },
+      "expect": {
+        "status": 200,
+        "bodyMatches": { "$.items": "$any$" }
+      }
+    }
+  ]
+}

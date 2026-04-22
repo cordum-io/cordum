@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "name": "auth.api_key_success",
+  "description": "Authenticated call with a valid API key returns 200 + the expected resource.",
+  "tags": ["auth", "happy-path"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "request",
+      "operationId": "getAuthConfig",
+      "expect": {
+        "status": 200,
+        "bodyMatches": {
+          "$.password_enabled": "$any$",
+          "$.default_tenant": "$any$"
+        }
+      }
+    }
+  ]
+}

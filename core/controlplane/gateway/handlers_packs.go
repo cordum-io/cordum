@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/env"
@@ -42,7 +43,7 @@ type packWorkerCredentialResponse struct {
 }
 
 func (s *server) handleListPacks(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPacksRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	records, _, err := s.loadPackRegistry(r.Context())
@@ -60,7 +61,7 @@ func (s *server) handleListPacks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleGetPack(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPacksRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	packID := strings.TrimSpace(r.PathValue("id"))
@@ -87,7 +88,7 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "pack dependencies unavailable")
 		return
 	}
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.lockStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPacksInstall, []string{"admin"}, s.lockStore) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxPackUploadBytes)
@@ -156,6 +157,18 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 			return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 	}
+
+	// Zero-trust rail: re-verify the pack signature server-side even
+	// when cordumctl verified locally. The client is untrusted.
+	verifyResult, verifyErr := verifyPackInstallBundle(ctx, s.redisClient(), bundleDir, manifest.Metadata.ID)
+	if verifyErr != nil {
+		s.appendAuditEntryNamed(ctx, PackVerificationEventRejected, "pack", manifest.Metadata.ID, manifest.Metadata.Title, opts.InstalledBy, "", verifyErr.Error())
+		return packRecord{}, nil, &packInstallError{
+			Status: http.StatusBadRequest,
+			Err:    fmt.Errorf("%s: %s", verifyErr.Code, verifyErr.Message),
+		}
+	}
+	s.appendAuditEntryNamed(ctx, PackVerificationEventVerified, "pack", manifest.Metadata.ID, manifest.Metadata.Title, opts.InstalledBy, "", fmt.Sprintf("signed=%t kid=%s cordum=%t", verifyResult.Signed, verifyResult.KID, verifyResult.HasCordumCounterSig))
 	owner := strings.TrimSpace(opts.Owner)
 	if owner == "" {
 		owner = packLockOwner(nil)
@@ -289,7 +302,8 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 			Config: appliedConfig,
 			Policy: appliedPolicy,
 		},
-		Tests: manifest.Tests,
+		Tests:        manifest.Tests,
+		Verification: verificationFromServerResult(verifyResult),
 	}
 	registeredTopicNames := []string{}
 	var packCredential *packWorkerCredentialResponse
@@ -325,6 +339,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 	}
 	if len(registeredTopicNames) > 0 {
 		s.publishConfigChanged("system", "topics")
+		s.emitTopicRegisteredAudit(ctx, manifest.Metadata.ID, registeredTopicNames, opts.InstalledBy)
 	}
 	if packCredential != nil {
 		s.publishConfigChanged("system", "workers")
@@ -340,7 +355,7 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "pack dependencies unavailable")
 		return
 	}
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.lockStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPacksUninstall, []string{"admin"}, s.lockStore) {
 		return
 	}
 	packID := strings.TrimSpace(r.PathValue("id"))
@@ -420,6 +435,7 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(names) > 0 {
 			s.publishConfigChanged("system", "topics")
+			s.emitTopicUnregisteredAudit(r.Context(), packID, names, packOpActor(r))
 		}
 	}
 	if s.workerCredentialStore != nil {
@@ -512,7 +528,7 @@ func packWorkerID(packID string) string {
 }
 
 func (s *server) handleVerifyPack(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.safetyClient) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPacksVerify, []string{"admin"}, s.safetyClient) {
 		return
 	}
 	packID := strings.TrimSpace(r.PathValue("id"))
@@ -956,7 +972,7 @@ func (s *server) runPolicySimulation(ctx context.Context, test packPolicySimulat
 			ActorType:  test.Request.ActorType,
 		},
 	}
-	if auth := authFromContext(ctx); auth != nil {
+	if auth := auth.FromContext(ctx); auth != nil {
 		if auth.Tenant != "" {
 			request.Tenant = auth.Tenant
 			if request.Meta != nil {
@@ -1138,7 +1154,7 @@ func acquirePackLocks(ctx context.Context, store locks.Store, packID, owner stri
 // ---------------------------------------------------------------------------
 
 func (s *server) handleMarketplacePacks(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.configSvc) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPacksRead, []string{"admin"}, s.configSvc) {
 		return
 	}
 	resp, err := s.marketplaceSnapshot(r.Context(), false)
@@ -1156,7 +1172,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		writeErrorJSON(w, http.StatusServiceUnavailable, "marketplace operation failed")
 		return
 	}
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.lockStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPacksInstall, []string{"admin"}, s.lockStore) {
 		return
 	}
 	var req marketplaceInstallRequest
@@ -1800,7 +1816,14 @@ func marketplaceHTTPTimeout() time.Duration {
 
 func marketplaceHTTPClient(allowedHosts map[string]struct{}, initialHost string) *http.Client {
 	initialHost = strings.ToLower(strings.TrimSpace(initialHost))
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// DefaultTransport is *http.Transport in stdlib; if tests or a future
+	// runtime injected a different transport, fall back to a fresh one
+	// rather than panic on the type assertion.
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		base = &http.Transport{}
+	}
+	transport := base.Clone()
 	transport.DialContext = marketplaceDialContext(allowedHosts)
 	return &http.Client{
 		Timeout:   marketplaceHTTPTimeout(),

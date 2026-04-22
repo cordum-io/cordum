@@ -17,6 +17,7 @@ type packPolicyOverlay = packs.PackPolicyOverlay
 type packPolicySimulation = packs.PackPolicySimulation
 type packPolicySimulationRequest = packs.PackPolicySimulationRequest
 type packRecord = packs.PackRecord
+type packRecordVerification = packs.PackRecordVerification
 type packRecordManifest = packs.PackRecordManifest
 type packRecordResources = packs.PackRecordResources
 type packRecordOverlays = packs.PackRecordOverlays
@@ -47,14 +48,10 @@ const (
 	packRegistryScope = packs.PackRegistryScope
 	packRegistryID    = packs.PackRegistryID
 
-	packCatalogScope        = packs.PackCatalogScope
-	packCatalogID           = packs.PackCatalogID
-	defaultPackCatalogID    = packs.DefaultPackCatalogID
-	defaultPackCatalogTitle = packs.DefaultPackCatalogTitle
-	defaultPackCatalogURL   = packs.DefaultPackCatalogURL
+	packCatalogScope      = packs.PackCatalogScope
+	packCatalogID         = packs.PackCatalogID
+	defaultPackCatalogURL = packs.DefaultPackCatalogURL
 
-	envPackCatalogID             = packs.EnvPackCatalogID
-	envPackCatalogTitle          = packs.EnvPackCatalogTitle
 	envPackCatalogURL            = packs.EnvPackCatalogURL
 	envPackCatalogDisableDefault = packs.EnvPackCatalogDisableDefault
 	envMarketplaceAllowHTTP      = packs.EnvMarketplaceAllowHTTP
@@ -64,11 +61,8 @@ const (
 	policyConfigID    = packs.PolicyConfigID
 	policyConfigKey   = packs.PolicyConfigKey
 
-	maxPackUploadBytes       = packs.MaxPackUploadBytes
-	maxPackFiles             = packs.MaxPackFiles
-	maxPackFileBytes         = packs.MaxPackFileBytes
-	maxPackUncompressedBytes = packs.MaxPackUncompressedBytes
-	maxCatalogBytes          = packs.MaxCatalogBytes
+	maxPackUploadBytes = packs.MaxPackUploadBytes
+	maxCatalogBytes    = packs.MaxCatalogBytes
 )
 
 // Time-based constants cannot use const alias; use var.
@@ -113,13 +107,13 @@ var (
 // ---------- function re-exports (marketplace.go) ----------
 
 var (
-	seedDefaultPackCatalogs = packs.SeedDefaultPackCatalogs
-	compareVersions         = packs.CompareVersions
-	parseVersion            = packs.ParseVersion
-	resolvePackURL          = packs.ResolvePackURL
-	hostFromURL             = packs.HostFromURL
+	seedDefaultPackCatalogs  = packs.SeedDefaultPackCatalogs
+	compareVersions          = packs.CompareVersions
+	parseVersion             = packs.ParseVersion
+	resolvePackURL           = packs.ResolvePackURL
+	hostFromURL              = packs.HostFromURL
 	cloneMarketplaceResponse = packs.CloneMarketplaceResponse
-	isPrivateNet            = packs.IsPrivateNet
+	isPrivateNet             = packs.IsPrivateNet
 )
 
 // ---------- var re-exports ----------

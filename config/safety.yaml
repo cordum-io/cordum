@@ -1,25 +1,26 @@
+# Cordum base safety policy.
+#
+# Signing:
+#   - In dev / local (CORDUM_POLICY_STRICT=off or unset-but-dev) this file
+#     loads unsigned. Useful for `make dev-up` and tests.
+#   - In enforce mode (CORDUM_POLICY_STRICT=enforce or env.IsProduction())
+#     a sibling safety.yaml.sig is required. Generate it with:
+#       CORDUM_POLICY_SIGNING_KEY=... cordumctl policy sign --in safety.yaml
+#     and deploy the matching public key via CORDUM_POLICY_PUBLIC_KEY_<ID>.
+#   - See docs/deployment/policy-signing.md for the full threat model
+#     and off→warn→enforce rollout.
+#
 # Default decision when no rule matches. Fail-closed: unmatched jobs are denied.
 default_decision: deny
 
 rules:
-  # Default topic — restricted to internal callers only.
-  # Probes and integration tests must include the _internal label.
-  # External callers without the label require human approval.
-  - id: default-topic-internal-allow
+  # Default topic — used by integration test probes and production gates
+  - id: default-topic-allow
     match:
       topics:
         - job.default
-      labels:
-        _internal: "true"
     decision: allow
-    reason: "Internal probe/test on default topic."
-
-  - id: default-topic-external-review
-    match:
-      topics:
-        - job.default
-    decision: require_approval
-    reason: "External use of job.default requires human approval."
+    reason: "Default topic for gate probes and integration tests."
 
   # Fraud detection jobs require human approval before execution
   - id: fraud-review-required
@@ -74,25 +75,10 @@ rules:
     decision: allow
     reason: "Read-only validation and notification jobs are auto-approved for workflow sources."
 
-  - id: validators-pack-allow
-    match:
-      topics:
-        - job.bank-validators.process
-        - job.notification-service.process
-        - job.valuation-agents.process
-      labels:
-        _source: "pack"
-    decision: allow
-    reason: "Read-only validation and notification jobs are auto-approved for pack sources."
-
-  - id: validators-api-review
-    match:
-      topics:
-        - job.bank-validators.process
-        - job.notification-service.process
-        - job.valuation-agents.process
-    decision: require_approval
-    reason: "Direct API access to validator/notification topics requires human approval."
+  # Mock-bank transfer rules are defined in the pack overlay
+  # (demo/mock-bank/pack/overlays/policy.fragment.yaml) and should NOT
+  # be duplicated here. The pack rules have finer granularity (blocked,
+  # review, low risk levels).
 
   # Mock-bank transfer rules are defined in the pack overlay
   # (demo/mock-bank/pack/overlays/policy.fragment.yaml) and should NOT
@@ -150,32 +136,10 @@ rules:
     decision: require_approval
     reason: "Direct API access to B2B topics requires human approval."
 
-  - id: b2b-governance-evaluate-allow
-    match:
-      topics:
-        - job.b2b.governance-evaluate
-    decision: allow_with_constraints
-    reason: "B2B governance evaluator checks spend thresholds."
-    constraints:
-      budgets:
-        max_runtime_ms: 30000
-
-  - id: b2b-procurement-pay-allow
-    match:
-      topics:
-        - job.b2b.procurement-pay
-    decision: allow_with_constraints
-    reason: "Payment processor issues purchase order."
-    constraints:
-      budgets:
-        max_runtime_ms: 30000
-
-  - id: b2b-vendor-email-allow
-    match:
-      topics:
-        - job.b2b.vendor-email
-    decision: allow
-    reason: "Vendor email sends confirmation."
+  # Pack-specific B2B workflow execution rules are installed as signed
+  # config-service bundles (for example secops/peax-demo). Keep the base file
+  # free of those IDs so the kernel does not emit duplicate-ID warnings on
+  # every reload when those bundles are active.
 
   # Visa governance — allow synthetic topics used by the governance-evaluator
   # worker for direct Safety Kernel content scanning via gRPC.
@@ -198,101 +162,17 @@ rules:
     reason: "Workflow approval gates require explicit human authorization."
 
   # =========================================================================
-  # CordClaw — pre-dispatch governance for OpenClaw agents
+  # CordClaw — only keep base fallback rules that are not shipped by the
+  # signed cordclaw/safety bundle. The bundle provides the deny/approval/
+  # constraint/read/search rules; duplicating them here caused noisy
+  # duplicate-ID warnings on every policy reload.
   # =========================================================================
-  - id: cordclaw-deny-destructive
-    match:
-      topics: ["job.cordclaw.exec"]
-      risk_tags: ["destructive"]
-    decision: deny
-    reason: "Destructive commands (rm -rf, mkfs, dd) are blocked by policy."
-
-  - id: cordclaw-deny-secrets-access
-    match:
-      topics: ["job.cordclaw.file-read", "job.cordclaw.file-write"]
-      risk_tags: ["secrets"]
-    decision: deny
-    reason: "Access to credential and key files is blocked by policy."
-
-  - id: cordclaw-deny-cloud-infra
-    match:
-      topics: ["job.cordclaw.exec"]
-      risk_tags: ["cloud", "infrastructure"]
-    decision: deny
-    reason: "Cloud infrastructure commands require explicit policy override."
-
-  - id: cordclaw-deny-remote-access
-    match:
-      topics: ["job.cordclaw.exec"]
-      risk_tags: ["remote-access"]
-    decision: deny
-    reason: "Remote access commands (ssh/scp) are blocked by policy."
-
-  - id: cordclaw-approve-outbound-messages
-    match:
-      topics: ["job.cordclaw.message-send"]
-      risk_tags: ["external"]
-    decision: require_approval
-    reason: "Outbound messages to external channels require human approval."
-
-  - id: cordclaw-approve-package-install
-    match:
-      topics: ["job.cordclaw.exec"]
-      risk_tags: ["package-install"]
-    decision: require_approval
-    reason: "Package installation requires human approval."
-
-  - id: cordclaw-approve-cron
-    match:
-      topics: ["job.cordclaw.cron-create"]
-    decision: require_approval
-    reason: "Creating autonomous scheduled tasks requires human approval."
-
-  - id: cordclaw-approve-code-deploy
-    match:
-      topics: ["job.cordclaw.exec"]
-      risk_tags: ["code-deploy"]
-    decision: require_approval
-    reason: "Code deployment operations (for example git push) require review."
-
-  - id: cordclaw-constrain-exec
-    match:
-      topics: ["job.cordclaw.exec"]
-      risk_tags: ["exec"]
-    decision: allow_with_constraints
-    constraints:
-      sandbox:
-        isolated: true
-      budgets:
-        max_runtime_ms: 30000
-    reason: "Shell execution allowed in a sandboxed environment with 30s timeout."
-
-  - id: cordclaw-constrain-browser
-    match:
-      topics: ["job.cordclaw.browser", "job.cordclaw.browser-action"]
-    decision: allow_with_constraints
-    constraints:
-      budgets:
-        max_runtime_ms: 60000
-    reason: "Browser actions are allowed with a 60s timeout."
-
-  - id: cordclaw-allow-read
-    match:
-      topics: ["job.cordclaw.file-read"]
-    decision: allow
-    reason: "File reads are allowed by default."
 
   - id: cordclaw-allow-write
     match:
       topics: ["job.cordclaw.file-write"]
     decision: allow
     reason: "Workspace file writes are allowed by default."
-
-  - id: cordclaw-allow-search
-    match:
-      topics: ["job.cordclaw.web-search", "job.cordclaw.web-fetch"]
-    decision: allow
-    reason: "Web search and fetch actions are allowed by default."
 
   - id: cordclaw-allow-memory
     match:

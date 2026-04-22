@@ -31,13 +31,22 @@ topics:
   # Visa Agentic Ready Demo — TX1-3
   job.visa-governance.evaluate: visa-governance
   job.visa-payment.process: visa-payment
-  # Visa Agentic Ready Demo — TX4 B2B
+  # PEAX Agentic Ready Demo — TX1-3
+  job.peax-governance.evaluate: peax-governance
+  job.peax-payment.process: peax-payment
+  # PEAX Agentic Ready Demo — TX3 Enterprise Onboarding
+  job.onboarding.validate-hr: identity-pool
+  job.onboarding.create-ad: identity-pool
+  job.onboarding.provision-m365: identity-pool
+  job.onboarding.assign-sap: identity-pool
+  job.onboarding.grant-sf: identity-pool
+  # PEAX Agentic Ready Demo — TX4 B2B
   job.b2b.orchestrate: b2b-orchestrator
   job.b2b.hr-setup: b2b-hr
   job.b2b.it-inventory: b2b-it
   job.b2b.procurement-source: b2b-procurement
-  job.b2b.governance-evaluate: visa-governance
-  job.b2b.procurement-pay: visa-payment
+  job.b2b.governance-evaluate: peax-governance
+  job.b2b.procurement-pay: peax-payment
   job.b2b.vendor-email: b2b-vendor-email
 pools:
   default:
@@ -82,6 +91,10 @@ pools:
     requires: []
   visa-payment:
     requires: []
+  peax-governance:
+    requires: []
+  peax-payment:
+    requires: []
   b2b-orchestrator:
     requires: []
   b2b-hr:
@@ -95,4 +108,6 @@ pools:
   b2b-payment:
     requires: []
   b2b-vendor-email:
+    requires: []
+  identity-pool:
     requires: []

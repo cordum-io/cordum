@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "name": "jobs.cancel_inflight",
+  "description": "Submit a job the simulator will hold in running state, cancel it, assert status=cancelled.",
+  "tags": ["jobs", "lifecycle"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "request",
+      "operationId": "submitJob",
+      "body": {
+        "topic": "job.longrunning",
+        "prompt": "Hold me in running state",
+        "priority": "normal"
+      },
+      "expect": {
+        "status": 202,
+        "bodyMatches": { "$.job_id": "$any$" }
+      },
+      "extract": { "jobId": "$.job_id" }
+    },
+    {
+      "kind": "request",
+      "operationId": "cancelJob",
+      "pathParams": { "id": "$vars.jobId" },
+      "expect": { "status": 204 }
+    },
+    {
+      "kind": "request",
+      "operationId": "getJob",
+      "pathParams": { "id": "$vars.jobId" },
+      "expect": {
+        "status": 200,
+        "body": { "status": "cancelled" }
+      }
+    }
+  ]
+}

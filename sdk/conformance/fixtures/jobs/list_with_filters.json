@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "name": "jobs.list_with_filters",
+  "description": "List jobs filtered by status and topic. Simulator seeds several jobs at boot across mixed statuses.",
+  "tags": ["jobs", "read-only"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "request",
+      "operationId": "listJobs",
+      "query": { "limit": 25 },
+      "expect": {
+        "status": 200,
+        "bodyMatches": { "$.items": "$any$" }
+      }
+    },
+    {
+      "kind": "request",
+      "operationId": "listJobs",
+      "query": { "status": "succeeded", "topic": "job.echo", "limit": 25 },
+      "expect": {
+        "status": 200,
+        "bodyMatches": { "$.items": "$any$" }
+      }
+    }
+  ]
+}

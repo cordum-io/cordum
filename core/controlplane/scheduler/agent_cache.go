@@ -77,13 +77,25 @@ func (r *AgentResolver) Resolve(ctx context.Context, workerID string) AgentInfo 
 }
 
 func (r *AgentResolver) resolveFromStores(ctx context.Context, workerID string) AgentInfo {
-	// Step 1: Get agent_id from credential cache.
+	// Prefer the canonical reverse-lookup in the agent identity store when it
+	// is available. Newer worker credentials no longer carry an embedded
+	// agent_id, so the store link is the source of truth.
+	if r.agentStore != nil {
+		if identity, err := r.agentStore.GetByWorkerID(ctx, workerID); err == nil && identity != nil {
+			return AgentInfo{
+				AgentID:  identity.ID,
+				Name:     identity.Name,
+				RiskTier: identity.RiskTier,
+			}
+		}
+	}
+
+	// Fall back to the legacy worker-credential mapping when present.
 	agentID := r.agentIDFromCredential(workerID)
 	if agentID == "" {
 		return unlinkedAgent()
 	}
 
-	// Step 2: Look up agent identity details from store.
 	if r.agentStore == nil {
 		return AgentInfo{AgentID: agentID, Name: agentID, RiskTier: ""}
 	}
@@ -93,11 +105,7 @@ func (r *AgentResolver) resolveFromStores(ctx context.Context, workerID string) 
 		return AgentInfo{AgentID: agentID, Name: agentID, RiskTier: ""}
 	}
 
-	return AgentInfo{
-		AgentID:  identity.ID,
-		Name:     identity.Name,
-		RiskTier: identity.RiskTier,
-	}
+	return AgentInfo{AgentID: identity.ID, Name: identity.Name, RiskTier: identity.RiskTier}
 }
 
 func (r *AgentResolver) agentIDFromCredential(workerID string) string {

@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 )
 
 // TestPolicyEvaluate_UserRoleRejected proves red-team #19 is closed:
@@ -18,7 +20,7 @@ func TestPolicyEvaluate_UserRoleRejected(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("X-API-Key", "test-api-key")
-	req = withAuth(req, &AuthContext{Tenant: "default", Role: "user", PrincipalID: "attacker"})
+	req = withAuth(req, &auth.AuthContext{Tenant: "default", Role: "user", PrincipalID: "attacker"})
 	rec := httptest.NewRecorder()
 
 	s.handlePolicyEvaluate(rec, req)
@@ -39,7 +41,7 @@ func TestPolicyEvaluate_AdminAllowed_ReturnsResponse(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Tenant-ID", "default")
 	req.Header.Set("X-API-Key", "test-api-key")
-	req = withAuth(req, &AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-user"})
+	req = withAuth(req, &auth.AuthContext{Tenant: "default", Role: "admin", PrincipalID: "admin-user"})
 	rec := httptest.NewRecorder()
 
 	s.handlePolicyEvaluate(rec, req)

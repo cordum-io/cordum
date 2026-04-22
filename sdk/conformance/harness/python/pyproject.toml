@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cordum-sdk-conformance-harness"
+version = "0.0.0"
+description = "Python conformance harness for the Cordum SDK test suite. Internal tool — NOT published."
+requires-python = ">=3.9"
+# The harness itself stays tiny, but it expects the real `cordum-sdk`
+# package to be installed from the workspace so requests go through the
+# shipped auth/retry/error layers.
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["conformance*"]

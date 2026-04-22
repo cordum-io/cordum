@@ -1,0 +1,15 @@
+target-version = "py39"
+line-length = 100
+exclude = [
+    "build",
+    "dist",
+    "src/cordum_sdk/_generated",
+]
+
+[lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "B",
+]
