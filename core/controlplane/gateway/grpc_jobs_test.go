@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc/codes"
@@ -58,7 +59,7 @@ func TestSubmitJobGRPCAndStatus(t *testing.T) {
 func TestSubmitJobGRPCViewerDenied(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &publicPathAuth{}
-	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{
 		Role:   "viewer",
 		Tenant: "org-1",
 	})
@@ -76,7 +77,7 @@ func TestSubmitJobGRPCViewerDenied(t *testing.T) {
 func TestRequireRoleGRPC_DoesNotLeakRole(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &publicPathAuth{}
-	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{
 		Role:   "viewer",
 		Tenant: "org-1",
 	})
@@ -100,7 +101,7 @@ func TestRequireRoleGRPC_DoesNotLeakRole(t *testing.T) {
 func TestSubmitJobGRPCAdminAllowed(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &publicPathAuth{}
-	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{
 		Role:   "admin",
 		Tenant: "org-1",
 	})
@@ -121,7 +122,7 @@ func TestSubmitJobGRPCAdminAllowed(t *testing.T) {
 func TestSubmitJobGRPCUserAllowed(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &publicPathAuth{}
-	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{
 		Role:   "user",
 		Tenant: "org-1",
 	})
@@ -143,7 +144,7 @@ func TestSubmitJobGRPCSecopsNormalizedToAdmin(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &publicPathAuth{}
 	// secops normalizes to admin, which is allowed.
-	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{
 		Role:   "secops",
 		Tenant: "org-1",
 	})
@@ -180,7 +181,7 @@ func TestSubmitJobGRPCNilAuthDenied(t *testing.T) {
 func TestSubmitJobGRPCEmptyRoleDenied(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &publicPathAuth{} // Enable RBAC enforcement.
-	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{
 		Role:   "",
 		Tenant: "org-1",
 	})
@@ -199,7 +200,7 @@ func TestSubmitJobGRPCOperatorNormalizedToAdmin(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &publicPathAuth{} // Enable RBAC enforcement.
 	// operator normalizes to admin, which is allowed.
-	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{
 		Role:   "operator",
 		Tenant: "org-1",
 	})
@@ -285,7 +286,7 @@ func TestSubmitJobGRPCRespectsConcurrentJobsLimit(t *testing.T) {
 
 func TestSubmitJobGRPCTenantMismatchDenied(t *testing.T) {
 	s, _, _ := newTestGateway(t)
-	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{
 		Tenant:           "tenant-a",
 		AllowCrossTenant: false,
 	})
@@ -302,7 +303,7 @@ func TestSubmitJobGRPCTenantMismatchDenied(t *testing.T) {
 
 func TestSubmitJobGRPCTenantCrossTenantAllowed(t *testing.T) {
 	s, _, _ := newTestGateway(t)
-	ctx := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{
 		Tenant:           "tenant-a",
 		AllowCrossTenant: true,
 	})
@@ -328,7 +329,7 @@ func TestSubmitJobGRPCDefaultsTenantFromAuthOrServer(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.tenant = "server-tenant"
 
-	ctxAuth := context.WithValue(context.Background(), authContextKey{}, &AuthContext{
+	ctxAuth := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{
 		Tenant: "tenant-a",
 	})
 	resp, err := s.SubmitJob(ctxAuth, &pb.SubmitJobRequest{

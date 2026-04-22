@@ -263,14 +263,20 @@ func TestRevokeWorkerCredentialEncodesWorkerID(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildTLSTransportNil(t *testing.T) {
-	tr := BuildTLSTransport(TLSOptions{})
+	tr, err := BuildTLSTransportErr(TLSOptions{})
+	if err != nil {
+		t.Fatalf("tls transport: %v", err)
+	}
 	if tr != nil {
 		t.Fatal("expected nil transport for zero-value TLSOptions")
 	}
 }
 
 func TestBuildTLSTransportInsecure(t *testing.T) {
-	tr := BuildTLSTransport(TLSOptions{InsecureSkipVerify: true})
+	tr, err := BuildTLSTransportErr(TLSOptions{InsecureSkipVerify: true})
+	if err != nil {
+		t.Fatalf("tls transport: %v", err)
+	}
 	if tr == nil {
 		t.Fatal("expected non-nil transport")
 	}
@@ -284,7 +290,10 @@ func TestBuildTLSTransportInsecure(t *testing.T) {
 
 func TestBuildTLSTransportWithCA(t *testing.T) {
 	caPath := generateTestCA(t)
-	tr := BuildTLSTransport(TLSOptions{CACertPath: caPath})
+	tr, err := BuildTLSTransportErr(TLSOptions{CACertPath: caPath})
+	if err != nil {
+		t.Fatalf("tls transport: %v", err)
+	}
 	if tr == nil {
 		t.Fatal("expected non-nil transport")
 	}

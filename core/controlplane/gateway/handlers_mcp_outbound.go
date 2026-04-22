@@ -155,16 +155,7 @@ func scanOutbound(
 		minID = "(" + cursor
 	}
 	maxID := strconv.FormatInt(to.UnixMilli(), 10) + "-18446744073709551615"
-	// Defense-in-depth: the handler already clamps pageSize to
-	// mcpOutboundMaxPageSize before calling us, but CodeQL flags the
-	// user-tainted allocation capacity. Re-clamp here so an internal
-	// caller that forgets the handler-side bound can't drive a huge
-	// allocation either.
-	allocCap := pageSize
-	if allocCap < 0 || allocCap > mcpOutboundMaxPageSize {
-		allocCap = mcpOutboundMaxPageSize
-	}
-	out := make([]MCPOutboundEntry, 0, allocCap)
+	out := make([]MCPOutboundEntry, 0, pageSize)
 	const chunk = int64(500)
 	const walkBudget = int64(50_000)
 	scanned := int64(0)

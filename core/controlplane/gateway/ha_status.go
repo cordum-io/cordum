@@ -10,15 +10,14 @@ import (
 // Default circuit breaker thresholds — must match scheduler/safety_client.go values.
 const (
 	cbFailThreshold = 3
-	cbOpenDuration  = 30 * time.Second
 )
 
 // CircuitBreakerStatus describes the observed state of a distributed circuit breaker.
 type CircuitBreakerStatus struct {
-	State              string `json:"state"`                // CLOSED, OPEN, or UNKNOWN
-	Failures           int64  `json:"failures"`             // Current failure count (-1 if unknown)
-	FailThreshold      int    `json:"fail_threshold"`       // Threshold for tripping
-	CooldownRemainingMs int64 `json:"cooldown_remaining_ms"` // ms until key expires (0 if closed)
+	State               string `json:"state"`                 // CLOSED, OPEN, or UNKNOWN
+	Failures            int64  `json:"failures"`              // Current failure count (-1 if unknown)
+	FailThreshold       int    `json:"fail_threshold"`        // Threshold for tripping
+	CooldownRemainingMs int64  `json:"cooldown_remaining_ms"` // ms until key expires (0 if closed)
 }
 
 // readCircuitBreakerStatus reads a circuit breaker's state from Redis.
@@ -69,9 +68,9 @@ func readCircuitBreakerStatus(ctx context.Context, rdb redis.UniversalClient, ke
 	}
 
 	return CircuitBreakerStatus{
-		State:              state,
-		Failures:           count,
-		FailThreshold:      cbFailThreshold,
+		State:               state,
+		Failures:            count,
+		FailThreshold:       cbFailThreshold,
 		CooldownRemainingMs: cooldownMs,
 	}
 }

@@ -348,12 +348,8 @@ func TestPublicKeyFromEnvFallbacks(t *testing.T) {
 	}
 }
 
-// TestParseLicenseLegacyEnvelopeRejected asserts that the pre-GA
-// top-level features+limits payload shape is rejected by the loader.
-// The migration layer was removed in the pre-GA legacy sweep — operators
-// must regenerate licenses in the current Rights/Entitlements schema.
-func TestParseLicenseLegacyEnvelopeRejected(t *testing.T) {
-	legacy := map[string]any{
+func TestParseLicenseRejectsLegacyFormat(t *testing.T) {
+	legacyPayload := map[string]any{
 		"org_id":     "org-compat",
 		"license_id": "lic-compat",
 		"plan":       "team",
@@ -365,25 +361,28 @@ func TestParseLicenseLegacyEnvelopeRejected(t *testing.T) {
 			"max_workers": 25,
 		},
 	}
-	payload, err := json.Marshal(legacy)
-	if err != nil {
-		t.Fatalf("marshal legacy payload: %v", err)
-	}
+
 	doc := struct {
-		KID       string          `json:"kid,omitempty"`
-		Payload   json.RawMessage `json:"payload"`
-		Signature string          `json:"signature"`
+		KID       string         `json:"kid,omitempty"`
+		Payload   map[string]any `json:"payload"`
+		Signature string         `json:"signature"`
 	}{
 		KID:       "kid-legacy",
-		Payload:   payload,
-		Signature: "AA==",
+		Payload:   legacyPayload,
+		Signature: "legacy-signature",
 	}
+
 	raw, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal legacy license: %v", err)
 	}
-	if _, err := parseLicense(raw); !errors.Is(err, ErrUnsupportedLegacyLicenseFormat) {
-		t.Fatalf("parseLicense() err = %v, want ErrUnsupportedLegacyLicenseFormat", err)
+
+	lic, err := parseLicense(raw)
+	if !errors.Is(err, ErrUnsupportedLegacyLicenseFormat) {
+		t.Fatalf("parseLicense() error = %v, want %v", err, ErrUnsupportedLegacyLicenseFormat)
+	}
+	if lic != nil {
+		t.Fatalf("parseLicense() license = %#v, want nil", lic)
 	}
 }
 

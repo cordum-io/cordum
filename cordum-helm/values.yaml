@@ -21,10 +21,10 @@ imagePullSecrets: []
 global:
   image:
     # Container registry prefix. Each service appends its own repo name.
-    # GHCR: ghcr.io/cordum-io/cordum  →  ghcr.io/cordum-io/cordum/api-gateway:0.9.4
-    # Docker Hub: docker.io/cordum    →  docker.io/cordum/api-gateway:0.9.4
+    # GHCR: ghcr.io/cordum-io/cordum  →  ghcr.io/cordum-io/cordum/api-gateway:v0.9.7
+    # Docker Hub: docker.io/cordum    →  docker.io/cordum/api-gateway:v0.9.7
     registry: ghcr.io/cordum-io/cordum
-    tag: "0.9.4"
+    tag: "v0.9.7"
     pullPolicy: IfNotPresent
   # Set to true for production deployments (enables TLS enforcement, strict guards)
   production: false
@@ -519,34 +519,12 @@ auth:
     audience: "" # CORDUM_OIDC_AUDIENCE
     claimTenant: "" # CORDUM_OIDC_CLAIM_TENANT
     claimRole: "" # CORDUM_OIDC_CLAIM_ROLE
-    clientId: "" # CORDUM_OIDC_CLIENT_ID
-    clientSecret: "" # CORDUM_OIDC_CLIENT_SECRET
-    redirectUri: "" # CORDUM_OIDC_REDIRECT_URI
-    scopes: [] # CORDUM_OIDC_SCOPES
-    stateTtl: "" # CORDUM_OIDC_STATE_TTL
     allowedAlgs: [] # CORDUM_OIDC_ALLOWED_ALGS
     jwksRefreshInterval: "" # CORDUM_OIDC_JWKS_REFRESH_INTERVAL
     jwksRefreshCooldown: "" # OIDC_JWKS_REFRESH_COOLDOWN
     issuerAllowlist: [] # CORDUM_OIDC_ISSUER_ALLOWLIST
     allowPrivate: false # CORDUM_OIDC_ALLOW_PRIVATE
     allowHttp: false # CORDUM_OIDC_ALLOW_HTTP
-  saml:
-    enabled: false # CORDUM_SAML_ENABLED
-    idpMetadataUrl: "" # CORDUM_SAML_IDP_METADATA_URL
-    baseUrl: "" # CORDUM_SAML_BASE_URL
-    entityId: "" # CORDUM_SAML_ENTITY_ID
-    binding: "" # CORDUM_SAML_BINDING
-    responseBinding: "" # CORDUM_SAML_RESPONSE_BINDING
-    allowIdpInitiated: false # CORDUM_SAML_ALLOW_IDP_INITIATED
-    stateTtl: "" # CORDUM_SAML_STATE_TTL
-    redirectUrl: "" # CORDUM_AUTH_REDIRECT_URL
-    certSecret: "" # existing K8s TLS secret with tls.crt/tls.key
-    cert: "" # inline PEM used only when certSecret is empty
-    key: "" # inline PEM used only when certSecret is empty
-  scim:
-    bearerToken: "" # CORDUM_SCIM_BEARER_TOKEN
-    existingSecret: "" # existing K8s secret containing the SCIM bearer token
-    existingSecretKey: "CORDUM_SCIM_BEARER_TOKEN" # key inside auth.scim.existingSecret
   apiKeys: "" # CORDUM_API_KEYS
   apiKeysPath: "" # CORDUM_API_KEYS_PATH
   skipSecretValidation: false # CORDUM_SKIP_SECRET_VALIDATION

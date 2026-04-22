@@ -99,17 +99,32 @@ func NewRedisStore(url string) (*RedisStore, error) {
 }
 
 func (s *RedisStore) PutContext(ctx context.Context, key string, data []byte) error {
+	if s == nil || s.client == nil {
+		return errors.New("redis_store: client not initialized")
+	}
 	if ctx == nil {
-		ctx = context.Background()
+		return errors.New("redis_store: PutContext: nil context")
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("redis_store: PutContext: %w", err)
 	}
 	cctx, cancel := context.WithTimeout(ctx, defaultRedisOpTimeout)
 	defer cancel()
-	return s.client.Set(cctx, key, data, s.dataTTL).Err()
+	if err := s.client.Set(cctx, key, data, s.dataTTL).Err(); err != nil {
+		return fmt.Errorf("redis_store: put context %s: %w", key, err)
+	}
+	return nil
 }
 
 func (s *RedisStore) GetContext(ctx context.Context, key string) ([]byte, error) {
+	if s == nil || s.client == nil {
+		return nil, errors.New("redis_store: client not initialized")
+	}
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("redis_store: GetContext: nil context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("redis_store: GetContext: %w", err)
 	}
 	cctx, cancel := context.WithTimeout(ctx, defaultRedisOpTimeout)
 	defer cancel()
@@ -121,17 +136,32 @@ func (s *RedisStore) GetContext(ctx context.Context, key string) ([]byte, error)
 }
 
 func (s *RedisStore) PutResult(ctx context.Context, key string, data []byte) error {
+	if s == nil || s.client == nil {
+		return errors.New("redis_store: client not initialized")
+	}
 	if ctx == nil {
-		ctx = context.Background()
+		return errors.New("redis_store: PutResult: nil context")
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("redis_store: PutResult: %w", err)
 	}
 	cctx, cancel := context.WithTimeout(ctx, defaultRedisOpTimeout)
 	defer cancel()
-	return s.client.Set(cctx, key, data, s.dataTTL).Err()
+	if err := s.client.Set(cctx, key, data, s.dataTTL).Err(); err != nil {
+		return fmt.Errorf("redis_store: put result %s: %w", key, err)
+	}
+	return nil
 }
 
 func (s *RedisStore) GetResult(ctx context.Context, key string) ([]byte, error) {
+	if s == nil || s.client == nil {
+		return nil, errors.New("redis_store: client not initialized")
+	}
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("redis_store: GetResult: nil context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("redis_store: GetResult: %w", err)
 	}
 	cctx, cancel := context.WithTimeout(ctx, defaultRedisOpTimeout)
 	defer cancel()

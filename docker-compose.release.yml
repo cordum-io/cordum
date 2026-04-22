@@ -102,8 +102,16 @@ services:
       REDIS_TLS_SERVER_NAME: redis
       SAFETY_KERNEL_ADDR: ":50051"
       SAFETY_POLICY_PATH: /etc/cordum/safety.yaml
+      # Policy signing trust store. The legacy SAFETY_POLICY_PUBLIC_KEY
+      # is still accepted for one-release migration; prefer the
+      # per-key-id form CORDUM_POLICY_PUBLIC_KEY_<ID>=<base64> so key
+      # rotation does not require restart. See docs/deployment/policy-signing.md.
       SAFETY_POLICY_PUBLIC_KEY: "${SAFETY_POLICY_PUBLIC_KEY:?error: SAFETY_POLICY_PUBLIC_KEY is not set}"
       SAFETY_POLICY_SIGNATURE: "${SAFETY_POLICY_SIGNATURE:?error: SAFETY_POLICY_SIGNATURE is not set}"
+      # Strict mode: off | warn (default) | enforce. Set to enforce
+      # once every bundle verifies clean in warn. See policy-signing.md
+      # for the staged rollout procedure.
+      CORDUM_POLICY_STRICT: "${CORDUM_POLICY_STRICT:-warn}"
       SAFETY_KERNEL_TLS_CERT: /etc/cordum/tls/server/tls.crt
       SAFETY_KERNEL_TLS_KEY: /etc/cordum/tls/server/tls.key
     volumes:
@@ -205,6 +213,13 @@ services:
       GRPC_TLS_KEY: /etc/cordum/tls/server/tls.key
       GATEWAY_HTTP_TLS_CERT: /etc/cordum/tls/server/tls.crt
       GATEWAY_HTTP_TLS_KEY: /etc/cordum/tls/server/tls.key
+      # Policy signing. Populate CORDUM_POLICY_SIGNING_KEY (Ed25519 PEM
+      # or base64) when CORDUM_POLICY_STRICT is warn or enforce.
+      # See docs/deployment/policy-signing.md for key generation and
+      # the staged off→warn→enforce rollout.
+      CORDUM_POLICY_SIGNING_KEY: "${CORDUM_POLICY_SIGNING_KEY:-}"
+      CORDUM_POLICY_SIGNING_KEY_ID: "${CORDUM_POLICY_SIGNING_KEY_ID:-default}"
+      CORDUM_POLICY_STRICT: "${CORDUM_POLICY_STRICT:-warn}"
     volumes:
       - "${CORDUM_TLS_DIR:?error: CORDUM_TLS_DIR is not set}:/etc/cordum/tls:ro"
     ports:

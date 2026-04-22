@@ -7,22 +7,17 @@ import (
 )
 
 var (
-	ErrLicenseRequired         = errors.New("license required")
-	ErrLicensePayloadMissing   = errors.New("license payload missing")
-	ErrLicenseSignatureMissing = errors.New("license signature missing")
-	ErrLicenseSignatureInvalid = errors.New("license signature invalid")
-	ErrLicensePublicKeyMissing = errors.New("license public key missing")
-	ErrLicenseWindowInvalid    = errors.New("license window invalid")
-	ErrLicenseNotActive        = errors.New("license not active yet")
-	ErrLicenseExpired          = errors.New("license expired")
-	ErrInvalidPublicKey        = errors.New("invalid public key")
-	ErrTierLimitExceeded       = errors.New("tier limit exceeded")
-	// ErrUnsupportedLegacyLicenseFormat is returned by the loader when
-	// the license payload matches the pre-GA top-level features/limits
-	// envelope. The migration layer was removed in the pre-GA legacy
-	// sweep (no external adopters); operators must regenerate the
-	// license in the current schema.
-	ErrUnsupportedLegacyLicenseFormat = errors.New("unsupported legacy license format")
+	ErrLicenseRequired                = errors.New("license required")
+	ErrLicensePayloadMissing          = errors.New("license payload missing")
+	ErrLicenseSignatureMissing        = errors.New("license signature missing")
+	ErrLicenseSignatureInvalid        = errors.New("license signature invalid")
+	ErrLicensePublicKeyMissing        = errors.New("license public key missing")
+	ErrUnsupportedLegacyLicenseFormat = errors.New("unsupported legacy license format: regenerate with cordum-tools license-generator in the current schema")
+	ErrLicenseWindowInvalid           = errors.New("license window invalid")
+	ErrLicenseNotActive               = errors.New("license not active yet")
+	ErrLicenseExpired                 = errors.New("license expired")
+	ErrInvalidPublicKey               = errors.New("invalid public key")
+	ErrTierLimitExceeded              = errors.New("tier limit exceeded")
 )
 
 // GraceError captures grace-window metadata after signature verification succeeds.

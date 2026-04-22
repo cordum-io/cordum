@@ -273,15 +273,7 @@ func (s *server) recentJobsByPool(ctx context.Context, pool string, limit int64)
 	if limit > 100 {
 		limit = 100
 	}
-	// Defense-in-depth: `limit` is clamped above, but CodeQL's
-	// go/uncontrolled-allocation-size trace still flags the user-tainted
-	// value at the allocation site. Re-bind into a fresh variable and
-	// re-clamp so the analysis can see the bound at the make() call.
-	allocCap := limit
-	if allocCap < 0 || allocCap > 100 {
-		allocCap = 100
-	}
-	filtered := make([]model.JobRecord, 0, allocCap)
+	filtered := make([]model.JobRecord, 0, limit)
 	for _, j := range all {
 		if poolTopics[j.Topic] {
 			filtered = append(filtered, j)

@@ -21,17 +21,19 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
-	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/env"
 	"github.com/cordum/cordum/core/infra/health"
 	"github.com/cordum/cordum/core/infra/locks"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
+	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/schema"
@@ -39,6 +41,7 @@ import (
 	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
+	"github.com/cordum/cordum/core/policyshadow"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/telemetry"
 	"github.com/gorilla/websocket"
@@ -112,12 +115,17 @@ const (
 
 type server struct {
 	pb.UnimplementedCordumApiServer
-	memStore   store.Store
-	jobStore   *store.RedisJobStore // Typed for ListRecentJobs
-	bus        model.Bus
-	workers    map[string]*pb.Heartbeat
-	workerSeen map[string]time.Time
-	workerMu   sync.RWMutex
+	memStore         store.Store
+	jobStore         *store.RedisJobStore // Typed for ListRecentJobs
+	decisionLogStore model.DecisionLogStore
+	// approvalAnalyticsCache memoises approval-analytics responses
+	// per (tenant, window, group_by, limit) for
+	// approvalAnalyticsCacheTTL (30s) to smooth dashboard polling.
+	approvalAnalyticsCache *approvalAnalyticsMemCache
+	bus                    model.Bus
+	workers                map[string]*pb.Heartbeat
+	workerSeen             map[string]time.Time
+	workerMu               sync.RWMutex
 
 	clients             map[*websocket.Conn]*wsClient
 	clientsMu           sync.RWMutex
@@ -131,7 +139,7 @@ type server struct {
 	approvalMetrics infraMetrics.ApprovalMetrics
 	tenant          string
 	started         time.Time
-	auth            AuthProvider
+	auth            auth.AuthProvider
 	entitlements    *licensing.EntitlementResolver
 	telemetry       *telemetry.Collector
 	telemetryState  *telemetry.Store
@@ -141,22 +149,35 @@ type server struct {
 	configSvc             *configsvc.Service
 	topicRegistry         *topicregistry.Service
 	workerCredentialStore *workercredentials.Service
-	agentIdentityStore   *store.AgentIdentityStore
-	dlqStore              *store.DLQStore
-	artifactStore         artifacts.Store
-	lockStore             locks.Store
-	schemaRegistry        *schema.Registry
-	schemaEnforcement     schema.EnforcementMode
-	safetyConn            *grpc.ClientConn
-	safetyClient          pb.SafetyKernelClient
-	userStore             UserStore
-	keyStore              KeyStore
-	rbacStore             *RBACStore
-	permChecker           *PermissionChecker
+	agentIdentityStore    *store.AgentIdentityStore
+	// evalDatasetStore holds curated, immutable policy-regression test
+	// fixtures that the sibling eval-runner task (epic-e1c4321a) will
+	// replay through the policy engine. Only the CRUD surface lives in
+	// this field — the coupling to replay is intentionally deferred so
+	// this task stays scope-clean.
+	evalDatasetStore  model.EvalDatasetStore
+	evalRunStore      *store.EvalRunStore
+	dlqStore          *store.DLQStore
+	artifactStore     artifacts.Store
+	lockStore         locks.Store
+	schemaRegistry    *schema.Registry
+	schemaEnforcement schema.EnforcementMode
+	safetyConn        *grpc.ClientConn
+	safetyClient      pb.SafetyKernelClient
+	userStore         auth.UserStore
+	keyStore          auth.KeyStore
+	rbacStore         *auth.RBACStore
+	permChecker       *auth.PermissionChecker
 
-	auditExporter  audit.AuditSender
-	legalHoldStore *audit.LegalHoldStore
-	statusCacheObj *statusCache
+	auditExporter     audit.AuditSender
+	auditChainer      *audit.Chainer
+	legalHoldStore    *audit.LegalHoldStore
+	statusCacheObj    *statusCache
+	policyShadowStore *policyshadow.Store
+	mcpDenyRing       *denyEventRing
+	sessionIssuer     *scheduler.SessionTokenIssuer
+	trustResolver     *scheduler.TrustResolver
+	heartbeatMode     scheduler.HeartbeatMode
 
 	apiRL    rateLimiter
 	publicRL rateLimiter
@@ -263,7 +284,7 @@ func (s *server) Close() {
 		}
 	}
 	if s.keyStore != nil {
-		if ks, ok := s.keyStore.(*RedisKeyStore); ok {
+		if ks, ok := s.keyStore.(*auth.RedisKeyStore); ok {
 			if err := ks.Close(); err != nil {
 				slog.Error("key store close failed", "error", err)
 			}
@@ -291,7 +312,7 @@ func scimConfiguredFromEnv() bool {
 
 // RunWithAuth starts the gateway with a custom auth provider. When nil, a basic
 // single-tenant provider is used.
-func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers ...*licensing.EntitlementResolver) error {
+func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementResolvers ...*licensing.EntitlementResolver) error {
 	if cfg == nil {
 		cfg = config.Load()
 	}
@@ -324,29 +345,29 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 	gwMetrics := infraMetrics.NewGatewayProm("cordum_api_gateway")
 	otelGwMetrics := cordumotel.NewGatewayMetricsBridge()
 	approvalMetrics := infraMetrics.NewApprovalProm("cordum")
-	var userStore UserStore
-	var keyStore KeyStore
+	var userStore auth.UserStore
+	var keyStore auth.KeyStore
 	var err error
 	userAuthRequested := env.Bool("CORDUM_USER_AUTH_ENABLED")
 	samlRequested := samlConfiguredFromEnv()
 	oidcFlowRequested := oidcFlowConfiguredFromEnv()
 	scimRequested := scimConfiguredFromEnv() || entitlementResolver.Entitlements().SCIM
-	var basic *BasicAuthProvider
+	var basic *auth.BasicAuthProvider
 	if provider == nil {
-		basic, err = newBasicAuthProvider(tenantID)
+		basic, err = auth.NewBasicAuthProvider(tenantID)
 		if err != nil {
 			return fmt.Errorf("init auth: %w", err)
 		}
 		provider = basic
 	} else {
-		basic = basicAuthProvider(provider)
-		if usp, ok := provider.(UserStoreProvider); ok {
+		basic = auth.ExtractBasicAuth(provider)
+		if usp, ok := provider.(auth.UserStoreProvider); ok {
 			userStore = usp.UserStore()
 		}
 	}
 
 	if userStore == nil && (userAuthRequested || samlRequested || oidcFlowRequested || scimRequested) {
-		us, err := NewRedisUserStore(cfg.RedisURL)
+		us, err := auth.NewRedisUserStore(cfg.RedisURL)
 		if err != nil {
 			return fmt.Errorf("init user store: %w", err)
 		}
@@ -359,7 +380,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 	}
 
 	if basic != nil && userAuthRequested {
-		ks, err := NewRedisKeyStore(cfg.RedisURL)
+		ks, err := auth.NewRedisKeyStore(cfg.RedisURL)
 		if err != nil {
 			return fmt.Errorf("init key store: %w", err)
 		}
@@ -370,29 +391,29 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 			return fmt.Errorf("cordum_user_auth_enabled is set but cordum_admin_password is empty; set cordum_admin_password to configure the admin account")
 		}
 
-		if err := seedDefaultAdminUser(context.Background(), basic.UserStore(), tenantID); err != nil {
+		if err := auth.SeedDefaultAdminUser(context.Background(), basic.UserStore(), tenantID); err != nil {
 			slog.Error("seed admin user failed", "error", err)
 		}
 	}
 
 	// Initialize RBAC store
-	var rbacStore *RBACStore
-	var permChecker *PermissionChecker
-	rbacStore, err = NewRBACStore(cfg.RedisURL)
+	var rbacStore *auth.RBACStore
+	var permChecker *auth.PermissionChecker
+	rbacStore, err = auth.NewRBACStore(cfg.RedisURL)
 	if err != nil {
 		slog.Warn("rbac store init failed, advanced RBAC unavailable", "error", err)
 	} else {
 		if err := rbacStore.BootstrapDefaultRoles(context.Background()); err != nil {
 			slog.Warn("rbac bootstrap default roles failed", "error", err)
 		}
-		permChecker = NewPermissionChecker(rbacStore, func() licensing.Entitlements {
+		permChecker = auth.NewPermissionChecker(rbacStore, func() licensing.Entitlements {
 			return entitlementResolver.Entitlements()
 		})
 	}
 
-	authProviders := []AuthProvider{provider}
+	authProviders := []auth.AuthProvider{provider}
 
-	oidcProvider, err := NewOIDCProviderFromEnv()
+	oidcProvider, err := auth.NewOIDCProviderFromEnv()
 	if err != nil {
 		return fmt.Errorf("init oidc: %w", err)
 	}
@@ -404,9 +425,9 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 		} else {
 			slog.Error("oidc redis cache unavailable, continuing without", "error", rErr)
 		}
-		authProviders = append(authProviders, NewOIDCAuthAdapter(oidcProvider, tenantID))
+		authProviders = append(authProviders, auth.NewOIDCAuthAdapter(oidcProvider, tenantID))
 		if oidcFlowRequested {
-			oidcFlow, err := NewOIDCFlowAdapter(oidcProvider, userStore, tenantID, entitlementResolver)
+			oidcFlow, err := auth.NewOIDCFlowAdapter(oidcProvider, userStore, tenantID, entitlementResolver)
 			if err != nil {
 				return fmt.Errorf("init oidc sso: %w", err)
 			}
@@ -423,7 +444,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 	}
 
 	if samlRequested {
-		samlService, err := NewSAMLService(userStore, tenantID, entitlementResolver)
+		samlService, err := auth.NewSAMLService(userStore, tenantID, entitlementResolver)
 		if err != nil {
 			return fmt.Errorf("init saml: %w", err)
 		}
@@ -433,7 +454,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 	}
 
 	if scimRequested {
-		scimService, err := NewSCIMService(userStore, tenantID, entitlementResolver)
+		scimService, err := auth.NewSCIMService(userStore, tenantID, entitlementResolver)
 		if err != nil {
 			return fmt.Errorf("init scim: %w", err)
 		}
@@ -443,7 +464,7 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 	}
 
 	if len(authProviders) > 1 {
-		composite, err := NewCompositeAuthProvider(authProviders...)
+		composite, err := auth.NewCompositeAuthProvider(authProviders...)
 		if err != nil {
 			return fmt.Errorf("init composite auth: %w", err)
 		}
@@ -465,6 +486,12 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 		return fmt.Errorf("connect redis job store: %w", err)
 	}
 	defer func() { _ = jobStore.Close() }()
+
+	decisionLogStore, err := store.NewRedisDecisionLogStore(cfg.RedisURL)
+	if err != nil {
+		return fmt.Errorf("connect redis decision log store: %w", err)
+	}
+	defer func() { _ = decisionLogStore.Close() }()
 
 	natsBus, err := bus.NewNatsBus(cfg.NatsURL)
 	if err != nil {
@@ -573,42 +600,51 @@ func RunWithAuth(cfg *config.Config, provider AuthProvider, entitlementResolvers
 	}
 
 	s := &server{
-		memStore:              memStore,
-		jobStore:              jobStore,
-		bus:                   natsBus,
-		workers:               make(map[string]*pb.Heartbeat),
-		workerSeen:            make(map[string]time.Time),
-		clients:               make(map[*websocket.Conn]*wsClient),
-		eventsCh:              make(chan wsEvent, 512),
-		wsClientBufSz:         wsClientBufferSize(),
-		metrics:               gwMetrics,
-		otelMetrics:           otelGwMetrics,
-		approvalMetrics:       approvalMetrics,
-		tenant:                tenantID,
-		auth:                  provider,
-		entitlements:          entitlementResolver,
-		started:               time.Now().UTC(),
-		workflowStore:         workflowStore,
-		workflowEng:           workflowEng,
-		configSvc:             configSvc,
-		topicRegistry:         topicregistry.NewService(configSvc),
-		workerCredentialStore: workercredentials.NewService(configSvc),
-		agentIdentityStore:   store.NewAgentIdentityStoreFromClient(jobStore.Client()),
-		dlqStore:              dlqStore,
-		artifactStore:         artifactStore,
-		lockStore:             lockStore,
-		schemaRegistry:        schemaRegistry,
-		schemaEnforcement:     schema.ParseEnforcementMode(os.Getenv("SCHEMA_ENFORCEMENT")),
-		safetyConn:            safetyConn,
-		safetyClient:          safetyClient,
-		userStore:             userStore,
-		keyStore:              keyStore,
-		rbacStore:             rbacStore,
-		permChecker:           permChecker,
-		auditExporter:         auditSender,
-		legalHoldStore:        initLegalHoldStore(cfg.RedisURL),
-		statusCacheObj:        newStatusCache(2 * time.Second),
-		shutdownCh:            make(chan struct{}),
+		memStore:               memStore,
+		jobStore:               jobStore,
+		decisionLogStore:       decisionLogStore,
+		approvalAnalyticsCache: newApprovalAnalyticsCache(),
+		bus:                    natsBus,
+		workers:                make(map[string]*pb.Heartbeat),
+		workerSeen:             make(map[string]time.Time),
+		clients:                make(map[*websocket.Conn]*wsClient),
+		eventsCh:               make(chan wsEvent, 512),
+		wsClientBufSz:          wsClientBufferSize(),
+		metrics:                gwMetrics,
+		otelMetrics:            otelGwMetrics,
+		approvalMetrics:        approvalMetrics,
+		tenant:                 tenantID,
+		auth:                   provider,
+		entitlements:           entitlementResolver,
+		started:                time.Now().UTC(),
+		workflowStore:          workflowStore,
+		workflowEng:            workflowEng,
+		configSvc:              configSvc,
+		topicRegistry:          topicregistry.NewService(configSvc),
+		workerCredentialStore:  workercredentials.NewService(configSvc),
+		agentIdentityStore:     store.NewAgentIdentityStoreFromClient(jobStore.Client()),
+		evalDatasetStore:       store.NewEvalDatasetStoreFromClient(jobStore.Client()),
+		evalRunStore:           store.NewEvalRunStoreFromClient(jobStore.Client()),
+		dlqStore:               dlqStore,
+		artifactStore:          artifactStore,
+		lockStore:              lockStore,
+		schemaRegistry:         schemaRegistry,
+		schemaEnforcement:      schema.ParseEnforcementMode(os.Getenv("SCHEMA_ENFORCEMENT")),
+		safetyConn:             safetyConn,
+		safetyClient:           safetyClient,
+		userStore:              userStore,
+		keyStore:               keyStore,
+		rbacStore:              rbacStore,
+		permChecker:            permChecker,
+		auditExporter:          auditSender,
+		auditChainer:           audit.NewChainer(jobStore.Client(), ""),
+		legalHoldStore:         initLegalHoldStore(cfg.RedisURL),
+		statusCacheObj:         newStatusCache(2 * time.Second),
+		policyShadowStore:      policyshadow.NewStore(configSvc),
+		mcpDenyRing:            newDenyEventRing(500),
+		trustResolver:          scheduler.NewTrustResolver(jobStore.Client()),
+		heartbeatMode:          scheduler.ParseHeartbeatMode(os.Getenv(scheduler.EnvHeartbeatMode)),
+		shutdownCh:             make(chan struct{}),
 	}
 	s.syncApprovalQueueDepth(context.Background())
 	defer s.Close()
@@ -799,6 +835,10 @@ func (s *server) redisHealthStatus(ctx context.Context) (string, error) {
 }
 
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionSystemHealth) {
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 
@@ -920,6 +960,11 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("PUT /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleUpdateAgent))
 	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleDeleteAgent))
 	mux.HandleFunc("GET /api/v1/agents/{id}/stats", s.instrumented("/api/v1/agents/{id}/stats", s.handleAgentStats))
+	mux.HandleFunc("GET /api/v1/agents/{id}/delegations", s.instrumented("/api/v1/agents/{id}/delegations", s.handleListAgentDelegations))
+	mux.HandleFunc("POST /api/v1/agents/{id}/delegate", s.instrumented("/api/v1/agents/{id}/delegate", s.handleDelegateAgent))
+	mux.HandleFunc("GET /api/v1/delegations", s.instrumented("/api/v1/delegations", s.handleListDelegations))
+	mux.HandleFunc("POST /api/v1/agents/verify-delegation", s.instrumented("/api/v1/agents/verify-delegation", s.handleVerifyDelegation))
+	mux.HandleFunc("POST /api/v1/agents/revoke-delegation", s.instrumented("/api/v1/agents/revoke-delegation", s.handleRevokeDelegation))
 
 	mux.HandleFunc("GET /api/v1/pools", s.instrumented("/api/v1/pools", s.handleListPools))
 	mux.HandleFunc("GET /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleGetPool))
@@ -1037,6 +1082,15 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("POST /api/v1/approvals/{job_id}/reject", s.instrumented("/api/v1/approvals/{job_id}/reject", s.handleRejectJob))
 	mux.HandleFunc("POST /api/v1/approvals/{job_id}/repair", s.instrumented("/api/v1/approvals/{job_id}/repair", s.handleRepairApproval))
 	mux.HandleFunc("GET /api/v1/approvals/{job_id}/context", s.instrumented("/api/v1/approvals/{job_id}/context", s.handleApprovalContext))
+	mux.HandleFunc("GET /api/v1/governance/decisions", s.instrumented("/api/v1/governance/decisions", s.handleListGovernanceDecisions))
+	mux.HandleFunc("GET /api/v1/governance/approvals/analytics", s.instrumented("/api/v1/governance/approvals/analytics", s.handleApprovalAnalytics))
+	mux.HandleFunc("GET /api/v1/mcp/approvals", s.instrumented("/api/v1/mcp/approvals", s.handleMCPApprovalList))
+	mux.HandleFunc("GET /api/v1/mcp/approvals/{id}", s.instrumented("/api/v1/mcp/approvals/{id}", s.handleMCPApprovalGet))
+	mux.HandleFunc("POST /api/v1/mcp/approvals/{id}/approve", s.instrumented("/api/v1/mcp/approvals/{id}/approve", s.handleMCPApprovalApprove))
+	mux.HandleFunc("POST /api/v1/mcp/approvals/{id}/reject", s.instrumented("/api/v1/mcp/approvals/{id}/reject", s.handleMCPApprovalReject))
+	mux.HandleFunc("POST /api/v1/mcp/verify-signature", s.instrumented("/api/v1/mcp/verify-signature", s.handleMCPVerifySignature))
+	mux.HandleFunc("GET /api/v1/mcp/outbound", s.instrumented("/api/v1/mcp/outbound", s.handleMCPOutbound))
+	mux.HandleFunc("GET /api/v1/mcp/usage", s.instrumented("/api/v1/mcp/usage", s.handleMCPUsage))
 
 	// 12. Policy endpoints
 	mux.HandleFunc("POST /api/v1/policy/evaluate", s.instrumented("/api/v1/policy/evaluate", s.handlePolicyEvaluate))
@@ -1066,6 +1120,17 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("POST /api/v1/policy/replay", s.instrumented("/api/v1/policy/replay", s.handlePolicyReplay))
 	mux.HandleFunc("POST /api/v1/policy/analytics", s.instrumented("/api/v1/policy/analytics", s.handlePolicyAnalytics))
 
+	// 12.6 Eval datasets — curated, immutable policy-regression fixtures.
+	// The sibling eval-runner task (epic-e1c4321a) will replay these
+	// through the policy engine. PUT creates a successor version; it does
+	// not mutate an existing dataset in place.
+	mux.HandleFunc("POST /api/v1/evals/datasets/from-incidents", s.instrumented("/api/v1/evals/datasets/from-incidents", s.handleCreateDatasetFromIncidents))
+	mux.HandleFunc("POST /api/v1/evals/datasets", s.instrumented("/api/v1/evals/datasets", s.handleCreateEvalDataset))
+	mux.HandleFunc("GET /api/v1/evals/datasets", s.instrumented("/api/v1/evals/datasets", s.handleListEvalDatasets))
+	mux.HandleFunc("/api/v1/evals/datasets/", s.instrumented("/api/v1/evals/datasets/*", s.handleEvalDatasetSubroutes))
+	mux.HandleFunc("GET /api/v1/evals/runs/{run_id}", s.instrumented("/api/v1/evals/runs/{run_id}", s.handleGetEvalRun))
+	mux.HandleFunc("DELETE /api/v1/evals/runs/{run_id}", s.instrumented("/api/v1/evals/runs/{run_id}", s.handleDeleteEvalRun))
+
 	// 12.5 MCP (HTTP/SSE) routes
 	if err := s.registerMCPRoutes(mux); err != nil {
 		return fmt.Errorf("register mcp routes: %w", err)
@@ -1075,7 +1140,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
 
 	// Extension routes (enterprise auth, SSO, etc.)
-	if registrar, ok := s.auth.(RouteRegistrar); ok {
+	if registrar, ok := s.auth.(auth.RouteRegistrar); ok {
 		registrar.RegisterRoutes(mux, s.instrumented)
 	}
 
@@ -1131,7 +1196,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	// Graceful shutdown: on SIGINT/SIGTERM, drain all servers and goroutines.
 	sigCtx, sigStop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer sigStop()
-	if basic := basicAuthProvider(s.auth); basic != nil {
+	if basic := auth.ExtractBasicAuth(s.auth); basic != nil {
 		basic.SetUsageContext(sigCtx)
 	}
 
@@ -1175,7 +1240,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 			}
 		}
 
-		if basic := basicAuthProvider(s.auth); basic != nil {
+		if basic := auth.ExtractBasicAuth(s.auth); basic != nil {
 			basic.DrainUsage()
 		}
 
@@ -1223,7 +1288,7 @@ func (s *server) instrumented(route string, fn http.HandlerFunc) http.HandlerFun
 			s.otelMetrics.RecordRequest(r.Context(), r.Method, route, statusStr, duration.Seconds())
 		}
 		if exporter, ok := s.auth.(AuditExporter); ok {
-			authCtx := authFromRequest(r)
+			authCtx := auth.FromRequest(r)
 			event := AuditEvent{
 				Time:       start.UTC(),
 				Method:     r.Method,
@@ -1322,19 +1387,19 @@ func deleteSystemDefaultKeyWithRetry(ctx context.Context, svc *configsvc.Service
 
 // AuditEvent captures an HTTP request summary for audit export.
 type AuditEvent struct {
-	Time       time.Time  `json:"time"`
-	Method     string     `json:"method"`
-	Route      string     `json:"route"`
-	Path       string     `json:"path"`
-	Status     int        `json:"status"`
-	DurationMs int64      `json:"duration_ms"`
-	RemoteAddr string     `json:"remote_addr"`
-	UserAgent  string     `json:"user_agent"`
-	Tenant     string     `json:"tenant"`
-	Principal  string     `json:"principal"`
-	Role       string     `json:"role"`
-	AuthSource AuthSource `json:"auth_source,omitempty"`
-	RequestID  string     `json:"request_id"`
+	Time       time.Time       `json:"time"`
+	Method     string          `json:"method"`
+	Route      string          `json:"route"`
+	Path       string          `json:"path"`
+	Status     int             `json:"status"`
+	DurationMs int64           `json:"duration_ms"`
+	RemoteAddr string          `json:"remote_addr"`
+	UserAgent  string          `json:"user_agent"`
+	Tenant     string          `json:"tenant"`
+	Principal  string          `json:"principal"`
+	Role       string          `json:"role"`
+	AuthSource auth.AuthSource `json:"auth_source,omitempty"`
+	RequestID  string          `json:"request_id"`
 }
 
 // AuditExporter allows auth providers to emit audit events.

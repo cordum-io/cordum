@@ -85,10 +85,42 @@ func TestSIEMEvent_OmitsEmptyFields(t *testing.T) {
 	}
 
 	// Fields with omitempty should be absent when empty.
-	for _, field := range []string{"agent_id", "job_id", "decision", "matched_rule", "reason", "risk_tags", "capabilities", "policy_version", "identity", "extra"} {
+	for _, field := range []string{"agent_id", "job_id", "decision", "matched_rule", "reason", "risk_tags", "capabilities", "policy_version", "identity", "extra", "seq", "event_hash", "prev_hash"} {
 		if _, ok := raw[field]; ok {
 			t.Errorf("expected %q to be omitted from JSON", field)
 		}
+	}
+}
+
+func TestSIEMEvent_ChainFieldsRoundTrip(t *testing.T) {
+	ev := SIEMEvent{
+		EventType: EventSafetyDecision,
+		Severity:  SeverityInfo,
+		Action:    "test",
+		TenantID:  "tenant-1",
+		Seq:       42,
+		EventHash: "abc123",
+		PrevHash:  "def456",
+	}
+
+	data, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var got SIEMEvent
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if got.Seq != 42 {
+		t.Errorf("Seq = %d, want 42", got.Seq)
+	}
+	if got.EventHash != "abc123" {
+		t.Errorf("EventHash = %q, want abc123", got.EventHash)
+	}
+	if got.PrevHash != "def456" {
+		t.Errorf("PrevHash = %q, want def456", got.PrevHash)
 	}
 }
 
@@ -129,11 +161,21 @@ func TestExporter_FailThenSucceed(t *testing.T) {
 
 func TestEventConstants(t *testing.T) {
 	events := map[string]string{
-		"safety.decision":    EventSafetyDecision,
-		"safety.approval":    EventSafetyApproval,
-		"safety.policy_change": EventPolicyChange,
-		"safety.violation":   EventSafetyViolation,
-		"system.auth":        EventSystemAuth,
+		"safety.decision":                    EventSafetyDecision,
+		"delegation.lineage":                 EventDelegationLineage,
+		"delegation.rejected":                EventDelegationRejected,
+		"delegation.revoked_before_dispatch": EventDelegationRevokedBeforeDispatch,
+		"safety.approval":                    EventSafetyApproval,
+		"safety.policy_change":               EventPolicyChange,
+		"safety.violation":                   EventSafetyViolation,
+		"system.auth":                        EventSystemAuth,
+		"mcp.tool_approval":                  EventMCPToolApproval,
+		"mcp.tool_denied":                    EventMCPToolDenied,
+		// shadow_eval is the Phase-2 dual-evaluation signal — pinned
+		// here because SIEM correlation rules and the results API both
+		// filter on the literal string; an accidental rename would
+		// silently drop events from downstream dashboards.
+		"shadow_eval": EventShadowEval,
 	}
 	for want, got := range events {
 		if got != want {

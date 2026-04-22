@@ -1,5 +1,13 @@
 name: cordum
 
+# Default path: `docker compose pull && docker compose up -d` pulls every
+# Cordum service image from ghcr.io/cordum-io/cordum (tag from
+# ${CORDUM_VERSION:-latest}) — no source checkout or local build needed.
+#
+# Contributor path: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build`
+# overrides every `image:` with a local build from this tree. The Makefile
+# target `make dev-up` chains both files for convenience.
+
 services:
   nats:
     image: nats:2.10-alpine
@@ -24,7 +32,7 @@ services:
       - --appendonly
       - "yes"
       - --requirepass
-      - "${REDIS_PASSWORD:-cordum-dev}"
+      - "${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}"
       - --port
       - "0"
       - --tls-port
@@ -43,13 +51,14 @@ services:
       - ./certs:/etc/cordum/tls:ro
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "--tls", "--cacert", "/etc/cordum/tls/ca/ca.crt", "--cert", "/etc/cordum/tls/client/tls.crt", "--key", "/etc/cordum/tls/client/tls.key", "-a", "${REDIS_PASSWORD:-cordum-dev}", "ping"]
+      test: ["CMD", "redis-cli", "--tls", "--cacert", "/etc/cordum/tls/ca/ca.crt", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
       start_period: 10s
 
   context-engine:
+    image: ghcr.io/cordum-io/cordum/context-engine:${CORDUM_VERSION:-latest}
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -63,7 +72,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      - REDIS_URL=rediss://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
       - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
@@ -88,6 +97,7 @@ services:
       start_period: 15s
 
   safety-kernel:
+    image: ghcr.io/cordum-io/cordum/safety-kernel:${CORDUM_VERSION:-latest}
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -107,7 +117,7 @@ services:
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
       - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
-      - REDIS_URL=rediss://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
       - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
@@ -116,11 +126,14 @@ services:
       - SAFETY_KERNEL_TLS_CERT=/etc/cordum/tls/server/tls.crt
       - SAFETY_KERNEL_TLS_KEY=/etc/cordum/tls/server/tls.key
       - SAFETY_POLICY_PATH=/etc/cordum/safety.yaml
-      - SAFETY_POLICY_RELOAD_INTERVAL=5s
+      - SAFETY_POLICY_RELOAD_INTERVAL=${SAFETY_POLICY_RELOAD_INTERVAL:-60s}
+      - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
+      - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
     volumes:
       - ./config/safety.yaml:/etc/cordum/safety.yaml:ro
+      - ./config/safety.yaml.sig:/etc/cordum/safety.yaml.sig:ro
       - ./certs:/etc/cordum/tls:ro
     ports:
       - "50051:50051"
@@ -137,6 +150,7 @@ services:
       start_period: 10s
 
   scheduler:
+    image: ghcr.io/cordum-io/cordum/scheduler:${CORDUM_VERSION:-latest}
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -161,7 +175,7 @@ services:
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
       - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
-      - REDIS_URL=rediss://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
       - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
@@ -194,6 +208,7 @@ services:
       start_period: 10s
 
   api-gateway:
+    image: ghcr.io/cordum-io/cordum/api-gateway:${CORDUM_VERSION:-latest}
     restart: unless-stopped
     read_only: true
     dns:
@@ -227,7 +242,7 @@ services:
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
       - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
-      - REDIS_URL=rediss://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
       - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
@@ -243,9 +258,11 @@ services:
       - TENANT_ID=default
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
+      - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
+      - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
       - CORDUM_TELEMETRY_MODE=off
-      - API_RATE_LIMIT_RPS=${API_RATE_LIMIT_RPS:-50}
-      - API_RATE_LIMIT_BURST=${API_RATE_LIMIT_BURST:-100}
+      - API_RATE_LIMIT_RPS=2000
+      - API_RATE_LIMIT_BURST=4000
       - REDIS_DATA_TTL=24h
       - JOB_META_TTL=168h
       # User authentication (set CORDUM_USER_AUTH_ENABLED=true to enable)
@@ -296,6 +313,7 @@ services:
       start_period: 10s
 
   workflow-engine:
+    image: ghcr.io/cordum-io/cordum/workflow-engine:${CORDUM_VERSION:-latest}
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -320,7 +338,7 @@ services:
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
       - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
-      - REDIS_URL=rediss://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
       - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
@@ -347,6 +365,7 @@ services:
       start_period: 10s
 
   dashboard:
+    image: ghcr.io/cordum-io/cordum/dashboard:${CORDUM_VERSION:-latest}
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -436,6 +455,54 @@ services:
         limits:
           memory: 64M
           cpus: "0.25"
+
+  # Greeter for the demo-quickstart pack. Subscribes to job.demo.greet and
+  # echoes "hello, <name>!". Brought up only with `--profile demo` so the
+  # default stack stays lean for new users who only want the platform.
+  demo-quickstart-worker:
+    profiles: [demo]
+    image: ghcr.io/cordum-io/cordum/demo-quickstart-worker:${CORDUM_VERSION:-latest}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    build:
+      context: .
+      dockerfile: demo/quickstart/Dockerfile
+    depends_on:
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      scheduler:
+        condition: service_healthy
+      safety-kernel:
+        condition: service_healthy
+    environment:
+      - NATS_URL=tls://nats:4222
+      - NATS_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
+      - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
+      - NATS_TLS_SERVER_NAME=nats
+      - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
+      - REDIS_URL=rediss://:${REDIS_PASSWORD:-cordum-dev}@redis:6379
+      - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
+      - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
+      - REDIS_TLS_KEY=/etc/cordum/tls/client/tls.key
+      - REDIS_TLS_SERVER_NAME=redis
+    volumes:
+      - ./certs:/etc/cordum/tls:ro
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.25"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9091/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
 volumes:
   nats_data:

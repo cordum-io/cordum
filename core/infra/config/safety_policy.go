@@ -26,7 +26,7 @@ type SafetyPolicy struct {
 // InputPolicyConfig controls input-policy evaluation behavior.
 type InputPolicyConfig struct {
 	Enabled      bool   `yaml:"enabled"`
-	FailMode     string `yaml:"fail_mode,omitempty"`     // open|closed (default: closed = requeue when kernel down)
+	FailMode     string `yaml:"fail_mode,omitempty"`      // open|closed (default: closed = requeue when kernel down)
 	MaxScanBytes int    `yaml:"max_scan_bytes,omitempty"` // default 2 MiB
 }
 
@@ -221,17 +221,9 @@ type PolicyMatch struct {
 	LabelAllowlist           map[string][]string `yaml:"label_allowlist,omitempty"` // deny when label value NOT in list
 	LabelThreshold           map[string]float64  `yaml:"label_threshold,omitempty"` // deny when label value > threshold
 	SecretsPresent           *bool               `yaml:"secrets_present,omitempty"`
+	Predicate                string              `yaml:"predicate,omitempty"`
+	Delegation               *DelegationMatch    `yaml:"delegation,omitempty"`
 	MCP                      MCPPolicy           `yaml:"mcp"`
-	// Predicate is an expression-based fallback used when structured
-	// match fields can't express the intent (for example, checking
-	// that a delegation scope contains a specific action). The DSL is
-	// evaluated by the safety kernel; the config package only parses
-	// and validates the string shape.
-	Predicate string `yaml:"predicate,omitempty"`
-	// Delegation captures rule-level matching against the request's
-	// delegation chain — depth, issuer allowlist, required scope,
-	// etc. Zero value is delegation-neutral.
-	Delegation *DelegationMatch `yaml:"delegation,omitempty"`
 }
 
 type PolicyConstraints struct {
@@ -308,11 +300,7 @@ type PolicyInput struct {
 	Meta           PolicyMeta
 	SecretsPresent bool
 	MCP            MCPRequest
-	// Delegation carries the verified delegation chain for the request,
-	// or nil for a direct (non-delegated) call. Populated upstream by
-	// the token verifier; evaluateDelegationMatch consults it when a
-	// rule specifies match.delegation constraints.
-	Delegation *DelegationContext
+	Delegation     *DelegationContext
 }
 
 // PolicyMeta captures structured job metadata for policy checks.
@@ -371,6 +359,12 @@ func ParseSafetyPolicy(data []byte) (*SafetyPolicy, error) {
 			if err := rule.Velocity.Validate(rule.ID); err != nil {
 				return nil, fmt.Errorf("parse safety policy: %w", err)
 			}
+		}
+		if err := rule.Match.Delegation.Validate(); err != nil {
+			return nil, fmt.Errorf("parse safety policy: rule %q: %w", rule.ID, err)
+		}
+		if err := validateDelegationPredicate(rule.Match.Predicate); err != nil {
+			return nil, fmt.Errorf("parse safety policy: rule %q: %w", rule.ID, err)
 		}
 	}
 	return &policy, nil
@@ -547,6 +541,12 @@ func matchRule(match PolicyMatch, input PolicyInput) bool {
 		return false
 	}
 	if len(match.LabelThreshold) > 0 && !labelThresholdMatch(match.LabelThreshold, input.Labels) {
+		return false
+	}
+	if !delegationPredicateMatch(match.Predicate, input.Delegation) {
+		return false
+	}
+	if !evaluateDelegationMatch(match.Delegation, input.Delegation) {
 		return false
 	}
 	if !mcpMatch(match.MCP, input.MCP) {

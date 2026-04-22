@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/env"
+	"github.com/cordum/cordum/core/infra/tlsutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -144,6 +145,21 @@ func applyTLSFromEnv(opts *redis.Options) error {
 	return nil
 }
 
+// firstLeafFromTLSCert parses the leaf of a tls.Certificate for metric
+// emission. Nil on failure — emission is observability-only, so a nil return
+// just means the gauge doesn't get populated this run; it doesn't fail the
+// connection.
+func firstLeafFromTLSCert(cert tls.Certificate) *x509.Certificate {
+	if len(cert.Certificate) == 0 {
+		return nil
+	}
+	leaf, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		return nil
+	}
+	return leaf
+}
+
 func tlsConfigFromEnv(existing *tls.Config) (*tls.Config, error) {
 	caPath := strings.TrimSpace(os.Getenv(envRedisTLSCA))
 	certPath := strings.TrimSpace(os.Getenv(envRedisTLSCert))
@@ -203,6 +219,22 @@ func tlsConfigFromEnv(existing *tls.Config) (*tls.Config, error) {
 		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
 		if err != nil {
 			return nil, fmt.Errorf("redis tls keypair: %w", err)
+		}
+		// Chain-verify so CA-rotated-without-client drift surfaces with a
+		// rich error (issuer DNs, validity windows, remediation) instead of
+		// bubbling up as an opaque "certificate required" handshake failure.
+		chainValid := true
+		if caPath != "" && !insecure {
+			if verr := tlsutil.VerifyChain(certPath, caPath, tlsutil.RoleClient); verr != nil {
+				chainValid = false
+				if leaf := firstLeafFromTLSCert(cert); leaf != nil {
+					tlsutil.EmitCertMetrics("redis", "client", certPath, leaf.NotAfter, false)
+				}
+				return nil, fmt.Errorf("redis tls: %w", verr)
+			}
+		}
+		if leaf := firstLeafFromTLSCert(cert); leaf != nil {
+			tlsutil.EmitCertMetrics("redis", "client", certPath, leaf.NotAfter, chainValid)
 		}
 		cfg.Certificates = []tls.Certificate{cert}
 	}

@@ -109,24 +109,6 @@ func (r *EntitlementResolver) Rights() *Rights {
 	return &cloned
 }
 
-// ForceState bypasses the license-loading and merge logic, directly setting the
-// resolver's plan and entitlements. Intended for tests that need precise control
-// over entitlement values (the normal merge path only increases limits).
-func (r *EntitlementResolver) ForceState(plan Plan, entitlements Entitlements, rights *Rights) {
-	if r == nil {
-		return
-	}
-	r.state.Store(buildResolverSnapshot(plan, entitlements, nil, "active"))
-	// Patch rights into the snapshot since buildResolverSnapshot only copies from
-	// the license argument (which is nil here).
-	if rights != nil {
-		snap := r.state.Load().(resolverSnapshot)
-		cloned := *rights
-		snap.Rights = &cloned
-		r.state.Store(snap)
-	}
-}
-
 func (r *EntitlementResolver) snapshot() resolverSnapshot {
 	if r == nil {
 		return buildResolverSnapshot(PlanCommunity, DefaultEntitlements(PlanCommunity), nil, "active")
@@ -177,6 +159,33 @@ func (r *EntitlementResolver) clock() func() time.Time {
 	return func() time.Time {
 		return time.Now().UTC()
 	}
+}
+
+// ForceState is a test helper that bypasses env/file loading and stores a
+// synthetic resolver snapshot directly.
+func (r *EntitlementResolver) ForceState(plan Plan, entitlements Entitlements, rights *Rights) {
+	r.ForceStateWithStatus(plan, entitlements, rights, "active")
+}
+
+// ForceStateWithStatus is the same as ForceState, but allows tests to set an
+// explicit runtime status such as grace, degraded, or invalid.
+func (r *EntitlementResolver) ForceStateWithStatus(plan Plan, entitlements Entitlements, rights *Rights, status string) {
+	if r == nil {
+		return
+	}
+
+	var license *License
+	if rights != nil {
+		cloned := *rights
+		license = &License{Payload: Claims{Rights: &cloned}}
+	}
+
+	status = strings.TrimSpace(status)
+	if status == "" {
+		status = "active"
+	}
+
+	r.state.Store(buildResolverSnapshot(plan, entitlements, license, status))
 }
 
 func buildResolverSnapshot(plan Plan, entitlements Entitlements, license *License, status string) resolverSnapshot {

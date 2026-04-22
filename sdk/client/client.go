@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -90,21 +91,6 @@ func newClient(baseURL, apiKey string, transport *http.Transport) *Client {
 		TenantID:   tenantID,
 		HTTPClient: httpClient,
 	}
-}
-
-// BuildTLSTransport returns an [http.Transport] configured from the given
-// options, or nil when no TLS customization is needed.
-//
-// Deprecated: Use [BuildTLSTransportErr] which properly reports CA read/parse
-// failures. This wrapper calls [BuildTLSTransportErr] and logs errors to stderr
-// for backward compatibility.
-func BuildTLSTransport(opts TLSOptions) *http.Transport {
-	tr, err := BuildTLSTransportErr(opts)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "cordum sdk: tls transport: %v\n", err)
-		return nil
-	}
-	return tr
 }
 
 // BuildTLSTransportErr returns an [http.Transport] configured from the given
@@ -371,6 +357,28 @@ func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, bod
 	return nil
 }
 
+// ExtractEvalDatasetFromIncidents scans decision-log incidents and optionally
+// persists the deduplicated result as an immutable eval dataset.
+func (c *Client) ExtractEvalDatasetFromIncidents(ctx context.Context, req *ExtractIncidentsRequest) (*ExtractIncidentsResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request is nil")
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		return nil, fmt.Errorf("dataset name required")
+	}
+
+	path := "/api/v1/evals/datasets/from-incidents"
+	if req.DryRun {
+		path += "?dry_run=true"
+	}
+
+	var resp ExtractIncidentsResponse
+	if err := c.doJSON(ctx, http.MethodPost, path, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // CreateWorkflow creates or upserts a workflow and returns its ID.
 func (c *Client) CreateWorkflow(ctx context.Context, req *CreateWorkflowRequest) (string, error) {
 	if req == nil {
@@ -525,6 +533,114 @@ func (c *Client) GetJob(ctx context.Context, jobID string) (map[string]any, erro
 		return nil, err
 	}
 	return out, nil
+}
+
+// MCPApproval mirrors the gateway's MCPApprovalRecord JSON shape so
+// cordumctl and automation tools can decode the list/get responses
+// without reaching into internal packages.
+type MCPApproval struct {
+	ID         string `json:"id"`
+	Tenant     string `json:"tenant"`
+	AgentID    string `json:"agent_id"`
+	ToolName   string `json:"tool_name"`
+	ArgsHash   string `json:"args_hash"`
+	Requester  string `json:"requester,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	Status     string `json:"status"`
+	CreatedAt  int64  `json:"created_at"`
+	ExpiresAt  int64  `json:"expires_at"`
+	ResolvedAt int64  `json:"resolved_at,omitempty"`
+	ResolvedBy string `json:"resolved_by,omitempty"`
+	Decision   string `json:"decision,omitempty"`
+	ConsumedAt int64  `json:"consumed_at,omitempty"`
+}
+
+// MCPToolInfo describes a tool as returned by GET /api/v1/mcp/tools.
+// Only the fields the CLI renders are decoded; the full descriptor
+// shape is richer.
+type MCPToolInfo struct {
+	Name                string   `json:"name"`
+	Description         string   `json:"description,omitempty"`
+	RiskTier            string   `json:"riskTier,omitempty"`
+	Tags                []string `json:"tags,omitempty"`
+	DataClassifications []string `json:"dataClassifications,omitempty"`
+	RequiresApproval    bool     `json:"requiresApproval,omitempty"`
+}
+
+// MCPToolList is the payload wrapper returned by GET /api/v1/mcp/tools.
+type MCPToolList struct {
+	Tools    []MCPToolInfo `json:"tools"`
+	AgentID  string        `json:"agent_id"`
+	Filtered bool          `json:"filtered"`
+	Note     string        `json:"note,omitempty"`
+}
+
+// ListMCPTools returns the MCP tool catalogue. When agentID is empty
+// the gateway returns the unfiltered catalogue (admin-only). When set,
+// the gateway returns the subset that agent identity can currently
+// see — callers use this to verify scope configuration before rolling
+// the identity into production.
+func (c *Client) ListMCPTools(ctx context.Context, agentID string) (*MCPToolList, error) {
+	path := "/api/v1/mcp/tools"
+	if id := strings.TrimSpace(agentID); id != "" {
+		path += "?agent_id=" + url.QueryEscape(id)
+	}
+	var out MCPToolList
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListMCPApprovals returns the pending MCP approvals for the configured
+// tenant (narrowed by optional status). Empty status means "all".
+func (c *Client) ListMCPApprovals(ctx context.Context, status string) ([]MCPApproval, error) {
+	path := "/api/v1/approvals/mcp"
+	if status != "" {
+		path += "?status=" + url.QueryEscape(status)
+	}
+	var resp struct {
+		Items []MCPApproval `json:"items"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// GetMCPApproval fetches a single record by ID.
+func (c *Client) GetMCPApproval(ctx context.Context, id string) (*MCPApproval, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, fmt.Errorf("approval id required")
+	}
+	var out MCPApproval
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/approvals/mcp/"+escapePathSegment(id), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ApproveMCP resolves a pending MCP approval as approved.
+func (c *Client) ApproveMCP(ctx context.Context, id, reason string) (*MCPApproval, error) {
+	return c.resolveMCP(ctx, id, "approve", reason)
+}
+
+// RejectMCP resolves a pending MCP approval as rejected.
+func (c *Client) RejectMCP(ctx context.Context, id, reason string) (*MCPApproval, error) {
+	return c.resolveMCP(ctx, id, "reject", reason)
+}
+
+func (c *Client) resolveMCP(ctx context.Context, id, verb, reason string) (*MCPApproval, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, fmt.Errorf("approval id required")
+	}
+	body := map[string]any{"reason": strings.TrimSpace(reason)}
+	var out MCPApproval
+	path := "/api/v1/approvals/mcp/" + escapePathSegment(id) + "/" + verb
+	if err := c.doJSON(ctx, http.MethodPost, path, body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // GetStatus fetches the gateway status snapshot.
@@ -723,4 +839,61 @@ func (c *Client) AddTopicToPool(ctx context.Context, pool, topic string) error {
 
 func (c *Client) RemoveTopicFromPool(ctx context.Context, pool, topic string) error {
 	return c.doJSON(ctx, "DELETE", "/pools/"+pool+"/topics/"+topic, nil, nil)
+}
+
+// AuditVerifyGap mirrors the gateway's audit.VerifyGap response field.
+// Kept as a plain struct so the SDK does not depend on core/audit.
+type AuditVerifyGap struct {
+	AtSeq int64  `json:"at_seq"`
+	Type  string `json:"type"`
+}
+
+// AuditVerifyResult mirrors the gateway's audit.VerifyResult. The SDK
+// re-declares the shape rather than importing core/audit to keep the
+// client module dependency-free for third-party consumers.
+type AuditVerifyResult struct {
+	Status               string           `json:"status"`
+	TotalEvents          int              `json:"total_events"`
+	VerifiedEvents       int              `json:"verified_events"`
+	Gaps                 []AuditVerifyGap `json:"gaps"`
+	RetentionBoundarySeq int64            `json:"retention_boundary_seq"`
+	RetentionWindowHours float64          `json:"retention_window_hours,omitempty"`
+	FirstSeq             int64            `json:"first_seq,omitempty"`
+	LastSeq              int64            `json:"last_seq,omitempty"`
+}
+
+// AuditVerifyOptions narrows a verify call. All fields are optional.
+type AuditVerifyOptions struct {
+	SinceMs int64
+	UntilMs int64
+	Limit   int64
+}
+
+// VerifyAuditChain calls GET /api/v1/audit/verify for the given tenant.
+// tenant=="" uses the client's default tenant (sent via X-Tenant-ID).
+// The gateway walks the tenant's audit chain and returns an integrity
+// report — see AuditVerifyResult for the shape.
+func (c *Client) VerifyAuditChain(ctx context.Context, tenant string, opts AuditVerifyOptions) (*AuditVerifyResult, error) {
+	q := url.Values{}
+	if t := strings.TrimSpace(tenant); t != "" {
+		q.Set("tenant", t)
+	}
+	if opts.SinceMs > 0 {
+		q.Set("since", strconv.FormatInt(opts.SinceMs, 10))
+	}
+	if opts.UntilMs > 0 {
+		q.Set("until", strconv.FormatInt(opts.UntilMs, 10))
+	}
+	if opts.Limit > 0 {
+		q.Set("limit", strconv.FormatInt(opts.Limit, 10))
+	}
+	path := "/api/v1/audit/verify"
+	if qs := q.Encode(); qs != "" {
+		path += "?" + qs
+	}
+	var out AuditVerifyResult
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
