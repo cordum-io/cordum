@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
@@ -310,7 +312,7 @@ func (s *server) syncApprovalQueueDepth(ctx context.Context) {
 }
 
 func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.workflowEng) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermWorkflowsWrite, []string{"admin"}, s.workflowEng) {
 		return
 	}
 	runID, ok := requirePathParam(w, r, "run_id")
@@ -361,7 +363,7 @@ func (s *server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.jobStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore) {
 		return
 	}
 	s.syncApprovalQueueDepth(r.Context())
@@ -741,7 +743,7 @@ func (s *server) publishApprovalRepair(ctx context.Context, repaired *store.Appr
 }
 
 func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.jobStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore) {
 		return
 	}
 	var body approvalRepairRequest
@@ -898,7 +900,7 @@ func (s *server) handleRepairApproval(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.jobStore, s.bus) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore, s.bus) {
 		return
 	}
 	var body struct {
@@ -1045,6 +1047,20 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), "approval job hash unavailable")
 			result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictStaleRequest, "approval job hash unavailable")}
 			return nil
+		}
+		// Lock in the JobHash to match what the reconciler will compute from
+		// the currently stored request. Without this, drift between the
+		// scheduler's post-mutation hash (computed after effective-config /
+		// constraints were attached to req.Env) and the reconciler's
+		// hashApprovalJobRequest(stored-req) can cause the approval to be
+		// auto-invalidated as stale_request after a successful approve.
+		if lockedHash, err := scheduler.HashJobRequest(req); err == nil && lockedHash != "" {
+			if lockedHash != safetyRecord.JobHash {
+				safetyRecord.JobHash = lockedHash
+				if err := s.jobStore.SetSafetyDecision(ctx, jobID, safetyRecord); err != nil {
+					slog.Warn("approve: failed to lock in job hash", "job_id", jobID, "error", err)
+				}
+			}
 		}
 		topic := strings.TrimSpace(req.GetTopic())
 		isWorkflowGate := topic == capsdk.SubjectApprovalGate || topic == capsdk.SubjectWorkflowApprovalGate
@@ -1199,7 +1215,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.jobStore, s.bus) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore, s.bus) {
 		return
 	}
 	var body struct {
@@ -1419,7 +1435,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 // combining blast radius, prior approvals, rollback hints, policy snapshot
 // summary, time remaining, and parsed constraints in one response.
 func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.jobStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermJobsApprove, []string{"admin"}, s.jobStore) {
 		return
 	}
 	jobID, ok := requirePathParam(w, r, "job_id")
@@ -1467,18 +1483,18 @@ func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
 
 	// Build the approval item (same shape as list endpoint).
 	approvalItem := map[string]any{
-		"job_id":              jobID,
-		"state":               string(state),
-		"decision":            safetyRecord.Decision,
-		"policy_snapshot":     safetyRecord.PolicySnapshot,
-		"policy_rule_id":      safetyRecord.RuleID,
-		"policy_reason":       safetyRecord.Reason,
-		"constraints":         safetyRecord.Constraints,
-		"approval_required":   safetyRecord.ApprovalRequired,
-		"approval_ref":        safetyRecord.ApprovalRef,
-		"approval_status":     approvalRecord.Status,
+		"job_id":                 jobID,
+		"state":                  string(state),
+		"decision":               safetyRecord.Decision,
+		"policy_snapshot":        safetyRecord.PolicySnapshot,
+		"policy_rule_id":         safetyRecord.RuleID,
+		"policy_reason":          safetyRecord.Reason,
+		"constraints":            safetyRecord.Constraints,
+		"approval_required":      safetyRecord.ApprovalRequired,
+		"approval_ref":           safetyRecord.ApprovalRef,
+		"approval_status":        approvalRecord.Status,
 		"approval_actionability": approvalRecord.Actionability,
-		"approval_decision":   approvalRecord.Decision,
+		"approval_decision":      approvalRecord.Decision,
 	}
 	if approvalErr == nil && approvalRecord.ApprovedBy != "" {
 		approvalItem["resolved_by"] = approvalRecord.ApprovedBy
@@ -1587,13 +1603,13 @@ func (s *server) handleApprovalContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]any{
-		"approval":                 approvalItem,
-		"blast_radius":             blastRadius,
-		"prior_approvals":          s.queryPriorApprovals(ctx, jobTopic, jobTenant, 10),
-		"rollback_hint":            rollbackHint,
-		"policy_snapshot_summary":  buildPolicySnapshotSummary(safetyRecord),
-		"time_remaining_ms":        timeRemainingMs,
-		"constraints":              constraintsParsed,
+		"approval":                approvalItem,
+		"blast_radius":            blastRadius,
+		"prior_approvals":         s.queryPriorApprovals(ctx, jobTopic, jobTenant, 10),
+		"rollback_hint":           rollbackHint,
+		"policy_snapshot_summary": buildPolicySnapshotSummary(safetyRecord),
+		"time_remaining_ms":       timeRemainingMs,
+		"constraints":             constraintsParsed,
 	}
 
 	priorCount := len(response["prior_approvals"].([]map[string]any))
@@ -1754,12 +1770,12 @@ func (s *server) queryPriorApprovals(ctx context.Context, topic, tenant string, 
 		}
 
 		results = append(results, map[string]any{
-			"job_id":      id,
-			"topic":       jobTopic,
-			"tenant":      jobTenant,
-			"decision":    meta["approval_decision"],
-			"resolved_by": meta["approval_by"],
-			"resolved_at": approvedAt,
+			"job_id":       id,
+			"topic":        jobTopic,
+			"tenant":       jobTenant,
+			"decision":     meta["approval_decision"],
+			"resolved_by":  meta["approval_by"],
+			"resolved_at":  approvedAt,
 			"was_approved": wasApproved,
 		})
 	}
