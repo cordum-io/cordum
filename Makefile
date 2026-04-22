@@ -73,6 +73,9 @@ verify-images:
 demo-quickstart-test:
 	CORDUM_INTEGRATION=1 ./demo/quickstart/integration_test.sh
 
+demo-mock-bank-test:
+	CORDUM_INTEGRATION=1 ./demo/mock-bank/integration_test.sh
+
 dev-up:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
@@ -99,6 +102,7 @@ help:
 	@echo "  make smoke              Run platform smoke tests"
 	@echo "  make verify-images      Verify published GHCR images (pull + cosign + multi-arch)"
 	@echo "  make demo-quickstart-test  End-to-end test for the demo-quickstart pack"
+	@echo "  make demo-mock-bank-test   End-to-end test for the demo-mock-bank pack (all three verdicts)"
 	@echo "  make dev-up             Start all services via docker compose (with local rebuild)"
 	@echo "  make dev-down           Stop all services"
 	@echo "  make dev-logs           Tail docker compose logs"
@@ -119,4 +123,4 @@ soak-ws-full:
 	@echo "Running 2-hour full WebSocket soak test..."
 	./tools/scripts/ws_soak_test.sh full
 
-.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi openapi-validate docker smoke verify-images demo-quickstart-test dev-up dev-down dev-logs soak-ws soak-ws-quick soak-ws-full
+.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi openapi-validate docker smoke verify-images demo-quickstart-test demo-mock-bank-test dev-up dev-down dev-logs soak-ws soak-ws-quick soak-ws-full
