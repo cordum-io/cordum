@@ -40,7 +40,11 @@ jobs:
       run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
 
     - name: Generate TLS certificates
-      run: go run ./cmd/cordumctl generate-certs
+      # Relax permissions so non-root containers in docker-compose can
+      # read the generated cert + key files mounted from the workspace.
+      run: |
+        go run ./cmd/cordumctl generate-certs
+        chmod -R a+rX ./certs
 
     - name: Start services
       run: |
@@ -120,7 +124,11 @@ jobs:
       run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
 
     - name: Generate TLS certificates
-      run: go run ./cmd/cordumctl generate-certs
+      # Relax permissions so non-root containers in docker-compose can
+      # read the generated cert + key files mounted from the workspace.
+      run: |
+        go run ./cmd/cordumctl generate-certs
+        chmod -R a+rX ./certs
 
     - name: Start services
       run: |
@@ -198,7 +206,11 @@ jobs:
       run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
 
     - name: Generate TLS certificates
-      run: go run ./cmd/cordumctl generate-certs
+      # Relax permissions so non-root containers in docker-compose can
+      # read the generated cert + key files mounted from the workspace.
+      run: |
+        go run ./cmd/cordumctl generate-certs
+        chmod -R a+rX ./certs
 
     - name: Start services
       run: |

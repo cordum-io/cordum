@@ -41,7 +41,14 @@ need "${CORDUMCTL}"
 run_doctor_json() {
   # --cacert + --insecure reuse whatever env is set. Caller wraps in `|| true`
   # when a non-zero exit is expected.
-  "${CORDUMCTL}" doctor --json --timeout "${CORDUM_DOCTOR_TIMEOUT}"
+  local args=(doctor --json --timeout "${CORDUM_DOCTOR_TIMEOUT}")
+  # Auto-pass the locally-generated CA when the target is HTTPS and the caller
+  # hasn't pre-seeded CORDUM_TLS_CA. Without this, the default compose stack's
+  # self-signed certs fail TLS verification on the baseline phase.
+  if [[ -z "${CORDUM_TLS_CA:-}" && "${CORDUM_GATEWAY}" == https://* && -f "${REPO_ROOT}/certs/ca/ca.crt" ]]; then
+    args+=(--cacert "${REPO_ROOT}/certs/ca/ca.crt")
+  fi
+  "${CORDUMCTL}" "${args[@]}"
 }
 
 # Assert exitCode, stored in the JSON envelope, matches the expected value.

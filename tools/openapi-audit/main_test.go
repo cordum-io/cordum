@@ -367,7 +367,11 @@ func tempFile(t *testing.T) *os.File {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = f.Close() })
+	t.Cleanup(func() {
+		if err := f.Close(); err != nil {
+			t.Logf("warning: failed to close temp file: %v", err)
+		}
+	})
 	return f
 }
 
