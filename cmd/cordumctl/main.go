@@ -63,6 +63,8 @@ func main() {
 		runDelegationCmd(args)
 	case "governance":
 		runGovernanceCmd(args)
+	case "mcp":
+		runMCPCmd(args)
 	default:
 		usage()
 		os.Exit(1)
