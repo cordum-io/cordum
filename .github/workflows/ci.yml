@@ -325,7 +325,7 @@ jobs:
           ${{ runner.os }}-go-
 
     - name: Install oasdiff
-      run: go install github.com/oasdiff/oasdiff@latest
+      run: go install github.com/oasdiff/oasdiff@v1.11.7
 
     - name: Mark allow-breaking if commit message requests it
       id: allow_breaking
