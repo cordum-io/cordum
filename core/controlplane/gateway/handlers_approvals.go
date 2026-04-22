@@ -1122,13 +1122,27 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					freshMeta.PackId = req.Meta.PackId
 					freshMeta.Labels = req.Meta.Labels
 				}
+				// Use the ORIGINAL requester principal, not the approver. A
+				// principal-sensitive policy must be re-run against the
+				// identity that submitted the job; evaluating against the
+				// approver (who is typically an admin) would mask policies
+				// whose effect depends on the actor.
+				requesterPrincipal := strings.TrimSpace(req.GetPrincipalId())
+				if requesterPrincipal == "" && req.Meta != nil {
+					requesterPrincipal = strings.TrimSpace(req.Meta.ActorId)
+				}
+				if requesterPrincipal == "" {
+					slog.Warn("approve: drift re-evaluation missing original principal; falling back to approver identity",
+						"job_id", jobID, "approver", policyActorID(r))
+					requesterPrincipal = strings.TrimSpace(policyActorID(r))
+				}
 				freshCheck, freshErr := buildPolicyCheckRequest(ctx, &policyCheckRequest{
 					JobId:       jobID,
 					Topic:       req.GetTopic(),
 					Tenant:      strings.TrimSpace(req.TenantId),
 					WorkflowId:  strings.TrimSpace(req.WorkflowId),
 					Priority:    req.Priority.String(),
-					PrincipalId: strings.TrimSpace(policyActorID(r)),
+					PrincipalId: requesterPrincipal,
 					Labels:      req.Labels,
 					Budget:      req.Budget,
 					MemoryId:    strings.TrimSpace(req.MemoryId),
@@ -1153,15 +1167,25 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
 					pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN:
 					// Fresh policy still admits this request (possibly with
-					// approval). Rotate the snapshot + rewrite the safety
-					// record so the scheduler fast-path binds to the new
-					// decision, not the pre-drift one.
+					// approval). Persist the FULL re-evaluated decision so
+					// the scheduler's fast-path sees the current rule / reason /
+					// constraints, not a hybrid of old decision + new snapshot.
+					// ApprovalRef and JobHash are preserved (approval identity
+					// is still this job); ApprovalRevision is bumped so
+					// downstream consumers can detect the drift.
 					s.appendAuditEntryNamed(ctx, "approve_snapshot_refreshed", "job", jobID, "", policyActorID(r), policyRole(r),
-						fmt.Sprintf("policy snapshot refreshed during approval (was=%s now=%s decision=%s)",
-							snapshotBase(policySnapshot), snapshotBase(currentSnapshot), freshDecision.String()))
+						fmt.Sprintf("policy snapshot refreshed during approval (was=%s now=%s decision=%s rule=%s)",
+							snapshotBase(policySnapshot), snapshotBase(currentSnapshot), freshDecision.String(), freshResp.GetRuleId()))
 					policySnapshot = currentSnapshot
+					safetyRecord.Decision = mapDecisionTypeToSafety(freshDecision)
+					safetyRecord.Reason = freshResp.GetReason()
+					safetyRecord.RuleID = freshResp.GetRuleId()
+					safetyRecord.Constraints = freshResp.GetConstraints()
+					safetyRecord.Remediations = freshResp.GetRemediations()
 					safetyRecord.PolicySnapshot = currentSnapshot
 					safetyRecord.ApprovalRequired = freshDecision == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
+					safetyRecord.CheckedAt = time.Now().UnixMicro()
+					safetyRecord.ApprovalRevision++
 					if err := s.jobStore.SetSafetyDecision(ctx, jobID, safetyRecord); err != nil {
 						slog.Warn("approve: failed to persist re-evaluated safety decision", "job_id", jobID, "error", err)
 					}
