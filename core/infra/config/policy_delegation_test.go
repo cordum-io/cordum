@@ -469,21 +469,46 @@ func TestDelegationMatchDenyCallback(t *testing.T) {
 
 // TestDelegationMatchDenyCallbackNotCalledOnMatch asserts the callback does
 // NOT fire when a rule matches. Counting matches on the deny counter would
-// balloon dashboards with noise.
+// balloon dashboards with noise. A rule that FAILS CLOSED on a direct call
+// IS a rejection, so the callback is expected to fire for that case —
+// that's tracked in TestDelegationMatchDenyCallbackFiresOnFailClosed.
 func TestDelegationMatchDenyCallbackNotCalledOnMatch(t *testing.T) {
 	var called int
 	SetDelegationMatchDenyCallback(func(field string) { called++ })
 	t.Cleanup(func() { SetDelegationMatchDenyCallback(nil) })
 
-	// nil delegation passes every non-Forbid rule → no callback.
-	_ = evaluateDelegationMatch(&DelegationMatch{MaxDepth: func() *int { i := 0; return &i }()}, nil)
 	// nil match is neutral → no callback.
 	_ = evaluateDelegationMatch(nil, &DelegationContext{Depth: 1})
 	// Forbid + direct call is a match → no callback.
 	_ = evaluateDelegationMatch(&DelegationMatch{ForbidDelegated: true}, nil)
+	// Explicit DelegationRequired=false + delegation-scoped constraint +
+	// direct call opts into the legacy permissive behaviour and the rule
+	// matches without any callback.
+	_ = evaluateDelegationMatch(&DelegationMatch{
+		MaxDepth:           func() *int { i := 0; return &i }(),
+		DelegationRequired: boolPtr(false),
+	}, nil)
 
 	if called != 0 {
 		t.Fatalf("callback fired %d times on matches; should be 0", called)
+	}
+}
+
+// TestDelegationMatchDenyCallbackFiresOnFailClosed pins the new fail-closed
+// semantic: a rule with delegation-scoped constraints + direct call
+// rejects, and the deny callback fires with the delegation_required field
+// so observability surfaces the new policy-authoring foot-gun.
+func TestDelegationMatchDenyCallbackFiresOnFailClosed(t *testing.T) {
+	var fields []string
+	SetDelegationMatchDenyCallback(func(field string) { fields = append(fields, field) })
+	t.Cleanup(func() { SetDelegationMatchDenyCallback(nil) })
+
+	zero := 0
+	if evaluateDelegationMatch(&DelegationMatch{MaxDepth: &zero}, nil) {
+		t.Fatalf("direct call must fail closed when max_depth is set")
+	}
+	if len(fields) != 1 || fields[0] != "delegation_required" {
+		t.Fatalf("expected single delegation_required callback, got %v", fields)
 	}
 }
 
