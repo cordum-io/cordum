@@ -1138,9 +1138,19 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 					requesterPrincipal = strings.TrimSpace(req.Meta.ActorId)
 				}
 				if requesterPrincipal == "" {
-					slog.Warn("approve: drift re-evaluation missing original principal; falling back to approver identity",
-						"job_id", jobID, "approver", policyActorID(r))
-					requesterPrincipal = strings.TrimSpace(policyActorID(r))
+					// Fail closed. Evaluating under the approver's identity can
+					// admit a request that the current (principal-sensitive)
+					// policy would have denied for the original submitter when
+					// the approver happens to be more privileged. Force the
+					// request to be resubmitted so the fresh policy sees the
+					// real principal on a request that carries it.
+					msg := "original requester identity unavailable; resubmit under current policy"
+					s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), msg)
+					result = handlerResult{
+						http.StatusConflict,
+						approvalConflictPayload(http.StatusConflict, model.ApprovalConflictStaleSnapshot, msg),
+					}
+					return nil
 				}
 				freshCheck, freshErr := buildPolicyCheckRequest(ctx, &policyCheckRequest{
 					JobId:       jobID,

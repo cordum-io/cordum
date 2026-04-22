@@ -231,10 +231,14 @@ func tlsConfigFromEnv(existing *tls.Config) (*tls.Config, error) {
 				return nil, fmt.Errorf("redis tls: %w", verr)
 			}
 		}
-		// Chain verified (or skipped when caPath/insecure bypass it) — emit
-		// the success gauge so freshness/expiry dashboards stay green.
+		// Emit the success gauge. chainValid MUST reflect whether chain
+		// verification actually ran — when caPath is empty or insecure
+		// is set, VerifyChain was skipped, so we cannot claim chain
+		// validity and must emit false to avoid false-positive TLS
+		// health signals in cordum_cert_chain_valid.
+		chainValid := caPath != "" && !insecure
 		if leaf := firstLeafFromTLSCert(cert); leaf != nil {
-			tlsutil.EmitCertMetrics("redis", "client", certPath, leaf.NotAfter, true)
+			tlsutil.EmitCertMetrics("redis", "client", certPath, leaf.NotAfter, chainValid)
 		}
 		cfg.Certificates = []tls.Certificate{cert}
 	}

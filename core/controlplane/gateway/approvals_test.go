@@ -370,9 +370,10 @@ func TestApproveJobRefreshesStaleSnapshot(t *testing.T) {
 
 	jobID := "job-mismatch"
 	req := &pb.JobRequest{
-		JobId:    jobID,
-		Topic:    "job.test",
-		TenantId: "default",
+		JobId:       jobID,
+		Topic:       "job.test",
+		TenantId:    "default",
+		PrincipalId: "agent-submitter",
 	}
 	if err := s.jobStore.SetJobMeta(context.Background(), req); err != nil {
 		t.Fatalf("set job meta: %v", err)
