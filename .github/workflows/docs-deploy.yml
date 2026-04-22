@@ -43,6 +43,8 @@ jobs:
             --offline
             --no-progress
             --max-concurrency 32
+            --base .
+            --exclude-path docs-site/versioned_docs
             'docs/**/*.md'
             'docs-site/docs/**/*.md'
           output: ./lychee-report.md
