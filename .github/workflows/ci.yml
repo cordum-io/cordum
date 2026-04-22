@@ -329,10 +329,18 @@ jobs:
 
     - name: Mark allow-breaking if commit message requests it
       id: allow_breaking
+      # On pull_request events, checkout@v4 creates a synthetic merge commit
+      # so `git log -1` reads the merge message rather than the contributor's
+      # commit. Inspect the contributor commit (HEAD^2 on PR merges, HEAD
+      # otherwise) so the allow-breaking-openapi marker actually takes effect.
       run: |
-        if git log -1 --pretty=%B | grep -q 'allow-breaking-openapi'; then
-          echo "OPENAPI_ALLOW_BREAKING=1" >> $GITHUB_ENV
-          echo "::notice::allow-breaking-openapi marker found; oasdiff will not fail on breaking changes"
+        TARGET_REF="HEAD"
+        if [[ "${{ github.event_name }}" == "pull_request" ]] && git rev-parse --verify HEAD^2 >/dev/null 2>&1; then
+          TARGET_REF="HEAD^2"
+        fi
+        if git log -1 --pretty=%B "$TARGET_REF" | grep -q 'allow-breaking-openapi'; then
+          echo "OPENAPI_ALLOW_BREAKING=1" >> "$GITHUB_ENV"
+          echo "::notice::allow-breaking-openapi marker found on $TARGET_REF; oasdiff will not fail on breaking changes"
         fi
 
     - name: Validate OpenAPI

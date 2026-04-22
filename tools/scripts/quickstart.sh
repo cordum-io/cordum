@@ -75,12 +75,21 @@ preflight_deploy() {
   log "docker daemon: reachable"
   log "compose command: ${compose_cmd[*]}"
 
+  # Zero-config bootstrap: generate fresh secrets when the caller hasn't
+  # pre-seeded them via env. Both values are written to .env so subsequent
+  # runs + the advertised `cat .env` discovery path keep working. Callers
+  # who need deterministic values can still override via the env before
+  # invocation.
   if [[ -z "${api_key}" ]]; then
-    die "CORDUM_API_KEY is required; export it before running quickstart."
+    api_key="$(openssl rand -hex 32)"
+    export CORDUM_API_KEY="${api_key}"
+    log "CORDUM_API_KEY: auto-generated (set CORDUM_API_KEY before running to override)"
   fi
 
   if [[ -z "${REDIS_PASSWORD:-}" ]]; then
-    die "REDIS_PASSWORD is required; export REDIS_PASSWORD before running quickstart."
+    REDIS_PASSWORD="$(openssl rand -hex 24)"
+    export REDIS_PASSWORD
+    log "REDIS_PASSWORD: auto-generated (set REDIS_PASSWORD before running to override)"
   fi
 
   # Optional auth vars become required only when user auth is enabled.
@@ -411,7 +420,7 @@ else
   doctor_env=(CORDUM_API_KEY="${API_KEY}" CORDUM_TENANT_ID="${TENANT_ID}")
   if [[ -n "${TLS_CA}" ]]; then
     doctor_env+=(CORDUM_GATEWAY="https://127.0.0.1:8081")
-    env "${doctor_env[@]}" cordumctl doctor --timeout 30 --cacert ./certs/ca/ca.crt || \
+    env "${doctor_env[@]}" cordumctl doctor --timeout 30 --cacert "${TLS_CA}" || \
       log "cordumctl doctor reported issues — see docs/troubleshooting/install.md"
   else
     doctor_env+=(CORDUM_GATEWAY="http://127.0.0.1:8081")

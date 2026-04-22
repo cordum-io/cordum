@@ -100,8 +100,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set short sha
-        run: echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_ENV"
+      - name: Set short sha + build date
+        run: |
+          echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_ENV"
+          echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -133,8 +135,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set short sha
-        run: echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_ENV"
+      - name: Set short sha + build date
+        run: |
+          echo "SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_ENV"
+          echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
