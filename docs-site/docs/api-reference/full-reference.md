@@ -10,12 +10,12 @@ Source of truth: `core/controlplane/gateway/gateway_core.go` route registration 
 
 ## Related Specs and Protocol Docs
 
-- OpenAPI (generated output, current protobuf-driven subset): `docs/api/openapi/README.md`
-- OpenAPI merged spec artifact: `docs/api/openapi/cordum.swagger.json`
+- OpenAPI (canonical HTTP spec): `docs/api/openapi/cordum-api.yaml`
+- Interactive Swagger UI wrapper: `docs/api/openapi/index.html`
 - REST + gRPC overview: `docs/api.md`
 - gRPC service definition (`CordumApi`): `core/protocol/proto/v1/api.proto`
 
-This file is the comprehensive REST route reference; OpenAPI output currently covers only the generated subset.
+This file is the comprehensive REST route reference; the canonical OpenAPI spec lives alongside it at `docs/api/openapi/cordum-api.yaml`.
 
 ## gRPC Tenant Resolution
 

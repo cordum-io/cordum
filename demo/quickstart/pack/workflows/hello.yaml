@@ -1,0 +1,60 @@
+id: demo-quickstart.hello
+name: Cordum Quickstart — 3-verdict demo
+org_id: default
+
+# Three parallel worker steps, one per topic. Running in parallel means the
+# run's wall-clock is ~= the slowest step rather than the sum — the demo has
+# to finish in under 30 s and the ALLOW path is near-instant, so fanning
+# out keeps the user's attention short.
+#
+# A fourth transform step aggregates the per-topic verdicts into a single
+# run output so the caller can assert on one JSON object rather than three.
+steps:
+  greet:
+    id: greet
+    name: Greet (ALLOW)
+    type: worker
+    topic: job.demo.greet
+    input:
+      name: "${input.name}"
+    meta:
+      pack_id: demo-quickstart
+      capability: demo-quickstart.greet
+      risk_tags:
+        - safe
+
+  attempt_delete:
+    id: attempt_delete
+    name: Attempt destructive op (DENY)
+    type: worker
+    topic: job.demo.delete-all
+    input:
+      target: "${input.target}"
+    meta:
+      pack_id: demo-quickstart
+      capability: demo-quickstart.delete-all
+      risk_tags:
+        - destructive
+
+  escalate_admin:
+    id: escalate_admin
+    name: Admin operation (REQUIRE_APPROVAL)
+    type: worker
+    topic: job.demo.admin
+    input:
+      action: "${input.admin_action}"
+    meta:
+      pack_id: demo-quickstart
+      capability: demo-quickstart.admin
+      risk_tags:
+        - admin
+
+  # No aggregate transform step: safety_decision + safety_reason are on
+  # the job-meta record in Redis, not on step output, so a
+  # `${steps.X.output.safety_decision}` template would resolve nil. The
+  # demo CLI (`cordumctl demo run quickstart`) reads decisions directly
+  # from /api/v1/jobs/{id} via GetJob and assembles the verdict table
+  # on the client side — the run-output aggregation is not needed for
+  # the demo's DoD ("output clearly shows each verdict with
+  # explanation"). Left as a docstring rather than a dead step so a
+  # reader doesn't reach for a transform that would fail.

@@ -131,40 +131,13 @@ Purpose:
 Key config fields:
 
 - `input` (optional context for reviewers)
-- `input_schema` (recommended when `input` must contain required decision fields)
 - `output_path` (optional)
 
 Execution behavior:
 
-- Engine dispatches a gate job with topic `sys.approval.gate`.
-- Step enters `running` (has active gate job).
-- Gate job appears on the Approvals page alongside policy approvals.
-- Operator approves or rejects via the unified Approvals queue.
-- On approval: gate job auto-completes, step succeeds, DAG continues.
-- On rejection: gate job fails, step fails, `on_error` handler fires if configured.
-
-Recommended reviewer-facing fields:
-
-- `amount`
-- `currency`
-- `vendor`
-- `items`
-- `approval_reason`
-- `next_effect`
-
-These fields are surfaced by the approvals API/dashboard as human-readable decision
-summary data so approvers can answer: what is this, why is it being escalated, and what
-will happen next?
-
-Validation and degraded behavior:
-
-- Use `input_schema` to require the decision fields that must always exist for a valid
-  approval.
-- Optional fields may be omitted safely; the approvals API will still return a partial
-  but informative decision summary.
-- If persisted workflow approval context cannot be hydrated, the approvals API marks the
-  approval with an explicit degraded status such as `missing`, `malformed`, or
-  `unavailable` rather than silently showing an empty shell.
+- Step enters `waiting`.
+- Run enters `waiting`.
+- Resumed by `ApproveStep` API (`approved=true|false`).
 
 Output format:
 
@@ -172,9 +145,7 @@ Output format:
 
 Dashboard UI:
 
-- Gate approvals appear on the Approvals page with a `Workflow Gate` badge.
-- The dashboard prioritizes decision-first business context (title, reason, amount,
-  vendor, step, next effect) and keeps workflow/job IDs as secondary audit metadata.
+- Dedicated approval detail panel with approve/reject actions.
 
 YAML example:
 
@@ -184,22 +155,8 @@ steps:
     type: approval
     depends_on: [classify]
     input:
-      amount: "${input.request.amount}"
-      currency: "${input.request.currency}"
-      vendor: "${input.request.vendor}"
-      items: "${input.request.items}"
-      approval_reason: "${input.request.reason}"
-      next_effect: "Approve to continue payment processing."
-    input_schema:
-      type: object
-      properties:
-        amount: { type: number }
-        currency: { type: string }
-        vendor: { type: string }
-        items: { type: array }
-        approval_reason: { type: string }
-        next_effect: { type: string }
-      required: [amount, currency, vendor, items, approval_reason]
+      reason: "High impact case"
+      reviewer_group: risk-ops
 ```
 
 ### 4.3 `condition`

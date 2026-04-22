@@ -107,32 +107,6 @@ Cordum ships a baseline output rule set (disabled by default through `output_pol
 
 When saved from dashboard, these overrides are persisted under `output_policy.topic_overrides` and take precedence over global defaults for matching topics.
 
-### 3.6 Policy Studio (Input > Global) workflow
-
-The dashboard **Policy Studio → Input Policy → Global** flow is now the primary global editor and writes full `safety.yaml` bundle content through `/api/v1/policy/bundles/{id}`.
-Legacy `/policies/builder` links redirect to `/policies/input`.
-
-Operational behavior:
-
-- **First match wins (input rules)**: global input rules are ordered and evaluated top-to-bottom.
-- **`default_decision`**: applied only when no input rule matches. Recommended production default remains `deny` (fail-closed).
-- **Constraints & remediations**: each input rule can define `constraints` (`budgets`, `sandbox`, `toolchain`, `diff`, `redaction_level`) and `remediations`.
-- **Output policy controls**: global scope exposes `output_policy.enabled`, `output_policy.fail_mode`, and ordered `output_rules` (detectors/content_patterns + severity + decision + reason).
-- **Visual/Split/YAML sync**: visual edits update YAML immediately; YAML edits parse back into visual state when syntax is valid.
-- **Validation before save**: malformed YAML is surfaced inline and save is blocked until syntax errors are fixed.
-- **Conflict handling**: save errors from stale writes are surfaced as conflict responses (HTTP 409) so operators can refresh and reapply.
-- **Actionable errors**: validation/conflict/request failures are distinguished in UI feedback for save/simulate actions.
-
-Recommended pre-publish path:
-
-1. Open Input Policy (Global), choose target bundle.
-2. Apply global input/output changes (verify rule ordering).
-3. Run simulate from the same bundle context.
-4. Resolve YAML validation issues and save.
-5. Publish via existing policy publish flow (`/api/v1/policy/publish`) after review.
-
-Current milestone scope: only **Input > Global** has been migrated to the new builder surface. Workflow/Tenant/other scopes remain on existing UX and are planned for later parity work.
-
 ## 4. Rule Format (`output_rules`)
 
 `output_rules` are part of safety policy YAML and validated by `safety_policy.schema.json`.

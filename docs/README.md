@@ -90,8 +90,6 @@ variables from your shell.
 | [adr/005-output-policy-architecture.md](adr/005-output-policy-architecture.md) | ADR: Two-phase output policy architecture |
 | [adr/006-circuit-breaker-safety.md](adr/006-circuit-breaker-safety.md) | ADR: Circuit breaker on Safety Kernel client |
 | [adr/007-dashboard-state-management.md](adr/007-dashboard-state-management.md) | ADR: Zustand + React Query state management |
-| [adr/008-spa-auth-localstorage.md](adr/008-spa-auth-localstorage.md) | ADR: SPA auth token storage in localStorage |
-| [adr/009-control-plane-boundary-hardening.md](adr/009-control-plane-boundary-hardening.md) | ADR: Canonical topic registrations, worker credentials, and worker snapshots |
 
 ## API Reference
 

@@ -4,12 +4,12 @@ Source of truth: `core/controlplane/gateway/gateway_core.go` route registration 
 
 ## Related Specs and Protocol Docs
 
-- OpenAPI (generated output, current protobuf-driven subset): `docs/api/openapi/README.md`
-- OpenAPI merged spec artifact: `docs/api/openapi/cordum.swagger.json`
+- OpenAPI (canonical HTTP spec): `docs/api/openapi/cordum-api.yaml`
+- Interactive Swagger UI wrapper: `docs/api/openapi/index.html`
 - REST + gRPC overview: `docs/api.md`
 - gRPC service definition (`CordumApi`): `core/protocol/proto/v1/api.proto`
 
-This file is the comprehensive REST route reference; OpenAPI output currently covers only the generated subset.
+This file is the comprehensive REST route reference; the canonical OpenAPI spec lives alongside it at `docs/api/openapi/cordum-api.yaml`.
 
 ## gRPC Tenant Resolution
 
@@ -2209,108 +2209,6 @@ curl -sS -X DELETE http://localhost:8081/api/v1/workers/credentials/external-wor
 
 ---
 
-## 10.1 Agent Identities
-
-All endpoints require admin role. Agent identities are first-class resources representing an AI agent's identity, capabilities, and risk profile. One identity can be linked to multiple worker credentials (e.g. dev + prod for the same agent).
-
-### POST `/api/v1/agents`
-
-- Auth: required + `admin`
-- Request schema:
-
-```json
-{
-  "name": "fraud-detector",
-  "description": "Detects fraudulent transactions",
-  "owner": "risk-team",
-  "team": "risk",
-  "risk_tier": "high",
-  "allowed_topics": ["job.fraud-detection.process"],
-  "allowed_pools": ["default"],
-  "allowed_tools": [],
-  "data_classifications": ["pii", "financial"]
-}
-```
-
-- `name` (required): display name
-- `owner` (required): owner identifier
-- `risk_tier` (required): `low` | `medium` | `high` | `critical`
-- `status`: defaults to `active`. Values: `active` | `suspended` | `revoked`
-- Response: `201` + agent identity JSON with generated `id`, `created_at`, `updated_at`
-- Errors: `400`, `403`, `503`
-
-### GET `/api/v1/agents`
-
-- Auth: required + `admin`
-- Query params: `cursor`, `limit` (default 50, max 200), `status`, `risk_tier`, `team`
-- Response:
-
-```json
-{
-  "items": [{ "id": "...", "name": "...", "risk_tier": "high", ... }],
-  "cursor": "..."
-}
-```
-
-- Errors: `400`, `403`, `500`, `503`
-
-### GET `/api/v1/agents/{id}`
-
-- Auth: required + `admin`
-- Response: agent identity JSON
-- Errors: `400`, `403`, `404`, `503`
-
-### PUT `/api/v1/agents/{id}`
-
-- Auth: required + `admin`
-- Request: partial update — only provided fields are updated
-- Response: updated agent identity JSON
-- Errors: `400`, `403`, `404`, `503`
-
-### DELETE `/api/v1/agents/{id}`
-
-- Auth: required + `admin`
-- Soft-delete: sets `status` to `revoked`, preserves the record for audit
-- Response: `204`
-- Errors: `400`, `403`, `404`, `500`, `503`
-
-### Worker credential linking
-
-When creating a worker credential via `POST /api/v1/workers/credentials`, pass `agent_id` to link the credential to an agent identity:
-
-```json
-{
-  "worker_id": "fraud-worker-01",
-  "allowed_pools": ["default"],
-  "allowed_topics": ["job.fraud-detection.process"],
-  "agent_id": "uuid-of-fraud-detector-identity"
-}
-```
-
-The `agent_id` is validated to exist. Linked credentials return `agent_id` in list/detail responses.
-
-### Safety Kernel integration
-
-When a job is submitted with a worker credential linked to an agent identity, the Safety Kernel automatically enriches policy evaluation with agent context. Policy rules can match on agent fields:
-
-```yaml
-- id: critical-agent-approval
-  match:
-    topics: ["job.*"]
-    agent_risk_tiers: ["high", "critical"]
-  decision: require_approval
-  reason: "High/critical risk agents require human approval"
-
-- id: pii-agent-restricted
-  match:
-    topics: ["job.public.*"]
-    agent_data_classifications: ["pii"]
-  decision: deny
-  reason: "Agents with PII access cannot run public jobs"
-```
-
----
-
 ## 11. Packs and Marketplace
 
 All endpoints in this section require admin role.
@@ -3079,10 +2977,6 @@ The following routes are registered in gateway route setup.
 | GET | `/api/v1/auth/keys` |
 | POST | `/api/v1/auth/keys` |
 | DELETE | `/api/v1/auth/keys/{id}` |
-| GET | `/api/v1/auth/roles` |
-| GET | `/api/v1/auth/roles/{name}` |
-| PUT | `/api/v1/auth/roles/{name}` |
-| DELETE | `/api/v1/auth/roles/{name}` |
 | GET | `/api/v1/workers` |
 | GET | `/api/v1/workers/{id}` |
 | GET | `/api/v1/workers/{id}/jobs` |

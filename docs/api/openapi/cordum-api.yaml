@@ -1,9 +1,8 @@
 openapi: 3.0.3
 info:
   title: Cordum HTTP API
-  version: '2026-04-13'
-  description: Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface, including all REST routes in gateway.go plus
-    legacy and prefixed MCP HTTP endpoints.
+  version: '2026-04-21.2'
+  description: Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
   contact:
     name: Cordum Team
   license:
@@ -66,6 +65,14 @@ tags:
   description: Cryptographic audit log export configuration and health checks (admin only)
 - name: LegalHold
   description: Legal hold management for audit retention compliance (admin only)
+- name: Governance
+  description: Governance-native observability — policy decisions, approval analytics
+- name: Agents
+  description: Agent identities, delegation, and runtime statistics
+- name: Delegation
+  description: Delegation token issuance, verification, listing, and revocation
+- name: Evals
+  description: Evaluation dataset curation, incident extraction, and policy replay runs
 security:
 - apiKey: []
 - bearerAuth: []
@@ -2627,6 +2634,7 @@ paths:
       parameters:
       - $ref: '#/components/parameters/TenantID'
   /api/v1/stream:
+    x-any-method: true
     get:
       operationId: streamEvents
       summary: WebSocket event bus stream
@@ -4109,6 +4117,1440 @@ paths:
           $ref: '#/components/responses/Forbidden'
       parameters:
       - $ref: '#/components/parameters/TenantID'
+  /api/v1/agents:
+    get:
+      operationId: listAgents
+      summary: List agent identities
+      tags:
+      - Agents
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: risk_tier
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: team
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Agent identity page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+                        name: {type: string}
+                        description: {type: string}
+                        owner: {type: string}
+                        team: {type: string}
+                        risk_tier: {type: string}
+                        allowed_topics:
+                          type: array
+                          items: {type: string}
+                        allowed_pools:
+                          type: array
+                          items: {type: string}
+                        allowed_tools:
+                          type: array
+                          items: {type: string}
+                        data_classifications:
+                          type: array
+                          items: {type: string}
+                        status: {type: string}
+                        created_at: {type: string}
+                        updated_at: {type: string}
+                        last_active:
+                          type: integer
+                          format: int64
+                  cursor:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: createAgent
+      summary: Create an agent identity
+      tags:
+      - Agents
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, owner, risk_tier]
+              properties:
+                name: {type: string}
+                description: {type: string}
+                owner: {type: string}
+                team: {type: string}
+                risk_tier: {type: string}
+                allowed_topics:
+                  type: array
+                  items: {type: string}
+                allowed_pools:
+                  type: array
+                  items: {type: string}
+                allowed_tools:
+                  type: array
+                  items: {type: string}
+                data_classifications:
+                  type: array
+                  items: {type: string}
+      responses:
+        '201':
+          description: Agent identity created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/agents/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    - $ref: '#/components/parameters/TenantID'
+    get:
+      operationId: getAgent
+      summary: Get one agent identity
+      tags:
+      - Agents
+      responses:
+        '200':
+          description: Agent identity
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    put:
+      operationId: updateAgent
+      summary: Update an agent identity
+      tags:
+      - Agents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: {type: string}
+                description: {type: string}
+                owner: {type: string}
+                team: {type: string}
+                risk_tier: {type: string}
+                status: {type: string}
+                allowed_topics:
+                  type: array
+                  items: {type: string}
+                allowed_pools:
+                  type: array
+                  items: {type: string}
+                allowed_tools:
+                  type: array
+                  items: {type: string}
+                data_classifications:
+                  type: array
+                  items: {type: string}
+      responses:
+        '200':
+          description: Agent identity updated
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deleteAgent
+      summary: Delete an agent identity
+      tags:
+      - Agents
+      responses:
+        '204':
+          description: Agent identity deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/agents/{id}/stats:
+    get:
+      operationId: getAgentStats
+      summary: Get per-agent runtime statistics
+      tags:
+      - Agents
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Runtime statistics for the requested agent
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/agents/{id}/delegate:
+    post:
+      operationId: issueDelegationToken
+      summary: Issue a delegation token from one agent to another
+      tags:
+      - Agents
+      - Delegation
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_agent_id]
+              properties:
+                target_agent_id: {type: string}
+                allowed_actions:
+                  type: array
+                  items: {type: string}
+                allowed_topics:
+                  type: array
+                  items: {type: string}
+                ttl_seconds:
+                  type: integer
+                  format: int64
+                parent_token:
+                  type: string
+      responses:
+        '201':
+          description: Delegation token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: {type: string}
+                  kid: {type: string}
+                  expires_at: {type: string}
+                  chain_depth:
+                    type: integer
+                  jti: {type: string}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/agents/verify-delegation:
+    post:
+      operationId: verifyDelegationToken
+      summary: Verify a delegation token for an expected audience
+      tags:
+      - Agents
+      - Delegation
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: {type: string}
+                expected_audience: {type: string}
+      responses:
+        '200':
+          description: Delegation verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                  sub: {type: string}
+                  aud: {type: string}
+                  allowed_actions:
+                    type: array
+                    items: {type: string}
+                  allowed_topics:
+                    type: array
+                    items: {type: string}
+                  chain_depth:
+                    type: integer
+                  delegation_chain:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DelegationChainLink'
+                  error_code: {type: string}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/agents/revoke-delegation:
+    post:
+      operationId: revokeDelegationToken
+      summary: Revoke a delegation token by JTI
+      description: By default revoking a token cascades to every downstream delegation that extended it. Set `cascade=false` for narrow-scoped revocation.
+      tags:
+      - Agents
+      - Delegation
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jti]
+              properties:
+                jti: {type: string}
+                reason: {type: string}
+                cascade:
+                  type: boolean
+                  default: true
+                  description: When true, revoke downstream delegations that extended this token.
+      responses:
+        '200':
+          description: Delegation token revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jti, cascaded_count]
+                properties:
+                  jti:
+                    type: string
+                  cascaded_count:
+                    type: integer
+                    description: Number of downstream delegations revoked in addition to the root token.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/agents/{id}/delegations:
+    get:
+      operationId: listDelegationsForAgent
+      summary: List delegation tokens issued by a specific agent
+      tags:
+      - Agents
+      - Delegation
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [active, revoked, expired, all]
+      - name: scope
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: before_expiry
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: since_issued
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: until_issued
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Delegation token page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/delegations:
+    get:
+      operationId: listDelegations
+      summary: List delegation tokens for the current tenant
+      tags:
+      - Agents
+      - Delegation
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [active, revoked, expired, all]
+      - name: scope
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: before_expiry
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: since_issued
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: until_issued
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Delegation token page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegationListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/governance/decisions:
+    get:
+      operationId: listGovernanceDecisions
+      summary: Query the governance decision log
+      tags:
+      - Governance
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: since
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: until
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: topic
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: rule_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: verdict
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: agent_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+      responses:
+        '200':
+          description: Governance decision page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        job_id: {type: string}
+                        topic: {type: string}
+                        matched_rule: {type: string}
+                        verdict: {type: string}
+                        reason: {type: string}
+                        constraints:
+                          type: object
+                          additionalProperties: true
+                        approval_status: {type: string}
+                        approval_decision: {type: string}
+                        agent_id: {type: string}
+                        policy_version: {type: string}
+                        timestamp: {type: string}
+                  next_cursor:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/mcp/approvals:
+    get:
+      operationId: listMcpApprovals
+      summary: List MCP tool-call approvals
+      tags:
+      - MCP
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: MCP approval page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  next_cursor:
+                    type: integer
+                    format: uint64
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/mcp/approvals/{id}:
+    get:
+      operationId: getMcpApproval
+      summary: Get one MCP approval record
+      tags:
+      - MCP
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: MCP approval record
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/mcp/approvals/{id}/approve:
+    post:
+      operationId: approveMcpApproval
+      summary: Approve an MCP tool-call approval request
+      tags:
+      - MCP
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalDecisionRequest'
+      responses:
+        '200':
+          description: MCP approval resolved
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/mcp/approvals/{id}/reject:
+    post:
+      operationId: rejectMcpApproval
+      summary: Reject an MCP tool-call approval request
+      tags:
+      - MCP
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalDecisionRequest'
+      responses:
+        '200':
+          description: MCP approval resolved
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/mcp/verify-signature:
+    post:
+      operationId: verifyMcpSignature
+      summary: Verify an outbound MCP signature (admin-gated)
+      description: >-
+        Verify an ECDSA signature over an MCP request against the trusted-key
+        store. Admin-only. See docs/mcp/outbound-signing.md.
+      tags:
+      - MCP
+      security:
+      - apiKey: []
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Verification verdict
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/mcp/outbound:
+    get:
+      operationId: listMcpOutbound
+      summary: List outbound MCP signed-call events
+      description: >-
+        Walks the tenant's audit chain stream and returns observed outbound MCP
+        calls, filtered by time range + subject. Admin-only.
+      tags:
+      - MCP
+      security:
+      - apiKey: []
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: since
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: until
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Outbound MCP event page
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/mcp/usage:
+    get:
+      operationId: getMcpUsage
+      summary: Outbound MCP usage buckets from the audit chain
+      description: >-
+        Walks the tenant's audit chain and buckets outbound MCP calls by
+        subject, method, and tool for usage analytics. Admin-only.
+      tags:
+      - MCP
+      security:
+      - apiKey: []
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: since
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: until
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: group_by
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [subject, method, tool]
+          default: subject
+      responses:
+        '200':
+          description: Usage buckets
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/evals/datasets/from-incidents:
+    post:
+      operationId: createEvalDatasetFromIncidents
+      summary: Derive an eval dataset from governance incidents
+      tags:
+      - Evals
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: dry_run
+        in: query
+        required: false
+        schema:
+          type: boolean
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                tenant: {type: string}
+                since: {type: string}
+                until: {type: string}
+                topic: {type: string}
+                rule_id: {type: string}
+                verdicts:
+                  type: array
+                  items: {type: string}
+                agent_id: {type: string}
+                max_entries:
+                  type: integer
+                name: {type: string}
+                description: {type: string}
+                dry_run:
+                  type: boolean
+      responses:
+        '200':
+          description: Dry-run extraction result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '201':
+          description: Eval dataset created from incidents
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/evals/datasets:
+    # The gateway registers an internal Go 1.22 catch-all at
+    # `/api/v1/evals/datasets/` and dispatches to `/by-name/{name}`,
+    # `/{id}`, `/{id}/run`, and `/{id}/runs` from there because ServeMux
+    # rejects those sibling patterns as ambiguous. The public API surface
+    # is the canonical collection path plus the concrete child paths below;
+    # `x-subroute-dispatch` tells openapi-audit about the internal prefix
+    # route without modeling an invalid trailing-slash OpenAPI path.
+    x-subroute-dispatch: true
+    get:
+      operationId: listEvalDatasets
+      summary: List eval datasets
+      tags:
+      - Evals
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: name_prefix
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: created_after
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: created_before
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Eval dataset page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  next_cursor:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: createEvalDataset
+      summary: Create a curated eval dataset
+      tags:
+      - Evals
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, version, entries]
+              properties:
+                name: {type: string}
+                version:
+                  type: integer
+                description: {type: string}
+                entries:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id: {type: string}
+                      input:
+                        type: object
+                        additionalProperties: true
+                      expected_decision: {type: string}
+                      rule_id: {type: string}
+                      metadata:
+                        type: object
+                        additionalProperties:
+                          type: string
+                      source: {type: string}
+                      source_ref: {type: string}
+                      notes: {type: string}
+      responses:
+        '201':
+          description: Eval dataset created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/evals/datasets/by-name/{name}:
+    get:
+      operationId: listEvalDatasetVersions
+      summary: List versions for an eval dataset family
+      tags:
+      - Evals
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Dataset versions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/evals/datasets/by-name/{name}/versions/{version}:
+    get:
+      operationId: getEvalDatasetByNameVersion
+      summary: Get a dataset by name and version
+      tags:
+      - Evals
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: version
+        in: path
+        required: true
+        schema:
+          type: integer
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Eval dataset
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/evals/datasets/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    - $ref: '#/components/parameters/TenantID'
+    get:
+      operationId: getEvalDataset
+      summary: Get one eval dataset
+      tags:
+      - Evals
+      responses:
+        '200':
+          description: Eval dataset
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    put:
+      operationId: createEvalDatasetSuccessor
+      summary: Create a successor version from an existing dataset
+      tags:
+      - Evals
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                version:
+                  type: integer
+                description:
+                  type: string
+                entries:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+      responses:
+        '200':
+          description: Successor dataset created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deleteEvalDataset
+      summary: Delete an eval dataset
+      tags:
+      - Evals
+      parameters:
+      - name: force
+        in: query
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '204':
+          description: Dataset deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/evals/datasets/{id}/run:
+    post:
+      operationId: runEvalDataset
+      summary: Run an eval dataset against the active or candidate policy
+      description: Synchronous for ≤500 entries (returns 200 with full result), asynchronous for larger datasets (returns 202 with run_id; poll GET /evals/runs/{runId}).
+      tags:
+      - Evals
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EvalRunRequest'
+      responses:
+        '200':
+          description: Run completed synchronously
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvalRunResult'
+        '202':
+          description: Run accepted for asynchronous processing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvalRunAcceptedResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/evals/datasets/{id}/runs:
+    get:
+      operationId: listEvalRuns
+      summary: List historical runs for one eval dataset
+      tags:
+      - Evals
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: has_regression
+        in: query
+        required: false
+        schema:
+          type: boolean
+      - name: since
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: until
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - name: min_score
+        in: query
+        required: false
+        schema:
+          type: number
+          format: float
+      responses:
+        '200':
+          description: Run history page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvalRunsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/evals/runs/{run_id}:
+    parameters:
+    - name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+    - $ref: '#/components/parameters/TenantID'
+    get:
+      operationId: getEvalRun
+      summary: Get one eval run
+      tags:
+      - Evals
+      responses:
+        '200':
+          description: Completed run result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvalRunResult'
+        '202':
+          description: Run is still pending or running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvalRunAcceptedResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deleteEvalRun
+      summary: Delete a historical eval run
+      tags:
+      - Evals
+      parameters:
+      - name: force
+        in: query
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '204':
+          description: Eval run deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/mcp/status:
     get:
       operationId: mcpStatusV1
@@ -4131,6 +5573,83 @@ paths:
           $ref: '#/components/responses/Forbidden'
       parameters:
       - $ref: '#/components/parameters/TenantID'
+  /api/v1/governance/approvals/analytics:
+    get:
+      operationId: getApprovalAnalytics
+      summary: Approval analytics (time-to-approve, auto vs manual, bottlenecks)
+      description: |
+        Aggregated approval KPIs for the requested window. Consumes the
+        Policy Decision Log as the source of truth, pairs each
+        require_approval verdict with its ApprovalRecord, and computes
+        per-group breakdowns sorted with the slowest approvers first so
+        bottlenecks surface at the top.
+
+        Requires the `governance.read` permission.
+
+        Responses are memoised per `(tenant, window, group_by, limit)`
+        tuple for 30 seconds so dashboards can poll without thrashing
+        the decision-log index.
+      tags: [Governance]
+      security:
+      - apiKey: []
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: window
+        in: query
+        description: Shorthand for `since`/`until` (wins when supplied). One of `24h`, `7d`, `30d`.
+        required: false
+        schema:
+          type: string
+          enum: [24h, 7d, 30d]
+      - name: since
+        in: query
+        description: Inclusive lower bound (RFC3339 or unix milliseconds). Defaults to 24h before `until`.
+        required: false
+        schema:
+          type: string
+      - name: until
+        in: query
+        description: Exclusive upper bound (RFC3339 or unix milliseconds). Defaults to now.
+        required: false
+        schema:
+          type: string
+      - name: group_by
+        in: query
+        description: Breakdown axis; `overall` returns only the window-wide summary.
+        required: false
+        schema:
+          type: string
+          enum: [overall, rule, agent, topic]
+          default: overall
+      - name: limit
+        in: query
+        description: Top-N rows per group (bounded at 50). Ignored when `group_by=overall`.
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 10
+      responses:
+        '200':
+          description: Approval analytics response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalAnalyticsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          description: Decision log store unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 components:
   securitySchemes:
     apiKey:
@@ -4322,6 +5841,159 @@ components:
           schema:
             $ref: '#/components/schemas/GenericObject'
   schemas:
+    ApprovalAnalyticsResponse:
+      type: object
+      required: [window, summary]
+      properties:
+        window:
+          type: object
+          required: [since, until]
+          properties:
+            since:
+              type: string
+              format: date-time
+            until:
+              type: string
+              format: date-time
+        summary:
+          $ref: '#/components/schemas/ApprovalAnalyticsSummary'
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/ApprovalAnalyticsGroup'
+    ApprovalAnalyticsSummary:
+      type: object
+      required: [total, approved, rejected, expired, auto_resolved, manual_resolved]
+      properties:
+        total:
+          type: integer
+          description: Total decisions with verdict=require_approval in the window (includes still-pending).
+        approved:
+          type: integer
+        rejected:
+          type: integer
+        expired:
+          type: integer
+        auto_resolved:
+          type: integer
+          description: Resolutions driven by lifecycle events (expire/invalidate/repair), not human decision.
+        manual_resolved:
+          type: integer
+          description: Resolutions where a human approver entered approve or reject.
+        avg_time_to_approve_seconds:
+          type: number
+          nullable: true
+          description: Null when no approvals resolved in the window — distinguishes "no data" from "all resolved in 0 s".
+        p50:
+          type: number
+          nullable: true
+        p90:
+          type: number
+          nullable: true
+        p99:
+          type: number
+          nullable: true
+    ApprovalAnalyticsGroup:
+      type: object
+      required: [key, label, total, approved, rejected, expired, auto_count, manual_count]
+      properties:
+        key:
+          type: string
+          description: Group identifier (rule id, agent id, or topic string).
+        label:
+          type: string
+        total:
+          type: integer
+        approved:
+          type: integer
+        rejected:
+          type: integer
+        expired:
+          type: integer
+        auto_count:
+          type: integer
+        manual_count:
+          type: integer
+        avg_ttar_seconds:
+          type: number
+          nullable: true
+        p90_seconds:
+          type: number
+          nullable: true
+    DelegationChainLink:
+      type: object
+      required: [agent_id, issued_at, expires_at, jti, issued_by]
+      properties:
+        agent_id:
+          type: string
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        jti:
+          type: string
+        parent_jti:
+          type: string
+          nullable: true
+        issued_by:
+          type: string
+    DelegationView:
+      type: object
+      required: [jti, issuer, subject, audience, chain_depth, issued_at, expires_at, revoked]
+      properties:
+        jti:
+          type: string
+        issuer:
+          type: string
+          description: Root issuer for the delegation chain.
+        subject:
+          type: string
+          description: Agent that issued the token.
+        audience:
+          type: string
+          description: Target agent the token was minted for.
+        allowed_actions:
+          type: array
+          items:
+            type: string
+        allowed_topics:
+          type: array
+          items:
+            type: string
+        chain:
+          type: array
+          items:
+            $ref: '#/components/schemas/DelegationChainLink'
+        chain_depth:
+          type: integer
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        revoked:
+          type: boolean
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_reason:
+          type: string
+          nullable: true
+    DelegationListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DelegationView'
+        next_cursor:
+          type: string
+          nullable: true
     Error:
       type: object
       properties:
@@ -4707,6 +6379,52 @@ components:
             items:
               $ref: '#/components/schemas/SafetyDecision'
             nullable: true
+          delegation:
+            $ref: '#/components/schemas/DelegationLineageView'
+    DelegationLineageChainLink:
+      type: object
+      properties:
+        agent_id:
+          type: string
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        jti:
+          type: string
+        parent_jti:
+          type: string
+    DelegationLineageView:
+      type: object
+      properties:
+        jti:
+          type: string
+        audience:
+          type: string
+        root_issuer:
+          type: string
+        parent_issuer:
+          type: string
+        chain_depth:
+          type: integer
+        chain:
+          type: array
+          items:
+            $ref: '#/components/schemas/DelegationLineageChainLink'
+        scope:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+        verified_at:
+          type: integer
+          format: int64
+        reverified_at_dispatch:
+          type: boolean
     SafetyDecision:
       type: object
       description: Result of safety kernel policy evaluation for a job
@@ -5313,6 +7031,59 @@ components:
         updated_at:
           type: string
           format: date-time
+        verification:
+          $ref: '#/components/schemas/InstalledPackVerification'
+          description: |
+            Server-verified pack signature state. Pre-existing installs
+            from before signature verification shipped read as absent;
+            clients SHOULD render an absent value as {signed: false}.
+    InstalledPackVerification:
+      type: object
+      description: |
+        Pack-signature verification outcome computed by the gateway at
+        install time. Never client-supplied — the gateway discards any
+        `verification` field on the install payload and computes its own.
+        Pre-existing installs default to {signed: false} when this object
+        is absent.
+      required: [signed]
+      properties:
+        signed:
+          type: boolean
+          description: |
+            True when the gateway successfully verified the pack against
+            a trusted publisher key at install time.
+        publisher_id:
+          type: string
+          description: Publisher identifier derived from the trusted key's metadata.
+        kid:
+          type: string
+          description: Key id of the Ed25519 public key that verified the pack.
+        verified_at:
+          type: string
+          format: date-time
+          description: RFC3339 timestamp of the server-side verification.
+        has_cordum_counter_sig:
+          type: boolean
+          description: |
+            True when a valid Cordum counter-signature envelope
+            (pack.yaml.sig.cordum) is present and verified against the
+            embedded Cordum counter-signing key.
+        signature_algorithm:
+          type: string
+          enum: [ed25519]
+          description: Algorithm advertised by the verified envelope. Always ed25519 today.
+        pack_signature_version:
+          type: integer
+          minimum: 1
+          description: Canonical manifest version that was signed.
+        warnings:
+          type: array
+          description: |
+            Non-fatal warnings the gateway wants to surface alongside the
+            verification outcome (for example, "pack accepted unsigned —
+            gateway strict mode disabled").
+          items:
+            type: string
     PackVerification:
       type: object
       properties:
@@ -5864,6 +7635,151 @@ components:
           additionalProperties:
             type: integer
             format: int64
+    EvalRunRequest:
+      type: object
+      properties:
+        use_current_policy:
+          type: boolean
+        candidate_bundle_id:
+          type: string
+        candidate_content:
+          type: string
+        max_entries:
+          type: integer
+    EvalRunAcceptedResponse:
+      type: object
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, running, failed]
+        poll_url:
+          type: string
+        dataset_id:
+          type: string
+        dataset_name:
+          type: string
+        dataset_version:
+          type: integer
+        tenant:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        policy_snapshot:
+          type: string
+        error:
+          type: string
+      required:
+      - run_id
+      - status
+    EvalRunSummary:
+      type: object
+      properties:
+        total:
+          type: integer
+        passed:
+          type: integer
+        failed:
+          type: integer
+        regressions:
+          type: integer
+        errored:
+          type: integer
+        score_percent:
+          type: number
+          format: float
+          nullable: true
+      required:
+      - total
+      - passed
+      - failed
+      - regressions
+      - errored
+    EvalEntryResult:
+      type: object
+      properties:
+        entry_id:
+          type: string
+        input:
+          type: object
+          additionalProperties: true
+        expected_decision:
+          type: string
+        actual_decision:
+          type: string
+        rule_id:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
+          enum: [pass, fail, regression, error]
+          description: regression = expected was deny/require_approval/throttle/allow_with_constraints AND actual is allow
+        drift_direction:
+          type: string
+          enum: [escalated, relaxed, unchanged]
+        error:
+          type: string
+      required:
+      - entry_id
+      - status
+      - drift_direction
+    EvalRunResult:
+      type: object
+      properties:
+        run_id:
+          type: string
+          format: uuid
+        dataset_id:
+          type: string
+        dataset_name:
+          type: string
+        dataset_version:
+          type: integer
+        tenant:
+          type: string
+        policy_snapshot:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        summary:
+          $ref: '#/components/schemas/EvalRunSummary'
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvalEntryResult'
+      required:
+      - run_id
+      - dataset_id
+      - dataset_name
+      - dataset_version
+      - tenant
+      - policy_snapshot
+      - started_at
+      - completed_at
+      - summary
+      - entries
+    EvalRunsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvalRunResult'
+        next_cursor:
+          type: string
+      required:
+      - items
     PolicyReplayRequest:
       type: object
       properties:

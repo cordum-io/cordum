@@ -20,7 +20,7 @@ steps:
     type: worker
     depends_on:
       - validate
-    condition: "input.amount != nil && input.amount > 0 && input.amount < 100"
+    condition: "input.amount != nil && input.amount < 100"
     topic: job.demo-mock-bank.transfer
     input:
       amount: "${input.amount}"
@@ -42,7 +42,7 @@ steps:
     type: worker
     depends_on:
       - validate
-    condition: "input.amount != nil && input.amount >= 100 && input.amount > 0 && input.amount < 300"
+    condition: "input.amount != nil && input.amount >= 100 && input.amount < 300"
     topic: job.demo-mock-bank.transfer
     input:
       amount: "${input.amount}"
@@ -64,7 +64,7 @@ steps:
     type: worker
     depends_on:
       - validate
-    condition: "input.amount != nil && input.amount >= 300 && input.amount > 0"
+    condition: "input.amount != nil && input.amount >= 300"
     topic: job.demo-mock-bank.transfer
     input:
       amount: "${input.amount}"

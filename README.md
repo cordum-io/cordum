@@ -29,6 +29,63 @@
 
 ---
 
+## Quickstart
+
+One command stands up the full stack — API gateway, scheduler, safety
+kernel, workflow engine, context engine, dashboard, NATS, and
+TLS-secured Redis — with auto-generated secrets, auto-provisioned
+certificates, and a post-deploy smoke test that exercises a real
+approval workflow:
+
+```bash
+git clone https://github.com/cordum-io/cordum.git
+cd cordum
+./tools/scripts/quickstart.sh
+```
+
+**Prerequisites:** Docker Desktop v4+ (or Engine v20.10+ with Compose v2,
+≥ 4 GB RAM allocated), Go 1.24+ (for first-run cert generation), and
+`curl`. On Windows use MSYS2 / Git Bash / WSL.
+
+**What you get at the end:**
+- Dashboard at http://localhost:8082 (admin / admin123).
+- Gateway at http://localhost:8081 with a generated `CORDUM_API_KEY` in
+  `.env`.
+- TLS CA, server, and client keypairs under `./certs/`.
+- A working approval-gate workflow proven by the built-in
+  `platform_smoke.sh` run.
+
+Full walkthrough, platform notes, and troubleshooting:
+[docs/quickstart.md](docs/quickstart.md).
+
+### See a 3-verdict demo
+
+Once the stack is up, install the `demo-quickstart` pack and run the
+governance demo:
+
+```bash
+cordumctl pack install ./demo/quickstart/pack
+cordumctl demo run quickstart
+```
+
+A single `hello, operator!` workflow fans out to three topics and
+exercises every safety-kernel decision class in under 30 seconds:
+
+```
+  +--------------------+--------------------------+--------------------+---------
+  | Step               | Topic                    | Verdict            | Reason
+  +--------------------+--------------------------+--------------------+---------
+  | greet              | job.demo.greet           | ALLOW              | Safe…
+  | attempt_delete     | job.demo.delete-all      | DENY               | Block…
+  | escalate_admin     | job.demo.admin           | REQUIRE_APPROVAL   | Sign…
+  +--------------------+--------------------------+--------------------+---------
+```
+
+Full walkthrough, rule-by-rule explanation, and extension recipe:
+[demo/quickstart/README.md](demo/quickstart/README.md).
+
+---
+
 ## The Problem: The Agent Risk Gap
 
 Enterprises are rushing to deploy **Autonomous AI Agents**, but they're hitting a wall of risk. According to Gartner, **74% of enterprises see AI agents as a new attack vector**, and over 40% of agentic AI projects will be canceled due to inadequate risk controls.
@@ -103,29 +160,52 @@ graph LR
 
 | Goal | Path |
 |------|------|
-| **Just want to try it?** | `./tools/scripts/quickstart.sh` (below) |
-| **Manual step-by-step?** | [docs/quickstart.md](docs/quickstart.md) |
-| **Developing Cordum?** | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| **Just want to try it?** | `./tools/scripts/quickstart.sh` — one-command install from source ([guide](docs/quickstart.md)) |
+| **Run the full stack from pre-built images?** | `docker compose pull && docker compose up -d` (below) — once release images ship to ghcr.io |
+| **Developing Cordum?** | See [Development](#development) |
 
 ### Prerequisites
 
-- **Docker Desktop v4+** or **Docker CLI v20.10+** with **Compose v2** (4GB+ RAM allocated)
-- **jq** (recommended, for parsing API responses)
-- **Go 1.24+** (optional, only needed for `cordumctl` or cert generation)
+- **Docker Desktop v4+** or **Docker Engine v20.10+** with the **Compose v2** plugin (≥ 4 GB RAM allocated to Docker).
+- **jq** (recommended, for parsing API responses).
+
+### Run the published images
 
 ```bash
 git clone https://github.com/cordum-io/cordum.git
 cd cordum
-./tools/scripts/quickstart.sh
+export CORDUM_API_KEY=$(openssl rand -hex 32)
+export REDIS_PASSWORD=$(openssl rand -hex 16)
+docker compose pull         # pulls every Cordum service from ghcr.io
+docker compose up -d        # starts the stack — no source build needed
 ```
-
-That's it. The script auto-creates `.env`, generates API keys and Redis password, builds all services, and runs health checks. No manual configuration needed.
 
 **Dashboard:** http://localhost:8082
 **Login:** `admin` / `admin123` (change in `.env` → `CORDUM_ADMIN_PASSWORD`)
 
+Pin a specific release by exporting `CORDUM_VERSION=1.2.3` before
+`docker compose pull`. Defaults to `:latest`, which only moves on stable
+release tags (pre-release suffixes such as `-rc.1` never promote
+`:latest`).
+
+### Verifying image signatures
+
+Every release-tag image is signed with [cosign] keyless OIDC. Verify
+before deploying to production:
+
+```bash
+cosign verify ghcr.io/cordum-io/cordum/api-gateway:1.2.3 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp 'https://github\.com/cordum-io/cordum/\.github/workflows/docker\.yml@refs/tags/v.*'
+```
+
+See [docs/deployment/images.md](docs/deployment/images.md) for the full
+image catalogue, multi-arch pull instructions, and tag policy.
+
+[cosign]: https://docs.sigstore.dev/cosign/overview/
+
 <details>
-<summary>Manual setup (without quickstart script)</summary>
+<summary>Manual setup (without docker compose)</summary>
 
 ```bash
 cp .env.example .env
@@ -151,18 +231,24 @@ helm install cordum oci://ghcr.io/cordum-io/cordum/charts/cordum \
 
 See [cordum-helm/](cordum-helm/) for the full Helm chart reference. Chart also available on [Artifact Hub](https://artifacthub.io/packages/helm/cordum/cordum).
 
-**Container images** (multi-arch: amd64 + arm64):
+**Container images** (multi-arch: linux/amd64 + linux/arm64):
 
-| Image | Registry |
-|-------|----------|
-| `cordum/api-gateway` | [Docker Hub](https://hub.docker.com/r/cordum/api-gateway) |
-| `cordum/scheduler` | [Docker Hub](https://hub.docker.com/r/cordum/scheduler) |
-| `cordum/safety-kernel` | [Docker Hub](https://hub.docker.com/r/cordum/safety-kernel) |
-| `cordum/workflow-engine` | [Docker Hub](https://hub.docker.com/r/cordum/workflow-engine) |
-| `cordum/context-engine` | [Docker Hub](https://hub.docker.com/r/cordum/context-engine) |
-| `cordum/dashboard` | [Docker Hub](https://hub.docker.com/r/cordum/dashboard) |
+| Image | GHCR | Docker Hub |
+|-------|------|------------|
+| `api-gateway` | [`ghcr.io/cordum-io/cordum/api-gateway`](https://github.com/cordum-io/cordum/pkgs/container/cordum%2Fapi-gateway) | [`cordum/api-gateway`](https://hub.docker.com/r/cordum/api-gateway) |
+| `scheduler` | `ghcr.io/cordum-io/cordum/scheduler` | [`cordum/scheduler`](https://hub.docker.com/r/cordum/scheduler) |
+| `safety-kernel` | `ghcr.io/cordum-io/cordum/safety-kernel` | [`cordum/safety-kernel`](https://hub.docker.com/r/cordum/safety-kernel) |
+| `workflow-engine` | `ghcr.io/cordum-io/cordum/workflow-engine` | [`cordum/workflow-engine`](https://hub.docker.com/r/cordum/workflow-engine) |
+| `context-engine` | `ghcr.io/cordum-io/cordum/context-engine` | [`cordum/context-engine`](https://hub.docker.com/r/cordum/context-engine) |
+| `mcp` | `ghcr.io/cordum-io/cordum/mcp` | `cordum/mcp` |
+| `dashboard` | `ghcr.io/cordum-io/cordum/dashboard` | [`cordum/dashboard`](https://hub.docker.com/r/cordum/dashboard) |
 
-Also available on GHCR: `ghcr.io/cordum-io/cordum/{service}:{version}`
+![latest release](https://img.shields.io/github/v/release/cordum-io/cordum?sort=semver&label=release)
+![api-gateway image size](https://img.shields.io/docker/image-size/cordum/api-gateway/latest?label=api-gateway%20image)
+![dashboard image size](https://img.shields.io/docker/image-size/cordum/dashboard/latest?label=dashboard%20image)
+
+Full catalogue, tag policy, cosign verification recipe, and multi-arch
+notes: [docs/deployment/images.md](docs/deployment/images.md).
 
 ### Ports
 
@@ -210,6 +296,33 @@ docker compose logs -f api-gateway
 | Stale config after changes | `redis-cli DEL cfg:system:default` then restart |
 
 For detailed troubleshooting, see [docs/troubleshooting.md](docs/troubleshooting.md).
+
+## Development
+
+The published-images path above pulls Cordum binaries from `ghcr.io`.
+Contributors who need to rebuild from source use the development override
+file:
+
+```bash
+make dev-up      # docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+make dev-logs    # tail compose logs
+make dev-down    # docker compose down
+```
+
+`docker-compose.dev.yml` re-pins every Cordum service to a local
+`cordum/<name>:dev` tag and forces the `build:` context, so source
+changes are reflected on the next `--build`. Upstream images (NATS,
+Redis) are untouched. See `Makefile` and `docker-compose.dev.yml` for
+full details.
+
+Other useful contributor commands:
+
+| Command | Purpose |
+|---|---|
+| `make build` | Build every service binary into `bin/` (wraps `make proto` first). |
+| `make build SERVICE=cordumctl` | Build a single service. |
+| `make test` | Run the full Go test suite. |
+| `make smoke` | Quick post-deploy smoke against a running stack. |
 
 ## Key Features
 

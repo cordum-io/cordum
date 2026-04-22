@@ -83,76 +83,6 @@ kubectl create secret generic cordum-nats-server-tls \
   -n cordum
 ```
 
-### TLS Certificate Hot-Reload
-
-Cordum services that serve TLS use a `CertReloader` that watches certificate
-and key files on disk and atomically swaps them without restart or downtime.
-Existing connections continue with the previously loaded certificate; new
-connections use the updated one.
-
-| Service | Env Vars | Label |
-|---------|----------|-------|
-| Gateway (gRPC) | `GRPC_TLS_CERT`, `GRPC_TLS_KEY` | `gateway-grpc` |
-| Gateway (HTTP) | `GATEWAY_HTTP_TLS_CERT`, `GATEWAY_HTTP_TLS_KEY` | `gateway-http` |
-| Safety Kernel | `SAFETY_KERNEL_TLS_CERT`, `SAFETY_KERNEL_TLS_KEY` | `safety-kernel` |
-| Context Engine | `CONTEXT_ENGINE_TLS_CERT`, `CONTEXT_ENGINE_TLS_KEY` | `context-engine` |
-
-How it works:
-
-- On startup, the service loads the cert/key pair from the paths in the env vars.
-- A background goroutine polls the files every **30 seconds**, comparing modification times.
-- When a change is detected, the new cert/key pair is loaded and stored via an atomic pointer swap.
-- If the new files fail to parse (corrupted, incomplete write), the old certificate is kept and an error is logged. The service does not crash.
-
-**Operational notes:**
-
-- Write the new cert and key atomically (e.g., write to a temp file then `mv`) to avoid the reloader seeing a half-written file.
-- In Kubernetes, cert-manager volume mounts update atomically via symlinks — the reloader picks up changes on the next 30-second poll.
-- The label in the log messages (e.g., `"label": "gateway-grpc"`) identifies which service reloaded.
-
-### JWT Authentication
-
-The gateway supports JWT bearer tokens for authenticating API requests. Two
-signing algorithms are supported: **HS256** (HMAC-SHA256) and **RS256**
-(RSA-SHA256). Both can be configured simultaneously — the gateway selects the
-algorithm based on the `alg` header in each token.
-
-**Configuration:**
-
-| Env Var | Description |
-|---------|-------------|
-| `CORDUM_JWT_HMAC_SECRET` | HMAC secret for HS256. Prefix with `base64:` for explicit base64 decoding; raw string bytes used otherwise. |
-| `CORDUM_JWT_PUBLIC_KEY` | Inline RSA public key (PEM or DER) for RS256 |
-| `CORDUM_JWT_PUBLIC_KEY_PATH` | Path to RSA public key file for RS256 (enables file-based key rotation) |
-| `CORDUM_JWT_ISSUER` | Expected `iss` claim. **Required in production** — requests fail without it. |
-| `CORDUM_JWT_AUDIENCE` | Expected `aud` claim. **Required in production** — requests fail without it. |
-| `CORDUM_JWT_CLOCK_SKEW` | Allowed clock drift (e.g., `30s`). Hard cap: **5 minutes**. |
-| `CORDUM_JWT_DEFAULT_ROLE` | Role assigned when token has no `role` claim (default: `viewer`) |
-| `CORDUM_JWT_REQUIRED` | Set to `true` to reject all requests without a valid JWT |
-
-**Production enforcement:**
-
-When `CORDUM_ENV=production` (or `CORDUM_PRODUCTION=true`):
-- `CORDUM_JWT_ISSUER` must be set — tokens without a matching `iss` are rejected.
-- `CORDUM_JWT_AUDIENCE` must be set — tokens without a matching `aud` are rejected.
-- In non-production mode, missing issuer/audience logs a warning but allows the request.
-
-**Key rotation (RS256):**
-
-When `CORDUM_JWT_PUBLIC_KEY_PATH` is set, the gateway watches the key file for
-changes, polling every **30 seconds**. On detecting a new modification time,
-it re-reads the file and atomically swaps the validator. Existing in-flight
-validations complete with the old key; new requests use the updated key.
-
-For HMAC-only configurations (no key file), the watch loop is a no-op — restart
-the gateway or send SIGHUP to pick up a new secret.
-
-**HMAC secret format:**
-
-- Plain string: `CORDUM_JWT_HMAC_SECRET=my-secret-key` — uses raw bytes.
-- Base64-encoded: `CORDUM_JWT_HMAC_SECRET=base64:dGhpcyBpcyBhIHNlY3JldA==` — decodes after the prefix.
-- If the value looks like base64 but is missing the `base64:` prefix, a warning is logged to help operators migrate from older configurations.
-
 ## 4) Observability
 
 ### Metrics Endpoints
@@ -239,60 +169,6 @@ CORDUM_ALLOWED_ORIGINS="https://dashboard.example.com"
 CORDUM_CORS_ALLOW_ORIGINS="https://dashboard.example.com"
 CORS_ALLOW_ORIGINS="https://dashboard.example.com"
 ```
-
-## Control Plane Boundary Hardening
-
-Before turning on strict topic/schema/worker boundary checks in production, stage the
-rollout explicitly. These controls are shared across the gateway, scheduler, topic
-registry, worker credential store, and dashboard Topics page.
-
-### Feature flags
-
-| Variable | Recommended initial value | Production target | Notes |
-|----------|---------------------------|-------------------|-------|
-| `SCHEMA_ENFORCEMENT` | `warn` | `enforce` | Gateway rejects bad job payloads only in `enforce`; scheduler also enforces before dispatch. |
-| `WORKER_ATTESTATION` | `off` or `warn` | `enforce` | `warn` keeps older workers alive while surfacing missing/invalid credentials in logs. |
-| `WORKER_READINESS_REQUIRED` | `false` | `true` where supported | Keeps legacy heartbeat-only workers schedulable until they send readiness handshakes. |
-| `WORKER_READINESS_TTL` | `60s` | `60s` to `5m` | Increase only if workers handshake infrequently; lower values tighten readiness freshness. |
-
-### Recommended rollout phases
-
-1. **Observe**
-   - Populate the canonical topic registry (`/api/v1/topics` or `cordumctl topic create`)
-   - Provision worker credentials for external fleets
-   - Keep `SCHEMA_ENFORCEMENT=warn`
-   - Keep `WORKER_ATTESTATION=off` or `warn`
-   - Keep `WORKER_READINESS_REQUIRED=false`
-
-2. **Converge**
-   - Make sure every production topic appears in the dashboard Topics page
-   - Verify pack topics point at the correct input/output schemas
-   - Rotate workers onto issued credentials and validate attestation logs are clean
-   - Confirm workers advertise `ready_topics` during startup/handshake
-
-3. **Enforce**
-   - Move `SCHEMA_ENFORCEMENT` to `enforce` after submit-time violations reach zero
-   - Move `WORKER_ATTESTATION` to `enforce` after all production workers have valid credentials
-   - Enable `WORKER_READINESS_REQUIRED=true` only after readiness handshakes are universally present
-
-### Operator checks before enabling enforcement
-
-- `cordumctl topic list` shows every expected topic with the correct pool and schema IDs
-- Dashboard **Topics** page shows no unexpected degraded topics
-- `cordumctl worker credential list` covers all externally managed workers
-- Scheduler logs no recurring `attestation failed`, `unknown_topic`, or `schema_validation_failed` events
-- Staging smoke tests submit representative jobs for every critical topic
-
-### Rollback guidance
-
-If enforcement causes production impact, roll back in this order:
-
-1. Set `WORKER_READINESS_REQUIRED=false`
-2. Downgrade `WORKER_ATTESTATION` from `enforce` to `warn` (or `off` if needed)
-3. Downgrade `SCHEMA_ENFORCEMENT` from `enforce` to `warn`
-
-This preserves visibility while reopening the strictest gates first. Record the failing
-topic, worker ID, or schema ID before rollback so you can close the gap and retry safely.
 
 ## 6) Backup + Restore
 
@@ -399,7 +275,7 @@ Document a restore drill and run it at least quarterly.
 - Use versioned images and a staged rollout (dev -> staging -> prod).
 - Validate schema/policy changes in staging before publish.
 - Keep backward compatibility for workflow payloads.
-- The production K8s overlay pins all images to `v0.9.7` — update `kustomization.yaml` images section for upgrades.
+- The production K8s overlay pins all images to `v0.1.0` — update `kustomization.yaml` images section for upgrades.
 
 ### Rolling Upgrade Procedure
 
@@ -437,84 +313,6 @@ done
 - Enforce `CORDUM_LICENSE_REQUIRED=true` for enterprise gateways.
 - Keep public and enterprise images in separate registries.
 - Audit all API keys and principal roles.
-
-## Licensing Configuration
-
-### Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `CORDUM_LICENSE_FILE` | Path to the license JSON file on disk |
-| `CORDUM_LICENSE_TOKEN` | Inline license token (alternative to file) |
-| `CORDUM_LICENSE_PUBLIC_KEY` | Inline ECDSA public key (PEM) for license signature verification |
-| `CORDUM_LICENSE_PUBLIC_KEY_PATH` | Path to public key file for license verification |
-
-### Tiers
-
-| Tier | Description |
-|------|-------------|
-| **Community** | Default when no license is installed. Enforced limits on workers, concurrent jobs, rate limits, and audit retention. |
-| **Team** | Unlocks higher limits, additional features, and extended audit retention. |
-| **Enterprise** | Full platform capabilities including SAML/SSO, advanced RBAC, unlimited workers, and priority support. |
-
-If no license file or token is provided, the gateway starts in **Community** tier with enforced limits.
-
-### Expiry Lifecycle
-
-1. **Valid** — License is active and within its validity window.
-2. **Warning** (30 days before expiry) — The gateway logs warnings and the dashboard displays an expiry notice. All features remain available.
-3. **Grace period** (14 days after expiry, configurable) — The license is expired but the platform continues operating at its licensed tier with logged warnings.
-4. **Degraded** — After the grace period, the gateway falls back to Community tier limits. The platform never bricks — it degrades gracefully to community defaults.
-
-### CLI Commands
-
-```bash
-cordumctl license install ./license.json   # Install a license from file
-cordumctl license info                     # Display license plan, entitlements, and expiry
-cordumctl license reload                   # Hot-reload license on running gateway (no restart)
-```
-
-### Hot-Reload
-
-Reload a license on a running gateway without restart:
-
-```bash
-curl -X POST https://gateway:8081/api/v1/license/reload \
-  -H "Authorization: Bearer $API_KEY"
-```
-
-The gateway re-reads the license from environment or disk, revalidates the signature, and applies the new entitlements immediately.
-
-## Telemetry Configuration
-
-### Mode
-
-| `CORDUM_TELEMETRY_MODE` | Behavior |
-|--------------------------|----------|
-| `off` | No telemetry data is collected or stored. |
-| `local_only` (default) | Telemetry is collected and stored locally for the dashboard. No data is sent externally. |
-| `anonymous` | Aggregate, anonymized usage data is sent to Cordum. Requires explicit opt-in. |
-
-The default is `local_only` — remote reporting is never enabled without explicit operator opt-in.
-
-### Dashboard Consent
-
-On first visit, the dashboard displays a consent banner explaining telemetry modes. The operator must choose a mode before telemetry data is transmitted externally.
-
-### Inspect Payload
-
-Review exactly what telemetry data would be sent:
-
-```bash
-curl -H "Authorization: Bearer $API_KEY" \
-  https://gateway:8081/api/v1/telemetry/inspect
-```
-
-### Data Principles
-
-- **No PII collected** — telemetry contains only aggregate counts, hashed install ID, and feature flags.
-- No job content, prompts, outputs, user identifiers, or tenant data is ever included.
-- The hashed install ID is a one-way SHA-256 hash of the instance ID — it cannot be reversed to identify the installation.
 
 ## 9) K8s Hardening (recommended)
 
@@ -1034,11 +832,6 @@ Complete list of production-relevant environment variables:
 | `REDIS_TLS_KEY` | All | Redis TLS client key path |
 | `REDIS_CLUSTER_ADDRESSES` | All | Redis cluster seed node addresses |
 | `CORDUM_LICENSE_REQUIRED` | Gateway | Enforce enterprise license check |
-| `CORDUM_LICENSE_FILE` | Gateway | Path to license JSON file |
-| `CORDUM_LICENSE_TOKEN` | Gateway | Inline license token |
-| `CORDUM_LICENSE_PUBLIC_KEY` | Gateway | Inline ECDSA public key for license verification |
-| `CORDUM_LICENSE_PUBLIC_KEY_PATH` | Gateway | Path to public key file for license verification |
-| `CORDUM_TELEMETRY_MODE` | Gateway | Telemetry mode: `off`, `local_only` (default), `anonymous` |
 
 ---
 

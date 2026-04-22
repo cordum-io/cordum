@@ -14,7 +14,7 @@ docker compose up -d
 docker compose ps
 
 # View logs
-docker compose logs -f api-gateway
+docker compose logs -f cordum-api
 docker compose logs -f cordum-scheduler
 
 # Dashboard available at
@@ -28,15 +28,15 @@ open http://localhost:8082
 make build
 
 # Build specific service
-make build SERVICE=cordum-api-gateway
+make build SERVICE=cordum-api
 make build SERVICE=cordum-scheduler
-make build SERVICE=cordum-context-engine
+make build SERVICE=cordum-context
 
 # Build with race detector (for testing)
-go build -race ./cmd/cordum-api-gateway
+go build -race ./cmd/cordum-api
 
 # Build Docker images
-make docker SERVICE=cordum-api-gateway
+make docker SERVICE=cordum-api
 docker compose build
 ```
 
@@ -102,66 +102,36 @@ go install ./cmd/cordumctl
 cordumctl --help
 
 # Job operations
-cordumctl job submit --topic job.hello-pack.echo --prompt "hello"
-cordumctl job status <job-id>
-cordumctl job logs <job-id>
+cordumctl job submit --type echo --input '{"message":"hello"}'
+cordumctl job get <job-id>
+cordumctl job list --status pending
+cordumctl job cancel <job-id>
 
 # Workflow operations
-cordumctl workflow create --file workflow.json
-cordumctl workflow delete <workflow-id>
-cordumctl run start <workflow-id> --input '{"key":"value"}'
-cordumctl run get <run-id>
-cordumctl run timeline <run-id>
-cordumctl run delete <run-id>
+cordumctl workflow create -f workflow.yaml
+cordumctl workflow list
+cordumctl workflow run <workflow-id> --input '{"key":"value"}'
+cordumctl workflow run-status <run-id>
+
+# Policy operations
+cordumctl policy list
+cordumctl policy get <policy-id>
+cordumctl policy simulate --policy policy.yaml --input job.json
+cordumctl policy reload
 
 # Approval operations
-cordumctl approval job <job-id> --approve
-cordumctl approval job <job-id> --reject
-cordumctl approval repair <job-id>                # dry-run inspection
-cordumctl approval repair <job-id> --apply
-cordumctl approval repair <job-id> --apply --note "operator repair note"
-
-# DLQ operations
-cordumctl dlq retry <job-id>
+cordumctl approval list --status pending
+cordumctl approval approve <job-id> --comment "Approved"
+cordumctl approval reject <job-id> --comment "Rejected"
 
 # Pack operations
 cordumctl pack list
-cordumctl pack install ./my-pack
-cordumctl pack show my-pack
-cordumctl pack verify my-pack
-cordumctl pack uninstall my-pack
-
-# Topic registry
-cordumctl topic list
-cordumctl topic create job.my-pack.process --pool my-pack --input-schema my-pack/ProcessInput --output-schema my-pack/ProcessResult
-cordumctl topic delete job.my-pack.process
-
-# Worker credentials
-cordumctl worker credential list
-cordumctl worker credential create --worker-id external-worker-01 --allowed-pools my-pack --allowed-topics job.my-pack.process
-cordumctl worker credential revoke --worker-id external-worker-01
-
-# Pool management
-cordumctl pool list
-cordumctl pool get <pool-name>
-cordumctl pool create <pool-name> --requires gpu,docker --description "GPU pool"
-cordumctl pool update <pool-name> --description "Updated"
-cordumctl pool delete <pool-name> --force
-cordumctl pool drain <pool-name> --timeout 300
-cordumctl pool topic add <pool-name> job.my-service.process
-cordumctl pool topic remove <pool-name> job.my-service.process
-
-# License management
-cordumctl license info                    # display license details (plan, entitlements, expiry)
-cordumctl license install ./license.json  # install license from file
-cordumctl license reload                  # hot-reload license on running gateway (no restart)
-cordumctl auth sso status                 # inspect published SAML metadata/login URLs and runtime state
-cordumctl auth sso status --json          # raw /api/v1/auth/config output for automation
-cordumctl status                          # show tier, expiry, usage vs limits
+cordumctl pack install <pack-name>
+cordumctl pack uninstall <pack-name>
 
 # Health & status
 cordumctl status
-cordumctl status --json                   # machine-readable output
+cordumctl health
 ```
 
 ## Redis Operations
@@ -245,16 +215,16 @@ docker compose ps
 
 # View logs
 docker compose logs -f <service>
-docker compose logs --tail=100 api-gateway
+docker compose logs --tail=100 cordum-api
 
 # Restart service
 docker compose restart cordum-scheduler
 
 # Rebuild and restart
-docker compose up -d --build api-gateway
+docker compose up -d --build cordum-api
 
 # Shell into container
-docker compose exec api-gateway sh
+docker compose exec cordum-api sh
 docker compose exec redis sh
 
 # View container resource usage
@@ -295,7 +265,7 @@ git rebase origin/main
 LOG_LEVEL=debug go run ./cmd/cordum-scheduler
 
 # Run with delve debugger
-dlv debug ./cmd/cordum-api-gateway -- --config config.yaml
+dlv debug ./cmd/cordum-api -- --config config.yaml
 
 # Profile CPU
 go test -cpuprofile cpu.prof -bench=. ./core/safety/...
