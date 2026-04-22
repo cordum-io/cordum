@@ -155,10 +155,17 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
     };
   }, []);
 
-  // Sync local state when URL changes externally
-  useEffect(() => { setLocalActor(actor); }, [actor]);
-  useEffect(() => { setLocalSearch(search); }, [search]);
-  useEffect(() => { setLocalResourceId(resourceId); }, [resourceId]);
+  // Sync debounced inputs from URL in a single effect. Each field has the
+  // same semantics (mirror the URL param into local state whenever the URL
+  // changes externally — e.g. via Clear all, browser back, or an inbound
+  // deep link), so consolidating avoids three commit-phase scheduling
+  // points. Each setState only fires when its own source changes because
+  // the deps list still carries all three scalars.
+  useEffect(() => {
+    setLocalActor(actor);
+    setLocalSearch(search);
+    setLocalResourceId(resourceId);
+  }, [actor, search, resourceId]);
 
   // Emit filter changes
   useEffect(() => {

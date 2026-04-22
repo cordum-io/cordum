@@ -25,6 +25,22 @@ vi.mock("@/components/settings/SamlConfigPanel", () => ({
   SamlConfigPanel: () => <div>Mocked SAML config panel</div>,
 }));
 
+vi.mock("@/components/ui/Button", () => ({
+  Button: ({
+    children,
+    disabled,
+    onClick,
+  }: {
+    children: React.ReactNode;
+    disabled?: boolean;
+    onClick?: () => void;
+  }) => (
+    <button type="button" disabled={disabled} onClick={onClick}>
+      {children}
+    </button>
+  ),
+}));
+
 function renderPage() {
   const container = document.createElement("div");
   document.body.appendChild(container);

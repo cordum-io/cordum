@@ -313,7 +313,7 @@ export function PolicyFirewallView({
                       <Button variant="outline" size="sm" type="button" onClick={() => openEditRule(rule)}>
                         Edit
                       </Button>
-                      <Button variant="danger" size="sm" type="button" onClick={() => deleteRule(rule)}>
+                      <Button variant="danger" size="sm" type="button" aria-label="Delete rule" onClick={() => deleteRule(rule)}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
                     </div>

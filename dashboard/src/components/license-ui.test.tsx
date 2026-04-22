@@ -77,7 +77,8 @@ describe("license UI components", () => {
 
     try {
       expect(container.textContent).toContain("License renewal window is open");
-      expect(container.textContent).toContain("Enterprise features are degraded");
+      expect(container.textContent).toContain("Break-glass mode active");
+      expect(container.textContent).toContain("break-glass admin access available");
     } finally {
       cleanup();
     }

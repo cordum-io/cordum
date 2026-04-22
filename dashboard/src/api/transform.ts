@@ -37,6 +37,24 @@ import type {
   PolicyRuleMatch,
   ApprovalContext,
   ApprovalPolicySnapshot,
+  GovernanceDecision,
+  GovernanceVerdict,
+  EvalDataset,
+  EvalEntry,
+  EvalRun,
+  EvalRunStatus,
+  EvalRunSummary,
+  EvalEntryResult,
+  EvalDriftDirection,
+  SafetyDecisionType,
+  PolicyConstraints,
+  PolicyBundleSignature,
+  ApprovalAnalyticsGroup,
+  ApprovalAnalyticsResponse,
+  ApprovalAnalyticsSummary,
+  DelegationChainLink,
+  DelegationListResponse,
+  DelegationView,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -236,6 +254,23 @@ export interface BackendApprovalDecisionSummary {
   items_preview?: string[];
   escalation_reason?: string;
   missing_fields?: string[];
+}
+
+export interface BackendGovernanceDecision {
+  job_id?: string;
+  run_id?: string;
+  step_id?: string;
+  topic?: string;
+  matched_rule?: string;
+  rule_name?: string;
+  verdict?: string;
+  reason?: string;
+  constraints?: Record<string, unknown>;
+  approval_status?: ApprovalStatus;
+  approval_decision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
+  agent_id?: string;
+  policy_version?: string;
+  timestamp?: string;
 }
 
 export interface BackendApprovalItem {
@@ -513,6 +548,68 @@ export function normalizeDecisionType(raw?: string): SafetyDecision["type"] {
     default:
       return "deny";
   }
+}
+
+export function normalizeGovernanceVerdict(raw?: string): GovernanceVerdict {
+  switch ((raw || "").trim().toUpperCase()) {
+    case "ALLOW":
+      return "allow";
+    case "CONSTRAIN":
+    case "CONSTRAINED":
+    case "ALLOW_WITH_CONSTRAINTS":
+      return "constrain";
+    case "DENY":
+      return "deny";
+    case "REQUIRE_APPROVAL":
+    case "REQUIRE_HUMAN":
+      return "require_approval";
+    case "THROTTLE":
+      return "throttle";
+    default:
+      if (raw) {
+        console.warn(
+          `[transform] Unknown governance verdict "${raw}", defaulting to deny`,
+        );
+      }
+      return "deny";
+  }
+}
+
+function normalizeIsoTimestamp(raw: unknown): string | null {
+  if (typeof raw !== "string" || !raw.trim()) {
+    return null;
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+export function mapGovernanceDecision(
+  decision: BackendGovernanceDecision,
+): GovernanceDecision | null {
+  const timestamp = normalizeIsoTimestamp(decision.timestamp);
+  if (!timestamp) {
+    return null;
+  }
+  const constraints =
+    decision.constraints && typeof decision.constraints === "object"
+      ? (decision.constraints as GovernanceDecision["constraints"])
+      : undefined;
+  return {
+    jobId: decision.job_id ?? "",
+    topic: decision.topic ?? "",
+    matchedRule: decision.matched_rule ?? "",
+    verdict: normalizeGovernanceVerdict(decision.verdict),
+    reason: decision.reason ?? "",
+    agentId: decision.agent_id ?? "",
+    timestamp,
+    ...(decision.run_id ? { runId: decision.run_id } : {}),
+    ...(decision.step_id ? { stepId: decision.step_id } : {}),
+    ...(decision.rule_name ? { ruleName: decision.rule_name } : {}),
+    ...(constraints ? { constraints } : {}),
+    ...(decision.approval_status ? { approvalStatus: decision.approval_status } : {}),
+    ...(decision.approval_decision ? { approvalDecision: decision.approval_decision } : {}),
+    ...(decision.policy_version ? { policyVersion: decision.policy_version } : {}),
+  };
 }
 
 export function mapSafetyDecision(
@@ -1219,6 +1316,40 @@ export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary, cont
   };
 }
 
+export function readPolicyBundleSignature(
+  raw: unknown,
+): PolicyBundleSignature | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const bundle = raw as Record<string, unknown>;
+  const rawSig = bundle._signature ?? bundle.signature;
+  if (!rawSig || typeof rawSig !== "object") return undefined;
+
+  const sig = rawSig as Record<string, unknown>;
+  const algorithm =
+    typeof sig.algorithm === "string" ? sig.algorithm.trim() : "";
+  const keyID = typeof sig.key_id === "string" ? sig.key_id.trim() : "";
+  const value = typeof sig.value === "string" ? sig.value.trim() : "";
+  const hash = typeof sig.hash === "string" ? sig.hash.trim() : "";
+  const signedBytes =
+    typeof sig.signed_bytes === "number"
+      ? sig.signed_bytes
+      : typeof sig.signed_bytes === "string"
+        ? Number.parseInt(sig.signed_bytes, 10)
+        : Number.NaN;
+
+  if (!algorithm || !keyID || !value || !hash || !Number.isFinite(signedBytes)) {
+    return undefined;
+  }
+
+  return {
+    algorithm,
+    key_id: keyID,
+    value,
+    hash,
+    signed_bytes: signedBytes,
+  };
+}
+
 export function mapPolicyBundleDetail(detail: BackendPolicyBundleDetail): PolicyBundle {
   let rules: PolicyRule[] = [];
   if (!detail || typeof detail !== "object") {
@@ -1532,3 +1663,402 @@ export function mapPoolResponse(bp: BackendPoolSummary, mapWorker = mapHeartbeat
     workers: (bp.worker_list ?? []).map(mapWorker).filter((w): w is Worker => !!w),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Evals mappers
+// ---------------------------------------------------------------------------
+
+const EVAL_RUN_STATUSES: ReadonlySet<EvalRunStatus> = new Set([
+  "pass",
+  "fail",
+  "regression",
+  "error",
+]);
+
+const EVAL_DRIFT_DIRECTIONS: ReadonlySet<EvalDriftDirection> = new Set([
+  "escalated",
+  "relaxed",
+  "unchanged",
+]);
+
+const SAFETY_DECISION_TYPES: ReadonlySet<SafetyDecisionType> = new Set([
+  "allow",
+  "deny",
+  "require_approval",
+  "allow_with_constraints",
+  "throttle",
+]);
+
+export interface BackendEvalDataset {
+  id?: string;
+  name?: string;
+  version?: number;
+  tenant?: string;
+  description?: string;
+  entry_count?: number;
+  content_hash?: string;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: string;
+}
+
+export interface BackendEvalEntry {
+  id?: string;
+  input?: Record<string, unknown>;
+  expected_decision?: string;
+  rule_id?: string;
+  metadata?: Record<string, unknown>;
+  source?: string;
+  source_ref?: string;
+  notes?: string;
+}
+
+export interface BackendEvalRunSummary {
+  total?: number;
+  passed?: number;
+  failed?: number;
+  regressions?: number;
+  errored?: number;
+  score_percent?: number | null;
+}
+
+export interface BackendEvalEntryResult {
+  entry_id?: string;
+  input?: Record<string, unknown>;
+  expected_decision?: string;
+  actual_decision?: string;
+  rule_id?: string;
+  reason?: string;
+  status?: string;
+  drift_direction?: string;
+  constraints?: Record<string, unknown>;
+}
+
+export interface BackendEvalRun {
+  run_id?: string;
+  dataset_id?: string;
+  dataset_name?: string;
+  dataset_version?: number;
+  policy_snapshot?: string;
+  started_at?: string;
+  completed_at?: string;
+  summary?: BackendEvalRunSummary;
+  entries?: BackendEvalEntryResult[];
+}
+
+function normalizeEvalRunStatus(raw: unknown): EvalRunStatus {
+  if (typeof raw === "string") {
+    const lower = raw.toLowerCase();
+    if (EVAL_RUN_STATUSES.has(lower as EvalRunStatus)) {
+      return lower as EvalRunStatus;
+    }
+  }
+  logger.warn("evals", "unknown run status, falling back to error", { raw });
+  return "error";
+}
+
+function normalizeDriftDirection(raw: unknown): EvalDriftDirection {
+  if (typeof raw === "string") {
+    const lower = raw.toLowerCase();
+    if (EVAL_DRIFT_DIRECTIONS.has(lower as EvalDriftDirection)) {
+      return lower as EvalDriftDirection;
+    }
+  }
+  return "unchanged";
+}
+
+function normalizeSafetyDecisionType(raw: unknown): SafetyDecisionType {
+  if (typeof raw === "string") {
+    const lower = raw.toLowerCase();
+    if (SAFETY_DECISION_TYPES.has(lower as SafetyDecisionType)) {
+      return lower as SafetyDecisionType;
+    }
+  }
+  return "deny";
+}
+
+function coerceScorePercent(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  const num = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(num)) return null;
+  return num;
+}
+
+export function mapEvalDataset(raw: BackendEvalDataset): EvalDataset {
+  return {
+    id: raw.id ?? "",
+    name: raw.name ?? "",
+    version: typeof raw.version === "number" ? raw.version : Number(raw.version ?? 1),
+    tenant: raw.tenant ?? "",
+    description: raw.description,
+    entryCount: typeof raw.entry_count === "number" ? raw.entry_count : 0,
+    contentHash: raw.content_hash ?? "",
+    createdAt: raw.created_at ?? "",
+    updatedAt: raw.updated_at ?? raw.created_at ?? "",
+    createdBy: raw.created_by,
+  };
+}
+
+export function mapEvalEntry(raw: BackendEvalEntry): EvalEntry {
+  return {
+    id: raw.id ?? "",
+    input: raw.input ?? {},
+    expectedDecision: normalizeSafetyDecisionType(raw.expected_decision),
+    ruleId: raw.rule_id,
+    metadata: raw.metadata,
+    source: raw.source ?? "unknown",
+    sourceRef: raw.source_ref,
+    notes: raw.notes,
+  };
+}
+
+export function mapEvalEntryResult(raw: BackendEvalEntryResult): EvalEntryResult {
+  const expected = normalizeSafetyDecisionType(raw.expected_decision);
+  const actualRaw = typeof raw.actual_decision === "string" ? raw.actual_decision.toLowerCase() : "";
+  const actual: SafetyDecisionType | string = SAFETY_DECISION_TYPES.has(
+    actualRaw as SafetyDecisionType,
+  )
+    ? (actualRaw as SafetyDecisionType)
+    : actualRaw || "unknown";
+  return {
+    entryId: raw.entry_id ?? "",
+    input: raw.input ?? {},
+    expectedDecision: expected,
+    actualDecision: actual,
+    ruleId: raw.rule_id,
+    reason: raw.reason,
+    status: normalizeEvalRunStatus(raw.status),
+    driftDirection: normalizeDriftDirection(raw.drift_direction),
+    constraints: raw.constraints as PolicyConstraints | undefined,
+  };
+}
+
+function mapEvalRunSummary(raw: BackendEvalRunSummary | undefined): EvalRunSummary {
+  const summary = raw ?? {};
+  return {
+    total: typeof summary.total === "number" ? summary.total : 0,
+    passed: typeof summary.passed === "number" ? summary.passed : 0,
+    failed: typeof summary.failed === "number" ? summary.failed : 0,
+    regressions: typeof summary.regressions === "number" ? summary.regressions : 0,
+    errored: typeof summary.errored === "number" ? summary.errored : 0,
+    scorePercent: coerceScorePercent(summary.score_percent),
+  };
+}
+
+export function mapEvalRun(raw: BackendEvalRun): EvalRun {
+  return {
+    runId: raw.run_id ?? "",
+    datasetId: raw.dataset_id ?? "",
+    datasetName: raw.dataset_name ?? "",
+    datasetVersion:
+      typeof raw.dataset_version === "number" ? raw.dataset_version : Number(raw.dataset_version ?? 0),
+    policySnapshot: raw.policy_snapshot ?? "",
+    startedAt: raw.started_at ?? "",
+    completedAt: raw.completed_at,
+    summary: mapEvalRunSummary(raw.summary),
+    entries: Array.isArray(raw.entries) ? raw.entries.map(mapEvalEntryResult) : undefined,
+  };
+}
+
+export function isRegressionRun(run: Pick<EvalRun, "summary">): boolean {
+  return (run.summary?.regressions ?? 0) > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Approval analytics mappers
+// ---------------------------------------------------------------------------
+
+export interface BackendApprovalAnalyticsSummary {
+  total?: number;
+  approved?: number;
+  rejected?: number;
+  expired?: number;
+  auto_resolved?: number;
+  manual_resolved?: number;
+  avg_time_to_approve_seconds?: number | null;
+  p50?: number | null;
+  p90?: number | null;
+  p99?: number | null;
+}
+
+export interface BackendApprovalAnalyticsGroup {
+  key?: string;
+  label?: string;
+  total?: number;
+  approved?: number;
+  rejected?: number;
+  expired?: number;
+  auto_count?: number;
+  manual_count?: number;
+  avg_ttar_seconds?: number | null;
+  p90_seconds?: number | null;
+}
+
+export interface BackendApprovalAnalyticsResponse {
+  window?: { since?: string; until?: string };
+  summary?: BackendApprovalAnalyticsSummary;
+  groups?: BackendApprovalAnalyticsGroup[];
+}
+
+export interface BackendDelegationChainLink {
+  agent_id?: string;
+  issued_at?: string;
+  expires_at?: string;
+  jti?: string;
+  parent_jti?: string;
+  issued_by?: string;
+}
+
+export interface BackendDelegationView {
+  jti?: string;
+  issuer?: string;
+  subject?: string;
+  audience?: string;
+  allowed_actions?: string[];
+  allowed_topics?: string[];
+  chain?: BackendDelegationChainLink[];
+  chain_depth?: number;
+  issued_at?: string;
+  expires_at?: string;
+  revoked?: boolean;
+  revoked_at?: string;
+  revoked_reason?: string;
+}
+
+export interface BackendDelegationListResponse {
+  items?: BackendDelegationView[];
+  next_cursor?: string | null;
+  nextCursor?: string | null;
+}
+
+function coerceOptionalNumber(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  const num = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(num)) return null;
+  return num;
+}
+
+function mapApprovalAnalyticsSummary(
+  raw: BackendApprovalAnalyticsSummary | undefined,
+): ApprovalAnalyticsSummary {
+  const s = raw ?? {};
+  return {
+    total: typeof s.total === "number" ? s.total : 0,
+    approved: typeof s.approved === "number" ? s.approved : 0,
+    rejected: typeof s.rejected === "number" ? s.rejected : 0,
+    expired: typeof s.expired === "number" ? s.expired : 0,
+    autoResolved: typeof s.auto_resolved === "number" ? s.auto_resolved : 0,
+    manualResolved: typeof s.manual_resolved === "number" ? s.manual_resolved : 0,
+    avgTimeToApproveSeconds: coerceOptionalNumber(s.avg_time_to_approve_seconds),
+    p50: coerceOptionalNumber(s.p50),
+    p90: coerceOptionalNumber(s.p90),
+    p99: coerceOptionalNumber(s.p99),
+  };
+}
+
+function mapApprovalAnalyticsGroup(
+  raw: BackendApprovalAnalyticsGroup,
+): ApprovalAnalyticsGroup {
+  return {
+    key: raw.key ?? "",
+    label: raw.label ?? raw.key ?? "",
+    total: typeof raw.total === "number" ? raw.total : 0,
+    approved: typeof raw.approved === "number" ? raw.approved : 0,
+    rejected: typeof raw.rejected === "number" ? raw.rejected : 0,
+    expired: typeof raw.expired === "number" ? raw.expired : 0,
+    autoCount: typeof raw.auto_count === "number" ? raw.auto_count : 0,
+    manualCount: typeof raw.manual_count === "number" ? raw.manual_count : 0,
+    avgTtarSeconds: coerceOptionalNumber(raw.avg_ttar_seconds),
+    p90Seconds: coerceOptionalNumber(raw.p90_seconds),
+  };
+}
+
+export function mapApprovalAnalytics(
+  raw: BackendApprovalAnalyticsResponse,
+): ApprovalAnalyticsResponse {
+  return {
+    window: {
+      since: raw.window?.since ?? "",
+      until: raw.window?.until ?? "",
+    },
+    summary: mapApprovalAnalyticsSummary(raw.summary),
+    groups: Array.isArray(raw.groups)
+      ? raw.groups.map(mapApprovalAnalyticsGroup)
+      : undefined,
+  };
+}
+
+export function mapDelegationChainLink(
+  raw: BackendDelegationChainLink,
+): DelegationChainLink {
+  return {
+    agentId: raw.agent_id ?? "",
+    issuedAt: raw.issued_at ?? "",
+    expiresAt: raw.expires_at ?? "",
+    jti: raw.jti ?? "",
+    parentJti: raw.parent_jti || undefined,
+    issuedBy: raw.issued_by ?? "",
+  };
+}
+
+export function mapDelegationView(raw: BackendDelegationView): DelegationView {
+  return {
+    jti: raw.jti ?? "",
+    issuer: raw.issuer ?? "",
+    subject: raw.subject ?? "",
+    audience: raw.audience ?? "",
+    allowedActions: Array.isArray(raw.allowed_actions)
+      ? raw.allowed_actions.filter((value): value is string => typeof value === "string")
+      : [],
+    allowedTopics: Array.isArray(raw.allowed_topics)
+      ? raw.allowed_topics.filter((value): value is string => typeof value === "string")
+      : [],
+    chain: Array.isArray(raw.chain) ? raw.chain.map(mapDelegationChainLink) : [],
+    chainDepth: typeof raw.chain_depth === "number" ? raw.chain_depth : 0,
+    issuedAt: raw.issued_at ?? "",
+    expiresAt: raw.expires_at ?? "",
+    revoked: raw.revoked ?? false,
+    revokedAt: raw.revoked_at || undefined,
+    revokedReason: raw.revoked_reason || undefined,
+  };
+}
+
+export function mapDelegationListResponse(
+  raw: BackendDelegationListResponse,
+): DelegationListResponse {
+  return {
+    items: Array.isArray(raw.items) ? raw.items.map(mapDelegationView) : [],
+    nextCursor: raw.next_cursor ?? raw.nextCursor ?? undefined,
+  };
+}
+
+export interface BottleneckThresholds {
+  multiplier: number;
+  floorSeconds: number;
+}
+
+export const DEFAULT_BOTTLENECK_THRESHOLDS: BottleneckThresholds = {
+  multiplier: 2,
+  floorSeconds: 900,
+};
+
+/**
+ * Bottleneck detection rule — a group row is a bottleneck when its
+ * avg TTAR exceeds either (a) the configurable multiple of the
+ * window-wide avg, or (b) the absolute floor in seconds. Defaults
+ * match the plan's `>2x avg OR >15 min` contract.
+ */
+export function isBottleneckGroup(
+  group: ApprovalAnalyticsGroup,
+  summaryAvgSeconds: number | null,
+  thresholds: BottleneckThresholds = DEFAULT_BOTTLENECK_THRESHOLDS,
+): boolean {
+  const ttar = group.avgTtarSeconds;
+  if (ttar === null) return false;
+  if (ttar > thresholds.floorSeconds) return true;
+  if (summaryAvgSeconds !== null && ttar > summaryAvgSeconds * thresholds.multiplier) {
+    return true;
+  }
+  return false;
+}
+

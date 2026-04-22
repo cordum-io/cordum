@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   computeUrgencyLevel,
   deriveApprovalActionability,
   deriveApprovalStatus,
   mapApprovalItem,
+  mapDelegationListResponse,
+  mapDelegationView,
   mapDLQEntry,
+  mapGovernanceDecision,
   mapHeartbeatToWorker,
   mapJobDetail,
   mapJobRecord,
@@ -14,6 +17,7 @@ import {
   mapWorkflowRun,
   mapWorkflowRunStep,
   microsToISO,
+  normalizeGovernanceVerdict,
   normalizeDecisionType,
   normalizeJobStatus,
   normalizeOutputDecision,
@@ -35,6 +39,53 @@ describe("api/transform mappings", () => {
     expect(job.capabilities).toEqual(["cap.read", "cap.write"]);
     expect(job.output_safety?.decision).toBe("QUARANTINE");
     expect(job.updatedAt).toContain("T");
+  });
+
+  it("maps delegation views with defensive null-coalescing", () => {
+    const delegation = mapDelegationView({
+      jti: "dlg-1",
+      issuer: "agent-a",
+      subject: "agent-a",
+      audience: "agent-b",
+      allowed_actions: ["read"],
+      allowed_topics: undefined,
+      chain: [
+        {
+          agent_id: "agent-a",
+          issued_at: "2026-04-21T00:00:00Z",
+          expires_at: "2026-04-21T01:00:00Z",
+          jti: "dlg-1",
+          issued_by: "cordum",
+        },
+      ],
+      chain_depth: 1,
+      issued_at: "2026-04-21T00:00:00Z",
+      expires_at: "2026-04-21T01:00:00Z",
+      revoked: undefined,
+    });
+
+    expect(delegation.allowedActions).toEqual(["read"]);
+    expect(delegation.allowedTopics).toEqual([]);
+    expect(delegation.chain[0]).toEqual({
+      agentId: "agent-a",
+      issuedAt: "2026-04-21T00:00:00Z",
+      expiresAt: "2026-04-21T01:00:00Z",
+      jti: "dlg-1",
+      parentJti: undefined,
+      issuedBy: "cordum",
+    });
+    expect(delegation.revoked).toBe(false);
+  });
+
+  it("maps delegation list responses and next cursor safely", () => {
+    const response = mapDelegationListResponse({
+      items: [{ jti: "dlg-1", issuer: "agent-a", subject: "agent-a", audience: "agent-b" }],
+      next_cursor: "cur-2",
+    });
+
+    expect(response.items).toHaveLength(1);
+    expect(response.items[0]?.allowedActions).toEqual([]);
+    expect(response.nextCursor).toBe("cur-2");
   });
 
   it("maps job detail fields on top of base job mapping", () => {
@@ -394,6 +445,70 @@ rules:
     expect(worker?.status).toBe("busy");
     expect(worker?.capacity).toBe(2);
   });
+
+  it("maps governance decisions with optional fields and structured constraints", () => {
+    const decision = mapGovernanceDecision({
+      job_id: "job-gov-1",
+      run_id: "run-gov-1",
+      step_id: "step-7",
+      topic: "jobs.review",
+      matched_rule: "rule-42",
+      rule_name: "Escalate risky changes",
+      verdict: "ALLOW_WITH_CONSTRAINTS",
+      reason: "Needs domain allowlist",
+      constraints: {
+        maxInvocations: 3,
+        allowedDomains: ["cordum.io"],
+      },
+      approval_status: "pending",
+      approval_decision: "approve",
+      agent_id: "agent-4",
+      policy_version: "2026-04-20",
+      timestamp: "2026-04-20T08:30:00.000Z",
+    });
+
+    expect(decision).toEqual({
+      jobId: "job-gov-1",
+      runId: "run-gov-1",
+      stepId: "step-7",
+      topic: "jobs.review",
+      matchedRule: "rule-42",
+      ruleName: "Escalate risky changes",
+      verdict: "constrain",
+      reason: "Needs domain allowlist",
+      constraints: {
+        maxInvocations: 3,
+        allowedDomains: ["cordum.io"],
+      },
+      approvalStatus: "pending",
+      approvalDecision: "approve",
+      agentId: "agent-4",
+      policyVersion: "2026-04-20",
+      timestamp: "2026-04-20T08:30:00.000Z",
+    });
+  });
+
+  it("maps governance decisions when optional fields are absent", () => {
+    const decision = mapGovernanceDecision({
+      job_id: "job-gov-2",
+      topic: "jobs.review",
+      matched_rule: "rule-9",
+      verdict: "ALLOW",
+      reason: "Allowed",
+      agent_id: "agent-9",
+      timestamp: "2026-04-20T08:45:00.000Z",
+    });
+
+    expect(decision).toEqual({
+      jobId: "job-gov-2",
+      topic: "jobs.review",
+      matchedRule: "rule-9",
+      verdict: "allow",
+      reason: "Allowed",
+      agentId: "agent-9",
+      timestamp: "2026-04-20T08:45:00.000Z",
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -554,6 +669,33 @@ describe("transform contract hardening", () => {
     });
   });
 
+  describe("governance decision hardening", () => {
+    it("falls back to deny and warns for unknown verdicts", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      expect(normalizeGovernanceVerdict("ESCALATE_LATER")).toBe("deny");
+      expect(warn).toHaveBeenCalledWith(
+        '[transform] Unknown governance verdict "ESCALATE_LATER", defaulting to deny',
+      );
+
+      warn.mockRestore();
+    });
+
+    it("skips malformed governance timestamps instead of throwing", () => {
+      expect(
+        mapGovernanceDecision({
+          job_id: "job-bad-ts",
+          topic: "jobs.review",
+          matched_rule: "rule-9",
+          verdict: "DENY",
+          reason: "invalid timestamp",
+          agent_id: "agent-9",
+          timestamp: "not-a-date",
+        }),
+      ).toBeNull();
+    });
+  });
+
   describe("mapJobRecord with missing/malformed data", () => {
     it("generates stable ID for empty ID (not undefined)", () => {
       const job = mapJobRecord({ id: "", topic: "test" });
@@ -665,5 +807,244 @@ describe("transform contract hardening", () => {
       const result = mapOutputSafetyRecord({ decision: "ALLOW", findings: [] });
       expect(result!.findings).toEqual([]);
     });
+  });
+});
+
+describe("api/transform evals mappers", () => {
+  it("maps a backend eval dataset round-trip", async () => {
+    const { mapEvalDataset } = await import("./transform");
+    const ds = mapEvalDataset({
+      id: "ds-1",
+      name: "denies-2026-04",
+      version: 3,
+      tenant: "acme",
+      description: "April denies",
+      entry_count: 42,
+      content_hash: "sha256:abc",
+      created_at: "2026-04-01T00:00:00Z",
+      updated_at: "2026-04-02T00:00:00Z",
+      created_by: "worker-aa42",
+    });
+    expect(ds).toEqual({
+      id: "ds-1",
+      name: "denies-2026-04",
+      version: 3,
+      tenant: "acme",
+      description: "April denies",
+      entryCount: 42,
+      contentHash: "sha256:abc",
+      createdAt: "2026-04-01T00:00:00Z",
+      updatedAt: "2026-04-02T00:00:00Z",
+      createdBy: "worker-aa42",
+    });
+  });
+
+  it("defaults missing dataset fields safely", async () => {
+    const { mapEvalDataset } = await import("./transform");
+    const ds = mapEvalDataset({});
+    expect(ds.id).toBe("");
+    expect(ds.version).toBe(1);
+    expect(ds.entryCount).toBe(0);
+    expect(ds.contentHash).toBe("");
+    expect(ds.updatedAt).toBe("");
+  });
+
+  it("maps an eval entry result with known status and drift", async () => {
+    const { mapEvalEntryResult } = await import("./transform");
+    const r = mapEvalEntryResult({
+      entry_id: "e-1",
+      input: { topic: "fs.delete" },
+      expected_decision: "deny",
+      actual_decision: "allow",
+      rule_id: "rule-relaxed",
+      reason: "policy relaxed",
+      status: "regression",
+      drift_direction: "relaxed",
+    });
+    expect(r.status).toBe("regression");
+    expect(r.driftDirection).toBe("relaxed");
+    expect(r.expectedDecision).toBe("deny");
+    expect(r.actualDecision).toBe("allow");
+  });
+
+  it("falls back to error + unchanged on unknown status and drift", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { mapEvalEntryResult } = await import("./transform");
+    const r = mapEvalEntryResult({
+      entry_id: "e-2",
+      expected_decision: "weird",
+      actual_decision: "also-weird",
+      status: "not-a-real-status",
+      drift_direction: "sideways",
+    });
+    expect(r.status).toBe("error");
+    expect(r.driftDirection).toBe("unchanged");
+    // Unknown expected decision -> defaults to "deny" (safer).
+    expect(r.expectedDecision).toBe("deny");
+    // Unknown actual decision is passed through as lowercased string.
+    expect(r.actualDecision).toBe("also-weird");
+    warnSpy.mockRestore();
+  });
+
+  it("maps an eval run with coerced scorePercent and summary defaults", async () => {
+    const { mapEvalRun, isRegressionRun } = await import("./transform");
+    const run = mapEvalRun({
+      run_id: "run-1",
+      dataset_id: "ds-1",
+      dataset_name: "denies",
+      dataset_version: 2,
+      policy_snapshot: "snap-abc",
+      started_at: "2026-04-19T12:00:00Z",
+      completed_at: "2026-04-19T12:00:05Z",
+      summary: {
+        total: 10,
+        passed: 7,
+        failed: 2,
+        regressions: 1,
+        errored: 0,
+        score_percent: 70,
+      },
+      entries: [
+        {
+          entry_id: "e-1",
+          expected_decision: "deny",
+          actual_decision: "allow",
+          status: "regression",
+          drift_direction: "relaxed",
+        },
+      ],
+    });
+    expect(run.summary.scorePercent).toBe(70);
+    expect(isRegressionRun(run)).toBe(true);
+    expect(run.entries).toHaveLength(1);
+  });
+
+  it("coerces NaN/null scorePercent to null", async () => {
+    const { mapEvalRun } = await import("./transform");
+    const nan = mapEvalRun({ summary: { score_percent: Number.NaN } });
+    expect(nan.summary.scorePercent).toBeNull();
+    const nil = mapEvalRun({ summary: { score_percent: null } });
+    expect(nil.summary.scorePercent).toBeNull();
+    const missing = mapEvalRun({});
+    expect(missing.summary.scorePercent).toBeNull();
+    expect(missing.summary.total).toBe(0);
+  });
+
+  it("isRegressionRun returns false when no regressions", async () => {
+    const { isRegressionRun } = await import("./transform");
+    expect(
+      isRegressionRun({
+        summary: { total: 5, passed: 5, failed: 0, regressions: 0, errored: 0, scorePercent: 100 },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("api/transform approval analytics mappers", () => {
+  it("maps a full backend response round-trip", async () => {
+    const { mapApprovalAnalytics } = await import("./transform");
+    const out = mapApprovalAnalytics({
+      window: { since: "2026-04-20T00:00:00Z", until: "2026-04-21T00:00:00Z" },
+      summary: {
+        total: 10,
+        approved: 7,
+        rejected: 2,
+        expired: 1,
+        auto_resolved: 1,
+        manual_resolved: 9,
+        avg_time_to_approve_seconds: 120,
+        p50: 60,
+        p90: 300,
+        p99: 900,
+      },
+      groups: [
+        {
+          key: "rule-slow",
+          label: "rule-slow",
+          total: 3,
+          approved: 2,
+          rejected: 1,
+          expired: 0,
+          auto_count: 0,
+          manual_count: 3,
+          avg_ttar_seconds: 900,
+          p90_seconds: 1200,
+        },
+      ],
+    });
+    expect(out.summary.total).toBe(10);
+    expect(out.summary.manualResolved).toBe(9);
+    expect(out.summary.avgTimeToApproveSeconds).toBe(120);
+    expect(out.groups?.[0]?.key).toBe("rule-slow");
+    expect(out.groups?.[0]?.avgTtarSeconds).toBe(900);
+  });
+
+  it("preserves null percentiles on empty windows", async () => {
+    const { mapApprovalAnalytics } = await import("./transform");
+    const out = mapApprovalAnalytics({ summary: {} });
+    expect(out.summary.total).toBe(0);
+    expect(out.summary.avgTimeToApproveSeconds).toBeNull();
+    expect(out.summary.p90).toBeNull();
+    expect(out.window.since).toBe("");
+  });
+
+  it("isBottleneckGroup fires on absolute floor even when avg is low", async () => {
+    const { isBottleneckGroup } = await import("./transform");
+    const hit = isBottleneckGroup(
+      {
+        key: "r1",
+        label: "r1",
+        total: 1,
+        approved: 1,
+        rejected: 0,
+        expired: 0,
+        autoCount: 0,
+        manualCount: 1,
+        avgTtarSeconds: 1800,
+        p90Seconds: 1900,
+      },
+      60,
+    );
+    expect(hit).toBe(true);
+  });
+
+  it("isBottleneckGroup fires on multiplier of summary avg", async () => {
+    const { isBottleneckGroup } = await import("./transform");
+    const hit = isBottleneckGroup(
+      {
+        key: "r2",
+        label: "r2",
+        total: 1,
+        approved: 1,
+        rejected: 0,
+        expired: 0,
+        autoCount: 0,
+        manualCount: 1,
+        avgTtarSeconds: 300,
+        p90Seconds: 400,
+      },
+      60,
+    );
+    expect(hit).toBe(true);
+  });
+
+  it("isBottleneckGroup stays false when the group avg is null", async () => {
+    const { isBottleneckGroup } = await import("./transform");
+    const hit = isBottleneckGroup(
+      {
+        key: "r3",
+        label: "r3",
+        total: 0,
+        approved: 0,
+        rejected: 0,
+        expired: 0,
+        autoCount: 0,
+        manualCount: 0,
+        avgTtarSeconds: null,
+        p90Seconds: null,
+      },
+      60,
+    );
+    expect(hit).toBe(false);
   });
 });

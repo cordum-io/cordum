@@ -16,7 +16,11 @@ import { CodeBlock } from "@/components/ui/CodeBlock";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { Input } from "@/components/ui/Input";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
+import { StatTile } from "@/components/ui/StatTile";
+import { Checkbox } from "@/components/ui/Checkbox";
 import {
   Search,
   RefreshCw,
@@ -83,7 +87,7 @@ export default function DLQPage() {
   );
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
 
-  const { data, isLoading, refetch } = useDLQ({ limit: 200 });
+  const { data, isLoading, isError, error, refetch } = useDLQ({ limit: 200 });
   const retryMutation = useRetryDLQ();
   const purgeMutation = useDeleteDLQ();
   const bulkRetryMutation = useBulkRetryDLQ();
@@ -152,6 +156,15 @@ export default function DLQPage() {
     toast.success("Exported CSV");
   };
 
+  if (isError) {
+    return (
+      <ErrorBanner
+        message={error instanceof Error ? error.message : "Failed to load the dead letter queue"}
+        onRetry={() => void refetch()}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -183,90 +196,56 @@ export default function DLQPage() {
           Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
-            <div
-              className={cn(
-                "instrument-card",
-                items.length > 0 ? "status-danger" : "",
-              )}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">
-                  Dead Letters
-                </span>
+            <StatTile
+              accent={items.length > 0 ? "danger" : "healthy"}
+              label="Dead Letters"
+              value={data?.items?.length ?? 0}
+              helperText={items.length > 0 ? "Requires attention" : "Queue clear"}
+              icon={
                 <AlertTriangle
                   className={cn(
-                    "w-4 h-4",
+                    "h-4 w-4",
                     items.length > 0
                       ? "text-destructive"
-                      : "text-[var(--color-success)]",
+                      : "text-success",
                   )}
                 />
-              </div>
-              <span
-                className={cn(
-                  "font-mono text-2xl font-bold",
-                  items.length > 0
-                    ? "text-destructive"
-                    : "text-[var(--color-success)]",
-                )}
-              >
-                {data?.items?.length ?? 0}
-              </span>
-              <p className="text-xs text-muted-foreground mt-1">
-                {items.length > 0 ? "Requires attention" : "Queue clear"}
-              </p>
-            </div>
-            <div className="instrument-card">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">
-                  Avg Attempts
-                </span>
-              </div>
-              <span className="font-mono text-2xl font-bold text-foreground">
-                {avgAttempts}
-              </span>
-              <p className="text-xs text-muted-foreground mt-1">
-                Before dead-lettering
-              </p>
-            </div>
-            <div className="instrument-card">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">
-                  Status
-                </span>
-                <span
-                  className={cn(
-                    "w-1.5 h-1.5 rounded-full status-pulse",
-                    items.length > 0
-                      ? "bg-destructive"
-                      : "bg-[var(--color-success)]",
-                  )}
-                />
-              </div>
-              <span
-                className={cn(
-                  "font-mono text-sm font-bold",
-                  items.length > 0
-                    ? "text-[var(--color-warning)]"
-                    : "text-[var(--color-success)]",
-                )}
-              >
-                {items.length > 0 ? "Attention Required" : "All Clear"}
-              </span>
-            </div>
+              }
+            />
+            <StatTile
+              accent="muted"
+              label="Avg Attempts"
+              value={avgAttempts}
+              helperText="Before dead-lettering"
+              icon={<RefreshCw className="h-4 w-4 text-muted-foreground" />}
+            />
+            <StatTile
+              accent={items.length > 0 ? "warning" : "healthy"}
+              label="Status"
+              value={items.length > 0 ? "Attention Required" : "All Clear"}
+              helperText="Operational summary"
+              icon={
+                items.length > 0 ? (
+                  <AlertTriangle className="h-4 w-4 text-warning" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4 text-success" />
+                )
+              }
+              size="sm"
+            />
           </>
         )}
       </motion.div>
 
-      {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-        <input
+      {/* Search — composes the central Input primitive so focus/placeholder/
+          border styling stays consistent with other dashboard filters. */}
+      <div className="max-w-sm">
+        <Input
           type="text"
+          icon={<Search className="w-3.5 h-3.5" />}
           placeholder="Search by job ID, topic, or error..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
         />
       </div>
 
@@ -294,11 +273,10 @@ export default function DLQPage() {
                 <tr className="border-b border-border bg-surface-0">
                   <th className="w-12 px-1 py-1">
                     <label className="flex items-center justify-center min-w-[44px] min-h-[44px] cursor-pointer">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={allSelected}
                         onChange={toggleAll}
-                        className="w-4 h-4 rounded border-border bg-surface-0 text-cordum focus:ring-cordum accent-[oklch(0.82_0.18_165)]"
+                        aria-label="Select all dead letter entries"
                       />
                     </label>
                   </th>
@@ -338,11 +316,10 @@ export default function DLQPage() {
                         onClick={(e) => e.stopPropagation()}
                       >
                         <label className="flex items-center justify-center min-w-[44px] min-h-[44px] cursor-pointer">
-                          <input
-                            type="checkbox"
+                          <Checkbox
                             checked={selected.has(d.id)}
                             onChange={() => toggleOne(d.id)}
-                            className="w-4 h-4 rounded border-border bg-surface-0 text-cordum focus:ring-cordum accent-[oklch(0.82_0.18_165)]"
+                            aria-label={`Select ${d.jobId ?? d.id ?? "dead letter entry"}`}
                           />
                         </label>
                       </td>
@@ -367,29 +344,31 @@ export default function DLQPage() {
                         className="px-3 py-1"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <div className="flex gap-0 justify-end">
-                          <button
-                            type="button"
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
                             onClick={() => retryMutation.mutate({ id: d.id })}
                             disabled={
                               retryMutation.isPending || purgeMutation.isPending
                             }
-                            className="flex items-center justify-center min-w-[44px] min-h-[44px] rounded-lg hover:bg-surface-2 transition-colors text-cordum disabled:opacity-50 disabled:pointer-events-none"
+                            className="text-cordum"
                             aria-label="Retry this entry"
                           >
                             <Play className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
                             onClick={() => purgeMutation.mutate(d.id)}
                             disabled={
                               purgeMutation.isPending || retryMutation.isPending
                             }
-                            className="flex items-center justify-center min-w-[44px] min-h-[44px] rounded-lg hover:bg-surface-2 transition-colors text-destructive disabled:opacity-50 disabled:pointer-events-none"
+                            className="text-destructive hover:text-destructive"
                             aria-label="Purge this entry"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          </Button>
                         </div>
                       </td>
                     </tr>
@@ -402,15 +381,10 @@ export default function DLQPage() {
                               initial={{ height: 0, opacity: 0 }}
                               animate={{ height: "auto", opacity: 1 }}
                               exit={{ height: 0, opacity: 0 }}
-                              transition={{ duration: 0.2 }}
-                              className="overflow-hidden"
-                            >
-                              <div
-                                className="px-12 py-4 bg-surface-1 border-b border-border border-l-[3px] border-l-cordum space-y-3"
-                                style={{
-                                  boxShadow: "inset 0 2px 4px rgba(0,0,0,0.04)",
-                                }}
-                              >
+                            transition={{ duration: 0.2 }}
+                            className="overflow-hidden"
+                          >
+                              <div className="space-y-3 border-b border-border border-l-4 border-l-cordum bg-surface-1/80 px-12 py-4">
                                 <div>
                                   <CodeBlock
                                     title="Entry Details"
@@ -462,35 +436,35 @@ export default function DLQPage() {
                 selected
               </span>
               <div className="w-px h-5 bg-border" />
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setConfirmBulk("retry")}
                 disabled={
                   bulkRetryMutation.isPending || bulkPurgeMutation.isPending
                 }
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-cordum/10 text-cordum hover:bg-cordum/20 transition-colors disabled:opacity-50 disabled:pointer-events-none"
               >
                 <Play className="w-3 h-3" />
                 Retry All
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
                 onClick={() => setConfirmBulk("purge")}
                 disabled={
                   bulkRetryMutation.isPending || bulkPurgeMutation.isPending
                 }
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors disabled:opacity-50 disabled:pointer-events-none"
               >
                 <Trash2 className="w-3 h-3" />
                 Purge All
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={() => setSelected(new Set())}
-                className="p-1.5 rounded-full hover:bg-surface-2 text-muted-foreground transition-colors"
               >
                 <X className="w-3.5 h-3.5" />
-              </button>
+              </Button>
             </div>
           </motion.div>
         )}

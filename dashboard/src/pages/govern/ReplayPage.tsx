@@ -501,12 +501,21 @@ function RuleHitsChart({ ruleHits }: { ruleHits: PolicyReplayRuleHit[] }) {
 // Main page
 // ---------------------------------------------------------------------------
 
-export default function ReplayPage() {
+export default function ReplayPage({
+  hideHeader,
+}: {
+  hideHeader?: boolean;
+} = {}) {
   const [searchParams] = useSearchParams();
   const replayMutation = useReplayPolicy();
   const result = replayMutation.data;
 
-  // Form state
+  // Form state — seeded once from the inbound URL (deep-link into the
+  // replay page). We do not re-sync from searchParams after mount: once
+  // the user starts editing the form we must not wipe their input just
+  // because the URL changed (e.g. the browser pushed a history entry as
+  // other controls updated). A URL change that should reset the form is
+  // handled by the caller via a routed remount.
   const [from, setFrom] = useState(
     searchParams.get("from") || defaultFrom(),
   );
@@ -554,15 +563,8 @@ export default function ReplayPage() {
     replayMutation,
   ]);
 
-  return (
-    <div className="flex flex-col h-full overflow-y-auto">
-      <PageHeader
-        title="Policy Replay"
-        subtitle="Replay historical jobs against a candidate policy to see what decisions would change"
-        label="Govern"
-      />
-
-      <div className="max-w-6xl mx-auto w-full px-4 py-6 space-y-6">
+  const content = (
+    <div className={hideHeader ? "space-y-6" : "max-w-6xl mx-auto w-full px-4 py-6 space-y-6"}>
         {/* Form section */}
         <div className="rounded-lg border border-border/60 bg-card/80 p-5 space-y-5">
           {/* Time range */}
@@ -833,6 +835,20 @@ export default function ReplayPage() {
           </motion.div>
         )}
       </div>
+  );
+
+  if (hideHeader) {
+    return content;
+  }
+
+  return (
+    <div className="flex flex-col h-full overflow-y-auto">
+      <PageHeader
+        title="Replay & Compare"
+        subtitle="Re-run historical jobs against the current or a candidate policy to see what decisions would change."
+        label="Govern"
+      />
+      {content}
     </div>
   );
 }

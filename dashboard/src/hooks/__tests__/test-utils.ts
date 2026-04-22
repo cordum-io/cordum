@@ -17,7 +17,7 @@ export function createTestQueryClient(): QueryClient {
 interface RenderWithQueryClientResult<T> {
   result: { current: T | undefined };
   queryClient: QueryClient;
-  rerender: () => void;
+  rerender: (nextHook?: () => T) => void;
   unmount: () => void;
   waitFor: (assertion: () => void, timeoutMs?: number) => Promise<void>;
 }
@@ -30,9 +30,10 @@ export function renderWithQueryClient<T>(
   document.body.appendChild(container);
   const root: Root = createRoot(container);
   const result = { current: undefined as T | undefined };
+  let currentHook = hook;
 
   function HookHarness() {
-    result.current = hook();
+    result.current = currentHook();
     return null;
   }
 
@@ -70,7 +71,8 @@ export function renderWithQueryClient<T>(
   return {
     result,
     queryClient,
-    rerender: () => {
+    rerender: (nextHook) => {
+      if (nextHook) currentHook = nextHook;
       act(() => {
         render();
       });

@@ -10,6 +10,10 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonTable } from "@/components/ui/Skeleton";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { LabeledField } from "@/components/ui/LabeledField";
+import { InstrumentCard, InstrumentCardBody } from "@/components/ui/InstrumentCard";
 import {
   Search,
   RefreshCw,
@@ -19,7 +23,7 @@ import {
   Bot,
   X,
 } from "lucide-react";
-import { StatusBadge } from "@/components/ui/StatusBadge";
+import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -50,6 +54,31 @@ interface AuditObserverState {
 
 const PAGE_SIZE = 50;
 
+export function parseSeqParam(raw?: string | null): number | undefined {
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export function filterEventsBySeq<T extends { seq?: number }>(
+  events: T[],
+  fromSeq?: number,
+  toSeq?: number,
+): T[] {
+  if (fromSeq === undefined && toSeq === undefined) {
+    return events;
+  }
+  return events.filter((event) => {
+    if (typeof event.seq !== "number") return false;
+    if (fromSeq !== undefined && event.seq < fromSeq) return false;
+    if (toSeq !== undefined && event.seq > toSeq) return false;
+    return true;
+  });
+}
+
 export function shouldFetchNextAuditPage(
   entries: Pick<IntersectionObserverEntry, "isIntersecting">[],
   hasNextPage: boolean,
@@ -75,14 +104,17 @@ function mapEvent(e: Record<string, unknown>): AuditEvent {
   };
 }
 
-function actionColor(action: string) {
-  if (action.includes("created") || action.includes("registered"))
-    return "text-[var(--color-success)] bg-[var(--color-success)]/10 border-[var(--color-success)]/20";
-  if (action.includes("failed") || action.includes("deleted"))
-    return "text-destructive bg-destructive/10 border-destructive/20";
-  if (action.includes("updated") || action.includes("decided"))
-    return "text-[var(--color-warning)] bg-[var(--color-warning)]/10 border-[var(--color-warning)]/20";
-  return "text-cordum bg-cordum/10 border-cordum/20";
+function actionVariant(action: string): BadgeVariant {
+  if (action.includes("created") || action.includes("registered")) {
+    return "healthy";
+  }
+  if (action.includes("failed") || action.includes("deleted")) {
+    return "danger";
+  }
+  if (action.includes("updated") || action.includes("decided")) {
+    return "warning";
+  }
+  return "cordum";
 }
 
 interface AgentOption {
@@ -186,10 +218,15 @@ export default function AuditLogPage() {
     return () => observer.disconnect();
   }, []);
 
-  const filtersActive = !!actionFilter || !!agentFilter || !!dateFrom || !!dateTo || !!search;
-  const activeFilterCount = [actionFilter, agentFilter, dateFrom, dateTo, search].filter(
-    Boolean,
-  ).length;
+  const filtersActive =
+    !!actionFilter || !!agentFilter || !!dateFrom || !!dateTo || !!search;
+  const activeFilterCount = [
+    actionFilter,
+    agentFilter,
+    dateFrom,
+    dateTo,
+    search,
+  ].filter(Boolean).length;
 
   const exportCSV = () => {
     if (filtersActive) {
@@ -254,115 +291,137 @@ export default function AuditLogPage() {
         }
       />
 
-      {/* Filters */}
-      <div
-        className={cn(
-          "flex items-center gap-3 flex-wrap",
-          filtersActive && "border-l-[3px] border-l-[var(--color-info)] pl-3",
-        )}
-      >
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search events..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
-            aria-label="Search audit events"
-          />
-        </div>
-        <select
-          value={actionFilter}
-          onChange={(e) => setActionFilter(e.target.value)}
-          className="h-8 px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
-          aria-label="Filter by action"
-        >
-          <option value="">All Actions</option>
-          <option value="job.created">Job Created</option>
-          <option value="job.completed">Job Completed</option>
-          <option value="job.failed">Job Failed</option>
-          <option value="approval.decided">Approval Decided</option>
-          <option value="policy.updated">Policy Updated</option>
-          <option value="worker.registered">Worker Registered</option>
-        </select>
-        {agents.length > 0 && (
-          <div className="relative flex items-center gap-1.5">
-            <Bot className="w-3.5 h-3.5 text-muted-foreground" />
-            <select
-              value={agentFilter}
-              onChange={(e) => setAgentFilter(e.target.value)}
-              className="h-8 px-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
-              aria-label="Filter by agent"
+      <InstrumentCard className="p-4">
+        <InstrumentCardBody className="space-y-4">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div
+              className={cn(
+                "grid flex-1 gap-4",
+                agents.length > 0
+                  ? "md:grid-cols-2 xl:grid-cols-4"
+                  : "md:grid-cols-2 xl:grid-cols-3",
+              )}
             >
-              <option value="">All Agents</option>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
+              <LabeledField label="Search">
+                <Input
+                  type="text"
+                  icon={<Search className="h-3.5 w-3.5" />}
+                  placeholder="Search events..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  aria-label="Search audit events"
+                  className="bg-surface-1"
+                />
+              </LabeledField>
+
+              <LabeledField label="Action">
+                <Select
+                  value={actionFilter}
+                  onChange={(e) => setActionFilter(e.target.value)}
+                  aria-label="Filter by action"
+                  className="bg-surface-1"
+                >
+                  <option value="">All Actions</option>
+                  <option value="job.created">Job Created</option>
+                  <option value="job.completed">Job Completed</option>
+                  <option value="job.failed">Job Failed</option>
+                  <option value="approval.decided">Approval Decided</option>
+                  <option value="policy.updated">Policy Updated</option>
+                  <option value="worker.registered">Worker Registered</option>
+                </Select>
+              </LabeledField>
+
+              {agents.length > 0 && (
+                <LabeledField
+                  label="Agent"
+                  description="Filter by actor"
+                  action={<Bot className="h-3.5 w-3.5 text-muted-foreground" />}
+                >
+                  <Select
+                    value={agentFilter}
+                    onChange={(e) => setAgentFilter(e.target.value)}
+                    aria-label="Filter by agent"
+                    className="bg-surface-1"
+                  >
+                    <option value="">All Agents</option>
+                    {agents.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </Select>
+                </LabeledField>
+              )}
+
+              <LabeledField
+                label="Date range"
+                description="Inclusive start and end dates"
+                action={<Calendar className="h-3.5 w-3.5 text-muted-foreground" />}
+              >
+                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                  <Input
+                    type="date"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    aria-label="From date"
+                    className="bg-surface-1"
+                  />
+                  <span className="text-center text-xs text-muted-foreground">
+                    to
+                  </span>
+                  <Input
+                    type="date"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    aria-label="To date"
+                    className="bg-surface-1"
+                  />
+                </div>
+              </LabeledField>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+              {filtersActive && (
+                <StatusBadge variant="info">
+                  {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""}{" "}
+                  active
+                </StatusBadge>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSearch("");
+                  setActionFilter("");
+                  setAgentFilter("");
+                  setDateFrom("");
+                  setDateTo("");
+                }}
+                disabled={!filtersActive}
+              >
+                <X className="h-3 w-3" />
+                Clear filters
+              </Button>
+            </div>
           </div>
-        )}
-        <div className="flex items-center gap-1.5">
-          <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
-          <input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="h-8 px-2 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
-            aria-label="From date"
-          />
-          <span className="text-xs text-muted-foreground">to</span>
-          <input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="h-8 px-2 text-xs bg-surface-1 border border-border rounded-2xl text-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
-            aria-label="To date"
-          />
-        </div>
-        {filtersActive && (
-          <StatusBadge variant="info">
-            {activeFilterCount} filter{activeFilterCount > 1 ? "s" : ""} active
-          </StatusBadge>
-        )}
-        <button
-          onClick={() => {
-            setSearch("");
-            setActionFilter("");
-            setAgentFilter("");
-            setDateFrom("");
-            setDateTo("");
-          }}
-          disabled={!filtersActive}
-          className={cn(
-            "h-8 px-3 text-xs transition-colors flex items-center gap-1",
-            filtersActive
-              ? "text-muted-foreground hover:text-foreground"
-              : "text-muted-foreground/40 cursor-not-allowed",
-          )}
-        >
-          <X className="w-3 h-3" />
-          Clear filters
-        </button>
-      </div>
 
-      {/* Result count when filtered */}
-      {filtersActive && (
-        <p className="text-xs text-muted-foreground">
-          Showing {events.length} of {data?.pages?.[0]?.total ?? events.length}+
-          events
-        </p>
-      )}
-
-      {/* Total count */}
-      {total != null && (
-        <p className="text-xs text-muted-foreground">
-          Showing {events.length} of {total} events
-          {filtersActive && " (filtered)"}
-        </p>
-      )}
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+            {total != null ? (
+              <span>
+                Showing {events.length} of {total} events
+                {filtersActive && " (filtered)"}
+              </span>
+            ) : (
+              <span>Showing {events.length} events</span>
+            )}
+            {filtersActive && (
+              <span>
+                Narrowed by search, action, agent, or date range filters.
+              </span>
+            )}
+          </div>
+        </InstrumentCardBody>
+      </InstrumentCard>
 
       {/* Table */}
       {isLoading ? (
@@ -417,14 +476,12 @@ export default function AuditLogPage() {
                       {formatRelativeTime(e.timestamp)}
                     </td>
                     <td className="px-5 py-3">
-                      <span
-                        className={cn(
-                          "text-xs font-mono px-2 py-0.5 rounded-full border",
-                          actionColor(e.action),
-                        )}
+                      <StatusBadge
+                        variant={actionVariant(e.action)}
+                        className="font-mono"
                       >
                         {e.action}
-                      </span>
+                      </StatusBadge>
                     </td>
                     <td className="px-5 py-3 text-sm text-foreground">
                       {e.actor}

@@ -50,6 +50,8 @@ export const ANALYTICS_PAGE_SECTIONS = [
 
 export const OVERRIDE_WARNING_THRESHOLD = 0.5;
 export const MAX_ANALYTICS_RANGE_DAYS = 7;
+const REPLAY_COMPARE_LINK =
+  "/govern/overview?tab=evaluation&mode=replay&topic=*&decision=REQUIRE_APPROVAL";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -267,7 +269,7 @@ function RuleTable({ rules }: { rules: RuleAnalytics[] }) {
                   </td>
                   <td className="py-2 px-3 text-right">
                     <Link
-                      to={`/govern/replay?topic=*&decision=REQUIRE_APPROVAL`}
+                      to={REPLAY_COMPARE_LINK}
                       className="inline-flex items-center gap-1 text-xs text-[var(--color-cordum)] hover:underline"
                     >
                       What-if
@@ -372,7 +374,7 @@ function FalsePositiveHighlights({ rules }: { rules: RuleAnalytics[] }) {
               </StatusBadge>
             </div>
             <Link
-              to={`/govern/replay?topic=*&decision=REQUIRE_APPROVAL`}
+              to={REPLAY_COMPARE_LINK}
               className="text-xs text-[var(--color-cordum)] hover:underline shrink-0"
             >
               Test with replay &rarr;
@@ -394,7 +396,11 @@ function FalsePositiveHighlights({ rules }: { rules: RuleAnalytics[] }) {
 // Main page
 // ---------------------------------------------------------------------------
 
-export default function PolicyAnalyticsPage() {
+export default function PolicyAnalyticsPage({
+  hideHeader,
+}: {
+  hideHeader?: boolean;
+} = {}) {
   const analyticsMutation = usePolicyAnalytics();
   const result = analyticsMutation.data;
 
@@ -413,15 +419,8 @@ export default function PolicyAnalyticsPage() {
     analyticsMutation.mutate(req);
   }, [canSubmit, from, to, analyticsMutation]);
 
-  return (
-    <div className="flex flex-col h-full overflow-y-auto">
-      <PageHeader
-        title="Rule Analytics"
-        subtitle="Identify false positives and approval fatigue across policy rules"
-        label="Govern"
-      />
-
-      <div className="max-w-6xl mx-auto w-full px-4 py-6 space-y-6">
+  const content = (
+    <div className={hideHeader ? "space-y-6" : "max-w-6xl mx-auto w-full px-4 py-6 space-y-6"}>
         {/* Controls */}
         <div className="rounded-lg border border-border/60 bg-card/80 p-5">
           <div className="flex flex-wrap items-end gap-4">
@@ -547,6 +546,20 @@ export default function PolicyAnalyticsPage() {
           </motion.div>
         )}
       </div>
+  );
+
+  if (hideHeader) {
+    return content;
+  }
+
+  return (
+    <div className="flex flex-col h-full overflow-y-auto">
+      <PageHeader
+        title="Rule Quality Analytics"
+        subtitle="See which rules generate the most volume, overrides, and review fatigue before you replay or retune them."
+        label="Govern"
+      />
+      {content}
     </div>
   );
 }

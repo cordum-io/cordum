@@ -644,6 +644,7 @@ export function UsersTab() {
                             className="text-danger hover:bg-danger/10"
                             onClick={() => setDeleteTarget(user)}
                             disabled={self}
+                            aria-label={self ? "Cannot delete yourself" : "Delete user"}
                             title={self ? "Cannot delete yourself" : "Delete user"}
                           >
                             <Trash2 className="h-3.5 w-3.5" />

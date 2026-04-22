@@ -46,25 +46,25 @@ describe("AppShell systemStatus derivation", () => {
 });
 
 describe("AppShell GOVERN navigation", () => {
-  it("exposes six GOVERN entries (Policy Studio, Velocity Rules, Policy Replay, Rule Analytics, Tenants, Quarantine)", () => {
+  it("keeps Delegations hidden until the delegation dashboard feature flag is enabled", () => {
     const govern = APP_SHELL_NAV_SECTIONS.find((section) => section.label === "Govern");
     expect(govern).toBeDefined();
 
     const labels = govern?.items.map((item) => item.label);
     expect(labels).toEqual([
       "Policy Studio",
-      "Velocity Rules",
-      "Policy Replay",
-      "Rule Analytics",
-      "Tenants",
       "Quarantine",
     ]);
   });
 
-  it("points GOVERN entries at /govern routes and keeps quarantine badge behavior", () => {
+  it("keeps the default governance nav paths aligned to the studio and quarantine views", () => {
     const govern = APP_SHELL_NAV_SECTIONS.find((section) => section.label === "Govern");
     expect(govern).toBeDefined();
-    expect(govern?.items.every((item) => item.path.startsWith("/govern/"))).toBe(true);
+
+    expect(govern?.items.map((item) => item.path)).toEqual([
+      "/govern/overview",
+      "/govern/quarantine",
+    ]);
 
     const quarantine = govern?.items.find((item) => item.label === "Quarantine");
     expect(quarantine?.path).toBe("/govern/quarantine");
@@ -73,6 +73,10 @@ describe("AppShell GOVERN navigation", () => {
 
   it("updates g+key navigation to GOVERN policy routes", () => {
     expect(APP_SHELL_G_KEY_MAP.p).toBe("/govern/overview?tab=input-rules");
+    expect(APP_SHELL_G_KEY_MAP.v).toBe("/govern/overview?tab=velocity");
+    expect(APP_SHELL_G_KEY_MAP.e).toBe("/govern/overview?tab=evaluation&mode=analytics");
+    expect(APP_SHELL_G_KEY_MAP.t).toBe("/govern/overview?tab=scope");
+    expect(APP_SHELL_G_KEY_MAP.q).toBe("/govern/quarantine");
     expect(APP_SHELL_G_KEY_MAP.b).toBe("/govern/overview?tab=bundles");
   });
 });

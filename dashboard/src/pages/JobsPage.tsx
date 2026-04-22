@@ -13,11 +13,15 @@ import type { Job, SafetyDecisionType } from "@/api/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
+import { DialogOverlay } from "@/components/ui/DialogOverlay";
+import { LabeledField } from "@/components/ui/LabeledField";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Pagination } from "@/components/ui/Pagination";
 import { SkeletonTable } from "@/components/ui/Skeleton";
+import { Tabs } from "@/components/ui/Tabs";
+import { Textarea } from "@/components/ui/Textarea";
 import {
   Search,
   RefreshCw,
@@ -35,7 +39,6 @@ import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { friendlyError } from "@/lib/friendlyError";
 import { toast } from "sonner";
 import { useSubmitJob } from "@/hooks/useJobs";
-import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { safeLocalStorage } from "@/lib/storage";
@@ -104,10 +107,6 @@ export function SubmitJobDialog({
 }) {
   const navigate = useNavigate();
   const submitJob = useSubmitJob();
-  const dialogRef = useDialogA11y(onClose, {
-    enabled: open,
-    initialFocusSelector: '[data-autofocus="true"]',
-  });
   const [topic, setTopic] = useState("");
   const [prompt, setPrompt] = useState("");
   const [priority, setPriority] = useState("normal");
@@ -138,107 +137,95 @@ export function SubmitJobDialog({
   };
 
   return (
-    <AnimatePresence>
-      {open && (
-        <>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[90] bg-black/50 backdrop-blur-sm"
-            onClick={onClose}
-          />
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[91] w-[520px] max-w-[90vw] bg-surface-1 border border-border rounded-xl shadow-2xl"
-          >
-            <div
-              ref={dialogRef}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="submit-job-dialog-title"
+    <DialogOverlay
+      open={open}
+      onClose={onClose}
+      label="Submit Job"
+      initialFocusSelector='input[aria-label="Job topic"]'
+      className="w-[520px] max-w-[90vw] overflow-hidden rounded-3xl border border-border bg-surface-1 shadow-2xl"
+    >
+      <div className="border-b border-border px-6 py-4">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h2
+              id="submit-job-dialog-title"
+              className="font-display font-semibold text-foreground"
             >
-              <div className="px-6 py-4 border-b border-border flex items-center justify-between">
-                <h2
-                  id="submit-job-dialog-title"
-                  className="font-display font-semibold text-foreground"
-                >
-                  Submit Job
-                </h2>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  aria-label="Close submit job dialog"
-                  className="p-1 rounded hover:bg-surface-2 text-muted-foreground"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="px-6 py-5 space-y-4">
-                <div>
-                  <label className="text-xs font-mono text-muted-foreground uppercase tracking-wider block mb-1">
-                    Topic *
-                  </label>
-                  <Input
-                    value={topic}
-                    onChange={(e) => setTopic(e.target.value)}
-                    placeholder="e.g. job.code-review"
-                    aria-label="Job topic"
-                    data-autofocus="true"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-mono text-muted-foreground uppercase tracking-wider block mb-1">
-                    Prompt *
-                  </label>
-                  <textarea
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    rows={4}
-                    placeholder="Describe the task for the agent..."
-                    aria-label="Job prompt"
-                    className="w-full px-3 py-2 text-xs bg-surface-0 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-cordum/30 resize-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-mono text-muted-foreground uppercase tracking-wider block mb-1">
-                    Priority
-                  </label>
-                  <Select
-                    value={priority}
-                    onChange={(e) => setPriority(e.target.value)}
-                    aria-label="Job priority"
-                    options={[
-                      { value: "low", label: "Low" },
-                      { value: "normal", label: "Normal" },
-                      { value: "high", label: "High" },
-                      { value: "critical", label: "Critical" },
-                    ]}
-                    className="w-40"
-                  />
-                </div>
-              </div>
-              <div className="px-6 py-4 border-t border-border flex justify-end gap-2">
-                <Button variant="outline" size="sm" onClick={onClose}>
-                  Cancel
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  loading={submitJob.isPending}
-                  disabled={!topic.trim() || !prompt.trim()}
-                  onClick={handleSubmit}
-                >
-                  Submit
-                </Button>
-              </div>
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+              Submit Job
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Dispatch a new job to the control plane with a topic, prompt, and priority.
+            </p>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            aria-label="Close submit job dialog"
+            className="h-8 w-8"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+      <div className="space-y-4 px-6 py-5">
+        <LabeledField
+          label="Topic *"
+          description="Choose the routing topic the workers listen on."
+        >
+          <Input
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            placeholder="e.g. job.code-review"
+            aria-label="Job topic"
+          />
+        </LabeledField>
+        <LabeledField
+          label="Prompt *"
+          description="Describe the work the agent should execute."
+        >
+          <Textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            rows={4}
+            placeholder="Describe the task for the agent..."
+            aria-label="Job prompt"
+            className="min-h-[7rem] resize-none"
+          />
+        </LabeledField>
+        <LabeledField
+          label="Priority"
+          description="Escalate only when the job should jump ahead of normal work."
+        >
+          <Select
+            value={priority}
+            onChange={(e) => setPriority(e.target.value)}
+            aria-label="Job priority"
+            options={[
+              { value: "low", label: "Low" },
+              { value: "normal", label: "Normal" },
+              { value: "high", label: "High" },
+              { value: "critical", label: "Critical" },
+            ]}
+            className="w-full sm:w-48"
+          />
+        </LabeledField>
+      </div>
+      <div className="flex justify-end gap-2 border-t border-border px-6 py-4">
+        <Button variant="outline" size="sm" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
+          loading={submitJob.isPending}
+          disabled={!topic.trim() || !prompt.trim()}
+          onClick={handleSubmit}
+        >
+          Submit
+        </Button>
+      </div>
+    </DialogOverlay>
   );
 }
 
@@ -539,64 +526,39 @@ export default function JobsPage() {
       />
 
       {/* Status Filters */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search by ID, topic, or trace..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
-          />
-        </div>
-        <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-2xl p-0.5">
-          {tabs.map((tab) => (
-            <button
-              type="button"
-              key={tab.id}
-              onClick={() => setActiveTabAndResetPage(tab.id)}
-              className={cn(
-                "px-3 py-1.5 text-xs font-medium rounded transition-colors",
-                activeTab === tab.id
-                  ? "bg-cordum/10 text-cordum"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {tab.label}
-              {tab.count > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-mono bg-surface-2">
-                  {tab.count}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <Input
+          type="text"
+          placeholder="Search by ID, topic, or trace..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          icon={<Search className="h-3.5 w-3.5" />}
+          className="h-9 max-w-sm flex-1 text-sm"
+        />
+        <Tabs
+          tabs={tabs}
+          activeTab={activeTab}
+          onChange={setActiveTabAndResetPage}
+          variant="segmented"
+          ariaLabel="Job status filters"
+          className="w-full sm:w-auto"
+        />
       </div>
 
       {/* Safety Decision Filter */}
-      <div className="flex items-center gap-2">
-        <Shield className="w-3.5 h-3.5 text-muted-foreground" />
-        <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">
-          Safety:
-        </span>
-        <div className="flex items-center gap-1">
-          {safetyTabs.map((tab) => (
-            <button
-              type="button"
-              key={tab.id}
-              onClick={() => setSafetyFilter(tab.id)}
-              className={cn(
-                "px-2.5 py-1 text-xs font-medium rounded transition-colors",
-                safetyFilter === tab.id
-                  ? "bg-surface-2 text-foreground border border-border"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {tab.label}
-            </button>
-          ))}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-widest text-muted-foreground">
+          <Shield className="h-3.5 w-3.5" />
+          <span>Safety decision</span>
         </div>
+        <Tabs
+          tabs={safetyTabs}
+          activeTab={safetyFilter}
+          onChange={setSafetyFilter}
+          variant="segmented"
+          ariaLabel="Safety decision filters"
+          className="w-full"
+        />
       </div>
 
       {/* Jobs Table */}
@@ -717,12 +679,12 @@ export default function JobsPage() {
                         {job.status}
                       </StatusBadge>
                       {job.labels?.safety_bypassed === "true" && (
-                        <span
-                          className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-mono font-medium bg-[var(--color-warning)]/15 text-[var(--color-warning)] border border-[var(--color-warning)]/20"
-                          title="Safety bypassed via fail-open"
+                        <StatusBadge
+                          variant="warning"
+                          className="ml-1.5"
                         >
                           Bypassed
-                        </span>
+                        </StatusBadge>
                       )}
                     </td>
                     <td className="px-5 py-3 font-mono text-sm text-cordum group-hover:underline">
@@ -748,13 +710,14 @@ export default function JobsPage() {
                         : "—"}
                     </td>
                     <td className="px-5 py-3">
-                      <button
-                        type="button"
-                        className="p-1 rounded hover:bg-surface-2 transition-colors"
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
                         aria-label="View details"
                       >
                         <Eye className="w-3.5 h-3.5 text-muted-foreground" />
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 ))}

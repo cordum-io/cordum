@@ -69,6 +69,15 @@ describe("CollapsibleSection", () => {
     expect(container.textContent).toContain("3");
   });
 
+  it("renders optional description and trailing content", () => {
+    renderSection({
+      description: "Expandable metadata",
+      trailing: React.createElement("span", null, "Connected"),
+    });
+    expect(container.textContent).toContain("Expandable metadata");
+    expect(container.textContent).toContain("Connected");
+  });
+
   it("applies custom className", () => {
     renderSection({ className: "my-section" });
     const outerDiv = container.firstElementChild as HTMLElement;

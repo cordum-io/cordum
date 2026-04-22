@@ -77,7 +77,7 @@ export function GlobalOutputRuleEditorDrawer({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[125] flex justify-end">
+    <div className="fixed inset-0 z-[135] flex justify-end">
       <button type="button" className="absolute inset-0 bg-black/50" aria-label="Close output rule editor" onClick={onClose} />
       <div className="relative h-full w-full max-w-lg overflow-y-auto border-l border-border bg-surface-1 p-5">
         <div className="mb-4 flex items-center justify-between">

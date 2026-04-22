@@ -218,7 +218,7 @@ export function RuleCard({
             </Button>
           </div>
         ) : (
-          <Button variant="ghost" size="sm" type="button" onClick={() => setConfirmDelete(true)}>
+          <Button variant="ghost" size="sm" type="button" aria-label="Delete rule" onClick={() => setConfirmDelete(true)}>
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         )}

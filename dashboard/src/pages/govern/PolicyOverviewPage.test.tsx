@@ -1,19 +1,23 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
-const { navigateMock, mockSearchParams } = vi.hoisted(() => {
+const { mockSearchParams, setSearchParamsMock } = vi.hoisted(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   Object.defineProperty(window, "matchMedia", {
     writable: true,
     value: () => ({
-      matches: false, media: "", onchange: null,
-      addListener: () => {}, removeListener: () => {},
-      addEventListener: () => {}, removeEventListener: () => {},
+      matches: false,
+      media: "",
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
       dispatchEvent: () => false,
     }),
   });
   return {
-    navigateMock: vi.fn(),
-    mockSearchParams: { tab: "" as string },
+    mockSearchParams: { tab: "" as string, mode: "" as string },
+    setSearchParamsMock: vi.fn(),
   };
 });
 
@@ -21,24 +25,51 @@ vi.mock("@/hooks/usePolicies", () => ({
   usePolicyBundles: () => ({ data: { items: [] }, isLoading: false }),
   usePolicyRules: () => ({ data: { items: [] }, isLoading: false }),
 }));
-vi.mock("@/hooks/usePageTitle", () => ({ usePageTitle: () => {} }));
-vi.mock("@/hooks/useStatus", () => ({ useStatus: () => ({ data: null, isLoading: false }) }));
-vi.mock("@/hooks/usePolicyAccess", () => ({
-  usePolicyAccess: () => ({
-    canEdit: true, canPublish: true, canRelease: true, isReadOnly: false,
-    canManageOutputRules: true, canManageTenants: true,
+vi.mock("@/hooks/useAuditChainVerify", () => ({
+  useAuditChainVerify: () => ({
+    data: undefined,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+    dataUpdatedAt: 0,
   }),
 }));
+vi.mock("@/hooks/useAuditVerify", () => ({
+  useAuditVerify: () => ({
+    data: undefined,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+    dataUpdatedAt: 0,
+  }),
+  useTriggerAuditVerify: () => () => {},
+}));
+vi.mock("@/hooks/usePermission", () => ({
+  usePermission: () => ({ allowed: true, userRoles: ["admin"] }),
+  useIsAdmin: () => true,
+}));
+vi.mock("@/hooks/useAuth", () => ({
+  useAuth: () => ({ tenantId: "default" }),
+}));
+vi.mock("@/hooks/usePageTitle", () => ({ usePageTitle: () => {} }));
+vi.mock("@/pages/govern/InputRulesPage", () => ({ default: () => <div>Input rules content</div> }));
+vi.mock("@/pages/govern/OutputRulesPage", () => ({ default: () => <div>Output rules content</div> }));
+vi.mock("@/pages/govern/SimulatorPage", () => ({ default: () => <div>Simulator content</div> }));
+vi.mock("@/pages/govern/BundlesPage", () => ({ default: () => <div>Bundles content</div> }));
+vi.mock("@/pages/govern/VelocityRulesPage", () => ({ default: () => <div>Velocity content</div> }));
+vi.mock("@/pages/govern/ReplayPage", () => ({ default: () => <div>Replay content</div> }));
+vi.mock("@/pages/govern/PolicyAnalyticsPage", () => ({ default: () => <div>Analytics content</div> }));
+vi.mock("@/pages/govern/TenantsPage", () => ({ default: () => <div>Scope content</div> }));
 
 vi.mock("react-router-dom", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-router-dom")>();
   return {
     ...actual,
-    useNavigate: () => navigateMock,
     useSearchParams: () => {
       const params = new URLSearchParams();
       if (mockSearchParams.tab) params.set("tab", mockSearchParams.tab);
-      return [params, vi.fn()] as const;
+      if (mockSearchParams.mode) params.set("mode", mockSearchParams.mode);
+      return [params, setSearchParamsMock] as const;
     },
   };
 });
@@ -56,6 +87,8 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   mockSearchParams.tab = "";
+  mockSearchParams.mode = "";
+  setSearchParamsMock.mockReset();
 });
 
 afterEach(() => {
@@ -63,9 +96,10 @@ afterEach(() => {
   container.remove();
 });
 
-function renderPage(tab = "") {
+async function renderPage(tab = "", mode = "") {
   mockSearchParams.tab = tab;
-  act(() => {
+  mockSearchParams.mode = mode;
+  await act(async () => {
     root.render(
       <MemoryRouter>
         <React.Suspense fallback={<div>Loading...</div>}>
@@ -73,63 +107,73 @@ function renderPage(tab = "") {
         </React.Suspense>
       </MemoryRouter>,
     );
+    await Promise.resolve();
   });
 }
 
 function findTabButton(label: string): HTMLButtonElement | null {
-  const buttons = container.querySelectorAll<HTMLButtonElement>("button[type='button']");
-  for (const btn of buttons) {
-    if (btn.textContent?.trim().startsWith(label)) return btn;
-  }
-  return null;
+  return container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
 }
 
-function getActiveTabLabel(): string | null {
-  // The active tab has shadow-soft class
-  const buttons = container.querySelectorAll<HTMLButtonElement>("button[type='button']");
-  for (const btn of buttons) {
-    if (btn.className.includes("shadow-soft")) return btn.textContent?.trim() ?? null;
-  }
-  return null;
+function getActiveLabels(): string[] {
+  return Array.from(
+    container.querySelectorAll<HTMLButtonElement>('button[aria-selected="true"]'),
+  ).map((button) => button.getAttribute("aria-label") ?? "");
 }
 
 describe("PolicyOverviewPage tab rendering", () => {
-  it("renders all 5 tab buttons", () => {
-    renderPage();
+  it("renders the merged Policy Studio primary tabs", async () => {
+    await renderPage();
     expect(findTabButton("Overview")).not.toBeNull();
     expect(findTabButton("Input Rules")).not.toBeNull();
     expect(findTabButton("Output Rules")).not.toBeNull();
-    expect(findTabButton("Simulator")).not.toBeNull();
+    expect(findTabButton("Velocity")).not.toBeNull();
+    expect(findTabButton("Evaluation")).not.toBeNull();
     expect(findTabButton("Bundles")).not.toBeNull();
+    expect(findTabButton("Scope")).not.toBeNull();
   });
 
-  it("activates Overview tab by default", () => {
-    renderPage();
-    expect(getActiveTabLabel()).toContain("Overview");
+  it("activates Overview by default", async () => {
+    await renderPage();
+    expect(getActiveLabels()).toContain("Overview");
   });
 
-  it("activates Input Rules tab from URL param", () => {
-    renderPage("input-rules");
-    expect(getActiveTabLabel()).toContain("Input Rules");
+  it("activates Velocity from the tab query param", async () => {
+    await renderPage("velocity");
+    expect(getActiveLabels()).toContain("Velocity");
+    expect(container.textContent).toContain("Velocity content");
   });
 
-  it("activates Output Rules tab from URL param", () => {
-    renderPage("output-rules");
-    expect(getActiveTabLabel()).toContain("Output Rules");
+  it("activates Evaluation + Replay from tab and mode params", async () => {
+    await renderPage("evaluation", "replay");
+    expect(getActiveLabels()).toEqual(expect.arrayContaining(["Evaluation", "Replay"]));
+    expect(container.textContent).toContain("Replay content");
   });
 
-  it("activates Simulator tab from URL param", () => {
-    renderPage("simulator");
-    expect(getActiveTabLabel()).toContain("Simulator");
+  it("normalizes the legacy simulator tab into evaluation mode", async () => {
+    await renderPage("simulator");
+    expect(getActiveLabels()).toEqual(expect.arrayContaining(["Evaluation", "Simulator"]));
+    expect(container.textContent).toContain("Simulator content");
   });
 
-  it("activates Bundles tab from URL param", () => {
-    renderPage("bundles");
-    expect(getActiveTabLabel()).toContain("Bundles");
+  it("falls back to overview for invalid tab params", async () => {
+    await renderPage("nonexistent");
+    expect(getActiveLabels()).toContain("Overview");
   });
 
-  it("falls back to overview for invalid tab param", () => {
-    renderPage("nonexistent");
-    expect(getActiveTabLabel()).toContain("Overview");
+  it("mounts the ChainIntegrityWidget inside the Overview tab content", async () => {
+    await renderPage("overview");
+    const widget = container.querySelector(
+      "[data-testid=chain-integrity-widget]",
+    );
+    expect(widget).not.toBeNull();
+    // With the default (data: undefined, not loading, not error) mock
+    // the widget lands in its not_checked state.
+    expect(widget?.getAttribute("data-state")).toBe("not_checked");
+  });
+
+  it("does NOT mount the GapAlertBanner when verify data is absent or ok", async () => {
+    await renderPage("overview");
+    expect(container.querySelector("[data-testid=gap-alert-banner]")).toBeNull();
   });
 });

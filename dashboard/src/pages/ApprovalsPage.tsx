@@ -14,11 +14,16 @@ import {
 } from "@/hooks/useApprovals";
 import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { McpApprovalsSection } from "@/components/approvals/McpApprovalsSection";
 import { WorkflowContext } from "@/components/approvals/WorkflowContext";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
+import { Input } from "@/components/ui/Input";
+import { Textarea } from "@/components/ui/Textarea";
+import { Tabs } from "@/components/ui/Tabs";
+import { StatTile } from "@/components/ui/StatTile";
 import {
   Search,
   RefreshCw,
@@ -35,7 +40,6 @@ import { cn, formatRelativeTime } from "@/lib/utils";
 import { CodeBlock } from "@/components/ui/CodeBlock";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { InstrumentCard } from "@/components/ui/InstrumentCard";
-import { MetricValue } from "@/components/ui/MetricValue";
 import { friendlyError } from "@/lib/friendlyError";
 import { toast } from "sonner";
 
@@ -368,10 +372,10 @@ function DecisionSummaryBlock({
       </div>
 
       {escalationReason && (
-        <div className="flex items-start gap-2 rounded-2xl border border-[var(--color-warning)]/20 bg-[var(--color-warning)]/10 px-3 py-2 text-sm text-foreground">
-          <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-warning)]" />
+        <div className="flex items-start gap-2 rounded-2xl border border-warning/20 bg-warning/10 px-3 py-2 text-sm text-foreground">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
           <div>
-            <p className="text-xs font-mono uppercase tracking-wide text-[var(--color-warning)]">
+            <p className="text-xs font-mono uppercase tracking-wide text-warning">
               Escalation
             </p>
             <p>{escalationReason}</p>
@@ -610,6 +614,12 @@ export default function ApprovalsPage() {
         }
       />
 
+      {/* MCP tool-call approvals — surfaced above job approvals so
+          operators see the high-privilege agent-driven calls before
+          the routine job queue. Each card shows tool_name + requester
+          + args-preview (modal) + approve/reject. */}
+      <McpApprovalsSection statusFilter="pending" />
+
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -620,139 +630,140 @@ export default function ApprovalsPage() {
           Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
-            <InstrumentCard accent={pending.length > 0 ? "warning" : "muted"}>
-              <MetricValue
-                label="Pending"
-                value={pending.length}
-                icon={
-                  <Clock
-                    className={cn(
-                      "h-4 w-4",
-                      pending.length > 0
-                        ? "text-[var(--color-warning)]"
-                        : "text-muted-foreground",
-                    )}
-                  />
-                }
-              />
-            </InstrumentCard>
+            <StatTile
+              accent={pending.length > 0 ? "warning" : "muted"}
+              label="Pending"
+              value={pending.length}
+              helperText={
+                pending.length > 0 ? "Needs operator review" : "Queue clear"
+              }
+              icon={
+                <Clock
+                  className={cn(
+                    "h-4 w-4",
+                    pending.length > 0
+                      ? "text-warning"
+                      : "text-muted-foreground",
+                  )}
+                />
+              }
+            />
 
-            <InstrumentCard accent="healthy">
-              <MetricValue
-                label="Approved"
-                value={approved.length}
-                icon={
-                  <CheckCircle2 className="h-4 w-4 text-[var(--color-success)]" />
-                }
-              />
-            </InstrumentCard>
+            <StatTile
+              accent="healthy"
+              label="Approved"
+              value={approved.length}
+              helperText="Resolved successfully"
+              icon={
+                <CheckCircle2 className="h-4 w-4 text-success" />
+              }
+            />
 
-            <InstrumentCard accent={denied.length > 0 ? "governance" : "muted"}>
-              <MetricValue
-                label="Denied"
-                value={denied.length}
-                icon={
-                  <XCircle
-                    className={cn(
-                      "h-4 w-4",
-                      denied.length > 0
-                        ? "text-[var(--color-governance)]"
-                        : "text-muted-foreground",
-                    )}
-                  />
-                }
-              />
-            </InstrumentCard>
+            <StatTile
+              accent={denied.length > 0 ? "governance" : "muted"}
+              label="Denied"
+              value={denied.length}
+              helperText={
+                denied.length > 0 ? "Review denial reasons" : "No denied items"
+              }
+              icon={
+                <XCircle
+                  className={cn(
+                    "h-4 w-4",
+                    denied.length > 0
+                      ? "text-[var(--color-governance)]"
+                      : "text-muted-foreground",
+                  )}
+                />
+              }
+            />
 
-            <InstrumentCard accent="muted">
-              <MetricValue
-                label="Expired"
-                value={expired.length}
-                icon={<Timer className="h-4 w-4 text-muted-foreground" />}
-              />
-            </InstrumentCard>
+            <StatTile
+              accent="muted"
+              label="Expired"
+              value={expired.length}
+              helperText="Timed out before decision"
+              icon={<Timer className="h-4 w-4 text-muted-foreground" />}
+            />
 
-            <InstrumentCard accent={invalidated.length > 0 ? "danger" : "muted"}>
-              <MetricValue
-                label="Invalidated"
-                value={invalidated.length}
-                icon={
-                  <XCircle
-                    className={cn(
-                      "h-4 w-4",
-                      invalidated.length > 0
-                        ? "text-destructive"
-                        : "text-muted-foreground",
-                    )}
-                  />
-                }
-              />
-            </InstrumentCard>
+            <StatTile
+              accent={invalidated.length > 0 ? "danger" : "muted"}
+              label="Invalidated"
+              value={invalidated.length}
+              helperText={
+                invalidated.length > 0
+                  ? "Requests drifted after creation"
+                  : "No invalidated requests"
+              }
+              icon={
+                <XCircle
+                  className={cn(
+                    "h-4 w-4",
+                    invalidated.length > 0
+                      ? "text-destructive"
+                      : "text-muted-foreground",
+                  )}
+                />
+              }
+            />
 
-            <InstrumentCard accent={repaired.length > 0 ? "cordum" : "muted"}>
-              <MetricValue
-                label="Repaired"
-                value={repaired.length}
-                icon={
-                  <RefreshCw
-                    className={cn(
-                      "h-4 w-4",
-                      repaired.length > 0
-                        ? "text-cordum"
-                        : "text-muted-foreground",
-                    )}
-                  />
-                }
-              />
-            </InstrumentCard>
+            <StatTile
+              accent={repaired.length > 0 ? "cordum" : "muted"}
+              label="Repaired"
+              value={repaired.length}
+              helperText={
+                repaired.length > 0 ? "Legacy rows normalized" : "No repairs"
+              }
+              icon={
+                <RefreshCw
+                  className={cn(
+                    "h-4 w-4",
+                    repaired.length > 0
+                      ? "text-cordum"
+                      : "text-muted-foreground",
+                  )}
+                />
+              }
+            />
           </>
         )}
       </motion.div>
 
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="relative w-full max-w-md">
-          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            aria-label="Search approvals"
-            placeholder="Search decision summaries, vendors, workflow steps, or IDs"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-10 w-full rounded-2xl border border-border bg-surface-1 pl-8 pr-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+      <InstrumentCard className="p-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="w-full max-w-md">
+            <Input
+              type="text"
+              aria-label="Search approvals"
+              icon={<Search className="h-3.5 w-3.5" />}
+              placeholder="Search decision summaries, vendors, workflow steps, or IDs"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="h-10 bg-surface-1"
+            />
+          </div>
+          <Tabs
+            ariaLabel="Approval status filters"
+            variant="segmented"
+            className="w-full lg:w-auto"
+            activeTab={activeTab}
+            onChange={setActiveTab}
+            tabs={[
+              { id: "pending", label: "Pending", count: pending.length },
+              { id: "approved", label: "Approved", count: approved.length },
+              { id: "rejected", label: "Denied", count: denied.length },
+              { id: "expired", label: "Expired", count: expired.length },
+              {
+                id: "invalidated",
+                label: "Invalidated",
+                count: invalidated.length,
+              },
+              { id: "repaired", label: "Repaired", count: repaired.length },
+              { id: "all", label: "All", count: all.length },
+            ]}
           />
         </div>
-        <div className="flex flex-wrap items-center gap-1 rounded-2xl border border-border bg-surface-1 p-0.5">
-          {[
-            { id: "pending", label: "Pending", count: pending.length },
-            { id: "approved", label: "Approved", count: approved.length },
-            { id: "rejected", label: "Denied", count: denied.length },
-            { id: "expired", label: "Expired", count: expired.length },
-            { id: "invalidated", label: "Invalidated", count: invalidated.length },
-            { id: "repaired", label: "Repaired", count: repaired.length },
-            { id: "all", label: "All", count: all.length },
-          ].map((tab) => (
-            <button
-              type="button"
-              key={tab.id}
-              aria-pressed={activeTab === tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                "rounded-xl px-3 py-2 text-xs font-medium transition-colors",
-                activeTab === tab.id
-                  ? "bg-cordum/10 text-cordum"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {tab.label}
-              {tab.count > 0 && (
-                <span className="ml-1.5 rounded-full bg-surface-2 px-1.5 py-0.5 font-mono text-xs">
-                  {tab.count}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      </div>
+      </InstrumentCard>
 
       {isLoading ? (
         <SkeletonTable rows={5} />
@@ -951,7 +962,7 @@ export default function ApprovalsPage() {
               <label className="mb-1 block text-xs font-mono uppercase tracking-wide text-muted-foreground">
                 Reason <span className="text-destructive">*</span>
               </label>
-              <textarea
+              <Textarea
                 value={denyReason}
                 onChange={(e) => {
                   if (e.target.value.length <= 500)
@@ -962,13 +973,13 @@ export default function ApprovalsPage() {
                 maxLength={500}
                 aria-required="true"
                 aria-label="Denial reason"
-                className="w-full resize-none rounded-2xl border border-border bg-surface-2 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+                className="resize-none bg-surface-2 px-3 py-2 shadow-none focus:ring-cordum/30"
               />
               <p
                 className={cn(
                   "text-xs mt-1 text-right",
                   denyReason.length > 400
-                    ? "text-[var(--color-warning)]"
+                    ? "text-warning"
                     : "text-muted-foreground",
                   denyReason.length >= 500 && "text-destructive",
                 )}

@@ -322,67 +322,37 @@ export function useResetUserPassword() {
 }
 
 // ---------------------------------------------------------------------------
-// Notification localStorage keys (fallback when backend has no notification data)
-// ---------------------------------------------------------------------------
-
-const LS_CHANNELS_KEY = "cordum-notification-channels";
-const LS_RULES_KEY = "cordum-notification-rules";
-
-function readLocalStorage<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw) as T;
-  } catch {
-    logger.debug("settings", "localStorage JSON parse failed, using fallback");
-    return fallback;
-  }
-}
-
-function writeLocalStorage<T>(key: string, value: T): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    logger.debug("settings", "localStorage write failed, quota may be exceeded");
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Notification channels (derived from config with localStorage fallback)
+// Notification channels (derived from saved config only)
 // ---------------------------------------------------------------------------
 
 export function useNotificationChannels() {
-  const { data: config, isLoading } = useConfig();
+  const { data: config, isLoading, isError, error, refetch } = useConfig();
 
   const channels = useMemo<NotificationChannel[]>(() => {
-    if (!config) return readLocalStorage<NotificationChannel[]>(LS_CHANNELS_KEY, []);
+    if (!config) return [];
     const raw = (config as Record<string, unknown>).notifications as
       | { channels?: unknown[] }
       | undefined;
-    if (!Array.isArray(raw?.channels) || raw.channels.length === 0) {
-      return readLocalStorage<NotificationChannel[]>(LS_CHANNELS_KEY, []);
-    }
+    if (!Array.isArray(raw?.channels) || raw.channels.length === 0) return [];
     return raw.channels as NotificationChannel[];
   }, [config]);
 
-  return { data: channels, isLoading };
+  return { data: channels, isLoading, isError, error, refetch };
 }
 
 export function useNotificationRules() {
-  const { data: config, isLoading } = useConfig();
+  const { data: config, isLoading, isError, error, refetch } = useConfig();
 
   const rules = useMemo<NotificationRule[]>(() => {
-    if (!config) return readLocalStorage<NotificationRule[]>(LS_RULES_KEY, []);
+    if (!config) return [];
     const raw = (config as Record<string, unknown>).notifications as
       | { rules?: unknown[] }
       | undefined;
-    if (!Array.isArray(raw?.rules) || raw.rules.length === 0) {
-      return readLocalStorage<NotificationRule[]>(LS_RULES_KEY, []);
-    }
+    if (!Array.isArray(raw?.rules) || raw.rules.length === 0) return [];
     return raw.rules as NotificationRule[];
   }, [config]);
 
-  return { data: rules, isLoading };
+  return { data: rules, isLoading, isError, error, refetch };
 }
 
 export function useSaveNotificationChannel() {
@@ -403,8 +373,7 @@ export function useSaveNotificationChannel() {
       await setConfig.mutateAsync({ notifications: { channels: updated } });
       return updated;
     },
-    onSuccess: (updated) => {
-      writeLocalStorage(LS_CHANNELS_KEY, updated);
+    onSuccess: (_updated) => {
       queryClient.invalidateQueries({ queryKey: ["config"] });
     },
     onError: (err) => {
@@ -433,8 +402,7 @@ export function useDeleteNotificationChannel() {
       await setConfig.mutateAsync({ notifications: { channels: updated } });
       return updated;
     },
-    onSuccess: (updated) => {
-      writeLocalStorage(LS_CHANNELS_KEY, updated);
+    onSuccess: (_updated) => {
       queryClient.invalidateQueries({ queryKey: ["config"] });
     },
     onError: (err) => {
@@ -456,7 +424,6 @@ export function useSaveNotificationRules() {
   return useMutation<void, Error, NotificationRule[]>({
     mutationFn: (rules) => {
       logger.info("settings", "Saving notification rules");
-      writeLocalStorage(LS_RULES_KEY, rules);
       return setConfig.mutateAsync({ notifications: { rules } });
     },
     onSuccess: () => {
@@ -466,27 +433,20 @@ export function useSaveNotificationRules() {
 }
 
 // ---------------------------------------------------------------------------
-// Environments (derived from config — backend endpoint TBD)
+// Environments (derived from config only)
 // ---------------------------------------------------------------------------
 
-const DEFAULT_ENVIRONMENT: Environment = {
-  id: "production",
-  name: "production",
-  status: "active",
-  config: {},
-};
-
 export function useEnvironments() {
-  const { data: config, isLoading } = useConfig();
+  const { data: config, isLoading, isError, error, refetch } = useConfig();
 
   const environments = useMemo<Environment[]>(() => {
-    if (!config) return [DEFAULT_ENVIRONMENT];
+    if (!config) return [];
     const raw = (config as Record<string, unknown>).environments;
-    if (!Array.isArray(raw) || raw.length === 0) return [DEFAULT_ENVIRONMENT];
+    if (!Array.isArray(raw) || raw.length === 0) return [];
     return raw as Environment[];
   }, [config]);
 
-  return { data: environments, isLoading };
+  return { data: environments, isLoading, isError, error, refetch };
 }
 
 export function useSaveEnvironment() {
@@ -898,9 +858,6 @@ export function useSetGeneralConfig() {
 
 /** @internal exported for unit tests */
 export const __settingsInternal = {
-  readLocalStorage,
-  writeLocalStorage,
-  DEFAULT_ENVIRONMENT,
   GENERAL_CONFIG_DEFAULTS,
   DEFAULT_MCP_CONFIG,
   MCP_TOOL_CATALOG,

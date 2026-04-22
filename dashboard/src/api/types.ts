@@ -129,6 +129,56 @@ export interface PolicyConstraints {
     deny_path_globs?: string[];
   };
   redaction_level?: string;
+  maxInvocations?: number;
+  allowedDomains?: string[];
+  maskedFields?: string[];
+  rateLimit?:
+    | number
+    | string
+    | {
+        limit?: number;
+        requests?: number;
+        windowSeconds?: number;
+        window_seconds?: number;
+        burst?: number;
+      };
+  requireReviewer?:
+    | boolean
+    | string
+    | {
+        role?: string;
+        approverRole?: string;
+        reason?: string;
+      };
+}
+
+export type GovernanceVerdict =
+  | "allow"
+  | "deny"
+  | "constrain"
+  | "require_approval"
+  | "throttle";
+
+export interface GovernanceDecision {
+  jobId: string;
+  runId?: string;
+  stepId?: string;
+  topic: string;
+  matchedRule: string;
+  ruleName?: string;
+  verdict: GovernanceVerdict;
+  reason: string;
+  constraints?: PolicyConstraints;
+  approvalStatus?: ApprovalStatus;
+  approvalDecision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
+  agentId: string;
+  policyVersion?: string;
+  timestamp: string;
+}
+
+export interface GovernanceDecisionsResponse {
+  items: GovernanceDecision[];
+  nextCursor?: string;
 }
 
 export interface McpPolicyResult {
@@ -412,7 +462,11 @@ export interface WorkflowStep {
   delay_sec?: number;
   delay_until?: string;
   route_labels?: Record<string, string>;
-  /** Legacy config bag — kept for backward compat during migration */
+  /** Free-form configuration bag for step types whose knobs do not
+   *  fit under the typed fields above (scheduler-specific delays,
+   *  pack-specific tuning). Consumers read from the typed fields
+   *  first and fall back to this bag only when the knob is
+   *  genuinely step-type-specific. */
   config?: Record<string, unknown>;
   // Run-time fields (present when viewing runs)
   status?: RunStatus;
@@ -522,7 +576,10 @@ export interface PolicyRule {
   created_by?: string;
   created_at?: string;
   updated_at?: string;
-  // Legacy compat
+  // Legacy-bundle import fields — populated when loading YAML
+  // bundles that predate the canonical PolicyRule shape.
+  // `dashboard/src/lib/policy-bundle.ts` reads these during import;
+  // new bundles never write them.
   matchCriteria?: Record<string, unknown>;
   decisionType?: SafetyDecisionType;
   reason?: string;
@@ -542,6 +599,14 @@ export interface BundleSnapshot {
   created_by: string;
   version?: number;
   rule_count?: number;
+}
+
+export interface PolicyBundleSignature {
+  algorithm: string;
+  key_id: string;
+  value: string;
+  hash: string;
+  signed_bytes: number;
 }
 
 export interface PolicyBundle {
@@ -567,6 +632,16 @@ export interface PolicyBundle {
   rule_count?: number;
   eval_count_24h?: number;
   last_triggered?: string;
+  // shadow summary surfaces when the gateway detail response carries a
+  // /shadow sidecar. Absent = no shadow active for this bundle.
+  shadow?: ShadowPolicySummary | null;
+  // Signature fields sourced from the bundle's _signature map attached
+  // server-side by handlers_policy_bundles_signing.go. Missing when the
+  // bundle predates the signing pipeline or when the detail endpoint
+  // has not yet been extended to surface the _signature entry. UI
+  // surfaces default to 'unknown' badge when absent.
+  signed?: boolean;
+  signature?: PolicyBundleSignature;
 }
 
 export interface PolicyPublishRequest {
@@ -736,7 +811,29 @@ export interface Worker {
   cpuLoad?: number;
   gpuUtilization?: number;
   memoryLoad?: number;
+  // Heartbeat demotion (phase-2 boundary hardening). `online` is the
+  // authoritative dispatch-eligibility signal backed by the worker's
+  // session token; lastHeartbeat + heartbeatAgeSeconds are telemetry
+  // only — never gate UX behaviour on them.
+  online?: boolean;
+  sessionValid?: boolean;
+  sessionExpMs?: number;
+  sessionRevoked?: boolean;
+  sessionState?: WorkerSessionState;
+  lastHeartbeatAt?: string;
+  heartbeatAgeSeconds?: number;
 }
+
+/**
+ * WorkerSessionState mirrors the scheduler TrustReason* constants.
+ * Surfaced on /api/v1/workers for dashboards + external consumers.
+ */
+export type WorkerSessionState =
+  | "valid"
+  | "no_session"
+  | "session_expired"
+  | "session_revoked"
+  | "trust_store_unready";
 
 export interface Pool {
   name: string;
@@ -1324,6 +1421,31 @@ export interface McpResource {
   mimeType: string;
 }
 
+export interface McpPromptArgument {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+export interface McpPrompt {
+  name: string;
+  description: string;
+  arguments: McpPromptArgument[];
+  // modelClass hints at the model tier the prompt is tuned for —
+  // e.g. 'small' for straightforward rewriting, 'reasoning' for the
+  // policy-migration helper that has to navigate grammar diffs.
+  // Rendered on the catalogue card.
+  modelClass: "small" | "reasoning";
+  // safetyDisclaimer is true for prompts whose rendered output
+  // operators should simulate before applying (draft_safety_rule +
+  // policy_migration_helper). Gets a distinct amber chip on the card.
+  safetyDisclaimer: boolean;
+  // docsHref links to the long-form catalogue entry in
+  // docs/mcp/prompts.md so operators can jump straight to the
+  // argument-schema + example-output deep-dive.
+  docsHref: string;
+}
+
 export interface McpStatus {
   running: boolean;
   connectedClients: number;
@@ -1455,6 +1577,145 @@ export interface AgentRegistryEntry {
 // Setup Wizard
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Governance health — Command Center composite score.
+// Matches core/governance.HealthScore / HealthFactor on the wire.
+// ---------------------------------------------------------------------------
+
+export type GovernanceGrade = "A" | "B" | "C" | "D" | "F";
+
+export interface GovernanceHealthFactor {
+  score: number;
+  weight: number;
+  raw?: unknown;
+  notes?: string;
+}
+
+export interface GovernanceHealth {
+  score: number;
+  grade: GovernanceGrade;
+  generated_at: string;
+  factors: Record<string, GovernanceHealthFactor>;
+  truncated_at_max?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Policy shadow mode (mirrors core/policyshadow wire types)
+// ---------------------------------------------------------------------------
+
+export interface ShadowPolicy {
+  shadow_bundle_id: string;
+  bundle_id: string;
+  tenant_id: string;
+  content: string;
+  created_at: string;
+  activated_at: string;
+  created_by?: string;
+  metadata?: Record<string, string>;
+}
+
+export interface ShadowPolicySummary {
+  shadow_bundle_id: string;
+  bundle_id: string;
+  tenant_id: string;
+  created_by?: string;
+  created_at: string;
+  activated_at: string;
+}
+
+export interface ShadowResultsSummary {
+  total_evaluated: number;
+  escalated_count: number;
+  relaxed_count: number;
+  approval_differ_count: number;
+  unchanged_count: number;
+  first_evaluated_at?: string;
+  last_evaluated_at?: string;
+}
+
+export type ShadowDiff =
+  | "escalated"
+  | "relaxed"
+  | "approval_differ"
+  | "unchanged";
+
+export interface ShadowComparisonEntry {
+  ts_ms: number;
+  job_id: string;
+  agent_id: string;
+  active_verdict: string;
+  shadow_verdict: string;
+  diff: ShadowDiff;
+  active_rule_id?: string;
+  shadow_rule_id?: string;
+  latency_ms?: number;
+  seq?: number;
+}
+
+export interface ShadowComparisonsResponse {
+  entries: ShadowComparisonEntry[];
+  next_cursor?: string;
+  truncated_at_max?: boolean;
+}
+
+export interface ShadowTimeseriesBucket {
+  ts_ms: number;
+  escalated: number;
+  relaxed: number;
+  approval_differ: number;
+  unchanged: number;
+  total: number;
+}
+
+export interface ShadowTimeseriesResponse {
+  buckets: ShadowTimeseriesBucket[];
+  window_ms: number;
+}
+
+// ---------------------------------------------------------------------------
+// MCP governance dashboard
+// ---------------------------------------------------------------------------
+
+export type SignatureStatus = "verified" | "unverified" | "invalid";
+
+export interface MCPUsageCell {
+  agent_id: string;
+  tool_name: string;
+  count: number;
+  allow_count: number;
+  deny_count: number;
+  approval_required_count: number;
+  p50_latency_ms: number;
+  p99_latency_ms: number;
+  last_invoked_at_ms: number;
+}
+
+export interface MCPUsageResponse {
+  cells: MCPUsageCell[];
+  total_calls: number;
+  window_ms: number;
+  truncated_at_max: boolean;
+}
+
+export interface MCPOutboundEntry {
+  ts_ms: number;
+  stream_id: string;
+  agent_id: string;
+  tool_name: string;
+  target_server: string;
+  signature_status: SignatureStatus;
+  signature_key_id?: string;
+  latency_ms?: number;
+  result_type?: string;
+  event_hash?: string;
+}
+
+export interface MCPOutboundResponse {
+  entries: MCPOutboundEntry[];
+  next_cursor?: string;
+  truncated_at_max: boolean;
+}
+
 export interface SetupStatus {
   setup_complete: boolean;
   steps: {
@@ -1464,4 +1725,173 @@ export interface SetupStatus {
     first_agent_registered: boolean;
     first_job_submitted: boolean;
   };
+}
+
+// ---------------------------------------------------------------------------
+// Delegations
+// ---------------------------------------------------------------------------
+
+export type DelegationStatus = "active" | "revoked" | "expired" | "all";
+
+export interface DelegationChainLink {
+  agentId: string;
+  issuedAt: string;
+  expiresAt: string;
+  jti: string;
+  parentJti?: string;
+  issuedBy: string;
+}
+
+export interface DelegationView {
+  jti: string;
+  issuer: string;
+  subject: string;
+  audience: string;
+  allowedActions: string[];
+  allowedTopics: string[];
+  chain: DelegationChainLink[];
+  chainDepth: number;
+  issuedAt: string;
+  expiresAt: string;
+  revoked: boolean;
+  revokedAt?: string;
+  revokedReason?: string;
+}
+
+export interface DelegationListResponse {
+  items: DelegationView[];
+  nextCursor?: string;
+}
+
+export interface RevokeDelegationResult {
+  jti: string;
+  cascadedCount: number;
+}
+
+// ---------------------------------------------------------------------------
+// Evals
+// ---------------------------------------------------------------------------
+
+export interface EvalDataset {
+  id: string;
+  name: string;
+  version: number;
+  tenant: string;
+  description?: string;
+  entryCount: number;
+  contentHash: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+}
+
+export interface EvalEntry {
+  id: string;
+  input: Record<string, unknown>;
+  expectedDecision: SafetyDecisionType;
+  ruleId?: string;
+  metadata?: Record<string, unknown>;
+  source: string;
+  sourceRef?: string;
+  notes?: string;
+}
+
+export type EvalRunStatus = "pass" | "fail" | "regression" | "error";
+
+export type EvalDriftDirection = "escalated" | "relaxed" | "unchanged";
+
+export interface EvalEntryResult {
+  entryId: string;
+  input: Record<string, unknown>;
+  expectedDecision: SafetyDecisionType;
+  actualDecision: SafetyDecisionType | string;
+  ruleId?: string;
+  reason?: string;
+  status: EvalRunStatus;
+  driftDirection: EvalDriftDirection;
+  constraints?: PolicyConstraints;
+}
+
+export interface EvalRunSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  regressions: number;
+  errored: number;
+  scorePercent: number | null;
+}
+
+export interface EvalRun {
+  runId: string;
+  datasetId: string;
+  datasetName: string;
+  datasetVersion: number;
+  policySnapshot: string;
+  startedAt: string;
+  completedAt?: string;
+  summary: EvalRunSummary;
+  entries?: EvalEntryResult[];
+}
+
+export interface ExtractIncidentsRequest {
+  since?: string;
+  until?: string;
+  topicPattern?: string;
+  ruleId?: string;
+  verdicts?: SafetyDecisionType[];
+  agentId?: string;
+  maxEntries?: number;
+  datasetName: string;
+  datasetDescription?: string;
+  dryRun?: boolean;
+}
+
+export interface ExtractIncidentsPreview {
+  scannedDecisions: number;
+  entryCount: number;
+  dedupedCount: number;
+  warnings: string[];
+  datasetId?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Approval analytics — governance-overview widget + Command Center widget.
+// Backed by `GET /api/v1/governance/approvals/analytics`.
+// ---------------------------------------------------------------------------
+
+export type ApprovalAnalyticsWindow = "24h" | "7d" | "30d";
+export type ApprovalAnalyticsGroupBy = "overall" | "rule" | "agent" | "topic";
+
+export interface ApprovalAnalyticsSummary {
+  total: number;
+  approved: number;
+  rejected: number;
+  expired: number;
+  autoResolved: number;
+  manualResolved: number;
+  // Percentile fields are null when no approvals resolved in the
+  // window — distinguishes "no data" from "resolved in 0 s".
+  avgTimeToApproveSeconds: number | null;
+  p50: number | null;
+  p90: number | null;
+  p99: number | null;
+}
+
+export interface ApprovalAnalyticsGroup {
+  key: string;
+  label: string;
+  total: number;
+  approved: number;
+  rejected: number;
+  expired: number;
+  autoCount: number;
+  manualCount: number;
+  avgTtarSeconds: number | null;
+  p90Seconds: number | null;
+}
+
+export interface ApprovalAnalyticsResponse {
+  window: { since: string; until: string };
+  summary: ApprovalAnalyticsSummary;
+  groups?: ApprovalAnalyticsGroup[];
 }

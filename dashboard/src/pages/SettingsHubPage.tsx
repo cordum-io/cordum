@@ -30,15 +30,15 @@ interface SettingsCard {
 
 const settingsCards: SettingsCard[] = [
   { icon: Settings, title: "System Config", description: "Core system configuration and feature flags", path: "/settings/config" },
-  { icon: Globe, title: "Environments", description: "Manage deployment environments", path: "/settings/environments" },
+  { icon: Globe, title: "Environments", description: "Read-only deployment environment inventory from saved config", path: "/settings/environments" },
   { icon: Activity, title: "System Health", description: "Monitor system health and diagnostics", path: "/settings/health" },
   { icon: Key, title: "API Keys", description: "Manage API keys and access tokens", path: "/settings/keys" },
   { icon: Server, title: "MCP Server", description: "Configure MCP server connections", path: "/settings/mcp" },
-  { icon: Bell, title: "Notifications", description: "Notification channels and preferences", path: "/settings/notifications" },
-  { icon: Users, title: "Users & RBAC", description: "User management and role assignments", path: "/settings/users", entitlement: ["rbac"] },
-  { icon: Building2, title: "SSO & SAML", description: "Enterprise identity provider configuration and operator handoff details", path: "/settings/sso", entitlement: ["sso", "saml"] },
+  { icon: Bell, title: "Notifications", description: "Config-backed delivery channels and routing rules", path: "/settings/notifications" },
+  { icon: Users, title: "Users & RBAC", description: "User management and role assignments", path: "/settings/users" },
+  { icon: Building2, title: "SSO & SAML", description: "Enterprise identity provider configuration and operator handoff details", path: "/settings/sso", entitlement: ["sso"] },
   { icon: Key, title: "SCIM Provisioning", description: "Publish the SCIM endpoint, rotate provisioning tokens, and inspect synced users", path: "/settings/scim", entitlement: ["scim"] },
-  { icon: Activity, title: "Audit Export", description: "SIEM audit event export — webhook, syslog, Datadog, CloudWatch", path: "/settings/audit-export", entitlement: ["siemExport", "auditExport"] },
+  { icon: Activity, title: "Audit Export", description: "SIEM audit event export — webhook, syslog, Datadog, CloudWatch", path: "/settings/audit-export", entitlement: ["siemExport", "auditExport", "legalHold"] },
   { icon: Sparkles, title: "License & Limits", description: "Current plan, entitlements, telemetry mode, and capacity limits", path: "/settings/license" },
   { icon: ShieldCheck, title: "Input Safety", description: "Configure input safety policies", path: "/govern/overview?tab=input-rules" },
   { icon: ShieldAlert, title: "Output Safety", description: "Configure output quarantine settings", path: "/govern/overview?tab=output-rules" },
@@ -75,6 +75,7 @@ export default function SettingsHubPage() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.04, duration: 0.3 }}
               onClick={() => navigate(card.path)}
+              data-locked={locked ? "true" : "false"}
               className="instrument-card text-left transition-all duration-200 group hover:bg-surface-2/50"
             >
               <div className="flex items-start gap-4">

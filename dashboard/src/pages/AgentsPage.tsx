@@ -12,7 +12,10 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Input } from "@/components/ui/Input";
 import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
+import { StatTile } from "@/components/ui/StatTile";
+import { Tabs } from "@/components/ui/Tabs";
 import {
   Cpu, Search, RefreshCw, Zap, Shield, Fingerprint,
 } from "lucide-react";
@@ -21,9 +24,6 @@ import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { EntitlementGate } from "@/components/EntitlementGate";
 import { useAgentIdentities } from "@/hooks/useAgentIdentities";
 import type { AgentIdentity } from "@/api/types";
-import { TierLimitBar } from "@/components/TierLimitBar";
-import { UpgradePrompt } from "@/components/UpgradePrompt";
-import { useLicenseUsage } from "@/hooks/useLicense";
 import { useWorkers } from "@/hooks/useWorkers";
 import { PoolGroupedView } from "@/components/agents/PoolGroupedView";
 import { WorkerDetailDrawer } from "@/components/agents/WorkerDetailDrawer";
@@ -65,8 +65,6 @@ export default function AgentsPage() {
   const idleCount = allWorkers.filter((w) => w.status === "idle").length;
   const busyCount = allWorkers.filter((w) => w.status === "busy").length;
   const offlineCount = allWorkers.filter((w) => w.status === "offline").length;
-  const { data: licenseUsage } = useLicenseUsage();
-  const workerMetric = licenseUsage?.usage?.workers;
 
   // Sort: offline agents go to the bottom
   const statusOrder: Record<string, number> = { busy: 0, idle: 1, draining: 2, offline: 3 };
@@ -93,6 +91,19 @@ export default function AgentsPage() {
     navigate("/agents");
   };
 
+  const topTabs = [
+    { id: "fleet", label: "Fleet Overview" },
+    { id: "registry", label: "Agent Registry" },
+    { id: "pools", label: "Pool Topology" },
+    { id: "identity", label: "Identity Directory", icon: <Fingerprint className="h-3.5 w-3.5" /> },
+  ];
+
+  const statusTabs = ["all", "idle", "busy", "draining", "offline"].map((status) => ({
+    id: status,
+    label: status.charAt(0).toUpperCase() + status.slice(1),
+    count: status === "all" ? allWorkers.length : allWorkers.filter((worker) => worker.status === status).length,
+  }));
+
   if (isError) {
     return <ErrorBanner message={error instanceof Error ? error.message : "Failed to load agents"} onRetry={() => void refetch()} />;
   }
@@ -110,21 +121,6 @@ export default function AgentsPage() {
           </Button>
         }
       />
-
-      {workerMetric && (
-        <div className="space-y-3">
-          <TierLimitBar
-            label="Workers"
-            metric={workerMetric}
-            detail={
-              typeof workerMetric.registered === "number" && typeof workerMetric.connected === "number"
-                ? `${workerMetric.registered.toLocaleString()} registered · ${workerMetric.connected.toLocaleString()} connected`
-                : "Registered and connected workers count toward the active tier."
-            }
-          />
-          <UpgradePrompt label="Workers" metric={workerMetric} plan={licenseUsage?.plan} />
-        </div>
-      )}
 
       {(poolFilter || topicFilter) && (
         <div className="instrument-card flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -149,45 +145,13 @@ export default function AgentsPage() {
       )}
 
       {/* Tabs */}
-      <div className="flex items-center gap-4 border-b border-border">
-        <button type="button"
-          onClick={() => setTab("fleet")}
-          className={cn(
-            "pb-2 text-sm font-medium border-b-2 transition-colors",
-            tab === "fleet" ? "border-cordum text-cordum" : "border-transparent text-muted-foreground hover:text-foreground"
-          )}
-        >
-          Fleet Overview
-        </button>
-        <button type="button"
-          onClick={() => setTab("registry")}
-          className={cn(
-            "pb-2 text-sm font-medium border-b-2 transition-colors",
-            tab === "registry" ? "border-cordum text-cordum" : "border-transparent text-muted-foreground hover:text-foreground"
-          )}
-        >
-          Agent Registry
-        </button>
-        <button type="button"
-          onClick={() => setTab("pools")}
-          className={cn(
-            "pb-2 text-sm font-medium border-b-2 transition-colors",
-            tab === "pools" ? "border-cordum text-cordum" : "border-transparent text-muted-foreground hover:text-foreground"
-          )}
-        >
-          Pool Topology
-        </button>
-        <button type="button"
-          onClick={() => setTab("identity")}
-          className={cn(
-            "pb-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5",
-            tab === "identity" ? "border-cordum text-cordum" : "border-transparent text-muted-foreground hover:text-foreground"
-          )}
-        >
-          <Fingerprint className="w-3.5 h-3.5" />
-          Identity Directory
-        </button>
-      </div>
+      <Tabs
+        tabs={topTabs}
+        activeTab={tab}
+        onChange={(id) => setTab(id as typeof tab)}
+        ariaLabel="Agent fleet sections"
+        className="w-full"
+      />
 
       {tab === "fleet" && (<>
       {/* KPI Row — showcase style */}
@@ -201,82 +165,53 @@ export default function AgentsPage() {
           Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
-            <div className="instrument-card">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Total Agents</span>
-                <Cpu className="w-4 h-4 text-cordum" />
-              </div>
-              <span className="font-mono text-3xl font-bold text-foreground">{allWorkers.length}</span>
-              <div className="flex gap-1 mt-3">
-                {allWorkers.map((w, i) => (
-                  <div
-                    key={i}
-                    className={cn(
-                      "w-2 h-2 rounded-full",
-                      w.status === "idle" || w.status === "busy" ? "bg-[var(--color-success)]" : "bg-muted-foreground",
-                    )}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <div className="instrument-card">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Idle</span>
-                <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)] status-pulse" />
-              </div>
-              <span className="font-mono text-3xl font-bold text-[var(--color-success)]">{idleCount}</span>
-              <p className="text-xs text-muted-foreground mt-1">Ready for work</p>
-            </div>
-
-            <div className="instrument-card">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Busy</span>
-                <Zap className="w-4 h-4 text-[var(--color-info)]" />
-              </div>
-              <span className="font-mono text-3xl font-bold text-[var(--color-info)]">{busyCount}</span>
-              <p className="text-xs text-muted-foreground mt-1">Processing jobs</p>
-            </div>
-
-            <div className={cn("instrument-card", offlineCount > 0 && "status-danger")}>
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest">Offline</span>
-              </div>
-              <span className={cn("font-mono text-3xl font-bold", offlineCount > 0 ? "text-destructive" : "text-foreground")}>{offlineCount}</span>
-              <p className="text-xs text-muted-foreground mt-1">Disconnected</p>
-            </div>
+            <StatTile
+              label="Total agents"
+              value={allWorkers.length}
+              helperText="Workers seen in the fleet registry."
+              icon={<Cpu className="h-4 w-4 text-cordum" />}
+            />
+            <StatTile
+              label="Idle"
+              value={idleCount}
+              helperText="Ready to pick up new work."
+              accent="healthy"
+            />
+            <StatTile
+              label="Busy"
+              value={busyCount}
+              helperText="Currently processing jobs."
+              icon={<Zap className="h-4 w-4 text-sky-400" />}
+              accent="info"
+            />
+            <StatTile
+              label="Offline"
+              value={offlineCount}
+              helperText="Disconnected or not heartbeating."
+              accent={offlineCount > 0 ? "danger" : "muted"}
+            />
           </>
         )}
       </motion.div>
 
       {/* Filters — showcase style */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search agents..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
-          />
-        </div>
-        <div className="flex items-center gap-1 bg-surface-1 border border-border rounded-2xl p-0.5">
-          {["all", "idle", "busy", "draining", "offline"].map((s) => (
-            <button type="button"
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={cn(
-                "px-3 py-1.5 text-xs font-medium rounded transition-colors",
-                statusFilter === s
-                  ? "bg-cordum/10 text-cordum"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {s.charAt(0).toUpperCase() + s.slice(1)}
-            </button>
-          ))}
-        </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <Input
+          type="text"
+          placeholder="Search agents..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          icon={<Search className="h-3.5 w-3.5" />}
+          className="h-9 max-w-sm flex-1 text-sm"
+        />
+        <Tabs
+          tabs={statusTabs}
+          activeTab={statusFilter}
+          onChange={setStatusFilter}
+          variant="segmented"
+          ariaLabel="Agent status filters"
+          className="w-full md:w-auto"
+        />
       </div>
 
       {/* Worker Table — showcase style */}

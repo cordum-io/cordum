@@ -17,12 +17,15 @@ import { TierBadge, normalizeLicensePlan } from "@/components/TierBadge";
 import { UpgradePrompt } from "@/components/UpgradePrompt";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { DetailList } from "@/components/ui/DetailList";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
+import { StatTile } from "@/components/ui/StatTile";
+import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { useLicense } from "@/hooks/useLicense";
 import { useRotateSCIMToken, useSCIMConfig, type SCIMProvisionedUser } from "@/hooks/useSCIMConfig";
-import { cn } from "@/lib/utils";
 
 function planLabel(plan?: string | null): string {
   const normalized = normalizeLicensePlan(plan);
@@ -33,59 +36,6 @@ function planLabel(plan?: string | null): string {
 
 function openExternal(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
-}
-
-function DetailRow({
-  label,
-  value,
-  mono = false,
-  action,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4 border-t border-border/70 py-3 first:border-t-0 first:pt-0 last:pb-0">
-      <div>
-        <dt className="text-sm text-muted-foreground">{label}</dt>
-        <dd
-          className={cn(
-            "mt-1 max-w-[32rem] text-sm text-foreground break-all",
-            mono && "font-mono text-xs",
-          )}
-        >
-          {value}
-        </dd>
-      </div>
-      {action}
-    </div>
-  );
-}
-
-function RuntimePill({
-  configured,
-  tokenManagedBy,
-}: {
-  configured: boolean;
-  tokenManagedBy: string;
-}) {
-  const envManaged = tokenManagedBy === "env";
-
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium",
-        configured
-          ? "border-[var(--color-success)]/20 bg-[var(--color-success)]/10 text-[var(--color-success)]"
-          : "border-[var(--color-warning)]/20 bg-[var(--color-warning)]/10 text-[var(--color-warning)]",
-      )}
-    >
-      {configured ? <BadgeCheck className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
-      {configured ? (envManaged ? "Env token active" : "Provisioning ready") : "Generate a bearer token"}
-    </span>
-  );
 }
 
 function formatSyncTime(raw?: string): string {
@@ -310,10 +260,15 @@ export default function SettingsSCIMPage() {
     : scim.data.bearerTokenMasked?.trim() || "No bearer token configured";
 
   const handleRotate = () => {
+    // Snapshot "was configured" at mutation-call time so the success toast
+    // doesn't depend on stale `scim.data` when the onSuccess callback fires.
+    // The query cache may have been invalidated, evicted, or the component
+    // may be mid-unmount by the time onSuccess runs.
+    const wasConfigured = Boolean(scim.data?.configured);
     rotateToken.mutate(undefined, {
       onSuccess: () => {
         setShowSecret(true);
-        toast.success(scim.data?.configured ? "SCIM bearer token rotated" : "SCIM bearer token generated");
+        toast.success(wasConfigured ? "SCIM bearer token rotated" : "SCIM bearer token generated");
       },
       onError: (error) => {
         toast.error(error instanceof Error ? error.message : "Failed to rotate SCIM token");
@@ -369,57 +324,68 @@ export default function SettingsSCIMPage() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <TierBadge plan={license.data?.plan} />
-              <RuntimePill configured={scim.data.configured} tokenManagedBy={scim.data.tokenManagedBy} />
+              <StatusBadge variant={scim.data.configured ? "healthy" : "warning"}>
+                {scim.data.configured ? <BadgeCheck className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+                {scim.data.configured
+                  ? scim.data.tokenManagedBy === "env"
+                    ? "Env token active"
+                    : "Provisioning ready"
+                  : "Generate a bearer token"}
+              </StatusBadge>
             </div>
           </div>
 
-          <dl>
-            <DetailRow
-              label="Endpoint URL"
-              value={scim.data.endpointUrl || "Unavailable"}
-              mono
-              action={
-                <Button
-                  variant="outline"
-                  size="sm"
-                  aria-label="Copy endpoint URL"
-                  onClick={() => void copyToClipboard(scim.data.endpointUrl || "", "Endpoint URL")}
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                  Copy
-                </Button>
-              }
-            />
-            <DetailRow
-              label="Bearer token"
-              value={tokenValue}
-              mono
-              action={
-                <div className="flex flex-wrap items-center gap-2">
+          <DetailList
+            items={[
+              {
+                label: "Endpoint URL",
+                value: scim.data.endpointUrl || "Unavailable",
+                mono: true,
+                align: "left",
+                action: (
                   <Button
                     variant="outline"
                     size="sm"
-                    aria-label={showSecret ? "Hide bearer token" : "Reveal bearer token"}
-                    onClick={() => setShowSecret((current) => !current)}
-                  >
-                    {showSecret ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                    {showSecret ? "Hide" : "Reveal"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    aria-label="Copy bearer token"
-                    onClick={() => void copyToClipboard(scim.data.bearerToken || "", "Bearer token")}
-                    disabled={!scim.data.bearerToken}
+                    aria-label="Copy endpoint URL"
+                    onClick={() => void copyToClipboard(scim.data.endpointUrl || "", "Endpoint URL")}
                   >
                     <Copy className="h-3.5 w-3.5" />
                     Copy
                   </Button>
-                </div>
-              }
-            />
-            <DetailRow label="Token source" value={scim.data.tokenManagedBy || "none"} />
-          </dl>
+                ),
+              },
+              {
+                label: "Bearer token",
+                value: tokenValue,
+                mono: true,
+                align: "left",
+                action: (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label={showSecret ? "Hide bearer token" : "Reveal bearer token"}
+                      onClick={() => setShowSecret((current) => !current)}
+                    >
+                      {showSecret ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      {showSecret ? "Hide" : "Reveal"}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      aria-label="Copy bearer token"
+                      onClick={() => void copyToClipboard(scim.data.bearerToken || "", "Bearer token")}
+                      disabled={!scim.data.bearerToken}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                      Copy
+                    </Button>
+                  </div>
+                ),
+              },
+              { label: "Token source", value: scim.data.tokenManagedBy || "none", align: "left" },
+            ]}
+          />
 
           <div className="flex flex-wrap items-center gap-3">
             <Button
@@ -475,45 +441,38 @@ export default function SettingsSCIMPage() {
               {
                 label: "Entitlement",
                 value: "Active",
-                tone: "success",
+                tone: "healthy" as BadgeVariant,
+                helperText: "SCIM is licensed for this deployment.",
               },
               {
                 label: "Provisioning state",
                 value: scim.data.configured ? "Ready" : "Waiting for token",
-                tone: scim.data.configured ? "success" : "warning",
+                tone: (scim.data.configured ? "healthy" : "warning") as BadgeVariant,
               },
               {
                 label: "Users synced",
                 value: userCount.toString(),
-                tone: "info",
+                tone: "info" as BadgeVariant,
               },
               {
                 label: "Active users",
                 value: activeCount.toString(),
-                tone: activeCount > 0 ? "success" : "default",
+                tone: (activeCount > 0 ? "healthy" : "muted") as BadgeVariant,
               },
             ].map((item) => (
-              <div key={item.label} className="rounded-3xl border border-border bg-surface-1/70 p-4">
-                <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
-                  {item.label}
-                </p>
-                <div className="mt-3 flex items-center justify-between gap-3">
-                  <p className="text-2xl font-display font-semibold text-foreground">{item.value}</p>
-                  <Badge variant={item.tone}>{item.label}</Badge>
-                </div>
-              </div>
+              <StatTile
+                key={item.label}
+                label={item.label}
+                value={item.value}
+                accent={item.tone}
+                helperText={item.helperText}
+              />
             ))}
           </div>
 
-          <div className="rounded-3xl border border-border bg-surface-1/70 p-4">
-            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <Users className="h-4 w-4 text-cordum" />
-              Synced user signal
-            </div>
-            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-              Each SCIM-managed account shows its latest sync timestamp below. Disabled users remain visible so operators can audit deprovisioning events without leaving the dashboard.
-            </p>
-          </div>
+          <InfoBanner variant="info" title="Synced user signal">
+            Each SCIM-managed account shows its latest sync timestamp below. Disabled users remain visible so operators can audit deprovisioning events without leaving the dashboard.
+          </InfoBanner>
         </motion.section>
       </div>
 
@@ -536,12 +495,11 @@ export default function SettingsSCIMPage() {
         </div>
 
         {userCount === 0 ? (
-          <div className="rounded-3xl border border-dashed border-border/80 bg-surface-1/60 px-6 py-10 text-center">
-            <p className="text-sm font-semibold text-foreground">No SCIM-managed users yet</p>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Once your identity provider provisions users or groups into Cordum, they will appear here with their sync status and active state.
-            </p>
-          </div>
+          <EmptyState
+            icon={<Users className="w-8 h-8" />}
+            title="No SCIM-managed users yet"
+            description="Once your identity provider provisions users or groups into Cordum, they will appear here with their sync status and active state."
+          />
         ) : (
           <div className="overflow-hidden rounded-3xl border border-border/80 bg-surface-1/40">
             <div className="hidden border-b border-border/80 px-4 py-3 text-[11px] font-mono uppercase tracking-widest text-muted-foreground md:grid md:grid-cols-[minmax(0,2.2fr)_auto_auto_minmax(0,1.2fr)]">

@@ -1,4 +1,4 @@
-import { X, PauseCircle, RotateCcw } from "lucide-react";
+import { X } from "lucide-react";
 import { Drawer } from "../ui/Drawer";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -204,21 +204,6 @@ export function WorkerDetailDrawer({
               ) : (
                 <p className="text-xs text-muted-foreground">No heartbeat data available.</p>
               )}
-            </section>
-
-            {/* Management Actions */}
-            <section className="space-y-2">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Actions
-              </h4>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" disabled title="Agent drain not yet available — no backend endpoint">
-                  <PauseCircle className="w-3 h-3 mr-1" />Drain
-                </Button>
-                <Button variant="outline" size="sm" disabled title="Agent restart not yet available — no backend endpoint">
-                  <RotateCcw className="w-3 h-3 mr-1" />Restart
-                </Button>
-              </div>
             </section>
 
             {/* Recent Jobs */}

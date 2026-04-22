@@ -24,28 +24,28 @@ const REASON_CODE_MAP: Record<string, ReasonCodeMapping> = {
     title: "Topic not mapped to pool",
     description:
       "This topic has no pool routing configured. Map the topic to a worker pool in your pools configuration or pack overlays.",
-    action: { label: "View Pools", href: "/pools" },
+    action: { label: "View Pools", href: "/agents" },
     severity: "warning",
   },
   no_workers: {
     title: "No workers available",
     description:
       "The target pool has no active workers. Check worker health or scale up the pool.",
-    action: { label: "View Workers", href: "/pools" },
+    action: { label: "View Workers", href: "/agents" },
     severity: "error",
   },
   pool_overloaded: {
     title: "Pool capacity exceeded",
     description:
       "All workers in the pool are busy. Consider scaling the pool or adjusting concurrency limits.",
-    action: { label: "View Pool Health", href: "/pools" },
+    action: { label: "View Pool Health", href: "/agents" },
     severity: "warning",
   },
   pool_not_found: {
     title: "Pool does not exist",
     description:
       "The configured pool for this topic does not exist. Create the pool or update the routing configuration.",
-    action: { label: "View Configuration", href: "/system?tab=config" },
+    action: { label: "View Configuration", href: "/settings/config" },
     severity: "error",
   },
 
@@ -61,7 +61,7 @@ const REASON_CODE_MAP: Record<string, ReasonCodeMapping> = {
     title: "Approval timed out",
     description:
       "This job required approval but none was granted before the deadline. Re-submit the job or adjust approval timeout policies.",
-    action: { label: "Policy Center", href: "/policy" },
+    action: { label: "Policy Studio", href: "/govern/overview" },
     severity: "warning",
   },
   approval_rejected: {
@@ -90,14 +90,14 @@ const REASON_CODE_MAP: Record<string, ReasonCodeMapping> = {
     title: "Worker crashed",
     description:
       "The worker process crashed during execution. Check worker logs for stack traces or memory issues.",
-    action: { label: "View Workers", href: "/pools" },
+    action: { label: "View Workers", href: "/agents" },
     severity: "error",
   },
   worker_timeout: {
     title: "Worker heartbeat lost",
     description:
       "The worker stopped responding during job execution. This may indicate a hung process or network partition.",
-    action: { label: "View Workers", href: "/pools" },
+    action: { label: "View Workers", href: "/agents" },
     severity: "error",
   },
 
@@ -142,14 +142,14 @@ const REASON_CODE_MAP: Record<string, ReasonCodeMapping> = {
     title: "Message broker unavailable",
     description:
       "Could not connect to NATS. Check system connectivity and NATS cluster health.",
-    action: { label: "System Health", href: "/system" },
+    action: { label: "System Health", href: "/settings/health" },
     severity: "error",
   },
   storage_unavailable: {
     title: "Storage unavailable",
     description:
       "Could not access blob storage or database. Check storage connectivity and credentials.",
-    action: { label: "System Health", href: "/system" },
+    action: { label: "System Health", href: "/settings/health" },
     severity: "error",
   },
 

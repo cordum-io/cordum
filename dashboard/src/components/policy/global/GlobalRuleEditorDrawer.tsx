@@ -412,7 +412,7 @@ export function GlobalRuleEditorDrawer({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[120] flex justify-end">
+    <div className="fixed inset-0 z-[130] flex justify-end">
       <button
         type="button"
         className="absolute inset-0 bg-black/50"
@@ -777,7 +777,7 @@ export function GlobalRuleEditorDrawer({
           )}
         </div>
 
-        <div className="fixed bottom-0 right-0 z-[121] flex w-full max-w-xl flex-col gap-2 border-t border-border bg-surface-1 px-5 py-3">
+        <div className="fixed bottom-0 right-0 z-[131] flex w-full max-w-xl flex-col gap-2 border-t border-border bg-surface-1 px-5 py-3">
           {showRemediationMismatchConfirm && (
             <div className="rounded-md border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 p-2 text-xs text-[var(--color-warning)]">
               <p>

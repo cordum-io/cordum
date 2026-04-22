@@ -1,95 +1,149 @@
 /*
  * DESIGN: "Control Surface" — Environments
- * PRD Section 28: Environment cards with connection details
+ * Truthful inventory view derived from persisted config.
  */
-import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { get } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { InfoBanner } from "@/components/ui/InfoBanner";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { SkeletonCard } from "@/components/ui/Skeleton";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { Globe, Copy, Plus, Server, Shield, ExternalLink } from "lucide-react";
+import { Globe, Copy, Server, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { useEnvironments } from "@/hooks/useSettings";
 
-interface Environment {
-  id: string;
-  name: string;
-  url: string;
-  status: "active" | "inactive";
-  region: string;
-  version: string;
-  workers: number;
+function formatDateTime(raw?: string): string {
+  if (!raw) return "Not recorded";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+  return parsed.toLocaleString();
+}
+
+function statusVariant(status: "active" | "maintenance" | "degraded") {
+  switch (status) {
+    case "active":
+      return "healthy" as const;
+    case "maintenance":
+      return "warning" as const;
+    case "degraded":
+      return "danger" as const;
+  }
 }
 
 export default function SettingsEnvironmentsPage() {
-  const { data: envs, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ["environments"],
-    queryFn: async () => {
-      const res = await get<{ data?: Environment[] }>("/environments");
-      return res.data || [];
-    },
-  });
+  const { data: envs, isLoading, isError, error, refetch } = useEnvironments();
 
   if (isError) {
-    return <ErrorBanner message={error instanceof Error ? error.message : "Failed to load environments"} onRetry={() => void refetch()} />;
+    return (
+      <ErrorBanner
+        title="Unable to load environment inventory"
+        message={error instanceof Error ? error.message : "Failed to load environment config"}
+        onRetry={() => {
+          void refetch();
+        }}
+      />
+    );
   }
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-      <PageHeader title="Environments" subtitle="Manage deployment environments and connections" actions={<><Button variant="primary" size="sm" disabled title="Environment management not yet available">
-          <Plus className="w-3 h-3 mr-1" />Add Environment
-        </Button></>} />
+      <PageHeader
+        title="Environments"
+        subtitle="Read-only inventory derived from the saved deployment config, not a separate runtime environment service."
+      />
+
+      <InfoBanner variant="info" title="Config-backed inventory">
+        This page reflects the environments stored in system config. It does not create, promote, or deploy environments from the dashboard.
+      </InfoBanner>
 
       {isLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}</div>
-      ) : !envs?.length ? (
-        <EmptyState icon={<Globe className="w-8 h-8" />} title="No environments" description="Add an environment to connect to a Cordum cluster" action={<Button variant="outline" size="sm" disabled>Coming soon</Button>} />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {Array.from({ length: 2 }).map((_, i) => <SkeletonCard key={i} />)}
+        </div>
+      ) : (envs ?? []).length === 0 ? (
+        <EmptyState
+          icon={<Server className="w-8 h-8" />}
+          title="No configured environments"
+          description="This deployment has no environments saved in system config, so the dashboard does not invent a default production environment."
+        />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {envs.map((env, i) => (
-            <motion.div key={env.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-              className={cn("instrument-card", env.status === "active" && "status-healthy")}>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {(envs ?? []).map((env, i) => (
+            <motion.div
+              key={env.id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05 }}
+              className={cn(
+                "instrument-card",
+                env.status === "active" && "status-healthy",
+                env.status === "degraded" && "status-danger",
+              )}
+            >
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <Server className="w-4 h-4 text-cordum" />
                   <span className="text-sm font-display font-semibold text-foreground">{env.name}</span>
                 </div>
-                <StatusBadge variant={env.status === "active" ? "healthy" : "muted"} dot>{env.status}</StatusBadge>
+                <StatusBadge variant={statusVariant(env.status)} dot>{env.status}</StatusBadge>
               </div>
               <div className="space-y-2 mb-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">URL</span>
+                  <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Environment ID</span>
+                  <span className="text-xs font-mono text-foreground">{env.id}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Endpoint</span>
                   <div className="flex items-center gap-1">
-                    <span className="text-xs font-mono text-foreground">{env.url}</span>
-                    <button type="button" onClick={() => { navigator.clipboard.writeText(env.url); toast.success("Copied"); }} className="p-0.5 rounded hover:bg-surface-2">
-                      <Copy className="w-3 h-3 text-muted-foreground" />
-                    </button>
+                    <span className="max-w-[14rem] truncate text-xs font-mono text-foreground">
+                      {env.endpoint || "Not configured"}
+                    </span>
+                    {env.endpoint && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(env.endpoint!);
+                          toast.success("Endpoint copied");
+                        }}
+                        className="p-0.5 rounded hover:bg-surface-2"
+                        aria-label={`Copy endpoint for ${env.name}`}
+                      >
+                        <Copy className="w-3 h-3 text-muted-foreground" />
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Region</span>
-                  <span className="text-xs text-foreground">{env.region}</span>
+                  <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Last deployed</span>
+                  <span className="text-xs text-foreground">{formatDateTime(env.lastDeployedAt)}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Version</span>
-                  <span className="text-xs font-mono text-foreground">{env.version}</span>
+                  <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Last promoted</span>
+                  <span className="text-xs text-foreground">{formatDateTime(env.lastPromotedAt)}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Workers</span>
-                  <span className="text-xs text-foreground">{env.workers} connected</span>
+                  <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Config entries</span>
+                  <span className="text-xs text-foreground">{Object.keys(env.config ?? {}).length}</span>
                 </div>
               </div>
               <div className="flex gap-2 pt-3 border-t border-border">
-                <Button variant="outline" size="sm" className="flex-1" disabled title="Environment configuration not yet available">
-                  <Shield className="w-3 h-3 mr-1" />Configure
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => window.open(env.url, "_blank", "noopener,noreferrer")}>
-                  <ExternalLink className="w-3 h-3" />
-                </Button>
+                {env.endpoint ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => window.open(env.endpoint, "_blank", "noopener,noreferrer")}
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                  </Button>
+                ) : (
+                  <div className="text-xs text-muted-foreground flex items-center gap-2">
+                    <Globe className="w-3 h-3" />
+                    No external endpoint published
+                  </div>
+                )}
               </div>
             </motion.div>
           ))}

@@ -1,7 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertTriangle } from "lucide-react";
-import { GitBranch, ShieldCheck, FileEdit, Plus } from "lucide-react";
+import { GitBranch, ShieldCheck, FileEdit } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -40,10 +40,27 @@ export default function BundlesPage({ hideHeader }: { hideHeader?: boolean } = {
   const { data, isLoading, isError, error, refetch } = usePolicyBundles();
 
   const bundles = useMemo(() => data?.items ?? [], [data]);
-  const sortedBundles = useMemo(
-    () => [...bundles].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
-    [bundles],
-  );
+  const [sortField, setSortField] = useState<"name" | "signed">("name");
+
+  // classifySigned keeps the tri-state sort order deterministic:
+  //   signed (0) → unsigned (1) → unknown (2)
+  // Unsigned bundles are the remediation target in strict-mode deploys
+  // so surfacing them near the top when sorting by signature is the
+  // compliance-friendly default.
+  const sortedBundles = useMemo(() => {
+    const copy = [...bundles];
+    if (sortField === "signed") {
+      copy.sort((a, b) => {
+        const as = a.signed === true ? 0 : a.signed === false ? 1 : 2;
+        const bs = b.signed === true ? 0 : b.signed === false ? 1 : 2;
+        if (as !== bs) return as - bs;
+        return (a.name || a.id).localeCompare(b.name || b.id);
+      });
+    } else {
+      copy.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+    }
+    return copy;
+  }, [bundles, sortField]);
 
   const publishedCount = useMemo(
     () => bundles.filter((b) => (b.status ?? "").toLowerCase() === "published").length,
@@ -63,9 +80,6 @@ export default function BundlesPage({ hideHeader }: { hideHeader?: boolean } = {
           subtitle="Policy bundle inventory. Select a bundle to view YAML, diff, snapshots, and manage publish lifecycle."
           actions={
             <div className="flex items-center gap-2">
-              <Button variant="primary" size="sm" disabled title="Bundle creation not yet available — use the CLI to create new bundles">
-                <Plus className="w-3 h-3 mr-1" />Create Bundle
-              </Button>
               <StatusBadge variant={policyAccess.canPublish ? "healthy" : "muted"}>
                 {policyAccess.canPublish ? "publish access" : "publish restricted"}
               </StatusBadge>
@@ -107,6 +121,22 @@ export default function BundlesPage({ hideHeader }: { hideHeader?: boolean } = {
             <InstrumentCard>
               <MetricValue label="Draft" value={draftCount} icon={<FileEdit className="w-4 h-4" />} />
             </InstrumentCard>
+          </div>
+
+          <div className="flex items-center justify-end">
+            <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+              <span>Sort by</span>
+              <select
+                value={sortField}
+                onChange={(e) => setSortField(e.target.value as "name" | "signed")}
+                className="h-7 rounded-full border border-border bg-background px-3 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cordum/40"
+                aria-label="Sort bundles by"
+                data-testid="bundles-sort-select"
+              >
+                <option value="name">Name</option>
+                <option value="signed">Signature status</option>
+              </select>
+            </label>
           </div>
 
           <BundleList

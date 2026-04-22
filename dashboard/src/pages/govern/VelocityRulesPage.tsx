@@ -179,8 +179,12 @@ function VelocitySparkline({ values }: { values: number[] }) {
   );
 }
 
-export default function VelocityRulesPage() {
-  usePageTitle("Velocity rules");
+export default function VelocityRulesPage({
+  hideHeader,
+}: {
+  hideHeader?: boolean;
+} = {}) {
+  usePageTitle(hideHeader ? "Policy Studio — Velocity" : "Velocity controls");
 
   const policyAccess = usePolicyAccess();
   const license = useLicense();
@@ -245,8 +249,11 @@ export default function VelocityRulesPage() {
   );
   const enabledRules = rules.filter((rule) => rule.enabled).length;
   const limitReached = limit !== UNLIMITED_LIMIT && limit > 0 && rules.length >= limit;
+  const velocityEntitled = license.data?.entitlements.velocityRules === true;
   const canCreate =
-    policyAccess.canEdit && (limit === UNLIMITED_LIMIT || (limit > 0 && rules.length < limit));
+    velocityEntitled &&
+    policyAccess.canEdit &&
+    (limit === UNLIMITED_LIMIT || (limit > 0 && rules.length < limit));
 
   useEffect(() => {
     if (!editorOpen) {
@@ -257,11 +264,13 @@ export default function VelocityRulesPage() {
   if ((rulesQuery.isLoading && !rulesQuery.data) || (statsQuery.isLoading && !statsQuery.data)) {
     return (
       <div className="space-y-6">
-        <PageHeader
-          label="Govern"
-          title="Velocity rules"
-          subtitle="Create sliding-window policy fragments, monitor bucket pressure, and tune approval or deny actions without touching kernel logic."
-        />
+        {!hideHeader && (
+          <PageHeader
+            label="Govern"
+            title="Velocity controls"
+            subtitle="Create sliding-window policy fragments, monitor bucket pressure, and tune approval or deny actions without touching kernel logic."
+          />
+        )}
         <div className="grid gap-4 xl:grid-cols-4">
           <SkeletonCard />
           <SkeletonCard />
@@ -345,35 +354,57 @@ export default function VelocityRulesPage() {
 
   return (
     <div className="space-y-6 animate-rise">
-      <PageHeader
-        label="Govern"
-        title="Velocity rules"
-        subtitle="Manage live sliding-window rule fragments, inspect retained activity, and tune escalation thresholds from one operator surface."
-        actions={
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                void rulesQuery.refetch();
-                void statsQuery.refetch();
-              }}
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              Refresh
-            </Button>
-            <Button size="sm" onClick={openCreateDrawer} disabled={!canCreate}>
-              <Plus className="h-3.5 w-3.5" />
-              New rule
-            </Button>
-          </div>
-        }
-      />
+      {!hideHeader && (
+        <PageHeader
+          label="Govern"
+          title="Velocity controls"
+          subtitle="Manage live sliding-window rule fragments, inspect retained activity, and tune escalation thresholds from one operator surface."
+          actions={
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  void rulesQuery.refetch();
+                  void statsQuery.refetch();
+                }}
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Refresh
+              </Button>
+              <Button size="sm" onClick={openCreateDrawer} disabled={!canCreate}>
+                <Plus className="h-3.5 w-3.5" />
+                New rule
+              </Button>
+            </div>
+          }
+        />
+      )}
+
+      {hideHeader && (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              void rulesQuery.refetch();
+              void statsQuery.refetch();
+            }}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Refresh
+          </Button>
+          <Button size="sm" onClick={openCreateDrawer} disabled={!canCreate}>
+            <Plus className="h-3.5 w-3.5" />
+            New rule
+          </Button>
+        </div>
+      )}
 
       {policyAccess.isReadOnly && (
-        <InfoBanner variant="info" title="Read-only policy access">
-          Your current role can inspect velocity rules and activity, but editing and deletion
-          controls remain disabled.
+        <InfoBanner variant="info" title="View-only rule access">
+          You can inspect velocity rules and recent activity, but only policy editors can create,
+          update, or delete rule fragments.
         </InfoBanner>
       )}
 

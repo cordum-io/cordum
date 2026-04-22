@@ -6,12 +6,20 @@ import {
   FileOutput,
   FlaskConical,
   Package,
+  Zap,
+  History,
+  TrendingUp,
+  Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { logger } from "@/lib/logger";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { Tabs } from "@/components/ui/Tabs";
+import { InfoBanner } from "@/components/ui/InfoBanner";
 import { SkeletonCard } from "@/components/ui/Skeleton";
+import { ChainIntegrityWidget } from "@/components/ChainIntegrityWidget";
+import { GapAlertBanner } from "@/components/GapAlertBanner";
 import {
   PostureSummary,
   PolicyFilterBar,
@@ -25,6 +33,8 @@ import { Loader2 } from "lucide-react";
 import {
   isValidTab,
   type PolicyStudioTab,
+  isValidEvaluationMode,
+  type PolicyEvaluationMode,
 } from "@/components/policy/tabs";
 import type { PolicyBundle } from "@/api/types";
 
@@ -32,7 +42,16 @@ import type { PolicyBundle } from "@/api/types";
 const LazyInputRulesTab = lazy(() => import("@/pages/govern/InputRulesPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
 const LazyOutputRulesTab = lazy(() => import("@/pages/govern/OutputRulesPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
 const LazySimulatorTab = lazy(() => import("@/pages/govern/SimulatorPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
+const LazyVelocityTab = lazy(() => import("@/pages/govern/VelocityRulesPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
+const LazyReplayTab = lazy(() => import("@/pages/govern/ReplayPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
+const LazyAnalyticsTab = lazy(() => import("@/pages/govern/PolicyAnalyticsPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
 const LazyBundlesTab = lazy(() => import("@/pages/govern/BundlesPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
+const LazyScopeTab = lazy(() => import("@/pages/govern/TenantsPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
+const LazyApprovalAnalyticsWidget = lazy(() =>
+  import("@/components/governance/ApprovalAnalyticsWidget").then((m) => ({
+    default: m.ApprovalAnalyticsWidget,
+  })),
+);
 
 // ---------------------------------------------------------------------------
 // Tab definitions
@@ -48,8 +67,41 @@ const TABS: TabDef[] = [
   { id: "overview", label: "Overview", icon: Shield },
   { id: "input-rules", label: "Input Rules", icon: FileInput },
   { id: "output-rules", label: "Output Rules", icon: FileOutput },
-  { id: "simulator", label: "Simulator", icon: FlaskConical },
+  { id: "velocity", label: "Velocity", icon: Zap },
+  { id: "evaluation", label: "Evaluation", icon: TrendingUp },
   { id: "bundles", label: "Bundles", icon: Package },
+  { id: "scope", label: "Scope", icon: Layers },
+];
+
+interface EvaluationModeDef {
+  id: PolicyEvaluationMode;
+  label: string;
+  icon: typeof Shield;
+  description: string;
+}
+
+const EVALUATION_MODES: EvaluationModeDef[] = [
+  {
+    id: "analytics",
+    label: "Analytics",
+    icon: TrendingUp,
+    description:
+      "See which rules generate the most volume, overrides, and approval fatigue before you tune them.",
+  },
+  {
+    id: "replay",
+    label: "Replay",
+    icon: History,
+    description:
+      "Re-run historical traffic against the current or a candidate policy to see what decisions would change.",
+  },
+  {
+    id: "simulator",
+    label: "Simulator",
+    icon: FlaskConical,
+    description:
+      "Test one request at a time when you need targeted what-if validation instead of a batch comparison.",
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -165,7 +217,12 @@ function OverviewTabContent() {
 
   return (
     <div className="space-y-6">
+      <GapAlertBanner tenant="default" />
+      <ChainIntegrityWidget tenant="default" />
       <PostureSummary bundles={bundles} allRules={allRules} />
+      <Suspense fallback={null}>
+        <LazyApprovalAnalyticsWidget context="governance" defaultWindow="7d" />
+      </Suspense>
       <PolicyFilterBar
         searchText={searchText}
         onSearchChange={setSearchText}
@@ -244,6 +301,33 @@ function TabSkeleton() {
   );
 }
 
+function StudioSectionIntro({
+  eyebrow,
+  title,
+  description,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-3xl border border-border bg-surface-1/70 p-5">
+      <div className="space-y-2">
+        <p className="text-xs font-mono uppercase tracking-[0.12em] text-muted-foreground">
+          {eyebrow}
+        </p>
+        <div className="space-y-1">
+          <h2 className="text-lg font-display font-semibold text-foreground">{title}</h2>
+          <p className="max-w-3xl text-sm text-muted-foreground">{description}</p>
+        </div>
+      </div>
+      {children && <div className="mt-4">{children}</div>}
+    </section>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Policy Studio page
 // ---------------------------------------------------------------------------
@@ -251,7 +335,12 @@ function TabSkeleton() {
 export default function PolicyOverviewPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get("tab") ?? "overview";
-  const activeTab: PolicyStudioTab = isValidTab(rawTab) ? rawTab : "overview";
+  const normalizedTab = rawTab === "simulator" ? "evaluation" : rawTab;
+  const activeTab: PolicyStudioTab = isValidTab(normalizedTab) ? normalizedTab : "overview";
+  const rawMode = searchParams.get("mode") ?? (rawTab === "simulator" ? "simulator" : "analytics");
+  const evaluationMode: PolicyEvaluationMode = isValidEvaluationMode(rawMode)
+    ? rawMode
+    : "analytics";
 
   // Dirty-state guard for tab switching (output rules can have unsaved edits)
   const tabDirtyRef = useRef<Record<string, () => boolean>>({});
@@ -266,9 +355,28 @@ export default function PolicyOverviewPage() {
           return;
         }
       }
-      setSearchParams({ tab: newTab }, { replace: false });
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set("tab", newTab);
+      if (newTab === "evaluation") {
+        if (!isValidEvaluationMode(nextParams.get("mode") ?? "")) {
+          nextParams.set("mode", "analytics");
+        }
+      } else {
+        nextParams.delete("mode");
+      }
+      setSearchParams(nextParams, { replace: false });
     },
-    [activeTab, setSearchParams],
+    [activeTab, searchParams, setSearchParams],
+  );
+
+  const handleEvaluationModeChange = useCallback(
+    (mode: PolicyEvaluationMode) => {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set("tab", "evaluation");
+      nextParams.set("mode", mode);
+      setSearchParams(nextParams, { replace: false });
+    },
+    [searchParams, setSearchParams],
   );
 
   // Data for tab counts
@@ -278,55 +386,59 @@ export default function PolicyOverviewPage() {
   const bundleCount = bundlesRes?.items?.length ?? 0;
 
   const tabLabel = TABS.find((t) => t.id === activeTab)?.label ?? "Overview";
-  usePageTitle(activeTab === "overview" ? "Policy Studio" : `Policy Studio \u2014 ${tabLabel}`);
+  const evaluationModeLabel =
+    EVALUATION_MODES.find((mode) => mode.id === evaluationMode)?.label ?? "Analytics";
+  usePageTitle(
+    activeTab === "overview"
+      ? "Policy Studio"
+      : activeTab === "evaluation"
+        ? `Policy Studio \u2014 Evaluation \u2014 ${evaluationModeLabel}`
+        : `Policy Studio \u2014 ${tabLabel}`,
+  );
+
+  const primaryTabs = TABS.map((tab) => {
+    const Icon = tab.icon;
+    return {
+      id: tab.id,
+      label: tab.label,
+      icon: <Icon className="h-4 w-4" />,
+      count:
+        tab.id === "input-rules"
+          ? inputRuleCount
+          : tab.id === "bundles"
+            ? bundleCount
+            : undefined,
+    };
+  });
+
+  const evaluationTabs = EVALUATION_MODES.map((mode) => {
+    const Icon = mode.icon;
+    return {
+      id: mode.id,
+      label: mode.label,
+      icon: <Icon className="h-4 w-4" />,
+    };
+  });
+
+  const activeEvaluationMode =
+    EVALUATION_MODES.find((mode) => mode.id === evaluationMode) ?? EVALUATION_MODES[0];
 
   return (
     <div className="space-y-6 animate-rise">
-      {/* Page Header */}
       <PageHeader
         label={`Govern \u00b7 Policy Studio`}
         title="Policy Studio"
-        subtitle="Unified policy management \u2014 rules, output enforcement, simulation, and bundle lifecycle."
+        subtitle="Author rules, evaluate candidate changes, publish bundles, and roll out tenant scope from one governance workspace."
       />
 
-      {/* Tab Bar */}
-      <div className="flex items-center gap-0.5 bg-surface-1 border border-border rounded-2xl p-1 overflow-x-auto">
-        {TABS.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeTab === tab.id;
-          const count =
-            tab.id === "input-rules" ? inputRuleCount :
-            tab.id === "bundles" ? bundleCount :
-            undefined;
+      <Tabs
+        tabs={primaryTabs}
+        activeTab={activeTab}
+        onChange={(id) => handleTabChange(id as PolicyStudioTab)}
+        ariaLabel="Policy Studio sections"
+        variant="segmented"
+      />
 
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => handleTabChange(tab.id)}
-              className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all duration-150 whitespace-nowrap",
-                isActive
-                  ? "bg-card text-foreground shadow-soft"
-                  : "text-muted-foreground hover:text-foreground hover:bg-surface-2",
-              )}
-            >
-              <Icon className="w-4 h-4" />
-              {tab.label}
-              {typeof count === "number" && count > 0 && (
-                <span className={cn(
-                  "text-[10px] font-mono px-1.5 py-0.5 rounded-full",
-                  isActive ? "bg-[var(--primary)]/10 text-[var(--primary)]" : "bg-muted text-muted-foreground",
-                )}>
-                  {count}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Tab Content */}
       {activeTab === "overview" && <OverviewTabContent />}
 
       {activeTab === "input-rules" && (
@@ -341,16 +453,77 @@ export default function PolicyOverviewPage() {
         </Suspense>
       )}
 
-      {activeTab === "simulator" && (
-        <Suspense fallback={<TabSkeleton />}>
-          <LazySimulatorTab hideHeader />
-        </Suspense>
+      {activeTab === "velocity" && (
+        <div className="space-y-5">
+          <StudioSectionIntro
+            eyebrow="Author"
+            title="Velocity controls"
+            description="Keep sliding-window escalations beside the rest of policy authoring so rate-based protections are tuned in the same workflow as input and output rules."
+          />
+          <Suspense fallback={<TabSkeleton />}>
+            <LazyVelocityTab hideHeader />
+          </Suspense>
+        </div>
+      )}
+
+      {activeTab === "evaluation" && (
+        <div className="space-y-5">
+          <StudioSectionIntro
+            eyebrow="Evaluate"
+            title="Policy evaluation"
+            description="Use one evaluation workspace for live rule quality, historical replay, and targeted simulation so you can understand what is happening, compare what would change, and then tune or publish with confidence."
+          >
+            <Tabs
+              tabs={evaluationTabs}
+              activeTab={evaluationMode}
+              onChange={(id) => handleEvaluationModeChange(id as PolicyEvaluationMode)}
+              ariaLabel="Policy evaluation modes"
+              variant="segmented"
+              className="w-fit"
+            />
+          </StudioSectionIntro>
+
+          <InfoBanner variant="cordum" title={activeEvaluationMode.label}>
+            {activeEvaluationMode.description}
+          </InfoBanner>
+
+          {evaluationMode === "analytics" && (
+            <Suspense fallback={<TabSkeleton />}>
+              <LazyAnalyticsTab hideHeader />
+            </Suspense>
+          )}
+
+          {evaluationMode === "replay" && (
+            <Suspense fallback={<TabSkeleton />}>
+              <LazyReplayTab hideHeader />
+            </Suspense>
+          )}
+
+          {evaluationMode === "simulator" && (
+            <Suspense fallback={<TabSkeleton />}>
+              <LazySimulatorTab hideHeader />
+            </Suspense>
+          )}
+        </div>
       )}
 
       {activeTab === "bundles" && (
         <Suspense fallback={<TabSkeleton />}>
           <LazyBundlesTab hideHeader />
         </Suspense>
+      )}
+
+      {activeTab === "scope" && (
+        <div className="space-y-5">
+          <StudioSectionIntro
+            eyebrow="Roll out"
+            title="Scope and rollout"
+            description="Inspect tenant boundaries, bundle-backed rollout state, and MCP governance posture without leaving Policy Studio."
+          />
+          <Suspense fallback={<TabSkeleton />}>
+            <LazyScopeTab hideHeader />
+          </Suspense>
+        </div>
       )}
     </div>
   );

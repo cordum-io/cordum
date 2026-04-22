@@ -25,6 +25,7 @@ import {
   mapPolicySnapshotSummary,
   mapPolicySnapshot,
   normalizeDecisionType,
+  readPolicyBundleSignature,
   type BackendPolicyBundleSummary,
   type BackendPolicyBundleDetail,
   type BackendPolicySnapshotSummary,
@@ -103,15 +104,19 @@ export function usePolicyBundles() {
     queryFn: async () => {
       const res = await get<{
         items: BackendPolicyBundleSummary[];
-        bundles?: Record<string, { content?: string } | string>;
+        bundles?: Record<string, unknown>;
       }>("/policy/bundles");
       const bundlesMap = res.bundles ?? {};
       return {
         items: (res.items ?? []).map((summary) => {
-          const content = readPolicyBundleContent(bundlesMap[summary.id]);
+          const raw = bundlesMap[summary.id];
+          const content = readPolicyBundleContent(raw);
+          const signature = readPolicyBundleSignature(raw);
           return {
             ...mapPolicyBundleSummary(summary, content),
             content: content || undefined,
+            signed: signature ? true : raw && typeof raw === "object" ? false : undefined,
+            signature,
           };
         }),
       };
@@ -121,11 +126,33 @@ export function usePolicyBundles() {
 }
 
 export function usePolicyBundle(id: string) {
+  const queryClient = useQueryClient();
   return useQuery<PolicyBundle>({
     queryKey: queryKeys.policies.bundle(id),
     queryFn: async () => {
       const res = await get<BackendPolicyBundleDetail>(policyBundlePath(id));
-      return mapPolicyBundleDetail(res);
+      const detail = mapPolicyBundleDetail(res);
+      // The detail endpoint does not yet surface the `_signature` map
+      // attached by handlers_policy_bundles_signing.go. As a pragmatic
+      // workaround, enrich the detail record from the bundles list
+      // cache if it has been populated recently. This keeps the
+      // Signature section on BundleDetailPage accurate when the user
+      // navigates in from BundlesPage (the common path). When no
+      // cached list entry exists the UI falls back to the 'unknown'
+      // SignatureBadge state.
+      const cachedList = queryClient.getQueryData<ApiResponse<PolicyBundle[]>>(
+        queryKeys.policies.bundles(),
+      );
+      const cachedEntry = cachedList?.items?.find((b) => b.id === id);
+      if (cachedEntry) {
+        if (detail.signed === undefined) {
+          detail.signed = cachedEntry.signed;
+        }
+        if (!detail.signature && cachedEntry.signature) {
+          detail.signature = cachedEntry.signature;
+        }
+      }
+      return detail;
     },
     enabled: !!id,
     staleTime: 30_000,

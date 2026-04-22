@@ -1,53 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { LEGACY_POLICY_ROUTE_REDIRECTS } from "./App";
 import { COMMAND_PALETTE_COMMANDS } from "./components/CommandPalette";
 import { useConfigStore, registerQueryClient } from "./state/config";
 import { useEventStore } from "./state/events";
 
-describe("App policy route redirects", () => {
-  it("redirects legacy /policies/builder route to govern overview", () => {
-    expect(LEGACY_POLICY_ROUTE_REDIRECTS.builder).toBe("/govern/overview");
-  });
-
-  it("uses /govern/overview as the default legacy /policies target", () => {
-    expect(LEGACY_POLICY_ROUTE_REDIRECTS.root).toBe("/govern/overview");
-  });
-
-  it("keeps all legacy policy redirects on /govern routes to prevent redirect loops", () => {
-    const targets = Object.values(LEGACY_POLICY_ROUTE_REDIRECTS);
-    expect(targets.length).toBeGreaterThan(0);
-    expect(targets.every((target) => target.startsWith("/govern/"))).toBe(true);
-    expect(targets.some((target) => target.startsWith("/policies"))).toBe(false);
-  });
-});
-
 describe("Command palette navigation integrity", () => {
-  it("has no commands pointing to legacy /policies routes", () => {
-    const legacyPaths = COMMAND_PALETTE_COMMANDS.filter((c) =>
-      c.path.startsWith("/policies"),
-    );
-    expect(legacyPaths).toEqual([]);
-  });
-
-  it("has no commands pointing to legacy /quarantine route", () => {
-    const legacyQuarantine = COMMAND_PALETTE_COMMANDS.filter(
-      (c) => c.path === "/quarantine",
-    );
-    expect(legacyQuarantine).toEqual([]);
-  });
-
-  it("includes Govern section commands for all six govern pages", () => {
+  it("keeps Govern command-palette entries aligned to the merged Policy Studio IA", () => {
     const governCommands = COMMAND_PALETTE_COMMANDS.filter(
       (c) => c.section === "Govern",
     );
     const paths = governCommands.map((c) => c.path).sort();
     expect(paths).toEqual([
+      "/govern/overview",
       "/govern/overview?tab=bundles",
+      "/govern/overview?tab=evaluation&mode=analytics",
+      "/govern/overview?tab=evaluation&mode=replay",
+      "/govern/overview?tab=evaluation&mode=simulator",
       "/govern/overview?tab=input-rules",
       "/govern/overview?tab=output-rules",
-      "/govern/overview?tab=simulator",
+      "/govern/overview?tab=scope",
+      "/govern/overview?tab=velocity",
       "/govern/quarantine",
-      "/govern/tenants",
     ]);
   });
 });

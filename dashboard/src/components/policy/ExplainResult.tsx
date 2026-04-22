@@ -51,6 +51,11 @@ function ConditionRow({ condition }: { condition: ExplainCondition }) {
 // ---------------------------------------------------------------------------
 
 function RuleStepCard({ step, index }: { step: ExplainRuleStep; index: number }) {
+  // Initial open state mirrors `step.matched` — matched rules start
+  // expanded so the operator can inspect the decision inline. After
+  // mount this becomes user-controlled collapse state; we intentionally
+  // do not re-sync on prop change so a background refetch cannot
+  // auto-close a panel the user just opened.
   const [open, setOpen] = useState(step.matched);
 
   return (

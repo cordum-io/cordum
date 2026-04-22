@@ -160,6 +160,47 @@ describe("useAudit hooks", () => {
     hook.unmount();
   });
 
+  it("useAuditLog returns a referentially stable 'filtered' for content-equal filters", async () => {
+    mockFetch([
+      {
+        match: "/policy/audit",
+        method: "GET",
+        body: {
+          items: [
+            {
+              id: "a1",
+              action: "approve",
+              actor_id: "alice",
+              resource_type: "job",
+              resource_id: "j1",
+              message: "approved",
+              created_at: "2026-02-13T10:00:00.000Z",
+            },
+          ],
+        },
+      },
+    ]);
+
+    const filters = { eventType: ["approve"], actor: "ali", sort: "time-asc" };
+    const hook = renderWithQueryClient(() => useAuditLog(filters));
+
+    await hook.waitFor(() => {
+      expect(hook.result.current?.isSuccess).toBe(true);
+    });
+
+    const firstFiltered = hook.result.current?.filtered;
+
+    // Pass a brand-new object literal with the same content. The filtered
+    // memo should reuse its previous value because the stable-filter
+    // memoization keys off scalar field content, not object identity.
+    hook.rerender(() =>
+      useAuditLog({ eventType: ["approve"], actor: "ali", sort: "time-asc" }),
+    );
+
+    expect(hook.result.current?.filtered).toBe(firstFiltered);
+    hook.unmount();
+  });
+
   it("useAuditLog fetches and returns filtered/sorted entries", async () => {
     mockFetch([
       {

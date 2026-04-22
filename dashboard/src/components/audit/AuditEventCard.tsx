@@ -113,8 +113,9 @@ function resourceLink(resourceType: string, resourceId: string): string | null {
     case "workflow":
       return `/workflows/${resourceId}/studio`;
     case "policy":
+      return `/govern/overview`;
     case "bundle":
-      return `/policies`;
+      return `/govern/overview?tab=bundles`;
     case "approval":
       return `/approvals`;
     default:

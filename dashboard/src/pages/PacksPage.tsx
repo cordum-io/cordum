@@ -6,11 +6,19 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
+import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Input } from "@/components/ui/Input";
+import {
+  InstrumentCard,
+  InstrumentCardBody,
+  InstrumentCardFooter,
+  InstrumentCardHeader,
+} from "@/components/ui/InstrumentCard";
 import { SkeletonCard } from "@/components/ui/Skeleton";
+import { Tabs } from "@/components/ui/Tabs";
 import { Search, Package, Download, Trash2, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
-import { cn } from "@/lib/utils";
 import type { Pack, MarketplacePack } from "@/api/types";
 import { usePacks, useMarketplacePacks, useInstallPack, useUninstallPack } from "@/hooks/usePacks";
 
@@ -32,7 +40,10 @@ export default function PacksPage() {
   const installMutation = useInstallPack();
   const uninstallMutation = useUninstallPack();
 
-  const tabs = ["installed", "marketplace"];
+  const tabs = [
+    { id: "installed", label: "Installed", count: packsRes?.items?.length ?? 0 },
+    { id: "marketplace", label: "Marketplace", count: marketRes?.items?.length ?? 0 },
+  ];
   const q = search.toLowerCase();
 
   const installedPacks = (packsRes?.items ?? []).filter(p =>
@@ -51,31 +62,23 @@ export default function PacksPage() {
       <PageHeader title="Packs" subtitle="Extend Cordum with community and custom packs" />
 
       {/* Tabs + Search */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-1 p-1 rounded-2xl bg-surface-1">
-          {tabs.map(tab => (
-            <button type="button"
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={cn(
-                "px-4 py-1.5 text-xs font-medium rounded-2xl transition-colors capitalize",
-                activeTab === tab ? "bg-cordum/10 text-cordum" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-        <div className="relative w-64">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search packs..."
-            className="h-8 w-full pl-9 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
-          />
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <Tabs
+          tabs={tabs}
+          activeTab={activeTab}
+          onChange={setActiveTab}
+          variant="segmented"
+          ariaLabel="Pack catalog tabs"
+          className="w-full sm:w-auto"
+        />
+        <Input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search packs..."
+          icon={<Search className="h-3.5 w-3.5" />}
+          className="h-9 w-full text-sm sm:w-64"
+        />
       </div>
 
       {/* Content */}
@@ -84,12 +87,10 @@ export default function PacksPage() {
           {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
         </div>
       ) : error ? (
-        <div className="instrument-card p-8 text-center">
-          <p className="text-sm text-destructive">Failed to load packs</p>
-          <Button variant="outline" size="sm" className="mt-3" onClick={() => activeTab === "installed" ? refetchPacks() : refetchMarket()}>
-            <RefreshCw className="w-3 h-3 mr-1" />Retry
-          </Button>
-        </div>
+        <ErrorBanner
+          message={error instanceof Error ? error.message : "Failed to load packs"}
+          onRetry={() => activeTab === "installed" ? refetchPacks() : refetchMarket()}
+        />
       ) : activeTab === "installed" ? (
         installedPacks.length === 0 ? (
           <EmptyState
@@ -161,38 +162,43 @@ function InstalledPackCard({ pack, index, isUninstalling, onUninstall }: {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04 }}
-      className="instrument-card flex flex-col"
     >
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <Package className="w-4 h-4 text-cordum" />
-          <span className="text-sm font-display font-semibold text-foreground">{pack.name}</span>
-        </div>
-        <StatusBadge variant={packStatusVariant(pack.status)} dot>
-          {pack.status}
-        </StatusBadge>
-      </div>
+      <InstrumentCard className="h-full">
+        <InstrumentCardBody className="p-5">
+          <InstrumentCardHeader
+            title={pack.name}
+            icon={<Package className="h-4 w-4 text-cordum" />}
+            action={(
+              <StatusBadge variant={packStatusVariant(pack.status)} dot>
+                {pack.status}
+              </StatusBadge>
+            )}
+          />
 
-      <span className="text-xs font-mono text-muted-foreground mb-2">v{pack.version}</span>
+          <div className="space-y-3">
+            <p className="text-xs font-mono text-muted-foreground">v{pack.version}</p>
 
-      {pack.description && (
-        <p className="text-xs text-muted-foreground flex-1 mb-3">{pack.description}</p>
-      )}
+            {pack.description && (
+              <p className="text-xs text-muted-foreground">{pack.description}</p>
+            )}
 
-      {pack.capabilities.length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-3">
-          {pack.capabilities.map(c => (
-            <span key={c} className="text-xs font-mono px-1.5 py-0.5 rounded bg-surface-2 text-muted-foreground">{c}</span>
-          ))}
-        </div>
-      )}
+            {pack.capabilities.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {pack.capabilities.map(c => (
+                  <StatusBadge key={c} variant="muted">{c}</StatusBadge>
+                ))}
+              </div>
+            )}
+          </div>
+        </InstrumentCardBody>
 
-      <div className="flex items-center justify-between pt-3 border-t border-border">
-        <span className="text-xs text-muted-foreground">{pack.author ? `by ${pack.author}` : "\u00A0"}</span>
-        <Button variant="danger" size="sm" onClick={onUninstall} loading={isUninstalling}>
-          <Trash2 className="w-3 h-3 mr-1" />Uninstall
-        </Button>
-      </div>
+        <InstrumentCardFooter className="flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">{pack.author ? `by ${pack.author}` : "\u00A0"}</span>
+          <Button variant="danger" size="sm" onClick={onUninstall} loading={isUninstalling}>
+            <Trash2 className="w-3 h-3 mr-1" />Uninstall
+          </Button>
+        </InstrumentCardFooter>
+      </InstrumentCard>
     </motion.div>
   );
 }
@@ -214,55 +220,59 @@ function MarketplacePackCard({ pack, index, isInstalling, onInstall }: {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04 }}
-      className="instrument-card flex flex-col"
     >
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <Package className="w-4 h-4 text-cordum" />
-          <span className="text-sm font-display font-semibold text-foreground">{pack.title ?? pack.id}</span>
-        </div>
-        <StatusBadge variant="muted">v{pack.version}</StatusBadge>
-      </div>
+      <InstrumentCard className="h-full">
+        <InstrumentCardBody className="p-5">
+          <InstrumentCardHeader
+            title={pack.title ?? pack.id}
+            icon={<Package className="h-4 w-4 text-cordum" />}
+            action={<StatusBadge variant="muted">v{pack.version}</StatusBadge>}
+          />
 
-      {pack.description && (
-        <p className="text-xs text-muted-foreground flex-1 mb-3">{pack.description}</p>
-      )}
+          <div className="space-y-3">
+            {pack.description && (
+              <p className="text-xs text-muted-foreground">{pack.description}</p>
+            )}
 
-      {(pack.capabilities ?? []).length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-2">
-          {(pack.capabilities ?? []).map(c => (
-            <span key={c} className="text-xs font-mono px-1.5 py-0.5 rounded bg-surface-2 text-muted-foreground">{c}</span>
-          ))}
-        </div>
-      )}
+            {(pack.capabilities ?? []).length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {(pack.capabilities ?? []).map(c => (
+                  <StatusBadge key={c} variant="muted">{c}</StatusBadge>
+                ))}
+              </div>
+            )}
 
-      {(pack.riskTags ?? []).length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-3">
-          {(pack.riskTags ?? []).map(t => (
-            <span key={t} className="inline-flex items-center gap-1 text-xs font-mono px-1.5 py-0.5 rounded bg-[var(--color-warning)]/10 text-[var(--color-warning)]">
-              <AlertTriangle className="w-2.5 h-2.5" />{t}
-            </span>
-          ))}
-        </div>
-      )}
+            {(pack.riskTags ?? []).length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {(pack.riskTags ?? []).map(t => (
+                  <StatusBadge key={t} variant="warning">
+                    <AlertTriangle className="h-3 w-3" />
+                    {t}
+                  </StatusBadge>
+                ))}
+              </div>
+            )}
+          </div>
+        </InstrumentCardBody>
 
-      <div className="flex items-center justify-between pt-3 border-t border-border">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-xs text-muted-foreground">{pack.author ? `by ${pack.author}` : "\u00A0"}</span>
-          {pack.catalogTitle && (
-            <span className="text-xs text-muted-foreground/60">{pack.catalogTitle}</span>
+        <InstrumentCardFooter className="flex items-center justify-between">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs text-muted-foreground">{pack.author ? `by ${pack.author}` : "\u00A0"}</span>
+            {pack.catalogTitle && (
+              <span className="text-xs text-muted-foreground/60">{pack.catalogTitle}</span>
+            )}
+          </div>
+          {alreadyInstalled ? (
+            <StatusBadge variant="healthy" dot>
+              <CheckCircle2 className="w-3 h-3 mr-0.5" />Installed
+            </StatusBadge>
+          ) : (
+            <Button variant="primary" size="sm" onClick={onInstall} loading={isInstalling}>
+              <Download className="w-3 h-3 mr-1" />Install
+            </Button>
           )}
-        </div>
-        {alreadyInstalled ? (
-          <StatusBadge variant="healthy" dot>
-            <CheckCircle2 className="w-3 h-3 mr-0.5" />Installed
-          </StatusBadge>
-        ) : (
-          <Button variant="primary" size="sm" onClick={onInstall} loading={isInstalling}>
-            <Download className="w-3 h-3 mr-1" />Install
-          </Button>
-        )}
-      </div>
+        </InstrumentCardFooter>
+      </InstrumentCard>
     </motion.div>
   );
 }

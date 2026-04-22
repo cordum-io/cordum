@@ -180,6 +180,21 @@ describe("LicensePage", () => {
     }
   });
 
+  it("surfaces degraded licenses as break-glass mode instead of a generic error", async () => {
+    hookState.overview.license.data.expiryStatus = "degraded";
+
+    const { container, cleanup } = renderPage();
+
+    try {
+      await waitFor(() => {
+        expect(container.textContent).toContain("Break-glass mode active");
+        expect(container.textContent).toContain("break-glass admin access available");
+      });
+    } finally {
+      cleanup();
+    }
+  });
+
   it("shows the community fallback notice when no signed license is loaded", () => {
     hookState.overview = {
       license: {
@@ -221,6 +236,19 @@ describe("LicensePage", () => {
     try {
       expect(container.textContent).toContain("Community defaults are active");
       expect(container.textContent).toContain("No signed license is loaded for this deployment");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("uses a truthful license handoff section instead of a dead file picker", () => {
+    const { container, cleanup } = renderPage();
+
+    try {
+      expect(container.textContent).toContain("License update handoff");
+      expect(container.textContent).toContain("No dashboard upload path");
+      expect(container.textContent).not.toContain("Select file");
+      expect(container.textContent).not.toContain("Selected replacement");
     } finally {
       cleanup();
     }

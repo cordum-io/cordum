@@ -1,4 +1,124 @@
-import { describe, it, expect } from "vitest";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import type { Job } from "@/api/types";
+
+const { queryState, routerState, governanceState } = vi.hoisted(() => ({
+  queryState: {
+    current: {
+      data: null as Job | null,
+      isLoading: false,
+      isError: false,
+      error: null as Error | null,
+      refetch: vi.fn(),
+    },
+  },
+  routerState: {
+    params: { id: "job-123" },
+    navigate: vi.fn(),
+  },
+  governanceState: {
+    render: vi.fn(),
+  },
+}));
+
+vi.mock("@tanstack/react-query", () => ({
+  useQuery: () => queryState.current,
+}));
+
+vi.mock("react-router-dom", () => ({
+  useParams: () => routerState.params,
+  useNavigate: () => routerState.navigate,
+}));
+
+vi.mock("framer-motion", () => {
+  const passthrough = (tag: string) =>
+    React.forwardRef<HTMLElement, Record<string, unknown> & { children?: React.ReactNode }>(
+      ({ children, ...props }, ref) =>
+        React.createElement(tag, { ...props, ref }, children as React.ReactNode),
+    );
+  return {
+    motion: {
+      div: passthrough("div"),
+    },
+  };
+});
+
+vi.mock("@/hooks/useElapsedTimer", () => ({
+  useElapsedTimer: () => ({ formatted: "1m" }),
+}));
+
+vi.mock("@/state/events", () => ({
+  useEventStore: (selector: (state: { events: unknown[] }) => unknown) =>
+    selector({ events: [] }),
+}));
+
+vi.mock("@/components/jobs/JobActions", () => ({
+  JobActions: () => React.createElement("div", null, "Job actions"),
+}));
+
+vi.mock("@/components/governance/GovernanceTimeline", () => ({
+  GovernanceTimeline: (props: Record<string, unknown>) => {
+    governanceState.render(props);
+    return React.createElement(
+      "div",
+      { "data-testid": "governance-timeline" },
+      JSON.stringify(props),
+    );
+  },
+}));
+
+const JobDetailPage = (await import("./JobDetailPage")).default;
+
+function makeJob(overrides: Partial<Job> = {}): Job {
+  return {
+    id: "job-123",
+    topic: "job.review",
+    status: "running",
+    type: "job.review",
+    pool: "default",
+    capabilities: [],
+    riskTags: [],
+    metadata: {},
+    createdAt: "2026-04-20T10:00:00.000Z",
+    updatedAt: "2026-04-20T10:01:00.000Z",
+    labels: {},
+    context: { request: "hello" },
+    result: { ok: true },
+    ...overrides,
+  } as Job;
+}
+
+function renderPage() {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  act(() => {
+    root.render(React.createElement(JobDetailPage));
+  });
+
+  return {
+    container,
+    cleanup: () => {
+      act(() => root.unmount());
+      container.remove();
+    },
+  };
+}
+
+beforeEach(() => {
+  queryState.current = {
+    data: makeJob(),
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  };
+  routerState.params = { id: "job-123" };
+  routerState.navigate.mockReset();
+  governanceState.render.mockReset();
+});
 
 /**
  * Tests for JobDetailPage logic: payload truncation, JSON auto-parse, error fallback.
@@ -170,5 +290,33 @@ describe("Job status variant mapping", () => {
 
   it("maps succeeded to cordum", () => {
     expect(jobStatusVariant("succeeded")).toBe("cordum");
+  });
+});
+
+describe("JobDetailPage governance tab integration", () => {
+  it("renders the governance tab and lazy-mounts the timeline on activation", () => {
+    const { container, cleanup } = renderPage();
+
+    try {
+      expect(container.textContent).toContain("Governance");
+      expect(governanceState.render).not.toHaveBeenCalled();
+      expect(container.querySelector('[data-testid="governance-timeline"]')).toBeNull();
+
+      const governanceTab = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.includes("Governance"),
+      );
+      expect(governanceTab).toBeTruthy();
+
+      act(() => {
+        governanceTab?.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true }),
+        );
+      });
+
+      expect(governanceState.render).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('[data-testid="governance-timeline"]')?.textContent).toContain('"jobId":"job-123"');
+    } finally {
+      cleanup();
+    }
   });
 });

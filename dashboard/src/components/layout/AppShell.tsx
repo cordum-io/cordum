@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useConfigStore } from "@/state/config";
 import { useUiStore } from "@/state/ui";
+import { FEATURE_FLAGS } from "@/config/flags";
 import { useApprovals } from "@/hooks/useApprovals";
 import { useDLQ } from "@/hooks/useDLQ";
 import { useLicense } from "@/hooks/useLicense";
@@ -37,19 +38,13 @@ import {
   Command,
   ExternalLink,
   Shield,
-  ShieldCheck,
   ShieldAlert,
-  GitBranch,
+  KeyRound,
   Package,
   Database,
   Hash,
-  Layers,
-  Zap,
   Menu,
   X,
-  Eye,
-  History,
-  TrendingUp,
 } from "lucide-react";
 
 /*
@@ -93,10 +88,9 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
     label: "Govern",
     items: [
       { path: "/govern/overview", label: "Policy Studio", icon: Shield },
-      { path: "/govern/velocity-rules", label: "Velocity Rules", icon: Zap },
-      { path: "/govern/replay", label: "Policy Replay", icon: History },
-      { path: "/govern/analytics", label: "Rule Analytics", icon: TrendingUp },
-      { path: "/govern/tenants", label: "Tenants", icon: Layers },
+      ...(FEATURE_FLAGS.delegationDashboard
+        ? [{ path: "/delegations", label: "Delegations", icon: KeyRound }]
+        : []),
       { path: "/govern/quarantine", label: "Quarantine", icon: ShieldAlert, badge: "quarantine" },
     ],
   },

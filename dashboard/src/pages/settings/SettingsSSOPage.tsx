@@ -11,12 +11,13 @@ import { TierBadge, normalizeLicensePlan } from "@/components/TierBadge";
 import { UpgradePrompt } from "@/components/UpgradePrompt";
 import { SamlConfigPanel } from "@/components/settings/SamlConfigPanel";
 import { Button } from "@/components/ui/Button";
+import { DetailList } from "@/components/ui/DetailList";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { SkeletonCard } from "@/components/ui/Skeleton";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useLicense } from "@/hooks/useLicense";
 import { useSAMLConfig } from "@/hooks/useSAMLConfig";
-import { cn } from "@/lib/utils";
 
 function planLabel(plan?: string | null): string {
   const normalized = normalizeLicensePlan(plan);
@@ -27,38 +28,6 @@ function planLabel(plan?: string | null): string {
 
 function openExternal(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
-}
-
-function DetailRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex items-start justify-between gap-4 border-t border-border/70 py-3 first:border-t-0 first:pt-0 last:pb-0">
-      <dt className="text-sm text-muted-foreground">{label}</dt>
-      <dd
-        className={cn(
-          "max-w-[28rem] text-right text-sm text-foreground break-all",
-          mono && "font-mono text-xs",
-        )}
-      >
-        {value}
-      </dd>
-    </div>
-  );
-}
-
-function ProviderStatePill({ enabled }: { enabled: boolean }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium",
-        enabled
-          ? "border-[var(--color-success)]/20 bg-[var(--color-success)]/10 text-[var(--color-success)]"
-          : "border-[var(--color-warning)]/20 bg-[var(--color-warning)]/10 text-[var(--color-warning)]",
-      )}
-    >
-      {enabled ? <BadgeCheck className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
-      {enabled ? "Runtime enabled" : "Needs gateway config"}
-    </span>
-  );
 }
 
 export default function SettingsSSOPage() {
@@ -95,9 +64,10 @@ export default function SettingsSSOPage() {
   }
 
   const plan = planLabel(license.data?.plan);
-  const isEntitled = Boolean(license.data?.entitlements.sso);
+  const ssoEntitled = Boolean(license.data?.entitlements.sso);
+  const samlEntitled = ssoEntitled && Boolean(license.data?.entitlements.saml);
 
-  if (!isEntitled) {
+  if (!ssoEntitled) {
     return (
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
         <PageHeader
@@ -219,7 +189,28 @@ export default function SettingsSSOPage() {
   const oidcData = samlData.oidc;
   const samlRuntimeEnabled = samlData.enabled;
   const oidcRuntimeEnabled = oidcData.enabled;
-  const anyRuntimeEnabled = samlRuntimeEnabled || oidcRuntimeEnabled;
+  const samlEffectiveRuntimeEnabled = samlEntitled && samlRuntimeEnabled;
+  const anyRuntimeEnabled = samlEffectiveRuntimeEnabled || oidcRuntimeEnabled;
+  const samlStatusLabel = !samlEntitled
+    ? "SAML add-on required"
+    : samlRuntimeEnabled
+      ? "Runtime enabled"
+      : "Needs gateway config";
+  const samlLicenseGate = samlEntitled
+    ? "SSO + SAML enabled"
+    : "SSO enabled; SAML add-on required";
+  const runtimeBannerTitle = anyRuntimeEnabled
+    ? "Ready for provider testing"
+    : samlEntitled
+      ? "Configuration required"
+      : "OIDC-only until SAML is licensed";
+  const runtimeBannerMessage = anyRuntimeEnabled
+    ? samlEntitled
+      ? "Share the published provider details with your identity team, then use the test controls below to validate the browser redirect flows."
+      : "OIDC browser SSO is available. Upgrade the license to publish SAML metadata, ACS endpoints, and dashboard testing controls."
+    : samlEntitled
+      ? "The license is active, but the gateway is not yet publishing any SSO endpoints. Set the CORDUM_SAML_* or CORDUM_OIDC_* environment variables and restart the gateway."
+      : "The active license allows browser SSO, but the SAML add-on is disabled. Configure OIDC for browser sign-in or upgrade to publish SAML metadata and ACS endpoints.";
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
@@ -237,7 +228,7 @@ export default function SettingsSSOPage() {
               Open docs
               <ArrowUpRight className="ml-1 h-3.5 w-3.5" />
             </Button>
-            {samlRuntimeEnabled && (
+            {samlEffectiveRuntimeEnabled && (
               <Button
                 variant="outline"
                 size="sm"
@@ -269,17 +260,38 @@ export default function SettingsSSOPage() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <TierBadge plan={license.data?.plan} />
-              <ProviderStatePill enabled={samlRuntimeEnabled} />
+              <StatusBadge variant={samlEntitled && samlRuntimeEnabled ? "healthy" : "warning"}>
+                {samlEntitled && samlRuntimeEnabled ? <BadgeCheck className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+                {samlStatusLabel}
+              </StatusBadge>
             </div>
           </div>
 
-          <dl>
-            <DetailRow label="Metadata URL" value={samlData.metadataUrl} mono />
-            <DetailRow label="ACS URL" value={samlData.acsUrl} mono />
-            <DetailRow label="Login URL" value={samlData.loginUrl} mono />
-            <DetailRow label="Entity ID" value={samlData.entityId} mono />
-            <DetailRow label="Session TTL" value={samlData.sessionTtl} />
-          </dl>
+          <DetailList
+            items={[
+              {
+                label: "Metadata URL",
+                value: samlEntitled ? samlData.metadataUrl : "Upgrade to enable SAML metadata publishing",
+                mono: samlEntitled,
+              },
+              {
+                label: "ACS URL",
+                value: samlEntitled ? samlData.acsUrl : "Upgrade to enable Assertion Consumer Service routing",
+                mono: samlEntitled,
+              },
+              {
+                label: "Login URL",
+                value: samlEntitled ? samlData.loginUrl : "Upgrade to enable SP-initiated SAML login",
+                mono: samlEntitled,
+              },
+              {
+                label: "Entity ID",
+                value: samlEntitled ? samlData.entityId : "Upgrade to publish the service-provider entity ID",
+                mono: samlEntitled,
+              },
+              { label: "Session TTL", value: samlData.sessionTtl },
+            ]}
+          />
         </motion.section>
 
         <motion.section
@@ -297,24 +309,25 @@ export default function SettingsSSOPage() {
                 OIDC operator handoff
               </h2>
             </div>
-            <ProviderStatePill enabled={oidcRuntimeEnabled} />
+            <StatusBadge variant={oidcRuntimeEnabled ? "healthy" : "warning"}>
+              {oidcRuntimeEnabled ? <BadgeCheck className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+              {oidcRuntimeEnabled ? "Runtime enabled" : "Needs gateway config"}
+            </StatusBadge>
           </div>
 
-          <dl>
-            <DetailRow label="Issuer URL" value={oidcData.issuer || "Not configured"} mono />
-            <DetailRow label="Login URL" value={oidcData.loginUrl || "Not configured"} mono />
-            <DetailRow label="Redirect URI" value={oidcData.redirectUri || "Not configured"} mono />
-            <DetailRow label="Client ID" value={oidcData.clientId || "Not configured"} mono />
-            <DetailRow
-              label="Scopes"
-              value={oidcData.scopes.length > 0 ? oidcData.scopes.join(" ") : "openid profile email"}
-            />
-            <DetailRow
-              label="Client secret"
-              value={oidcData.clientSecretMasked || "Not configured"}
-              mono
-            />
-          </dl>
+          <DetailList
+            items={[
+              { label: "Issuer URL", value: oidcData.issuer || "Not configured", mono: true },
+              { label: "Login URL", value: oidcData.loginUrl || "Not configured", mono: true },
+              { label: "Redirect URI", value: oidcData.redirectUri || "Not configured", mono: true },
+              { label: "Client ID", value: oidcData.clientId || "Not configured", mono: true },
+              {
+                label: "Scopes",
+                value: oidcData.scopes.length > 0 ? oidcData.scopes.join(" ") : "openid profile email",
+              },
+              { label: "Client secret", value: oidcData.clientSecretMasked || "Not configured", mono: true },
+            ]}
+          />
         </motion.section>
       </div>
 
@@ -331,36 +344,31 @@ export default function SettingsSSOPage() {
           </h2>
         </div>
 
-        <div className="space-y-3 rounded-3xl border border-border bg-surface-1/70 p-4">
-          <div className="flex items-center justify-between gap-3 text-sm">
-            <span className="text-muted-foreground">License gate</span>
-            <span className="font-medium text-foreground">SSO enabled</span>
-          </div>
-          <div className="flex items-center justify-between gap-3 text-sm">
-            <span className="text-muted-foreground">SAML runtime</span>
-            <span className="font-medium text-foreground">
-              {samlRuntimeEnabled ? "Publishing endpoints" : "Waiting for CORDUM_SAML_* env vars"}
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-3 text-sm">
-            <span className="text-muted-foreground">OIDC runtime</span>
-            <span className="font-medium text-foreground">
-              {oidcRuntimeEnabled ? "Publishing login + callback" : "Waiting for CORDUM_OIDC_* env vars"}
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-3 text-sm">
-            <span className="text-muted-foreground">Cookie/session TTL</span>
-            <span className="font-medium text-foreground">{samlData.sessionTtl}</span>
-          </div>
-        </div>
+        <DetailList
+          className="rounded-3xl border border-border bg-surface-1/70 px-4 py-1"
+          items={[
+            { label: "License gate", value: samlLicenseGate },
+            {
+              label: "SAML runtime",
+              value: !samlEntitled
+                ? "Locked by license"
+                : samlRuntimeEnabled
+                  ? "Publishing endpoints"
+                  : "Waiting for CORDUM_SAML_* env vars",
+            },
+            {
+              label: "OIDC runtime",
+              value: oidcRuntimeEnabled ? "Publishing login + callback" : "Waiting for CORDUM_OIDC_* env vars",
+            },
+            { label: "Cookie/session TTL", value: samlData.sessionTtl },
+          ]}
+        />
 
         <InfoBanner
           variant={anyRuntimeEnabled ? "success" : "warning"}
-          title={anyRuntimeEnabled ? "Ready for provider testing" : "Configuration required"}
+          title={runtimeBannerTitle}
         >
-          {anyRuntimeEnabled
-            ? "Share the published provider details with your identity team, then use the test controls below to validate the browser redirect flows."
-            : "The license is active, but the gateway is not yet publishing any SSO endpoints. Set the CORDUM_SAML_* or CORDUM_OIDC_* environment variables and restart the gateway."}
+          {runtimeBannerMessage}
         </InfoBanner>
 
         <div className="grid gap-3 md:grid-cols-2">
@@ -369,7 +377,7 @@ export default function SettingsSSOPage() {
             size="sm"
             onClick={() => openExternal(samlData.loginUrl)}
             className="w-full"
-            disabled={!samlRuntimeEnabled}
+            disabled={!samlEffectiveRuntimeEnabled}
           >
             Test SAML login
             <ArrowUpRight className="ml-1 h-3.5 w-3.5" />
@@ -399,7 +407,7 @@ export default function SettingsSSOPage() {
             Dashboard controls
           </h2>
         </div>
-        <SamlConfigPanel entitled={isEntitled} />
+        <SamlConfigPanel entitled={samlEntitled} />
       </motion.section>
     </motion.div>
   );

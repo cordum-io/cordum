@@ -52,7 +52,7 @@ export default function SettingsLayout() {
                       "flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
                       isActive
                         ? "bg-accent/10 text-accent"
-                        : "text-muted-foreground hover:bg-surface2/60 hover:text-ink",
+                        : "text-muted-foreground hover:bg-surface-2/60 hover:text-ink",
                     )
                   }
                 >
