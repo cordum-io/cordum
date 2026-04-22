@@ -23,7 +23,7 @@ import (
 )
 
 func withAuth(req *http.Request, authCtx *auth.AuthContext) *http.Request {
-	return req.WithContext(context.WithValue(req.Context(), authContextKey{}, authCtx))
+	return req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 }
 
 func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
