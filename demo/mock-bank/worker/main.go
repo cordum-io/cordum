@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"math"
 	"math/big"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -155,6 +157,10 @@ type bankResult struct {
 // ---------------------------------------------------------------------------
 
 func main() {
+	// Structured JSON logs to stderr so operators can grep per-job state
+	// (see demo/mock-bank/README.md "Troubleshooting a stalled run").
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -192,7 +198,13 @@ func main() {
 			SenderID: worker.ID,
 		}
 
-		handler := makeHandler(worker.ID, worker.Pool)
+		// Per-workerDef in-flight counter. The heartbeat callback reads
+		// it on each tick so /api/v1/workers reflects actual load, not
+		// a simulated number. Counter state is lost if the process is
+		// killed mid-job; the next heartbeat after restart reads zero,
+		// which is the correct snapshot.
+		var counter atomic.Int32
+		handler := newCountingHandler(&counter, makeHandler(worker.ID, worker.Pool))
 
 		for _, topic := range worker.Topics {
 			runtime.Register(agent, topic, handler)
@@ -208,10 +220,10 @@ func main() {
 		// Heartbeat goroutine — builds full proto with capabilities, labels, region
 		go func() {
 			heartbeatFn := func() ([]byte, error) {
-				active := randInt(max(worker.Capacity/4, 1))
+				active := counter.Load()
 				cpuLoad := 5.0 + randFloat32()*35.0  // 5–40%
 				memLoad := 20.0 + randFloat32()*40.0 // 20–60%
-				return buildHeartbeat(worker, safeInt32(active), float32(cpuLoad), float32(memLoad))
+				return buildHeartbeat(worker, active, float32(cpuLoad), float32(memLoad))
 			}
 			if payload, err := heartbeatFn(); err == nil {
 				_ = runtime.EmitHeartbeat(nc, payload)
@@ -263,23 +275,78 @@ func buildHeartbeat(w workerDef, activeJobs int32, cpuLoad, memoryLoad float32) 
 // Handler factory — simulates bank operations
 // ---------------------------------------------------------------------------
 
+// newCountingHandler wraps a bank handler with an in-flight counter and
+// a panic recovery. counter.Add(1) on entry, defer Add(-1) runs whether
+// the handler returns success, error, or panics. The heartbeat callback
+// reads counter.Load() to publish a real active_jobs value.
+func newCountingHandler(
+	counter *atomic.Int32,
+	inner func(runtime.Context, bankPayload) (bankResult, error),
+) func(runtime.Context, bankPayload) (bankResult, error) {
+	return func(ctx runtime.Context, payload bankPayload) (res bankResult, err error) {
+		counter.Add(1)
+		defer counter.Add(-1)
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("mock-bank handler panic: %v", r)
+			}
+		}()
+		return inner(ctx, payload)
+	}
+}
+
+// makeHandler returns the production bank handler: structured per-job
+// logs, a randomized 200–2000 ms work simulation, and the verdict bucket
+// derived from amount (matches the policy fragment in pack/overlays/).
 func makeHandler(workerID, pool string) func(runtime.Context, bankPayload) (bankResult, error) {
+	return makeHandlerWithLogger(workerID, pool, slog.Default(), randomSleep)
+}
+
+// makeHandlerWithLogger is the test seam for makeHandler — the logger
+// and sleep function can be swapped for deterministic assertions.
+func makeHandlerWithLogger(
+	workerID, pool string,
+	logger *slog.Logger,
+	sleepFn func(context.Context),
+) func(runtime.Context, bankPayload) (bankResult, error) {
 	return func(ctx runtime.Context, payload bankPayload) (bankResult, error) {
+		start := time.Now()
 		jobID := ctx.Job.GetJobId()
 		topic := ctx.Job.GetTopic()
-
-		log.Printf("[%s] processing job=%s topic=%s", workerID, jobID, topic)
-
-		// Simulate processing time (200ms - 2s)
-		time.Sleep(time.Duration(200+randInt(1800)) * time.Millisecond)
-
 		amount := parseAmount(payload.Amount)
+		verdict, rule := classifyAmount(amount)
+
+		logger.Info("mock-bank job_received",
+			"job_id", jobID,
+			"worker_id", workerID,
+			"pool", pool,
+			"topic", topic,
+			"amount", amount,
+		)
+		logger.Info("mock-bank decision_made",
+			"job_id", jobID,
+			"worker_id", workerID,
+			"verdict", verdict,
+			"rule", rule,
+		)
+
+		sleepFn(context.Background())
+
 		message := payload.Message
 		if message == "" {
 			message = payload.Prompt
 		}
 		if message == "" {
 			message = fmt.Sprintf("Processed by %s", pool)
+		}
+
+		ref := pool
+		if n := len(jobID); n > 0 {
+			short := jobID
+			if n >= 8 {
+				short = jobID[:8]
+			}
+			ref = fmt.Sprintf("%s-%s", pool, short)
 		}
 
 		result := bankResult{
@@ -294,13 +361,40 @@ func makeHandler(workerID, pool string) func(runtime.Context, bankPayload) (bank
 			Topic:       topic,
 			Status:      "completed",
 			ProcessedAt: time.Now().UTC().Format(time.RFC3339),
-			ReferenceID: fmt.Sprintf("%s-%s", pool, jobID[:8]),
+			ReferenceID: ref,
 			Message:     message,
 		}
 
-		log.Printf("[%s] completed job=%s ref=%s", workerID, jobID, result.ReferenceID)
+		logger.Info("mock-bank job_completed",
+			"job_id", jobID,
+			"worker_id", workerID,
+			"verdict", verdict,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"reference_id", ref,
+		)
 		return result, nil
 	}
+}
+
+// classifyAmount reports the verdict bucket a transfer falls into. The
+// thresholds mirror demo/mock-bank/pack/overlays/policy.fragment.yaml
+// so the logged verdict/rule matches the safety kernel decision a
+// reviewer sees in the UI. If the policy fragment changes, update both.
+func classifyAmount(amount float64) (verdict, rule string) {
+	switch {
+	case amount < 100:
+		return "allow", "bank-transfer-allow"
+	case amount < 300:
+		return "require_approval", "bank-transfer-review"
+	default:
+		return "deny", "bank-transfer-blocked"
+	}
+}
+
+// randomSleep simulates 200–2000 ms of bank work so the demo visibly
+// occupies a worker slot. Replaced in tests by a no-op sleep.
+func randomSleep(_ context.Context) {
+	time.Sleep(time.Duration(200+randInt(1800)) * time.Millisecond)
 }
 
 // ---------------------------------------------------------------------------
@@ -349,13 +443,6 @@ func envOr(key, fallback string) string {
 		return val
 	}
 	return fallback
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func randInt(max int) int {
