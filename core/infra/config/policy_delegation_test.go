@@ -281,11 +281,13 @@ func TestDelegationContextFromLabels(t *testing.T) {
 		LabelDelegationParentIssuer: "agent-b",
 		LabelDelegationScope:        "read,write",
 		LabelDelegationJTI:          "dlg-123",
+		LabelDelegationExpiresAt:    "2026-04-21T13:14:15Z",
+		LabelDelegationAudience:     "agent-b",
 	})
 	if got == nil {
 		t.Fatal("expected delegation context")
 	}
-	if got.Depth != 2 || got.RootIssuer != "agent-a" || got.ParentIssuer != "agent-b" || got.JTI != "dlg-123" {
+	if got.Depth != 2 || got.RootIssuer != "agent-a" || got.ParentIssuer != "agent-b" || got.JTI != "dlg-123" || got.ExpiresAt != "2026-04-21T13:14:15Z" || got.Audience != "agent-b" {
 		t.Fatalf("unexpected delegation context: %#v", got)
 	}
 }
@@ -490,14 +492,17 @@ func TestDelegationAuditExtras(t *testing.T) {
 		ParentIssuer: "agent-a",
 		Scope:        []string{"read", "write"}, // must NOT appear in Extras
 		JTI:          "jti-123",
+		ExpiresAt:    "2026-04-21T13:14:15Z",
+		Audience:     "agent-a",
 	}
 	got := DelegationAuditExtras(ctx)
 	wantPairs := map[string]string{
 		"delegation.depth":         "2",
 		"delegation.root_issuer":   "finance-bot",
 		"delegation.parent_issuer": "agent-a",
-		"delegation.chain":         "finance-bot,agent-a",
 		"delegation.jti":           "jti-123",
+		"delegation.expires_at":    "2026-04-21T13:14:15Z",
+		"delegation.audience":      "agent-a",
 	}
 	for k, v := range wantPairs {
 		if got[k] != v {
@@ -510,6 +515,9 @@ func TestDelegationAuditExtras(t *testing.T) {
 	if got["delegation.depth"] == "" {
 		t.Fatal("depth must always be emitted, even zero-valued")
 	}
+	if _, present := got["delegation.chain"]; present {
+		t.Fatalf("Extras must NOT include delegation.chain; the companion lineage event carries the full chain")
+	}
 }
 
 func TestDelegationAuditExtras_OmitsBlankFields(t *testing.T) {
@@ -518,20 +526,20 @@ func TestDelegationAuditExtras_OmitsBlankFields(t *testing.T) {
 	if got["delegation.depth"] != "0" {
 		t.Fatalf("depth=0 should be emitted verbatim; got %q", got["delegation.depth"])
 	}
-	for _, key := range []string{"delegation.root_issuer", "delegation.parent_issuer", "delegation.chain", "delegation.jti"} {
+	for _, key := range []string{"delegation.root_issuer", "delegation.parent_issuer", "delegation.jti", "delegation.expires_at", "delegation.audience", "delegation.chain"} {
 		if _, ok := got[key]; ok {
 			t.Errorf("key %q should be omitted when the source field is empty", key)
 		}
 	}
 }
 
-func TestDelegationAuditExtras_TrimsChainAndSkipsBlanks(t *testing.T) {
-	ctx := &DelegationContext{
-		Depth:       3,
-		IssuerChain: []string{"finance-bot", "  ", "agent-a"},
-	}
+func TestDelegationAuditExtras_TrimsAudienceAndExpiry(t *testing.T) {
+	ctx := &DelegationContext{Depth: 3, ExpiresAt: " 2026-04-21T13:14:15Z ", Audience: " agent-b "}
 	got := DelegationAuditExtras(ctx)
-	if got["delegation.chain"] != "finance-bot,agent-a" {
-		t.Fatalf("chain should drop blanks; got %q", got["delegation.chain"])
+	if got["delegation.expires_at"] != "2026-04-21T13:14:15Z" {
+		t.Fatalf("expires_at should be trimmed; got %q", got["delegation.expires_at"])
+	}
+	if got["delegation.audience"] != "agent-b" {
+		t.Fatalf("audience should be trimmed; got %q", got["delegation.audience"])
 	}
 }

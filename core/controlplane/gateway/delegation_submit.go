@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/auth/delegation"
+	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -15,6 +18,14 @@ var errDelegationAgentRequired = errors.New("delegation token requires an authen
 
 func (s *server) applySubmitDelegation(ctx context.Context, tenant, agentID, token string, labels map[string]string, meta *pb.JobMetadata) (map[string]string, error) {
 	return s.applySubmitDelegationWithAudience(ctx, tenant, agentID, token, "", labels, meta)
+}
+
+func submitDelegationExpectedAudience(agentID, audienceOverride string) string {
+	expectedAudience := strings.TrimSpace(audienceOverride)
+	if expectedAudience == "" {
+		expectedAudience = strings.TrimSpace(agentID)
+	}
+	return expectedAudience
 }
 
 // applySubmitDelegationWithAudience allows the caller to pass an
@@ -31,10 +42,7 @@ func (s *server) applySubmitDelegationWithAudience(ctx context.Context, tenant, 
 	if agentID == "" {
 		return nil, errDelegationAgentRequired
 	}
-	expectedAudience := strings.TrimSpace(audienceOverride)
-	if expectedAudience == "" {
-		expectedAudience = agentID
-	}
+	expectedAudience := submitDelegationExpectedAudience(agentID, audienceOverride)
 	service, err := s.delegationTokenService()
 	if err != nil {
 		return nil, fmt.Errorf("delegation token service unavailable: %w", err)
@@ -59,6 +67,62 @@ func (s *server) applySubmitDelegationWithAudience(ctx context.Context, tenant, 
 		}
 	}
 	return labels, nil
+}
+
+func (s *server) persistSubmitDelegationToken(ctx context.Context, jobID, token, audience string) error {
+	token = strings.TrimSpace(token)
+	if token == "" || s == nil || s.jobStore == nil {
+		return nil
+	}
+	dispatchStore, ok := any(s.jobStore).(model.DelegationDispatchTokenStore)
+	if !ok {
+		return fmt.Errorf("delegation dispatch token store unavailable")
+	}
+	return dispatchStore.SetDelegationDispatchToken(ctx, jobID, model.DelegationDispatchToken{
+		Token:    token,
+		Audience: strings.TrimSpace(audience),
+	})
+}
+
+func submitDelegationAuditReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	if code := delegation.ErrorCode(err); code != "" {
+		return code
+	}
+	if errors.Is(err, errDelegationAgentRequired) {
+		return err.Error()
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "tenant mismatch") {
+		return "delegation token tenant mismatch"
+	}
+	return "delegation token service unavailable"
+}
+
+func (s *server) emitSubmitDelegationRejectedAudit(r *http.Request, jobID, topic, agentID string, err error) {
+	if s == nil || s.auditExporter == nil || err == nil {
+		return
+	}
+	extra := map[string]string{}
+	if topic = strings.TrimSpace(topic); topic != "" {
+		extra["topic"] = topic
+	}
+	if len(extra) == 0 {
+		extra = nil
+	}
+	s.auditExporter.Send(audit.SIEMEvent{
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventDelegationRejected,
+		Severity:  audit.SeverityMedium,
+		TenantID:  strings.TrimSpace(tenantFromRequest(r)),
+		AgentID:   strings.TrimSpace(agentID),
+		JobID:     strings.TrimSpace(jobID),
+		Action:    "submit",
+		Reason:    submitDelegationAuditReason(err),
+		Identity:  strings.TrimSpace(policyActorID(r)),
+		Extra:     extra,
+	})
 }
 
 // submitDelegationErrorStatus maps delegation verify errors to HTTP status
@@ -102,4 +166,18 @@ func submitDelegationErrorStatus(err error) (int, string) {
 		return http.StatusForbidden, "delegation token tenant mismatch"
 	}
 	return http.StatusServiceUnavailable, "delegation token service unavailable"
+}
+
+func writeDelegationSubmitErrorJSON(w http.ResponseWriter, status int, code string) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = "delegation token service unavailable"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	writeJSON(w, map[string]any{
+		"error":      code,
+		"error_code": code,
+		"status":     status,
+	})
 }

@@ -54,6 +54,8 @@ const (
 	metaFieldAttempts              = "attempts"
 	metaFieldDeadline              = "deadline_unix"
 	metaFieldSafetyDecision        = "safety_decision"
+	metaFieldDelegationLineage     = "delegation_lineage"
+	metaFieldDelegationDispatch    = "delegation_dispatch_token"
 	metaFieldSafetyReason          = "safety_reason"
 	metaFieldSafetyRuleID          = "safety_rule_id"
 	metaFieldSafetySnapshot        = "safety_snapshot"
@@ -1673,6 +1675,94 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 		return fmt.Errorf("job store set safety decision %s: %w", jobID, err)
 	}
 	return nil
+}
+
+// SetDelegationLineage stores the verified dispatch-time delegation lineage on
+// the job metadata hash as a JSON blob.
+func (s *RedisJobStore) SetDelegationLineage(ctx context.Context, jobID string, lineage model.DelegationLineage) error {
+	if jobID == "" {
+		return fmt.Errorf("jobID required")
+	}
+	encoded, err := json.Marshal(lineage)
+	if err != nil {
+		return fmt.Errorf("marshal delegation lineage: %w", err)
+	}
+	pipe := s.client.TxPipeline()
+	pipe.HSet(ctx, jobMetaKey(jobID), metaFieldDelegationLineage, string(encoded))
+	if s.metaTTL > 0 {
+		pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("job store set delegation lineage %s: %w", jobID, err)
+	}
+	return nil
+}
+
+// GetDelegationLineage loads the verified dispatch-time delegation lineage from
+// the job metadata hash.
+func (s *RedisJobStore) GetDelegationLineage(ctx context.Context, jobID string) (model.DelegationLineage, error) {
+	if jobID == "" {
+		return model.DelegationLineage{}, fmt.Errorf("jobID required")
+	}
+	raw, err := s.client.HGet(ctx, jobMetaKey(jobID), metaFieldDelegationLineage).Result()
+	if err == redis.Nil || raw == "" {
+		return model.DelegationLineage{}, nil
+	}
+	if err != nil {
+		return model.DelegationLineage{}, fmt.Errorf("job store get delegation lineage %s: %w", jobID, err)
+	}
+	var lineage model.DelegationLineage
+	if err := json.Unmarshal([]byte(raw), &lineage); err != nil {
+		return model.DelegationLineage{}, fmt.Errorf("decode delegation lineage %s: %w", jobID, err)
+	}
+	return lineage, nil
+}
+
+// SetDelegationDispatchToken stores the raw delegation token required for
+// dispatch-time re-verification. It is intentionally persisted separately from
+// the public job request snapshot.
+func (s *RedisJobStore) SetDelegationDispatchToken(ctx context.Context, jobID string, token model.DelegationDispatchToken) error {
+	if jobID == "" {
+		return fmt.Errorf("jobID required")
+	}
+	if strings.TrimSpace(token.Token) == "" {
+		return nil
+	}
+	token.Token = strings.TrimSpace(token.Token)
+	token.Audience = strings.TrimSpace(token.Audience)
+	encoded, err := json.Marshal(token)
+	if err != nil {
+		return fmt.Errorf("marshal delegation dispatch token: %w", err)
+	}
+	pipe := s.client.TxPipeline()
+	pipe.HSet(ctx, jobMetaKey(jobID), metaFieldDelegationDispatch, string(encoded))
+	if s.metaTTL > 0 {
+		pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("job store set delegation dispatch token %s: %w", jobID, err)
+	}
+	return nil
+}
+
+// GetDelegationDispatchToken loads the raw delegation token stored for
+// dispatch-time re-verification.
+func (s *RedisJobStore) GetDelegationDispatchToken(ctx context.Context, jobID string) (model.DelegationDispatchToken, error) {
+	if jobID == "" {
+		return model.DelegationDispatchToken{}, fmt.Errorf("jobID required")
+	}
+	raw, err := s.client.HGet(ctx, jobMetaKey(jobID), metaFieldDelegationDispatch).Result()
+	if err == redis.Nil || raw == "" {
+		return model.DelegationDispatchToken{}, nil
+	}
+	if err != nil {
+		return model.DelegationDispatchToken{}, fmt.Errorf("job store get delegation dispatch token %s: %w", jobID, err)
+	}
+	var token model.DelegationDispatchToken
+	if err := json.Unmarshal([]byte(raw), &token); err != nil {
+		return model.DelegationDispatchToken{}, fmt.Errorf("decode delegation dispatch token %s: %w", jobID, err)
+	}
+	return token, nil
 }
 
 // SetOutputSafety stores output policy evaluation data on the job metadata hash.

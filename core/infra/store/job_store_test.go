@@ -101,6 +101,59 @@ func TestRedisJobStoreResultPtrTTL(t *testing.T) {
 	}
 }
 
+func TestRedisJobStoreDelegationLineageRoundTrip(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	store, err := NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("failed to create job store: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	jobID := "job-delegation-lineage"
+	want := model.DelegationLineage{
+		TokenJTI:       "dlg-jti-1",
+		ParentTokenJTI: "dlg-parent-1",
+		Subject:        "agent-a",
+		Audience:       "agent-b",
+		Tenant:         "default",
+		RootIssuer:     "agent-a",
+		ParentIssuer:   "agent-a",
+		IssuerChain: []model.DelegationChainLink{{
+			AgentID:   "agent-a",
+			IssuedAt:  "2026-04-21T09:00:00Z",
+			ExpiresAt: "2026-04-21T10:00:00Z",
+			JTI:       "dlg-jti-1",
+			IssuedBy:  "agent-a",
+		}},
+		ChainDepth:    1,
+		ExpiresAt:     "2026-04-21T10:00:00Z",
+		Scope:         []string{"read"},
+		AllowedTopics: []string{"job.test"},
+		VerifiedAt:    1_713_680_000_000_000,
+	}
+
+	if err := store.SetDelegationLineage(ctx, jobID, want); err != nil {
+		t.Fatalf("SetDelegationLineage() error = %v", err)
+	}
+	got, err := store.GetDelegationLineage(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetDelegationLineage() error = %v", err)
+	}
+	if got.TokenJTI != want.TokenJTI || got.Audience != want.Audience || got.RootIssuer != want.RootIssuer || got.ChainDepth != want.ChainDepth {
+		t.Fatalf("delegation lineage mismatch: got %#v want %#v", got, want)
+	}
+	if len(got.IssuerChain) != 1 || got.IssuerChain[0].AgentID != "agent-a" {
+		t.Fatalf("issuer chain mismatch: %#v", got.IssuerChain)
+	}
+	if len(got.Scope) != 1 || got.Scope[0] != "read" {
+		t.Fatalf("scope mismatch: %#v", got.Scope)
+	}
+}
+
 func TestRedisJobStoreTransitionGuard(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {

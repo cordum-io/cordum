@@ -6379,6 +6379,52 @@ components:
             items:
               $ref: '#/components/schemas/SafetyDecision'
             nullable: true
+          delegation:
+            $ref: '#/components/schemas/DelegationLineageView'
+    DelegationLineageChainLink:
+      type: object
+      properties:
+        agent_id:
+          type: string
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        jti:
+          type: string
+        parent_jti:
+          type: string
+    DelegationLineageView:
+      type: object
+      properties:
+        jti:
+          type: string
+        audience:
+          type: string
+        root_issuer:
+          type: string
+        parent_issuer:
+          type: string
+        chain_depth:
+          type: integer
+        chain:
+          type: array
+          items:
+            $ref: '#/components/schemas/DelegationLineageChainLink'
+        scope:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+        verified_at:
+          type: integer
+          format: int64
+        reverified_at_dispatch:
+          type: boolean
     SafetyDecision:
       type: object
       description: Result of safety kernel policy evaluation for a job

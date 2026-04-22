@@ -3,6 +3,7 @@ package gateway
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cordum/cordum/core/auth/delegation"
 	"github.com/cordum/cordum/core/infra/config"
@@ -32,6 +33,10 @@ func projectVerifiedDelegationContext(verified delegation.VerifiedToken) *config
 		RootIssuer:   issuerChain[0],
 		ParentIssuer: issuerChain[len(issuerChain)-1],
 		JTI:          strings.TrimSpace(verified.JTI),
+		Audience:     strings.TrimSpace(verified.Audience),
+	}
+	if !verified.ExpiresAt.IsZero() {
+		ctx.ExpiresAt = verified.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
 	return ctx
 }
@@ -58,6 +63,12 @@ func applyDelegationContextLabels(labels map[string]string, delegationCtx *confi
 	}
 	if delegationCtx.JTI != "" {
 		labels[config.LabelDelegationJTI] = delegationCtx.JTI
+	}
+	if delegationCtx.ExpiresAt != "" {
+		labels[config.LabelDelegationExpiresAt] = delegationCtx.ExpiresAt
+	}
+	if delegationCtx.Audience != "" {
+		labels[config.LabelDelegationAudience] = delegationCtx.Audience
 	}
 	if subject = strings.TrimSpace(subject); subject != "" {
 		labels[config.LabelDelegationSubject] = subject

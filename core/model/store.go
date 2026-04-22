@@ -107,6 +107,8 @@ type JobStore interface {
 	GetTeam(ctx context.Context, jobID string) (string, error)
 	SetSafetyDecision(ctx context.Context, jobID string, record SafetyDecisionRecord) error
 	GetSafetyDecision(ctx context.Context, jobID string) (SafetyDecisionRecord, error)
+	SetDelegationLineage(ctx context.Context, jobID string, lineage DelegationLineage) error
+	GetDelegationLineage(ctx context.Context, jobID string) (DelegationLineage, error)
 	GetAttempts(ctx context.Context, jobID string) (int, error)
 	CountActiveByTenant(ctx context.Context, tenant string) (int, error)
 	TryAcquireLock(ctx context.Context, key string, ttl time.Duration) (string, error)

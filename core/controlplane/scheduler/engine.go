@@ -1329,6 +1329,49 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 
 	e.attachEffectiveConfig(req)
 
+	verifyCtx, verifyCancel := context.WithTimeout(lockCtx, storeOpTimeout)
+	lineage, hasDelegation, delegationErr := e.verifyDelegationBeforeDispatch(verifyCtx, req)
+	verifyCancel()
+	if delegationErr != nil {
+		reason, reasonCode, retry := classifyDelegationDispatchError(delegationErr)
+		slog.Warn("delegation dispatch verification failed",
+			"job_id", jobID,
+			"topic", topic,
+			"reason_code", reasonCode,
+			"error", delegationErr,
+		)
+		if retry {
+			return RetryAfter(delegationErr, retryDelayStore)
+		}
+		if hasDelegation {
+			e.emitDelegationDispatchFailureAudit(lockCtx, req, reasonCode)
+		}
+		if hasDelegation && e.jobStore != nil {
+			ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
+			failureReason := reason
+			if reasonCode != "" {
+				failureReason = reasonCode
+			}
+			if err := e.jobStore.SetFailureReason(ctx, jobID, failureReason); err != nil {
+				slog.Warn("failed to persist delegation dispatch failure reason", "job_id", jobID, "error", err)
+			}
+			cancel()
+		}
+		if err := e.setJobState(jobID, JobStateFailed); err != nil {
+			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
+			return RetryAfter(err, retryDelayStore)
+		}
+		e.incJobsCompleted(topic, pb.JobStatus_JOB_STATUS_FAILED.String())
+		if err := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED, reason, reasonCode); err != nil {
+			slog.Error("dlq emit failed, retrying", "job_id", jobID, "error", err)
+			return RetryAfter(err, retryDelayPublish)
+		}
+		return nil
+	}
+	if hasDelegation {
+		e.emitDelegationLineageAudit(lockCtx, req, lineage)
+	}
+
 	record, err := e.checkSafetyDecisionTraced(lockCtx, req)
 	if err != nil {
 		slog.Error("safety check failed", "job_id", jobID, "error", err)

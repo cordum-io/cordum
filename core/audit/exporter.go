@@ -17,11 +17,24 @@ import (
 
 // Event types emitted by the audit subsystem.
 const (
-	EventSafetyDecision  = "safety.decision"
-	EventSafetyApproval  = "safety.approval"
-	EventPolicyChange    = "safety.policy_change"
-	EventSafetyViolation = "safety.violation"
-	EventSystemAuth      = "system.auth"
+	EventSafetyDecision = "safety.decision"
+	// EventDelegationLineage captures the full human-readable delegation chain
+	// once per (job_id, token_jti) at dispatch so downstream SIEM rules can
+	// correlate the compact safety.decision delegation fields back to the
+	// complete issuer ancestry.
+	EventDelegationLineage = "delegation.lineage"
+	// EventDelegationRejected captures submit-time delegation verification
+	// failures before a job is accepted. Reason carries the delegation error
+	// code (for example malformed, revoked, or audience_mismatch).
+	EventDelegationRejected = "delegation.rejected"
+	// EventDelegationRevokedBeforeDispatch captures dispatch-time delegation
+	// re-verification failures after a submit already succeeded. Reason carries
+	// the stable failure code persisted onto the job / DLQ record.
+	EventDelegationRevokedBeforeDispatch = "delegation.revoked_before_dispatch"
+	EventSafetyApproval                  = "safety.approval"
+	EventPolicyChange                    = "safety.policy_change"
+	EventSafetyViolation                 = "safety.violation"
+	EventSystemAuth                      = "system.auth"
 	// EventMCPToolApproval is emitted for every MCP per-tool approval
 	// lifecycle transition: enqueue, approve, reject, expire, consume.
 	// The Extra map carries tool_name, args_hash, approval_id,

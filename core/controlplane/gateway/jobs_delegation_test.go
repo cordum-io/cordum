@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -78,12 +79,10 @@ func TestHandleSubmitJobHTTPInjectsDelegationContextIntoPolicyCheck(t *testing.T
 	}
 }
 
-func TestHandleSubmitJobHTTPEmitsDelegationExtrasOnSafetyDecisionAudit(t *testing.T) {
+func TestHandleSubmitJobHTTPPersistsDelegationDispatchToken(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableTestAuth(s)
 	setDelegationKeys(t)
-	sink := &recordingAuditSender{}
-	s.auditExporter = sink
 
 	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
 		t.Fatalf("LinkWorker() error = %v", err)
@@ -104,6 +103,69 @@ func TestHandleSubmitJobHTTPEmitsDelegationExtrasOnSafetyDecisionAudit(t *testin
 	})
 	if err != nil {
 		t.Fatalf("IssueDelegationToken() error = %v", err)
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"prompt":"hello","topic":"job.test","delegation_token":"`+token+`"}`)), &auth.AuthContext{
+		Tenant:      "default",
+		PrincipalID: "worker-b",
+		Role:        "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	got, err := s.jobStore.GetDelegationDispatchToken(context.Background(), resp.JobID)
+	if err != nil {
+		t.Fatalf("GetDelegationDispatchToken() error = %v", err)
+	}
+	if got.Token != token {
+		t.Fatalf("stored delegation token mismatch")
+	}
+	if got.Audience != "agent-b" {
+		t.Fatalf("audience = %q, want agent-b", got.Audience)
+	}
+}
+
+func TestHandleSubmitJobHTTPEmitsDelegationExtrasOnSafetyDecisionAudit(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	setDelegationKeys(t)
+	sink := &recordingAuditSender{}
+	s.auditExporter = sink
+
+	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
+		t.Fatalf("LinkWorker() error = %v", err)
+	}
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read", "write"}, []string{"job.test"})
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
+
+	service, err := s.delegationTokenService()
+	if err != nil {
+		t.Fatalf("delegationTokenService() error = %v", err)
+	}
+	token, verifiedClaims, err := service.IssueDelegationToken(context.Background(), delegation.IssueRequest{
+		Tenant:            "default",
+		DelegatingAgentID: "agent-a",
+		TargetAgentID:     "agent-b",
+		AllowedActions:    []string{"read"},
+		AllowedTopics:     []string{"job.test"},
+	})
+	if err != nil {
+		t.Fatalf("IssueDelegationToken() error = %v", err)
+	}
+	verified, err := service.VerifyDelegationToken(context.Background(), token, "agent-b")
+	if err != nil {
+		t.Fatalf("VerifyDelegationToken() error = %v", err)
 	}
 
 	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"prompt":"hello","topic":"job.test","delegation_token":"`+token+`"}`)), &auth.AuthContext{
@@ -140,7 +202,8 @@ func TestHandleSubmitJobHTTPEmitsDelegationExtrasOnSafetyDecisionAudit(t *testin
 		"delegation.depth":         "1",
 		"delegation.root_issuer":   "agent-a",
 		"delegation.parent_issuer": "agent-a",
-		"delegation.chain":         "agent-a",
+		"delegation.audience":      "agent-b",
+		"delegation.expires_at":    verified.ExpiresAt.UTC().Format(time.RFC3339Nano),
 	}
 	for key, want := range wantExtras {
 		if got := decisionEvent.Extra[key]; got != want {
@@ -149,6 +212,54 @@ func TestHandleSubmitJobHTTPEmitsDelegationExtrasOnSafetyDecisionAudit(t *testin
 	}
 	if got := decisionEvent.Extra["delegation.jti"]; got == "" {
 		t.Fatal("delegation.jti should be present on safety decision audit event")
+	}
+	if got := decisionEvent.Extra["delegation.chain"]; got != "" {
+		t.Fatalf("delegation.chain = %q, want omitted from safety decision audit event", got)
+	}
+	if verifiedClaims.ExpiresAt == nil {
+		t.Fatal("expected issued claims to carry an expiration")
+	}
+}
+
+func TestHandleSubmitJobHTTPEmitsDelegationRejectedAuditOnVerifyFailure(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	setDelegationKeys(t)
+	sink := &testAuditSender{}
+	s.auditExporter = sink
+
+	if err := s.agentIdentityStore.LinkWorker(context.Background(), "agent-b", "worker-b"); err != nil {
+		t.Fatalf("LinkWorker() error = %v", err)
+	}
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.test"})
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/jobs", strings.NewReader(`{"prompt":"hello","topic":"job.test","delegation_token":"not-a-jwt"}`)), &auth.AuthContext{
+		Tenant:      "default",
+		PrincipalID: "worker-b",
+		Role:        "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if sink.Len() != 1 {
+		t.Fatalf("expected 1 audit event, got %d", sink.Len())
+	}
+	event := sink.Get(0)
+	if event.EventType != audit.EventDelegationRejected {
+		t.Fatalf("event_type = %q, want %q", event.EventType, audit.EventDelegationRejected)
+	}
+	if event.Action != "submit" {
+		t.Fatalf("action = %q, want submit", event.Action)
+	}
+	if event.Reason != "malformed" {
+		t.Fatalf("reason = %q, want malformed", event.Reason)
+	}
+	if event.Extra["topic"] != "job.test" {
+		t.Fatalf("topic extra = %q, want job.test", event.Extra["topic"])
 	}
 }
 

@@ -108,6 +108,8 @@ type fakeJobStore struct {
 	tenants        map[string]string
 	teams          map[string]string
 	safety         map[string]SafetyDecisionRecord
+	lineage        map[string]model.DelegationLineage
+	dispatchTokens map[string]model.DelegationDispatchToken
 	output         map[string]OutputSafetyRecord
 	attempts       map[string]int
 	locks          map[string]time.Time
@@ -164,6 +166,8 @@ func newFakeJobStore() *fakeJobStore {
 		tenants:        make(map[string]string),
 		teams:          make(map[string]string),
 		safety:         make(map[string]SafetyDecisionRecord),
+		lineage:        make(map[string]model.DelegationLineage),
+		dispatchTokens: make(map[string]model.DelegationDispatchToken),
 		output:         make(map[string]OutputSafetyRecord),
 		attempts:       make(map[string]int),
 		locks:          make(map[string]time.Time),
@@ -320,6 +324,32 @@ func (s *fakeJobStore) GetSafetyDecision(_ context.Context, jobID string) (Safet
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.safety[jobID], nil
+}
+
+func (s *fakeJobStore) SetDelegationLineage(_ context.Context, jobID string, lineage model.DelegationLineage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lineage[jobID] = lineage
+	return nil
+}
+
+func (s *fakeJobStore) GetDelegationLineage(_ context.Context, jobID string) (model.DelegationLineage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lineage[jobID], nil
+}
+
+func (s *fakeJobStore) SetDelegationDispatchToken(_ context.Context, jobID string, token model.DelegationDispatchToken) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dispatchTokens[jobID] = token
+	return nil
+}
+
+func (s *fakeJobStore) GetDelegationDispatchToken(_ context.Context, jobID string) (model.DelegationDispatchToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.dispatchTokens[jobID], nil
 }
 
 func (s *fakeJobStore) GetAttempts(_ context.Context, jobID string) (int, error) {

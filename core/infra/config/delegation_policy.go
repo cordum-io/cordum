@@ -13,6 +13,8 @@ const (
 	LabelDelegationIssuerChain  = "_delegation.issuer_chain"
 	LabelDelegationParentIssuer = "_delegation.parent_issuer"
 	LabelDelegationJTI          = "_delegation.jti"
+	LabelDelegationExpiresAt    = "_delegation.expires_at"
+	LabelDelegationAudience     = "_delegation.audience"
 	LabelDelegationScope        = "_delegation.scope"
 	LabelDelegationSubject      = "_delegation.subject"
 )
@@ -27,6 +29,8 @@ type DelegationContext struct {
 	RootIssuer   string
 	ParentIssuer string
 	JTI          string
+	ExpiresAt    string
+	Audience     string
 }
 
 // DelegationMatch is the structured rule-match block under
@@ -209,9 +213,9 @@ func reportDelegationDeny(field string) {
 // DelegationAuditExtras projects a verified DelegationContext into the
 // SIEMEvent.Extra map keys the audit trail should carry at safety-decision
 // emission time. Returns nil when the context is nil (direct call — no
-// delegation keys to emit). The scope list is deliberately omitted so a
-// single event stays under the 8 KiB syslog line limit; full scope is
-// captured in the decision log via the sibling policy-decision-log task.
+// delegation keys to emit). The companion delegation.lineage audit event
+// carries the full issuer chain, so the safety-decision event only includes
+// compact routing fields that stay under the syslog size rail.
 func DelegationAuditExtras(ctx *DelegationContext) map[string]string {
 	if ctx == nil {
 		return nil
@@ -225,20 +229,14 @@ func DelegationAuditExtras(ctx *DelegationContext) map[string]string {
 	if parent := strings.TrimSpace(ctx.ParentIssuer); parent != "" {
 		out["delegation.parent_issuer"] = parent
 	}
-	if len(ctx.IssuerChain) > 0 {
-		trimmed := make([]string, 0, len(ctx.IssuerChain))
-		for _, id := range ctx.IssuerChain {
-			id = strings.TrimSpace(id)
-			if id != "" {
-				trimmed = append(trimmed, id)
-			}
-		}
-		if len(trimmed) > 0 {
-			out["delegation.chain"] = strings.Join(trimmed, ",")
-		}
-	}
 	if jti := strings.TrimSpace(ctx.JTI); jti != "" {
 		out["delegation.jti"] = jti
+	}
+	if expiresAt := strings.TrimSpace(ctx.ExpiresAt); expiresAt != "" {
+		out["delegation.expires_at"] = expiresAt
+	}
+	if audience := strings.TrimSpace(ctx.Audience); audience != "" {
+		out["delegation.audience"] = audience
 	}
 	return out
 }
@@ -272,6 +270,8 @@ func DelegationContextFromLabels(labels map[string]string) *DelegationContext {
 		RootIssuer:   rootIssuer,
 		ParentIssuer: parentIssuer,
 		JTI:          strings.TrimSpace(labels[LabelDelegationJTI]),
+		ExpiresAt:    strings.TrimSpace(labels[LabelDelegationExpiresAt]),
+		Audience:     strings.TrimSpace(labels[LabelDelegationAudience]),
 	}
 }
 

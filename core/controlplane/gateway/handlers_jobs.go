@@ -56,6 +56,67 @@ func safeUnmarshal(data []byte, v any, field, jobID string) bool {
 	return true
 }
 
+func hasDelegationLineage(lineage model.DelegationLineage) bool {
+	return strings.TrimSpace(lineage.TokenJTI) != "" ||
+		strings.TrimSpace(lineage.Audience) != "" ||
+		strings.TrimSpace(lineage.RootIssuer) != "" ||
+		strings.TrimSpace(lineage.ParentIssuer) != "" ||
+		strings.TrimSpace(lineage.ExpiresAt) != "" ||
+		lineage.ChainDepth > 0 ||
+		len(lineage.IssuerChain) > 0 ||
+		len(lineage.Scope) > 0 ||
+		lineage.VerifiedAt > 0
+}
+
+func delegationLineageResponse(lineage model.DelegationLineage) map[string]any {
+	chain := make([]map[string]any, 0, len(lineage.IssuerChain))
+	for _, link := range lineage.IssuerChain {
+		item := map[string]any{}
+		if agentID := strings.TrimSpace(link.AgentID); agentID != "" {
+			item["agent_id"] = agentID
+		}
+		if issuedAt := strings.TrimSpace(link.IssuedAt); issuedAt != "" {
+			item["issued_at"] = issuedAt
+		}
+		if expiresAt := strings.TrimSpace(link.ExpiresAt); expiresAt != "" {
+			item["expires_at"] = expiresAt
+		}
+		if jti := strings.TrimSpace(link.JTI); jti != "" {
+			item["jti"] = jti
+		}
+		if parentJTI := strings.TrimSpace(link.ParentJTI); parentJTI != "" {
+			item["parent_jti"] = parentJTI
+		}
+		if len(item) > 0 {
+			chain = append(chain, item)
+		}
+	}
+
+	resp := map[string]any{
+		"chain_depth":            lineage.ChainDepth,
+		"chain":                  chain,
+		"scope":                  append([]string(nil), lineage.Scope...),
+		"verified_at":            lineage.VerifiedAt,
+		"reverified_at_dispatch": lineage.VerifiedAt > 0,
+	}
+	if jti := strings.TrimSpace(lineage.TokenJTI); jti != "" {
+		resp["jti"] = jti
+	}
+	if audience := strings.TrimSpace(lineage.Audience); audience != "" {
+		resp["audience"] = audience
+	}
+	if rootIssuer := strings.TrimSpace(lineage.RootIssuer); rootIssuer != "" {
+		resp["root_issuer"] = rootIssuer
+	}
+	if parentIssuer := strings.TrimSpace(lineage.ParentIssuer); parentIssuer != "" {
+		resp["parent_issuer"] = parentIssuer
+	}
+	if expiresAt := strings.TrimSpace(lineage.ExpiresAt); expiresAt != "" {
+		resp["expires_at"] = expiresAt
+	}
+	return resp
+}
+
 // --- Handlers ---
 
 func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
@@ -561,6 +622,7 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	workflowID := ""
 	runID := ""
 	stepID := ""
+	var delegationLineage model.DelegationLineage
 	if s.jobStore != nil {
 		if req, err := s.jobStore.GetJobRequest(r.Context(), id); err == nil && req != nil {
 			if req.WorkflowId != "" {
@@ -576,6 +638,9 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 				runID = req.Labels["run_id"]
 				stepID = req.Labels["step_id"]
 			}
+		}
+		if lineage, err := s.jobStore.GetDelegationLineage(r.Context(), id); err == nil {
+			delegationLineage = lineage
 		}
 	}
 
@@ -690,6 +755,9 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if approvalRecord.Decision != "" {
 		resp["approval_decision"] = approvalRecord.Decision
+	}
+	if hasDelegationLineage(delegationLineage) {
+		resp["delegation"] = delegationLineageResponse(delegationLineage)
 	}
 	writeJSON(w, resp)
 }
@@ -1576,10 +1644,12 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Labels, err = s.applySubmitDelegationWithAudience(r.Context(), orgID, req.Labels["agent_id"], req.DelegationToken, req.DelegationAudienceAgentID, req.Labels, meta); err != nil {
+		s.emitSubmitDelegationRejectedAudit(r, jobID, req.Topic, req.Labels["agent_id"], err)
 		status, message := submitDelegationErrorStatus(err)
-		writeErrorJSON(w, status, message)
+		writeDelegationSubmitErrorJSON(w, status, message)
 		return
 	}
+	delegationExpectedAudience := submitDelegationExpectedAudience(req.Labels["agent_id"], req.DelegationAudienceAgentID)
 
 	// Inject job content into labels so the safety kernel's tag deriver can
 	// inspect the payload for server-side risk tag derivation.
@@ -1735,6 +1805,12 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := s.jobStore.SetJobRequest(r.Context(), jobReq); err != nil {
 				slog.Error("failed to persist approval job request", "job_id", jobID, "error", err)
+			}
+			if err := s.persistSubmitDelegationToken(r.Context(), jobID, req.DelegationToken, delegationExpectedAudience); err != nil {
+				slog.Error("failed to persist approval delegation token", "job_id", jobID, "error", err)
+				_ = s.jobStore.SetState(r.Context(), jobID, model.JobStateFailed)
+				writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist delegation metadata")
+				return
 			}
 			if identity := submitterIdentity(r); identity != "" {
 				if err := s.jobStore.SetSubmittedBy(r.Context(), jobID, identity); err != nil {
@@ -1895,6 +1971,12 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		if err := s.jobStore.SetJobRequest(r.Context(), jobReq); err != nil {
 			slog.Error("failed to persist job request", "job_id", jobID, "error", err)
 			writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist job metadata")
+			return
+		}
+		if err := s.persistSubmitDelegationToken(r.Context(), jobID, req.DelegationToken, delegationExpectedAudience); err != nil {
+			slog.Error("failed to persist delegation token", "job_id", jobID, "error", err)
+			_ = s.jobStore.SetState(r.Context(), jobID, model.JobStateFailed)
+			writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist delegation metadata")
 			return
 		}
 		if identity := submitterIdentity(r); identity != "" {

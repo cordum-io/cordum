@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/auth/delegation"
 	"github.com/cordum/cordum/core/infra/config"
@@ -11,7 +12,9 @@ func TestProjectVerifiedDelegationContextUsesAgentChain(t *testing.T) {
 	verified := delegation.VerifiedToken{
 		ChainDepth:      2,
 		AllowedActions:  []string{"read", "write"},
+		Audience:        "agent-b",
 		JTI:             "jti-child",
+		ExpiresAt:       time.Date(2026, 4, 21, 13, 14, 15, 0, time.UTC),
 		DelegationChain: []delegation.ChainLink{{AgentID: "agent-a", IssuedBy: "cordum"}, {AgentID: "agent-b", IssuedBy: "agent-a"}},
 	}
 
@@ -37,9 +40,15 @@ func TestProjectVerifiedDelegationContextUsesAgentChain(t *testing.T) {
 	if got.JTI != "jti-child" {
 		t.Fatalf("JTI = %q, want jti-child", got.JTI)
 	}
+	if got.Audience != "agent-b" {
+		t.Fatalf("Audience = %q, want agent-b", got.Audience)
+	}
+	if got.ExpiresAt != "2026-04-21T13:14:15Z" {
+		t.Fatalf("ExpiresAt = %q, want 2026-04-21T13:14:15Z", got.ExpiresAt)
+	}
 }
 
-func TestApplyDelegationContextLabelsIncludesParentAndJTI(t *testing.T) {
+func TestApplyDelegationContextLabelsIncludesParentJTIAndRouting(t *testing.T) {
 	labels := applyDelegationContextLabels(map[string]string{"existing": "ok"}, &config.DelegationContext{
 		Depth:        2,
 		IssuerChain:  []string{"agent-a", "agent-b"},
@@ -47,6 +56,8 @@ func TestApplyDelegationContextLabelsIncludesParentAndJTI(t *testing.T) {
 		RootIssuer:   "agent-a",
 		ParentIssuer: "agent-b",
 		JTI:          "dlg-123",
+		ExpiresAt:    "2026-04-21T13:14:15Z",
+		Audience:     "agent-b",
 	}, "agent-b")
 
 	want := map[string]string{
@@ -57,6 +68,8 @@ func TestApplyDelegationContextLabelsIncludesParentAndJTI(t *testing.T) {
 		config.LabelDelegationScope:        "read",
 		config.LabelDelegationParentIssuer: "agent-b",
 		config.LabelDelegationJTI:          "dlg-123",
+		config.LabelDelegationExpiresAt:    "2026-04-21T13:14:15Z",
+		config.LabelDelegationAudience:     "agent-b",
 		config.LabelDelegationSubject:      "agent-b",
 	}
 	for key, value := range want {
