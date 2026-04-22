@@ -54,11 +54,13 @@ jobs:
           cache-dependency-path: sdk/typescript/package-lock.json
 
       - name: Install dependencies
-        # --no-optional skips platform-specific optional deps (like
-        # @rolldown/binding-wasm32-wasi's nested @emnapi/core) that
-        # otherwise fail npm ci when the lockfile was generated on a
-        # different host OS / arch than the CI runner.
-        run: npm ci --no-optional
+        # Use `npm install` instead of `npm ci`. The SDK's lockfile
+        # includes platform-specific optional subtrees (nested @emnapi
+        # under @rolldown/binding-wasm32-wasi) that resolve differently
+        # on Windows dev vs Linux CI, which breaks the strict lockfile
+        # match that `npm ci` enforces. `npm install` tolerates the
+        # platform drift and regenerates only the affected entries.
+        run: npm install --no-audit --no-fund
 
       - name: Typecheck
         run: npm run typecheck
@@ -99,11 +101,13 @@ jobs:
           cache-dependency-path: sdk/typescript/package-lock.json
 
       - name: Install dependencies
-        # --no-optional skips platform-specific optional deps (like
-        # @rolldown/binding-wasm32-wasi's nested @emnapi/core) that
-        # otherwise fail npm ci when the lockfile was generated on a
-        # different host OS / arch than the CI runner.
-        run: npm ci --no-optional
+        # Use `npm install` instead of `npm ci`. The SDK's lockfile
+        # includes platform-specific optional subtrees (nested @emnapi
+        # under @rolldown/binding-wasm32-wasi) that resolve differently
+        # on Windows dev vs Linux CI, which breaks the strict lockfile
+        # match that `npm ci` enforces. `npm install` tolerates the
+        # platform drift and regenerates only the affected entries.
+        run: npm install --no-audit --no-fund
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium firefox webkit
@@ -138,11 +142,13 @@ jobs:
           cache-dependency-path: sdk/typescript/package-lock.json
 
       - name: Install dependencies
-        # --no-optional skips platform-specific optional deps (like
-        # @rolldown/binding-wasm32-wasi's nested @emnapi/core) that
-        # otherwise fail npm ci when the lockfile was generated on a
-        # different host OS / arch than the CI runner.
-        run: npm ci --no-optional
+        # Use `npm install` instead of `npm ci`. The SDK's lockfile
+        # includes platform-specific optional subtrees (nested @emnapi
+        # under @rolldown/binding-wasm32-wasi) that resolve differently
+        # on Windows dev vs Linux CI, which breaks the strict lockfile
+        # match that `npm ci` enforces. `npm install` tolerates the
+        # platform drift and regenerates only the affected entries.
+        run: npm install --no-audit --no-fund
 
       - name: Build publish artifact
         run: npm run build
