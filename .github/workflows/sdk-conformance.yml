@@ -149,8 +149,10 @@ jobs:
       - name: Require TypeScript SDK workspace
         run: test -f sdk/typescript/package.json
       - name: Install TypeScript SDK from workspace path
+        # npm install (not npm ci) tolerates the platform-specific
+        # @emnapi optional-dep drift in the lockfile between host OSes.
         run: |
-          (cd sdk/typescript && npm ci && npm run build)
+          (cd sdk/typescript && npm install --no-audit --no-fund && npm run build)
       - name: Download simulator binary
         uses: actions/download-artifact@v4
         with:
