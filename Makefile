@@ -53,6 +53,9 @@ coverage-core:
 openapi:
 	./tools/scripts/gen_openapi.sh
 
+openapi-validate:
+	./tools/scripts/openapi-validate.sh
+
 docker:
 	@test -n "$(SERVICE)" || (echo "SERVICE is required (e.g. SERVICE=cordum-scheduler)" && exit 1)
 	@BASE="$(SERVICE)"; BASE="$${BASE#cordum-}"; \
@@ -116,4 +119,4 @@ soak-ws-full:
 	@echo "Running 2-hour full WebSocket soak test..."
 	./tools/scripts/ws_soak_test.sh full
 
-.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi docker smoke verify-images demo-quickstart-test dev-up dev-down dev-logs soak-ws soak-ws-quick soak-ws-full
+.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi openapi-validate docker smoke verify-images demo-quickstart-test dev-up dev-down dev-logs soak-ws soak-ws-quick soak-ws-full
