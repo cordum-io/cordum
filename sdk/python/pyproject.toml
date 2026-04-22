@@ -7,7 +7,7 @@ name = "cordum-sdk"
 version = "0.1.0"
 description = "Typed Python SDK for the Cordum control plane."
 readme = { file = "README.md", content-type = "text/markdown" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "BUSL-1.1"
 authors = [
     { name = "Cordum", email = "engineering@cordum.io" },
