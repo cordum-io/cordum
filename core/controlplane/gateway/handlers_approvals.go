@@ -1097,13 +1097,85 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}
 			if snapshotBase(currentSnapshot) != snapshotBase(policySnapshot) {
-				// Policy changed since the approval was created. The human is
-				// explicitly choosing to approve after reviewing the request —
-				// refresh the snapshot and proceed. Audit trail records the
-				// discrepancy for compliance.
-				s.appendAuditEntryNamed(ctx, "approve_snapshot_refreshed", "job", jobID, "", policyActorID(r), policyRole(r),
-					fmt.Sprintf("policy snapshot refreshed during approval (was=%s now=%s)", snapshotBase(policySnapshot), snapshotBase(currentSnapshot)))
-				policySnapshot = currentSnapshot
+				// Policy changed since the approval was created. Re-evaluate
+				// the CURRENT policy against the stored request before
+				// admitting the human approval — without this check, a job
+				// that the pre-drift policy merely gate-required can be
+				// dispatched under the post-drift policy even when that
+				// policy now denies it outright (TOCTOU). We only admit the
+				// approval if the fresh decision is still approval-gated or
+				// plain allow; DENY / THROTTLE / anything else fails closed
+				// and the request must be resubmitted.
+				defaultTenant := strings.TrimSpace(s.tenant)
+				if defaultTenant == "" {
+					defaultTenant = "default"
+				}
+				freshMeta := &policyMetaRequest{}
+				if req.Meta != nil {
+					freshMeta.TenantId = req.Meta.TenantId
+					freshMeta.ActorId = req.Meta.ActorId
+					freshMeta.ActorType = req.Meta.ActorType.String()
+					freshMeta.IdempotencyKey = req.Meta.IdempotencyKey
+					freshMeta.Capability = req.Meta.Capability
+					freshMeta.RiskTags = append([]string{}, req.Meta.RiskTags...)
+					freshMeta.Requires = append([]string{}, req.Meta.Requires...)
+					freshMeta.PackId = req.Meta.PackId
+					freshMeta.Labels = req.Meta.Labels
+				}
+				freshCheck, freshErr := buildPolicyCheckRequest(ctx, &policyCheckRequest{
+					JobId:       jobID,
+					Topic:       req.GetTopic(),
+					Tenant:      strings.TrimSpace(req.TenantId),
+					WorkflowId:  strings.TrimSpace(req.WorkflowId),
+					Priority:    req.Priority.String(),
+					PrincipalId: strings.TrimSpace(policyActorID(r)),
+					Labels:      req.Labels,
+					Budget:      req.Budget,
+					MemoryId:    strings.TrimSpace(req.MemoryId),
+					Meta:        freshMeta,
+				}, s.configSvc, defaultTenant)
+				if freshErr != nil {
+					s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r),
+						fmt.Sprintf("approval drift re-evaluation build failed: %v", freshErr))
+					result = handlerResult{http.StatusInternalServerError, "approval drift re-evaluation failed"}
+					return nil
+				}
+				freshResp, freshEvalErr := s.safetyClient.Check(ctx, freshCheck)
+				if freshEvalErr != nil || freshResp == nil {
+					s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r),
+						fmt.Sprintf("approval drift re-evaluation call failed: %v", freshEvalErr))
+					result = handlerResult{http.StatusBadGateway, "approval drift re-evaluation failed"}
+					return nil
+				}
+				freshDecision := freshResp.GetDecision()
+				switch freshDecision {
+				case pb.DecisionType_DECISION_TYPE_ALLOW,
+					pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
+					pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN:
+					// Fresh policy still admits this request (possibly with
+					// approval). Rotate the snapshot + rewrite the safety
+					// record so the scheduler fast-path binds to the new
+					// decision, not the pre-drift one.
+					s.appendAuditEntryNamed(ctx, "approve_snapshot_refreshed", "job", jobID, "", policyActorID(r), policyRole(r),
+						fmt.Sprintf("policy snapshot refreshed during approval (was=%s now=%s decision=%s)",
+							snapshotBase(policySnapshot), snapshotBase(currentSnapshot), freshDecision.String()))
+					policySnapshot = currentSnapshot
+					safetyRecord.PolicySnapshot = currentSnapshot
+					safetyRecord.ApprovalRequired = freshDecision == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
+					if err := s.jobStore.SetSafetyDecision(ctx, jobID, safetyRecord); err != nil {
+						slog.Warn("approve: failed to persist re-evaluated safety decision", "job_id", jobID, "error", err)
+					}
+				default:
+					// DENY / THROTTLE / UNSPECIFIED — the drifted policy no
+					// longer permits this request at all. Fail closed and
+					// surface a stale-snapshot conflict so the caller
+					// resubmits under current policy.
+					reason := fmt.Sprintf("policy drift denies this request under current snapshot (was=%s now=%s decision=%s)",
+						snapshotBase(policySnapshot), snapshotBase(currentSnapshot), freshDecision.String())
+					s.appendAuditEntryNamed(ctx, "approve_failed", "job", jobID, "", policyActorID(r), policyRole(r), reason)
+					result = handlerResult{http.StatusConflict, approvalConflictPayload(http.StatusConflict, model.ApprovalConflictStaleSnapshot, reason)}
+					return nil
+				}
 			}
 		}
 		reason := strings.TrimSpace(body.Reason)
