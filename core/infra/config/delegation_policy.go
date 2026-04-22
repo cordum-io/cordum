@@ -34,24 +34,36 @@ type DelegationContext struct {
 }
 
 // DelegationMatch is the structured rule-match block under
-// PolicyRule.Match.Delegation. Every field is optional; the
-// rule-evaluator treats the zero value as "delegation-neutral" and
-// (per the DoD) allows non-delegated requests to pass delegation
-// rules by default. ForbidDelegated flips that to "direct-only".
+// PolicyRule.Match.Delegation. Every field is optional. An empty
+// DelegationMatch (no constraints) is delegation-neutral and matches
+// both direct and delegated requests.
+//
+// Policies that specify ANY delegation-specific constraint (MaxDepth,
+// Issuers, RequireIssuer, RequiredScope) are treated as delegation-
+// scoped rules: evaluateDelegationMatch fails closed when the request
+// carries no delegation chain, rather than silently passing direct
+// calls through constraints designed for delegated ones. This closes
+// the foot-gun where a deny rule written for "delegated calls with
+// depth>3" would also fire against direct calls.
+//
+// Use DelegationRequired=false to OPT OUT of fail-closed behaviour
+// (rule matches BOTH direct and delegated), true to require delegation,
+// or leave nil to accept the auto-inferred default from the presence
+// of constraints.
 type DelegationMatch struct {
-	// MaxDepth matches when delegation==nil OR delegation.Depth
+	// MaxDepth matches when delegation!=nil AND delegation.Depth
 	// <= *MaxDepth. A pointer (not int) so the zero value and
-	// "MaxDepth==0 means allow only direct calls" are
+	// "MaxDepth==0 means allow only direct chains" are
 	// distinguishable.
 	MaxDepth *int `yaml:"max_depth,omitempty"`
-	// Issuers matches when delegation==nil OR every id in the
+	// Issuers matches when delegation!=nil AND every id in the
 	// chain is in this allowlist. Strictest interpretation —
 	// relax via RequireIssuer (root-only) if operators want.
 	Issuers []string `yaml:"issuers,omitempty"`
-	// RequireIssuer matches when delegation==nil OR
+	// RequireIssuer matches when delegation!=nil AND
 	// delegation.RootIssuer == RequireIssuer.
 	RequireIssuer string `yaml:"require_issuer,omitempty"`
-	// RequiredScope matches when delegation==nil OR
+	// RequiredScope matches when delegation!=nil AND
 	// RequiredScope ⊆ delegation.Scope (set-subset).
 	RequiredScope []string `yaml:"required_scope,omitempty"`
 	// ForbidDelegated=true matches ONLY non-delegated requests
@@ -59,6 +71,41 @@ type DelegationMatch struct {
 	// only on direct calls" rules without inverting the match
 	// logic elsewhere.
 	ForbidDelegated bool `yaml:"forbid_delegated,omitempty"`
+	// DelegationRequired is an explicit tri-state override for the
+	// auto-inferred "this rule is delegation-scoped" behaviour:
+	//   nil   → infer from constraints (constraints present → true)
+	//   true  → rule applies ONLY to delegated requests
+	//   false → rule applies to BOTH direct and delegated (legacy
+	//           permissive behaviour; use only when the constraints
+	//           are intentionally non-gating for direct calls).
+	// Policy authors should almost never need false — it exists
+	// purely for the narrow case where an operator wants a
+	// delegation-neutral rule to also record delegation metadata.
+	DelegationRequired *bool `yaml:"delegation_required,omitempty"`
+}
+
+// hasDelegationScopedConstraint reports whether the match carries any
+// field whose semantics only make sense for a delegated request. Used
+// by evaluateDelegationMatch to default delegation-scoped rules to
+// fail-closed when the request is direct. DelegationRequired is an
+// explicit operator-facing override that wins over this inference.
+func (m *DelegationMatch) hasDelegationScopedConstraint() bool {
+	if m == nil {
+		return false
+	}
+	if m.MaxDepth != nil {
+		return true
+	}
+	if len(m.Issuers) > 0 {
+		return true
+	}
+	if strings.TrimSpace(m.RequireIssuer) != "" {
+		return true
+	}
+	if len(m.RequiredScope) > 0 {
+		return true
+	}
+	return false
 }
 
 // agentIDRegex is the validation pattern for issuer and
@@ -146,6 +193,7 @@ var DelegationMatchDenyFields = [...]string{
 	"issuers",
 	"require_issuer",
 	"required_scope",
+	"delegation_required",
 }
 
 func evaluateDelegationMatch(match *DelegationMatch, delegation *DelegationContext) bool {
@@ -160,9 +208,23 @@ func evaluateDelegationMatch(match *DelegationMatch, delegation *DelegationConte
 		reportDelegationDeny("forbid_delegated")
 		return false
 	}
-	// delegation==nil with non-Forbid fields set: the rule is
-	// neutral — per DoD, direct calls pass every delegation rule.
+	// When delegation is absent, decide whether this rule is
+	// delegation-scoped. The explicit DelegationRequired flag
+	// overrides auto-inference; otherwise a match with any
+	// delegation-specific constraint is treated as delegation-
+	// scoped and fails closed for direct calls.
 	if delegation == nil {
+		if match.DelegationRequired != nil {
+			if *match.DelegationRequired {
+				reportDelegationDeny("delegation_required")
+				return false
+			}
+			return true
+		}
+		if match.hasDelegationScopedConstraint() {
+			reportDelegationDeny("delegation_required")
+			return false
+		}
 		return true
 	}
 	// Structured checks — every failing sub-field short-circuits.

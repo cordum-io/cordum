@@ -1745,6 +1745,24 @@ func (s *RedisJobStore) SetDelegationDispatchToken(ctx context.Context, jobID st
 	return nil
 }
 
+// ClearDelegationDispatchToken deletes the raw delegation bearer token from
+// the job metadata hash. Callers MUST invoke this as soon as dispatch-time
+// re-verification completes (successfully or with a fail-closed decision)
+// so the raw token does not sit in the 7-day job-metadata TTL where it
+// could be recovered via admin tooling, backups, or operator access. The
+// persisted DelegationLineage on the job record continues to carry the
+// non-sensitive chain metadata (JTI, issuer chain, scope) for audit and
+// read-side APIs after this wipe.
+func (s *RedisJobStore) ClearDelegationDispatchToken(ctx context.Context, jobID string) error {
+	if jobID == "" {
+		return fmt.Errorf("jobID required")
+	}
+	if _, err := s.client.HDel(ctx, jobMetaKey(jobID), metaFieldDelegationDispatch).Result(); err != nil {
+		return fmt.Errorf("job store clear delegation dispatch token %s: %w", jobID, err)
+	}
+	return nil
+}
+
 // GetDelegationDispatchToken loads the raw delegation token stored for
 // dispatch-time re-verification.
 func (s *RedisJobStore) GetDelegationDispatchToken(ctx context.Context, jobID string) (model.DelegationDispatchToken, error) {

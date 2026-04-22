@@ -1629,18 +1629,37 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		meta.Labels = req.Labels
 	}
 
-	// Inject agent_id from linked worker credential if not already set.
-	if req.Labels["agent_id"] == "" && s.agentIdentityStore != nil {
+	// Bind agent_id to the authenticated principal. Never trust
+	// client-supplied labels.agent_id: a client that can reach this
+	// handler already has a worker credential, and that credential's
+	// agent identity is the only authoritative one. A mismatch between
+	// client-asserted and credential-derived agent_id is an
+	// impersonation attempt and rejects 403.
+	var authDerivedAgentID string
+	if s.agentIdentityStore != nil {
 		if agent, err := s.agentIdentityStore.GetByWorkerID(r.Context(), principalID); err == nil && agent != nil {
-			if req.Labels == nil {
-				req.Labels = map[string]string{}
-			}
-			req.Labels["agent_id"] = agent.ID
-			if meta.Labels == nil {
-				meta.Labels = map[string]string{}
-			}
-			meta.Labels["agent_id"] = agent.ID
+			authDerivedAgentID = agent.ID
 		}
+	}
+	if clientAgentID := req.Labels["agent_id"]; clientAgentID != "" {
+		if authDerivedAgentID == "" {
+			writeErrorJSON(w, http.StatusForbidden, "client-supplied agent_id requires an authenticated worker credential")
+			return
+		}
+		if clientAgentID != authDerivedAgentID {
+			writeErrorJSON(w, http.StatusForbidden, "client-supplied agent_id does not match authenticated principal")
+			return
+		}
+	}
+	if authDerivedAgentID != "" {
+		if req.Labels == nil {
+			req.Labels = map[string]string{}
+		}
+		req.Labels["agent_id"] = authDerivedAgentID
+		if meta.Labels == nil {
+			meta.Labels = map[string]string{}
+		}
+		meta.Labels["agent_id"] = authDerivedAgentID
 	}
 
 	if req.Labels, err = s.applySubmitDelegationWithAudience(r.Context(), orgID, req.Labels["agent_id"], req.DelegationToken, req.DelegationAudienceAgentID, req.Labels, meta); err != nil {
