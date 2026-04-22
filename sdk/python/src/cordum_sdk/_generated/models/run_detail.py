@@ -18,9 +18,9 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
+  from ..models.run_detail_input import RunDetailInput
   from ..models.run_detail_output_type_0 import RunDetailOutputType0
   from ..models.run_summary_error_type_0 import RunSummaryErrorType0
-  from ..models.run_detail_input import RunDetailInput
   from ..models.run_detail_steps import RunDetailSteps
 
 
@@ -62,9 +62,9 @@ class RunDetail:
 
 
     def to_dict(self) -> Dict[str, Any]:
+        from ..models.run_detail_input import RunDetailInput
         from ..models.run_detail_output_type_0 import RunDetailOutputType0
         from ..models.run_summary_error_type_0 import RunSummaryErrorType0
-        from ..models.run_detail_input import RunDetailInput
         from ..models.run_detail_steps import RunDetailSteps
         id = self.id
 
@@ -149,9 +149,9 @@ class RunDetail:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
+        from ..models.run_detail_input import RunDetailInput
         from ..models.run_detail_output_type_0 import RunDetailOutputType0
         from ..models.run_summary_error_type_0 import RunSummaryErrorType0
-        from ..models.run_detail_input import RunDetailInput
         from ..models.run_detail_steps import RunDetailSteps
         d = src_dict.copy()
         id = d.pop("id", UNSET)

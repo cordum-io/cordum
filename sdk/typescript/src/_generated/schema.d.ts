@@ -97,6 +97,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/{id}/denied-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recent mcp_tool_denied events for an agent identity
+         * @description Returns up to 50 of the most recent `mcp_tool_denied` audit events for the identity from the gateway's in-memory ring. Feeds the dashboard "recent denials" panel without requiring a SIEM pipeline.
+         */
+        get: operations["getAgentDeniedEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/{id}/stats": {
         parameters: {
             query?: never;
@@ -106,6 +126,26 @@ export interface paths {
         };
         /** Get per-agent runtime statistics */
         get: operations["getAgentStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/{id}/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List MCP tools visible to a specific agent identity
+         * @description Returns the subset of the MCP tool catalogue this agent identity can call after applying the identity-aware filter (risk tier + data classification). A revoked or suspended identity returns an empty list with an advisory `note` field rather than failing.
+         */
+        get: operations["getAgentToolVisibility"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1288,6 +1328,26 @@ export interface paths {
         };
         /** Get MCP server status */
         get: operations["mcpStatusV1"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mcp/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List MCP tools visible to an agent or the full catalogue
+         * @description Returns the MCP tool catalogue. Without an `agent_id` query parameter, returns the unfiltered admin view. With `agent_id`, returns the subset of tools the identity is entitled to call after applying the MCP risk- tier and data-classification filter.
+         */
+        get: operations["listMcpTools"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4110,6 +4170,35 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getAgentDeniedEvents: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Most recent denial records for the agent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
     getAgentStats: {
         parameters: {
             query?: never;
@@ -4125,6 +4214,37 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Runtime statistics for the requested agent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getAgentToolVisibility: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tool list filtered for the agent identity */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6609,6 +6729,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["McpStatus"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listMcpTools: {
+        parameters: {
+            query?: {
+                agent_id?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tool list for the requested scope */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             401: components["responses"]["Unauthorized"];
@@ -9477,6 +9626,9 @@ export enum ApiPaths {
     verifyMcpSignature = "/api/v1/mcp/verify-signature",
     listMcpOutbound = "/api/v1/mcp/outbound",
     getMcpUsage = "/api/v1/mcp/usage",
+    listMcpTools = "/api/v1/mcp/tools",
+    getAgentToolVisibility = "/api/v1/agents/{id}/tools",
+    getAgentDeniedEvents = "/api/v1/agents/{id}/denied-events",
     createEvalDatasetFromIncidents = "/api/v1/evals/datasets/from-incidents",
     listEvalDatasets = "/api/v1/evals/datasets",
     createEvalDataset = "/api/v1/evals/datasets",

@@ -14,8 +14,8 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.workflow_definition_config import WorkflowDefinitionConfig
   from ..models.workflow_definition_steps import WorkflowDefinitionSteps
+  from ..models.workflow_definition_config import WorkflowDefinitionConfig
 
 
 
@@ -52,8 +52,8 @@ class WorkflowDefinition:
 
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.workflow_definition_config import WorkflowDefinitionConfig
         from ..models.workflow_definition_steps import WorkflowDefinitionSteps
+        from ..models.workflow_definition_config import WorkflowDefinitionConfig
         id = self.id
 
         name = self.name
@@ -101,8 +101,8 @@ class WorkflowDefinition:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.workflow_definition_config import WorkflowDefinitionConfig
         from ..models.workflow_definition_steps import WorkflowDefinitionSteps
+        from ..models.workflow_definition_config import WorkflowDefinitionConfig
         d = src_dict.copy()
         id = d.pop("id")
 

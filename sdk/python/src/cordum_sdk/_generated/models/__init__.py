@@ -72,8 +72,10 @@ from .eval_run_result import EvalRunResult
 from .eval_run_summary import EvalRunSummary
 from .eval_runs_response import EvalRunsResponse
 from .generic_object import GenericObject
+from .get_agent_denied_events_response_200 import GetAgentDeniedEventsResponse200
 from .get_agent_response_200 import GetAgentResponse200
 from .get_agent_stats_response_200 import GetAgentStatsResponse200
+from .get_agent_tool_visibility_response_200 import GetAgentToolVisibilityResponse200
 from .get_approval_analytics_group_by import GetApprovalAnalyticsGroupBy
 from .get_approval_analytics_window import GetApprovalAnalyticsWindow
 from .get_approval_context_response_200 import GetApprovalContextResponse200
@@ -137,6 +139,7 @@ from .list_jobs_response_200 import ListJobsResponse200
 from .list_mcp_approvals_response_200 import ListMcpApprovalsResponse200
 from .list_mcp_approvals_response_200_items_item import ListMcpApprovalsResponse200ItemsItem
 from .list_mcp_outbound_response_200 import ListMcpOutboundResponse200
+from .list_mcp_tools_response_200 import ListMcpToolsResponse200
 from .list_packs_response_200 import ListPacksResponse200
 from .list_policy_bundles_response_200 import ListPolicyBundlesResponse200
 from .list_policy_rules_response_200 import ListPolicyRulesResponse200
@@ -346,8 +349,10 @@ __all__ = (
     "EvalRunsResponse",
     "EvalRunSummary",
     "GenericObject",
+    "GetAgentDeniedEventsResponse200",
     "GetAgentResponse200",
     "GetAgentStatsResponse200",
+    "GetAgentToolVisibilityResponse200",
     "GetApprovalAnalyticsGroupBy",
     "GetApprovalAnalyticsWindow",
     "GetApprovalContextResponse200",
@@ -411,6 +416,7 @@ __all__ = (
     "ListMcpApprovalsResponse200",
     "ListMcpApprovalsResponse200ItemsItem",
     "ListMcpOutboundResponse200",
+    "ListMcpToolsResponse200",
     "ListPacksResponse200",
     "ListPolicyBundlesResponse200",
     "ListPolicyRulesResponse200",

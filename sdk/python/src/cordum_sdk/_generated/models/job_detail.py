@@ -18,10 +18,10 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.delegation_lineage_view import DelegationLineageView
+  from ..models.job_detail_result_type_0 import JobDetailResultType0
   from ..models.safety_decision import SafetyDecision
   from ..models.job_detail_labels import JobDetailLabels
-  from ..models.job_detail_result_type_0 import JobDetailResultType0
+  from ..models.delegation_lineage_view import DelegationLineageView
 
 
 
@@ -84,10 +84,10 @@ class JobDetail:
 
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.delegation_lineage_view import DelegationLineageView
+        from ..models.job_detail_result_type_0 import JobDetailResultType0
         from ..models.safety_decision import SafetyDecision
         from ..models.job_detail_labels import JobDetailLabels
-        from ..models.job_detail_result_type_0 import JobDetailResultType0
+        from ..models.delegation_lineage_view import DelegationLineageView
         id = self.id
 
         state = self.state
@@ -241,10 +241,10 @@ class JobDetail:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.delegation_lineage_view import DelegationLineageView
+        from ..models.job_detail_result_type_0 import JobDetailResultType0
         from ..models.safety_decision import SafetyDecision
         from ..models.job_detail_labels import JobDetailLabels
-        from ..models.job_detail_result_type_0 import JobDetailResultType0
+        from ..models.delegation_lineage_view import DelegationLineageView
         d = src_dict.copy()
         id = d.pop("id", UNSET)
 

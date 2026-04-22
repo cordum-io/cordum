@@ -14,8 +14,8 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.create_eval_dataset_body_entries_item_input import CreateEvalDatasetBodyEntriesItemInput
   from ..models.create_eval_dataset_body_entries_item_metadata import CreateEvalDatasetBodyEntriesItemMetadata
+  from ..models.create_eval_dataset_body_entries_item_input import CreateEvalDatasetBodyEntriesItemInput
 
 
 
@@ -50,8 +50,8 @@ class CreateEvalDatasetBodyEntriesItem:
 
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.create_eval_dataset_body_entries_item_input import CreateEvalDatasetBodyEntriesItemInput
         from ..models.create_eval_dataset_body_entries_item_metadata import CreateEvalDatasetBodyEntriesItemMetadata
+        from ..models.create_eval_dataset_body_entries_item_input import CreateEvalDatasetBodyEntriesItemInput
         id = self.id
 
         input_: Union[Unset, Dict[str, Any]] = UNSET
@@ -100,8 +100,8 @@ class CreateEvalDatasetBodyEntriesItem:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.create_eval_dataset_body_entries_item_input import CreateEvalDatasetBodyEntriesItemInput
         from ..models.create_eval_dataset_body_entries_item_metadata import CreateEvalDatasetBodyEntriesItemMetadata
+        from ..models.create_eval_dataset_body_entries_item_input import CreateEvalDatasetBodyEntriesItemInput
         d = src_dict.copy()
         id = d.pop("id", UNSET)
 
