@@ -1662,6 +1662,28 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		meta.Labels["agent_id"] = authDerivedAgentID
 	}
 
+	// Gate delegation audience override. When the caller supplies an
+	// explicit delegation_audience_agent_id that differs from the
+	// auth-derived agent_id, they are asking the gateway to verify a
+	// token whose audience is a DIFFERENT agent — effectively
+	// impersonating that agent at delegation-verification time.
+	// Without a permission gate, any caller could widen their own
+	// identity by pointing the audience at a more-privileged agent.
+	// Require PermDelegationImpersonate (or admin) for this path and
+	// audit every denial.
+	audienceOverride := strings.TrimSpace(req.DelegationAudienceAgentID)
+	if audienceOverride != "" && audienceOverride != authDerivedAgentID {
+		if !s.requirePermissionOrRole(w, r, auth.PermDelegationImpersonate, "admin") {
+			actorID, role := "anonymous", "none"
+			if ac := auth.FromRequest(r); ac != nil {
+				actorID, role = ac.PrincipalID, ac.Role
+			}
+			s.appendAuditEntryNamed(r.Context(), "submit_delegation_impersonation_denied", "job", "", req.Topic, actorID, role,
+				"delegation audience override denied: caller agent_id "+authDerivedAgentID+" requested audience "+audienceOverride+" without "+auth.PermDelegationImpersonate)
+			return
+		}
+	}
+
 	if req.Labels, err = s.applySubmitDelegationWithAudience(r.Context(), orgID, req.Labels["agent_id"], req.DelegationToken, req.DelegationAudienceAgentID, req.Labels, meta); err != nil {
 		s.emitSubmitDelegationRejectedAudit(r, jobID, req.Topic, req.Labels["agent_id"], err)
 		status, message := submitDelegationErrorStatus(err)
