@@ -16,11 +16,11 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.get_approval_context_response_200_approval import GetApprovalContextResponse200Approval
-  from ..models.get_approval_context_response_200_prior_approvals_item import GetApprovalContextResponse200PriorApprovalsItem
   from ..models.get_approval_context_response_200_blast_radius import GetApprovalContextResponse200BlastRadius
+  from ..models.get_approval_context_response_200_prior_approvals_item import GetApprovalContextResponse200PriorApprovalsItem
   from ..models.get_approval_context_response_200_constraints_type_0 import GetApprovalContextResponse200ConstraintsType0
   from ..models.get_approval_context_response_200_policy_snapshot_summary import GetApprovalContextResponse200PolicySnapshotSummary
+  from ..models.get_approval_context_response_200_approval import GetApprovalContextResponse200Approval
 
 
 
@@ -55,11 +55,11 @@ class GetApprovalContextResponse200:
 
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.get_approval_context_response_200_approval import GetApprovalContextResponse200Approval
-        from ..models.get_approval_context_response_200_prior_approvals_item import GetApprovalContextResponse200PriorApprovalsItem
         from ..models.get_approval_context_response_200_blast_radius import GetApprovalContextResponse200BlastRadius
+        from ..models.get_approval_context_response_200_prior_approvals_item import GetApprovalContextResponse200PriorApprovalsItem
         from ..models.get_approval_context_response_200_constraints_type_0 import GetApprovalContextResponse200ConstraintsType0
         from ..models.get_approval_context_response_200_policy_snapshot_summary import GetApprovalContextResponse200PolicySnapshotSummary
+        from ..models.get_approval_context_response_200_approval import GetApprovalContextResponse200Approval
         approval: Union[Unset, Dict[str, Any]] = UNSET
         if not isinstance(self.approval, Unset):
             approval = self.approval.to_dict()
@@ -123,11 +123,11 @@ class GetApprovalContextResponse200:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.get_approval_context_response_200_approval import GetApprovalContextResponse200Approval
-        from ..models.get_approval_context_response_200_prior_approvals_item import GetApprovalContextResponse200PriorApprovalsItem
         from ..models.get_approval_context_response_200_blast_radius import GetApprovalContextResponse200BlastRadius
+        from ..models.get_approval_context_response_200_prior_approvals_item import GetApprovalContextResponse200PriorApprovalsItem
         from ..models.get_approval_context_response_200_constraints_type_0 import GetApprovalContextResponse200ConstraintsType0
         from ..models.get_approval_context_response_200_policy_snapshot_summary import GetApprovalContextResponse200PolicySnapshotSummary
+        from ..models.get_approval_context_response_200_approval import GetApprovalContextResponse200Approval
         d = src_dict.copy()
         _approval = d.pop("approval", UNSET)
         approval: Union[Unset, GetApprovalContextResponse200Approval]

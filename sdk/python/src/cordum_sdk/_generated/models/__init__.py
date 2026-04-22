@@ -18,6 +18,8 @@ from .chat_message_role import ChatMessageRole
 from .config_document import ConfigDocument
 from .config_document_data import ConfigDocumentData
 from .config_document_scope import ConfigDocumentScope
+from .create_agent_body import CreateAgentBody
+from .create_agent_response_201 import CreateAgentResponse201
 from .create_api_key_request import CreateAPIKeyRequest
 from .create_api_key_response import CreateAPIKeyResponse
 from .create_artifact_request import CreateArtifactRequest
@@ -39,6 +41,8 @@ from .dry_run_workflow_body_environment import DryRunWorkflowBodyEnvironment
 from .dry_run_workflow_body_input import DryRunWorkflowBodyInput
 from .error import Error
 from .generic_object import GenericObject
+from .get_agent_response_200 import GetAgentResponse200
+from .get_agent_stats_response_200 import GetAgentStatsResponse200
 from .get_approval_context_response_200 import GetApprovalContextResponse200
 from .get_approval_context_response_200_approval import GetApprovalContextResponse200Approval
 from .get_approval_context_response_200_blast_radius import GetApprovalContextResponse200BlastRadius
@@ -71,6 +75,7 @@ from .json_rpc_response_result_type_0 import JsonRpcResponseResultType0
 from .license_info import LicenseInfo
 from .license_info_limits import LicenseInfoLimits
 from .list_admin_locks_response_200 import ListAdminLocksResponse200
+from .list_agents_response_200 import ListAgentsResponse200
 from .list_all_workflow_runs_response_200 import ListAllWorkflowRunsResponse200
 from .list_api_keys_response_200 import ListAPIKeysResponse200
 from .list_approvals_response_200 import ListApprovalsResponse200
@@ -187,6 +192,8 @@ from .timeline_event import TimelineEvent
 from .timeline_event_data_type_0 import TimelineEventDataType0
 from .topic_response import TopicResponse
 from .uninstall_pack_body import UninstallPackBody
+from .update_agent_body import UpdateAgentBody
+from .update_agent_response_200 import UpdateAgentResponse200
 from .update_policy_bundle_request import UpdatePolicyBundleRequest
 from .update_pool_body import UpdatePoolBody
 from .update_user_request import UpdateUserRequest
@@ -223,6 +230,8 @@ __all__ = (
     "ConfigDocument",
     "ConfigDocumentData",
     "ConfigDocumentScope",
+    "CreateAgentBody",
+    "CreateAgentResponse201",
     "CreateAPIKeyRequest",
     "CreateAPIKeyResponse",
     "CreateArtifactRequest",
@@ -244,6 +253,8 @@ __all__ = (
     "DryRunWorkflowBodyInput",
     "Error",
     "GenericObject",
+    "GetAgentResponse200",
+    "GetAgentStatsResponse200",
     "GetApprovalContextResponse200",
     "GetApprovalContextResponse200Approval",
     "GetApprovalContextResponse200BlastRadius",
@@ -276,6 +287,7 @@ __all__ = (
     "LicenseInfo",
     "LicenseInfoLimits",
     "ListAdminLocksResponse200",
+    "ListAgentsResponse200",
     "ListAllWorkflowRunsResponse200",
     "ListAPIKeysResponse200",
     "ListApprovalsResponse200",
@@ -392,6 +404,8 @@ __all__ = (
     "TimelineEventDataType0",
     "TopicResponse",
     "UninstallPackBody",
+    "UpdateAgentBody",
+    "UpdateAgentResponse200",
     "UpdatePolicyBundleRequest",
     "UpdatePoolBody",
     "UpdateUserRequest",
