@@ -17,10 +17,20 @@ on:
     tags:
       - "v*"
 
+# Serialize tag-triggered runs per ref so two concurrent pushes (or a
+# re-run while the previous run is still finishing) cannot race on the
+# :latest tag in any registry. cancel-in-progress is false because a
+# half-pushed multi-arch image would leave an inconsistent manifest.
+concurrency:
+  group: docker-release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
   packages: write
   id-token: write  # cosign keyless signing
+  security-events: write  # Trivy SARIF upload
+  issues: write           # smoke-test failure auto-issue
 
 jobs:
   control-plane:
@@ -39,6 +49,8 @@ jobs:
             service: cordum-workflow-engine
           - name: context-engine
             service: cordum-context-engine
+          - name: mcp
+            service: cordum-mcp
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -72,9 +84,14 @@ jobs:
           images: |
             ghcr.io/cordum-io/cordum/${{ matrix.name }}
             cordum/${{ matrix.name }}
+          # :latest only moves on final release tags. Pre-release suffixes
+          # (v1.0.0-rc.1, -beta, -alpha) must NEVER overwrite :latest —
+          # that's the single most common way to ship a production-unsafe
+          # image by accident.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-alpha') }}
 
       - name: Build image (verify)
         uses: docker/build-push-action@v5
@@ -96,6 +113,29 @@ jobs:
           echo "Verifying $IMAGE..."
           docker run --rm "$IMAGE" --version || docker run --rm "$IMAGE" version || echo "No --version flag"
           docker run --rm --entrypoint sh "$IMAGE" -c "ls -la /usr/local/bin/${{ matrix.service }} 2>/dev/null || ls -la /app/${{ matrix.service }} 2>/dev/null || echo 'binary ok'"
+
+      - name: Scan image for vulnerabilities (Trivy)
+        id: trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: cordum/${{ matrix.name }}:verify
+          format: sarif
+          output: trivy-${{ matrix.name }}.sarif
+          # Fail the job only on CRITICAL OS-package vulnerabilities that
+          # already have a fix available. HIGH severities and language-lib
+          # findings still produce SARIF (uploaded below) so they surface in
+          # the Security tab without blocking releases for churning advisories.
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          vuln-type: os
+
+      - name: Upload Trivy SARIF
+        if: always() && hashFiles(format('trivy-{0}.sarif', matrix.name)) != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.name }}.sarif
+          category: trivy-${{ matrix.name }}
 
       - name: Push image
         id: push
@@ -160,6 +200,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-alpha') }}
 
       - name: Build dashboard image (verify)
         uses: docker/build-push-action@v5
@@ -186,6 +227,24 @@ jobs:
           fi
           docker stop dash-verify && docker rm dash-verify
 
+      - name: Scan dashboard image for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: cordum/dashboard:verify
+          format: sarif
+          output: trivy-dashboard.sarif
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          vuln-type: os
+
+      - name: Upload Trivy SARIF (dashboard)
+        if: always() && hashFiles('trivy-dashboard.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-dashboard.sarif
+          category: trivy-dashboard
+
       - name: Push dashboard image
         id: push
         uses: docker/build-push-action@v5
@@ -193,7 +252,14 @@ jobs:
           context: ./dashboard
           file: ./dashboard/Dockerfile
           push: true
-          platforms: linux/amd64
+          # Multi-arch for parity with the control-plane images. The
+          # upstream node:20-alpine and nginx:alpine bases are both
+          # multi-arch so no Dockerfile changes are required. The preceding
+          # verify step loads the amd64 image locally and runs it via
+          # `docker run` on the amd64 runner — cross-arch docker run needs
+          # QEMU *execution* support which we don't install, so verify
+          # stays amd64-only by design.
+          platforms: linux/amd64,linux/arm64
           sbom: true
           provenance: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -208,6 +274,212 @@ jobs:
         run: |
           cosign sign --yes ghcr.io/cordum-io/cordum/dashboard@${DIGEST}
           cosign sign --yes docker.io/cordum/dashboard@${DIGEST}
+
+  # Greeter for the demo-quickstart pack. Built from a dedicated Dockerfile
+  # under demo/quickstart/, hence its own job rather than a control-plane
+  # matrix entry. Same publishing posture as core images: multi-arch,
+  # cosign-signed, SBOM + provenance.
+  demo-quickstart-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set build metadata
+        run: echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ghcr.io/cordum-io/cordum/demo-quickstart-worker
+            cordum/demo-quickstart-worker
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') && !contains(github.ref_name, '-alpha') }}
+
+      - name: Build image (verify)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: demo/quickstart/Dockerfile
+          load: true
+          push: false
+          tags: cordum/demo-quickstart-worker:verify
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+
+      - name: Verify image boots
+        run: |
+          set -euo pipefail
+          # The greeter exits with no work to do when no NATS server is
+          # reachable; log inspection is the right boot probe here.
+          docker run --rm --entrypoint sh cordum/demo-quickstart-worker:verify -c \
+            "test -x /usr/local/bin/demo-quickstart-worker && echo 'binary ok'"
+
+      - name: Scan demo-quickstart-worker image for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: cordum/demo-quickstart-worker:verify
+          format: sarif
+          output: trivy-demo-quickstart-worker.sarif
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          vuln-type: os
+
+      - name: Upload Trivy SARIF (demo-quickstart-worker)
+        if: always() && hashFiles('trivy-demo-quickstart-worker.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-demo-quickstart-worker.sarif
+          category: trivy-demo-quickstart-worker
+
+      - name: Push image
+        id: push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: demo/quickstart/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          sbom: true
+          provenance: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign images
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          cosign sign --yes ghcr.io/cordum-io/cordum/demo-quickstart-worker@${DIGEST}
+          cosign sign --yes docker.io/cordum/demo-quickstart-worker@${DIGEST}
+
+  smoke-published-images:
+    needs: [control-plane, dashboard, demo-quickstart-worker]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Pull and smoke each published image
+        id: smoke
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Strip leading 'v' from semver tags so the image tag matches what
+          # docker/metadata-action emitted (type=semver,pattern={{version}}).
+          IMAGE_TAG="${TAG#v}"
+          echo "Verifying images at ghcr.io/cordum-io/cordum/*:${IMAGE_TAG}"
+
+          control_plane=(api-gateway scheduler safety-kernel workflow-engine context-engine mcp)
+          declare -a failed
+          for name in "${control_plane[@]}" dashboard demo-quickstart-worker; do
+            image="ghcr.io/cordum-io/cordum/${name}:${IMAGE_TAG}"
+            echo "::group::pull ${image}"
+            if ! docker pull "${image}"; then
+              echo "FAIL: docker pull ${image}"
+              failed+=("${name}: pull failed")
+              echo "::endgroup::"
+              continue
+            fi
+            echo "::endgroup::"
+
+            echo "::group::smoke ${image}"
+            # demo-quickstart-worker is a long-running NATS subscriber and
+            # has no --help; the binary's mere presence is sufficient as a
+            # post-pull smoke (the integration test hits the real workflow).
+            if [[ "${name}" == "demo-quickstart-worker" ]]; then
+              if ! docker run --rm --entrypoint sh "${image}" -c "test -x /usr/local/bin/demo-quickstart-worker"; then
+                failed+=("${name}: binary missing from image")
+              fi
+              echo "::endgroup::"
+              continue
+            fi
+            # dashboard is an nginx container — boot probe rather than --help.
+            if [[ "${name}" == "dashboard" ]]; then
+              if ! docker run -d --name "smoke-${name}" -p 18080:8080 "${image}"; then
+                failed+=("${name}: container failed to start")
+              else
+                sleep 3
+                if ! curl -sf http://localhost:18080/healthz >/dev/null 2>&1; then
+                  failed+=("${name}: /healthz did not respond")
+                  docker logs "smoke-${name}" || true
+                fi
+                docker rm -f "smoke-${name}" >/dev/null 2>&1 || true
+              fi
+            else
+              # All Cordum CLI/service binaries respond to --help with exit
+              # 0 or 1 and emit usage. We accept either exit code; we fail
+              # only when the container itself cannot start.
+              if ! docker run --rm "${image}" --help >/dev/null 2>&1; then
+                if ! docker run --rm "${image}" version >/dev/null 2>&1; then
+                  failed+=("${name}: --help and version both failed")
+                fi
+              fi
+            fi
+            echo "::endgroup::"
+          done
+
+          if (( ${#failed[@]} > 0 )); then
+            printf 'SMOKE FAILED:\n' >&2
+            printf '  - %s\n' "${failed[@]}" >&2
+            {
+              echo "tag=${TAG}"
+              echo "failed<<EOF"
+              printf '  - %s\n' "${failed[@]}"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "All published images smoke-passed."
+
+      - name: Open release-break issue on failure
+        if: failure() && steps.smoke.outputs.failed != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          FAILED: ${{ steps.smoke.outputs.failed }}
+        run: |
+          set -euo pipefail
+          body=$(printf 'Release smoke test failed for **%s**.\n\nFailures:\n%s\n\nWorkflow run: %s/%s/actions/runs/%s' \
+            "${TAG}" "${FAILED}" "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}")
+          gh issue create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "release-break: ${TAG} smoke test failed" \
+            --label "release-break" \
+            --body "${body}"
 
   helm-chart:
     runs-on: ubuntu-latest

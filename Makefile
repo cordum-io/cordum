@@ -64,8 +64,14 @@ docker:
 smoke:
 	./tools/scripts/platform_smoke.sh
 
+verify-images:
+	CORDUM_VERIFY_IMAGES=1 ./tools/scripts/verify_published_images.sh
+
+demo-quickstart-test:
+	CORDUM_INTEGRATION=1 ./demo/quickstart/integration_test.sh
+
 dev-up:
-	docker compose up -d --build
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 dev-down:
 	docker compose down
@@ -85,10 +91,12 @@ help:
 	@echo "  make test-integration   Run integration tests (requires Docker)"
 	@echo "  make coverage           Full coverage report"
 	@echo "  make coverage-core      Core coverage check (80% minimum)"
-	@echo "  make openapi            Regenerate protobuf swagger + validate cordum-api.yaml"
+	@echo "  make openapi            Validate cordum-api.yaml (Redocly lint)"
 	@echo "  make docker SERVICE=X   Build Docker image for a service"
 	@echo "  make smoke              Run platform smoke tests"
-	@echo "  make dev-up             Start all services via docker compose"
+	@echo "  make verify-images      Verify published GHCR images (pull + cosign + multi-arch)"
+	@echo "  make demo-quickstart-test  End-to-end test for the demo-quickstart pack"
+	@echo "  make dev-up             Start all services via docker compose (with local rebuild)"
 	@echo "  make dev-down           Stop all services"
 	@echo "  make dev-logs           Tail docker compose logs"
 	@echo "  make soak-ws            10-minute WebSocket soak test"
@@ -108,4 +116,4 @@ soak-ws-full:
 	@echo "Running 2-hour full WebSocket soak test..."
 	./tools/scripts/ws_soak_test.sh full
 
-.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi docker smoke dev-up dev-down dev-logs soak-ws soak-ws-quick soak-ws-full
+.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi docker smoke verify-images demo-quickstart-test dev-up dev-down dev-logs soak-ws soak-ws-quick soak-ws-full

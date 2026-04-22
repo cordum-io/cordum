@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "cordum": {
+      "command": "cordumctl",
+      "args": [],
+      "env": {
+        "CORDUM_API_KEY": "",
+        "CORDUM_GATEWAY": "",
+        "CORDUM_TENANT_ID": ""
+      }
+    }
+  }
+}
