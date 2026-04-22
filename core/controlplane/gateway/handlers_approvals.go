@@ -1201,9 +1201,17 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// approval_snapshot binds the resubmitted JobRequest to the exact
+		// PolicySnapshot this approval was admitted against (including any
+		// drift-refresh above). The scheduler's approval fast-path requires
+		// this label to match the stored SafetyDecisionRecord.PolicySnapshot
+		// before short-circuiting to SafetyAllow — blocking the TOCTOU where
+		// an approval granted under policy v1 would dispatch against policy v2
+		// without re-evaluation.
 		labelUpdates := map[string]string{
-			"approval_granted": "true",
-			bus.LabelBusMsgID:  "approval:" + jobID,
+			"approval_granted":  "true",
+			"approval_snapshot": policySnapshot,
+			bus.LabelBusMsgID:   "approval:" + jobID,
 		}
 		if reason != "" {
 			labelUpdates["approval_reason"] = reason

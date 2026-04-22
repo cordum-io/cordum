@@ -84,6 +84,12 @@ const (
 	// A/B impact analysis. Extra carries shadow_bundle_id, bundle_id,
 	// active_verdict, shadow_verdict, diff, and latency_ms.
 	EventShadowEval = "shadow_eval"
+	// EventApprovalRevisionMismatch is emitted when the scheduler's
+	// approval fast-path rejects a job because the approval_snapshot
+	// label carried on the resubmitted JobRequest does not match the
+	// PolicySnapshot currently stored on the SafetyDecisionRecord.
+	// Extra carries stored_snapshot, asserted_snapshot, and topic.
+	EventApprovalRevisionMismatch = "approval.revision_mismatch"
 )
 
 // Severity levels for SIEM events.
