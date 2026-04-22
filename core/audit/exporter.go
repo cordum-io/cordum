@@ -32,6 +32,7 @@ const (
 	EventTopicRegistered           = "topic_registered"
 	EventTopicUnregistered         = "topic_unregistered"
 	EventShadowEval                = "shadow_eval"
+	EventHeartbeatDisagreement     = "heartbeat_disagreement"
 )
 
 // Severity levels for SIEM events.

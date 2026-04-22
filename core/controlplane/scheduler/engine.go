@@ -108,6 +108,10 @@ type Engine struct {
 	cancel                  context.CancelFunc
 	traceCtxMu              sync.Mutex
 	lastTraceCtx            context.Context
+	dispatchGate            *DispatchGate
+	trustMetrics            *WorkerTrustMetrics
+	sessionMiddleware       *SessionTokenMiddleware
+	dispatchAuditSink       AuditSink
 }
 
 func jobLockKey(jobID string) string {

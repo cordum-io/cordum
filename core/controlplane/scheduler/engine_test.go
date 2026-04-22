@@ -1735,7 +1735,7 @@ func TestCheckSafetyDecision_EngineShutdown_DeniesImmediately(t *testing.T) {
 	// Simulate engine shutdown by cancelling the engine context.
 	engine.cancel()
 
-	record, err := engine.checkSafetyDecision(req, "")
+	record, err := engine.checkSafetyDecision(req)
 	if err == nil {
 		t.Fatal("expected error during shutdown, got nil")
 	}
@@ -2721,7 +2721,7 @@ func TestCheckSafetyDecisionShutdownDeniesNotFailOpen(t *testing.T) {
 	// Cancel the engine context to simulate shutdown
 	engine.cancel()
 
-	record, err := engine.checkSafetyDecision(req, "")
+	record, err := engine.checkSafetyDecision(req)
 	if err == nil {
 		t.Fatal("expected error from checkSafetyDecision during shutdown, got nil")
 	}
