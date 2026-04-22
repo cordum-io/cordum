@@ -6,15 +6,134 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/model"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
+
+// handleRevokeWorkerSession revokes the active session token for the
+// named worker. Admin-only. Idempotent — revoking a worker with no
+// active session is a 200 success with "no_active_session" in the
+// response so operator scripts can retry safely.
+//
+// Audit: a worker_trust_change event with reason=session_revoked is
+// emitted through the tenant audit chain (task-2497391e) so SOC2
+// tooling can reconstruct who revoked which worker when.
+func (s *server) handleRevokeWorkerSession(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkersWrite, "admin") {
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeErrorJSON(w, http.StatusBadRequest, "worker id required")
+		return
+	}
+	if s.sessionIssuer == nil {
+		writeErrorJSON(w, http.StatusServiceUnavailable,
+			"session issuer not configured — wire via server.WithSessionIssuer")
+		return
+	}
+	tenant, tenErr := s.resolveTenant(r, "")
+	if tenErr != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := s.sessionIssuer.RevokeByAgent(ctx, tenant, id); err != nil {
+		slog.Error("revoke worker session failed",
+			"worker_id", id,
+			"tenant", tenant,
+			"error", err,
+		)
+		writeErrorJSON(w, http.StatusInternalServerError, "revoke failed")
+		return
+	}
+	s.emitWorkerTrustChangeAudit(ctx, id, tenant, r)
+	s.emitWorkerHandshakeRevokeAudit(ctx, id, tenant, r)
+	writeJSON(w, map[string]any{
+		"worker_id": id,
+		"tenant":    tenant,
+		"revoked":   true,
+	})
+}
+
+// emitWorkerTrustChangeAudit records a worker_trust_change SIEMEvent
+// for an admin revoke. Delegates to scheduler.EmitTrustChange so the
+// canonical helper is the single production call site for revoke
+// events (QA reopen requirement). Best-effort — a failing audit
+// sink must not block the revoke response.
+func (s *server) emitWorkerTrustChangeAudit(ctx context.Context, workerID, tenant string, r *http.Request) {
+	if s.auditExporter == nil {
+		return
+	}
+	actor := "admin"
+	if ac, ok := r.Context().Value(auth.ContextKey{}).(*auth.AuthContext); ok && ac != nil && ac.PrincipalID != "" {
+		actor = ac.PrincipalID
+	}
+	// Capture the prior JTI when available so the SIEM event can
+	// pair with the handshake that originally issued it. Best-effort;
+	// the revocation itself doesn't depend on this.
+	jti := ""
+	if s.sessionIssuer != nil {
+		if state, err := scheduler.NewTrustResolver(s.jobStore.Client()).ResolveTrust(ctx, workerID); err == nil {
+			jti = state.JTI
+		}
+	}
+	scheduler.EmitTrustChangeWithActor(
+		ctx,
+		s.auditExporter,
+		workerID,
+		tenant,
+		"valid",
+		"revoked",
+		scheduler.TrustChangeReasonSessionRevoked,
+		jti,
+		actor,
+	)
+}
+
+// emitWorkerHandshakeRevokeAudit emits the worker_handshake SIEMEvent
+// with outcome=revoked alongside the trust-change event. The plan
+// requires both events to fire for a revoke so SIEM correlation
+// rules can join on EventWorkerHandshake AND EventWorkerTrustChange
+// independently — revoke is the terminal transition that closes the
+// handshake lifecycle.
+func (s *server) emitWorkerHandshakeRevokeAudit(ctx context.Context, workerID, tenant string, r *http.Request) {
+	if s.auditExporter == nil {
+		return
+	}
+	actor := "admin"
+	if ac, ok := r.Context().Value(auth.ContextKey{}).(*auth.AuthContext); ok && ac != nil && ac.PrincipalID != "" {
+		actor = ac.PrincipalID
+	}
+	s.auditExporter.Send(audit.SIEMEvent{
+		Timestamp: time.Now().UTC(),
+		EventType: scheduler.EventWorkerHandshake,
+		Severity:  audit.SeverityHigh,
+		TenantID:  tenant,
+		AgentID:   workerID,
+		Action:    "worker_handshake",
+		Reason:    scheduler.TrustChangeReasonSessionRevoked,
+		Identity:  actor,
+		Extra: map[string]string{
+			"agent_id": workerID,
+			"tenant":   tenant,
+			"outcome":  "revoked",
+			"actor":    actor,
+		},
+	})
+	_ = ctx
+}
 
 // handleGetWorker returns a single worker by ID from the Redis snapshot.
 func (s *server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
 		return
 	}
 
@@ -32,7 +151,7 @@ func (s *server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
 	if snap != nil {
 		for _, ws := range snap.Workers {
 			if ws.WorkerID == id {
-				writeJSON(w, workerSummaryToResponse(ws, snap.CapturedAt))
+				writeJSON(w, s.workerStatusFromSummary(r.Context(), ws, snap.CapturedAt))
 				return
 			}
 		}
@@ -41,22 +160,13 @@ func (s *server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
 	// Fallback: check in-memory heartbeat map.
 	s.workerMu.RLock()
 	hb, ok := s.workers[id]
+	lastSeen := time.Time{}
+	if s.workerSeen != nil {
+		lastSeen = s.workerSeen[id]
+	}
 	s.workerMu.RUnlock()
 	if ok && hb != nil {
-		ws := registry.WorkerSummary{
-			WorkerID:        hb.WorkerId,
-			Pool:            hb.Pool,
-			ActiveJobs:      hb.ActiveJobs,
-			MaxParallelJobs: hb.MaxParallelJobs,
-			Capabilities:    hb.Capabilities,
-			CpuLoad:         hb.CpuLoad,
-			GpuUtilization:  hb.GpuUtilization,
-			MemoryLoad:      hb.MemoryLoad,
-			Region:          hb.Region,
-			Type:            hb.Type,
-			Labels:          hb.Labels,
-		}
-		writeJSON(w, workerSummaryToResponse(ws, ""))
+		writeJSON(w, s.workerStatusResponse(r.Context(), hb, lastSeen))
 		return
 	}
 
@@ -67,8 +177,7 @@ func (s *server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
 // When the per-worker index is empty (pre-existing jobs), falls back to
 // recent jobs filtered by the worker's pool topics.
 func (s *server) handleGetWorkerJobs(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
 		return
 	}
 
@@ -178,8 +287,7 @@ func (s *server) recentJobsByPool(ctx context.Context, pool string, limit int64)
 
 // handleListPools returns all pools with utilization metrics.
 func (s *server) handleListPools(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
 		return
 	}
 
@@ -206,8 +314,7 @@ func (s *server) handleListPools(w http.ResponseWriter, r *http.Request) {
 
 // handleGetPool returns a single pool's detail with its workers and topics.
 func (s *server) handleGetPool(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {
 		return
 	}
 
@@ -236,7 +343,7 @@ func (s *server) handleGetPool(w http.ResponseWriter, r *http.Request) {
 	poolWorkers := []map[string]any{}
 	for _, ws := range snap.Workers {
 		if ws.Pool == name {
-			poolWorkers = append(poolWorkers, workerSummaryToResponse(ws, snap.CapturedAt))
+			poolWorkers = append(poolWorkers, s.workerStatusFromSummary(r.Context(), ws, snap.CapturedAt))
 		}
 	}
 
@@ -258,25 +365,106 @@ func (s *server) handleGetPool(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// workerSummaryToResponse converts a WorkerSummary into a JSON-friendly map.
-func workerSummaryToResponse(ws registry.WorkerSummary, capturedAt string) map[string]any {
+// workerStatusResponse builds the canonical worker payload for the
+// /api/v1/workers endpoints under the heartbeat-demotion rollout.
+//
+// Session authority (online, session_valid, session_exp_ms,
+// session_revoked, session_state) is sourced from WorkerTrustState
+// when the gateway has a trust resolver wired; otherwise we fall back
+// to heartbeat-recency (legacy semantics), letting operators stay on
+// authority mode without wiring the resolver.
+//
+// Telemetry fields (last_heartbeat_at, heartbeat_age_seconds,
+// last_heartbeat) are always emitted when a lastSeen timestamp is
+// available. Consumers should display them as freshness indicators
+// only — never as policy gates.
+func (s *server) workerStatusResponse(ctx context.Context, hb *pb.Heartbeat, lastSeen time.Time) map[string]any {
 	resp := map[string]any{
-		"worker_id":         ws.WorkerID,
-		"pool":              ws.Pool,
-		"active_jobs":       ws.ActiveJobs,
-		"max_parallel_jobs": ws.MaxParallelJobs,
-		"capabilities":      ws.Capabilities,
-		"cpu_load":          ws.CpuLoad,
-		"gpu_utilization":   ws.GpuUtilization,
-		"memory_load":       ws.MemoryLoad,
-		"region":            ws.Region,
-		"type":              ws.Type,
-		"labels":            ws.Labels,
+		"worker_id":         hb.GetWorkerId(),
+		"pool":              hb.GetPool(),
+		"active_jobs":       hb.GetActiveJobs(),
+		"max_parallel_jobs": hb.GetMaxParallelJobs(),
+		"capabilities":      hb.GetCapabilities(),
+		"cpu_load":          hb.GetCpuLoad(),
+		"gpu_utilization":   hb.GetGpuUtilization(),
+		"memory_load":       hb.GetMemoryLoad(),
+		"region":            hb.GetRegion(),
+		"type":              hb.GetType(),
+		"labels":            hb.GetLabels(),
 	}
-	if capturedAt != "" {
-		resp["last_heartbeat"] = capturedAt
+	now := time.Now().UTC()
+	if !lastSeen.IsZero() {
+		iso := lastSeen.UTC().Format(time.RFC3339)
+		resp["last_heartbeat_at"] = iso
+		resp["last_heartbeat"] = iso
+		age := int64(now.Sub(lastSeen.UTC()).Seconds())
+		if age < 0 {
+			age = 0
+		}
+		resp["heartbeat_age_seconds"] = age
+	}
+	trust := s.resolveWorkerTrust(ctx, hb.GetWorkerId())
+	resp["session_state"] = trust.Reason
+	resp["session_valid"] = trust.SessionValid
+	if !trust.SessionExp.IsZero() {
+		resp["session_exp_ms"] = trust.SessionExp.UnixMilli()
+	}
+	if trust.RevokedAt != nil {
+		resp["session_revoked"] = true
+	}
+	if s.trustResolver != nil {
+		// Session authority is wired — use it as the canonical online
+		// signal, regardless of heartbeat staleness.
+		resp["online"] = trust.IsAlive()
+	} else {
+		// Authority-mode / legacy: online is whatever the TTL gate says.
+		resp["online"] = !lastSeen.IsZero() && now.Sub(lastSeen.UTC()) <= workerHeartbeatTTL
 	}
 	return resp
+}
+
+// workerStatusFromSummary wraps a snapshot-derived WorkerSummary into
+// the canonical workerStatusResponse shape. It threads the snapshot's
+// CapturedAt as the last-seen approximation (accurate within the
+// snapshot interval).
+func (s *server) workerStatusFromSummary(ctx context.Context, ws registry.WorkerSummary, capturedAt string) map[string]any {
+	hb := &pb.Heartbeat{
+		WorkerId:        ws.WorkerID,
+		Pool:            ws.Pool,
+		ActiveJobs:      ws.ActiveJobs,
+		MaxParallelJobs: ws.MaxParallelJobs,
+		Capabilities:    ws.Capabilities,
+		CpuLoad:         ws.CpuLoad,
+		GpuUtilization:  ws.GpuUtilization,
+		MemoryLoad:      ws.MemoryLoad,
+		Region:          ws.Region,
+		Type:            ws.Type,
+		Labels:          ws.Labels,
+	}
+	lastSeen := time.Time{}
+	if t, err := time.Parse(time.RFC3339, capturedAt); err == nil {
+		lastSeen = t
+	}
+	return s.workerStatusResponse(ctx, hb, lastSeen)
+}
+
+// resolveWorkerTrust reads WorkerTrustState for workerID, returning a
+// store-unready sentinel when the resolver isn't wired or returns an
+// error. Never panics — the caller can always surface the Reason
+// string to operators.
+func (s *server) resolveWorkerTrust(ctx context.Context, workerID string) scheduler.WorkerTrustState {
+	if s == nil || s.trustResolver == nil {
+		return scheduler.WorkerTrustState{Reason: scheduler.TrustReasonStoreUnready}
+	}
+	state, err := s.trustResolver.ResolveTrust(ctx, workerID)
+	if err != nil {
+		slog.Warn("worker trust resolve failed",
+			"worker_id", workerID,
+			"error", err,
+		)
+		return scheduler.WorkerTrustState{Reason: scheduler.TrustReasonStoreUnready}
+	}
+	return state
 }
 
 // poolUtilization calculates the utilization ratio for a pool snapshot.

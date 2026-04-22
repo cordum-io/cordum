@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "name": "auth.session_login_refresh",
+  "description": "Login with username+password, receive a session token, use it on a subsequent call. Simulator accepts the seeded test user.",
+  "tags": ["auth", "session"],
+  "steps": [
+    {
+      "kind": "request",
+      "operationId": "login",
+      "body": {
+        "username": "conformance-user",
+        "password": "conformance-pass-01"
+      },
+      "expect": {
+        "status": 200,
+        "bodyMatches": {
+          "$.token": "$any$",
+          "$.expires_at": "$timestamp$"
+        }
+      },
+      "extract": { "sessionToken": "$.token" }
+    },
+    {
+      "kind": "request",
+      "operationId": "getSession",
+      "auth": { "kind": "bearer", "value": "$vars.sessionToken" },
+      "expect": {
+        "status": 200,
+        "bodyMatches": {
+          "$.user_id": "$any$"
+        }
+      }
+    }
+  ]
+}

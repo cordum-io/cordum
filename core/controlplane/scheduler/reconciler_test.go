@@ -24,6 +24,7 @@ type fakeReconcileStore struct {
 	teams          map[string]string
 	safety         map[string]SafetyDecisionRecord
 	output         map[string]OutputSafetyRecord
+	lineage        map[string]model.DelegationLineage
 	dead           map[string]int64
 	attempts       map[string]int
 	locks          map[string]time.Time
@@ -39,6 +40,7 @@ func newFakeReconcileStore() *fakeReconcileStore {
 		teams:          make(map[string]string),
 		safety:         make(map[string]SafetyDecisionRecord),
 		output:         make(map[string]OutputSafetyRecord),
+		lineage:        make(map[string]model.DelegationLineage),
 		dead:           make(map[string]int64),
 		attempts:       make(map[string]int),
 		locks:          make(map[string]time.Time),
@@ -64,6 +66,14 @@ func (s *fakeReconcileStore) SetState(_ context.Context, jobID string, state Job
 	return nil
 }
 
+func (s *fakeReconcileStore) SetStateWithContext(ctx context.Context, jobID string, state JobState, _ *model.StateEventContext) error {
+	return s.SetState(ctx, jobID, state)
+}
+
+func (s *fakeReconcileStore) GetJobEvents(_ context.Context, _ string) ([]model.JobEvent, error) {
+	return nil, nil
+}
+
 func (s *fakeReconcileStore) GetState(_ context.Context, jobID string) (JobState, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -76,6 +86,19 @@ func (s *fakeReconcileStore) SetResultPtr(_ context.Context, jobID, resultPtr st
 
 func (s *fakeReconcileStore) GetResultPtr(_ context.Context, jobID string) (string, error) {
 	return "", nil
+}
+
+func (s *fakeReconcileStore) SetDelegationLineage(_ context.Context, jobID string, lineage model.DelegationLineage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lineage[jobID] = lineage
+	return nil
+}
+
+func (s *fakeReconcileStore) GetDelegationLineage(_ context.Context, jobID string) (model.DelegationLineage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.lineage[jobID], nil
 }
 
 func (s *fakeReconcileStore) SetJobMeta(_ context.Context, _ *pb.JobRequest) error {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/pools"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/licensing"
@@ -41,8 +42,7 @@ const (
 )
 
 func (s *server) handleListWorkerCredentials(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkerCredentialsRead, "admin") {
 		return
 	}
 	if s.workerCredentialStore == nil {
@@ -64,8 +64,7 @@ func (s *server) handleListWorkerCredentials(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkerCredentialsWrite, "admin") {
 		return
 	}
 	if s.workerCredentialStore == nil {
@@ -206,8 +205,7 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 }
 
 func (s *server) handleDeleteWorkerCredential(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkerCredentialsWrite, "admin") {
 		return
 	}
 	if s.workerCredentialStore == nil {

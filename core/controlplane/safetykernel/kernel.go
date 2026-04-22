@@ -35,15 +35,15 @@ import (
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
-	"go.opentelemetry.io/otel/attribute"
-	oteltrace "go.opentelemetry.io/otel/trace"
 	"github.com/cordum/cordum/core/licensing"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -73,12 +73,13 @@ type server struct {
 	cacheMaxSize      int
 	entitlements      *licensing.EntitlementResolver
 	customBundleCount int
+	shadowEvaluator   *ShadowEvaluator
 
 	// Agent identity store for enriching policy evaluation with agent context.
-	agentStore        *store.AgentIdentityStore
-	agentCacheMu      sync.Mutex
-	agentCache        map[string]agentCacheEntry
-	agentCacheTTL     time.Duration
+	agentStore    *store.AgentIdentityStore
+	agentCacheMu  sync.Mutex
+	agentCache    map[string]agentCacheEntry
+	agentCacheTTL time.Duration
 
 	// Server-side risk tag derivation registry. When a deriver is registered
 	// for a topic, it replaces client-supplied risk_tags with authoritative
@@ -113,6 +114,12 @@ type cacheEntry struct {
 type agentCacheEntry struct {
 	identity *store.AgentIdentity
 	expires  time.Time
+}
+
+func (s *server) SetShadowEvaluator(eval *ShadowEvaluator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.shadowEvaluator = eval
 }
 
 const defaultAgentCacheTTL = 30 * time.Second
@@ -267,10 +274,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		return fmt.Errorf("safety kernel tls required in production")
 	}
 
-	cacheMax := parseIntEnv(envDecisionCacheMaxSize, defaultDecisionCacheMaxSize)
-	if cacheMax <= 0 {
-		cacheMax = defaultDecisionCacheMaxSize
-	}
+	cacheMax := resolveDecisionCacheMax()
 	resultClient, err := redisutil.NewClient(cfg.RedisURL)
 	if err != nil {
 		slog.Warn("safety-kernel: output result redis client disabled", "err", err)
@@ -303,11 +307,14 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		agentCacheTTL:      defaultAgentCacheTTL,
 		tagDeriverRegistry: tagRegistry,
 	}
-	srv.setPolicyWithBundleCount(policy, snapshot, customBundleCount)
 
 	// Lifecycle context for background goroutines — cancelled when Run returns.
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	defer lifecycleCancel()
+
+	if err := srv.setPolicyWithBundleCount(lifecycleCtx, policy, snapshot, customBundleCount); err != nil {
+		return fmt.Errorf("initial policy load: %w", err)
+	}
 
 	var wg sync.WaitGroup
 	if loader.ShouldWatch() {
@@ -515,6 +522,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	snapshot := s.snapshot
 	inputRules := s.inputRules
 	scanners := s.scanners
+	shadowEvaluator := s.shadowEvaluator
 	defaultTenant := ""
 	if policy != nil {
 		defaultTenant = strings.TrimSpace(policy.DefaultTenant)
@@ -566,11 +574,12 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	}
 
 	input := config.PolicyInput{
-		Tenant: tenant,
-		Topic:  topic,
-		Labels: req.GetLabels(),
-		Meta:   policyMetaFromRequest(req),
-		MCP:    extractMCPRequest(req.GetLabels()),
+		Tenant:     tenant,
+		Topic:      topic,
+		Labels:     req.GetLabels(),
+		Meta:       policyMetaFromRequest(req),
+		MCP:        extractMCPRequest(req.GetLabels()),
+		Delegation: delegationContextFromRequest(req),
 	}
 
 	// Server-side risk tag derivation: when a deriver is registered for this
@@ -758,6 +767,21 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 		ApprovalRef:      approvalRef,
 		Remediations:     toProtoRemediations(policyDecision.Remediations),
 	}
+	if shadowEvaluator != nil {
+		shadowEvaluator.Submit(
+			config.PolicyDecision{
+				Decision:         shadowDecisionName(decision, approvalRequired),
+				Reason:           reason,
+				RuleID:           ruleID,
+				Constraints:      policyDecision.Constraints,
+				Remediations:     policyDecision.Remediations,
+				ApprovalRequired: approvalRequired,
+			},
+			input,
+			tenant,
+			req.GetJobId(),
+		)
+	}
 
 	slog.Info("policy evaluation result", "component", "safety", "tenant", tenant, "topic", topic, "jobId", req.GetJobId(), "decision", resp.Decision.String(), "ruleId", resp.RuleId)
 
@@ -768,6 +792,29 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	}
 
 	return resp, nil
+}
+
+func shadowDecisionName(decision pb.DecisionType, approvalRequired bool) string {
+	switch decision {
+	case pb.DecisionType_DECISION_TYPE_DENY:
+		return "deny"
+	case pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN:
+		return "require_approval"
+	case pb.DecisionType_DECISION_TYPE_THROTTLE:
+		return "throttle"
+	case pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS:
+		return "allow_with_constraints"
+	case pb.DecisionType_DECISION_TYPE_ALLOW:
+		if approvalRequired {
+			return "require_approval"
+		}
+		return "allow"
+	default:
+		if approvalRequired {
+			return "require_approval"
+		}
+		return "deny"
+	}
 }
 
 func cacheKeyForRequest(req *pb.PolicyCheckRequest, snapshot string) string {
@@ -884,6 +931,26 @@ func parseIntEnv(key string, defaultVal int) int {
 		return defaultVal
 	}
 	return val
+}
+
+// resolveDecisionCacheMax reads envDecisionCacheMaxSize and enforces the
+// non-positive guard. A non-positive override (zero, negative, or a parse
+// fallback that landed below 1) is treated as operator error and falls back
+// to defaultDecisionCacheMaxSize with a WARN — silently honoring cacheMax==0
+// would disable the cache entirely and push every request to the policy
+// evaluator, and cacheMax<0 is a programmer typo that must never reach
+// runtime.
+func resolveDecisionCacheMax() int {
+	cacheMax := parseIntEnv(envDecisionCacheMaxSize, defaultDecisionCacheMaxSize)
+	if cacheMax <= 0 {
+		slog.Warn("safety-kernel: ignoring non-positive decision cache size override",
+			"env", envDecisionCacheMaxSize,
+			"override", cacheMax,
+			"default", defaultDecisionCacheMaxSize,
+		)
+		return defaultDecisionCacheMaxSize
+	}
+	return cacheMax
 }
 
 func toProtoRemediations(remediations []config.PolicyRemediation) []*pb.PolicyRemediation {
@@ -1129,7 +1196,9 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 	defer ticker.Stop()
 
 	reload := func(trigger string) {
-		slog.Info("safety-kernel: policy reload triggered", "trigger", trigger)
+		if trigger != "poll" {
+			slog.Info("safety-kernel: policy reload triggered", "trigger", trigger)
+		}
 
 		policy, snapshot, customBundleCount, err := loader.Load(ctx)
 		if err != nil {
@@ -1143,7 +1212,10 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 		current := s.snapshot
 		s.mu.RUnlock()
 		if snapshot != "" && snapshot != current {
-			s.setPolicyWithBundleCount(policy, snapshot, customBundleCount)
+			if err := s.setPolicyWithBundleCount(ctx, policy, snapshot, customBundleCount); err != nil {
+				slog.Error("safety-kernel: setPolicyWithBundleCount failed", "err", err, "trigger", trigger)
+				return
+			}
 			slog.Info("safety-kernel: policy snapshot updated", "snapshot", snapshot, "trigger", trigger)
 		}
 
@@ -1171,11 +1243,21 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 	}
 }
 
-func (s *server) setPolicy(policy *config.SafetyPolicy, snapshot string) {
-	s.setPolicyWithBundleCount(policy, snapshot, 0)
+func (s *server) setPolicy(ctx context.Context, policy *config.SafetyPolicy, snapshot string) error {
+	return s.setPolicyWithBundleCount(ctx, policy, snapshot, 0)
 }
 
-func (s *server) setPolicyWithBundleCount(policy *config.SafetyPolicy, snapshot string, customBundleCount int) {
+// setPolicyWithBundleCount atomically swaps the active policy, trims the
+// snapshot history and persists the new snapshot to Redis for cross-replica
+// consistency. Callers MUST pass a non-nil ctx — the Redis persistence call
+// derives its deadline from the caller so lock-contention paths (policy
+// reload, graceful shutdown) cannot orphan a hung Redis write behind a
+// detached context.Background(). Tests in this package construct a ctx via
+// context.Background() or t.Context() at the call site.
+func (s *server) setPolicyWithBundleCount(ctx context.Context, policy *config.SafetyPolicy, snapshot string, customBundleCount int) error {
+	if ctx == nil {
+		return fmt.Errorf("safety-kernel: setPolicyWithBundleCount: nil context")
+	}
 	newVersion := s.policyVersion.Add(1)
 
 	s.mu.Lock()
@@ -1192,13 +1274,16 @@ func (s *server) setPolicyWithBundleCount(policy *config.SafetyPolicy, snapshot 
 	}
 	s.mu.Unlock()
 
-	// Persist snapshot to Redis for cross-replica consistency.
+	// Persist snapshot to Redis for cross-replica consistency. The deadline
+	// is derived from the caller's ctx — if the caller (watchPolicy reload
+	// or Run() startup) is cancelled, this write unblocks promptly rather
+	// than orphaning a Redis round-trip behind context.Background().
 	if snapshot != "" && s.resultClient != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
-		if err := s.resultClient.LPush(ctx, snapshotHistoryKey, snapshot).Err(); err != nil {
+		if err := s.resultClient.LPush(rctx, snapshotHistoryKey, snapshot).Err(); err != nil {
 			slog.Warn("safety-kernel: snapshot redis LPUSH failed", "err", err)
-		} else if err := s.resultClient.LTrim(ctx, snapshotHistoryKey, 0, snapshotHistoryMax-1).Err(); err != nil {
+		} else if err := s.resultClient.LTrim(rctx, snapshotHistoryKey, 0, snapshotHistoryMax-1).Err(); err != nil {
 			slog.Warn("safety-kernel: snapshot redis LTRIM failed", "err", err)
 		}
 	}
@@ -1209,6 +1294,7 @@ func (s *server) setPolicyWithBundleCount(policy *config.SafetyPolicy, snapshot 
 	s.cacheMu.Unlock()
 
 	slog.Info("safety-kernel: policy updated, cache invalidated", "version", newVersion)
+	return nil
 }
 
 type policyLoader struct {
@@ -1337,6 +1423,7 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 	var skippedCount int
 	customBundleCount := 0
 	bundleLimit := l.policyBundleLimit()
+	verifier := newBundleVerifier()
 	for _, key := range keys {
 		content, ok := extractPolicyFragment(rawBundles[key])
 		if !ok || strings.TrimSpace(content) == "" {
@@ -1355,6 +1442,9 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 				skippedCount++
 				continue
 			}
+		}
+		if err := verifyBundleSignature(key, []byte(content), fragmentSignature(rawBundles[key]), verifier.mode, verifier.store); err != nil {
+			return nil, "", customBundleCount, err
 		}
 		policy, err := config.ParseSafetyPolicy([]byte(content))
 		if err != nil {

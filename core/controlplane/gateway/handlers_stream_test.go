@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/gorilla/websocket"
@@ -86,7 +87,7 @@ func TestApiKeyFromWebSocketProtocols(t *testing.T) {
 	req.Header.Set("X-Tenant-ID", "default")
 	token := base64.RawURLEncoding.EncodeToString([]byte("secret"))
 	req.Header.Set("Sec-WebSocket-Protocol", wsAuthSubprotocol+", "+token)
-	if got := apiKeyFromWebSocket(req); got != "secret" {
+	if got := auth.APIKeyFromWebSocket(req); got != "secret" {
 		t.Fatalf("expected secret got %q", got)
 	}
 }
@@ -144,14 +145,14 @@ func TestApiKeyFromWebSocket_DotFormat(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	token := base64.RawURLEncoding.EncodeToString([]byte("secret-key"))
 	req.Header.Set("Sec-WebSocket-Protocol", wsAuthSubprotocol+"."+token)
-	got := apiKeyFromWebSocket(req)
+	got := auth.APIKeyFromWebSocket(req)
 	if got != "secret-key" {
 		t.Fatalf("expected secret-key, got %q", got)
 	}
 }
 
 func TestApiKeyFromWebSocket_NilRequest(t *testing.T) {
-	got := apiKeyFromWebSocket(nil)
+	got := auth.APIKeyFromWebSocket(nil)
 	if got != "" {
 		t.Fatalf("expected empty for nil request, got %q", got)
 	}
@@ -159,7 +160,7 @@ func TestApiKeyFromWebSocket_NilRequest(t *testing.T) {
 
 func TestApiKeyFromWebSocket_NoSubprotocol(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	got := apiKeyFromWebSocket(req)
+	got := auth.APIKeyFromWebSocket(req)
 	if got != "" {
 		t.Fatalf("expected empty for no subprotocol, got %q", got)
 	}
@@ -169,7 +170,7 @@ func TestApiKeyFromWebSocket_MalformedBase64FallsBack(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	// Non-base64 token — decodeWSAPIKey returns raw string as fallback
 	req.Header.Set("Sec-WebSocket-Protocol", wsAuthSubprotocol+".not-base64!!!")
-	got := apiKeyFromWebSocket(req)
+	got := auth.APIKeyFromWebSocket(req)
 	if got == "" {
 		t.Fatal("expected non-empty fallback for malformed base64")
 	}
@@ -1089,9 +1090,9 @@ func TestWSRevalidation_TransientError_KeepsConnection(t *testing.T) {
 
 	var authCalls atomic.Int32
 	provider := &mockAuthProvider{
-		authHTTP: func(*http.Request) (*AuthContext, error) {
+		authHTTP: func(*http.Request) (*auth.AuthContext, error) {
 			if authCalls.Add(1) == 1 {
-				return &AuthContext{APIKey: "live-key", Tenant: "default", Role: "admin"}, nil
+				return &auth.AuthContext{APIKey: "live-key", Tenant: "default", Role: "admin"}, nil
 			}
 			return nil, transientNetError{}
 		},
@@ -1169,9 +1170,9 @@ func TestWSRevalidation_Revocation_ClosesConnection(t *testing.T) {
 
 	var authCalls atomic.Int32
 	provider := &mockAuthProvider{
-		authHTTP: func(*http.Request) (*AuthContext, error) {
+		authHTTP: func(*http.Request) (*auth.AuthContext, error) {
 			if authCalls.Add(1) == 1 {
-				return &AuthContext{APIKey: "revoked-key", Tenant: "default", Role: "admin"}, nil
+				return &auth.AuthContext{APIKey: "revoked-key", Tenant: "default", Role: "admin"}, nil
 			}
 			return nil, errors.New("invalid api key")
 		},
@@ -1226,11 +1227,11 @@ func TestWSRevalidation_RetrySucceeds(t *testing.T) {
 
 	var authCalls atomic.Int32
 	provider := &mockAuthProvider{
-		authHTTP: func(*http.Request) (*AuthContext, error) {
+		authHTTP: func(*http.Request) (*auth.AuthContext, error) {
 			if authCalls.Add(1) == 1 {
 				return nil, transientNetError{}
 			}
-			return &AuthContext{APIKey: "live-key", Tenant: "default", Role: "admin"}, nil
+			return &auth.AuthContext{APIKey: "live-key", Tenant: "default", Role: "admin"}, nil
 		},
 	}
 
@@ -1364,8 +1365,8 @@ func TestWSMetrics_RevalidationOutcome(t *testing.T) {
 	initial := testutil.ToFloat64(wsRevalidation.WithLabelValues("ok"))
 
 	provider := &mockAuthProvider{
-		authHTTP: func(*http.Request) (*AuthContext, error) {
-			return &AuthContext{APIKey: "live-key", Tenant: "default", Role: "admin"}, nil
+		authHTTP: func(*http.Request) (*auth.AuthContext, error) {
+			return &auth.AuthContext{APIKey: "live-key", Tenant: "default", Role: "admin"}, nil
 		},
 	}
 

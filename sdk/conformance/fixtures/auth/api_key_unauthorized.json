@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "auth.api_key_unauthorized",
+  "description": "Unauthenticated call (no API key header) MUST raise the SDK's typed AuthenticationError with status 401.",
+  "tags": ["auth", "error"],
+  "setup": {
+    "auth": { "kind": "none" }
+  },
+  "steps": [
+    {
+      "kind": "assert_error",
+      "operationId": "listJobs",
+      "expect": {
+        "errorClass": "AuthenticationError",
+        "status": 401,
+        "fields": {
+          "error.code": "unauthorized"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+# Lychee ignore file for cordum docs.
+#
+# Entries are regex patterns. One per line. Any URL matching is
+# silently skipped. See https://github.com/lycheeverse/lychee for
+# syntax.
+
+# Local-dev hosts that only resolve inside the compose stack.
+^https?://localhost(:[0-9]+)?(/|$)
+^https?://127\.0\.0\.1(:[0-9]+)?(/|$)
+^https?://0\.0\.0\.0(:[0-9]+)?(/|$)
+
+# mailto and tel schemes — lychee can't verify them, skip noise.
+^mailto:
+^tel:
+
+# Example / placeholder hostnames that intentionally don't resolve.
+^https?://example\.com(/|$)
+^https?://example\.org(/|$)
+^https?://your-domain\.example(/|$)
+^https?://placeholder\.invalid(/|$)
+
+# Docker image pulls: GHCR 401s for unauthenticated HEAD are expected
+# (the tag exists; GHCR refuses anonymous manifest reads).
+^https?://ghcr\.io/
+
+# Internal reference formats that look like URLs but aren't (e.g.
+# Redis URIs or NATS subject names appearing in code fences).
+^redis://
+^nats://

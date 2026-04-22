@@ -1,0 +1,20 @@
+# Conformance runtime output — per-run, not source.
+reports/*.xml
+reports/*.json
+
+# Simulator binary — built on demand.
+simulator/bin/
+
+# Per-harness build artifacts.
+harness/go/conformance.exe
+harness/go/conformance
+harness/typescript/dist/
+harness/typescript/node_modules/
+harness/python/.venv/
+harness/python/*.egg-info/
+harness/python/build/
+harness/python/dist/
+
+# OS junk.
+.DS_Store
+Thumbs.db

@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "name": "agents.create_and_get",
+  "description": "Create an agent identity, then GET it back by id.",
+  "tags": ["agents", "happy-path"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "request",
+      "operationId": "createAgent",
+      "body": {
+        "name": "alpha",
+        "owner": "ops@acme",
+        "risk_tier": "low",
+        "description": "Conformance-test agent"
+      },
+      "expect": {
+        "status": 201,
+        "body": {
+          "name": "alpha",
+          "owner": "ops@acme",
+          "risk_tier": "low",
+          "status": "active"
+        },
+        "bodyMatches": {
+          "$.id": "$any$",
+          "$.created_at": "$timestamp$",
+          "$.updated_at": "$timestamp$"
+        }
+      },
+      "extract": {
+        "agentId": "$.id"
+      }
+    },
+    {
+      "kind": "request",
+      "operationId": "getAgent",
+      "pathParams": { "id": "$vars.agentId" },
+      "expect": {
+        "status": 200,
+        "body": {
+          "name": "alpha",
+          "owner": "ops@acme",
+          "risk_tier": "low",
+          "status": "active"
+        },
+        "bodyMatches": {
+          "$.id": "$any$"
+        }
+      }
+    }
+  ]
+}

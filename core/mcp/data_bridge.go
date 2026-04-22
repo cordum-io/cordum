@@ -41,6 +41,40 @@ type HTTPDataBridge struct {
 	allowedHosts      []string
 	allowPrivateHosts bool
 	httpClient        *http.Client
+
+	// outboundSigner is applied to every outgoing request when non-nil.
+	// Resources are read-only so the audit signal is less critical than
+	// on tool-call bridges, but symmetric signing keeps the whole
+	// outbound surface auditable for multi-cluster deployments.
+	outboundSigner  OutboundSigner
+	outboundAgentID string
+
+	// outboundInvocationAuditor brackets every request with Start/Finish
+	// so resource fetches also land on mcp.tool_outbound_invocation.
+	// See bridge.go's OutboundInvocationAuditor interface doc.
+	outboundInvocationAuditor OutboundInvocationAuditor
+}
+
+// WithOutboundSigner installs a signer that will stamp every outgoing
+// request with ECDSA P-256 headers. Nil signer is accepted (noop).
+// Returns b for chaining.
+func (b *HTTPDataBridge) WithOutboundSigner(signer OutboundSigner, agentID string) *HTTPDataBridge {
+	if b == nil {
+		return nil
+	}
+	b.outboundSigner = signer
+	b.outboundAgentID = strings.TrimSpace(agentID)
+	return b
+}
+
+// WithOutboundInvocationAuditor brackets every outbound request with
+// terminal audit Start/Finish. See bridge.OutboundInvocationAuditor.
+func (b *HTTPDataBridge) WithOutboundInvocationAuditor(a OutboundInvocationAuditor) *HTTPDataBridge {
+	if b == nil {
+		return nil
+	}
+	b.outboundInvocationAuditor = a
+	return b
 }
 
 // NewHTTPDataBridge creates an HTTP DataBridge with secure defaults.
@@ -262,12 +296,14 @@ func (b *HTTPDataBridge) doRequest(ctx context.Context, method, path string, hea
 	}
 
 	var payload io.Reader
+	var bodyBytes []byte
 	if body != nil {
 		buf := &bytes.Buffer{}
 		if err := json.NewEncoder(buf).Encode(body); err != nil {
 			return 0, nil, fmt.Errorf("encode request: %w", err)
 		}
-		payload = buf
+		bodyBytes = buf.Bytes()
+		payload = bytes.NewReader(bodyBytes)
 	}
 
 	// #nosec G704 -- target URL is constrained by bridge configuration and validated below.
@@ -287,6 +323,22 @@ func (b *HTTPDataBridge) doRequest(ctx context.Context, method, path string, hea
 	}
 	if b.tenantID != "" {
 		req.Header.Set("X-Tenant-ID", b.tenantID)
+	}
+	// Outbound signing: stamp the 6 X-Cordum-* ECDSA-P256 headers
+	// before the caller-supplied overrides so method+path+body are
+	// covered by the signature. Identical pattern to HTTPServiceBridge.
+	if b.outboundSigner != nil {
+		agentID := b.outboundAgentID
+		if agentID == "" {
+			agentID = b.tenantID
+		}
+		if signed, err := b.outboundSigner.SignRequest(method+" "+path, bodyBytes, b.tenantID, agentID); err == nil {
+			for k, v := range signed {
+				if v != "" {
+					req.Header.Set(k, v)
+				}
+			}
+		}
 	}
 	for key, value := range headers {
 		key = strings.TrimSpace(key)
@@ -309,18 +361,38 @@ func (b *HTTPDataBridge) doRequest(ctx context.Context, method, path string, hea
 			Transport:     &http.Transport{DialContext: pinnedDialer(pinnedIPs)},
 		}
 	}
+	// Bracket the outbound HTTP round-trip with the invocation auditor
+	// so FinishRequest sees the terminal status + latency + response
+	// body. Mirrors the HTTPServiceBridge wiring; every data bridge
+	// request (resource read, artifact fetch) also lands on
+	// mcp.tool_outbound_invocation when an auditor is installed.
+	var handle OutboundRequestHandle
+	if b.outboundInvocationAuditor != nil {
+		handle = b.outboundInvocationAuditor.StartRequest(ctx, method, path, bodyBytes)
+	}
+	status := 0
+	var data []byte
+	var callErr error
+	defer func() {
+		if b.outboundInvocationAuditor != nil {
+			b.outboundInvocationAuditor.FinishRequest(handle, status, data, callErr)
+		}
+	}()
 	// #nosec G704 -- URL is validated and DNS-pinned via validateAndResolveOutboundURL above.
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, nil, fmt.Errorf("request failed: %w", err)
+		callErr = fmt.Errorf("request failed: %w", err)
+		return 0, nil, callErr
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	data, err := io.ReadAll(resp.Body)
+	data, err = io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, nil, fmt.Errorf("read response body: %w", err)
+		callErr = fmt.Errorf("read response body: %w", err)
+		return 0, nil, callErr
 	}
-	return resp.StatusCode, data, nil
+	status = resp.StatusCode
+	return status, data, nil
 }
 
 // DirectDataBridgeConfig allows callers to bind direct in-process resource reads.

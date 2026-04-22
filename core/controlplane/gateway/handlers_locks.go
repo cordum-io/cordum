@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -32,8 +34,7 @@ func stripTenantLockPrefix(tenantID, resource string) string {
 }
 
 func (s *server) handleGetLock(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin", "operator", "viewer"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermLocksRead, "admin", "operator", "viewer") {
 		return
 	}
 	if s.lockStore == nil {
@@ -95,6 +96,9 @@ func (s *server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.lockStore) {
 		return
 	}
+	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionLocksWrite) {
+		return
+	}
 	tenantID, err := s.resolveTenant(r, "")
 	if err != nil {
 		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
@@ -127,6 +131,9 @@ func (s *server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleReleaseLock(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.lockStore) {
+		return
+	}
+	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionLocksWrite) {
 		return
 	}
 	tenantID, err := s.resolveTenant(r, "")
@@ -162,6 +169,9 @@ func (s *server) handleReleaseLock(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleRenewLock(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.lockStore) {
+		return
+	}
+	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionLocksWrite) {
 		return
 	}
 	tenantID, err := s.resolveTenant(r, "")

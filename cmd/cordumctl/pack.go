@@ -137,15 +137,32 @@ type packPolicySimulationRequest struct {
 }
 
 type packRecord struct {
-	ID          string              `json:"id"`
-	Version     string              `json:"version"`
-	Status      string              `json:"status"`
-	InstalledAt string              `json:"installed_at,omitempty"`
-	InstalledBy string              `json:"installed_by,omitempty"`
-	Manifest    packRecordManifest  `json:"manifest,omitempty"`
-	Resources   packRecordResources `json:"resources,omitempty"`
-	Overlays    packRecordOverlays  `json:"overlays,omitempty"`
-	Tests       packTests           `json:"tests,omitempty"`
+	ID           string                   `json:"id"`
+	Version      string                   `json:"version"`
+	Status       string                   `json:"status"`
+	InstalledAt  string                   `json:"installed_at,omitempty"`
+	InstalledBy  string                   `json:"installed_by,omitempty"`
+	Manifest     packRecordManifest       `json:"manifest,omitempty"`
+	Resources    packRecordResources      `json:"resources,omitempty"`
+	Overlays     packRecordOverlays       `json:"overlays,omitempty"`
+	Tests        packTests                `json:"tests,omitempty"`
+	Verification *packRecordVerification  `json:"verification,omitempty"`
+}
+
+// packRecordVerification is the on-the-wire shape the gateway persists
+// alongside an installed pack. Server-side verification in
+// handleInstallPack (task step 3) overwrites any client-supplied
+// fields — cordumctl attaches this for diagnostic + client-side
+// audit, but the gateway is the source of truth.
+type packRecordVerification struct {
+	Signed              bool     `json:"signed"`
+	PublisherID         string   `json:"publisher_id,omitempty"`
+	KID                 string   `json:"kid,omitempty"`
+	VerifiedAt          string   `json:"verified_at,omitempty"`
+	HasCordumCounterSig bool     `json:"has_cordum_counter_sig,omitempty"`
+	SignatureAlgorithm  string   `json:"signature_algorithm,omitempty"`
+	PackSignatureVer    int      `json:"pack_signature_version,omitempty"`
+	Warnings            []string `json:"warnings,omitempty"`
 }
 
 type packRecordManifest struct {
@@ -193,6 +210,17 @@ func runPackCmd(args []string) {
 		usage()
 		os.Exit(1)
 	}
+	// Pack-signing subcommands (task-6ced7932) — keygen, sign,
+	// verify-signature, export-key — share dispatch via
+	// dispatchPackSigningCmd in pack_sign.go. They don't collide with
+	// the legacy install/verify commands because each uses a distinct
+	// verb.
+	if handled, err := dispatchPackSigningCmd(args[0], args[1:]); handled {
+		if err != nil {
+			fail(err.Error())
+		}
+		return
+	}
 	switch args[0] {
 	case "create":
 		runPackCreate(args[1:])
@@ -219,9 +247,13 @@ func runPackCmd(args []string) {
 func runPackInstall(args []string) error {
 	fs := newFlagSet("pack install")
 	dryRun := fs.Bool("dry-run", false, "print planned changes without writing")
-	force := fs.Bool("force", false, "skip core version check")
+	force := fs.Bool("force", false, "skip core version check and allow --no-verify in strict mode")
 	upgrade := fs.Bool("upgrade", false, "overwrite existing resources")
 	inactive := fs.Bool("inactive", false, "install without pool mappings")
+	strict := fs.Bool("strict", false, "refuse to install unsigned packs (also: CORDUM_PACK_STRICT=true)")
+	requireCordumSig := fs.Bool("require-cordum-sig", false, "require Cordum counter-signature in addition to publisher signature")
+	trustedKeys := fs.String("trusted-keys", "", "directory of trusted publisher public keys (*.pub)")
+	noVerify := fs.Bool("no-verify", false, "skip signature verification (DANGEROUS; requires --force in strict mode)")
 	fs.ParseArgs(args)
 	if fs.NArg() < 1 {
 		return errors.New("pack path or url required")
@@ -246,6 +278,21 @@ func runPackInstall(args []string) error {
 		return err
 	}
 	if err := ensureProtocolCompatible(manifest); err != nil {
+		return err
+	}
+
+	// Verify gate — runs BEFORE any state-changing step so a failed
+	// verify never leaves partial install state behind. Strict mode
+	// is the union of --strict and CORDUM_PACK_STRICT.
+	verifyResult, err := VerifyInstallBundle(bundle.Dir, manifest.Metadata.ID, PackVerificationOptions{
+		Strict:           resolvePackStrict(*strict),
+		RequireCordumSig: *requireCordumSig,
+		NoVerify:         *noVerify,
+		Force:            *force,
+		TrustedKeysDir:   *trustedKeys,
+		Stderr:           os.Stderr,
+	})
+	if err != nil {
 		return err
 	}
 
@@ -379,7 +426,8 @@ func runPackInstall(args []string) error {
 			Config: appliedConfig,
 			Policy: appliedPolicy,
 		},
-		Tests: manifest.Tests,
+		Tests:        manifest.Tests,
+		Verification: verificationFromResult(verifyResult),
 	}
 
 	if err := updatePackRegistry(ctx, client, record); err != nil {

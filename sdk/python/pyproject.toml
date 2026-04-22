@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cordum-sdk"
+version = "0.1.0"
+description = "Typed Python SDK for the Cordum control plane."
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.9"
+license = "BUSL-1.1"
+authors = [
+    { name = "Cordum", email = "engineering@cordum.io" },
+]
+keywords = ["cordum", "sdk", "api", "openapi", "async", "httpx"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "attrs>=23.2",
+    "httpx>=0.27",
+    "pydantic>=2.5",
+    "typing-extensions>=4.8",
+]
+
+[project.optional-dependencies]
+test = [
+    "freezegun>=1.4",
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+]
+dev = [
+    "cordum-sdk[test]",
+    "build>=1.2",
+    "mypy>=1.8",
+    "ruff>=0.4",
+    "twine>=5.0",
+]
+generator = [
+    "click<8.2",
+    "openapi-python-client>=0.21,<0.22",
+    "pydantic<2.10",
+]
+
+[project.urls]
+Homepage = "https://cordum.io"
+Documentation = "https://github.com/cordum-io/cordum/tree/main/sdk/python"
+Repository = "https://github.com/cordum-io/cordum"
+Issues = "https://github.com/cordum-io/cordum/issues"
+
+[tool.setuptools]
+include-package-data = true
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["cordum_sdk*"]
+
+[tool.setuptools.package-data]
+cordum_sdk = ["py.typed"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"

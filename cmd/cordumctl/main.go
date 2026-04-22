@@ -37,8 +37,6 @@ func main() {
 		runStatusCmd(args)
 	case "license":
 		runLicenseCmd(args)
-	case "auth":
-		runAuthCmd(args)
 	case "workflow":
 		runWorkflowCmd(args)
 	case "run":
@@ -57,6 +55,16 @@ func main() {
 		runWorkerCmd(args)
 	case "job":
 		runJobCmd(args)
+	case "demo":
+		runDemoCmd(args)
+	case "mcp":
+		runMCPCmd(args)
+	case "policy":
+		runPolicyCmd(args)
+	case "audit":
+		runAuditCmd(args)
+	case "evals":
+		runEvalsCmd(args)
 	default:
 		usage()
 		os.Exit(1)
@@ -357,12 +365,16 @@ func usage() {
 Usage:
   cordumctl init <dir> [--force] [--framework langchain|crewai|autogen]
   cordumctl generate-certs [--dir ./certs] [--force] [--days 365]
+  cordumctl demo run <demo_id> [--timeout 30] [--json]
+  cordumctl mcp pending [--status pending] [--json]
+  cordumctl mcp approve <approval_id> [--reason text]
+  cordumctl mcp reject <approval_id> [--reason text]
+  cordumctl mcp tools list [--agent-id X] [--json]
   cordumctl dev [--file docker-compose.yml] [--build] [--detach]
   cordumctl up [--file docker-compose.yml] [--build] [--detach]
   cordumctl status [--json]
   cordumctl license install <path>
   cordumctl license info [--json]
-  cordumctl auth sso status [--json]
   cordumctl workflow create --file workflow.json
   cordumctl workflow delete <workflow_id>
   cordumctl run start <workflow_id> [--input input.json|'{...}'|-] [--dry-run] [--debug]
@@ -395,6 +407,11 @@ Usage:
   cordumctl pack show <pack_id>
   cordumctl pack verify <pack_id>
   cordumctl pack create <pack_id> [--dir path] [--force]
+  cordumctl policy sign --in <path> [--out <path>.sig] [--key-env NAME] [--key-id ID]
+  cordumctl policy verify --in <path> [--sig <path>] [--public-key-env NAME]
+  cordumctl audit verify [tenant] [--since ms] [--until ms] [--limit N] [--json]
+  cordumctl evals extract --name <dataset> [--dry-run]
+  cordumctl evals run --dataset <id> [--use-current] [--wait]
 
 Global flags:
   --gateway    Gateway base URL (default from CORDUM_GATEWAY)

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/store"
@@ -45,7 +46,7 @@ func TestRegisterExternalWorker(t *testing.T) {
 	seedWorkerCredentialAccessConfig(t, s)
 
 	body := bytes.NewBufferString(`{"worker_id":"external-worker","allowed_pools":["default"],"allowed_topics":["job.external"]}`)
-	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", body), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", body), &auth.AuthContext{
 		Tenant:      "default",
 		Role:        "admin",
 		PrincipalID: "admin-user",
@@ -87,7 +88,7 @@ func TestRegisterExternalWorker(t *testing.T) {
 		t.Fatalf("expected created_by admin-user, got %q", record.CreatedBy)
 	}
 
-	listReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/workers/credentials", nil), &AuthContext{
+	listReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/workers/credentials", nil), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -139,7 +140,7 @@ func TestRevokeWorker(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	req := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/workers/credentials/external-worker", nil), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/workers/credentials/external-worker", nil), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -186,7 +187,7 @@ func TestRevokeWorker(t *testing.T) {
 func TestCreateCredentialEmptyWorkerID(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 
-	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", bytes.NewBufferString(`{"worker_id":"   "}`)), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", bytes.NewBufferString(`{"worker_id":"   "}`)), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -215,7 +216,7 @@ func TestCreateCredentialArrayTooLong(t *testing.T) {
 		t.Fatalf("marshal request: %v", err)
 	}
 
-	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", bytes.NewReader(body)), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", bytes.NewReader(body)), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -232,7 +233,7 @@ func TestCreateCredentialArrayTooLong(t *testing.T) {
 func TestCreateCredentialPoolNotFound(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 
-	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", bytes.NewBufferString(`{"worker_id":"external-worker","allowed_pools":["missing-pool"]}`)), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", bytes.NewBufferString(`{"worker_id":"external-worker","allowed_pools":["missing-pool"]}`)), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -249,7 +250,7 @@ func TestCreateCredentialPoolNotFound(t *testing.T) {
 func TestRevokeNonexistentCredential(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 
-	req := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/workers/credentials/missing-worker", nil), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/workers/credentials/missing-worker", nil), &auth.AuthContext{
 		Tenant: "default",
 		Role:   "admin",
 	})
@@ -280,7 +281,7 @@ func TestRotateCredentialClearsAgentLink(t *testing.T) {
 
 	// Create credential linked to agent.
 	body := bytes.NewBufferString(`{"worker_id":"link-worker","allowed_pools":["default"],"allowed_topics":["job.external"],"agent_id":"` + agent.ID + `"}`)
-	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", body), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", body), &auth.AuthContext{
 		Tenant: "default", Role: "admin", PrincipalID: "admin",
 	})
 	req.Header.Set("Content-Type", "application/json")
@@ -298,7 +299,7 @@ func TestRotateCredentialClearsAgentLink(t *testing.T) {
 
 	// Rotate credential WITHOUT agent_id → should clear the link.
 	body2 := bytes.NewBufferString(`{"worker_id":"link-worker","allowed_pools":["default"],"allowed_topics":["job.external"]}`)
-	req2 := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", body2), &AuthContext{
+	req2 := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", body2), &auth.AuthContext{
 		Tenant: "default", Role: "admin", PrincipalID: "admin",
 	})
 	req2.Header.Set("Content-Type", "application/json")
@@ -333,7 +334,7 @@ func TestRevokeCredentialClearsAgentLink(t *testing.T) {
 
 	// Create credential linked to agent.
 	body := bytes.NewBufferString(`{"worker_id":"revoke-worker","allowed_pools":["default"],"allowed_topics":["job.external"],"agent_id":"` + agent.ID + `"}`)
-	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", body), &AuthContext{
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials", body), &auth.AuthContext{
 		Tenant: "default", Role: "admin", PrincipalID: "admin",
 	})
 	req.Header.Set("Content-Type", "application/json")
@@ -344,7 +345,7 @@ func TestRevokeCredentialClearsAgentLink(t *testing.T) {
 	}
 
 	// Revoke the credential.
-	revokeReq := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/workers/credentials/revoke-worker", nil), &AuthContext{
+	revokeReq := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/workers/credentials/revoke-worker", nil), &auth.AuthContext{
 		Tenant: "default", Role: "admin",
 	})
 	revokeReq.SetPathValue("worker_id", "revoke-worker")

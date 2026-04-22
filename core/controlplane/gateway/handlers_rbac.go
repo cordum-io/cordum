@@ -13,8 +13,7 @@ import (
 // handleListRoles returns all role definitions.
 // GET /api/v1/auth/roles
 func (s *server) handleListRoles(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, auth.PermRolesRead, "admin") {
 		return
 	}
 	if s.rbacStore == nil {
@@ -40,8 +39,7 @@ func (s *server) handleListRoles(w http.ResponseWriter, r *http.Request) {
 // handleGetRole returns a single role definition with resolved permissions.
 // GET /api/v1/auth/roles/{name}
 func (s *server) handleGetRole(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, auth.PermRolesRead, "admin") {
 		return
 	}
 	if s.rbacStore == nil {
@@ -72,7 +70,7 @@ func (s *server) handleGetRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{
-		"role":                role,
+		"role":                 role,
 		"resolved_permissions": resolved,
 	})
 }
@@ -87,8 +85,7 @@ type roleRequest struct {
 // handlePutRole creates or updates a role definition.
 // PUT /api/v1/auth/roles/{name}
 func (s *server) handlePutRole(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, auth.PermRolesWrite, "admin") {
 		return
 	}
 
@@ -171,8 +168,7 @@ func (s *server) handlePutRole(w http.ResponseWriter, r *http.Request) {
 // handleDeleteRole removes a custom role definition.
 // DELETE /api/v1/auth/roles/{name}
 func (s *server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, auth.PermRolesWrite, "admin") {
 		return
 	}
 

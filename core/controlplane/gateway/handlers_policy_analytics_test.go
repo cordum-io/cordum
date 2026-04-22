@@ -9,13 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func analyticsRequest(t *testing.T, s *server, body map[string]any, auth *AuthContext) *httptest.ResponseRecorder {
+func analyticsRequest(t *testing.T, s *server, body map[string]any, auth *auth.AuthContext) *httptest.ResponseRecorder {
 	t.Helper()
 	payload, err := json.Marshal(body)
 	require.NoError(t, err)
@@ -103,7 +104,7 @@ func TestPolicyAnalytics_Forbidden(t *testing.T) {
 	rec := analyticsRequest(t, s, map[string]any{
 		"from": now.Add(-24 * time.Hour).Format(time.RFC3339),
 		"to":   now.Format(time.RFC3339),
-	}, &AuthContext{Role: "viewer"})
+	}, &auth.AuthContext{Role: "viewer"})
 
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
@@ -111,7 +112,7 @@ func TestPolicyAnalytics_Forbidden(t *testing.T) {
 func TestPolicyAnalytics_BadTimeRange(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &policyReplayAuth{}
-	admin := &AuthContext{Role: "admin", Tenant: "default", PrincipalID: "admin-1"}
+	admin := &auth.AuthContext{Role: "admin", Tenant: "default", PrincipalID: "admin-1"}
 
 	// from >= to
 	now := time.Now().UTC()
@@ -132,7 +133,7 @@ func TestPolicyAnalytics_BadTimeRange(t *testing.T) {
 func TestPolicyAnalytics_EmptyResult(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &policyReplayAuth{}
-	admin := &AuthContext{Role: "admin", Tenant: "default", PrincipalID: "admin-1"}
+	admin := &auth.AuthContext{Role: "admin", Tenant: "default", PrincipalID: "admin-1"}
 
 	now := time.Now().UTC()
 	rec := analyticsRequest(t, s, map[string]any{
@@ -149,7 +150,7 @@ func TestPolicyAnalytics_EmptyResult(t *testing.T) {
 func TestPolicyAnalytics_PerRuleMetrics(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &policyReplayAuth{}
-	admin := &AuthContext{Role: "admin", Tenant: "acme", PrincipalID: "admin-1"}
+	admin := &auth.AuthContext{Role: "admin", Tenant: "acme", PrincipalID: "admin-1"}
 
 	now := time.Now().UTC()
 	checkedAt := now.Add(-1 * time.Hour).UnixMicro()
@@ -203,7 +204,7 @@ func TestPolicyAnalytics_PerRuleMetrics(t *testing.T) {
 func TestPolicyAnalytics_RuleFilter(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &policyReplayAuth{}
-	admin := &AuthContext{Role: "admin", Tenant: "acme", PrincipalID: "admin-1"}
+	admin := &auth.AuthContext{Role: "admin", Tenant: "acme", PrincipalID: "admin-1"}
 
 	now := time.Now().UTC()
 	seedAnalyticsJobs(t, s, []analyticsTestJob{
@@ -226,7 +227,7 @@ func TestPolicyAnalytics_RuleFilter(t *testing.T) {
 func TestPolicyAnalytics_DailyHitsBucketing(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &policyReplayAuth{}
-	admin := &AuthContext{Role: "admin", Tenant: "acme", PrincipalID: "admin-1"}
+	admin := &auth.AuthContext{Role: "admin", Tenant: "acme", PrincipalID: "admin-1"}
 
 	now := time.Now().UTC()
 	seedAnalyticsJobs(t, s, []analyticsTestJob{
@@ -257,7 +258,7 @@ func TestPolicyAnalytics_DailyHitsBucketing(t *testing.T) {
 func TestPolicyAnalytics_OverrideRateCalculation(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &policyReplayAuth{}
-	admin := &AuthContext{Role: "admin", Tenant: "acme", PrincipalID: "admin-1"}
+	admin := &auth.AuthContext{Role: "admin", Tenant: "acme", PrincipalID: "admin-1"}
 
 	now := time.Now().UTC()
 	checkedAt := now.Add(-1 * time.Hour).UnixMicro()
@@ -289,7 +290,7 @@ func TestPolicyAnalytics_OverrideRateCalculation(t *testing.T) {
 func TestPolicyAnalytics_TenantIsolation(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.auth = &policyReplayAuth{}
-	admin := &AuthContext{Role: "admin", Tenant: "acme", PrincipalID: "admin-1"}
+	admin := &auth.AuthContext{Role: "admin", Tenant: "acme", PrincipalID: "admin-1"}
 
 	now := time.Now().UTC()
 	checkedAt := now.Add(-1 * time.Hour).UnixMicro()

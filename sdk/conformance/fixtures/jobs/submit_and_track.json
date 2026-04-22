@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "name": "jobs.submit_and_track",
+  "description": "Submit a job, then GET it and assert the final state reaches a terminal value.",
+  "tags": ["jobs", "happy-path"],
+  "setup": {
+    "auth": { "kind": "apiKey", "value": "$vars.apiKey" },
+    "headers": { "X-Tenant-Id": "$vars.tenant" }
+  },
+  "steps": [
+    {
+      "kind": "request",
+      "operationId": "submitJob",
+      "body": {
+        "topic": "job.echo",
+        "prompt": "Hello from conformance suite",
+        "priority": "normal",
+        "labels": { "origin": "conformance" }
+      },
+      "expect": {
+        "status": 202,
+        "bodyMatches": {
+          "$.job_id": "$any$",
+          "$.trace_id": "$any$"
+        }
+      },
+      "extract": { "jobId": "$.job_id" }
+    },
+    {
+      "kind": "sleep",
+      "durationMs": 50
+    },
+    {
+      "kind": "request",
+      "operationId": "getJob",
+      "pathParams": { "id": "$vars.jobId" },
+      "expect": {
+        "status": 200,
+        "body": {
+          "topic": "job.echo",
+          "status": "succeeded"
+        },
+        "bodyMatches": {
+          "$.id": "$any$",
+          "$.updatedAt": "$timestamp$"
+        }
+      }
+    }
+  ]
+}

@@ -723,26 +723,6 @@ spec:
             - name: CORDUM_OIDC_CLAIM_ROLE
               value: {{ .Values.auth.oidc.claimRole | quote }}
             {{- end }}
-            {{- if .Values.auth.oidc.clientId }}
-            - name: CORDUM_OIDC_CLIENT_ID
-              value: {{ .Values.auth.oidc.clientId | quote }}
-            {{- end }}
-            {{- if .Values.auth.oidc.clientSecret }}
-            - name: CORDUM_OIDC_CLIENT_SECRET
-              value: {{ .Values.auth.oidc.clientSecret | quote }}
-            {{- end }}
-            {{- if .Values.auth.oidc.redirectUri }}
-            - name: CORDUM_OIDC_REDIRECT_URI
-              value: {{ .Values.auth.oidc.redirectUri | quote }}
-            {{- end }}
-            {{- if gt (len .Values.auth.oidc.scopes) 0 }}
-            - name: CORDUM_OIDC_SCOPES
-              value: {{ join "," .Values.auth.oidc.scopes | quote }}
-            {{- end }}
-            {{- if .Values.auth.oidc.stateTtl }}
-            - name: CORDUM_OIDC_STATE_TTL
-              value: {{ .Values.auth.oidc.stateTtl | quote }}
-            {{- end }}
             {{- if gt (len .Values.auth.oidc.allowedAlgs) 0 }}
             - name: CORDUM_OIDC_ALLOWED_ALGS
               value: {{ join "," .Values.auth.oidc.allowedAlgs | quote }}
@@ -766,58 +746,6 @@ spec:
             {{- if .Values.auth.oidc.allowHttp }}
             - name: CORDUM_OIDC_ALLOW_HTTP
               value: "true"
-            {{- end }}
-            {{- if .Values.auth.saml.enabled }}
-            - name: CORDUM_SAML_ENABLED
-              value: "true"
-            {{- end }}
-            {{- if .Values.auth.saml.idpMetadataUrl }}
-            - name: CORDUM_SAML_IDP_METADATA_URL
-              value: {{ .Values.auth.saml.idpMetadataUrl | quote }}
-            {{- end }}
-            {{- if .Values.auth.saml.baseUrl }}
-            - name: CORDUM_SAML_BASE_URL
-              value: {{ .Values.auth.saml.baseUrl | quote }}
-            {{- end }}
-            {{- if .Values.auth.saml.entityId }}
-            - name: CORDUM_SAML_ENTITY_ID
-              value: {{ .Values.auth.saml.entityId | quote }}
-            {{- end }}
-            {{- if .Values.auth.saml.binding }}
-            - name: CORDUM_SAML_BINDING
-              value: {{ .Values.auth.saml.binding | quote }}
-            {{- end }}
-            {{- if .Values.auth.saml.responseBinding }}
-            - name: CORDUM_SAML_RESPONSE_BINDING
-              value: {{ .Values.auth.saml.responseBinding | quote }}
-            {{- end }}
-            {{- if .Values.auth.saml.allowIdpInitiated }}
-            - name: CORDUM_SAML_ALLOW_IDP_INITIATED
-              value: "true"
-            {{- end }}
-            {{- if .Values.auth.saml.stateTtl }}
-            - name: CORDUM_SAML_STATE_TTL
-              value: {{ .Values.auth.saml.stateTtl | quote }}
-            {{- end }}
-            {{- if .Values.auth.saml.redirectUrl }}
-            - name: CORDUM_AUTH_REDIRECT_URL
-              value: {{ .Values.auth.saml.redirectUrl | quote }}
-            {{- end }}
-            {{- if or .Values.auth.saml.certSecret (and .Values.auth.saml.cert .Values.auth.saml.key) }}
-            - name: CORDUM_SAML_CERT_PATH
-              value: /etc/cordum/saml/tls.crt
-            - name: CORDUM_SAML_KEY_PATH
-              value: /etc/cordum/saml/tls.key
-            {{- end }}
-            {{- if .Values.auth.scim.existingSecret }}
-            - name: CORDUM_SCIM_BEARER_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.auth.scim.existingSecret | quote }}
-                  key: {{ .Values.auth.scim.existingSecretKey | quote }}
-            {{- else if .Values.auth.scim.bearerToken }}
-            - name: CORDUM_SCIM_BEARER_TOKEN
-              value: {{ .Values.auth.scim.bearerToken | quote }}
             {{- end }}
             {{- if .Values.auth.apiKeys }}
             - name: CORDUM_API_KEYS
@@ -953,10 +881,6 @@ spec:
             - name: CORDUM_MARKETPLACE_HTTP_TIMEOUT
               value: {{ .Values.marketplace.httpTimeout | quote }}
             {{- end }}
-            {{- if .Values.gateway.goMaxProcs }}
-            - name: GOMAXPROCS
-              value: {{ .Values.gateway.goMaxProcs | quote }}
-            {{- end }}
           ports:
             - name: grpc
               containerPort: {{ .Values.gateway.service.grpcPort }}
@@ -979,11 +903,6 @@ spec:
             - name: license
               mountPath: /etc/cordum/license.json
               subPath: license.json
-              readOnly: true
-            {{- end }}
-            {{- if or .Values.auth.saml.certSecret (and .Values.auth.saml.cert .Values.auth.saml.key) }}
-            - name: saml
-              mountPath: /etc/cordum/saml
               readOnly: true
             {{- end }}
           livenessProbe:
@@ -1021,11 +940,6 @@ spec:
         - name: license
           secret:
             secretName: {{ include "cordum.licenseSecretName" . }}
-        {{- end }}
-        {{- if or .Values.auth.saml.certSecret (and .Values.auth.saml.cert .Values.auth.saml.key) }}
-        - name: saml
-          secret:
-            secretName: {{ default (printf "%s-saml" (include "cordum.fullname" .)) .Values.auth.saml.certSecret }}
         {{- end }}
 ---
 {{- end }}

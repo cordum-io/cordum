@@ -1,10 +1,10 @@
 module github.com/cordum/cordum/sdk
 
-go 1.25.8
+go 1.25.9
 
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1
-	github.com/cordum-io/cap/v2 v2.9.0
+	github.com/cordum-io/cap/v2 v2.9.3
 	github.com/nats-io/nats-server/v2 v2.12.6
 	github.com/nats-io/nats.go v1.49.0
 	github.com/redis/go-redis/v9 v9.7.3

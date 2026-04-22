@@ -20,6 +20,40 @@ const (
 	ToolApproveJob      = "cordum_approve_job"
 	ToolRejectJob       = "cordum_reject_job"
 	ToolQueryPolicy     = "cordum_query_policy"
+
+	// Read-only discovery tools (task-466b6a6a).
+	ToolListJobs              = "cordum_list_jobs"
+	ToolGetJob                = "cordum_get_job"
+	ToolListRuns              = "cordum_list_runs"
+	ToolGetRun                = "cordum_get_run"
+	ToolRunTimeline           = "cordum_run_timeline"
+	ToolListWorkflows         = "cordum_list_workflows"
+	ToolListPacks             = "cordum_list_packs"
+	ToolListTopics            = "cordum_list_topics"
+	ToolListWorkers           = "cordum_list_workers"
+	ToolListAgents            = "cordum_list_agents"
+	ToolListPendingApprovals  = "cordum_list_pending_approvals"
+	ToolAuditQuery            = "cordum_audit_query"
+	ToolAuditVerify           = "cordum_audit_verify"
+	ToolStatus                = "cordum_status"
+
+	// Mutating administrative tools (task-2d989055). Every one of
+	// these is gated by RequiresApproval=true + ApprovalScope set to
+	// a risk tier so the approval pipeline from task-94b27344 can
+	// enqueue a human review before the call executes.
+	ToolCreateWorkflow      = "cordum_create_workflow"
+	ToolInstallPack         = "cordum_install_pack"
+	ToolUninstallPack       = "cordum_uninstall_pack"
+	ToolRegisterAgent       = "cordum_register_agent"
+	ToolUpdatePolicyBundle  = "cordum_update_policy_bundle"
+	ToolRevokeWorkerSession = "cordum_revoke_worker_session"
+	ToolSetAgentScope       = "cordum_set_agent_scope"
+
+	// Approval scope tags. 'mcp_write_admin' is the high-privilege
+	// tier for identity / policy / session changes; 'mcp_write' is
+	// the lower tier for workflow / pack provisioning.
+	ApprovalScopeWriteAdmin = "mcp_write_admin"
+	ApprovalScopeWrite      = "mcp_write"
 )
 
 // ServiceBridge abstracts backend operations for MCP tool handlers.
@@ -30,6 +64,76 @@ type ServiceBridge interface {
 	ApproveJob(ctx context.Context, jobID string, note string) error
 	RejectJob(ctx context.Context, jobID string, reason string) error
 	SimulatePolicy(ctx context.Context, req PolicySimInput) (*PolicySimOutput, error)
+
+	// Read-only discovery surface. See ListInput/ListPage for the
+	// common pagination envelope. Every method returns a typed page
+	// of the relevant record plus an opaque NextCursor the client
+	// round-trips for subsequent pages.
+	ListJobs(ctx context.Context, req ListInput) (*ListPage, error)
+	GetJob(ctx context.Context, jobID string) (*ResourceItem, error)
+	ListRuns(ctx context.Context, req ListInput) (*ListPage, error)
+	GetRun(ctx context.Context, runID string) (*ResourceItem, error)
+	GetRunTimeline(ctx context.Context, runID string) (*ResourceItem, error)
+	ListWorkflows(ctx context.Context, req ListInput) (*ListPage, error)
+	ListPacks(ctx context.Context, req ListInput) (*ListPage, error)
+	ListTopics(ctx context.Context, req ListInput) (*ListPage, error)
+	ListWorkers(ctx context.Context, req ListInput) (*ListPage, error)
+	ListAgents(ctx context.Context, req ListInput) (*ListPage, error)
+	ListPendingApprovals(ctx context.Context, req ListInput) (*ListPage, error)
+	QueryAudit(ctx context.Context, req AuditQueryInput) (*ListPage, error)
+	VerifyAudit(ctx context.Context, tenant string) (*ResourceItem, error)
+	GetStatus(ctx context.Context) (*ResourceItem, error)
+
+	// Mutating administrative surface. Every method below is intended
+	// to be gated by RequiresApproval + ApprovalScope on the
+	// corresponding ToolDefinition so a human must sign off before
+	// the call executes (see task-94b27344's approval pipeline).
+	// IdempotencyKey on each input routes through the gateway's
+	// existing idempotency middleware so an LLM retrying after
+	// approval does not produce duplicate resources.
+	CreateWorkflow(ctx context.Context, req CreateWorkflowInput) (*CreateWorkflowOutput, error)
+	InstallPack(ctx context.Context, req InstallPackInput) (*InstallPackOutput, error)
+	UninstallPack(ctx context.Context, req UninstallPackInput) error
+	RegisterAgent(ctx context.Context, req RegisterAgentInput) (*RegisterAgentOutput, error)
+	UpdatePolicyBundle(ctx context.Context, req UpdatePolicyBundleInput) (*UpdatePolicyBundleOutput, error)
+	RevokeWorkerSession(ctx context.Context, req RevokeWorkerSessionInput) error
+	SetAgentScope(ctx context.Context, req SetAgentScopeInput) (*SetAgentScopeOutput, error)
+}
+
+// ListInput carries the common filter + pagination controls for every
+// read-only list tool. Filter is method-specific (interpreted by the
+// bridge); Cursor is the opaque string returned by the previous page.
+// PageSize defaults to 50, capped at 500 (see pagination.go).
+type ListInput struct {
+	Filter   map[string]string `json:"filter,omitempty"`
+	Cursor   string            `json:"cursor,omitempty"`
+	PageSize int               `json:"page_size,omitempty"`
+	Tenant   string            `json:"tenant,omitempty"`
+}
+
+// AuditQueryInput extends ListInput with audit-specific filters.
+type AuditQueryInput struct {
+	ListInput
+	Tenant    string `json:"tenant,omitempty"`
+	EventType string `json:"event_type,omitempty"`
+	Since     string `json:"since,omitempty"`
+	Until     string `json:"until,omitempty"`
+}
+
+// ListPage is the uniform response shape for every list tool.
+type ListPage struct {
+	Items      []map[string]any `json:"items"`
+	NextCursor string           `json:"next_cursor,omitempty"`
+	Total      int              `json:"total,omitempty"`
+}
+
+// ResourceItem is the uniform shape for single-record get tools. Data
+// stays opaque (map[string]any) so the bridge can pass through any
+// field set the gateway returns without this package owning the schema.
+type ResourceItem struct {
+	ID   string         `json:"id,omitempty"`
+	Kind string         `json:"kind,omitempty"`
+	Data map[string]any `json:"data"`
 }
 
 type SubmitJobInput struct {
@@ -181,6 +285,23 @@ func RegisterAllTools(registry *ToolRegistry, bridge ServiceBridge) error {
 	}
 
 	for _, spec := range specs {
+		if err := registry.Register(spec.tool, spec.handler); err != nil {
+			return err
+		}
+	}
+	// Read-only discovery surface (task-466b6a6a). Adds 14 tools so an
+	// MCP client can inspect platform state without submitting jobs.
+	for _, spec := range readOnlyToolSpecs(bridge) {
+		if err := registry.Register(spec.tool, spec.handler); err != nil {
+			return err
+		}
+	}
+	// Mutating administrative surface (task-2d989055). Adds 7 tools
+	// behind RequiresApproval=true. The approval gate (see
+	// registry.go + mcp_gate.go) intercepts tools/call before the
+	// handler runs and returns JSON-RPC -32099 until a human approves
+	// the call; handlers then execute on retry.
+	for _, spec := range mutatingToolSpecs(bridge) {
 		if err := registry.Register(spec.tool, spec.handler); err != nil {
 			return err
 		}

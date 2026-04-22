@@ -120,6 +120,69 @@ func (c HTTPServiceBridgeConfig) WithAuthToken(token string) HTTPServiceBridgeCo
 	return c
 }
 
+// WithOutboundSigner installs a signer that will stamp every outgoing
+// request with ECDSA P-256 headers. Nil signer is accepted (noop).
+// Returns b for chaining.
+func (b *HTTPServiceBridge) WithOutboundSigner(signer outboundSigner, agentID string) *HTTPServiceBridge {
+	if b == nil {
+		return nil
+	}
+	b.outboundSigner = signer
+	b.outboundAgentID = strings.TrimSpace(agentID)
+	return b
+}
+
+// OutboundSignAuditHook is the bridge-level audit callback fired after
+// every successfully-signed outbound request. The hook receives the
+// target URL path, method, and the 6-header map the signer produced.
+// Keeping it a callback avoids an import of core/audit inside core/mcp
+// (which would cycle back through the gateway's auditExporter).
+type OutboundSignAuditHook func(method, path, keyID, nonce, tenant, agentID string)
+
+// WithOutboundSignAuditHook installs the audit hook. Nil is accepted
+// — unhooked deployments simply skip SIEM emission.
+func (b *HTTPServiceBridge) WithOutboundSignAuditHook(hook OutboundSignAuditHook) *HTTPServiceBridge {
+	if b == nil {
+		return nil
+	}
+	b.outboundSignHook = hook
+	return b
+}
+
+// OutboundInvocationAuditor brackets every outbound HTTP request with
+// terminal audit emission. Start is called BEFORE client.Do, Finish is
+// called AFTER — so Finish sees the real response status, latency, and
+// any transport error. Unlike OutboundSignAuditHook (which fires
+// per-sign and can't carry the terminal result), this is the contract
+// the DoD's "mcp.tool_outbound_invocation" event needs.
+//
+// Keeping the interface callback-shaped rather than importing
+// ToolInvocationAuditor directly avoids tangling every bridge consumer
+// with the concrete audit implementation — the gateway wires a real
+// auditor adapter; tests wire a recording double.
+type OutboundInvocationAuditor interface {
+	StartRequest(ctx context.Context, method, path string, body []byte) OutboundRequestHandle
+	FinishRequest(h OutboundRequestHandle, statusCode int, responseBody []byte, err error)
+}
+
+// OutboundRequestHandle is the opaque per-request token the auditor
+// returns from StartRequest and reads back in FinishRequest.
+type OutboundRequestHandle interface{}
+
+// WithOutboundInvocationAuditor installs the terminal-response audit
+// hook. Nil is accepted — the bridge then falls back to the
+// sign-time-only OutboundSignAuditHook (if wired) for attempt
+// coverage. Concrete callers (cordum-mcp stdio + gateway test
+// harness) wire an adapter that emits mcp.tool_outbound_invocation on
+// FinishRequest with the real status/latency/body-redacted payload.
+func (b *HTTPServiceBridge) WithOutboundInvocationAuditor(a OutboundInvocationAuditor) *HTTPServiceBridge {
+	if b == nil {
+		return nil
+	}
+	b.outboundInvocationAuditor = a
+	return b
+}
+
 // HTTPServiceBridge maps ServiceBridge methods to gateway HTTP APIs.
 type HTTPServiceBridge struct {
 	baseURL           string
@@ -128,7 +191,42 @@ type HTTPServiceBridge struct {
 	allowedHosts      []string
 	allowPrivateHosts bool
 	httpClient        *http.Client
+
+	// outboundSigner is applied to every outgoing request when non-nil,
+	// attaching the X-Cordum-{Signature,Timestamp,Nonce,KeyId,Tenant,AgentId}
+	// headers. See core/mcp/outbound. Wire via WithOutboundSigner.
+	outboundSigner outboundSigner
+
+	// outboundAgentID is stamped into the signed-request Agent-Id
+	// header. Defaults to the tenantID when empty.
+	outboundAgentID string
+
+	// outboundSignHook is invoked after each successful sign so the
+	// caller can emit an audit event. Nil is a noop.
+	outboundSignHook OutboundSignAuditHook
+
+	// outboundInvocationAuditor brackets every outbound request with
+	// Start/Finish so terminal status + latency + redacted body land
+	// on a mcp.tool_outbound_invocation SIEMEvent. Nil = no audit.
+	outboundInvocationAuditor OutboundInvocationAuditor
 }
+
+// OutboundSigner is the narrow interface the bridge needs from the
+// core/mcp/outbound.Signer. Declaring it here avoids an import cycle
+// (outbound already imports crypto; keeping the bridge free of crypto
+// types lets outbound unit-test without Go pulling mcp back in).
+//
+// Exported so sibling packages (core/mcp/tools, core/mcp/resources)
+// can forward a signer through their GatewayClient builders without
+// duplicating the type. Any *outbound.Signer satisfies this interface.
+type OutboundSigner interface {
+	SignRequest(method string, params []byte, tenant, agentID string) (map[string]string, error)
+}
+
+// outboundSigner kept as an unexported alias for backwards compat
+// with internal callers — safe to remove once every caller migrates
+// to the exported name.
+type outboundSigner = OutboundSigner
 
 // NewHTTPServiceBridge creates an HTTP bridge with secure defaults.
 func NewHTTPServiceBridge(cfg HTTPServiceBridgeConfig) *HTTPServiceBridge {
@@ -347,11 +445,13 @@ func (b *HTTPServiceBridge) doRequest(ctx context.Context, method, path string, 
 	}
 
 	var payload io.Reader
+	var payloadBytes []byte
 	if body != nil {
 		buf := &bytes.Buffer{}
 		if err := json.NewEncoder(buf).Encode(body); err != nil {
 			return 0, nil, fmt.Errorf("encode request: %w", err)
 		}
+		payloadBytes = buf.Bytes()
 		payload = buf
 	}
 
@@ -372,6 +472,52 @@ func (b *HTTPServiceBridge) doRequest(ctx context.Context, method, path string, 
 	}
 	if b.tenantID != "" {
 		req.Header.Set("X-Tenant-ID", b.tenantID)
+	}
+	// Outbound signature (task-ba236f62). Signs method + sha256(body)
+	// + fresh nonce + timestamp + tenant + agent_id. Server-side
+	// middleware verifies via core/mcp/outbound.Verifier. Fails open
+	// on signer error (log + continue) so a transient signing fault
+	// doesn't break the API request — the audit chain records the
+	// unsigned call so operators can detect the regression.
+	if b.outboundSigner != nil {
+		bodyBytes := []byte{}
+		if body != nil {
+			// We already marshalled into payload above but don't have
+			// the bytes directly — re-encode once here. Acceptable cost
+			// given signing is per-request and the body is small.
+			if buf, ok := payload.(*bytes.Buffer); ok {
+				bodyBytes = buf.Bytes()
+			}
+		}
+		agentID := b.outboundAgentID
+		if agentID == "" {
+			agentID = b.tenantID
+		}
+		if signed, err := b.outboundSigner.SignRequest(method+" "+path, bodyBytes, b.tenantID, agentID); err == nil {
+			for k, v := range signed {
+				if v != "" {
+					req.Header.Set(k, v)
+				}
+			}
+			// Epic rail "All MCP tool invocations must produce audit
+			// events" — fire the audit hook just after the signer
+			// succeeds, BEFORE the request actually goes out. Emitting
+			// the event per-sign (rather than per-response) captures
+			// the attempt even when the remote server is unreachable,
+			// which is exactly the case an operator most wants logged.
+			if b.outboundSignHook != nil {
+				b.outboundSignHook(method, path, signed["X-Cordum-Key-Id"], signed["X-Cordum-Nonce"], signed["X-Cordum-Tenant"], signed["X-Cordum-Agent-Id"])
+			}
+		} else {
+			// Fail-CLOSED on signer error (QA reopen fix). The earlier
+			// fail-open behaviour let an attacker who could make the
+			// signer transiently error strip signatures from outbound
+			// calls. Returning the error here means a misbehaving
+			// signer surfaces as a hard request failure — operators
+			// notice immediately instead of auditors finding a gap in
+			// the chain weeks later.
+			return 0, nil, fmt.Errorf("outbound signer failed: %w", err)
+		}
 	}
 	for key, value := range headers {
 		key = strings.TrimSpace(key)
@@ -394,18 +540,41 @@ func (b *HTTPServiceBridge) doRequest(ctx context.Context, method, path string, 
 			Transport:     &http.Transport{DialContext: pinnedDialer(pinnedIPs)},
 		}
 	}
+	// Start the invocation audit BEFORE client.Do so latency is measured
+	// across the full transport. FinishRequest always fires (defer) so
+	// both the success path and every error path (DNS failure, TLS
+	// failure, body-read failure) produce a terminal SIEMEvent — the
+	// DoD requires "every outbound call produces an audit event", which
+	// must include transport-level failures that previously slipped
+	// through the per-sign hook.
+	var handle OutboundRequestHandle
+	if b.outboundInvocationAuditor != nil {
+		handle = b.outboundInvocationAuditor.StartRequest(ctx, method, path, payloadBytes)
+	}
+	status := 0
+	var data []byte
+	var callErr error
+	defer func() {
+		if b.outboundInvocationAuditor != nil {
+			b.outboundInvocationAuditor.FinishRequest(handle, status, data, callErr)
+		}
+	}()
+
 	// #nosec G704 -- URL is validated and DNS-pinned via validateAndResolveOutboundURL above.
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, nil, fmt.Errorf("request failed: %w", err)
+		callErr = fmt.Errorf("request failed: %w", err)
+		return 0, nil, callErr
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	data, err := io.ReadAll(resp.Body)
+	data, err = io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, nil, fmt.Errorf("read response body: %w", err)
+		callErr = fmt.Errorf("read response body: %w", err)
+		return 0, nil, callErr
 	}
-	return resp.StatusCode, data, nil
+	status = resp.StatusCode
+	return status, data, nil
 }
 
 // DirectServiceBridgeConfig allows callers to bind direct in-process handlers.
@@ -416,6 +585,17 @@ type DirectServiceBridgeConfig struct {
 	ApproveJobFunc      func(ctx context.Context, jobID string, note string) error
 	RejectJobFunc       func(ctx context.Context, jobID string, reason string) error
 	SimulatePolicyFunc  func(ctx context.Context, req PolicySimInput) (*PolicySimOutput, error)
+
+	// Mutating hooks — kept nil by default so an in-process bridge
+	// configured for read-only paths returns ErrBridgeUnavailable on
+	// a mutating call instead of silently no-opping.
+	CreateWorkflowFunc      func(ctx context.Context, req CreateWorkflowInput) (*CreateWorkflowOutput, error)
+	InstallPackFunc         func(ctx context.Context, req InstallPackInput) (*InstallPackOutput, error)
+	UninstallPackFunc       func(ctx context.Context, req UninstallPackInput) error
+	RegisterAgentFunc       func(ctx context.Context, req RegisterAgentInput) (*RegisterAgentOutput, error)
+	UpdatePolicyBundleFunc  func(ctx context.Context, req UpdatePolicyBundleInput) (*UpdatePolicyBundleOutput, error)
+	RevokeWorkerSessionFunc func(ctx context.Context, req RevokeWorkerSessionInput) error
+	SetAgentScopeFunc       func(ctx context.Context, req SetAgentScopeInput) (*SetAgentScopeOutput, error)
 }
 
 // DirectServiceBridge is an in-process ServiceBridge based on function hooks.
@@ -426,17 +606,33 @@ type DirectServiceBridge struct {
 	approveJob      func(ctx context.Context, jobID string, note string) error
 	rejectJob       func(ctx context.Context, jobID string, reason string) error
 	simulatePolicy  func(ctx context.Context, req PolicySimInput) (*PolicySimOutput, error)
+
+	// Mutating hooks
+	createWorkflow      func(ctx context.Context, req CreateWorkflowInput) (*CreateWorkflowOutput, error)
+	installPack         func(ctx context.Context, req InstallPackInput) (*InstallPackOutput, error)
+	uninstallPack       func(ctx context.Context, req UninstallPackInput) error
+	registerAgent       func(ctx context.Context, req RegisterAgentInput) (*RegisterAgentOutput, error)
+	updatePolicyBundle  func(ctx context.Context, req UpdatePolicyBundleInput) (*UpdatePolicyBundleOutput, error)
+	revokeWorkerSession func(ctx context.Context, req RevokeWorkerSessionInput) error
+	setAgentScope       func(ctx context.Context, req SetAgentScopeInput) (*SetAgentScopeOutput, error)
 }
 
 // NewDirectServiceBridge creates a direct bridge.
 func NewDirectServiceBridge(cfg DirectServiceBridgeConfig) *DirectServiceBridge {
 	return &DirectServiceBridge{
-		submitJob:       cfg.SubmitJobFunc,
-		cancelJob:       cfg.CancelJobFunc,
-		triggerWorkflow: cfg.TriggerWorkflowFunc,
-		approveJob:      cfg.ApproveJobFunc,
-		rejectJob:       cfg.RejectJobFunc,
-		simulatePolicy:  cfg.SimulatePolicyFunc,
+		submitJob:           cfg.SubmitJobFunc,
+		cancelJob:           cfg.CancelJobFunc,
+		triggerWorkflow:     cfg.TriggerWorkflowFunc,
+		approveJob:          cfg.ApproveJobFunc,
+		rejectJob:           cfg.RejectJobFunc,
+		simulatePolicy:      cfg.SimulatePolicyFunc,
+		createWorkflow:      cfg.CreateWorkflowFunc,
+		installPack:         cfg.InstallPackFunc,
+		uninstallPack:       cfg.UninstallPackFunc,
+		registerAgent:       cfg.RegisterAgentFunc,
+		updatePolicyBundle:  cfg.UpdatePolicyBundleFunc,
+		revokeWorkerSession: cfg.RevokeWorkerSessionFunc,
+		setAgentScope:       cfg.SetAgentScopeFunc,
 	}
 }
 
