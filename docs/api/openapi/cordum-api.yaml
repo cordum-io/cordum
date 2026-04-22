@@ -70,30 +70,142 @@ security:
 - apiKey: []
 - bearerAuth: []
 paths:
-  # Agent Identity CRUD. The gateway handlers live in handlers_agents.go;
-  # the full request/response shapes will ship in a follow-up OpenAPI
-  # authoring task. x-any-method is used here as a placeholder so the
-  # openapi-audit tool accepts the paths as documented while the schema
-  # detail lands.
+  # Agent Identity CRUD. The full request / response schemas ship in a
+  # follow-up OpenAPI authoring pass; for now each op carries a minimal
+  # shape that satisfies the conformance-fixture validator (which keys
+  # off operationId + status) without overspecifying the body contract.
   /api/v1/agents:
-    x-any-method: true
-    summary: Agent Identity CRUD (list + create)
-    description: |
-      Admin CRUD for agent identity records. Handlers in
-      `core/controlplane/gateway/handlers_agents.go`. Request/response
-      bodies are tracked for schema docs in a follow-up OpenAPI task.
+    get:
+      operationId: listAgents
+      summary: List agent identities
+      tags: [Agents]
+      responses:
+        '200':
+          description: Agents
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createAgent
+      summary: Create an agent identity
+      tags: [Agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/v1/agents/{id}:
-    x-any-method: true
-    summary: Agent Identity by ID (get / update / delete)
-    description: |
-      Admin CRUD for a single agent identity. Handlers in
-      `core/controlplane/gateway/handlers_agents.go`.
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getAgent
+      summary: Get an agent identity
+      tags: [Agents]
+      responses:
+        '200':
+          description: Agent
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: updateAgent
+      summary: Update an agent identity
+      tags: [Agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteAgent
+      summary: Delete an agent identity
+      tags: [Agents]
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/v1/agents/{id}/stats:
-    x-any-method: true
-    summary: Agent statistics
-    description: |
-      Per-agent activity counters and trust snapshot. Handler in
-      `core/controlplane/gateway/handlers_agents.go`.
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getAgentStats
+      summary: Get per-agent statistics
+      tags: [Agents]
+      responses:
+        '200':
+          description: Stats
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/v1/auth/config:
     get:
       operationId: getAuthConfig
