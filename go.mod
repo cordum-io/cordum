@@ -1,13 +1,14 @@
 module github.com/cordum/cordum
 
-go 1.25.8
+go 1.25.9
 
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1
-	github.com/cordum-io/cap/v2 v2.9.0
+	github.com/cordum-io/cap/v2 v2.9.3
 	github.com/cordum/cordum/sdk v0.0.0
 	github.com/crewjam/saml v0.5.1
 	github.com/expr-lang/expr v1.17.8
+	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/nats-io/nats-server/v2 v2.12.6

@@ -1,0 +1,11 @@
+{
+  "terminal.integrated.env.linux": {
+    "NODE_EXTRA_CA_CERTS": ""
+  },
+  "terminal.integrated.env.osx": {
+    "NODE_EXTRA_CA_CERTS": ""
+  },
+  "terminal.integrated.env.windows": {
+    "NODE_EXTRA_CA_CERTS": ""
+  }
+}

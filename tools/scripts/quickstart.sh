@@ -4,13 +4,15 @@
 #
 # Usage:
 #   ./tools/scripts/quickstart.sh [--clean] [--artifacts-dir DIR] [--skip-build]
-#                                 [--skip-smoke] [--health-timeout N]
+#                                 [--skip-smoke] [--skip-doctor] [--health-timeout N]
 #
 # Flags:
 #   --clean           Tear down existing stack (compose down -v) before starting
 #   --artifacts-dir   Directory for deploy artifacts (logs, status snapshots)
+#                     Includes predeploy baseline, failure snapshot, and postdeploy snapshot.
 #   --skip-build      Reuse existing images (do not rebuild)
-#   --skip-smoke      Skip the post-deploy smoke test
+#   --skip-smoke      Skip the post-deploy smoke test (also skips doctor)
+#   --skip-doctor     Skip the post-deploy `cordumctl doctor` verification
 #   --health-timeout  Seconds to wait for health readiness (default: 120)
 #
 # This script auto-creates .env, generates credentials, and starts the full
@@ -46,55 +48,6 @@ gen_hex() {
 require docker
 require curl
 
-# Check Go version (needed for cert generation and cordumctl)
-if command -v go >/dev/null 2>&1; then
-  go_version="$(go version | grep -oP 'go\K[0-9]+\.[0-9]+')"
-  go_major="${go_version%%.*}"
-  go_minor="${go_version#*.}"
-  if [[ "$go_major" -lt 1 ]] || { [[ "$go_major" -eq 1 ]] && [[ "$go_minor" -lt 24 ]]; }; then
-    die "Go 1.24+ required (found go${go_version}). Upgrade at https://go.dev/dl/"
-  fi
-fi
-
-# Check Docker is running
-if ! docker info >/dev/null 2>&1; then
-  die "cannot connect to the Docker daemon. Start Docker Desktop or the docker service."
-fi
-
-# --- Auto-create .env if it doesn't exist ---
-if [[ ! -f ".env" ]]; then
-  if [[ -f ".env.example" ]]; then
-    log "creating .env from .env.example"
-    cp .env.example .env
-  else
-    log "creating minimal .env"
-    touch .env
-  fi
-
-  # Auto-generate API key
-  if ! grep -q '^CORDUM_API_KEY=.\+' .env 2>/dev/null; then
-    generated_key="$(gen_hex 32)"
-    if grep -q '^CORDUM_API_KEY=' .env 2>/dev/null; then
-      sed -i "s/^CORDUM_API_KEY=.*/CORDUM_API_KEY=${generated_key}/" .env
-    else
-      echo "CORDUM_API_KEY=${generated_key}" >> .env
-    fi
-    log "generated API key"
-  fi
-
-  # Auto-generate Redis password (not the weak default)
-  if grep -q '^REDIS_PASSWORD=cordum-dev' .env 2>/dev/null; then
-    generated_redis_pw="$(gen_hex 16)"
-    sed -i "s/^REDIS_PASSWORD=cordum-dev/REDIS_PASSWORD=${generated_redis_pw}/" .env
-    log "generated Redis password (replaced weak default)"
-  fi
-fi
-
-# Load .env into environment for this script
-set -a
-source .env 2>/dev/null || true
-set +a
-
 compose_cmd=()
 if docker compose version >/dev/null 2>&1; then
   compose_cmd=(docker compose)
@@ -104,6 +57,62 @@ elif command -v docker-compose >/dev/null 2>&1; then
 else
   die "docker compose plugin required"
 fi
+
+if ! docker info >/dev/null 2>&1; then
+  die "cannot connect to the Docker daemon. Ensure Docker is running."
+fi
+
+preflight_deploy() {
+  local compose_files="$1"
+  local allow_enterprise="$2"
+  local api_key="$3"
+  local auth_enabled="$4"
+  local admin_password="$5"
+  local admin_email="$6"
+  local file
+
+  log "running pre-flight deployment checks"
+  log "docker daemon: reachable"
+  log "compose command: ${compose_cmd[*]}"
+
+  if [[ -z "${api_key}" ]]; then
+    die "CORDUM_API_KEY is required; export it before running quickstart."
+  fi
+
+  if [[ -z "${REDIS_PASSWORD:-}" ]]; then
+    die "REDIS_PASSWORD is required; export REDIS_PASSWORD before running quickstart."
+  fi
+
+  # Optional auth vars become required only when user auth is enabled.
+  local auth_flag
+  auth_flag="$(echo "${auth_enabled}" | tr '[:upper:]' '[:lower:]')"
+  if [[ "${auth_flag}" == "1" || "${auth_flag}" == "true" || "${auth_flag}" == "yes" ]]; then
+    if [[ -z "${admin_password}" ]]; then
+      die "CORDUM_USER_AUTH_ENABLED=true but CORDUM_ADMIN_PASSWORD is empty."
+    fi
+    if [[ -z "${admin_email}" ]]; then
+      log "warning: CORDUM_USER_AUTH_ENABLED=true but CORDUM_ADMIN_EMAIL is empty."
+      log "         Set CORDUM_ADMIN_EMAIL for clearer operator identity metadata."
+    fi
+  fi
+
+  if [[ -z "${compose_files}" ]]; then
+    die "CORDUM_COMPOSE_FILES resolved to empty; provide at least docker-compose.yml"
+  fi
+
+  log "compose file set:"
+  for file in ${compose_files}; do
+    if [[ "${allow_enterprise}" != "1" && "${file}" == *enterprise* ]]; then
+      die "enterprise compose overrides are not supported in quickstart (OSS only). Set CORDUM_ALLOW_ENTERPRISE=1 to override."
+    fi
+    if [[ ! -f "${file}" ]]; then
+      die "compose file not found: ${file}"
+    fi
+    log "  - ${file}"
+  done
+
+  log "pre-flight checks passed"
+}
 
 port_in_use() {
   local port="$1"
@@ -174,6 +183,7 @@ wait_for_health() {
 # Capture deploy artifacts: compose status, service logs, and env snapshot
 capture_artifacts() {
   local dir="$1"
+  local phase="${2:-deploy}"
   local timestamp
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 
@@ -183,22 +193,22 @@ capture_artifacts() {
 
   # Container status
   "${compose_cmd[@]}" ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}" \
-    > "${dir}/compose-status-${timestamp}.txt" 2>/dev/null || \
-    "${compose_cmd[@]}" ps > "${dir}/compose-status-${timestamp}.txt" 2>/dev/null || true
+    > "${dir}/${phase}-compose-status-${timestamp}.txt" 2>/dev/null || \
+    "${compose_cmd[@]}" ps > "${dir}/${phase}-compose-status-${timestamp}.txt" 2>/dev/null || true
 
   # Service logs (last 200 lines per service, no follow)
   for svc in nats redis context-engine safety-kernel scheduler api-gateway workflow-engine dashboard; do
     "${compose_cmd[@]}" logs --tail=200 --no-color "${svc}" \
-      > "${dir}/${svc}-${timestamp}.log" 2>&1 || true
+      > "${dir}/${phase}-${svc}-${timestamp}.log" 2>&1 || true
   done
 
   # Docker image versions
   "${compose_cmd[@]}" images \
-    > "${dir}/compose-images-${timestamp}.txt" 2>/dev/null || true
+    > "${dir}/${phase}-compose-images-${timestamp}.txt" 2>/dev/null || true
 
   # Git commit (if in a repo)
   if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
-    git log --oneline -5 > "${dir}/git-log-${timestamp}.txt" 2>/dev/null || true
+    git log --oneline -5 > "${dir}/${phase}-git-log-${timestamp}.txt" 2>/dev/null || true
   fi
 
   log "artifacts captured (${dir})"
@@ -215,6 +225,7 @@ CLEAN=0
 ARTIFACTS_DIR=""
 SKIP_BUILD=${CORDUM_SKIP_BUILD:-0}
 SKIP_SMOKE=0
+SKIP_DOCTOR=0
 HEALTH_TIMEOUT=120
 
 while [[ $# -gt 0 ]]; do
@@ -223,6 +234,7 @@ while [[ $# -gt 0 ]]; do
     --artifacts-dir) ARTIFACTS_DIR="$2"; shift 2 ;;
     --skip-build)    SKIP_BUILD=1; shift ;;
     --skip-smoke)    SKIP_SMOKE=1; shift ;;
+    --skip-doctor)   SKIP_DOCTOR=1; shift ;;
     --health-timeout) HEALTH_TIMEOUT="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,/^# =====/{ /^#/s/^# //p }' "${BASH_SOURCE[0]}"
@@ -245,19 +257,26 @@ warn_port 6379 "redis"
 
 # --- Env vars ---
 API_KEY=${CORDUM_API_KEY:-${API_KEY:-}}
-if [[ -z "${API_KEY}" ]]; then
-  # Last resort: generate on the fly if .env creation somehow missed it
-  API_KEY="$(gen_hex 32)"
-  export CORDUM_API_KEY="${API_KEY}"
-  log "generated API key on the fly (set CORDUM_API_KEY to persist)"
-fi
 export CORDUM_API_KEY="${API_KEY}"
+REDIS_PASSWORD_VAL=${REDIS_PASSWORD:-}
+export REDIS_PASSWORD="${REDIS_PASSWORD_VAL}"
 ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}
 TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
 COMPOSE_FILES=${CORDUM_COMPOSE_FILES:-docker-compose.yml}
 ALLOW_ENTERPRISE=${CORDUM_ALLOW_ENTERPRISE:-0}
+AUTH_ENABLED=${CORDUM_USER_AUTH_ENABLED:-false}
+ADMIN_PASSWORD=${CORDUM_ADMIN_PASSWORD:-}
+ADMIN_EMAIL=${CORDUM_ADMIN_EMAIL:-}
 export COMPOSE_HTTP_TIMEOUT=${COMPOSE_HTTP_TIMEOUT:-1800}
 export DOCKER_CLIENT_TIMEOUT=${DOCKER_CLIENT_TIMEOUT:-1800}
+
+preflight_deploy "${COMPOSE_FILES}" "${ALLOW_ENTERPRISE}" "${API_KEY}" "${AUTH_ENABLED}" "${ADMIN_PASSWORD}" "${ADMIN_EMAIL}"
+
+# --- Capture pre-deploy baseline ---
+if [[ -n "${ARTIFACTS_DIR}" ]]; then
+  log "capturing pre-deploy baseline"
+  capture_artifacts "${ARTIFACTS_DIR}" "predeploy"
+fi
 
 # --- TLS certificate generation ---
 # Generate self-signed certs if they don't exist yet.
@@ -302,9 +321,6 @@ fi
 # --- Build compose args ---
 compose_args=()
 for file in ${COMPOSE_FILES}; do
-  if [[ "${ALLOW_ENTERPRISE}" != "1" && "${file}" == *enterprise* ]]; then
-    die "enterprise compose overrides are not supported in quickstart (OSS only). Set CORDUM_ALLOW_ENTERPRISE=1 to override."
-  fi
   compose_args+=("-f" "${file}")
 done
 compose_args+=("up" "-d")
@@ -321,7 +337,7 @@ if ! wait_for_health "${HEALTH_TIMEOUT}" "${API_BASE}" "${API_KEY}" "${TENANT_ID
   log "stack did not become healthy within ${HEALTH_TIMEOUT}s"
   # Capture artifacts even on failure for debugging
   if [[ -n "${ARTIFACTS_DIR}" ]]; then
-    capture_artifacts "${ARTIFACTS_DIR}"
+    capture_artifacts "${ARTIFACTS_DIR}" "deploy-failed"
   fi
   exit 1
 fi
@@ -368,7 +384,7 @@ echo ""
 
 # --- Capture artifacts ---
 if [[ -n "${ARTIFACTS_DIR}" ]]; then
-  capture_artifacts "${ARTIFACTS_DIR}"
+  capture_artifacts "${ARTIFACTS_DIR}" "postdeploy"
 fi
 
 # --- Smoke test ---
@@ -378,6 +394,30 @@ else
   echo ""
   log "running smoke test"
   CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" ./tools/scripts/platform_smoke.sh
+fi
+
+# --- Doctor (install verification) ---
+# Optional final check — runs only when `cordumctl` is on PATH so fresh
+# clones that haven't built the CLI yet still finish quickstart cleanly.
+# --skip-smoke implies --skip-doctor so users who asked to skip
+# verification get a uniformly verification-free run.
+if [[ "${SKIP_SMOKE}" == "1" || "${SKIP_DOCTOR}" == "1" ]]; then
+  log "skipping doctor verification"
+elif ! command -v cordumctl >/dev/null 2>&1; then
+  log "cordumctl not on PATH — skipping doctor (build it with: make build SERVICE=cordumctl)"
+else
+  echo ""
+  log "running cordumctl doctor (post-install verification)"
+  doctor_env=(CORDUM_API_KEY="${API_KEY}" CORDUM_TENANT_ID="${TENANT_ID}")
+  if [[ -n "${TLS_CA}" ]]; then
+    doctor_env+=(CORDUM_GATEWAY="https://127.0.0.1:8081")
+    env "${doctor_env[@]}" cordumctl doctor --timeout 30 --cacert ./certs/ca/ca.crt || \
+      log "cordumctl doctor reported issues — see docs/troubleshooting/install.md"
+  else
+    doctor_env+=(CORDUM_GATEWAY="http://127.0.0.1:8081")
+    env "${doctor_env[@]}" cordumctl doctor --timeout 30 || \
+      log "cordumctl doctor reported issues — see docs/troubleshooting/install.md"
+  fi
 fi
 
 echo ""
