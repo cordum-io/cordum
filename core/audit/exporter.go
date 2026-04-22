@@ -62,6 +62,12 @@ const (
 	// warn mode and session-token authority disagrees with legacy heartbeat
 	// recency for the same worker liveness decision.
 	EventHeartbeatDisagreement = "heartbeat_disagreement"
+	// EventApprovalRevisionMismatch is emitted when the scheduler's
+	// approval fast-path rejects a job because the approval_snapshot
+	// label does not match the stored SafetyDecisionRecord.PolicySnapshot.
+	// Signals that policy drifted between approval time and dispatch time
+	// and the fast-path refused to short-circuit on stale constraints.
+	EventApprovalRevisionMismatch = "approval.revision_mismatch"
 	EventWorkerTrustChange     = "worker_trust_change"
 	EventTopicRegistered       = "topic_registered"
 	EventTopicUnregistered     = "topic_unregistered"
