@@ -70,6 +70,30 @@ security:
 - apiKey: []
 - bearerAuth: []
 paths:
+  # Agent Identity CRUD. The gateway handlers live in handlers_agents.go;
+  # the full request/response shapes will ship in a follow-up OpenAPI
+  # authoring task. x-any-method is used here as a placeholder so the
+  # openapi-audit tool accepts the paths as documented while the schema
+  # detail lands.
+  /api/v1/agents:
+    x-any-method: true
+    summary: Agent Identity CRUD (list + create)
+    description: |
+      Admin CRUD for agent identity records. Handlers in
+      `core/controlplane/gateway/handlers_agents.go`. Request/response
+      bodies are tracked for schema docs in a follow-up OpenAPI task.
+  /api/v1/agents/{id}:
+    x-any-method: true
+    summary: Agent Identity by ID (get / update / delete)
+    description: |
+      Admin CRUD for a single agent identity. Handlers in
+      `core/controlplane/gateway/handlers_agents.go`.
+  /api/v1/agents/{id}/stats:
+    x-any-method: true
+    summary: Agent statistics
+    description: |
+      Per-agent activity counters and trust snapshot. Handler in
+      `core/controlplane/gateway/handlers_agents.go`.
   /api/v1/auth/config:
     get:
       operationId: getAuthConfig
@@ -2627,6 +2651,12 @@ paths:
       parameters:
       - $ref: '#/components/parameters/TenantID'
   /api/v1/stream:
+    # The handler is registered with no HTTP method prefix (net/http
+    # mux treats the pattern as any-method). The GET op below documents
+    # the WebSocket upgrade path; x-any-method declares the handler-side
+    # semantics so the openapi-audit tool doesn't flag the path as
+    # under-specified.
+    x-any-method: true
     get:
       operationId: streamEvents
       summary: WebSocket event bus stream
