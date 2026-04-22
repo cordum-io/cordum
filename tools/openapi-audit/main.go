@@ -372,28 +372,28 @@ func diff(routes []Route, ops []SpecOp, anyMethod map[string]bool) ([]Route, []S
 }
 
 func writeText(w *os.File, report Report) {
-	fmt.Fprintf(w, "Routes seen:   %d\n", report.Routes)
-	fmt.Fprintf(w, "Spec ops seen: %d\n", report.SpecOps)
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintf(w, "Routes seen:   %d\n", report.Routes)
+	_, _ = fmt.Fprintf(w, "Spec ops seen: %d\n", report.SpecOps)
+	_, _ = fmt.Fprintln(w)
 	if len(report.MissingFromSpec) == 0 {
-		fmt.Fprintln(w, "Routes missing from spec: (none)")
+		_, _ = fmt.Fprintln(w, "Routes missing from spec: (none)")
 	} else {
-		fmt.Fprintln(w, "Routes missing from spec:")
+		_, _ = fmt.Fprintln(w, "Routes missing from spec:")
 		for _, r := range report.MissingFromSpec {
 			m := r.Method
 			if m == "" {
 				m = "ANY"
 			}
-			fmt.Fprintf(w, "  %-6s %s  (%s:%d)\n", strings.ToUpper(m), r.Path, r.File, r.Line)
+			_, _ = fmt.Fprintf(w, "  %-6s %s  (%s:%d)\n", strings.ToUpper(m), r.Path, r.File, r.Line)
 		}
 	}
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 	if len(report.UnroutedInSpec) == 0 {
-		fmt.Fprintln(w, "Spec ops without a route: (none)")
+		_, _ = fmt.Fprintln(w, "Spec ops without a route: (none)")
 	} else {
-		fmt.Fprintln(w, "Spec ops without a route:")
+		_, _ = fmt.Fprintln(w, "Spec ops without a route:")
 		for _, op := range report.UnroutedInSpec {
-			fmt.Fprintf(w, "  %-6s %s\n", strings.ToUpper(op.Method), op.Path)
+			_, _ = fmt.Fprintf(w, "  %-6s %s\n", strings.ToUpper(op.Method), op.Path)
 		}
 	}
 }
@@ -403,12 +403,12 @@ func writeText(w *os.File, report Report) {
 func run(specPath, gatewayDir string, asJSON bool, stdout, stderr *os.File) int {
 	routes, err := collectRoutes(gatewayDir)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 2
 	}
 	ops, anyMethod, err := loadSpecOps(specPath)
 	if err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 2
 	}
 	missing, unrouted := diff(routes, ops, anyMethod)
@@ -422,7 +422,7 @@ func run(specPath, gatewayDir string, asJSON bool, stdout, stderr *os.File) int 
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(report); err != nil {
-			fmt.Fprintln(stderr, err)
+			_, _ = fmt.Fprintln(stderr, err)
 			return 2
 		}
 	} else {
