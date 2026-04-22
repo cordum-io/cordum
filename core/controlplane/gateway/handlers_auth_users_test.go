@@ -7,31 +7,33 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 )
 
 type stubUserStoreEmptyTenant struct{}
 
-func (s *stubUserStoreEmptyTenant) GetByUsername(context.Context, string, string) (*User, error) {
-	return nil, ErrUserNotFound
+func (s *stubUserStoreEmptyTenant) GetByUsername(context.Context, string, string) (*auth.User, error) {
+	return nil, auth.ErrUserNotFound
 }
 
-func (s *stubUserStoreEmptyTenant) GetByEmail(context.Context, string, string) (*User, error) {
-	return nil, ErrUserNotFound
+func (s *stubUserStoreEmptyTenant) GetByEmail(context.Context, string, string) (*auth.User, error) {
+	return nil, auth.ErrUserNotFound
 }
 
-func (s *stubUserStoreEmptyTenant) GetByID(context.Context, string) (*User, error) {
-	return nil, ErrUserNotFound
+func (s *stubUserStoreEmptyTenant) GetByID(context.Context, string) (*auth.User, error) {
+	return nil, auth.ErrUserNotFound
 }
 
-func (s *stubUserStoreEmptyTenant) Create(context.Context, *User, string) error {
+func (s *stubUserStoreEmptyTenant) Create(context.Context, *auth.User, string) error {
 	return nil
 }
 
-func (s *stubUserStoreEmptyTenant) List(context.Context, string) ([]*User, error) {
-	return []*User{}, nil
+func (s *stubUserStoreEmptyTenant) List(context.Context, string) ([]*auth.User, error) {
+	return []*auth.User{}, nil
 }
 
-func (s *stubUserStoreEmptyTenant) Update(context.Context, *User) error {
+func (s *stubUserStoreEmptyTenant) Update(context.Context, *auth.User) error {
 	return nil
 }
 
@@ -43,7 +45,7 @@ func (s *stubUserStoreEmptyTenant) UpdatePassword(context.Context, string, strin
 	return nil
 }
 
-func (s *stubUserStoreEmptyTenant) ValidatePassword(context.Context, *User, string) bool {
+func (s *stubUserStoreEmptyTenant) ValidatePassword(context.Context, *auth.User, string) bool {
 	return false
 }
 
@@ -52,13 +54,13 @@ func (s *stubUserStoreEmptyTenant) Close() error {
 }
 
 func newUserHandlerServer() *server {
-	basicAuth := &BasicAuthProvider{}
+	basicAuth := &auth.BasicAuthProvider{}
 	basicAuth.SetUserStore(&stubUserStoreEmptyTenant{})
 	return &server{auth: basicAuth}
 }
 
-func requestWithAuth(req *http.Request, auth *AuthContext) *http.Request {
-	return req.WithContext(context.WithValue(req.Context(), authContextKey{}, auth))
+func requestWithAuth(req *http.Request, authCtx *auth.AuthContext) *http.Request {
+	return req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
 }
 
 func decodeError(t *testing.T, rec *httptest.ResponseRecorder) string {
@@ -74,7 +76,7 @@ func decodeError(t *testing.T, rec *httptest.ResponseRecorder) string {
 func TestListUsers_EmptyTenant(t *testing.T) {
 	s := newUserHandlerServer()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-	req = requestWithAuth(req, &AuthContext{Tenant: "", Role: "admin"})
+	req = requestWithAuth(req, &auth.AuthContext{Tenant: "", Role: "admin"})
 	rec := httptest.NewRecorder()
 
 	s.handleListUsers(rec, req)
@@ -91,7 +93,7 @@ func TestUpdateUser_EmptyTenant(t *testing.T) {
 	s := newUserHandlerServer()
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/users/user-1", strings.NewReader(`{}`))
 	req.SetPathValue("id", "user-1")
-	req = requestWithAuth(req, &AuthContext{Tenant: "", Role: "admin"})
+	req = requestWithAuth(req, &auth.AuthContext{Tenant: "", Role: "admin"})
 	rec := httptest.NewRecorder()
 
 	s.handleUpdateUser(rec, req)
@@ -108,7 +110,7 @@ func TestDeleteUser_EmptyTenant(t *testing.T) {
 	s := newUserHandlerServer()
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/user-1", nil)
 	req.SetPathValue("id", "user-1")
-	req = requestWithAuth(req, &AuthContext{Tenant: "", Role: "admin"})
+	req = requestWithAuth(req, &auth.AuthContext{Tenant: "", Role: "admin"})
 	rec := httptest.NewRecorder()
 
 	s.handleDeleteUser(rec, req)

@@ -38,19 +38,21 @@ var validAgentStatuses = map[string]bool{
 
 // AgentIdentity is the canonical agent identity resource stored in Redis.
 type AgentIdentity struct {
-	ID                  string   `json:"id"`
-	Name                string   `json:"name"`
-	Description         string   `json:"description,omitempty"`
-	Owner               string   `json:"owner"`
-	Team                string   `json:"team,omitempty"`
-	RiskTier            string   `json:"risk_tier"`
-	AllowedTopics       []string `json:"allowed_topics,omitempty"`
-	AllowedPools        []string `json:"allowed_pools,omitempty"`
-	AllowedTools        []string `json:"allowed_tools,omitempty"`
-	DataClassifications []string `json:"data_classifications,omitempty"`
-	Status              string   `json:"status"`
-	CreatedAt           string   `json:"created_at"`
-	UpdatedAt           string   `json:"updated_at"`
+	ID                       string   `json:"id"`
+	TenantID                 string   `json:"tenant_id,omitempty"`
+	Name                     string   `json:"name"`
+	Description              string   `json:"description,omitempty"`
+	Owner                    string   `json:"owner"`
+	Team                     string   `json:"team,omitempty"`
+	RiskTier                 string   `json:"risk_tier"`
+	AllowedTopics            []string `json:"allowed_topics,omitempty"`
+	AllowedPools             []string `json:"allowed_pools,omitempty"`
+	AllowedTools             []string `json:"allowed_tools,omitempty"`
+	PreapprovedMutatingTools []string `json:"preapproved_mutating_tools,omitempty"`
+	DataClassifications      []string `json:"data_classifications,omitempty"`
+	Status                   string   `json:"status"`
+	CreatedAt                string   `json:"created_at"`
+	UpdatedAt                string   `json:"updated_at"`
 }
 
 // AgentIdentityFilter controls list filtering.
@@ -94,8 +96,8 @@ func NewAgentIdentityStoreFromClient(client redis.UniversalClient) *AgentIdentit
 
 // Create validates and stores a new agent identity.
 func (s *AgentIdentityStore) Create(ctx context.Context, identity AgentIdentity) (*AgentIdentity, error) {
-	if s == nil {
-		return nil, fmt.Errorf("agent identity store unavailable")
+	if s == nil || s.client == nil {
+		return nil, fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
 	identity = normalizeAgentIdentity(identity)
 
@@ -134,8 +136,8 @@ func (s *AgentIdentityStore) Create(ctx context.Context, identity AgentIdentity)
 
 // Get returns the agent identity by ID, or nil if not found.
 func (s *AgentIdentityStore) Get(ctx context.Context, id string) (*AgentIdentity, error) {
-	if s == nil {
-		return nil, fmt.Errorf("agent identity store unavailable")
+	if s == nil || s.client == nil {
+		return nil, fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -159,8 +161,8 @@ func (s *AgentIdentityStore) Get(ctx context.Context, id string) (*AgentIdentity
 
 // List returns agent identities with cursor-based pagination and optional filtering.
 func (s *AgentIdentityStore) List(ctx context.Context, cursor string, limit int, filter AgentIdentityFilter) ([]*AgentIdentity, string, error) {
-	if s == nil {
-		return nil, "", fmt.Errorf("agent identity store unavailable")
+	if s == nil || s.client == nil {
+		return nil, "", fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
 	if limit <= 0 {
 		limit = defaultAgentListLimit
@@ -301,8 +303,8 @@ func (s *AgentIdentityStore) List(ctx context.Context, cursor string, limit int,
 
 // Update applies partial updates to an existing agent identity.
 func (s *AgentIdentityStore) Update(ctx context.Context, id string, updates AgentIdentity) (*AgentIdentity, error) {
-	if s == nil {
-		return nil, fmt.Errorf("agent identity store unavailable")
+	if s == nil || s.client == nil {
+		return nil, fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -344,6 +346,9 @@ func (s *AgentIdentityStore) Update(ctx context.Context, id string, updates Agen
 	if updates.AllowedTools != nil {
 		existing.AllowedTools = updates.AllowedTools
 	}
+	if updates.PreapprovedMutatingTools != nil {
+		existing.PreapprovedMutatingTools = updates.PreapprovedMutatingTools
+	}
 	if updates.DataClassifications != nil {
 		existing.DataClassifications = updates.DataClassifications
 	}
@@ -367,8 +372,8 @@ func (s *AgentIdentityStore) Update(ctx context.Context, id string, updates Agen
 
 // Delete soft-deletes an agent identity by setting status to "revoked".
 func (s *AgentIdentityStore) Delete(ctx context.Context, id string) error {
-	if s == nil {
-		return fmt.Errorf("agent identity store unavailable")
+	if s == nil || s.client == nil {
+		return fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -398,8 +403,8 @@ func (s *AgentIdentityStore) Delete(ctx context.Context, id string) error {
 
 // GetByWorkerID returns the agent identity linked to the given worker ID, or nil if unlinked.
 func (s *AgentIdentityStore) GetByWorkerID(ctx context.Context, workerID string) (*AgentIdentity, error) {
-	if s == nil {
-		return nil, fmt.Errorf("agent identity store unavailable")
+	if s == nil || s.client == nil {
+		return nil, fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
 	workerID = strings.TrimSpace(workerID)
 	if workerID == "" {
@@ -418,27 +423,33 @@ func (s *AgentIdentityStore) GetByWorkerID(ctx context.Context, workerID string)
 
 // LinkWorker creates a reverse-lookup mapping from worker ID to agent identity ID.
 func (s *AgentIdentityStore) LinkWorker(ctx context.Context, agentID, workerID string) error {
-	if s == nil {
-		return fmt.Errorf("agent identity store unavailable")
+	if s == nil || s.client == nil {
+		return fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
 	agentID = strings.TrimSpace(agentID)
 	workerID = strings.TrimSpace(workerID)
 	if agentID == "" || workerID == "" {
 		return fmt.Errorf("agent id and worker id required")
 	}
-	return s.client.Set(ctx, agentByWorkerKeyPrefix+workerID, agentID, 0).Err()
+	if err := s.client.Set(ctx, agentByWorkerKeyPrefix+workerID, agentID, 0).Err(); err != nil {
+		return fmt.Errorf("link worker %s -> %s: %w", workerID, agentID, err)
+	}
+	return nil
 }
 
 // UnlinkWorker removes the reverse-lookup mapping for a worker ID.
 func (s *AgentIdentityStore) UnlinkWorker(ctx context.Context, workerID string) error {
-	if s == nil {
-		return fmt.Errorf("agent identity store unavailable")
+	if s == nil || s.client == nil {
+		return fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
 	workerID = strings.TrimSpace(workerID)
 	if workerID == "" {
 		return fmt.Errorf("worker id required")
 	}
-	return s.client.Del(ctx, agentByWorkerKeyPrefix+workerID).Err()
+	if err := s.client.Del(ctx, agentByWorkerKeyPrefix+workerID).Err(); err != nil {
+		return fmt.Errorf("unlink worker %s: %w", workerID, err)
+	}
+	return nil
 }
 
 // Close closes the underlying Redis client.
@@ -473,6 +484,7 @@ func validateAgentIdentity(a AgentIdentity) error {
 
 func normalizeAgentIdentity(a AgentIdentity) AgentIdentity {
 	a.ID = strings.TrimSpace(a.ID)
+	a.TenantID = strings.TrimSpace(a.TenantID)
 	a.Name = strings.TrimSpace(a.Name)
 	a.Description = strings.TrimSpace(a.Description)
 	a.Owner = strings.TrimSpace(a.Owner)
@@ -482,6 +494,7 @@ func normalizeAgentIdentity(a AgentIdentity) AgentIdentity {
 	a.AllowedTopics = normalizeStringSlice(a.AllowedTopics)
 	a.AllowedPools = normalizeStringSlice(a.AllowedPools)
 	a.AllowedTools = normalizeStringSlice(a.AllowedTools)
+	a.PreapprovedMutatingTools = normalizeStringSlice(a.PreapprovedMutatingTools)
 	a.DataClassifications = normalizeStringSlice(a.DataClassifications)
 	return a
 }

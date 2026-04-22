@@ -24,11 +24,9 @@ type TierDefaultSpec struct {
 	MaxWorkers         int64
 	MaxConcurrentJobs  int64
 	RequestsPerSecond  int64
-	MaxPromptChars     int64
 	AuditRetentionDays int64
 	ApprovalMode       ApprovalMode
 	Audit              bool
-	AuditExport        bool
 	RBAC               bool
 	SSO                bool
 	SAML               bool
@@ -37,6 +35,7 @@ type TierDefaultSpec struct {
 	LegalHold          bool
 	VelocityRules      bool
 	BreakGlassAdmin    bool
+	AgentIdentity      bool
 	SupportSLA         bool
 }
 
@@ -45,7 +44,6 @@ var TierDefaults = map[Plan]TierDefaultSpec{
 		MaxWorkers:         3,
 		MaxConcurrentJobs:  3,
 		RequestsPerSecond:  500,
-		MaxPromptChars:     50_000,
 		AuditRetentionDays: 7,
 		ApprovalMode:       ApprovalModeSingle,
 		Audit:              true,
@@ -55,25 +53,18 @@ var TierDefaults = map[Plan]TierDefaultSpec{
 		MaxWorkers:         25,
 		MaxConcurrentJobs:  25,
 		RequestsPerSecond:  2000,
-		MaxPromptChars:     100_000,
 		AuditRetentionDays: 90,
 		ApprovalMode:       ApprovalModeMulti,
 		Audit:              true,
-		AuditExport:        true,
-		RBAC:               true,
 		BreakGlassAdmin:    true,
-		// SSO, SAML, SCIM available as add-on (set via license entitlements override)
-		// SIEMExport, LegalHold, VelocityRules available as add-on
 	},
 	PlanEnterprise: {
 		MaxWorkers:         Unlimited,
 		MaxConcurrentJobs:  Unlimited,
 		RequestsPerSecond:  10000,
-		MaxPromptChars:     200_000,
 		AuditRetentionDays: Unlimited,
 		ApprovalMode:       ApprovalModeCustom,
 		Audit:              true,
-		AuditExport:        true,
 		RBAC:               true,
 		SSO:                true,
 		SAML:               true,
@@ -82,6 +73,7 @@ var TierDefaults = map[Plan]TierDefaultSpec{
 		LegalHold:          true,
 		VelocityRules:      true,
 		BreakGlassAdmin:    true,
+		AgentIdentity:      true,
 		SupportSLA:         true,
 	},
 }
@@ -148,18 +140,17 @@ func applyTierDefaultSpec(target *Entitlements, spec TierDefaultSpec) {
 	setNamedIntField(target, spec.MaxWorkers, "MaxWorkers")
 	setNamedIntField(target, spec.MaxConcurrentJobs, "MaxConcurrentJobs")
 	setNamedIntField(target, spec.RequestsPerSecond, "RequestsPerSecond", "RateLimitRPS", "MaxRequestsPerSecond", "RPS")
-	setNamedIntField(target, spec.MaxPromptChars, "MaxPromptChars")
 	setNamedIntField(target, spec.AuditRetentionDays, "AuditRetentionDays")
 	setNamedStringField(target, string(spec.ApprovalMode), "ApprovalMode")
 	setNamedBoolField(target, spec.Audit, "Audit")
-	setNamedBoolField(target, spec.AuditExport, "AuditExport")
 	setNamedBoolField(target, spec.RBAC, "RBAC", "AdvancedRBAC")
 	setNamedBoolField(target, spec.SSO, "SSO")
 	setNamedBoolField(target, spec.SAML, "SAML")
 	setNamedBoolField(target, spec.SCIM, "SCIM")
-	setNamedBoolField(target, spec.SIEMExport, "SIEMExport")
+	setNamedBoolField(target, spec.SIEMExport, "SIEMExport", "AuditExport")
 	setNamedBoolField(target, spec.LegalHold, "LegalHold")
 	setNamedBoolField(target, spec.VelocityRules, "VelocityRules")
 	setNamedBoolField(target, spec.BreakGlassAdmin, "BreakGlassAdmin")
+	setNamedBoolField(target, spec.AgentIdentity, "AgentIdentity")
 	setNamedBoolField(target, spec.SupportSLA, "SupportSLA")
 }

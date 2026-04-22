@@ -812,12 +812,12 @@ func TestListApprovalsEnrichedFields(t *testing.T) {
 		Topic:    "deploy.staging",
 		TenantId: "acme-corp",
 		Labels: map[string]string{
-			"tenant_id":        "acme-corp",
-			"system:api":       "api-gateway",
-			"system:db":        "postgres-primary",
+			"tenant_id":         "acme-corp",
+			"system:api":        "api-gateway",
+			"system:db":         "postgres-primary",
 			"namespace:staging": "staging-ns",
-			"resource:pod":     "api-pod-1",
-			"rollback_hint":    "Run: kubectl rollout undo deployment/api -n staging",
+			"resource:pod":      "api-pod-1",
+			"rollback_hint":     "Run: kubectl rollout undo deployment/api -n staging",
 		},
 	}
 	require.NoError(t, s.jobStore.SetJobMeta(ctx, req))
@@ -1049,15 +1049,15 @@ func TestApprovalContextBlastRadiusParsesLabels(t *testing.T) {
 		Topic:    "deploy.staging",
 		TenantId: "org-1",
 		Labels: map[string]string{
-			"tenant_id":          "org-1",
-			"system:web":         "web-frontend",
-			"system:api":         "api-backend",
-			"system:worker":      "background-worker",
-			"namespace:staging":  "staging",
-			"namespace:preview":  "preview-env",
+			"tenant_id":           "org-1",
+			"system:web":          "web-frontend",
+			"system:api":          "api-backend",
+			"system:worker":       "background-worker",
+			"namespace:staging":   "staging",
+			"namespace:preview":   "preview-env",
 			"resource:deploy/web": "web-deploy",
-			"resource:svc/api":   "api-service",
-			"target_system":      "monitoring", // Also picked up
+			"resource:svc/api":    "api-service",
+			"target_system":       "monitoring", // Also picked up
 		},
 	}
 	require.NoError(t, s.jobStore.SetJobMeta(ctx, req))
@@ -1096,9 +1096,9 @@ func TestApprovalContextRollbackHintEmpty(t *testing.T) {
 
 	jobID := "job-no-rollback"
 	req := &pb.JobRequest{
-		JobId:    jobID,
-		Topic:    "test.topic",
-		Labels:   map[string]string{},
+		JobId:  jobID,
+		Topic:  "test.topic",
+		Labels: map[string]string{},
 	}
 	require.NoError(t, s.jobStore.SetJobMeta(ctx, req))
 	require.NoError(t, s.jobStore.SetJobRequest(ctx, req))

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -67,7 +68,7 @@ func TestSelfApprovalBlocked(t *testing.T) {
 	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
 	// Auth context that produces the same submitterIdentity hash.
-	httpReq = withAuth(httpReq, &AuthContext{
+	httpReq = withAuth(httpReq, &auth.AuthContext{
 		APIKey:      "\xab\xcd\x12\x34", // produces apikey:abcd1234 after sha256[:4]
 		PrincipalID: "alice",
 		Role:        "admin",
@@ -116,7 +117,7 @@ func TestSameAPIKeyDifferentPrincipalBlocked(t *testing.T) {
 
 	// Compute the submitter identity using alice + shared key.
 	submitReq := httptest.NewRequest(http.MethodPost, "/test", nil)
-	submitReq = withAuth(submitReq, &AuthContext{
+	submitReq = withAuth(submitReq, &auth.AuthContext{
 		APIKey:      sharedKey,
 		PrincipalID: "alice",
 		Role:        "admin",
@@ -131,7 +132,7 @@ func TestSameAPIKeyDifferentPrincipalBlocked(t *testing.T) {
 	approveReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(`{"reason":"different principal"}`))
 	approveReq.Header.Set("X-Tenant-ID", "default")
 	approveReq.SetPathValue("job_id", jobID)
-	approveReq = withAuth(approveReq, &AuthContext{
+	approveReq = withAuth(approveReq, &auth.AuthContext{
 		APIKey:      sharedKey,
 		PrincipalID: "bob",
 		Role:        "admin",
@@ -168,7 +169,7 @@ func TestCrossUserApprovalAllowed(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(body))
 	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq = withAuth(httpReq, &AuthContext{
+	httpReq = withAuth(httpReq, &auth.AuthContext{
 		APIKey:      "different-key",
 		PrincipalID: "bob",
 		Role:        "admin",
@@ -191,7 +192,7 @@ func TestSelfRejectionBlocked(t *testing.T) {
 	rejectReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/reject", strings.NewReader(`{"reason":"rejecting my own job"}`))
 	rejectReq.Header.Set("X-Tenant-ID", "default")
 	rejectReq.SetPathValue("job_id", jobID)
-	rejectReq = withAuth(rejectReq, &AuthContext{
+	rejectReq = withAuth(rejectReq, &auth.AuthContext{
 		APIKey:      "self-reject-key",
 		PrincipalID: "alice",
 		Role:        "admin",
@@ -233,7 +234,7 @@ func TestApprovalBackwardCompatibility(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(body))
 	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
-	httpReq = withAuth(httpReq, &AuthContext{
+	httpReq = withAuth(httpReq, &auth.AuthContext{
 		APIKey:      "any-key",
 		PrincipalID: "admin",
 		Role:        "admin",

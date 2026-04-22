@@ -2,7 +2,7 @@ package licensing
 
 import "strings"
 
-const DefaultUpgradeURL = ""
+const DefaultUpgradeURL = "https://cordum.io/pricing"
 
 type TierLimitHTTPError struct {
 	Code       string `json:"code"`

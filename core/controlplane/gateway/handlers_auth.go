@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,6 +15,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/licensing"
 )
 
 // ---------------------------------------------------------------------------
@@ -65,14 +66,14 @@ func (s *server) emitAuthFailure(r *http.Request, username, authMethod, reason s
 
 // extractBasicAuth returns the BasicAuthProvider from s.auth, handling both
 // direct BasicAuthProvider and CompositeAuthProvider wrapping one.
-func (s *server) extractBasicAuth() *BasicAuthProvider {
+func (s *server) extractBasicAuth() *auth.BasicAuthProvider {
 	if s == nil || s.auth == nil {
 		return nil
 	}
-	if bp, ok := s.auth.(*BasicAuthProvider); ok {
+	if bp, ok := s.auth.(*auth.BasicAuthProvider); ok {
 		return bp
 	}
-	if cp, ok := s.auth.(*CompositeAuthProvider); ok {
+	if cp, ok := s.auth.(*auth.CompositeAuthProvider); ok {
 		return cp.BasicProvider()
 	}
 	return nil
@@ -87,10 +88,10 @@ func (s *server) requireRole(r *http.Request, roles ...string) error {
 
 func (s *server) resolveTenant(r *http.Request, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
-	headerTenant := headerValue(r, "X-Tenant-ID")
+	headerTenant := auth.HeaderValue(r, "X-Tenant-ID")
 	// Fall back to auth context tenant (e.g. from session token)
 	if headerTenant == "" {
-		if authCtx := authFromRequest(r); authCtx != nil && authCtx.Tenant != "" {
+		if authCtx := auth.FromRequest(r); authCtx != nil && authCtx.Tenant != "" {
 			headerTenant = authCtx.Tenant
 		}
 	}
@@ -133,7 +134,7 @@ func (s *server) handleAuthConfig(w http.ResponseWriter, _ *http.Request) {
 	if defaultTenant == "" {
 		defaultTenant = "default"
 	}
-	resp := AuthConfig{
+	resp := auth.AuthConfig{
 		PasswordEnabled:  false,
 		SAMLEnabled:      false,
 		SessionTTL:       "0s",
@@ -141,7 +142,7 @@ func (s *server) handleAuthConfig(w http.ResponseWriter, _ *http.Request) {
 		RequirePrincipal: false,
 		DefaultTenant:    defaultTenant,
 	}
-	if provider, ok := s.auth.(AuthConfigProvider); ok {
+	if provider, ok := s.auth.(auth.AuthConfigProvider); ok {
 		resp = provider.AuthConfig()
 	}
 	if strings.TrimSpace(resp.DefaultTenant) == "" {
@@ -171,7 +172,7 @@ func (s *server) handleAuthConfig(w http.ResponseWriter, _ *http.Request) {
 var loginTimingDummyHash []byte
 
 func init() {
-	cost := bcryptCostFromEnv()
+	cost := auth.BcryptCostFromEnv()
 	hash, err := bcrypt.GenerateFromPassword([]byte("timing-pad"), cost)
 	if err != nil {
 		// Fallback: generate with default cost rather than panicking at startup.
@@ -229,6 +230,10 @@ func sessionTTL() time.Duration {
 // 1. User/password: If user store is configured, authenticates against stored users
 // 2. API key: For programmatic access (scripts, CI/CD), the password field accepts API keys
 func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionAuthLogin) {
+		return
+	}
+
 	var req AuthLoginRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		writeJSONDecodeError(w, err, "invalid request body")
@@ -254,7 +259,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 		// Try to find user by username or email
 		user, err := userStore.GetByUsername(r.Context(), username, tenant)
-		if errors.Is(err, ErrUserNotFound) && strings.Contains(username, "@") {
+		if errors.Is(err, auth.ErrUserNotFound) && strings.Contains(username, "@") {
 			user, err = userStore.GetByEmail(r.Context(), username, tenant)
 		}
 
@@ -266,7 +271,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Brute-force protection: check throttle before password validation.
-			if redisStore, ok := userStore.(*RedisUserStore); ok {
+			if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
 				if err := redisStore.CheckLoginThrottle(r.Context(), username, clientIP(r)); err != nil {
 					s.emitAuthFailure(r, username, "password", "rate_limited")
 					slog.Warn("rate limit exceeded", "method", r.Method, "path", r.URL.Path, "error", err)
@@ -277,7 +282,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 			if userStore.ValidatePassword(r.Context(), user, password) {
 				// User/password authentication successful — clear failed counter.
-				if redisStore, ok := userStore.(*RedisUserStore); ok {
+				if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
 					redisStore.ClearFailedLogins(r.Context(), username, clientIP(r))
 				}
 				resp, err := buildUserLoginResponse(r.Context(), user)
@@ -286,7 +291,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				// Store session token in Redis for subsequent request validation
-				if redisStore, ok := userStore.(*RedisUserStore); ok {
+				if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
 					if err := redisStore.StoreSession(r.Context(), resp.Token, user, sessionTTL()); err != nil {
 						writeErrorJSON(w, http.StatusInternalServerError, "failed to create session")
 						return
@@ -294,7 +299,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				}
 				// Set httpOnly cookie so browser auth doesn't require localStorage
 				ttl := sessionTTL()
-				setSessionCookie(w, r, resp.Token, time.Now().Add(ttl))
+				auth.SetSessionCookie(w, r, resp.Token, time.Now().UTC().Add(ttl))
 				w.Header().Set("Content-Type", "application/json")
 				writeJSON(w, resp)
 				return
@@ -302,7 +307,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 			// Password validation failed — record the attempt and emit audit event.
 			s.emitAuthFailure(r, username, "password", "invalid_credentials")
-			if redisStore, ok := userStore.(*RedisUserStore); ok {
+			if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
 				redisStore.RecordFailedLogin(r.Context(), username, clientIP(r))
 			}
 		} else if username != "" {
@@ -344,7 +349,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Set httpOnly cookie so browser auth doesn't require localStorage
 	ttl := sessionTTL()
-	setSessionCookie(w, r, apiKey, time.Now().Add(ttl))
+	auth.SetSessionCookie(w, r, apiKey, time.Now().UTC().Add(ttl))
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, resp)
 }
@@ -352,9 +357,12 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 // handleSession validates current session via X-API-Key header.
 func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 	// Get auth context from middleware (already validated)
-	authCtx := authFromRequest(r)
+	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionAuthSession) {
 		return
 	}
 
@@ -367,29 +375,33 @@ func (s *server) handleSession(w http.ResponseWriter, r *http.Request) {
 
 // handleLogout invalidates the current session token.
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionAuthSession) {
+		return
+	}
+
 	// Extract the session token from the auth context
 	key := strings.TrimSpace(r.Header.Get("X-API-Key"))
 	if key == "" {
-		if tok := bearerToken(r.Header.Get("Authorization")); tok != "" {
+		if tok := auth.BearerToken(r.Header.Get("Authorization")); tok != "" {
 			key = tok
 		}
 	}
 	if key == "" {
-		key = sessionTokenFromCookie(r)
+		key = auth.SessionTokenFromCookie(r)
 	}
 	if strings.HasPrefix(key, "session-") && s.userStore != nil {
-		if redisStore, ok := s.userStore.(*RedisUserStore); ok {
+		if redisStore, ok := s.userStore.(*auth.RedisUserStore); ok {
 			_ = redisStore.DeleteSession(r.Context(), key)
 		}
 	}
-	clearSessionCookie(w, r)
+	auth.ClearSessionCookie(w, r)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // buildLoginResponse creates the AuthLoginResponse from auth context.
 // SECURITY: Token is masked to prevent API key leakage in responses.
-func buildLoginResponse(authCtx *AuthContext, token string) AuthLoginResponse {
-	now := time.Now()
+func buildLoginResponse(authCtx *auth.AuthContext, token string) AuthLoginResponse {
+	now := time.Now().UTC()
 	expiresAt := now.Add(sessionTTL())
 
 	// Use principal ID or generate from API key prefix
@@ -427,10 +439,22 @@ func buildLoginResponse(authCtx *AuthContext, token string) AuthLoginResponse {
 	}
 }
 
+// errSessionTokenEntropy is the opaque, caller-visible signal that session
+// token minting failed because the entropy source (crypto/rand) returned an
+// error. The underlying reader error is deliberately NOT wrapped — the
+// handler maps this to a generic 500, and the upstream error may carry
+// kernel- or driver-level details that must not reach the HTTP body.
+var errSessionTokenEntropy = errors.New("session token entropy unavailable")
+
 // buildUserLoginResponse creates the AuthLoginResponse for user/password auth.
 // For user auth, we generate a session token rather than exposing the password.
-func buildUserLoginResponse(ctx context.Context, user *User) (AuthLoginResponse, error) {
-	now := time.Now()
+//
+// SECURITY: Any failure of the entropy source returns errSessionTokenEntropy
+// with the zero-value response, so the caller never mints a token backed by
+// a zero-filled or partially-filled buffer. The underlying rand error is
+// logged server-side only.
+func buildUserLoginResponse(ctx context.Context, user *auth.User) (AuthLoginResponse, error) {
+	now := time.Now().UTC()
 	expiresAt := now.Add(sessionTTL())
 
 	var roles []string
@@ -439,10 +463,16 @@ func buildUserLoginResponse(ctx context.Context, user *User) (AuthLoginResponse,
 	}
 
 	// Generate a cryptographically random session token (256 bits entropy).
+	// io.ReadFull guarantees the full buffer is populated on success; on any
+	// error (short read or reader failure) we abandon the token entirely
+	// rather than emit a zero-filled / partial buffer.
 	var tokenBytes [32]byte
 	if _, err := io.ReadFull(rand.Reader, tokenBytes[:]); err != nil {
-		slog.ErrorContext(ctx, "crypto/rand failed", "error", err)
-		return AuthLoginResponse{}, fmt.Errorf("crypto/rand: %w", err)
+		slog.ErrorContext(ctx, "session token entropy source failed",
+			"error", err,
+			"user_id", user.ID,
+		)
+		return AuthLoginResponse{}, errSessionTokenEntropy
 	}
 	sessionToken := "session-" + base64.RawURLEncoding.EncodeToString(tokenBytes[:])
 
@@ -493,9 +523,12 @@ func safePrefix(s string, n int) string {
 // handleChangePassword handles password change for authenticated users.
 // POST /api/v1/auth/password
 func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
-	authCtx := authFromRequest(r)
+	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionAuthPassword) {
 		return
 	}
 
@@ -505,7 +538,7 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req ChangePasswordRequest
+	var req auth.ChangePasswordRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		writeJSONDecodeError(w, err, "invalid request body")
 		return
@@ -563,7 +596,7 @@ type adminPasswordRequest struct {
 }
 
 // userResponse maps a User to the frontend-expected JSON shape.
-func userResponse(u *User) AuthUser {
+func userResponse(u *auth.User) AuthUser {
 	var roles []string
 	if u.Role != "" {
 		roles = []string{u.Role}
@@ -583,7 +616,7 @@ func userResponse(u *User) AuthUser {
 // handleCreateUser creates a new user (admin only).
 // POST /api/v1/users
 func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
-	authCtx := authFromRequest(r)
+	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -593,9 +626,7 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Require admin role
-	if err := s.auth.RequireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, auth.PermUsersWrite, "admin") {
 		return
 	}
 
@@ -605,7 +636,7 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req CreateUserRequest
+	var req auth.CreateUserRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		writeJSONDecodeError(w, err, "invalid request body")
 		return
@@ -630,7 +661,7 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		role = "user"
 	}
 
-	user := &User{
+	user := &auth.User{
 		Username: strings.TrimSpace(req.Username),
 		Email:    strings.TrimSpace(req.Email),
 		Tenant:   tenant,
@@ -639,7 +670,7 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	userStore := basicAuth.UserStore()
 	if err := userStore.Create(r.Context(), user, req.Password); err != nil {
-		if errors.Is(err, ErrUserAlreadyExists) {
+		if errors.Is(err, auth.ErrUserAlreadyExists) {
 			writeErrorJSON(w, http.StatusConflict, "user already exists")
 			return
 		}
@@ -664,7 +695,7 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 // handleListUsers lists all users for the authenticated tenant (admin only).
 // GET /api/v1/users
 func (s *server) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	authCtx := authFromRequest(r)
+	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -673,12 +704,11 @@ func (s *server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
 		return
 	}
-	if err := s.auth.RequireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, auth.PermUsersRead, "admin") {
 		return
 	}
 
-	usp, ok := s.auth.(UserStoreProvider)
+	usp, ok := s.auth.(auth.UserStoreProvider)
 	if !ok || usp.UserStore() == nil {
 		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
 		return
@@ -702,7 +732,7 @@ func (s *server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 // handleUpdateUser updates a user's mutable fields (admin only).
 // PUT /api/v1/users/{id}
 func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
-	authCtx := authFromRequest(r)
+	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -711,12 +741,11 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
 		return
 	}
-	if err := s.auth.RequireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, auth.PermUsersWrite, "admin") {
 		return
 	}
 
-	usp, ok := s.auth.(UserStoreProvider)
+	usp, ok := s.auth.(auth.UserStoreProvider)
 	if !ok || usp.UserStore() == nil {
 		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
 		return
@@ -733,7 +762,7 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	// Load existing user and verify tenant
 	existing, err := userStore.GetByID(r.Context(), userID)
 	if err != nil {
-		if errors.Is(err, ErrUserNotFound) {
+		if errors.Is(err, auth.ErrUserNotFound) {
 			writeErrorJSON(w, http.StatusNotFound, "user not found")
 			return
 		}
@@ -752,7 +781,7 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build update user with only the fields to change
-	update := &User{ID: userID}
+	update := &auth.User{ID: userID}
 	if strings.TrimSpace(req.Email) != "" {
 		update.Email = strings.TrimSpace(req.Email)
 	}
@@ -783,7 +812,7 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 // handleDeleteUser soft-deletes a user (admin only).
 // DELETE /api/v1/users/{id}
 func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
-	authCtx := authFromRequest(r)
+	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -792,12 +821,11 @@ func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
 		return
 	}
-	if err := s.auth.RequireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, auth.PermUsersWrite, "admin") {
 		return
 	}
 
-	usp, ok := s.auth.(UserStoreProvider)
+	usp, ok := s.auth.(auth.UserStoreProvider)
 	if !ok || usp.UserStore() == nil {
 		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
 		return
@@ -814,7 +842,7 @@ func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	// Load user and verify tenant
 	user, err := userStore.GetByID(r.Context(), userID)
 	if err != nil {
-		if errors.Is(err, ErrUserNotFound) {
+		if errors.Is(err, auth.ErrUserNotFound) {
 			writeErrorJSON(w, http.StatusNotFound, "user not found")
 			return
 		}
@@ -844,7 +872,7 @@ func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 // handleChangeUserPassword changes a user's password (admin only).
 // POST /api/v1/users/{id}/password
 func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request) {
-	authCtx := authFromRequest(r)
+	authCtx := auth.FromRequest(r)
 	if authCtx == nil {
 		writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -853,12 +881,11 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
 		return
 	}
-	if err := s.auth.RequireRole(r, "admin"); err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "admin role required")
+	if !s.requirePermissionOrRole(w, r, auth.PermUsersWrite, "admin") {
 		return
 	}
 
-	usp, ok := s.auth.(UserStoreProvider)
+	usp, ok := s.auth.(auth.UserStoreProvider)
 	if !ok || usp.UserStore() == nil {
 		writeErrorJSON(w, http.StatusBadRequest, "user authentication not enabled")
 		return
@@ -875,7 +902,7 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 	// Load user and verify tenant
 	user, err := userStore.GetByID(r.Context(), userID)
 	if err != nil {
-		if errors.Is(err, ErrUserNotFound) {
+		if errors.Is(err, auth.ErrUserNotFound) {
 			writeErrorJSON(w, http.StatusNotFound, "user not found")
 			return
 		}
@@ -894,7 +921,7 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 	}
 
 	password := strings.TrimSpace(req.Password)
-	if err := ValidatePassword(password); err != nil {
+	if err := auth.ValidatePassword(password); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -941,7 +968,7 @@ type createKeyRequest struct {
 	ExpiresAt string   `json:"expiresAt,omitempty"`
 }
 
-func managedKeyToResponse(mk *ManagedKey) apiKeyResponse {
+func managedKeyToResponse(mk *auth.ManagedKey) apiKeyResponse {
 	resp := apiKeyResponse{
 		ID:         mk.ID,
 		Name:       mk.Name,
@@ -964,12 +991,12 @@ func managedKeyToResponse(mk *ManagedKey) apiKeyResponse {
 
 // handleListKeys handles GET /api/v1/auth/keys.
 func (s *server) handleListKeys(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.keyStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermAPIKeysRead, []string{"admin"}, s.keyStore) {
 		return
 	}
 
 	tenant := s.tenant
-	if auth := authFromRequest(r); auth != nil && auth.Tenant != "" {
+	if auth := auth.FromRequest(r); auth != nil && auth.Tenant != "" {
 		tenant = auth.Tenant
 	}
 
@@ -991,7 +1018,7 @@ func (s *server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 
 // handleCreateKey handles POST /api/v1/auth/keys.
 func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.keyStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermAPIKeysWrite, []string{"admin"}, s.keyStore) {
 		return
 	}
 
@@ -1022,14 +1049,14 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusBadRequest, "invalid expiresAt format, use RFC3339")
 			return
 		}
-		if parsed.Before(time.Now()) {
+		if parsed.Before(time.Now().UTC()) {
 			writeErrorJSON(w, http.StatusBadRequest, "expiresAt must be in the future")
 			return
 		}
 		expiresAt = parsed
 	}
 
-	rawKey, err := GenerateRawKey()
+	rawKey, err := auth.GenerateRawKey()
 	if err != nil {
 		slog.Error("generate key failed", "error", err)
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to generate key")
@@ -1037,7 +1064,7 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenant := s.tenant
-	if auth := authFromRequest(r); auth != nil && auth.Tenant != "" {
+	if auth := auth.FromRequest(r); auth != nil && auth.Tenant != "" {
 		tenant = auth.Tenant
 	}
 
@@ -1046,7 +1073,7 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		scopes = []string{}
 	}
 
-	mk := &ManagedKey{
+	mk := &auth.ManagedKey{
 		Name:      req.Name,
 		Tenant:    tenant,
 		Scopes:    scopes,
@@ -1072,7 +1099,7 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 
 // handleRevokeKey handles DELETE /api/v1/auth/keys/{id}.
 func (s *server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndRole(w, r, []string{"admin"}, s.keyStore) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermAPIKeysWrite, []string{"admin"}, s.keyStore) {
 		return
 	}
 
@@ -1083,12 +1110,12 @@ func (s *server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenant := s.tenant
-	if auth := authFromRequest(r); auth != nil && auth.Tenant != "" {
+	if auth := auth.FromRequest(r); auth != nil && auth.Tenant != "" {
 		tenant = auth.Tenant
 	}
 
 	if err := s.keyStore.Revoke(r.Context(), id, tenant); err != nil {
-		if errors.Is(err, ErrKeyNotFound) {
+		if errors.Is(err, auth.ErrKeyNotFound) {
 			writeErrorJSON(w, http.StatusNotFound, "key not found")
 			return
 		}

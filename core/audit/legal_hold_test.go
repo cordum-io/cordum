@@ -2,10 +2,12 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func newTestLegalHoldStore(t *testing.T) (*LegalHoldStore, *miniredis.Miniredis) {
@@ -235,5 +237,96 @@ func TestIsUnderHold_EmptyTenant(t *testing.T) {
 	}
 	if held {
 		t.Fatal("empty tenant should not be under hold")
+	}
+}
+
+// TestLegalHold_ChainLinkageUnaffected verifies that placing a tenant
+// under legal hold does not perturb the audit hash chain: events for the
+// held tenant get monotonic seqs and correct prev_hash linkage exactly
+// as they would without the hold. Legal hold is a retention-policy
+// flag, not a pipeline filter — it must never shift seq numbering or
+// the chain's verifiability collapses.
+//
+// Regression guard: if a future change accidentally routes held-tenant
+// events around Chainer.Append (e.g. to short-circuit to a long-term
+// retention store), this test detects the seq gap.
+func TestLegalHold_ChainLinkageUnaffected(t *testing.T) {
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Skipf("miniredis unavailable: %v", err)
+	}
+	t.Cleanup(srv.Close)
+
+	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	holdStore := NewLegalHoldStoreFromClient(client)
+	chainer := NewChainer(client, "lh:chain:")
+	ctx := context.Background()
+
+	// Place tenant under legal hold BEFORE appending any events so the
+	// hold is active throughout. If Append consulted the hold store
+	// and took a different path, the chain would shift — that would
+	// show up as a broken prev_hash.
+	if _, err := holdStore.CreateHold(ctx, "lh-tenant", "regulatory inquiry 2026-Q2", "admin@cordum.io"); err != nil {
+		t.Fatalf("create hold: %v", err)
+	}
+	held, err := holdStore.IsUnderHold(ctx, "lh-tenant")
+	if err != nil {
+		t.Fatalf("is-under-hold: %v", err)
+	}
+	if !held {
+		t.Fatal("tenant should report as under hold")
+	}
+
+	const n = 6
+	hashes := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		ev := &SIEMEvent{
+			EventType: EventSafetyDecision,
+			Severity:  SeverityInfo,
+			TenantID:  "lh-tenant",
+			Action:    "on-hold",
+		}
+		if err := chainer.Append(ctx, ev); err != nil {
+			t.Fatalf("append[%d]: %v", i, err)
+		}
+		if ev.Seq != int64(i+1) {
+			t.Errorf("Seq[%d] = %d, want %d (legal hold must not shift seqs)", i, ev.Seq, i+1)
+		}
+		if i == 0 {
+			if ev.PrevHash != "" {
+				t.Errorf("genesis PrevHash = %q, want empty", ev.PrevHash)
+			}
+		} else if ev.PrevHash != hashes[i-1] {
+			t.Errorf("PrevHash[%d] = %q, want %q (linkage broken under legal hold)",
+				i, ev.PrevHash, hashes[i-1])
+		}
+		hashes = append(hashes, ev.EventHash)
+	}
+
+	// Verify every event_hash recomputes — if the held-tenant path
+	// ever mutates payloads (e.g. to tag them with a hold_id), the
+	// hash would stop matching and this assertion catches it.
+	stream, err := client.XRange(ctx, chainer.StreamKey("lh-tenant"), "-", "+").Result()
+	if err != nil {
+		t.Fatalf("xrange: %v", err)
+	}
+	if len(stream) != n {
+		t.Fatalf("stream len = %d, want %d", len(stream), n)
+	}
+	for i, entry := range stream {
+		payload := entry.Values[chainStreamFieldEvent].(string)
+		var got SIEMEvent
+		if err := json.Unmarshal([]byte(payload), &got); err != nil {
+			t.Fatalf("decode[%d]: %v", i, err)
+		}
+		ok, err := VerifyEventHash(&got)
+		if err != nil {
+			t.Fatalf("verify[%d]: %v", i, err)
+		}
+		if !ok {
+			t.Errorf("Seq=%d hash did not recompute under legal hold", got.Seq)
+		}
 	}
 }

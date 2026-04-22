@@ -212,7 +212,20 @@
           "additionalProperties": {"type": "number"}
         },
         "secrets_present": {"type": "boolean"},
+        "predicate": {"type": "string"},
+        "delegation": {"$ref": "#/definitions/delegationMatch"},
         "mcp": {"$ref": "#/definitions/mcpPolicy"}
+      }
+    },
+    "delegationMatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_depth": {"type": "integer", "minimum": 0},
+        "issuers": {"type": "array", "items": {"type": "string"}},
+        "require_issuer": {"type": "string"},
+        "required_scope": {"type": "array", "items": {"type": "string"}},
+        "forbid_delegated": {"type": "boolean"}
       }
     },
     "constraints": {

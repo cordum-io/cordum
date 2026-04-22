@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -188,8 +189,7 @@ func (s *server) handleGetRunChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
-	if err := s.requireRole(r, "admin", "operator"); err != nil {
-		writeForbidden(w, r, err)
+	if !s.requirePermissionOrRole(w, r, auth.PermWorkflowsWrite, "admin", "operator") {
 		return
 	}
 	if s.workflowStore == nil {
@@ -250,7 +250,7 @@ func (s *server) handlePostRunChat(w http.ResponseWriter, r *http.Request) {
 	// Defense-in-depth: only admins may post as agent/system.
 	// Operators are forced to "user" to prevent impersonation.
 	if role != "user" {
-		if ac := authFromRequest(r); ac == nil || ac.Role != "admin" {
+		if ac := auth.FromRequest(r); ac == nil || ac.Role != "admin" {
 			role = "user"
 		}
 	}

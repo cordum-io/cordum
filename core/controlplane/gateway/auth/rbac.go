@@ -19,49 +19,103 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	PermAdminAll       = "admin.*"
-	PermJobsRead       = "jobs.read"
-	PermJobsWrite      = "jobs.write"
-	PermJobsApprove    = "jobs.approve"
-	PermWorkflowsRead  = "workflows.read"
-	PermWorkflowsWrite = "workflows.write"
-	PermWorkersRead    = "workers.read"
-	PermConfigRead     = "config.read"
-	PermConfigWrite    = "config.write"
-	PermAuditRead      = "audit.read"
-	PermPacksInstall   = "packs.install"
-	PermPacksUninstall = "packs.uninstall"
-	PermPolicyRead     = "policy.read"
-	PermPolicyWrite    = "policy.write"
-	PermSchemasRead    = "schemas.read"
-	PermSchemasWrite   = "schemas.write"
-	PermUsersRead      = "users.read"
-	PermUsersWrite     = "users.write"
-	PermRolesRead      = "roles.read"
-	PermRolesWrite     = "roles.write"
-	// PermDelegationImpersonate authorises a caller to submit a job with a
-	// delegation audience agent that differs from the caller's own
-	// authenticated agent identity. This amounts to impersonating a
-	// different audience at delegation-verification time and must be
-	// restricted to operators explicitly trusted to relay tokens on
-	// behalf of other agents.
+	PermAdminAll               = "admin.*"
+	PermJobsRead               = "jobs.read"
+	PermJobsWrite              = "jobs.write"
+	PermJobsApprove            = "jobs.approve"
+	PermAgentsRead             = "agents.read"
+	PermAgentsWrite            = "agents.write"
+	PermAgentsDelegate         = "agents.delegate"
+	PermDelegationRead         = "delegation.read"
+	// PermDelegationImpersonate authorises a caller to submit a job
+	// asserting a delegation_audience_agent_id that differs from the
+	// caller's authenticated agent_id. Without this permission, any
+	// audience widening on submit is rejected 403 to prevent quiet
+	// impersonation through the delegation wire path. See #198
+	// Blocker 1 follow-up on split/delegation-security.
 	PermDelegationImpersonate = "delegation.impersonate"
+	PermWorkflowsRead         = "workflows.read"
+	PermWorkflowsWrite         = "workflows.write"
+	PermWorkersRead            = "workers.read"
+	PermWorkersWrite           = "workers.write"
+	PermConfigRead             = "config.read"
+	PermConfigWrite            = "config.write"
+	PermAuditRead              = "audit.read"
+	PermAuditExport            = "audit.export"
+	PermAuditVerify            = "audit.verify"
+	PermAPIKeysRead            = "apiKeys.read"
+	PermAPIKeysWrite           = "apiKeys.write"
+	PermDLQRead                = "dlq.read"
+	PermDLQWrite               = "dlq.write"
+	PermMemoryRead             = "memory.read"
+	PermLegalHoldRead          = "legalHold.read"
+	PermLegalHoldWrite         = "legalHold.write"
+	PermLicenseRead            = "license.read"
+	PermLocksRead              = "locks.read"
+	PermMCPRead                = "mcp.read"
+	PermMCPVerify              = "mcp.verify"
+	PermPacksInstall           = "packs.install"
+	PermPacksUninstall         = "packs.uninstall"
+	PermPacksRead              = "packs.read"
+	PermPacksVerify            = "packs.verify"
+	PermPolicyRead             = "policy.read"
+	PermPolicyWrite            = "policy.write"
+	PermPoolsWrite             = "pools.write"
+	PermTelemetryRead          = "telemetry.read"
+	PermTelemetryWrite         = "telemetry.write"
+	PermTelemetryExport        = "telemetry.export"
+	PermTopicsRead             = "topics.read"
+	PermTopicsWrite            = "topics.write"
+	PermWorkerCredentialsRead  = "workerCredentials.read"
+	PermWorkerCredentialsWrite = "workerCredentials.write"
+	PermGovernanceRead         = "governance.read"
+	PermSchemasRead            = "schemas.read"
+	PermSchemasWrite           = "schemas.write"
+	PermUsersRead              = "users.read"
+	PermUsersWrite             = "users.write"
+	PermRolesRead              = "roles.read"
+	PermRolesWrite             = "roles.write"
+
+	// Eval dataset permissions gate the phase-2 governance-regression
+	// pipeline. They are namespaced under `evals.datasets.*` so the
+	// broader `evals.*` area stays available for sibling work (runner,
+	// replay comparisons) without churning this constant block.
+	PermEvalsDatasetsRead   = "evals.datasets.read"
+	PermEvalsDatasetsWrite  = "evals.datasets.write"
+	PermEvalsDatasetsDelete = "evals.datasets.delete"
+	PermEvalsRunsExecute    = "evals.runs.execute"
+	PermEvalsRunsRead       = "evals.runs.read"
+	PermEvalsRunsDelete     = "evals.runs.delete"
 )
 
 // AllPermissions is the canonical list of permissions for validation.
 var AllPermissions = []string{
 	PermAdminAll,
 	PermJobsRead, PermJobsWrite, PermJobsApprove,
+	PermAgentsRead, PermAgentsWrite, PermAgentsDelegate, PermDelegationRead,
 	PermWorkflowsRead, PermWorkflowsWrite,
-	PermWorkersRead,
+	PermWorkersRead, PermWorkersWrite,
 	PermConfigRead, PermConfigWrite,
-	PermAuditRead,
-	PermPacksInstall, PermPacksUninstall,
+	PermAuditRead, PermAuditExport, PermAuditVerify,
+	PermAPIKeysRead, PermAPIKeysWrite,
+	PermDLQRead, PermDLQWrite,
+	PermMemoryRead,
+	PermLegalHoldRead, PermLegalHoldWrite,
+	PermLicenseRead,
+	PermLocksRead,
+	PermMCPRead, PermMCPVerify,
+	PermPacksInstall, PermPacksUninstall, PermPacksRead, PermPacksVerify,
 	PermPolicyRead, PermPolicyWrite,
+	PermPoolsWrite,
+	PermTelemetryRead, PermTelemetryWrite, PermTelemetryExport,
+	PermTopicsRead, PermTopicsWrite,
+	PermWorkerCredentialsRead, PermWorkerCredentialsWrite,
+	PermGovernanceRead,
 	PermSchemasRead, PermSchemasWrite,
 	PermUsersRead, PermUsersWrite,
 	PermRolesRead, PermRolesWrite,
-	PermDelegationImpersonate,
+	PermEvalsDatasetsRead, PermEvalsDatasetsWrite, PermEvalsDatasetsDelete,
+	PermEvalsRunsExecute, PermEvalsRunsRead, PermEvalsRunsDelete,
 }
 
 // ---------------------------------------------------------------------------
@@ -98,9 +152,13 @@ func DefaultRoles() []*RoleDefinition {
 				PermJobsRead, PermJobsWrite, PermJobsApprove,
 				PermWorkflowsRead, PermWorkflowsWrite,
 				PermWorkersRead,
+				PermLocksRead,
+				PermTopicsRead,
 				PermPacksInstall, PermPacksUninstall,
 				PermSchemasRead, PermSchemasWrite,
 				PermPolicyRead,
+				PermGovernanceRead,
+				PermDelegationRead,
 				PermAuditRead,
 				PermConfigRead,
 			},
@@ -116,10 +174,14 @@ func DefaultRoles() []*RoleDefinition {
 				PermJobsRead,
 				PermWorkflowsRead,
 				PermWorkersRead,
+				PermLocksRead,
+				PermTopicsRead,
 				PermConfigRead,
 				PermAuditRead,
 				PermSchemasRead,
 				PermPolicyRead,
+				PermGovernanceRead,
+				PermDelegationRead,
 			},
 			BuiltIn:   true,
 			CreatedAt: now,
@@ -140,9 +202,13 @@ var basicRolePermissions = map[string][]string{
 		PermJobsRead, PermJobsWrite, PermJobsApprove,
 		PermWorkflowsRead, PermWorkflowsWrite,
 		PermWorkersRead,
+		PermLocksRead,
+		PermTopicsRead,
 		PermPacksInstall, PermPacksUninstall,
 		PermSchemasRead, PermSchemasWrite,
 		PermPolicyRead,
+		PermGovernanceRead,
+		PermDelegationRead,
 		PermAuditRead,
 		PermConfigRead,
 	},
@@ -150,10 +216,14 @@ var basicRolePermissions = map[string][]string{
 		PermJobsRead,
 		PermWorkflowsRead,
 		PermWorkersRead,
+		PermLocksRead,
+		PermTopicsRead,
 		PermConfigRead,
 		PermAuditRead,
 		PermSchemasRead,
 		PermPolicyRead,
+		PermGovernanceRead,
+		PermDelegationRead,
 	},
 }
 
