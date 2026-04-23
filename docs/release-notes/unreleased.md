@@ -404,6 +404,17 @@ these entries into a versioned release note and reset this file.
 
 ## Removed
 
+- **docs-site: removed `versioned_docs/version-2.9/` and
+  `versioned_sidebars/version-2.9-sidebars.json`.** The 2.9 docs snapshot
+  was never published to an external release (`docs-site/versions.json`
+  remains `[]` — no public version cut has ever happened). The
+  precursor sweep under task-e8a0ff88 was supposed to catch this but
+  the directory either slipped past the original pass or was re-added
+  afterward; this task closes the gap. `npm run build` succeeds after
+  the deletion with only pre-existing broken-link warnings (documented
+  in mem-c4de6900) that are unrelated to version-2.9. Closes
+  task-ec3fce1e.
+
 - Removed the legacy OpenAPI sidecars `docs/api/openapi/cordum-rest.yaml`
   and `docs/api/openapi/cordum.swagger.json`. `docs/api/openapi/cordum-api.yaml`
   is now the single canonical OpenAPI 3 spec, `make openapi` is a pure
