@@ -1,9 +1,8 @@
 import React, { act } from "react";
-import { createRoot } from "react-dom/client";
-import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Approval } from "@/api/types";
 import { FOCUSABLE_SELECTOR } from "@/hooks/useDialogA11y";
+import { renderWithProviders } from "@/test-utils/render";
 import {
   default as ApprovalsPage,
   DRAWER_A11Y,
@@ -49,6 +48,7 @@ const { hookState, toastState } = vi.hoisted(() => {
 });
 
 vi.mock("sonner", () => ({
+  Toaster: () => React.createElement("div", { "data-testid": "toaster" }),
   toast: {
     error: toastState.error,
   },
@@ -128,26 +128,12 @@ function makeWorkflowApproval(overrides: Partial<Approval> = {}): Approval {
 }
 
 function renderPage() {
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  const root = createRoot(container);
-
-  act(() => {
-    root.render(
-      React.createElement(
-        MemoryRouter,
-        { initialEntries: ["/approvals"] },
-        React.createElement(ApprovalsPage),
-      ),
-    );
+  const result = renderWithProviders(React.createElement(ApprovalsPage), {
+    initialEntries: ["/approvals"],
   });
-
   return {
-    container,
-    cleanup: () => {
-      act(() => root.unmount());
-      container.remove();
-    },
+    container: result.container,
+    cleanup: result.unmount,
   };
 }
 
