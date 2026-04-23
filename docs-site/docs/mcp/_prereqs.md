@@ -25,8 +25,8 @@
 3. **MCP endpoint.** The gateway's HTTP MCP route is:
 
    ```
-   POST {CORDUM_GATEWAY}/api/v1/mcp/message
-   GET  {CORDUM_GATEWAY}/api/v1/mcp/sse
+   POST {CORDUM_GATEWAY}/mcp/message
+   GET  {CORDUM_GATEWAY}/mcp/sse
    ```
 
    Authentication: pass the API key as `Authorization: Bearer ${CORDUM_API_KEY}`

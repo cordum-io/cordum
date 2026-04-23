@@ -60,9 +60,6 @@ func (s *server) registerMCPRoutes(mux *http.ServeMux) error {
 	mux.HandleFunc("GET /mcp/sse", s.instrumented("/mcp/sse", s.mcpAuth(s.handleMCPSSE)))
 	mux.HandleFunc("POST /mcp/message", s.instrumented("/mcp/message", s.mcpAuth(s.handleMCPMessage)))
 	mux.HandleFunc("GET /mcp/status", s.instrumented("/mcp/status", s.mcpAuth(s.handleMCPStatus)))
-	mux.HandleFunc("GET /api/v1/mcp/sse", s.instrumented("/api/v1/mcp/sse", s.mcpAuth(s.handleMCPSSE)))
-	mux.HandleFunc("POST /api/v1/mcp/message", s.instrumented("/api/v1/mcp/message", s.mcpAuth(s.handleMCPMessage)))
-	mux.HandleFunc("GET /api/v1/mcp/status", s.instrumented("/api/v1/mcp/status", s.mcpAuth(s.handleMCPStatus)))
 
 	cfg := s.loadMCPConfig(context.Background())
 	if !cfg.Enabled {

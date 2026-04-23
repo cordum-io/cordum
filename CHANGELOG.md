@@ -64,6 +64,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Added conformance test fixtures for all 8 CAP packet types with signature verification
 - SDK runtime exposes `ValidateJobRequest`, `ValidateJobResult`, `Handshake`, `ComponentRole`, `ErrorCode`, `AlertSeverity` types
 
+### Removed
+
+- Removed the legacy OpenAPI sidecars `docs/api/openapi/cordum-rest.yaml`
+  and `docs/api/openapi/cordum.swagger.json`. `docs/api/openapi/cordum-api.yaml`
+  is now the single canonical OpenAPI 3 spec, `make openapi` is a pure
+  Redocly validation pass, and the local/public Swagger UI wrappers now load
+  only that canonical spec. Also removed the legacy prefixed MCP transport
+  aliases `/api/v1/mcp/{sse,message,status}`; MCP transport is now exposed
+  only at `/mcp/{sse,message,status}` while MCP governance REST endpoints
+  remain under `/api/v1/mcp/*`. See
+  [`docs/cleanup/openapi-legacy-audit.md`](docs/cleanup/openapi-legacy-audit.md)
+  `Audit re-verification 2026-04-23` for the ground-truth timeline.
+
 ### Added
 
 #### Output Policy System

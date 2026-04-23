@@ -46,7 +46,7 @@ describe("integration CRUD (jsdom)", () => {
       method: "POST",
       body: JSON.stringify({ topic: "job.default" }),
     });
-    const mcp = await fetchJson("/api/v1/mcp/message", {
+    const mcp = await fetchJson("/mcp/message", {
       method: "POST",
       body: JSON.stringify({ payload: "signed" }),
     });

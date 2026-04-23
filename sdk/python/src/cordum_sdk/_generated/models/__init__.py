@@ -71,6 +71,7 @@ from .eval_run_request import EvalRunRequest
 from .eval_run_result import EvalRunResult
 from .eval_run_summary import EvalRunSummary
 from .eval_runs_response import EvalRunsResponse
+from .export_audit_compliance_format import ExportAuditComplianceFormat
 from .generic_object import GenericObject
 from .get_agent_denied_events_response_200 import GetAgentDeniedEventsResponse200
 from .get_agent_response_200 import GetAgentResponse200
@@ -348,6 +349,7 @@ __all__ = (
     "EvalRunResult",
     "EvalRunsResponse",
     "EvalRunSummary",
+    "ExportAuditComplianceFormat",
     "GenericObject",
     "GetAgentDeniedEventsResponse200",
     "GetAgentResponse200",

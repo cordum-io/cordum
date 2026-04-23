@@ -191,7 +191,7 @@ export function createIntegrationHandlers(getState: () => IntegrationState): Htt
       return json(200, { decision: "allow", request_id: request.headers.get("x-request-id") ?? null });
     }),
 
-    http.post("https://cordum.test/api/v1/mcp/message", ({ request }) => {
+    http.post("https://cordum.test/mcp/message", ({ request }) => {
       const unauthorized = requireAuth(request, getState());
       if (unauthorized) {
         return unauthorized;

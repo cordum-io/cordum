@@ -1,8 +1,6 @@
 import React, { act } from "react";
-import { createRoot } from "react-dom/client";
-import { MemoryRouter } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { renderWithProviders } from "@/test-utils/render";
 import MCPPage from "./MCPPage";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -59,6 +57,7 @@ vi.mock("@/hooks/useMcp", async () => {
 vi.mock("../state/config", () => ({
   useConfigStore: <T,>(selector: (s: { principalId: string }) => T) =>
     selector({ principalId: "user-1" }),
+  registerQueryClient: vi.fn(),
 }));
 
 // PromptCatalogMount imports useMcpPrompts from useMcpCatalog. In the
@@ -84,8 +83,7 @@ vi.mock("@/components/layout/PageHeader", () => ({
   PageHeader: ({ title }: { title: string }) => <h1>{title}</h1>,
 }));
 
-let container: HTMLDivElement;
-let root: ReturnType<typeof createRoot>;
+let rendered: ReturnType<typeof renderWithProviders>;
 
 beforeEach(() => {
   vi.stubGlobal("matchMedia", () => ({
@@ -98,38 +96,23 @@ beforeEach(() => {
     onchange: null,
     dispatchEvent: () => false,
   }));
-  container = document.createElement("div");
-  document.body.appendChild(container);
-  root = createRoot(container);
 });
 
 afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
+  rendered?.unmount();
   vi.unstubAllGlobals();
 });
 
 function render() {
-  // PromptCatalogMount now uses useMcpPrompts (React Query) so the
-  // page must be rendered inside a QueryClientProvider. Retry disabled
-  // so a mock-fetch failure fails fast instead of spinning.
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  });
   act(() => {
-    root.render(
-      <QueryClientProvider client={qc}>
-        <MemoryRouter>
-          <MCPPage />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
+    rendered = renderWithProviders(<MCPPage />, { initialEntries: ["/settings/mcp"] });
   });
+  return rendered.container;
 }
 
 describe("MCPPage", () => {
   it("renders the four governance sections", () => {
-    render();
+    const container = render();
     expect(container.querySelector('[data-testid="mcp-summary"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="mcp-heatmap-section"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="mcp-approvals-section"]')).toBeTruthy();
@@ -137,7 +120,7 @@ describe("MCPPage", () => {
   });
 
   it("summarises totals using the live usage payload", () => {
-    render();
+    const container = render();
     const summary = container.querySelector('[data-testid="mcp-summary"]')?.textContent ?? "";
     expect(summary).toContain("3"); // tool calls
     expect(summary).toContain("2"); // pending approvals
@@ -145,7 +128,7 @@ describe("MCPPage", () => {
   });
 
   it("offers preset windows and approval status tabs", () => {
-    render();
+    const container = render();
     expect(container.querySelector('[data-testid="mcp-range-1h"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="mcp-range-7d"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="mcp-approval-tab-pending"]')).toBeTruthy();
