@@ -153,7 +153,7 @@ type server struct {
 	// evalDatasetStore holds curated, immutable policy-regression test
 	// fixtures that the sibling eval-runner task (epic-e1c4321a) will
 	// replay through the policy engine. Only the CRUD surface lives in
-	// this field â€” the coupling to replay is intentionally deferred so
+	// this field — the coupling to replay is intentionally deferred so
 	// this task stays scope-clean.
 	evalDatasetStore  model.EvalDatasetStore
 	evalRunStore      *store.EvalRunStore
@@ -450,7 +450,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	}
 
 	if env.IsProduction() && env.Bool("CORDUM_DASHBOARD_EMBED_API_KEY") {
-		slog.Error("SECURITY WARNING: CORDUM_DASHBOARD_EMBED_API_KEY is enabled in production â€” API key will be exposed in browser JavaScript")
+		slog.Error("SECURITY WARNING: CORDUM_DASHBOARD_EMBED_API_KEY is enabled in production — API key will be exposed in browser JavaScript")
 	}
 
 	memStore, err := store.NewRedisStore(cfg.RedisURL)
@@ -553,7 +553,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		} else {
 			safetyConn = conn
 			safetyClient = client
-			// safetyConn is closed in s.Close(), NOT here â€” handlers may still
+			// safetyConn is closed in s.Close(), NOT here — handlers may still
 			// use safetyClient during the graceful shutdown window.
 		}
 	}
@@ -852,7 +852,7 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 		return nil, nil, nil
 	}
 
-	// Keep the audit chain live whenever the exporter layer is active â€”
+	// Keep the audit chain live whenever the exporter layer is active —
 	// including the null/discard backend used by task-e1d54a75. Without this
 	// the verify endpoint reports total_events=0 even though audit sends
 	// appear healthy at the API boundary.
@@ -867,7 +867,7 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 	transport := strings.ToLower(strings.TrimSpace(os.Getenv("AUDIT_TRANSPORT")))
 	if transport == "nats" && natsBus != nil {
 		auditSender = audit.NewNATSAuditPublisher(natsBus, bufExporter)
-		// Start consumer in the same process â€” queue group ensures only one
+		// Start consumer in the same process — queue group ensures only one
 		// replica across the cluster handles each event.
 		if _, err := audit.NewNATSAuditConsumer(
 			natsBus,
@@ -986,7 +986,7 @@ func newHTTPHandler(s *server) (http.Handler, error) {
 	mux.HandleFunc("GET /api/v1/audit/export/config", s.instrumented("/api/v1/audit/export/config", s.handleAuditExportConfig))
 	mux.HandleFunc("POST /api/v1/audit/export/test", s.instrumented("/api/v1/audit/export/test", s.handleAuditExportTest))
 
-	// 2.7.1 Audit chain verify (admin only) â€” handler lives in
+	// 2.7.1 Audit chain verify (admin only) — handler lives in
 	// handlers_audit_verify.go; missing this line was a wire-up regression
 	// that had /api/v1/audit/verify 404ing on fresh deploys despite the
 	// handler being fully implemented and unit-tested.
@@ -1119,7 +1119,7 @@ func newHTTPHandler(s *server) (http.Handler, error) {
 	mux.HandleFunc("POST /api/v1/policy/replay", s.instrumented("/api/v1/policy/replay", s.handlePolicyReplay))
 	mux.HandleFunc("POST /api/v1/policy/analytics", s.instrumented("/api/v1/policy/analytics", s.handlePolicyAnalytics))
 
-	// 12.6 Eval datasets â€” curated, immutable policy-regression fixtures.
+	// 12.6 Eval datasets — curated, immutable policy-regression fixtures.
 	// The sibling eval-runner task (epic-e1c4321a) will replay these
 	// through the policy engine. PUT creates a successor version; it does
 	// not mutate an existing dataset in place.
@@ -1143,7 +1143,7 @@ func newHTTPHandler(s *server) (http.Handler, error) {
 		registrar.RegisterRoutes(mux, s.instrumented)
 	}
 
-	// Middleware chain: logging â†’ CORS â†’ rate limit â†’ auth â†’ read audit â†’ tenant â†’ body limit â†’ mux
+	// Middleware chain: logging → CORS → rate limit → auth → read audit → tenant → body limit → mux
 	// SECURITY: Rate limiter MUST run before auth so that invalid API key
 	// brute-force attempts are rate-limited by IP. When auth context is
 	// absent, rateLimitKey falls back to IP-based keying automatically.
@@ -1253,7 +1253,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 			slog.Error("http shutdown error", "error", err)
 		}
 
-		// Drain gRPC server with timeout â€” fallback to force Stop if it hangs.
+		// Drain gRPC server with timeout — fallback to force Stop if it hangs.
 		if grpcServer != nil {
 			grpcDone := make(chan struct{})
 			go func() {
