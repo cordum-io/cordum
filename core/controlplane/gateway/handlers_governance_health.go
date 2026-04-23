@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -54,7 +55,7 @@ func newGovernanceHealthDeps(s *server, tenant string) *governanceHealthDeps {
 	return &governanceHealthDeps{s: s, tenant: tenant, now: time.Now().UTC()}
 }
 
-func (d *governanceHealthDeps) Tenant() string  { return d.tenant }
+func (d *governanceHealthDeps) Tenant() string { return d.tenant }
 func (d *governanceHealthDeps) Now() time.Time { return d.now }
 
 func (d *governanceHealthDeps) ScanDecisions(ctx context.Context, window time.Duration, now time.Time) (governance.DecisionCounts, error) {
@@ -125,7 +126,13 @@ func (d *governanceHealthDeps) ApprovalLatencies(ctx context.Context, window tim
 			continue
 		}
 		record, err := d.s.jobStore.GetApprovalRecord(ctx, item.JobID)
-		if err != nil || record.ApprovedAt <= item.Timestamp {
+		if err != nil {
+			return nil, fmt.Errorf("approval latency lookup %s: %w", item.JobID, err)
+		}
+		// Missing or still-pending approvals have no resolution timestamp yet.
+		// They should not make the health endpoint unavailable; real store
+		// lookup errors above do.
+		if record.ApprovedAt == 0 || record.ApprovedAt <= item.Timestamp {
 			continue
 		}
 		samples = append(samples, time.Duration(record.ApprovedAt-item.Timestamp)*time.Millisecond)

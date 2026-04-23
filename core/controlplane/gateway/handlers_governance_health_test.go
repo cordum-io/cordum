@@ -1,13 +1,17 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/governance"
+	"github.com/cordum/cordum/core/model"
 )
 
 func TestGovernanceHealthRouteRegistered(t *testing.T) {
@@ -72,5 +76,61 @@ func TestGovernanceHealthRequiresAdmin(t *testing.T) {
 
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGovernanceHealthApprovalLatenciesSkipsPendingRecords(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	jobID := "approval-pending"
+
+	if err := s.decisionLogStore.AppendDecision(ctx, model.DecisionLogRecord{
+		JobID:     jobID,
+		Tenant:    "default",
+		Verdict:   model.SafetyRequireApproval,
+		Timestamp: now.Add(-time.Minute).UnixMilli(),
+	}); err != nil {
+		t.Fatalf("append decision: %v", err)
+	}
+
+	samples, err := newGovernanceHealthDeps(s, "default").ApprovalLatencies(ctx, 24*time.Hour, now)
+	if err != nil {
+		t.Fatalf("ApprovalLatencies returned error for pending/missing approval record: %v", err)
+	}
+	if len(samples) != 0 {
+		t.Fatalf("samples = %d, want 0 for pending/missing approval record", len(samples))
+	}
+}
+
+func TestGovernanceHealthApprovalLatencyLookupErrorMarksUnavailable(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	jobID := "approval-lookup-fails"
+
+	if err := s.decisionLogStore.AppendDecision(ctx, model.DecisionLogRecord{
+		JobID:     jobID,
+		Tenant:    "default",
+		Verdict:   model.SafetyRequireApproval,
+		Timestamp: now.Add(-time.Minute).UnixMilli(),
+	}); err != nil {
+		t.Fatalf("append decision: %v", err)
+	}
+
+	if err := s.jobStore.Client().Close(); err != nil {
+		t.Fatalf("close job store client: %v", err)
+	}
+
+	score, err := governance.ComputeHealth(ctx, newGovernanceHealthDeps(s, "default"), nil)
+	if err != nil {
+		t.Fatalf("ComputeHealth: %v", err)
+	}
+	factor := score.Factors[governance.FactorApprovalLatencyP95]
+	if factor.Score != governance.NeutralFactorScore {
+		t.Fatalf("approval latency score = %d, want neutral %d", factor.Score, governance.NeutralFactorScore)
+	}
+	if !strings.Contains(factor.Notes, "unavailable:") || !strings.Contains(factor.Notes, "approval latency lookup "+jobID) {
+		t.Fatalf("approval latency notes = %q, want unavailable lookup error", factor.Notes)
 	}
 }

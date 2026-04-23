@@ -145,8 +145,8 @@ if [[ "${status}" != "succeeded" ]]; then
   exit 1
 fi
 
-probe_json_field "GET" "/api/v1/audit/verify?tenant=${TENANT_ID}" "200" '.status | type == "string"' "audit verify"
-probe_json_field "GET" "/api/v1/governance/health?tenant=${TENANT_ID}" "200" '.grade | type == "string"' "governance health"
+probe_json_field "GET" "/api/v1/audit/verify?tenant=${TENANT_ID}" "200" '(.status == "ok") and ((.total_events // 0) > 0)' "audit verify"
+probe_json_field "GET" "/api/v1/governance/health?tenant=${TENANT_ID}" "200" '(.grade | test("^[ABCDF]$")) and (.factors | has("denial_rate") and has("approval_latency_p95") and has("policy_coverage") and has("chain_integrity"))' "governance health"
 
 log "deleting run"
 curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" -X DELETE "${API_BASE}/api/v1/workflow-runs/${run_id}" >/dev/null
