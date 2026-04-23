@@ -2,10 +2,12 @@
 // the OpenAPI spec and reports gaps in either direction.
 //
 // It parses every *.go file under the gateway package with go/parser, collects
-// calls of the form mux.HandleFunc("METHOD /path", ...) or mux.HandleFunc("/path", ...),
-// and loads the spec via gopkg.in/yaml.v3. A route registered without a method
-// prefix is treated as any-method: the corresponding spec path must either list
-// all standard HTTP methods or declare x-any-method: true.
+// calls of the form mux.HandleFunc("METHOD /path", ...),
+// mux.HandleFunc("/path", ...), s.registerRoute(mux, "METHOD /path", ...), or
+// s.registerRoute(mux, "/path", ...), and loads the spec via gopkg.in/yaml.v3.
+// A route registered without a method prefix is treated as any-method: the
+// corresponding spec path must either list all standard HTTP methods or
+// declare x-any-method: true.
 package main
 
 import (
@@ -30,8 +32,8 @@ import (
 // in this set, or if the spec path declares x-any-method: true.
 var standardMethods = []string{"get", "post", "put", "patch", "delete"}
 
-// Route is a parsed mux.HandleFunc registration. Method is lower-case or ""
-// for any-method registrations.
+// Route is a parsed HTTP registration. Method is lower-case or "" for
+// any-method registrations.
 type Route struct {
 	Method string `json:"method"`
 	Path   string `json:"path"`
@@ -87,8 +89,9 @@ func parseHandlerPattern(pattern string) (method, path string, err error) {
 }
 
 // collectRoutes walks a directory, parses every non-test .go file, and
-// extracts string-literal mux.HandleFunc patterns. Test files are skipped so
-// synthetic routes in _test.go fixtures do not pollute production coverage.
+// extracts string-literal mux.HandleFunc/registerRoute patterns. Test files are
+// skipped so synthetic routes in _test.go fixtures do not pollute production
+// coverage.
 func collectRoutes(dir string) ([]Route, error) {
 	fset := token.NewFileSet()
 	var routes []Route
@@ -115,13 +118,22 @@ func collectRoutes(dir string) ([]Route, error) {
 				return true
 			}
 			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel == nil || sel.Sel.Name != "HandleFunc" {
+			if !ok || sel.Sel == nil {
 				return true
 			}
-			if len(call.Args) == 0 {
+			var patternArgIndex int
+			switch sel.Sel.Name {
+			case "HandleFunc":
+				patternArgIndex = 0
+			case "registerRoute":
+				patternArgIndex = 1
+			default:
 				return true
 			}
-			lit, ok := call.Args[0].(*ast.BasicLit)
+			if len(call.Args) <= patternArgIndex {
+				return true
+			}
+			lit, ok := call.Args[patternArgIndex].(*ast.BasicLit)
 			if !ok || lit.Kind != token.STRING {
 				return true
 			}

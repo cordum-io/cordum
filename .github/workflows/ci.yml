@@ -254,6 +254,11 @@ jobs:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
         REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
 
+    - name: Run platform smoke
+      run: make smoke
+      env:
+        CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+
     - name: Run Go integration tests
       run: go test -v -tags=integration -timeout 5m ./...
       env:

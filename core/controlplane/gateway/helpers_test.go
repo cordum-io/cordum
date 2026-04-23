@@ -21,6 +21,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
+	"github.com/cordum/cordum/core/governance"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/schema"
@@ -337,6 +338,10 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	if err != nil {
 		t.Fatalf("config svc: %v", err)
 	}
+	decisionLogStore, err := store.NewRedisDecisionLogStore(redisURL)
+	if err != nil {
+		t.Fatalf("decision log store: %v", err)
+	}
 	rbacStore, err := auth.NewRBACStore(redisURL)
 	if err != nil {
 		t.Fatalf("rbac store: %v", err)
@@ -367,6 +372,8 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 	s := &server{
 		memStore:              memStore,
 		jobStore:              jobStore,
+		decisionLogStore:      decisionLogStore,
+		governanceHealthCache: governance.NewCache(60 * time.Second),
 		bus:                   bus,
 		workers:               make(map[string]*pb.Heartbeat),
 		workerSeen:            make(map[string]time.Time),
@@ -400,6 +407,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 		_ = jobStore.Close()
 		_ = workflowStore.Close()
 		_ = configSvc.Close()
+		_ = decisionLogStore.Close()
 		_ = rbacStore.Close()
 		_ = schemaRegistry.Close()
 		_ = dlqStore.Close()

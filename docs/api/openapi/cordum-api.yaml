@@ -3538,9 +3538,9 @@ paths:
       summary: Verify audit chain integrity
       description: |
         Walks the tenant's audit stream and attests integrity of the hash chain. Reports
-        `status=ok` on a contiguous chain, `status=gap` with classification when seq numbers are
-        missing (retention-trimmed vs suspected tampering), and `status=tamper` on a broken hash
-        link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
+        `status=ok` on a contiguous chain, `status=partial` when the only gaps are below the
+        retention boundary, and `status=compromised` on missing events or a broken hash link.
+        Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
         integrity report surface, not event retrieval.
       tags:
       - AuditExport
@@ -4872,6 +4872,39 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/governance/health:
+    get:
+      operationId: getGovernanceHealth
+      summary: Composite governance health score per tenant
+      description: |
+        Returns the Command Center governance-health aggregate for the tenant:
+        denial-rate, approval-latency p95, policy coverage, and audit-chain integrity
+        rolled up into a 0-100 score plus A-F grade.
+
+        Admin-only. Results are cached per tenant for 60 seconds so dashboards can poll
+        without forcing a full recompute on every refresh.
+      tags:
+      - Governance
+      security:
+      - apiKey: []
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: tenant
+        in: query
+        description: Tenant id (must match caller scope)
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/GovernanceHealthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/mcp/approvals:
     get:
       operationId: listMcpApprovals
@@ -6069,6 +6102,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/GenericObject'
+    GovernanceHealthResponse:
+      description: Composite governance health score
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GovernanceHealth'
   schemas:
     ApprovalAnalyticsResponse:
       type: object
@@ -6149,6 +6188,36 @@ components:
         p90_seconds:
           type: number
           nullable: true
+    GovernanceHealth:
+      type: object
+      required: [score, grade, generated_at, factors]
+      properties:
+        score:
+          type: integer
+        grade:
+          type: string
+          enum: [A, B, C, D, F]
+        generated_at:
+          type: string
+          format: date-time
+        factors:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/GovernanceHealthFactor'
+        truncated_at_max:
+          type: boolean
+    GovernanceHealthFactor:
+      type: object
+      required: [score, weight]
+      properties:
+        score:
+          type: integer
+        weight:
+          type: number
+        raw:
+          description: Factor-specific raw measurement payload.
+        notes:
+          type: string
     DelegationChainLink:
       type: object
       required: [agent_id, issued_at, expires_at, jti, issued_by]

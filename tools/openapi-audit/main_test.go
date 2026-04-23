@@ -59,7 +59,8 @@ func TestNormalisePath(t *testing.T) {
 func TestCollectRoutes_MultiplePackages(t *testing.T) {
 	dir := t.TempDir()
 	// Two sub-packages under the gateway-like dir. The walker should pick up
-	// routes from both, and should NOT pick up any from the _test.go file.
+	// routes from both registration styles, and should NOT pick up any from the
+	// _test.go file.
 	mustWrite(t, filepath.Join(dir, "pkga", "routes.go"), `
 package pkga
 
@@ -76,8 +77,13 @@ package pkgb
 
 import "net/http"
 
+type server struct{}
+
+func (s *server) registerRoute(_ *http.ServeMux, _ string, _ http.HandlerFunc) {}
+
 func register(mux *http.ServeMux) {
-	mux.HandleFunc(`+"`DELETE /api/v1/other/{name}`"+`, nil)
+	s := &server{}
+	s.registerRoute(mux, `+"`DELETE /api/v1/other/{name}`"+`, nil)
 }
 `)
 	mustWrite(t, filepath.Join(dir, "pkgb", "ignore_test.go"), `

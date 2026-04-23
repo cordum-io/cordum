@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -404,5 +405,61 @@ func TestHandleAuditVerify_NeverReturnsEventBody(t *testing.T) {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("response leaks %q: %s", forbidden, body)
 		}
+	}
+}
+
+func TestAuditVerifyRouteRegistered(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	seedChain(t, s, "default", 3)
+
+	mux := http.NewServeMux()
+	if err := s.registerRoutes(mux); err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+
+	req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/verify?tenant=default", nil))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	var res audit.VerifyResult
+	if err := json.NewDecoder(rec.Body).Decode(&res); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if res.Status != audit.VerifyStatusOK {
+		t.Fatalf("status field = %q, want %q", res.Status, audit.VerifyStatusOK)
+	}
+	if res.TotalEvents != 3 {
+		t.Fatalf("total_events = %d, want 3", res.TotalEvents)
+	}
+	if res.VerifiedEvents != 3 {
+		t.Fatalf("verified_events = %d, want 3", res.VerifiedEvents)
+	}
+}
+
+func TestAuditVerifyRequiresAdmin(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	seedChain(t, s, "default", 1)
+
+	mux := http.NewServeMux()
+	if err := s.registerRoutes(mux); err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/verify?tenant=default", nil), &auth.AuthContext{
+		Role:        "viewer",
+		Tenant:      "default",
+		PrincipalID: "viewer@example.com",
+	})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
 	}
 }

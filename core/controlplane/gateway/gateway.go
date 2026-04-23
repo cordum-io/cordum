@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
+	"github.com/cordum/cordum/core/governance"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	"github.com/cordum/cordum/core/infra/bus"
@@ -115,9 +117,11 @@ const (
 
 type server struct {
 	pb.UnimplementedCordumApiServer
-	memStore         store.Store
-	jobStore         *store.RedisJobStore // Typed for ListRecentJobs
-	decisionLogStore model.DecisionLogStore
+	memStore              store.Store
+	jobStore              *store.RedisJobStore // Typed for ListRecentJobs
+	decisionLogStore      model.DecisionLogStore
+	governanceHealthCache *governance.Cache
+	routeTable            []routeInfo
 	// approvalAnalyticsCache memoises approval-analytics responses
 	// per (tenant, window, group_by, limit) for
 	// approvalAnalyticsCacheTTL (30s) to smooth dashboard polling.
@@ -194,6 +198,12 @@ type server struct {
 	workerExpireStop chan struct{}
 	workerExpireOnce sync.Once
 	probes           *health.ProbeServer
+}
+
+type routeInfo struct {
+	Method string
+	Path   string
+	Auth   string
 }
 
 // snapshotFromRedis reads the full scheduler worker snapshot from Redis.
@@ -581,6 +591,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		memStore:               memStore,
 		jobStore:               jobStore,
 		decisionLogStore:       decisionLogStore,
+		governanceHealthCache:  governance.NewCache(60 * time.Second),
 		approvalAnalyticsCache: newApprovalAnalyticsCache(),
 		bus:                    natsBus,
 		workers:                make(map[string]*pb.Heartbeat),
@@ -892,249 +903,8 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		_, err := s.redisHealthStatus(ctx)
 		return err
 	})
-	s.probes.Register(mux)
-	mux.HandleFunc("GET /health", s.handleHealth)
-	mux.HandleFunc("GET /api/v1/health", s.instrumented("/api/v1/health", s.handleHealth))
-
-	// 1.5 Auth config (public)
-	mux.HandleFunc("GET /api/v1/auth/config", s.instrumented("/api/v1/auth/config", s.handleAuthConfig))
-
-	// 1.6 Auth endpoints
-	mux.HandleFunc("POST /api/v1/auth/login", s.instrumented("/api/v1/auth/login", s.handleLogin))
-	mux.HandleFunc("GET /api/v1/auth/session", s.instrumented("/api/v1/auth/session", s.handleSession))
-	mux.HandleFunc("POST /api/v1/auth/logout", s.instrumented("/api/v1/auth/logout", s.handleLogout))
-	mux.HandleFunc("POST /api/v1/auth/password", s.instrumented("/api/v1/auth/password", s.handleChangePassword))
-
-	// 1.7 User management (admin only)
-	mux.HandleFunc("POST /api/v1/users", s.instrumented("/api/v1/users", s.handleCreateUser))
-	mux.HandleFunc("GET /api/v1/users", s.instrumented("/api/v1/users", s.handleListUsers))
-	mux.HandleFunc("PUT /api/v1/users/{id}", s.instrumented("/api/v1/users/{id}", s.handleUpdateUser))
-	mux.HandleFunc("DELETE /api/v1/users/{id}", s.instrumented("/api/v1/users/{id}", s.handleDeleteUser))
-	mux.HandleFunc("POST /api/v1/users/{id}/password", s.instrumented("/api/v1/users/{id}/password", s.handleChangeUserPassword))
-
-	// 1.8 API Key management (admin only)
-	mux.HandleFunc("GET /api/v1/auth/keys", s.instrumented("/api/v1/auth/keys", s.handleListKeys))
-	mux.HandleFunc("POST /api/v1/auth/keys", s.instrumented("/api/v1/auth/keys", s.handleCreateKey))
-	mux.HandleFunc("DELETE /api/v1/auth/keys/{id}", s.instrumented("/api/v1/auth/keys/{id}", s.handleRevokeKey))
-
-	// 1.9 RBAC role management (admin only, entitlement-gated)
-	mux.HandleFunc("GET /api/v1/auth/roles", s.instrumented("/api/v1/auth/roles", s.handleListRoles))
-	mux.HandleFunc("GET /api/v1/auth/roles/{name}", s.instrumented("/api/v1/auth/roles/{name}", s.handleGetRole))
-	mux.HandleFunc("PUT /api/v1/auth/roles/{name}", s.instrumented("/api/v1/auth/roles/{name}", s.handlePutRole))
-	mux.HandleFunc("DELETE /api/v1/auth/roles/{name}", s.instrumented("/api/v1/auth/roles/{name}", s.handleDeleteRole))
-
-	// 2. Workers (RPC via NATS)
-	mux.HandleFunc("GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))
-	mux.HandleFunc("GET /api/v1/workers/{id}", s.instrumented("/api/v1/workers/{id}", s.handleGetWorker))
-	mux.HandleFunc("GET /api/v1/workers/{id}/jobs", s.instrumented("/api/v1/workers/{id}/jobs", s.handleGetWorkerJobs))
-	mux.HandleFunc("GET /api/v1/workers/credentials", s.instrumented("/api/v1/workers/credentials", s.handleListWorkerCredentials))
-	mux.HandleFunc("POST /api/v1/workers/credentials", s.instrumented("/api/v1/workers/credentials", s.handleCreateWorkerCredential))
-	mux.HandleFunc("DELETE /api/v1/workers/credentials/{worker_id}", s.instrumented("/api/v1/workers/credentials/{worker_id}", s.handleDeleteWorkerCredential))
-
-	// 2.1 Agent Identities (admin only)
-	mux.HandleFunc("GET /api/v1/agents", s.instrumented("/api/v1/agents", s.handleListAgents))
-	mux.HandleFunc("POST /api/v1/agents", s.instrumented("/api/v1/agents", s.handleCreateAgent))
-	mux.HandleFunc("GET /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleGetAgent))
-	mux.HandleFunc("PUT /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleUpdateAgent))
-	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleDeleteAgent))
-	mux.HandleFunc("GET /api/v1/agents/{id}/stats", s.instrumented("/api/v1/agents/{id}/stats", s.handleAgentStats))
-	mux.HandleFunc("GET /api/v1/agents/{id}/delegations", s.instrumented("/api/v1/agents/{id}/delegations", s.handleListAgentDelegations))
-	mux.HandleFunc("POST /api/v1/agents/{id}/delegate", s.instrumented("/api/v1/agents/{id}/delegate", s.handleDelegateAgent))
-	mux.HandleFunc("GET /api/v1/delegations", s.instrumented("/api/v1/delegations", s.handleListDelegations))
-	mux.HandleFunc("POST /api/v1/agents/verify-delegation", s.instrumented("/api/v1/agents/verify-delegation", s.handleVerifyDelegation))
-	mux.HandleFunc("POST /api/v1/agents/revoke-delegation", s.instrumented("/api/v1/agents/revoke-delegation", s.handleRevokeDelegation))
-
-	mux.HandleFunc("GET /api/v1/pools", s.instrumented("/api/v1/pools", s.handleListPools))
-	mux.HandleFunc("GET /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleGetPool))
-	mux.HandleFunc("GET /api/v1/topics", s.instrumented("/api/v1/topics", s.handleListTopics))
-	mux.HandleFunc("POST /api/v1/topics", s.instrumented("/api/v1/topics", s.handleCreateTopic))
-	mux.HandleFunc("DELETE /api/v1/topics/{name}", s.instrumented("/api/v1/topics/{name}", s.handleDeleteTopic))
-	mux.HandleFunc("PUT /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleCreatePool))
-	mux.HandleFunc("PATCH /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleUpdatePool))
-	mux.HandleFunc("DELETE /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleDeletePool))
-	mux.HandleFunc("POST /api/v1/pools/{name}/drain", s.instrumented("/api/v1/pools/{name}/drain", s.handleDrainPool))
-	mux.HandleFunc("PUT /api/v1/pools/{name}/topics/{topic}", s.instrumented("/api/v1/pools/{name}/topics/{topic}", s.handleAddTopicToPool))
-	mux.HandleFunc("DELETE /api/v1/pools/{name}/topics/{topic}", s.instrumented("/api/v1/pools/{name}/topics/{topic}", s.handleRemoveTopicFromPool))
-
-	// 2.5 Status snapshot (Redis/NATS/workers/uptime)
-	mux.HandleFunc("GET /api/v1/status", s.instrumented("/api/v1/status", s.handleStatus))
-	mux.HandleFunc("GET /api/v1/license", s.instrumented("/api/v1/license", s.handleGetLicense))
-	mux.HandleFunc("GET /api/v1/license/usage", s.instrumented("/api/v1/license/usage", s.handleGetLicenseUsage))
-	mux.HandleFunc("POST /api/v1/license/reload", s.instrumented("/api/v1/license/reload", s.handleReloadLicense))
-	mux.HandleFunc("GET /api/v1/telemetry/status", s.instrumented("/api/v1/telemetry/status", s.handleGetTelemetryStatus))
-	mux.HandleFunc("GET /api/v1/telemetry/inspect", s.instrumented("/api/v1/telemetry/inspect", s.handleGetTelemetryInspect))
-	mux.HandleFunc("GET /api/v1/telemetry/export", s.instrumented("/api/v1/telemetry/export", s.handleGetTelemetryExport))
-	mux.HandleFunc("GET /api/v1/telemetry/usage", s.instrumented("/api/v1/telemetry/usage", s.handleGetTelemetryUsage))
-	mux.HandleFunc("POST /api/v1/telemetry/consent", s.instrumented("/api/v1/telemetry/consent", s.handleSetTelemetryConsent))
-
-	// 2.6 Admin endpoints (read-only, admin auth required)
-	mux.HandleFunc("GET /api/v1/admin/locks", s.instrumented("/api/v1/admin/locks", s.handleAdminLocks))
-
-	// 2.7 Audit export management (admin only, entitlement-gated)
-	// 2.7 Audit export — main endpoint plus operational sub-routes.
-	// The top-level GET /api/v1/audit/export was missing despite the
-	// handler being fully implemented in handlers_audit_compliance.go:61
-	// (same wire-up gap class as /api/v1/audit/verify below).
-	mux.HandleFunc("GET /api/v1/audit/export", s.instrumented("/api/v1/audit/export", s.handleAuditExport))
-	mux.HandleFunc("GET /api/v1/audit/export/health", s.instrumented("/api/v1/audit/export/health", s.handleAuditExportHealth))
-	mux.HandleFunc("GET /api/v1/audit/export/config", s.instrumented("/api/v1/audit/export/config", s.handleAuditExportConfig))
-	mux.HandleFunc("POST /api/v1/audit/export/test", s.instrumented("/api/v1/audit/export/test", s.handleAuditExportTest))
-
-	// 2.7.1 Audit chain verify (admin only) — handler lives in
-	// handlers_audit_verify.go; missing this line was a wire-up regression
-	// that had /api/v1/audit/verify 404ing on fresh deploys despite the
-	// handler being fully implemented and unit-tested.
-	mux.HandleFunc("GET /api/v1/audit/verify", s.instrumented("/api/v1/audit/verify", s.handleAuditVerify))
-
-	// 2.8 Legal hold management (admin only, entitlement-gated)
-	mux.HandleFunc("POST /api/v1/audit/legal-hold", s.instrumented("/api/v1/audit/legal-hold", s.handleCreateLegalHold))
-	mux.HandleFunc("GET /api/v1/audit/legal-holds", s.instrumented("/api/v1/audit/legal-holds", s.handleListLegalHolds))
-	mux.HandleFunc("DELETE /api/v1/audit/legal-hold/{id}", s.instrumented("/api/v1/audit/legal-hold/{id}", s.handleReleaseLegalHold))
-
-	// 3. Jobs (Redis ZSet)
-	mux.HandleFunc("GET /api/v1/jobs", s.instrumented("/api/v1/jobs", s.handleListJobs))
-
-	// 4. Job Details
-	mux.HandleFunc("GET /api/v1/jobs/{id}", s.instrumented("/api/v1/jobs/{id}", s.handleGetJob))
-	mux.HandleFunc("GET /api/v1/jobs/{id}/stream", s.instrumented("/api/v1/jobs/{id}/stream", s.handleJobStream))
-	mux.HandleFunc("GET /api/v1/jobs/{id}/decisions", s.instrumented("/api/v1/jobs/{id}/decisions", s.handleListJobDecisions))
-	mux.HandleFunc("POST /api/v1/jobs/{id}/cancel", s.instrumented("/api/v1/jobs/{id}/cancel", s.handleCancelJob))
-	mux.HandleFunc("POST /api/v1/jobs/{id}/remediate", s.instrumented("/api/v1/jobs/{id}/remediate", s.handleRemediateJob))
-
-	// 4.5 Memory pointers (debug)
-	mux.HandleFunc("GET /api/v1/memory", s.instrumented("/api/v1/memory", s.handleGetMemory))
-	// 4.6 Artifact store
-	mux.HandleFunc("POST /api/v1/artifacts", s.instrumented("/api/v1/artifacts", s.handlePutArtifact))
-	mux.HandleFunc("GET /api/v1/artifacts/{ptr}", s.instrumented("/api/v1/artifacts/{ptr}", s.handleGetArtifact))
-
-	// 5. Submit Job (REST)
-	mux.HandleFunc("POST /api/v1/jobs", s.instrumented("/api/v1/jobs", s.handleSubmitJobHTTP))
-
-	// 6. Trace Details
-	mux.HandleFunc("GET /api/v1/traces/{id}", s.instrumented("/api/v1/traces/{id}", s.handleGetTrace))
-
-	// 8. Workflows
-	mux.HandleFunc("GET /api/v1/workflows", s.instrumented("/api/v1/workflows", s.handleListWorkflows))
-	mux.HandleFunc("POST /api/v1/workflows", s.instrumented("/api/v1/workflows", s.handleCreateWorkflow))
-	mux.HandleFunc("GET /api/v1/workflows/{id}", s.instrumented("/api/v1/workflows/{id}", s.handleGetWorkflow))
-	mux.HandleFunc("DELETE /api/v1/workflows/{id}", s.instrumented("/api/v1/workflows/{id}", s.handleDeleteWorkflow))
-	mux.HandleFunc("POST /api/v1/workflows/{id}/runs", s.instrumented("/api/v1/workflows/{id}/runs", s.handleStartRun))
-	mux.HandleFunc("GET /api/v1/workflows/{id}/runs", s.instrumented("/api/v1/workflows/{id}/runs", s.handleListRuns))
-	mux.HandleFunc("GET /api/v1/workflow-runs", s.instrumented("/api/v1/workflow-runs", s.handleListAllRuns))
-	mux.HandleFunc("GET /api/v1/workflow-runs/{id}", s.instrumented("/api/v1/workflow-runs/{id}", s.handleGetRun))
-	mux.HandleFunc("GET /api/v1/workflow-runs/{id}/timeline", s.instrumented("/api/v1/workflow-runs/{id}/timeline", s.handleGetRunTimeline))
-	mux.HandleFunc("GET /api/v1/workflow-runs/{id}/chat", s.instrumented("/api/v1/workflow-runs/{id}/chat", s.handleGetRunChat))
-	mux.HandleFunc("POST /api/v1/workflow-runs/{id}/chat", s.instrumented("/api/v1/workflow-runs/{id}/chat", s.handlePostRunChat))
-	mux.HandleFunc("DELETE /api/v1/workflow-runs/{id}", s.instrumented("/api/v1/workflow-runs/{id}", s.handleDeleteRun))
-	mux.HandleFunc("POST /api/v1/workflow-runs/{id}/rerun", s.instrumented("/api/v1/workflow-runs/{id}/rerun", s.handleRerunRun))
-	mux.HandleFunc("POST /api/v1/workflows/{id}/dry-run", s.instrumented("/api/v1/workflows/{id}/dry-run", s.handleWorkflowDryRun))
-
-	// 9. Config
-	mux.HandleFunc("GET /api/v1/config", s.instrumented("/api/v1/config", s.handleGetConfig))
-	mux.HandleFunc("GET /api/v1/config/effective", s.instrumented("/api/v1/config/effective", s.handleGetEffectiveConfig))
-	mux.HandleFunc("PUT /api/v1/config", s.instrumented("/api/v1/config", s.handleSetConfig))
-	mux.HandleFunc("POST /api/v1/config", s.instrumented("/api/v1/config", s.handleSetConfig))
-
-	// 9.25 Packs
-	mux.HandleFunc("GET /api/v1/packs", s.instrumented("/api/v1/packs", s.handleListPacks))
-	mux.HandleFunc("GET /api/v1/packs/{id}", s.instrumented("/api/v1/packs/{id}", s.handleGetPack))
-	mux.HandleFunc("POST /api/v1/packs/install", s.instrumented("/api/v1/packs/install", s.handleInstallPack))
-	mux.HandleFunc("POST /api/v1/packs/{id}/uninstall", s.instrumented("/api/v1/packs/{id}/uninstall", s.handleUninstallPack))
-	mux.HandleFunc("POST /api/v1/packs/{id}/verify", s.instrumented("/api/v1/packs/{id}/verify", s.handleVerifyPack))
-	mux.HandleFunc("GET /api/v1/marketplace/packs", s.instrumented("/api/v1/marketplace/packs", s.handleMarketplacePacks))
-	mux.HandleFunc("POST /api/v1/marketplace/install", s.instrumented("/api/v1/marketplace/install", s.handleMarketplaceInstall))
-
-	// 9.5 Schemas
-	mux.HandleFunc("POST /api/v1/schemas", s.instrumented("/api/v1/schemas", s.handleRegisterSchema))
-	mux.HandleFunc("GET /api/v1/schemas", s.instrumented("/api/v1/schemas", s.handleListSchemas))
-	mux.HandleFunc("GET /api/v1/schemas/{id}", s.instrumented("/api/v1/schemas/{id}", s.handleGetSchema))
-	mux.HandleFunc("DELETE /api/v1/schemas/{id}", s.instrumented("/api/v1/schemas/{id}", s.handleDeleteSchema))
-
-	// 9.6 Resource locks
-	mux.HandleFunc("GET /api/v1/locks", s.instrumented("/api/v1/locks", s.handleGetLock))
-	mux.HandleFunc("POST /api/v1/locks/acquire", s.instrumented("/api/v1/locks/acquire", s.handleAcquireLock))
-	mux.HandleFunc("POST /api/v1/locks/release", s.instrumented("/api/v1/locks/release", s.handleReleaseLock))
-	mux.HandleFunc("POST /api/v1/locks/renew", s.instrumented("/api/v1/locks/renew", s.handleRenewLock))
-
-	// 10. DLQ
-	mux.HandleFunc("GET /api/v1/dlq", s.instrumented("/api/v1/dlq", s.handleListDLQ))
-	mux.HandleFunc("GET /api/v1/dlq/page", s.instrumented("/api/v1/dlq/page", s.handleListDLQPage))
-	mux.HandleFunc("DELETE /api/v1/dlq/{job_id}", s.instrumented("/api/v1/dlq/{job_id}", s.handleDeleteDLQ))
-	mux.HandleFunc("POST /api/v1/dlq/{job_id}/retry", s.instrumented("/api/v1/dlq/{job_id}/retry", s.handleRetryDLQ))
-
-	// 11. Workflow run operations
-	mux.HandleFunc("POST /api/v1/workflows/{id}/runs/{run_id}/cancel", s.instrumented("/api/v1/workflows/{id}/runs/{run_id}/cancel", s.handleCancelRun))
-
-	// 11.5 Job approvals
-	mux.HandleFunc("GET /api/v1/approvals", s.instrumented("/api/v1/approvals", s.handleListApprovals))
-	mux.HandleFunc("POST /api/v1/approvals/{job_id}/approve", s.instrumented("/api/v1/approvals/{job_id}/approve", s.handleApproveJob))
-	mux.HandleFunc("POST /api/v1/approvals/{job_id}/reject", s.instrumented("/api/v1/approvals/{job_id}/reject", s.handleRejectJob))
-	mux.HandleFunc("POST /api/v1/approvals/{job_id}/repair", s.instrumented("/api/v1/approvals/{job_id}/repair", s.handleRepairApproval))
-	mux.HandleFunc("GET /api/v1/approvals/{job_id}/context", s.instrumented("/api/v1/approvals/{job_id}/context", s.handleApprovalContext))
-	mux.HandleFunc("GET /api/v1/governance/decisions", s.instrumented("/api/v1/governance/decisions", s.handleListGovernanceDecisions))
-	mux.HandleFunc("GET /api/v1/governance/approvals/analytics", s.instrumented("/api/v1/governance/approvals/analytics", s.handleApprovalAnalytics))
-	mux.HandleFunc("GET /api/v1/mcp/approvals", s.instrumented("/api/v1/mcp/approvals", s.handleMCPApprovalList))
-	mux.HandleFunc("GET /api/v1/mcp/approvals/{id}", s.instrumented("/api/v1/mcp/approvals/{id}", s.handleMCPApprovalGet))
-	mux.HandleFunc("POST /api/v1/mcp/approvals/{id}/approve", s.instrumented("/api/v1/mcp/approvals/{id}/approve", s.handleMCPApprovalApprove))
-	mux.HandleFunc("POST /api/v1/mcp/approvals/{id}/reject", s.instrumented("/api/v1/mcp/approvals/{id}/reject", s.handleMCPApprovalReject))
-	mux.HandleFunc("POST /api/v1/mcp/verify-signature", s.instrumented("/api/v1/mcp/verify-signature", s.handleMCPVerifySignature))
-	mux.HandleFunc("GET /api/v1/mcp/outbound", s.instrumented("/api/v1/mcp/outbound", s.handleMCPOutbound))
-	mux.HandleFunc("GET /api/v1/mcp/usage", s.instrumented("/api/v1/mcp/usage", s.handleMCPUsage))
-	// MCP tool visibility (dashboard consumes these via src/hooks/useAgentTools.ts):
-	mux.HandleFunc("GET /api/v1/mcp/tools", s.instrumented("/api/v1/mcp/tools", s.handleListMCPTools))
-	mux.HandleFunc("GET /api/v1/agents/{id}/tools", s.instrumented("/api/v1/agents/{id}/tools", s.handleAgentToolVisibility))
-	mux.HandleFunc("GET /api/v1/agents/{id}/denied-events", s.instrumented("/api/v1/agents/{id}/denied-events", s.handleAgentDeniedEvents))
-
-	// 12. Policy endpoints
-	mux.HandleFunc("POST /api/v1/policy/evaluate", s.instrumented("/api/v1/policy/evaluate", s.handlePolicyEvaluate))
-	mux.HandleFunc("POST /api/v1/policy/simulate", s.instrumented("/api/v1/policy/simulate", s.handlePolicySimulate))
-	mux.HandleFunc("POST /api/v1/policy/explain", s.instrumented("/api/v1/policy/explain", s.handlePolicyExplain))
-	mux.HandleFunc("GET /api/v1/policy/snapshots", s.instrumented("/api/v1/policy/snapshots", s.handlePolicySnapshots))
-	mux.HandleFunc("GET /api/v1/policy/rules", s.instrumented("/api/v1/policy/rules", s.handlePolicyRules))
-	mux.HandleFunc("GET /api/v1/policy/output/rules", s.instrumented("/api/v1/policy/output/rules", s.handlePolicyOutputRules))
-	mux.HandleFunc("GET /api/v1/policy/output/stats", s.instrumented("/api/v1/policy/output/stats", s.handlePolicyOutputStats))
-	mux.HandleFunc("PUT /api/v1/policy/output/rules/{id}", s.instrumented("/api/v1/policy/output/rules/{id}", s.handlePutPolicyOutputRule))
-	mux.HandleFunc("GET /api/v1/policy/velocity-rules", s.instrumented("/api/v1/policy/velocity-rules", s.handleVelocityRules))
-	mux.HandleFunc("GET /api/v1/policy/velocity-rules/stats", s.instrumented("/api/v1/policy/velocity-rules/stats", s.handleVelocityRuleStats))
-	mux.HandleFunc("POST /api/v1/policy/velocity-rules", s.instrumented("/api/v1/policy/velocity-rules", s.handleCreateVelocityRule))
-	mux.HandleFunc("PUT /api/v1/policy/velocity-rules/{id}", s.instrumented("/api/v1/policy/velocity-rules/{id}", s.handlePutVelocityRule))
-	mux.HandleFunc("DELETE /api/v1/policy/velocity-rules/{id}", s.instrumented("/api/v1/policy/velocity-rules/{id}", s.handleDeleteVelocityRule))
-	mux.HandleFunc("GET /api/v1/policy/bundles", s.instrumented("/api/v1/policy/bundles", s.handlePolicyBundles))
-	mux.HandleFunc("GET /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleGetPolicyBundle))
-	mux.HandleFunc("PUT /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handlePutPolicyBundle))
-	mux.HandleFunc("DELETE /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleDeletePolicyBundle))
-	mux.HandleFunc("POST /api/v1/policy/bundles/{id}/simulate", s.instrumented("/api/v1/policy/bundles/{id}/simulate", s.handleSimulatePolicyBundle))
-	mux.HandleFunc("GET /api/v1/policy/bundles/snapshots", s.instrumented("/api/v1/policy/bundles/snapshots", s.handleListPolicyBundleSnapshots))
-	mux.HandleFunc("POST /api/v1/policy/bundles/snapshots", s.instrumented("/api/v1/policy/bundles/snapshots", s.handleCapturePolicyBundleSnapshot))
-	mux.HandleFunc("GET /api/v1/policy/bundles/snapshots/{id}", s.instrumented("/api/v1/policy/bundles/snapshots/{id}", s.handleGetPolicyBundleSnapshot))
-	mux.HandleFunc("POST /api/v1/policy/publish", s.instrumented("/api/v1/policy/publish", s.handlePublishPolicyBundles))
-	mux.HandleFunc("POST /api/v1/policy/rollback", s.instrumented("/api/v1/policy/rollback", s.handleRollbackPolicyBundles))
-	mux.HandleFunc("GET /api/v1/policy/audit", s.instrumented("/api/v1/policy/audit", s.handleListPolicyAudit))
-	mux.HandleFunc("POST /api/v1/policy/replay", s.instrumented("/api/v1/policy/replay", s.handlePolicyReplay))
-	mux.HandleFunc("POST /api/v1/policy/analytics", s.instrumented("/api/v1/policy/analytics", s.handlePolicyAnalytics))
-
-	// 12.6 Eval datasets — curated, immutable policy-regression fixtures.
-	// The sibling eval-runner task (epic-e1c4321a) will replay these
-	// through the policy engine. PUT creates a successor version; it does
-	// not mutate an existing dataset in place.
-	mux.HandleFunc("POST /api/v1/evals/datasets/from-incidents", s.instrumented("/api/v1/evals/datasets/from-incidents", s.handleCreateDatasetFromIncidents))
-	mux.HandleFunc("POST /api/v1/evals/datasets", s.instrumented("/api/v1/evals/datasets", s.handleCreateEvalDataset))
-	mux.HandleFunc("GET /api/v1/evals/datasets", s.instrumented("/api/v1/evals/datasets", s.handleListEvalDatasets))
-	mux.HandleFunc("/api/v1/evals/datasets/", s.instrumented("/api/v1/evals/datasets/*", s.handleEvalDatasetSubroutes))
-	mux.HandleFunc("GET /api/v1/evals/runs/{run_id}", s.instrumented("/api/v1/evals/runs/{run_id}", s.handleGetEvalRun))
-	mux.HandleFunc("DELETE /api/v1/evals/runs/{run_id}", s.instrumented("/api/v1/evals/runs/{run_id}", s.handleDeleteEvalRun))
-
-	// 12.5 MCP (HTTP/SSE) routes
-	if err := s.registerMCPRoutes(mux); err != nil {
-		return fmt.Errorf("register mcp routes: %w", err)
-	}
-
-	// 7. Stream (WebSocket)
-	mux.HandleFunc("/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
-
-	// Extension routes (enterprise auth, SSO, etc.)
-	if registrar, ok := s.auth.(auth.RouteRegistrar); ok {
-		registrar.RegisterRoutes(mux, s.instrumented)
+	if err := s.registerRoutes(mux); err != nil {
+		return err
 	}
 
 	// Middleware chain: logging → CORS → rate limit → auth → read audit → tenant → body limit → mux
@@ -1261,6 +1031,392 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		return fmt.Errorf("http server failed: %w", err)
 	}
 	return nil
+}
+
+func (s *server) registerRoutes(mux *http.ServeMux) error {
+	s.routeTable = s.routeTable[:0]
+	s.probes.Register(mux)
+	s.registerRoute(mux, "GET /health", s.handleHealth)
+	s.registerRoute(mux, "GET /api/v1/health", s.instrumented("/api/v1/health", s.handleHealth))
+
+	// 1.5 Auth config (public)
+	s.registerRoute(mux, "GET /api/v1/auth/config", s.instrumented("/api/v1/auth/config", s.handleAuthConfig))
+
+	// 1.6 Auth endpoints
+	s.registerRoute(mux, "POST /api/v1/auth/login", s.instrumented("/api/v1/auth/login", s.handleLogin))
+	s.registerRoute(mux, "GET /api/v1/auth/session", s.instrumented("/api/v1/auth/session", s.handleSession))
+	s.registerRoute(mux, "POST /api/v1/auth/logout", s.instrumented("/api/v1/auth/logout", s.handleLogout))
+	s.registerRoute(mux, "POST /api/v1/auth/password", s.instrumented("/api/v1/auth/password", s.handleChangePassword))
+
+	// 1.7 User management (admin only)
+	s.registerRoute(mux, "POST /api/v1/users", s.instrumented("/api/v1/users", s.handleCreateUser))
+	s.registerRoute(mux, "GET /api/v1/users", s.instrumented("/api/v1/users", s.handleListUsers))
+	s.registerRoute(mux, "PUT /api/v1/users/{id}", s.instrumented("/api/v1/users/{id}", s.handleUpdateUser))
+	s.registerRoute(mux, "DELETE /api/v1/users/{id}", s.instrumented("/api/v1/users/{id}", s.handleDeleteUser))
+	s.registerRoute(mux, "POST /api/v1/users/{id}/password", s.instrumented("/api/v1/users/{id}/password", s.handleChangeUserPassword))
+
+	// 1.8 API Key management (admin only)
+	s.registerRoute(mux, "GET /api/v1/auth/keys", s.instrumented("/api/v1/auth/keys", s.handleListKeys))
+	s.registerRoute(mux, "POST /api/v1/auth/keys", s.instrumented("/api/v1/auth/keys", s.handleCreateKey))
+	s.registerRoute(mux, "DELETE /api/v1/auth/keys/{id}", s.instrumented("/api/v1/auth/keys/{id}", s.handleRevokeKey))
+
+	// 1.9 RBAC role management (admin only, entitlement-gated)
+	s.registerRoute(mux, "GET /api/v1/auth/roles", s.instrumented("/api/v1/auth/roles", s.handleListRoles))
+	s.registerRoute(mux, "GET /api/v1/auth/roles/{name}", s.instrumented("/api/v1/auth/roles/{name}", s.handleGetRole))
+	s.registerRoute(mux, "PUT /api/v1/auth/roles/{name}", s.instrumented("/api/v1/auth/roles/{name}", s.handlePutRole))
+	s.registerRoute(mux, "DELETE /api/v1/auth/roles/{name}", s.instrumented("/api/v1/auth/roles/{name}", s.handleDeleteRole))
+
+	// 2. Workers (RPC via NATS)
+	s.registerRoute(mux, "GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))
+	s.registerRoute(mux, "GET /api/v1/workers/{id}", s.instrumented("/api/v1/workers/{id}", s.handleGetWorker))
+	s.registerRoute(mux, "GET /api/v1/workers/{id}/jobs", s.instrumented("/api/v1/workers/{id}/jobs", s.handleGetWorkerJobs))
+	s.registerRoute(mux, "GET /api/v1/workers/credentials", s.instrumented("/api/v1/workers/credentials", s.handleListWorkerCredentials))
+	s.registerRoute(mux, "POST /api/v1/workers/credentials", s.instrumented("/api/v1/workers/credentials", s.handleCreateWorkerCredential))
+	s.registerRoute(mux, "DELETE /api/v1/workers/credentials/{worker_id}", s.instrumented("/api/v1/workers/credentials/{worker_id}", s.handleDeleteWorkerCredential))
+
+	// 2.1 Agent Identities (admin only)
+	s.registerRoute(mux, "GET /api/v1/agents", s.instrumented("/api/v1/agents", s.handleListAgents))
+	s.registerRoute(mux, "POST /api/v1/agents", s.instrumented("/api/v1/agents", s.handleCreateAgent))
+	s.registerRoute(mux, "GET /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleGetAgent))
+	s.registerRoute(mux, "PUT /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleUpdateAgent))
+	s.registerRoute(mux, "DELETE /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleDeleteAgent))
+	s.registerRoute(mux, "GET /api/v1/agents/{id}/stats", s.instrumented("/api/v1/agents/{id}/stats", s.handleAgentStats))
+	s.registerRoute(mux, "GET /api/v1/agents/{id}/delegations", s.instrumented("/api/v1/agents/{id}/delegations", s.handleListAgentDelegations))
+	s.registerRoute(mux, "POST /api/v1/agents/{id}/delegate", s.instrumented("/api/v1/agents/{id}/delegate", s.handleDelegateAgent))
+	s.registerRoute(mux, "GET /api/v1/delegations", s.instrumented("/api/v1/delegations", s.handleListDelegations))
+	s.registerRoute(mux, "POST /api/v1/agents/verify-delegation", s.instrumented("/api/v1/agents/verify-delegation", s.handleVerifyDelegation))
+	s.registerRoute(mux, "POST /api/v1/agents/revoke-delegation", s.instrumented("/api/v1/agents/revoke-delegation", s.handleRevokeDelegation))
+
+	s.registerRoute(mux, "GET /api/v1/pools", s.instrumented("/api/v1/pools", s.handleListPools))
+	s.registerRoute(mux, "GET /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleGetPool))
+	s.registerRoute(mux, "GET /api/v1/topics", s.instrumented("/api/v1/topics", s.handleListTopics))
+	s.registerRoute(mux, "POST /api/v1/topics", s.instrumented("/api/v1/topics", s.handleCreateTopic))
+	s.registerRoute(mux, "DELETE /api/v1/topics/{name}", s.instrumented("/api/v1/topics/{name}", s.handleDeleteTopic))
+	s.registerRoute(mux, "PUT /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleCreatePool))
+	s.registerRoute(mux, "PATCH /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleUpdatePool))
+	s.registerRoute(mux, "DELETE /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleDeletePool))
+	s.registerRoute(mux, "POST /api/v1/pools/{name}/drain", s.instrumented("/api/v1/pools/{name}/drain", s.handleDrainPool))
+	s.registerRoute(mux, "PUT /api/v1/pools/{name}/topics/{topic}", s.instrumented("/api/v1/pools/{name}/topics/{topic}", s.handleAddTopicToPool))
+	s.registerRoute(mux, "DELETE /api/v1/pools/{name}/topics/{topic}", s.instrumented("/api/v1/pools/{name}/topics/{topic}", s.handleRemoveTopicFromPool))
+
+	// 2.5 Status snapshot (Redis/NATS/workers/uptime)
+	s.registerRoute(mux, "GET /api/v1/status", s.instrumented("/api/v1/status", s.handleStatus))
+	s.registerRoute(mux, "GET /api/v1/license", s.instrumented("/api/v1/license", s.handleGetLicense))
+	s.registerRoute(mux, "GET /api/v1/license/usage", s.instrumented("/api/v1/license/usage", s.handleGetLicenseUsage))
+	s.registerRoute(mux, "POST /api/v1/license/reload", s.instrumented("/api/v1/license/reload", s.handleReloadLicense))
+	s.registerRoute(mux, "GET /api/v1/telemetry/status", s.instrumented("/api/v1/telemetry/status", s.handleGetTelemetryStatus))
+	s.registerRoute(mux, "GET /api/v1/telemetry/inspect", s.instrumented("/api/v1/telemetry/inspect", s.handleGetTelemetryInspect))
+	s.registerRoute(mux, "GET /api/v1/telemetry/export", s.instrumented("/api/v1/telemetry/export", s.handleGetTelemetryExport))
+	s.registerRoute(mux, "GET /api/v1/telemetry/usage", s.instrumented("/api/v1/telemetry/usage", s.handleGetTelemetryUsage))
+	s.registerRoute(mux, "POST /api/v1/telemetry/consent", s.instrumented("/api/v1/telemetry/consent", s.handleSetTelemetryConsent))
+
+	// 2.6 Admin endpoints (read-only, admin auth required)
+	s.registerRoute(mux, "GET /api/v1/admin/locks", s.instrumented("/api/v1/admin/locks", s.handleAdminLocks))
+
+	// 2.7 Audit export management (admin only, entitlement-gated)
+	// 2.7 Audit export — main endpoint plus operational sub-routes.
+	// The top-level GET /api/v1/audit/export was missing despite the
+	// handler being fully implemented in handlers_audit_compliance.go:61
+	// (same wire-up gap class as /api/v1/audit/verify below).
+	s.registerRoute(mux, "GET /api/v1/audit/export", s.instrumented("/api/v1/audit/export", s.handleAuditExport))
+	s.registerRoute(mux, "GET /api/v1/audit/export/health", s.instrumented("/api/v1/audit/export/health", s.handleAuditExportHealth))
+	s.registerRoute(mux, "GET /api/v1/audit/export/config", s.instrumented("/api/v1/audit/export/config", s.handleAuditExportConfig))
+	s.registerRoute(mux, "POST /api/v1/audit/export/test", s.instrumented("/api/v1/audit/export/test", s.handleAuditExportTest))
+
+	// 2.7.1 Audit chain verify (admin only) — handler lives in
+	// handlers_audit_verify.go; missing this line was a wire-up regression
+	// that had /api/v1/audit/verify 404ing on fresh deploys despite the
+	// handler being fully implemented and unit-tested.
+	s.registerRoute(mux, "GET /api/v1/audit/verify", s.instrumented("/api/v1/audit/verify", s.handleAuditVerify))
+	s.registerRoute(mux, "GET /api/v1/governance/health", s.instrumented("/api/v1/governance/health", s.handleGovernanceHealth))
+
+	// 2.8 Legal hold management (admin only, entitlement-gated)
+	s.registerRoute(mux, "POST /api/v1/audit/legal-hold", s.instrumented("/api/v1/audit/legal-hold", s.handleCreateLegalHold))
+	s.registerRoute(mux, "GET /api/v1/audit/legal-holds", s.instrumented("/api/v1/audit/legal-holds", s.handleListLegalHolds))
+	s.registerRoute(mux, "DELETE /api/v1/audit/legal-hold/{id}", s.instrumented("/api/v1/audit/legal-hold/{id}", s.handleReleaseLegalHold))
+
+	// 3. Jobs (Redis ZSet)
+	s.registerRoute(mux, "GET /api/v1/jobs", s.instrumented("/api/v1/jobs", s.handleListJobs))
+
+	// 4. Job Details
+	s.registerRoute(mux, "GET /api/v1/jobs/{id}", s.instrumented("/api/v1/jobs/{id}", s.handleGetJob))
+	s.registerRoute(mux, "GET /api/v1/jobs/{id}/stream", s.instrumented("/api/v1/jobs/{id}/stream", s.handleJobStream))
+	s.registerRoute(mux, "GET /api/v1/jobs/{id}/decisions", s.instrumented("/api/v1/jobs/{id}/decisions", s.handleListJobDecisions))
+	s.registerRoute(mux, "POST /api/v1/jobs/{id}/cancel", s.instrumented("/api/v1/jobs/{id}/cancel", s.handleCancelJob))
+	s.registerRoute(mux, "POST /api/v1/jobs/{id}/remediate", s.instrumented("/api/v1/jobs/{id}/remediate", s.handleRemediateJob))
+
+	// 4.5 Memory pointers (debug)
+	s.registerRoute(mux, "GET /api/v1/memory", s.instrumented("/api/v1/memory", s.handleGetMemory))
+	// 4.6 Artifact store
+	s.registerRoute(mux, "POST /api/v1/artifacts", s.instrumented("/api/v1/artifacts", s.handlePutArtifact))
+	s.registerRoute(mux, "GET /api/v1/artifacts/{ptr}", s.instrumented("/api/v1/artifacts/{ptr}", s.handleGetArtifact))
+
+	// 5. Submit Job (REST)
+	s.registerRoute(mux, "POST /api/v1/jobs", s.instrumented("/api/v1/jobs", s.handleSubmitJobHTTP))
+
+	// 6. Trace Details
+	s.registerRoute(mux, "GET /api/v1/traces/{id}", s.instrumented("/api/v1/traces/{id}", s.handleGetTrace))
+
+	// 8. Workflows
+	s.registerRoute(mux, "GET /api/v1/workflows", s.instrumented("/api/v1/workflows", s.handleListWorkflows))
+	s.registerRoute(mux, "POST /api/v1/workflows", s.instrumented("/api/v1/workflows", s.handleCreateWorkflow))
+	s.registerRoute(mux, "GET /api/v1/workflows/{id}", s.instrumented("/api/v1/workflows/{id}", s.handleGetWorkflow))
+	s.registerRoute(mux, "DELETE /api/v1/workflows/{id}", s.instrumented("/api/v1/workflows/{id}", s.handleDeleteWorkflow))
+	s.registerRoute(mux, "POST /api/v1/workflows/{id}/runs", s.instrumented("/api/v1/workflows/{id}/runs", s.handleStartRun))
+	s.registerRoute(mux, "GET /api/v1/workflows/{id}/runs", s.instrumented("/api/v1/workflows/{id}/runs", s.handleListRuns))
+	s.registerRoute(mux, "GET /api/v1/workflow-runs", s.instrumented("/api/v1/workflow-runs", s.handleListAllRuns))
+	s.registerRoute(mux, "GET /api/v1/workflow-runs/{id}", s.instrumented("/api/v1/workflow-runs/{id}", s.handleGetRun))
+	s.registerRoute(mux, "GET /api/v1/workflow-runs/{id}/timeline", s.instrumented("/api/v1/workflow-runs/{id}/timeline", s.handleGetRunTimeline))
+	s.registerRoute(mux, "GET /api/v1/workflow-runs/{id}/chat", s.instrumented("/api/v1/workflow-runs/{id}/chat", s.handleGetRunChat))
+	s.registerRoute(mux, "POST /api/v1/workflow-runs/{id}/chat", s.instrumented("/api/v1/workflow-runs/{id}/chat", s.handlePostRunChat))
+	s.registerRoute(mux, "DELETE /api/v1/workflow-runs/{id}", s.instrumented("/api/v1/workflow-runs/{id}", s.handleDeleteRun))
+	s.registerRoute(mux, "POST /api/v1/workflow-runs/{id}/rerun", s.instrumented("/api/v1/workflow-runs/{id}/rerun", s.handleRerunRun))
+	s.registerRoute(mux, "POST /api/v1/workflows/{id}/dry-run", s.instrumented("/api/v1/workflows/{id}/dry-run", s.handleWorkflowDryRun))
+
+	// 9. Config
+	s.registerRoute(mux, "GET /api/v1/config", s.instrumented("/api/v1/config", s.handleGetConfig))
+	s.registerRoute(mux, "GET /api/v1/config/effective", s.instrumented("/api/v1/config/effective", s.handleGetEffectiveConfig))
+	s.registerRoute(mux, "PUT /api/v1/config", s.instrumented("/api/v1/config", s.handleSetConfig))
+	s.registerRoute(mux, "POST /api/v1/config", s.instrumented("/api/v1/config", s.handleSetConfig))
+
+	// 9.25 Packs
+	s.registerRoute(mux, "GET /api/v1/packs", s.instrumented("/api/v1/packs", s.handleListPacks))
+	s.registerRoute(mux, "GET /api/v1/packs/{id}", s.instrumented("/api/v1/packs/{id}", s.handleGetPack))
+	s.registerRoute(mux, "POST /api/v1/packs/install", s.instrumented("/api/v1/packs/install", s.handleInstallPack))
+	s.registerRoute(mux, "POST /api/v1/packs/{id}/uninstall", s.instrumented("/api/v1/packs/{id}/uninstall", s.handleUninstallPack))
+	s.registerRoute(mux, "POST /api/v1/packs/{id}/verify", s.instrumented("/api/v1/packs/{id}/verify", s.handleVerifyPack))
+	s.registerRoute(mux, "GET /api/v1/marketplace/packs", s.instrumented("/api/v1/marketplace/packs", s.handleMarketplacePacks))
+	s.registerRoute(mux, "POST /api/v1/marketplace/install", s.instrumented("/api/v1/marketplace/install", s.handleMarketplaceInstall))
+
+	// 9.5 Schemas
+	s.registerRoute(mux, "POST /api/v1/schemas", s.instrumented("/api/v1/schemas", s.handleRegisterSchema))
+	s.registerRoute(mux, "GET /api/v1/schemas", s.instrumented("/api/v1/schemas", s.handleListSchemas))
+	s.registerRoute(mux, "GET /api/v1/schemas/{id}", s.instrumented("/api/v1/schemas/{id}", s.handleGetSchema))
+	s.registerRoute(mux, "DELETE /api/v1/schemas/{id}", s.instrumented("/api/v1/schemas/{id}", s.handleDeleteSchema))
+
+	// 9.6 Resource locks
+	s.registerRoute(mux, "GET /api/v1/locks", s.instrumented("/api/v1/locks", s.handleGetLock))
+	s.registerRoute(mux, "POST /api/v1/locks/acquire", s.instrumented("/api/v1/locks/acquire", s.handleAcquireLock))
+	s.registerRoute(mux, "POST /api/v1/locks/release", s.instrumented("/api/v1/locks/release", s.handleReleaseLock))
+	s.registerRoute(mux, "POST /api/v1/locks/renew", s.instrumented("/api/v1/locks/renew", s.handleRenewLock))
+
+	// 10. DLQ
+	s.registerRoute(mux, "GET /api/v1/dlq", s.instrumented("/api/v1/dlq", s.handleListDLQ))
+	s.registerRoute(mux, "GET /api/v1/dlq/page", s.instrumented("/api/v1/dlq/page", s.handleListDLQPage))
+	s.registerRoute(mux, "DELETE /api/v1/dlq/{job_id}", s.instrumented("/api/v1/dlq/{job_id}", s.handleDeleteDLQ))
+	s.registerRoute(mux, "POST /api/v1/dlq/{job_id}/retry", s.instrumented("/api/v1/dlq/{job_id}/retry", s.handleRetryDLQ))
+
+	// 11. Workflow run operations
+	s.registerRoute(mux, "POST /api/v1/workflows/{id}/runs/{run_id}/cancel", s.instrumented("/api/v1/workflows/{id}/runs/{run_id}/cancel", s.handleCancelRun))
+
+	// 11.5 Job approvals
+	s.registerRoute(mux, "GET /api/v1/approvals", s.instrumented("/api/v1/approvals", s.handleListApprovals))
+	s.registerRoute(mux, "POST /api/v1/approvals/{job_id}/approve", s.instrumented("/api/v1/approvals/{job_id}/approve", s.handleApproveJob))
+	s.registerRoute(mux, "POST /api/v1/approvals/{job_id}/reject", s.instrumented("/api/v1/approvals/{job_id}/reject", s.handleRejectJob))
+	s.registerRoute(mux, "POST /api/v1/approvals/{job_id}/repair", s.instrumented("/api/v1/approvals/{job_id}/repair", s.handleRepairApproval))
+	s.registerRoute(mux, "GET /api/v1/approvals/{job_id}/context", s.instrumented("/api/v1/approvals/{job_id}/context", s.handleApprovalContext))
+	s.registerRoute(mux, "GET /api/v1/governance/decisions", s.instrumented("/api/v1/governance/decisions", s.handleListGovernanceDecisions))
+	s.registerRoute(mux, "GET /api/v1/governance/approvals/analytics", s.instrumented("/api/v1/governance/approvals/analytics", s.handleApprovalAnalytics))
+	s.registerRoute(mux, "GET /api/v1/mcp/approvals", s.instrumented("/api/v1/mcp/approvals", s.handleMCPApprovalList))
+	s.registerRoute(mux, "GET /api/v1/mcp/approvals/{id}", s.instrumented("/api/v1/mcp/approvals/{id}", s.handleMCPApprovalGet))
+	s.registerRoute(mux, "POST /api/v1/mcp/approvals/{id}/approve", s.instrumented("/api/v1/mcp/approvals/{id}/approve", s.handleMCPApprovalApprove))
+	s.registerRoute(mux, "POST /api/v1/mcp/approvals/{id}/reject", s.instrumented("/api/v1/mcp/approvals/{id}/reject", s.handleMCPApprovalReject))
+	s.registerRoute(mux, "POST /api/v1/mcp/verify-signature", s.instrumented("/api/v1/mcp/verify-signature", s.handleMCPVerifySignature))
+	s.registerRoute(mux, "GET /api/v1/mcp/outbound", s.instrumented("/api/v1/mcp/outbound", s.handleMCPOutbound))
+	s.registerRoute(mux, "GET /api/v1/mcp/usage", s.instrumented("/api/v1/mcp/usage", s.handleMCPUsage))
+	// MCP tool visibility (dashboard consumes these via src/hooks/useAgentTools.ts):
+	s.registerRoute(mux, "GET /api/v1/mcp/tools", s.instrumented("/api/v1/mcp/tools", s.handleListMCPTools))
+	s.registerRoute(mux, "GET /api/v1/agents/{id}/tools", s.instrumented("/api/v1/agents/{id}/tools", s.handleAgentToolVisibility))
+	s.registerRoute(mux, "GET /api/v1/agents/{id}/denied-events", s.instrumented("/api/v1/agents/{id}/denied-events", s.handleAgentDeniedEvents))
+
+	// 12. Policy endpoints
+	s.registerRoute(mux, "POST /api/v1/policy/evaluate", s.instrumented("/api/v1/policy/evaluate", s.handlePolicyEvaluate))
+	s.registerRoute(mux, "POST /api/v1/policy/simulate", s.instrumented("/api/v1/policy/simulate", s.handlePolicySimulate))
+	s.registerRoute(mux, "POST /api/v1/policy/explain", s.instrumented("/api/v1/policy/explain", s.handlePolicyExplain))
+	s.registerRoute(mux, "GET /api/v1/policy/snapshots", s.instrumented("/api/v1/policy/snapshots", s.handlePolicySnapshots))
+	s.registerRoute(mux, "GET /api/v1/policy/rules", s.instrumented("/api/v1/policy/rules", s.handlePolicyRules))
+	s.registerRoute(mux, "GET /api/v1/policy/output/rules", s.instrumented("/api/v1/policy/output/rules", s.handlePolicyOutputRules))
+	s.registerRoute(mux, "GET /api/v1/policy/output/stats", s.instrumented("/api/v1/policy/output/stats", s.handlePolicyOutputStats))
+	s.registerRoute(mux, "PUT /api/v1/policy/output/rules/{id}", s.instrumented("/api/v1/policy/output/rules/{id}", s.handlePutPolicyOutputRule))
+	s.registerRoute(mux, "GET /api/v1/policy/velocity-rules", s.instrumented("/api/v1/policy/velocity-rules", s.handleVelocityRules))
+	s.registerRoute(mux, "GET /api/v1/policy/velocity-rules/stats", s.instrumented("/api/v1/policy/velocity-rules/stats", s.handleVelocityRuleStats))
+	s.registerRoute(mux, "POST /api/v1/policy/velocity-rules", s.instrumented("/api/v1/policy/velocity-rules", s.handleCreateVelocityRule))
+	s.registerRoute(mux, "PUT /api/v1/policy/velocity-rules/{id}", s.instrumented("/api/v1/policy/velocity-rules/{id}", s.handlePutVelocityRule))
+	s.registerRoute(mux, "DELETE /api/v1/policy/velocity-rules/{id}", s.instrumented("/api/v1/policy/velocity-rules/{id}", s.handleDeleteVelocityRule))
+	s.registerRoute(mux, "GET /api/v1/policy/bundles", s.instrumented("/api/v1/policy/bundles", s.handlePolicyBundles))
+	s.registerRoute(mux, "GET /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleGetPolicyBundle))
+	s.registerRoute(mux, "PUT /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handlePutPolicyBundle))
+	s.registerRoute(mux, "DELETE /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleDeletePolicyBundle))
+	s.registerRoute(mux, "POST /api/v1/policy/bundles/{id}/simulate", s.instrumented("/api/v1/policy/bundles/{id}/simulate", s.handleSimulatePolicyBundle))
+	s.registerRoute(mux, "GET /api/v1/policy/bundles/snapshots", s.instrumented("/api/v1/policy/bundles/snapshots", s.handleListPolicyBundleSnapshots))
+	s.registerRoute(mux, "POST /api/v1/policy/bundles/snapshots", s.instrumented("/api/v1/policy/bundles/snapshots", s.handleCapturePolicyBundleSnapshot))
+	s.registerRoute(mux, "GET /api/v1/policy/bundles/snapshots/{id}", s.instrumented("/api/v1/policy/bundles/snapshots/{id}", s.handleGetPolicyBundleSnapshot))
+	s.registerRoute(mux, "POST /api/v1/policy/publish", s.instrumented("/api/v1/policy/publish", s.handlePublishPolicyBundles))
+	s.registerRoute(mux, "POST /api/v1/policy/rollback", s.instrumented("/api/v1/policy/rollback", s.handleRollbackPolicyBundles))
+	s.registerRoute(mux, "GET /api/v1/policy/audit", s.instrumented("/api/v1/policy/audit", s.handleListPolicyAudit))
+	s.registerRoute(mux, "POST /api/v1/policy/replay", s.instrumented("/api/v1/policy/replay", s.handlePolicyReplay))
+	s.registerRoute(mux, "POST /api/v1/policy/analytics", s.instrumented("/api/v1/policy/analytics", s.handlePolicyAnalytics))
+
+	// 12.6 Eval datasets — curated, immutable policy-regression fixtures.
+	// The sibling eval-runner task (epic-e1c4321a) will replay these
+	// through the policy engine. PUT creates a successor version; it does
+	// not mutate an existing dataset in place.
+	s.registerRoute(mux, "POST /api/v1/evals/datasets/from-incidents", s.instrumented("/api/v1/evals/datasets/from-incidents", s.handleCreateDatasetFromIncidents))
+	s.registerRoute(mux, "POST /api/v1/evals/datasets", s.instrumented("/api/v1/evals/datasets", s.handleCreateEvalDataset))
+	s.registerRoute(mux, "GET /api/v1/evals/datasets", s.instrumented("/api/v1/evals/datasets", s.handleListEvalDatasets))
+	s.registerRoute(mux, "/api/v1/evals/datasets/", s.instrumented("/api/v1/evals/datasets/*", s.handleEvalDatasetSubroutes))
+	s.registerRoute(mux, "GET /api/v1/evals/runs/{run_id}", s.instrumented("/api/v1/evals/runs/{run_id}", s.handleGetEvalRun))
+	s.registerRoute(mux, "DELETE /api/v1/evals/runs/{run_id}", s.instrumented("/api/v1/evals/runs/{run_id}", s.handleDeleteEvalRun))
+
+	// 12.5 MCP (HTTP/SSE) routes
+	if err := s.registerMCPRoutes(mux); err != nil {
+		return fmt.Errorf("register mcp routes: %w", err)
+	}
+
+	// 7. Stream (WebSocket)
+	s.registerRoute(mux, "/api/v1/stream", s.instrumented("/api/v1/stream", s.handleStream))
+
+	// Extension routes (enterprise auth, SSO, etc.)
+	if registrar, ok := s.auth.(auth.RouteRegistrar); ok {
+		registrar.RegisterRoutes(mux, s.instrumented)
+	}
+
+	for _, route := range s.adminRoutes() {
+		slog.Info("route.registered",
+			"method", route.Method,
+			"path", route.Path,
+			"auth", route.Auth,
+		)
+	}
+
+	return nil
+}
+
+func (s *server) registerRoute(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {
+	if mux == nil {
+		return
+	}
+	method, path := parseRoutePattern(pattern)
+	s.routeTable = append(s.routeTable, routeInfo{
+		Method: method,
+		Path:   path,
+		Auth:   inferRouteAuth(path),
+	})
+	mux.HandleFunc(pattern, handler)
+}
+
+func (s *server) Routes() []routeInfo {
+	if len(s.routeTable) == 0 {
+		return nil
+	}
+	routes := append([]routeInfo(nil), s.routeTable...)
+	sort.Slice(routes, func(i, j int) bool {
+		if routes[i].Path == routes[j].Path {
+			return routes[i].Method < routes[j].Method
+		}
+		return routes[i].Path < routes[j].Path
+	})
+	return routes
+}
+
+func (s *server) adminRoutes() []routeInfo {
+	routes := s.Routes()
+	if len(routes) == 0 {
+		return nil
+	}
+	admin := make([]routeInfo, 0, len(routes))
+	for _, route := range routes {
+		if route.Auth == "admin" {
+			admin = append(admin, route)
+		}
+	}
+	return admin
+}
+
+func parseRoutePattern(pattern string) (method, path string) {
+	pattern = strings.TrimSpace(pattern)
+	parts := strings.SplitN(pattern, " ", 2)
+	if len(parts) == 2 && strings.HasPrefix(parts[1], "/") {
+		return parts[0], parts[1]
+	}
+	return "ANY", pattern
+}
+
+func inferRouteAuth(path string) string {
+	switch {
+	case publicRoutePaths[path]:
+		return "public"
+	case adminRoutePaths[path]:
+		return "admin"
+	case hasRoutePrefix(path, adminRoutePrefixes):
+		return "admin"
+	case hasRoutePrefix(path, tenantRoutePrefixes):
+		return "tenant"
+	default:
+		return "tenant"
+	}
+}
+
+func hasRoutePrefix(path string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+var publicRoutePaths = map[string]bool{
+	"/health":              true,
+	"/api/v1/health":       true,
+	"/api/v1/auth/config":  true,
+	"/api/v1/auth/login":   true,
+	"/api/v1/auth/session": true,
+}
+
+var adminRoutePaths = map[string]bool{
+	"/api/v1/governance/health": true,
+}
+
+var adminRoutePrefixes = []string{
+	"/mcp/",
+	"/api/v1/admin",
+	"/api/v1/agents",
+	"/api/v1/audit",
+	"/api/v1/auth/keys",
+	"/api/v1/auth/roles",
+	"/api/v1/config",
+	"/api/v1/delegations",
+	"/api/v1/dlq",
+	"/api/v1/license",
+	"/api/v1/locks",
+	"/api/v1/marketplace",
+	"/api/v1/mcp",
+	"/api/v1/packs",
+	"/api/v1/pools",
+	"/api/v1/schemas",
+	"/api/v1/status",
+	"/api/v1/telemetry",
+	"/api/v1/topics",
+	"/api/v1/users",
+	"/api/v1/workers",
+}
+
+var tenantRoutePrefixes = []string{
+	"/api/v1/approvals",
+	"/api/v1/artifacts",
+	"/api/v1/auth/logout",
+	"/api/v1/auth/password",
+	"/api/v1/evals",
+	"/api/v1/governance/approvals/analytics",
+	"/api/v1/governance/decisions",
+	"/api/v1/jobs",
+	"/api/v1/memory",
+	"/api/v1/policy",
+	"/api/v1/stream",
+	"/api/v1/traces",
+	"/api/v1/workflow-runs",
+	"/api/v1/workflows",
 }
 
 // instrumented wraps handlers to record metrics and debug logging.
