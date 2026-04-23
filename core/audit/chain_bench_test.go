@@ -92,7 +92,15 @@ func TestChainer_Append10kLatency(t *testing.T) {
 	// storm or a new allocation on the hot path). The plan's <1ms
 	// target applies to real Redis; asserting it against miniredis
 	// would be flaky on slow CI.
-	if p99 > 10*time.Millisecond {
-		t.Errorf("p99 append latency %s exceeds 10ms ceiling", p99)
+	ceiling := 10 * time.Millisecond
+	if raceDetectorEnabled {
+		// The required CI test job runs `go test -race ./...`; the race
+		// detector instruments every miniredis/Lua round trip and can push
+		// p99 slightly above the non-race ceiling without indicating a
+		// production hot-path regression.
+		ceiling = 50 * time.Millisecond
+	}
+	if p99 > ceiling {
+		t.Errorf("p99 append latency %s exceeds %s ceiling", p99, ceiling)
 	}
 }

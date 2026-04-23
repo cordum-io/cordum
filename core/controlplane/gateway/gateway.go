@@ -568,7 +568,9 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		}
 	}
 
+	auditChainer := audit.NewChainer(jobStore.Client(), "")
 	var auditSender audit.AuditSender
+	auditConsumerChains := false
 	bufExporter, err := audit.NewExporterFromEnvWithEntitlements(entitlementResolver)
 	if err != nil {
 		return fmt.Errorf("init audit exporter: %w", err)
@@ -579,12 +581,17 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 			auditSender = audit.NewNATSAuditPublisher(natsBus, bufExporter)
 			// Start consumer in the same process — queue group ensures only
 			// one replica across the cluster handles each event.
-			if _, err := audit.NewNATSAuditConsumer(natsBus, bufExporter.Backend()); err != nil {
+			if _, err := audit.NewNATSAuditConsumer(natsBus, bufExporter.Backend(), audit.WithChainer(auditChainer)); err != nil {
 				slog.Warn("audit NATS consumer failed to start, falling back to local buffer", "error", err)
+			} else {
+				auditConsumerChains = true
 			}
 		} else {
 			auditSender = bufExporter
 		}
+	}
+	if !auditConsumerChains {
+		auditSender = newAuditChainSender(auditChainer, auditSender)
 	}
 
 	s := &server{
@@ -626,7 +633,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		rbacStore:              rbacStore,
 		permChecker:            permChecker,
 		auditExporter:          auditSender,
-		auditChainer:           audit.NewChainer(jobStore.Client(), ""),
+		auditChainer:           auditChainer,
 		legalHoldStore:         initLegalHoldStore(cfg.RedisURL),
 		statusCacheObj:         newStatusCache(2 * time.Second),
 		policyShadowStore:      policyshadow.NewStore(configSvc),
