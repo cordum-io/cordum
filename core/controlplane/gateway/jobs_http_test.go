@@ -1413,3 +1413,78 @@ func TestHandleSubmitJobHTTP_PolicyFailOpen(t *testing.T) {
 		t.Fatalf("expected 1 bus publish for fail-open, got %d", len(bus.published))
 	}
 }
+
+// TestHandleSubmitJob_DeniedIdempotencyReplay pins the contract for
+// task-11152261: a client retrying a policy-denied submit with the
+// same idempotency key must get the original job_id + trace_id back
+// (pointing at the single stored denied job), NOT a newly-minted
+// second denied job + second DLQ entry. Before this task the denied
+// branch returned without reserving the idempotency key, so retries
+// silently forked.
+//
+// Replay mechanic: the first POST hits the denied branch, which now
+// reserves the key via TrySetIdempotencyKeyScoped before persisting.
+// The second POST short-circuits at the top-of-handler idempotency
+// check (handlers_jobs.go ~1549) which returns 200 with the same
+// job_id + trace_id. Clients check the job's state via GET
+// /api/v1/jobs/{id} to see it's DENIED. This matches the existing
+// approval_required idempotency behavior.
+func TestHandleSubmitJob_DeniedIdempotencyReplay(t *testing.T) {
+	s, _, safety := newTestGateway(t)
+	s.tenant = "default"
+	safety.setResponse(&pb.PolicyCheckResponse{
+		Decision:       pb.DecisionType_DECISION_TYPE_DENY,
+		Reason:         "policy blocks this",
+		PolicySnapshot: "snap-test",
+	})
+
+	submit := func() (int, map[string]any) {
+		payload := map[string]any{
+			"prompt":          "hello",
+			"topic":           "job.test",
+			"idempotency_key": "deny-replay-key",
+		}
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+		req.Header.Set("X-Tenant-ID", "default")
+		rec := httptest.NewRecorder()
+		s.handleSubmitJobHTTP(rec, req)
+		var resp map[string]any
+		_ = json.NewDecoder(rec.Body).Decode(&resp)
+		return rec.Code, resp
+	}
+
+	firstCode, firstResp := submit()
+	if firstCode != http.StatusForbidden {
+		t.Fatalf("first submit: want 403, got %d (%v)", firstCode, firstResp)
+	}
+	firstJobID, _ := firstResp["job_id"].(string)
+	firstTraceID, _ := firstResp["trace_id"].(string)
+	if firstJobID == "" {
+		t.Fatalf("first submit missing job_id: %v", firstResp)
+	}
+
+	secondCode, secondResp := submit()
+	// Retry short-circuits at the top-of-handler idempotency check →
+	// returns 200 with the existing job_id, same contract as
+	// approval_required replay.
+	if secondCode != http.StatusOK {
+		t.Fatalf("second submit: want 200 (idempotency replay), got %d (%v)", secondCode, secondResp)
+	}
+	if got, _ := secondResp["job_id"].(string); got != firstJobID {
+		t.Fatalf("second submit job_id: want %q (replay), got %q — idempotency reservation missing on first POST", firstJobID, got)
+	}
+	if got, _ := secondResp["trace_id"].(string); got != firstTraceID {
+		t.Fatalf("second submit trace_id: want %q (replay), got %q", firstTraceID, got)
+	}
+
+	// Exactly one denied job in the store for this key — no second mint.
+	existing, err := s.jobStore.GetJobByIdempotencyKeyScoped(context.Background(), "default", "deny-replay-key")
+	if err != nil || existing != firstJobID {
+		t.Fatalf("idempotency index lookup: want jobID=%q err=nil, got jobID=%q err=%v", firstJobID, existing, err)
+	}
+	state, _ := s.jobStore.GetState(context.Background(), firstJobID)
+	if state != model.JobStateDenied {
+		t.Fatalf("denied job state: want DENIED, got %s", state)
+	}
+}

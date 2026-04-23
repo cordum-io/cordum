@@ -1746,6 +1746,42 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
+
+		// Reserve idempotency key so a client retry with the same key
+		// replays the original 403 + job_id instead of minting a second
+		// denied job + DLQ entry. Mirrors the approval_required pattern
+		// below. The top-of-handler idempotency short-circuit (line
+		// ~1549) only hits on the SECOND POST — we must persist the
+		// reservation on the FIRST denied POST for that short-circuit
+		// to fire.
+		if key != "" && s.jobStore != nil {
+			reserved, existingID, err := s.jobStore.TrySetIdempotencyKeyScoped(r.Context(), orgID, key, jobID)
+			if err != nil {
+				slog.Error("denied-submit idempotency reservation failed", "job_id", jobID, "error", err)
+				writeErrorJSON(w, http.StatusServiceUnavailable, "idempotency reservation failed")
+				return
+			}
+			if !reserved {
+				if existingID == "" {
+					existingID, _ = s.jobStore.GetJobByIdempotencyKeyScoped(r.Context(), orgID, key)
+				}
+				if existingID != "" {
+					existingTrace, _ := s.jobStore.GetTraceID(r.Context(), existingID)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusForbidden)
+					writeJSON(w, map[string]any{
+						"error":    reason,
+						"status":   http.StatusForbidden,
+						"job_id":   existingID,
+						"trace_id": existingTrace,
+					})
+					return
+				}
+				writeErrorJSON(w, http.StatusConflict, "idempotency key already used")
+				return
+			}
+		}
+
 		if err := s.persistSubmitDeniedJob(r.Context(), r, req, meta, jobID, traceID, orgID, principalID, teamID, projectID, memoryID, delegationExpectedAudience, policyResult, reason); err != nil {
 			slog.Error("failed to persist denied submit job", "job_id", jobID, "error", err)
 			writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist denied job state")
@@ -2194,19 +2230,19 @@ func (s *server) persistSubmitDeniedJob(
 		return fmt.Errorf("set initial denied-job state: %w", err)
 	}
 	if err := s.jobStore.SetTopic(ctx, jobID, req.Topic); err != nil {
-		slog.Warn("failed to set denied job topic", "job_id", jobID, "error", err)
+		return fmt.Errorf("set denied job topic: %w", err)
 	}
 	if err := s.jobStore.SetTenant(ctx, jobID, orgID); err != nil {
-		slog.Warn("failed to set denied job tenant", "job_id", jobID, "error", err)
+		return fmt.Errorf("set denied job tenant: %w", err)
 	}
 	if err := s.jobStore.AddJobToTrace(ctx, traceID, jobID); err != nil {
-		slog.Warn("failed to add denied job to trace", "job_id", jobID, "trace_id", traceID, "error", err)
+		return fmt.Errorf("add denied job to trace: %w", err)
 	}
 	if err := s.jobStore.SetJobMeta(ctx, jobReq); err != nil {
-		slog.Warn("failed to persist denied job metadata", "job_id", jobID, "error", err)
+		return fmt.Errorf("persist denied job metadata: %w", err)
 	}
 	if err := s.jobStore.SetJobRequest(ctx, jobReq); err != nil {
-		slog.Warn("failed to persist denied job request", "job_id", jobID, "error", err)
+		return fmt.Errorf("persist denied job request: %w", err)
 	}
 	if err := s.persistSubmitDelegationToken(ctx, jobID, req.DelegationToken, delegationExpectedAudience); err != nil {
 		_ = s.jobStore.SetState(ctx, jobID, model.JobStateFailed)
@@ -2230,7 +2266,7 @@ func (s *server) persistSubmitDeniedJob(
 		CheckedAt:      time.Now().UnixMicro(),
 	}
 	if err := s.jobStore.SetSafetyDecision(ctx, jobID, safetyRecord); err != nil {
-		slog.Warn("failed to persist denied safety decision", "job_id", jobID, "error", err)
+		return fmt.Errorf("persist denied safety decision: %w", err)
 	}
 	if err := s.jobStore.SetState(ctx, jobID, model.JobStateDenied); err != nil {
 		return fmt.Errorf("set denied state: %w", err)
@@ -2267,7 +2303,7 @@ func (s *server) persistSubmitDeniedJob(
 			Attempts:   0,
 			CreatedAt:  time.Now().UTC(),
 		}); err != nil {
-			slog.Warn("failed to persist denied dlq entry", "job_id", jobID, "error", err)
+			return fmt.Errorf("persist denied dlq entry: %w", err)
 		}
 	}
 	if s.memStore != nil {
@@ -2287,7 +2323,7 @@ func (s *server) persistSubmitDeniedJob(
 		}
 		if existing, err := s.jobStore.GetResultPtr(ctx, jobID); err != nil || strings.TrimSpace(existing) == "" {
 			if err := s.jobStore.SetResultPtr(ctx, jobID, resPtr); err != nil {
-				slog.Warn("failed to set denied result pointer", "job_id", jobID, "error", err)
+				return fmt.Errorf("set denied result pointer: %w", err)
 			}
 		}
 	}
