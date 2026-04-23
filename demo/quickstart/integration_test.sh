@@ -41,6 +41,19 @@ if [[ ! -x "${cordumctl_bin}" ]]; then
   fi
 fi
 
+to_cordumctl_path() {
+  local path="$1"
+  if command -v cygpath >/dev/null 2>&1; then
+    case "${path}" in
+      /*)
+        cygpath -w "${path}"
+        return 0
+        ;;
+    esac
+  fi
+  printf '%s' "${path}"
+}
+
 pack_dir="${repo_root}/demo/quickstart/pack"
 if [[ ! -f "${pack_dir}/pack.yaml" ]]; then
   echo "ERROR: ${pack_dir}/pack.yaml not found — wrong working directory?" >&2
@@ -51,7 +64,7 @@ log_file="$(mktemp -t demo-quickstart-XXXXXX.log)"
 trap 'echo "[integration] artifacts at ${log_file}"' EXIT
 
 echo "[integration] installing pack ..."
-"${cordumctl_bin}" pack install "${pack_dir}" --upgrade
+"${cordumctl_bin}" pack install "$(to_cordumctl_path "${pack_dir}")" --upgrade
 
 echo "[integration] running demo ..."
 start_epoch="$(date +%s)"
@@ -107,7 +120,7 @@ fi
 # fails the integration test rather than being silently accepted.
 golden="demo/quickstart/expected-output.json"
 if command -v jq >/dev/null 2>&1 && [[ -f "${golden}" ]]; then
-  expected_verdicts="$(jq -r '.verdicts[].verdict' "${golden}" | sort -u | paste -sd, -)"
+  expected_verdicts="$(jq -r '.verdicts[].verdict' "${golden}" | tr -d '\r' | sort -u | paste -sd, -)"
   observed_verdicts="$(printf '%s\n' "${!observed[@]}" | sort -u | paste -sd, -)"
   if [[ "${expected_verdicts}" != "${observed_verdicts}" ]]; then
     echo "FAIL: verdict set drift — expected=${expected_verdicts}, observed=${observed_verdicts}" >&2

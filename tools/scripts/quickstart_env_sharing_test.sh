@@ -269,6 +269,9 @@ ENV
   local curl_tls=()
   if [[ -f ./certs/ca/ca.crt ]]; then
     curl_tls=(--cacert ./certs/ca/ca.crt)
+    if curl --version 2>/dev/null | grep -qi schannel; then
+      curl_tls+=(--ssl-no-revoke)
+    fi
     api_base="${CORDUM_API_BASE:-https://localhost:8081}"
   else
     api_base="${CORDUM_API_BASE:-http://localhost:8081}"

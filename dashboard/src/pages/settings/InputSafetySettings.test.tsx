@@ -127,7 +127,6 @@ describe("InputSafetySettings page", () => {
     mockConfigState.principalRole = "";
     mockConfigState.user = null;
     vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue("00000000-0000-0000-0000-000000000456");
-    vi.spyOn(performance, "now").mockReturnValue(100);
   });
 
   afterEach(() => {
@@ -179,17 +178,29 @@ describe("InputSafetySettings page", () => {
     expect(select).toBeTruthy();
     await act(async () => {
       if (select) {
-        select.value = "open";
+        const setValue = Object.getOwnPropertyDescriptor(
+          HTMLSelectElement.prototype,
+          "value",
+        )?.set;
+        setValue?.call(select, "open");
+        select.dispatchEvent(new Event("input", { bubbles: true }));
         select.dispatchEvent(new Event("change", { bubbles: true }));
       }
     });
 
-    const saveButton = Array.from(view.container.querySelectorAll("button")).find((btn) =>
-      btn.textContent?.includes("Save Input Safety Settings"),
-    ) as HTMLButtonElement | undefined;
-    expect(saveButton).toBeTruthy();
+    await view.waitFor(() => {
+      expect(view.container.textContent).toContain("Fail-open mode bypasses safety checks");
+      const liveSaveButton = Array.from(view.container.querySelectorAll("button")).find((btn) =>
+        btn.textContent?.includes("Save Input Safety Settings"),
+      ) as HTMLButtonElement | undefined;
+      expect(liveSaveButton).toBeTruthy();
+      expect(liveSaveButton?.disabled).toBe(false);
+    });
     await act(async () => {
-      saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      const liveSaveButton = Array.from(view.container.querySelectorAll("button")).find((btn) =>
+        btn.textContent?.includes("Save Input Safety Settings"),
+      ) as HTMLButtonElement | undefined;
+      liveSaveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     await view.waitFor(() => {

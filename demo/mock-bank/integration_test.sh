@@ -42,6 +42,19 @@ if [[ ! -x "${cordumctl_bin}" ]]; then
   fi
 fi
 
+to_cordumctl_path() {
+  local path="$1"
+  if command -v cygpath >/dev/null 2>&1; then
+    case "${path}" in
+      /*)
+        cygpath -w "${path}"
+        return 0
+        ;;
+    esac
+  fi
+  printf '%s' "${path}"
+}
+
 pack_dir="${repo_root}/demo/mock-bank/pack"
 if [[ ! -f "${pack_dir}/pack.yaml" ]]; then
   echo "ERROR: ${pack_dir}/pack.yaml not found — wrong working directory?" >&2
@@ -76,7 +89,7 @@ log_file="$(mktemp -t demo-mock-bank-XXXXXX.log)"
 trap 'echo "[integration] artifacts at ${log_file}"' EXIT
 
 echo "[integration] installing mock-bank pack ..."
-"${cordumctl_bin}" pack install "${pack_dir}" --upgrade
+"${cordumctl_bin}" pack install "$(to_cordumctl_path "${pack_dir}")" --upgrade
 
 # --- helpers ----------------------------------------------------------------
 
