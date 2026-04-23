@@ -89,12 +89,23 @@ func (s *SyslogExporter) Export(_ context.Context, events []SIEMEvent) error {
 	return nil
 }
 
-// Close closes the underlying network connection.
+// Close closes the underlying network connection. A failure from the
+// connection's own Close (half-open sockets, fsync on the TCP stack)
+// is logged at Warn before being returned so operators see the signal
+// rather than having it absorbed silently by the BufferedExporter
+// close cascade. See task-8db173c5.
 func (s *SyslogExporter) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.conn != nil {
-		return s.conn.Close()
+		if err := s.conn.Close(); err != nil {
+			slog.Warn("syslog: close failed",
+				"network", s.network,
+				"address", s.address,
+				"error", err,
+			)
+			return err
+		}
 	}
 	return nil
 }

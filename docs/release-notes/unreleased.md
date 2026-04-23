@@ -53,6 +53,33 @@ these entries into a versioned release note and reset this file.
 
 ## Fixed
 
+- **audit: `SyslogExporter.Close` now logs at Warn when the underlying
+  `net.Conn.Close` returns an error.** Previously the failure was
+  returned opaquely to the `BufferedExporter` close cascade, where
+  generic close-cascade handling could absorb it silently — masking
+  half-open sockets and TCP-stack fsync failures that left buffered
+  audit events unflushed. The returned-error contract is unchanged
+  (`BufferedExporter` still observes the error); operators now also
+  see a `syslog: close failed` Warn line with `network`, `address`,
+  and `error` fields. Closes task-8db173c5.
+
+- **Investigated and dismissed (not a bug).** The 2026-04-23 bug-hunt
+  agent flagged two additional sites that on verification are
+  already correctly handled; documented here so future audits don't
+  re-litigate them:
+  - `core/controlplane/gateway/handlers_jobs.go:201`
+    `statusCacheObj.Get()` was flagged as returning `any` without a
+    type guard. False positive: `statusCache.Get()` returns a typed
+    `map[string]any`, not `any`; `writeJSON(w, cached)` is
+    type-safe at compile time and `map[string]any` always marshals
+    to valid JSON.
+  - `core/auth/delegation/token.go` `NewTokenService` wrong-size
+    signing-key handling was re-flagged as a silent drop. Current
+    code (since the original delegation feature commit `09f4838a`)
+    already returns `(*TokenService, error)` with
+    `ErrInvalidSigningKey` when the signing key's own public key is
+    not `ed25519.PublicKeySize`. No fix needed.
+
 - **gateway: WebSocket `SetReadDeadline` errors at connection setup are now
   propagated instead of silently discarded.** `handleStream` and
   `handleJobStream` both called `_ = ws.SetReadDeadline(...)` on the just-

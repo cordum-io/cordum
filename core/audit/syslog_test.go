@@ -2,7 +2,10 @@ package audit
 
 import (
 	"bufio"
+	"bytes"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 	"testing"
@@ -568,5 +571,82 @@ func TestSyslogExporter_Close(t *testing.T) {
 
 	if err := exp.Close(); err != nil {
 		t.Errorf("Close: %v", err)
+	}
+}
+
+// closeFailingConn is a net.Conn stub whose Close() returns a sentinel
+// error. Used by TestSyslogExporter_Close_LogsErrorOnConnCloseFailure
+// to exercise the task-8db173c5 error-logging path without relying on
+// OS-specific socket teardown behaviour.
+type closeFailingConn struct {
+	closeErr error
+}
+
+func (c *closeFailingConn) Read([]byte) (int, error)         { return 0, nil }
+func (c *closeFailingConn) Write(b []byte) (int, error)      { return len(b), nil }
+func (c *closeFailingConn) Close() error                     { return c.closeErr }
+func (c *closeFailingConn) LocalAddr() net.Addr              { return &net.TCPAddr{} }
+func (c *closeFailingConn) RemoteAddr() net.Addr             { return &net.TCPAddr{} }
+func (c *closeFailingConn) SetDeadline(time.Time) error      { return nil }
+func (c *closeFailingConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *closeFailingConn) SetWriteDeadline(time.Time) error { return nil }
+
+func TestSyslogExporter_Close_LogsErrorOnConnCloseFailure(t *testing.T) {
+	// Regression for task-8db173c5: a failing conn.Close() used to be
+	// returned opaquely to the BufferedExporter cascade where it could
+	// be absorbed silently. SyslogExporter.Close now logs at Warn with
+	// network + address + error so operators see the signal.
+	sentinel := errors.New("mock close failure")
+
+	var logBuf bytes.Buffer
+	origLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(origLogger) })
+
+	exp := &SyslogExporter{
+		network: "tcp",
+		address: "127.0.0.1:65535",
+		conn:    &closeFailingConn{closeErr: sentinel},
+	}
+
+	err := exp.Close()
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Close returned %v, want sentinel %v", err, sentinel)
+	}
+	log := logBuf.String()
+	if !strings.Contains(log, "syslog: close failed") {
+		t.Fatalf("expected log to contain 'syslog: close failed', got: %q", log)
+	}
+	if !strings.Contains(log, "mock close failure") {
+		t.Fatalf("expected log to include error detail 'mock close failure', got: %q", log)
+	}
+	if !strings.Contains(log, "network=tcp") {
+		t.Fatalf("expected log to include network=tcp, got: %q", log)
+	}
+	if !strings.Contains(log, "address=127.0.0.1:65535") {
+		t.Fatalf("expected log to include address=127.0.0.1:65535, got: %q", log)
+	}
+}
+
+func TestSyslogExporter_Close_HappyPathNoLog(t *testing.T) {
+	// Complementary invariant: a successful conn.Close() must NOT
+	// emit the "syslog: close failed" Warn. Otherwise operators would
+	// see spurious noise on every clean shutdown.
+	var logBuf bytes.Buffer
+	origLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(origLogger) })
+
+	exp := &SyslogExporter{
+		network: "tcp",
+		address: "127.0.0.1:0",
+		conn:    &closeFailingConn{closeErr: nil},
+	}
+
+	if err := exp.Close(); err != nil {
+		t.Fatalf("happy-path Close returned %v, want nil", err)
+	}
+	if log := logBuf.String(); strings.Contains(log, "syslog: close failed") {
+		t.Fatalf("happy path must not log 'syslog: close failed', got: %q", log)
 	}
 }
