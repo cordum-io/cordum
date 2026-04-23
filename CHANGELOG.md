@@ -30,6 +30,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **safety-kernel (task-681f83cd)** — `shadowTimeout` now actually bounds the per-submission shadow evaluation loop. The `context.WithTimeout` return was previously discarded; captured + plumbed through `evalShadowSafely` with a `ctx.Err()` check at bundle-iteration top.
+
 #### Critical
 - **NATS reconnect** — Safety kernel and scheduler re-subscribe to `sys.config.changed` on NATS reconnect. Previously degraded silently to 30s polling on network partition.
 - **Config scope corruption** — `SetWithRetry` now deep-merges config updates, preserving existing keys. Policy bundles no longer silently wiped by pools config pushes. Startup migration moves stale bundles to correct scope.
@@ -50,7 +52,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Dashboard a11y** — focus traps on modals, aria-labels on stats, localStorage try-catch
 - **Security logging** — `slog.Info`/`slog.Warn` for credential and topic operations
 - **Input validation** — array length limits (max 100 items, 128 chars), URL encoding on dynamic links
-- **lodash** bumped to 4.18.1 (CVE-2026-4800, CVE-2026-2950)
+- **lodash** — CVE-2026-4800, CVE-2026-2950 fixed upstream in 4.18.0; bumped to 4.18.1 as the latest safe release.
 
 ### Changed
 

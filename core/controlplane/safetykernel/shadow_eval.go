@@ -355,12 +355,20 @@ func (e *ShadowEvaluator) evaluate(job shadowJob) {
 	tenantMeta := meta[job.tenantID]
 	// Bounded background ctx so a cancelled caller-ctx doesn't snip
 	// the shadow eval mid-flight. shadowTimeout is the absolute wall-
-	// clock budget for processing every shadow for this submission.
-	_, cancel := context.WithTimeout(context.Background(), e.shadowTimeout)
+	// clock budget for processing every shadow for this submission;
+	// the loop-top ctx.Err() check below enforces that budget at
+	// per-bundle granularity (one slow bundle can still exceed the
+	// timeout by its own eval time, but subsequent bundles are
+	// skipped). Partial shadow-event counts are expected behavior on
+	// timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), e.shadowTimeout)
 	defer cancel()
 	for bundleID, policy := range tenantCompiled {
+		if err := ctx.Err(); err != nil {
+			return
+		}
 		start := time.Now()
-		shadowDecision, evalErr := evalShadowSafely(policy, job.input)
+		shadowDecision, evalErr := evalShadowSafely(ctx, policy, job.input)
 		latency := time.Since(start)
 		if evalErr != nil {
 			// Panic-recovered evaluations emit a warn + keep going.
@@ -413,7 +421,14 @@ func (e *ShadowEvaluator) evaluate(job shadowJob) {
 // evalShadowSafely wraps shadow.Evaluate in a panic recover so one
 // broken rule can't bring down a kernel worker. Returns the decision
 // on success, or (zero-decision, error) if Evaluate panicked.
-func evalShadowSafely(policy *config.SafetyPolicy, input config.PolicyInput) (decision config.PolicyDecision, err error) {
+//
+// ctx is plumbed for future ctx-aware policy engines; today's
+// config.SafetyPolicy.Evaluate takes no ctx, so this function does
+// not actually cancel the evaluate call itself. The caller in
+// evaluate() uses ctx to bound the loop between iterations, which is
+// the correct granularity while policy.Evaluate remains synchronous.
+func evalShadowSafely(ctx context.Context, policy *config.SafetyPolicy, input config.PolicyInput) (decision config.PolicyDecision, err error) {
+	_ = ctx
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("shadow evaluate panic: %v: %s", r, string(debug.Stack()))

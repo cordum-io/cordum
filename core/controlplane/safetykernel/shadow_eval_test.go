@@ -2,6 +2,7 @@ package safetykernel
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -291,7 +292,7 @@ func TestShadowEvaluator_PanicInEvaluateDoesNotKillWorker(t *testing.T) {
 	// pointer as the receiver. evalShadowSafely must recover and return
 	// an error; it must never panic out.
 	var nilPolicy *config.SafetyPolicy
-	_, err := evalShadowSafely(nilPolicy, config.PolicyInput{Tenant: "t", Topic: "x"})
+	_, err := evalShadowSafely(context.Background(), nilPolicy, config.PolicyInput{Tenant: "t", Topic: "x"})
 	if err == nil {
 		t.Fatal("expected recovered panic error from nil-receiver Evaluate")
 	}
@@ -341,5 +342,75 @@ rules:
 	// depthChanges sums +1 (enqueue) and -1 (dequeue) → 0 once drained.
 	if depthChanges.Load() != 0 {
 		t.Errorf("queue-depth balance = %d, want 0", depthChanges.Load())
+	}
+}
+
+// TestShadowEvaluator_ShadowTimeoutBoundsLoop pins that the
+// shadowTimeout option actually bounds the per-submission shadow
+// evaluation loop. Construction: 10 shadow bundles for one tenant +
+// a 50ms shadowTimeout + an EmitCallback that sleeps 100ms per
+// iteration. A correctly-bounded loop skips subsequent iterations
+// once the context expires (≈ 1 emit, ≤ 300ms wall-clock); an
+// unbounded loop would process all 10 bundles serially (~1s).
+//
+// Pre-task-681f83cd behaviour (bug): the WithTimeout return was
+// discarded at shadow_eval.go:359, so the loop ran to completion
+// regardless of the configured shadowTimeout. This test FAILED with
+// elapsed ≈ 1000ms.
+func TestShadowEvaluator_ShadowTimeoutBoundsLoop(t *testing.T) {
+	t.Parallel()
+
+	shadowYAML := `version: "1"
+rules:
+  - id: x
+    match: {topics: ["job.foo"]}
+    decision: deny
+    reason: r
+`
+	const bundleCount = 10
+	bundles := make(map[string]string, bundleCount)
+	for i := 0; i < bundleCount; i++ {
+		bundles[fmt.Sprintf("bundle-%02d", i)] = shadowYAML
+	}
+	loader := seedLoader(t, map[string]map[string]string{"tenant-a": bundles})
+
+	var emitted atomic.Int64
+	opts := ShadowEvaluatorOptions{
+		Workers:       1,
+		QueueSize:     4,
+		ShadowTimeout: 50 * time.Millisecond,
+		EmitCallback: func(_ string, _ ShadowDiff, _ time.Duration) {
+			emitted.Add(1)
+			time.Sleep(100 * time.Millisecond)
+		},
+	}
+	eval := NewShadowEvaluator(loader, &capturingSender{}, opts)
+	defer eval.Close()
+
+	job := shadowJob{
+		tenantID:       "tenant-a",
+		jobID:          "job-bound-test",
+		agentID:        "agent-1",
+		activeDecision: config.PolicyDecision{Decision: "allow"},
+		input:          allowInput("tenant-a"),
+	}
+
+	start := time.Now()
+	eval.evaluate(job)
+	elapsed := time.Since(start)
+
+	// With shadowTimeout=50ms and a 100ms emit sleep, the fix bounds
+	// the loop to one iteration (first emit takes 100ms, then the
+	// loop-top ctx.Err() check returns). Allow 300ms slack for CI
+	// jitter. The bug (discarded ctx) lets all 10 iterations run ≈
+	// 1000ms; that is the failure mode this test pins.
+	const upperBound = 300 * time.Millisecond
+	if elapsed >= upperBound {
+		t.Fatalf("evaluate(job) took %s, want < %s (shadowTimeout did not bound the loop; %d emissions fired across %d bundles)",
+			elapsed, upperBound, emitted.Load(), bundleCount)
+	}
+	if emitted.Load() >= int64(bundleCount) {
+		t.Fatalf("emit callback fired %d times, want < %d (loop did not stop early on ctx timeout)",
+			emitted.Load(), bundleCount)
 	}
 }

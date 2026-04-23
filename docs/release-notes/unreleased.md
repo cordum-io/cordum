@@ -35,6 +35,23 @@ these entries into a versioned release note and reset this file.
 
 ## Fixed
 
+- **safety-kernel: `shadowTimeout` now actually bounds the per-submission
+  shadow evaluation loop.** Previously the bounded context returned by
+  `context.WithTimeout` in `core/controlplane/safetykernel/shadow_eval.go`
+  was discarded (`_, cancel := ...`), so the timeout never applied and a
+  slow shadow-policy eval (or a slow audit emit) could extend loop
+  duration indefinitely, contradicting the documented "absolute wall-clock
+  budget for processing every shadow for this submission". The fix
+  captures the bounded ctx, plumbs it through `evalShadowSafely`, and
+  adds a `ctx.Err()` check at the top of each bundle iteration.
+  Granularity is per-bundle: one bundle may still exceed the timeout by
+  its own eval time, but subsequent bundles are skipped, and partial
+  shadow-event counts are expected behavior on timeout (observability
+  dashboards filtering by tenant may see fewer `shadow_eval` events on
+  submissions that hit the bound). Operators tuning `shadowTimeout` via
+  `ShadowEvaluatorOptions.ShadowTimeout` will see the expected wall-clock
+  bound going forward. Closes task-681f83cd.
+
 - **policy shadow: registered the six shadow-policy gateway routes so the
   dashboard's PromoteShadowDialog works end-to-end.** The handlers
   (`handlePutPolicyShadow`, `handleGetPolicyShadow`, `handleDeletePolicyShadow`
