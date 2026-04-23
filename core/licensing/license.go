@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -300,14 +301,13 @@ func parseLicense(data []byte) (*License, error) {
 		return nil, fmt.Errorf("compact license payload: %w", err)
 	}
 
+	if isLegacyLicenseEnvelope(raw.Payload) {
+		logLegacyLicenseFormatRejected(raw.KID, raw.Payload)
+		return nil, ErrUnsupportedLegacyLicenseFormat
+	}
+
 	var claims Claims
-	if isLegacyClaims(raw.Payload) {
-		var legacy legacyClaims
-		if err := json.Unmarshal(raw.Payload, &legacy); err != nil {
-			return nil, fmt.Errorf("parse legacy claims: %w", err)
-		}
-		claims = migrateLegacyClaims(legacy)
-	} else if err := json.Unmarshal(raw.Payload, &claims); err != nil {
+	if err := json.Unmarshal(raw.Payload, &claims); err != nil {
 		return nil, fmt.Errorf("parse claims: %w", err)
 	}
 
@@ -318,6 +318,22 @@ func parseLicense(data []byte) (*License, error) {
 		ExpiryState:   ExpiryStateValid,
 		signedPayload: payload,
 	}, nil
+}
+
+func logLegacyLicenseFormatRejected(kid string, payload json.RawMessage) {
+	var legacyMeta struct {
+		OrgID     string `json:"org_id"`
+		LicenseID string `json:"license_id"`
+	}
+	_ = json.Unmarshal(payload, &legacyMeta)
+	slog.Error(
+		"legacy license format rejected",
+		"kid", strings.TrimSpace(kid),
+		"org_id", strings.TrimSpace(legacyMeta.OrgID),
+		"license_id", strings.TrimSpace(legacyMeta.LicenseID),
+		"suggested_action", "regenerate with cordum-tools license-generator in the current schema",
+		"error", ErrUnsupportedLegacyLicenseFormat,
+	)
 }
 
 func decodePublicKey(raw string) (ed25519.PublicKey, error) {

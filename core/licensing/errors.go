@@ -7,16 +7,17 @@ import (
 )
 
 var (
-	ErrLicenseRequired         = errors.New("license required")
-	ErrLicensePayloadMissing   = errors.New("license payload missing")
-	ErrLicenseSignatureMissing = errors.New("license signature missing")
-	ErrLicenseSignatureInvalid = errors.New("license signature invalid")
-	ErrLicensePublicKeyMissing = errors.New("license public key missing")
-	ErrLicenseWindowInvalid    = errors.New("license window invalid")
-	ErrLicenseNotActive        = errors.New("license not active yet")
-	ErrLicenseExpired          = errors.New("license expired")
-	ErrInvalidPublicKey        = errors.New("invalid public key")
-	ErrTierLimitExceeded       = errors.New("tier limit exceeded")
+	ErrLicenseRequired                = errors.New("license required")
+	ErrLicensePayloadMissing          = errors.New("license payload missing")
+	ErrLicenseSignatureMissing        = errors.New("license signature missing")
+	ErrLicenseSignatureInvalid        = errors.New("license signature invalid")
+	ErrLicensePublicKeyMissing        = errors.New("license public key missing")
+	ErrUnsupportedLegacyLicenseFormat = errors.New("unsupported legacy license format: regenerate with cordum-tools license-generator in the current schema")
+	ErrLicenseWindowInvalid           = errors.New("license window invalid")
+	ErrLicenseNotActive               = errors.New("license not active yet")
+	ErrLicenseExpired                 = errors.New("license expired")
+	ErrInvalidPublicKey               = errors.New("invalid public key")
+	ErrTierLimitExceeded              = errors.New("tier limit exceeded")
 )
 
 // GraceError captures grace-window metadata after signature verification succeeds.

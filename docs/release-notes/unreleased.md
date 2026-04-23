@@ -6,17 +6,20 @@ these entries into a versioned release note and reset this file.
 
 ## Removed
 
-- Removed `core/licensing/compat.go` (the legacy claims-format migration
-  layer). License envelopes in the pre-GA top-level `features` + `limits`
-  shape are now hard-rejected with the new typed error
-  `licensing.ErrUnsupportedLegacyLicenseFormat` — operators running
-  such a license must regenerate via `cordum-tools license-generator`
-  in the current schema before starting the gateway. Rejection emits a
-  structured `slog.Error("legacy license format rejected", ...)` log
-  line with `kid` / `org_id` / `license_id` and a `suggested_action`
-  hint, and a new SIEM event type `license.legacy_format_rejected`
+- Removed the pre-GA compat shims `core/licensing/compat.go` and
+  `core/controlplane/gateway/auth_compat.go`. License envelopes in the
+  legacy top-level `features` + `limits` shape are now hard-rejected
+  with the typed error `licensing.ErrUnsupportedLegacyLicenseFormat` —
+  operators running such a license must regenerate via
+  `cordum-tools license-generator` in the current schema before
+  starting the gateway. Rejection emits a structured
+  `slog.Error("legacy license format rejected", ...)` log line with
+  `kid` / `org_id` / `license_id` and a `suggested_action` hint, and
+  the new SIEM event type `license.legacy_format_rejected`
   (`core/audit.EventLicenseLegacyRejected`) is available for audit
-  exporters that want to monitor the brownout. Audit trail at
+  exporters that want to monitor the brownout. Gateway callers now
+  import `core/controlplane/gateway/auth` directly instead of using the
+  old alias shim. Audit trail at
   [`docs/cleanup/auth-license-compat-audit.md`](../cleanup/auth-license-compat-audit.md).
 - Removed `sdk/client.BuildTLSTransport` — the error-swallowing wrapper
   that logged CA-read failures to stderr and returned `nil`. Use
