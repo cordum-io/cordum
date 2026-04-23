@@ -6,6 +6,29 @@ these entries into a versioned release note and reset this file.
 
 ## Changed
 
+- **core: extracted the Redis CAS retry loop into
+  `core/infra/redisutil/Retry`.** Four production call sites across
+  `gateway/auth/keystore_redis.go` (RevokeKey) and `gateway/mcp_approvals.go`
+  (Consume, Resolve, SweepExpired) used to carry a hand-rolled
+  `for attempt := 0; attempt < N; attempt++ { client.Watch(...) ; continue on
+  TxFailedErr ; return on other }` loop. Each copy could drift on its own
+  (off-by-one budget, missing `continue`, wrong error class) — a prior
+  production incident (task-035cdc8e) was exactly this retry-loop edge
+  case. Behavior preserved exactly: default 3-attempt budget (overridable
+  via `WithMaxAttempts(n)`; mcp_approvals keeps its `mcpCASMaxAttempts=5`),
+  retry only on `redis.TxFailedErr`, bubble any other error on the first
+  attempt that sees it, honour `ctx.Done()` between attempts. Closures that
+  capture outer variables (e.g. `consumed`, `final`, `result`, `expired`)
+  keep working unchanged because `fn` is still passed directly to
+  `client.Watch`. New `redisutil.ErrMaxAttemptsExceeded` sentinel wraps the
+  last TxFailedErr via `%w` so callers that want to distinguish budget
+  exhaustion from other errors can do so with `errors.Is`. Two call sites
+  originally suggested by the audit (`configsvc/service.go:128`,
+  `core/infra/store/job_store.go:2711`) are left inline: both are
+  single-Watch with typed error translation (→`ErrRevisionConflict` and
+  →`ApprovalConflictError`), not retry loops, so the helper does not apply.
+  Closes task-c7e419d8.
+
 - **core: extracted JobRequest canonicalisation into a single shared
   helper at `core/protocol/reqhash`.** The scheduler, gateway, and
   infra/store packages each used to carry their own copy of the same

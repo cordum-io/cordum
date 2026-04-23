@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/model"
 	"github.com/redis/go-redis/v9"
 )
@@ -486,15 +487,18 @@ func (s *MCPApprovalStore) consumeRecord(ctx context.Context, id string) (bool, 
 		}
 		return err
 	}
-	for attempt := 0; attempt < mcpCASMaxAttempts; attempt++ {
-		err := s.client.Watch(ctx, txFn, key)
-		if err == nil {
-			break
+	// task-c7e419d8: Redis CAS retry loop extracted into redisutil.Retry.
+	if err := redisutil.Retry(ctx, s.client, txFn,
+		redisutil.WithKeys(key),
+		redisutil.WithMaxAttempts(mcpCASMaxAttempts),
+	); err != nil {
+		if !errors.Is(err, redisutil.ErrMaxAttemptsExceeded) {
+			return false, nil, err
 		}
-		if errors.Is(err, redis.TxFailedErr) {
-			continue
-		}
-		return false, nil, err
+		// Budget exhausted on TxFailedErr — preserves pre-refactor
+		// behaviour: the loop used to fall through with `consumed/final`
+		// capturing the last pre-Watch snapshot; return whatever the
+		// closure last set.
 	}
 	if consumed && final != nil {
 		s.emitAudit(final, "consumed", "", audit.SeverityInfo)
@@ -563,14 +567,11 @@ func (s *MCPApprovalStore) Resolve(ctx context.Context, id string, decision mode
 		}
 		return err
 	}
-	for attempt := 0; attempt < mcpCASMaxAttempts; attempt++ {
-		err := s.client.Watch(ctx, txFn, key)
-		if err == nil {
-			break
-		}
-		if errors.Is(err, redis.TxFailedErr) {
-			continue
-		}
+	// task-c7e419d8: Redis CAS retry loop extracted into redisutil.Retry.
+	if err := redisutil.Retry(ctx, s.client, txFn,
+		redisutil.WithKeys(key),
+		redisutil.WithMaxAttempts(mcpCASMaxAttempts),
+	); err != nil && !errors.Is(err, redisutil.ErrMaxAttemptsExceeded) {
 		return nil, err
 	}
 	if resolveErr != nil {
@@ -726,16 +727,14 @@ func (s *MCPApprovalStore) expireOne(ctx context.Context, id string, deadline in
 		}
 		return err
 	}
-	for attempt := 0; attempt < mcpCASMaxAttempts; attempt++ {
-		err := s.client.Watch(ctx, txFn, key)
-		if err == nil {
-			break
-		}
-		if errors.Is(err, redis.TxFailedErr) {
-			continue
-		}
-		// Any other error aborts — we don't propagate; the caller can
-		// retry on the next sweep tick. SweepExpired is best-effort.
+	// task-c7e419d8: Redis CAS retry loop extracted into redisutil.Retry.
+	// SweepExpired is best-effort: any non-retryable error aborts without
+	// propagating (the caller retries on the next sweep tick). Budget
+	// exhaustion falls through with whatever state the closure last set.
+	if err := redisutil.Retry(ctx, s.client, txFn,
+		redisutil.WithKeys(key),
+		redisutil.WithMaxAttempts(mcpCASMaxAttempts),
+	); err != nil && !errors.Is(err, redisutil.ErrMaxAttemptsExceeded) {
 		return false, nil
 	}
 	return expired, final

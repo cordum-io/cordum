@@ -212,19 +212,19 @@ func (s *RedisKeyStore) Revoke(ctx context.Context, id string, tenant string) er
 		return err
 	}
 
-	for i := 0; i < 3; i++ {
-		if err := s.client.Watch(ctx, txFunc, keyRecordKey(id)); err != nil {
-			if errors.Is(err, ErrKeyNotFound) {
-				return err
-			}
-			if errors.Is(err, redis.TxFailedErr) {
-				continue
-			}
-			return fmt.Errorf("revoke key: %w", err)
+	// task-c7e419d8: Redis CAS retry loop extracted into redisutil.Retry.
+	// Default 3-attempt budget preserved. ErrKeyNotFound is not TxFailedErr,
+	// so Retry returns it immediately — matches the old early-exit semantic.
+	if err := redisutil.Retry(ctx, s.client, txFunc, redisutil.WithKeys(keyRecordKey(id))); err != nil {
+		if errors.Is(err, ErrKeyNotFound) {
+			return err
 		}
-		return nil
+		if errors.Is(err, redisutil.ErrMaxAttemptsExceeded) {
+			return fmt.Errorf("revoke key: too many retries")
+		}
+		return fmt.Errorf("revoke key: %w", err)
 	}
-	return fmt.Errorf("revoke key: too many retries")
+	return nil
 }
 
 // ValidateKey checks a raw API key against the store.
