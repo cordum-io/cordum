@@ -32,6 +32,22 @@ require() {
 log() { echo "[quickstart] $*"; }
 die() { echo "[quickstart] ERROR: $*" >&2; exit 1; }
 
+resolve_cordumctl() {
+  if [[ -n "${CORDUMCTL_BIN:-}" ]]; then
+    printf '%s' "${CORDUMCTL_BIN}"
+    return 0
+  fi
+  if [[ -n "${CORDUMCTL:-}" ]]; then
+    printf '%s' "${CORDUMCTL}"
+    return 0
+  fi
+  if command -v cordumctl >/dev/null 2>&1; then
+    command -v cordumctl
+    return 0
+  fi
+  return 1
+}
+
 # --- Generate a random hex string (no openssl dependency) ---
 gen_hex() {
   local len="${1:-32}"
@@ -576,7 +592,7 @@ fi
 # verification get a uniformly verification-free run.
 if [[ "${SKIP_SMOKE}" == "1" || "${SKIP_DOCTOR}" == "1" ]]; then
   log "skipping doctor verification"
-elif ! command -v cordumctl >/dev/null 2>&1; then
+elif ! cordumctl_cmd="$(resolve_cordumctl)"; then
   log "cordumctl not on PATH — skipping doctor (build it with: make build SERVICE=cordumctl)"
 else
   echo ""
@@ -584,11 +600,11 @@ else
   doctor_env=(CORDUM_API_KEY="${API_KEY}" CORDUM_TENANT_ID="${TENANT_ID}")
   if [[ -n "${TLS_CA}" ]]; then
     doctor_env+=(CORDUM_GATEWAY="https://127.0.0.1:8081")
-    env "${doctor_env[@]}" cordumctl doctor --timeout 30 --cacert "${TLS_CA}" || \
+    env "${doctor_env[@]}" "${cordumctl_cmd}" doctor --timeout 30 --cacert "${TLS_CA}" || \
       log "cordumctl doctor reported issues — see docs/troubleshooting/install.md"
   else
     doctor_env+=(CORDUM_GATEWAY="http://127.0.0.1:8081")
-    env "${doctor_env[@]}" cordumctl doctor --timeout 30 || \
+    env "${doctor_env[@]}" "${cordumctl_cmd}" doctor --timeout 30 || \
       log "cordumctl doctor reported issues — see docs/troubleshooting/install.md"
   fi
 fi

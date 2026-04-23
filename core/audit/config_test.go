@@ -11,12 +11,9 @@ func TestNewExporterFromEnv_EmptyType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if exp == nil {
-		t.Fatal("expected discard exporter for empty type")
-	}
-	defer func() { _ = exp.Close() }()
-	if _, ok := exp.Backend().(*DiscardExporter); !ok {
-		t.Fatalf("Backend() = %T, want *DiscardExporter", exp.Backend())
+	if exp != nil {
+		defer func() { _ = exp.Close() }()
+		t.Fatalf("NewExporterFromEnv(empty) = %T, want nil; the chain now runs unconditionally so an empty export type no longer needs a dummy DiscardExporter", exp)
 	}
 }
 
@@ -26,12 +23,9 @@ func TestNewExporterFromEnv_NoneType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if exp == nil {
-		t.Fatal("expected discard exporter for 'none' type")
-	}
-	defer func() { _ = exp.Close() }()
-	if _, ok := exp.Backend().(*DiscardExporter); !ok {
-		t.Fatalf("Backend() = %T, want *DiscardExporter", exp.Backend())
+	if exp != nil {
+		defer func() { _ = exp.Close() }()
+		t.Fatalf("NewExporterFromEnv(\"none\") = %T, want nil; 'none' is a shorthand for no external SIEM export and no longer instantiates a DiscardExporter", exp)
 	}
 }
 
@@ -41,12 +35,32 @@ func TestNewExporterFromEnv_NoneTypeCaseInsensitive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if exp == nil {
-		t.Fatal("expected discard exporter for 'NONE' type")
+	if exp != nil {
+		defer func() { _ = exp.Close() }()
+		t.Fatalf("NewExporterFromEnv(\"NONE\") = %T, want nil; the case-insensitive lowering of 'NONE' still maps to the no-exporter path", exp)
 	}
-	defer func() { _ = exp.Close() }()
-	if _, ok := exp.Backend().(*DiscardExporter); !ok {
-		t.Fatalf("Backend() = %T, want *DiscardExporter", exp.Backend())
+}
+
+// TestNewExporterFromEnv_NullBackCompat pins that operators who explicitly
+// opt into the discard/null exporter (for metrics parity with a real SIEM
+// backend) still get a DiscardExporter. Only '' and 'none' are treated as
+// "no exporter at all" after task-096de016.
+func TestNewExporterFromEnv_NullBackCompat(t *testing.T) {
+	for _, typ := range []string{"null", "discard", "chain-only"} {
+		t.Run(typ, func(t *testing.T) {
+			t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", typ)
+			exp, err := NewExporterFromEnv()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if exp == nil {
+				t.Fatalf("NewExporterFromEnv(%q) returned nil; %q must still install a DiscardExporter for explicit no-op back-compat", typ, typ)
+			}
+			defer func() { _ = exp.Close() }()
+			if _, ok := exp.Backend().(*DiscardExporter); !ok {
+				t.Fatalf("NewExporterFromEnv(%q) backend = %T, want *DiscardExporter", typ, exp.Backend())
+			}
+		})
 	}
 }
 

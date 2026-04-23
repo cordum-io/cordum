@@ -38,10 +38,28 @@ func main() {
 
 	workerID := envOr("WORKER_ID", "demo-guardrails-worker")
 	natsURL := envOr("NATS_URL", defaultNatsURL)
+	redisURL := envOr("REDIS_URL", defaultRedisURL)
+
+	store, err := runtime.NewRedisBlobStoreWithPing(redisURL)
+	if err != nil {
+		log.Fatalf("redis connect: %v", err)
+	}
+	natsOpts, err := natsConnectOptions(workerID)
+	if err != nil {
+		_ = store.Close()
+		log.Fatalf("nats tls config: %v", err)
+	}
+	nc, err := nats.Connect(natsURL, natsOpts...)
+	if err != nil {
+		_ = store.Close()
+		log.Fatalf("nats connect: %v", err)
+	}
 
 	agent := &runtime.Agent{
+		NATS:     nc,
 		NATSURL:  natsURL,
-		RedisURL: envOr("REDIS_URL", defaultRedisURL),
+		RedisURL: redisURL,
+		Store:    store,
 		SenderID: workerID,
 	}
 
@@ -71,10 +89,6 @@ func main() {
 		}
 	}()
 
-	nc, err := nats.Connect(natsURL, nats.Name(workerID), nats.Timeout(5*time.Second))
-	if err != nil {
-		log.Fatalf("nats connect: %v", err)
-	}
 	defer func() {
 		if err := nc.Drain(); err != nil {
 			log.Printf("nats drain: %v", err)
@@ -99,4 +113,19 @@ func envOr(key, fallback string) string {
 		return val
 	}
 	return fallback
+}
+
+func natsConnectOptions(workerID string) ([]nats.Option, error) {
+	opts := []nats.Option{
+		nats.Name(workerID),
+		nats.Timeout(5 * time.Second),
+	}
+	tlsCfg, err := runtime.NATSTLSConfigFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if tlsCfg != nil {
+		opts = append(opts, nats.Secure(tlsCfg))
+	}
+	return opts, nil
 }

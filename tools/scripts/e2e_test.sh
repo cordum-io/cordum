@@ -226,11 +226,11 @@ redis_ping() {
 
   if command -v docker >/dev/null 2>&1 && docker compose ps -q redis >/dev/null 2>&1; then
     if [[ -n "${TLS_CA}" ]]; then
-      docker compose exec -T redis redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "${REDIS_PASSWORD}" ping
+      MSYS_NO_PATHCONV=1 docker compose exec -T redis redis-cli --tls --cacert /etc/cordum/tls/ca/ca.crt -a "${REDIS_PASSWORD}" ping
     elif [[ -n "${REDIS_PASSWORD}" ]]; then
-      docker compose exec -T redis redis-cli -a "${REDIS_PASSWORD}" ping
+      MSYS_NO_PATHCONV=1 docker compose exec -T redis redis-cli -a "${REDIS_PASSWORD}" ping
     else
-      docker compose exec -T redis redis-cli ping
+      MSYS_NO_PATHCONV=1 docker compose exec -T redis redis-cli ping
     fi
     return
   fi

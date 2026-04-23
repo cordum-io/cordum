@@ -1746,8 +1746,20 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
+		if err := s.persistSubmitDeniedJob(r.Context(), r, req, meta, jobID, traceID, orgID, principalID, teamID, projectID, memoryID, delegationExpectedAudience, policyResult, reason); err != nil {
+			slog.Error("failed to persist denied submit job", "job_id", jobID, "error", err)
+			writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist denied job state")
+			return
+		}
 		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_denied", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy denied: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
-		writeErrorJSON(w, http.StatusForbidden, reason)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		writeJSON(w, map[string]any{
+			"error":    reason,
+			"status":   http.StatusForbidden,
+			"job_id":   jobID,
+			"trace_id": traceID,
+		})
 		return
 	}
 	if policyResult.Throttled {
@@ -2116,6 +2128,171 @@ func marshalSubmitJobPayload(req submitJobRequest, tenantID string, createdAt ti
 		payload["context"] = req.Context
 	}
 	return json.Marshal(payload)
+}
+
+func (s *server) persistSubmitDeniedJob(
+	ctx context.Context,
+	r *http.Request,
+	req submitJobRequest,
+	meta *pb.JobMetadata,
+	jobID, traceID, orgID, principalID, teamID, projectID, memoryID, delegationExpectedAudience string,
+	policyResult submitPolicyDecision,
+	reason string,
+) error {
+	if s == nil || s.jobStore == nil {
+		return errors.New("job store unavailable")
+	}
+
+	payloadBytes, err := marshalSubmitJobPayload(req, orgID, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("encode denied job payload: %w", err)
+	}
+
+	ctxKey := store.MakeContextKey(jobID)
+	ctxPtr := store.PointerForKey(ctxKey)
+	if s.memStore != nil {
+		if err := s.memStore.PutContext(ctx, ctxKey, payloadBytes); err != nil {
+			slog.Warn("failed to persist denied job context", "job_id", jobID, "error", err)
+		}
+	}
+
+	jobPriority := parsePriority(req.Priority)
+	envVars := map[string]string{
+		"tenant_id":         orgID,
+		"max_input_tokens":  fmt.Sprintf("%d", req.MaxInputTokens),
+		"max_output_tokens": fmt.Sprintf("%d", req.MaxOutputTokens),
+	}
+	if teamID != "" {
+		envVars["team_id"] = teamID
+	}
+	if projectID != "" {
+		envVars["project_id"] = projectID
+	}
+	if memoryID != "" {
+		envVars["memory_id"] = memoryID
+	}
+	if req.Mode != "" {
+		envVars["context_mode"] = req.Mode
+	}
+
+	jobReq := &pb.JobRequest{
+		JobId: jobID, Topic: req.Topic, Priority: jobPriority,
+		ContextPtr: ctxPtr, AdapterId: req.AdapterId, Env: envVars,
+		MemoryId: memoryID, TenantId: orgID, PrincipalId: principalID,
+		Labels: req.Labels, Meta: meta,
+		ContextHints: &pb.ContextHints{
+			MaxInputTokens: req.MaxInputTokens, AllowSummarization: req.AllowSummarization,
+			AllowRetrieval: req.AllowRetrieval, Tags: req.Tags,
+		},
+		Budget: &pb.Budget{
+			MaxInputTokens: int64(req.MaxInputTokens), MaxOutputTokens: req.MaxOutputTokens,
+			MaxTotalTokens: req.MaxTotalTokens, DeadlineMs: req.DeadlineMs,
+		},
+	}
+
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
+		return fmt.Errorf("set initial denied-job state: %w", err)
+	}
+	if err := s.jobStore.SetTopic(ctx, jobID, req.Topic); err != nil {
+		slog.Warn("failed to set denied job topic", "job_id", jobID, "error", err)
+	}
+	if err := s.jobStore.SetTenant(ctx, jobID, orgID); err != nil {
+		slog.Warn("failed to set denied job tenant", "job_id", jobID, "error", err)
+	}
+	if err := s.jobStore.AddJobToTrace(ctx, traceID, jobID); err != nil {
+		slog.Warn("failed to add denied job to trace", "job_id", jobID, "trace_id", traceID, "error", err)
+	}
+	if err := s.jobStore.SetJobMeta(ctx, jobReq); err != nil {
+		slog.Warn("failed to persist denied job metadata", "job_id", jobID, "error", err)
+	}
+	if err := s.jobStore.SetJobRequest(ctx, jobReq); err != nil {
+		slog.Warn("failed to persist denied job request", "job_id", jobID, "error", err)
+	}
+	if err := s.persistSubmitDelegationToken(ctx, jobID, req.DelegationToken, delegationExpectedAudience); err != nil {
+		_ = s.jobStore.SetState(ctx, jobID, model.JobStateFailed)
+		return fmt.Errorf("persist denied delegation metadata: %w", err)
+	}
+	if identity := submitterIdentity(r); identity != "" {
+		if err := s.jobStore.SetSubmittedBy(ctx, jobID, identity); err != nil {
+			slog.Warn("failed to persist submitter identity for denied job", "job_id", jobID, "error", err)
+		}
+	}
+
+	jobHash, _ := scheduler.HashJobRequest(jobReq)
+	safetyRecord := model.SafetyDecisionRecord{
+		Decision:       model.SafetyDeny,
+		Reason:         reason,
+		RuleID:         policyResult.RuleId,
+		PolicySnapshot: policyResult.PolicySnapshot,
+		Constraints:    policyResult.Constraints,
+		JobHash:        jobHash,
+		Remediations:   policyResult.Remediations,
+		CheckedAt:      time.Now().UnixMicro(),
+	}
+	if err := s.jobStore.SetSafetyDecision(ctx, jobID, safetyRecord); err != nil {
+		slog.Warn("failed to persist denied safety decision", "job_id", jobID, "error", err)
+	}
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStateDenied); err != nil {
+		return fmt.Errorf("set denied state: %w", err)
+	}
+
+	packet := &pb.BusPacket{
+		TraceId:         traceID,
+		SenderId:        "api-gateway",
+		CreatedAt:       timestamppb.Now(),
+		ProtocolVersion: capsdk.DefaultProtocolVersion,
+		Payload: &pb.BusPacket_JobResult{
+			JobResult: &pb.JobResult{
+				JobId:         jobID,
+				Status:        pb.JobStatus_JOB_STATUS_DENIED,
+				ErrorCode:     "policy_denied",
+				ErrorCodeEnum: pb.ErrorCode_ERROR_CODE_SAFETY_DENIED,
+				ErrorMessage:  reason,
+			},
+		},
+	}
+	if s.bus != nil {
+		if err := s.bus.Publish(capsdk.SubjectDLQ, packet); err != nil {
+			slog.Warn("publish dlq on submit deny failed", "job_id", jobID, "error", err)
+		}
+	}
+	if s.dlqStore != nil {
+		if err := s.dlqStore.Add(ctx, store.DLQEntry{
+			JobID:      jobID,
+			Topic:      req.Topic,
+			Status:     pb.JobStatus_JOB_STATUS_DENIED.String(),
+			Reason:     reason,
+			ReasonCode: "policy_denied",
+			LastState:  string(model.JobStateDenied),
+			Attempts:   0,
+			CreatedAt:  time.Now().UTC(),
+		}); err != nil {
+			slog.Warn("failed to persist denied dlq entry", "job_id", jobID, "error", err)
+		}
+	}
+	if s.memStore != nil {
+		resKey := store.MakeResultKey(jobID)
+		resPtr := store.PointerForKey(resKey)
+		body := map[string]any{
+			"job_id":       jobID,
+			"status":       pb.JobStatus_JOB_STATUS_DENIED.String(),
+			"error":        map[string]any{"message": reason},
+			"processed_by": "api-gateway",
+			"completed_at": time.Now().UTC().Format(time.RFC3339),
+		}
+		if data, err := json.Marshal(body); err == nil {
+			if err := s.memStore.PutResult(ctx, resKey, data); err != nil {
+				slog.Warn("failed to persist denied job result", "job_id", jobID, "error", err)
+			}
+		}
+		if existing, err := s.jobStore.GetResultPtr(ctx, jobID); err != nil || strings.TrimSpace(existing) == "" {
+			if err := s.jobStore.SetResultPtr(ctx, jobID, resPtr); err != nil {
+				slog.Warn("failed to set denied result pointer", "job_id", jobID, "error", err)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (s *server) handleGetTrace(w http.ResponseWriter, r *http.Request) {

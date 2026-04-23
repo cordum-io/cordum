@@ -4,6 +4,81 @@ This file captures user-visible changes that have landed on `main` but
 have not yet been cut into a release. When a release is tagged, copy
 these entries into a versioned release note and reset this file.
 
+## Audit chain decoupling (WIP — task-096de016)
+
+Working entry. Full text lands at step 6; these are the three design
+findings captured in step 1 so reviewers can follow the diff:
+
+1. **Chain currently depends on exporter plumbing.**
+   `core/controlplane/gateway/gateway.go` `initAuditPipeline`
+   (lines 854-896) creates `auditChainer` only after the
+   `bufExporter == nil` guard at line 862; when
+   `NewExporterFromEnvWithEntitlements` returns `(nil, nil)` —
+   i.e. the SIEM entitlement is blocked for the plan — the function
+   short-circuits at line 863 with `return nil, nil, nil` and the
+   whole chain stays dark.
+2. **Direct-transport mode skips the chain on the write path.**
+   When `AUDIT_TRANSPORT != "nats"` the function falls through to
+   line 894: `auditSender = bufExporter`. The raw buffered exporter
+   is not chain-aware, so `appendAuditEntryNamed` never writes to the
+   Redis chain stream in direct mode; only the NATS consumer
+   (started with `audit.WithChainer(...)` inside the `transport == "nats"`
+   branch) feeds the chain.
+3. **A chain-first decorator already exists but is unwired in prod.**
+   `core/controlplane/gateway/audit_chain_sender.go` already defines
+   `newAuditChainSender(chainer, downstream)` with the exact
+   semantics this task needs (chain append first, optional
+   downstream forwarding, 5s timeout, tenant-empty skip, stateless).
+   Grep confirms the only callers are its own test file
+   (`audit_chain_sender_test.go` at lines 25 and 64) — no production
+   code path instantiates it today.
+
+## Corrections
+
+- `task-fa783d7a` description references a "three-layer hotfix" (60s
+  grace period in `ClassifyApprovalRepair` + `preMutationHash`
+  threading through `checkSafetyDecisionTracedWithHash` + gateway
+  approve lock) supposedly applied on 2026-04-19. That implementation
+  was explored in a local commit on `super/all-local-work-2026-04-20`
+  but was **never merged to `main`**; the team abandoned it in favor
+  of the canonicaliser-based "proper fix" that currently ships on
+  `main` (commit `b06c22fe`) and on the follow-up branch. The DoD
+  items are superseded as follows:
+  - DoD #1 (cherry-pick the hotfix) — **SUPERSEDED.** Re-introducing
+    the 60s grace period in `ClassifyApprovalRepair` would mask the
+    real bug and is a regression; see the file-header comment in
+    `core/infra/store/approval_repair_regression_test.go` which
+    explicitly states the grace period "is gone; it masked the real
+    bug".
+  - DoD #2 (regression test for the grace period in
+    `core/infra/store/job_store_test.go`) — **NOT APPLICABLE.** No
+    grace period to cover.
+  - DoD #3 (regression test for `preMutationHash` in
+    `core/controlplane/scheduler/engine_test.go`) — **NOT APPLICABLE.**
+    The canonicaliser (`scheduler.HashJobRequest` in
+    `core/controlplane/scheduler/job_hash.go`) strips `approval_*`
+    labels, `bus.LabelBusMsgID`, and `config.EffectiveConfigEnvVar`
+    and protojson-roundtrips the request, so the post-mutation hash
+    equals the pre-mutation hash by construction — no separate
+    pre-mutation capture is needed. Existing coverage in
+    `core/controlplane/scheduler/job_hash_stale_request_test.go`
+    (6 tests) pins this contract.
+  - DoD #4 (mock-bank $200 smoke reaches `succeeded`) — covered by
+    this task's Phase 5 smoke run.
+  - DoD #5 (architectural followup filed) — covered by this task's
+    Phase 6 follow-up Moe task (unify canonical hash into a shared
+    package + evaluate atomic Redis store-and-hash).
+  - DoD #6 (no regression in legitimate stale detection) — covered by
+    the existing
+    `TestClassifyApprovalRepair_RealPayloadDrift_StillTripsStaleRequest`
+    regression in
+    `core/infra/store/approval_repair_regression_test.go`.
+
+  This task's scope is therefore *verify-and-harden* the shipped
+  canonicaliser, close one latent cross-package divergence
+  (`store.hashApprovalJobRequest` did not protojson-roundtrip), and
+  file the architectural follow-up.
+
 ## Chore
 
 - Dashboard bug fixes across five hooks/components plus one test-file
@@ -236,6 +311,26 @@ these entries into a versioned release note and reset this file.
   `invalidate_stale_request` path should now see the benign approval
   succeed again. Follow-up to commit `297937c7` and guard task
   `task-035cdc8e`.
+- **Approvals — canonical hash parity
+  (`core/infra/store/job_store.go`):** the store-side
+  `hashApprovalJobRequest` now protojson-roundtrips the cloned
+  `JobRequest` (via `protojson.MarshalOptions{EmitUnpopulated: true}`
+  → `protojson.UnmarshalOptions{DiscardUnknown: true}`) after
+  stripping `approval_*` labels, `bus.LabelBusMsgID`, and
+  `config.EffectiveConfigEnvVar`, matching
+  `core/controlplane/scheduler/HashJobRequest` byte-for-byte. Closes
+  a latent hash-divergence risk where an in-memory `JobRequest` proto
+  carrying forward-compat unknown fields (e.g. from a newer SDK)
+  would hash differently on the store side than the scheduler side,
+  tripping the reconciler's `invalidate_stale_request` classifier on
+  a benign approval. No production behavior change in the common
+  path (`SetJobRequest` already persists via protojson, which drops
+  unknowns before the reconciler reads the request), but the store's
+  canonical hash is now identical to the scheduler's canonical hash
+  on every logical input — not just on the Redis-read subset of
+  inputs. Follow-up task filed for canonical-hash unification into a
+  single shared package + atomic `SetJobRequest`-and-hash write. See
+  `task-fa783d7a`.
 - **Session token entropy failure surface
   (`core/controlplane/gateway/handlers_auth.go`):** `buildUserLoginResponse`
   now returns the opaque `errSessionTokenEntropy` sentinel instead of a

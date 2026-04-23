@@ -164,6 +164,20 @@ func normalizeTimestampMicrosUpper(ts int64) int64 {
 	}
 }
 
+// hashApprovalJobRequest computes the store-side canonical hash of
+// a JobRequest for approval-repair classification. It must match
+// scheduler.HashJobRequest (core/controlplane/scheduler/job_hash.go)
+// byte-for-byte on any logically-equivalent input — approval_*
+// labels, bus.LabelBusMsgID, config.EffectiveConfigEnvVar, and proto
+// unknown fields are all stripped so the scheduler's in-memory hash
+// agrees with the reconciler's later re-hash of the Redis-stored
+// request.
+//
+// The protojson roundtrip below is load-bearing: without it, an
+// in-memory proto carrying forward-compat unknown fields (from a
+// newer SDK) would hash differently here than scheduler.HashJobRequest
+// does, and the reconciler's drift-detection would trip StaleRequest
+// on a benign approval. See task-fa783d7a (unification follow-up).
 func hashApprovalJobRequest(req *pb.JobRequest) (string, error) {
 	if req == nil {
 		return "", fmt.Errorf("job request required")
@@ -189,7 +203,15 @@ func hashApprovalJobRequest(req *pb.JobRequest) (string, error) {
 			clone.Env = nil
 		}
 	}
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(clone)
+	raw, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(clone)
+	if err != nil {
+		return "", fmt.Errorf("canonical job request marshal: %w", err)
+	}
+	canonical := &pb.JobRequest{}
+	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, canonical); err != nil {
+		return "", fmt.Errorf("canonical job request unmarshal: %w", err)
+	}
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(canonical)
 	if err != nil {
 		return "", err
 	}

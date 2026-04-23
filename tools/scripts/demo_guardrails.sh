@@ -1,15 +1,50 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if command -v cordumctl >/dev/null 2>&1; then
-  CTL_BIN="cordumctl"
-elif [[ -x "./bin/cordumctl" ]]; then
-  CTL_BIN="./bin/cordumctl"
-elif [[ -x "./cordumctl" ]]; then
-  CTL_BIN="./cordumctl"
-else
-  CTL_BIN="./cmd/cordumctl/cordumctl"
-fi
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+
+resolve_cordumctl() {
+  if [[ -n "${CORDUMCTL_BIN:-}" ]]; then
+    printf '%s' "${CORDUMCTL_BIN}"
+    return 0
+  fi
+  if [[ -n "${CORDUMCTL:-}" ]]; then
+    printf '%s' "${CORDUMCTL}"
+    return 0
+  fi
+  if command -v cordumctl >/dev/null 2>&1; then
+    command -v cordumctl
+    return 0
+  fi
+  if [[ -x "${ROOT_DIR}/bin/cordumctl" ]]; then
+    printf '%s' "${ROOT_DIR}/bin/cordumctl"
+    return 0
+  fi
+  if [[ -x "${ROOT_DIR}/cordumctl" ]]; then
+    printf '%s' "${ROOT_DIR}/cordumctl"
+    return 0
+  fi
+  if [[ -x "${ROOT_DIR}/cmd/cordumctl/cordumctl" ]]; then
+    printf '%s' "${ROOT_DIR}/cmd/cordumctl/cordumctl"
+    return 0
+  fi
+  return 1
+}
+
+to_cordumctl_path() {
+  local path="$1"
+  if command -v cygpath >/dev/null 2>&1; then
+    case "${path}" in
+      /*)
+        cygpath -w "${path}"
+        return 0
+        ;;
+    esac
+  fi
+  printf '%s' "${path}"
+}
+
+CTL_BIN="$(resolve_cordumctl || true)"
 if ! command -v curl >/dev/null 2>&1; then
   echo "curl is required" >&2
   exit 1
@@ -31,15 +66,32 @@ TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
 export CORDUM_TENANT_ID=${TENANT_ID}
 auth_header=("-H" "X-API-Key: ${API_KEY}" "-H" "X-Tenant-ID: ${TENANT_ID}")
 
-if [[ ! -x "${CTL_BIN}" ]]; then
+CURL_TLS_OPTS=()
+if [[ "${CORDUM_TLS_INSECURE:-}" =~ ^(1|true|TRUE|yes|YES)$ ]]; then
+  CURL_TLS_OPTS=(-k)
+else
+  TLS_CA="${CORDUM_TLS_CA:-}"
+  if [[ -z "${TLS_CA}" && "${API_BASE}" == https://* && -f "${ROOT_DIR}/certs/ca/ca.crt" ]]; then
+    TLS_CA="${ROOT_DIR}/certs/ca/ca.crt"
+  fi
+  if [[ -n "${TLS_CA}" ]]; then
+    CURL_TLS_OPTS=(--cacert "${TLS_CA}")
+    if curl --version 2>/dev/null | grep -qi schannel; then
+      CURL_TLS_OPTS+=(--ssl-no-revoke)
+    fi
+    export CORDUM_TLS_CA="${TLS_CA}"
+  fi
+fi
+
+if [[ -z "${CTL_BIN}" || ! -x "${CTL_BIN}" ]]; then
   echo "cordumctl not found; build with make build" >&2
   exit 1
 fi
 
-"${CTL_BIN}" pack install --upgrade ./examples/demo-guardrails
+"${CTL_BIN}" pack install --upgrade "$(to_cordumctl_path "${ROOT_DIR}/examples/demo-guardrails")"
 
 echo "[demo] starting approval workflow run"
-approval_run=$(curl -sS -X POST "${API_BASE}/api/v1/workflows/demo-guardrails.approval/runs?org_id=${ORG_ID}" \
+approval_run=$(curl -sS "${CURL_TLS_OPTS[@]}" -X POST "${API_BASE}/api/v1/workflows/demo-guardrails.approval/runs?org_id=${ORG_ID}" \
   "${auth_header[@]}" \
   -H "Content-Type: application/json" \
   -d '{"message":"Ship with guardrails","actor":"demo"}' | jq -r '.run_id')
@@ -50,7 +102,7 @@ fi
 
 approval_job=""
 for _ in {1..20}; do
-  approval_job=$(curl -sS "${auth_header[@]}" "${API_BASE}/api/v1/workflow-runs/${approval_run}?org_id=${ORG_ID}" | jq -r '.steps.write.job_id // empty')
+  approval_job=$(curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" "${API_BASE}/api/v1/workflow-runs/${approval_run}?org_id=${ORG_ID}" | jq -r '.steps.write.job_id // empty')
   if [[ -n "${approval_job}" ]]; then
     break
   fi
@@ -72,7 +124,7 @@ fi
 
 status=""
 for _ in {1..25}; do
-  status=$(curl -sS "${auth_header[@]}" "${API_BASE}/api/v1/workflow-runs/${approval_run}?org_id=${ORG_ID}" | jq -r '.status')
+  status=$(curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" "${API_BASE}/api/v1/workflow-runs/${approval_run}?org_id=${ORG_ID}" | jq -r '.status')
   if [[ "${status}" == "succeeded" ]]; then
     break
   fi
@@ -86,9 +138,22 @@ if [[ "${status}" != "succeeded" ]]; then
 fi
 
 echo "[demo] submitting dangerous job"
-danger_job=$(${CTL_BIN} job submit --topic job.demo-guardrails.dangerous --prompt "rm -rf /" --json | jq -r '.job_id')
-if [[ -z "${danger_job}" || "${danger_job}" == "null" ]]; then
-  echo "failed to submit dangerous job" >&2
+danger_body="$(mktemp)"
+danger_status=$(curl -sS "${CURL_TLS_OPTS[@]}" -o "${danger_body}" -w "%{http_code}" \
+  -X POST "${API_BASE}/api/v1/jobs" \
+  "${auth_header[@]}" \
+  -H "Content-Type: application/json" \
+  -d '{"topic":"job.demo-guardrails.dangerous","prompt":"rm -rf /"}')
+if [[ "${danger_status}" != "403" ]]; then
+  echo "unexpected dangerous submit status ${danger_status}: $(cat "${danger_body}")" >&2
+  rm -f "${danger_body}"
+  exit 1
+fi
+
+danger_job=$(jq -r '.job_id // empty' "${danger_body}")
+rm -f "${danger_body}"
+if [[ -z "${danger_job}" ]]; then
+  echo "failed to persist denied dangerous job" >&2
   exit 1
 fi
 
@@ -96,19 +161,19 @@ sleep 0.5
 
 dlq_job=""
 for _ in {1..20}; do
-  dlq_job=$(curl -sS "${auth_header[@]}" "${API_BASE}/api/v1/dlq/page?org_id=${ORG_ID}&limit=1" | jq -r '.items[0].job_id // empty')
+  dlq_job=$(curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" "${API_BASE}/api/v1/dlq/page?org_id=${ORG_ID}&limit=20" | jq -r --arg job_id "${danger_job}" '.items[]? | select(.job_id == $job_id) | .job_id' | head -n 1)
   if [[ -n "${dlq_job}" ]]; then
     break
   fi
   sleep 0.3
 done
 if [[ -z "${dlq_job}" ]]; then
-  echo "denied job not found in DLQ" >&2
+  echo "denied job ${danger_job} not found in DLQ" >&2
   exit 1
 fi
 
 echo "[demo] applying remediation to denied job"
-remediate_resp=$(curl -sS -X POST "${API_BASE}/api/v1/jobs/${dlq_job}/remediate" \
+remediate_resp=$(curl -sS "${CURL_TLS_OPTS[@]}" -X POST "${API_BASE}/api/v1/jobs/${danger_job}/remediate" \
   "${auth_header[@]}" \
   -H "Content-Type: application/json" \
   -d '{}' )

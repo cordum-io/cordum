@@ -1167,6 +1167,7 @@ func TestGetJob_DelegatedJobCrossTenantForbidden(t *testing.T) {
 func TestHandleSubmitJobHTTP_PolicyDeny(t *testing.T) {
 	s, bus, safetyClient := newTestGateway(t)
 	s.tenant = "default"
+	ctx := context.Background()
 
 	safetyClient.setResponse(&pb.PolicyCheckResponse{
 		Decision: pb.DecisionType_DECISION_TYPE_DENY,
@@ -1187,11 +1188,43 @@ func TestHandleSubmitJobHTTP_PolicyDeny(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for policy deny, got %d: %s", rec.Code, rec.Body.String())
 	}
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode deny response: %v", err)
+	}
+	jobID, _ := resp["job_id"].(string)
+	if strings.TrimSpace(jobID) == "" {
+		t.Fatalf("expected denied response to include job_id, got %#v", resp)
+	}
+	state, err := s.jobStore.GetState(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get denied job state: %v", err)
+	}
+	if state != model.JobStateDenied {
+		t.Fatalf("expected denied job state, got %s", state)
+	}
+	record, err := s.jobStore.GetSafetyDecision(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get denied safety decision: %v", err)
+	}
+	if record.Decision != model.SafetyDeny {
+		t.Fatalf("expected denied safety decision, got %s", record.Decision)
+	}
+	if record.Reason != "topic prohibited by policy" {
+		t.Fatalf("unexpected deny reason: %q", record.Reason)
+	}
+	entry, err := s.dlqStore.Get(ctx, jobID)
+	if err != nil || entry == nil {
+		t.Fatalf("expected denied job in dlq, got entry=%v err=%v", entry, err)
+	}
 
 	bus.mu.Lock()
 	defer bus.mu.Unlock()
-	if len(bus.published) != 0 {
-		t.Fatalf("expected no bus publish on deny, got %d", len(bus.published))
+	if len(bus.published) != 1 {
+		t.Fatalf("expected one dlq publish on deny, got %d", len(bus.published))
+	}
+	if bus.published[0].subject != capsdk.SubjectDLQ {
+		t.Fatalf("expected deny publish to dlq subject, got %s", bus.published[0].subject)
 	}
 }
 
@@ -1305,6 +1338,7 @@ func TestHandleSubmitJobHTTP_PolicyApprovalRequired(t *testing.T) {
 func TestHandleSubmitJobHTTP_PolicyFailClosed(t *testing.T) {
 	s, bus, _ := newTestGateway(t)
 	s.tenant = "default"
+	ctx := context.Background()
 
 	// Replace the safety client with one that returns errors from Evaluate.
 	s.safetyClient = &failingSafetyClient{}
@@ -1326,11 +1360,25 @@ func TestHandleSubmitJobHTTP_PolicyFailClosed(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for fail-closed, got %d: %s", rec.Code, rec.Body.String())
 	}
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode fail-closed response: %v", err)
+	}
+	jobID, _ := resp["job_id"].(string)
+	if strings.TrimSpace(jobID) == "" {
+		t.Fatalf("expected fail-closed response to include job_id, got %#v", resp)
+	}
+	if state, err := s.jobStore.GetState(ctx, jobID); err != nil || state != model.JobStateDenied {
+		t.Fatalf("expected fail-closed denied state, got state=%v err=%v", state, err)
+	}
 
 	bus.mu.Lock()
 	defer bus.mu.Unlock()
-	if len(bus.published) != 0 {
-		t.Fatalf("expected no bus publish on fail-closed, got %d", len(bus.published))
+	if len(bus.published) != 1 {
+		t.Fatalf("expected one dlq publish on fail-closed, got %d", len(bus.published))
+	}
+	if bus.published[0].subject != capsdk.SubjectDLQ {
+		t.Fatalf("expected fail-closed publish to dlq subject, got %s", bus.published[0].subject)
 	}
 }
 

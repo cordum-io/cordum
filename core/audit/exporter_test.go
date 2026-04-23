@@ -198,8 +198,15 @@ func TestEventConstants(t *testing.T) {
 	}
 }
 
+// TestNewExporterFromEnvWithEntitlements_NullBackendAliases pins that the
+// explicit no-op backend types ("null", "discard", "chain-only") still
+// install a DiscardExporter for operators who want audit-export metrics to
+// match "a backend exists". Empty string and "none" are covered by
+// TestNewExporterFromEnvWithEntitlements_NoExporterAliases below — after
+// task-096de016 they map to (nil, nil) because the audit chain no longer
+// depends on an exporter being present.
 func TestNewExporterFromEnvWithEntitlements_NullBackendAliases(t *testing.T) {
-	for _, typ := range []string{"null", "discard", "chain-only", "none", ""} {
+	for _, typ := range []string{"null", "discard", "chain-only"} {
 		t.Run(typ, func(t *testing.T) {
 			t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", typ)
 
@@ -215,6 +222,28 @@ func TestNewExporterFromEnvWithEntitlements_NullBackendAliases(t *testing.T) {
 			}
 			if err := exp.Close(); err != nil {
 				t.Fatalf("close %q exporter: %v", typ, err)
+			}
+		})
+	}
+}
+
+// TestNewExporterFromEnvWithEntitlements_NoExporterAliases pins that the
+// "no external SIEM configured" shorthand values produce a nil exporter.
+// The gateway's initAuditPipeline now keeps the audit chain live without
+// requiring a DiscardExporter to be constructed, so empty and "none" map
+// to "no exporter at all".
+func TestNewExporterFromEnvWithEntitlements_NoExporterAliases(t *testing.T) {
+	for _, typ := range []string{"", "none", "NONE"} {
+		t.Run(typ, func(t *testing.T) {
+			t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", typ)
+
+			exp, err := NewExporterFromEnvWithEntitlements(nil)
+			if err != nil {
+				t.Fatalf("NewExporterFromEnvWithEntitlements(%q) error = %v", typ, err)
+			}
+			if exp != nil {
+				defer func() { _ = exp.Close() }()
+				t.Fatalf("NewExporterFromEnvWithEntitlements(%q) = %T, want nil; the chain runs without an exporter for this alias", typ, exp)
 			}
 		})
 	}

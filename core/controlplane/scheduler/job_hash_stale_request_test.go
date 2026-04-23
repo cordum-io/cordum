@@ -16,10 +16,14 @@ package scheduler
 //   - the approval flow's label churn (approval_* + bus.LabelBusMsgID)
 
 import (
+	"context"
 	"testing"
 
+	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/config"
+	infraStore "github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -189,5 +193,103 @@ func TestHashJobRequest_NilRejected(t *testing.T) {
 	_, err := HashJobRequest(nil)
 	if err == nil {
 		t.Fatal("HashJobRequest(nil) must return an error")
+	}
+}
+
+// TestHashApprovalJobRequest_MatchesSchedulerHashJobRequest cross-binds
+// the scheduler canonical hash (HashJobRequest, this package) against
+// the store canonical hash (store.hashApprovalJobRequest, accessed
+// indirectly via InspectApprovalRepair → snap.RequestHash). Both must
+// produce the same hash for any logical JobRequest so the reconciler's
+// drift detection matches the scheduler's submit-time hash.
+//
+// The test uses the production read path (miniredis + RedisJobStore +
+// InspectApprovalRepair), so it pins the end-to-end invariant without
+// requiring store.hashApprovalJobRequest to be exported. If someone
+// drifts either side's canonicalisation (adds/removes a stripped
+// field, removes the protojson roundtrip, etc.) the assertion fails.
+//
+// Scope: proto unknown fields are NOT exercised here because
+// SetJobRequest persists via protojson which drops them; the store-side
+// unit test TestHashApprovalJobRequest_IgnoresProtoUnknownFields covers
+// that path directly. See task-fa783d7a.
+func TestHashApprovalJobRequest_MatchesSchedulerHashJobRequest(t *testing.T) {
+	t.Parallel()
+
+	srv := miniredis.RunT(t)
+	store, err := infraStore.NewRedisJobStore("redis://" + srv.Addr())
+	if err != nil {
+		t.Fatalf("create store: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	// A realistic single-step approval payload: body + labels that
+	// the canonicaliser keeps (run_id/step_id/workflow_id) AND labels
+	// + env that the canonicaliser must strip (approval_*, LabelBusMsgID,
+	// EffectiveConfigEnvVar).
+	req := &pb.JobRequest{
+		JobId:      "job-xcheck",
+		Topic:      "job.approval-gate",
+		TenantId:   "default",
+		ContextPtr: "ctx:job-xcheck",
+		Labels: map[string]string{
+			"run_id":             "run-xcheck",
+			"step_id":            "approve",
+			"workflow_id":        "wf-xcheck",
+			"approval_granted":   "true",
+			"approval_reason":    "looks safe",
+			bus.LabelBusMsgID:    "approval:job-xcheck",
+		},
+		Env: map[string]string{
+			config.EffectiveConfigEnvVar: `{"tenant":"default","effective":true}`,
+			"CUSTOM_VAR":                 "keep-me",
+		},
+	}
+
+	ctx := context.Background()
+	if err := store.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	if err := store.SetState(ctx, req.GetJobId(), model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	schedulerHash, err := HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("scheduler HashJobRequest: %v", err)
+	}
+
+	snap, err := store.InspectApprovalRepair(ctx, req.GetJobId())
+	if err != nil {
+		t.Fatalf("inspect approval repair: %v", err)
+	}
+	if snap.RequestHash == "" {
+		t.Fatal("InspectApprovalRepair returned empty RequestHash")
+	}
+
+	if schedulerHash != snap.RequestHash {
+		t.Fatalf("canonical hash mismatch across scheduler and store: scheduler=%s store=%s",
+			schedulerHash, snap.RequestHash)
+	}
+
+	// Also cross-check that roundtripping the in-memory proto through
+	// protojson (what SetJobRequest does) doesn't shift the hash —
+	// the invariant that lets the reconciler re-hash the stored form
+	// and still match the scheduler's submit-time hash.
+	raw, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(req)
+	if err != nil {
+		t.Fatalf("protojson marshal: %v", err)
+	}
+	roundtripped := &pb.JobRequest{}
+	if err := protojson.Unmarshal(raw, roundtripped); err != nil {
+		t.Fatalf("protojson unmarshal: %v", err)
+	}
+	roundtrippedHash, err := HashJobRequest(roundtripped)
+	if err != nil {
+		t.Fatalf("HashJobRequest roundtripped: %v", err)
+	}
+	if roundtrippedHash != schedulerHash {
+		t.Fatalf("scheduler hash not stable across protojson roundtrip: before=%s after=%s",
+			schedulerHash, roundtrippedHash)
 	}
 }
