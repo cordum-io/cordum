@@ -2081,7 +2081,20 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 		record.Decision = SafetyRequireApproval
 	}
 	if record.Decision == SafetyRequireApproval || record.ApprovalRequired {
-		if hash, err := HashJobRequest(req); err == nil {
+		var existingHash string
+		if e.jobStore != nil {
+			storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
+			if prev, prevErr := e.jobStore.GetSafetyDecision(storeCtx, jobID); prevErr == nil && prev.JobHash != "" {
+				existingHash = prev.JobHash
+			}
+			cancel()
+		}
+		// Preserve the JobHash computed at gateway submit time — overwriting with
+		// the post-mutation hash here would cause the reconciler to classify this
+		// approval as invalidate_stale_request. See task-035cdc8e / commit 297937c7.
+		if existingHash != "" {
+			record.JobHash = existingHash
+		} else if hash, err := HashJobRequest(req); err == nil {
 			record.JobHash = hash
 		} else {
 			slog.Error("job hash failed", "job_id", jobID, "error", err)

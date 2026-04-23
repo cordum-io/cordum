@@ -2684,6 +2684,71 @@ func TestCheckSafetyDecisionApprovalGrantedAppendsDecisionLog(t *testing.T) {
 	}
 }
 
+func TestCheckSafetyDecision_PreservesExistingJobHashOnRequireApproval(t *testing.T) {
+	store := newFakeJobStore()
+	engine := NewEngine(&fakeBus{}, &fixedSafetyRecordChecker{record: SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		Reason:           "needs review",
+	}}, newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	req := &pb.JobRequest{
+		JobId:    "job-preserve-hash",
+		Topic:    "job.test",
+		TenantId: "tenant-a",
+		Labels:   map[string]string{"workflow_id": "wf-1"},
+	}
+	const pristineHash = "pristine-gateway-hash-xyz"
+	store.safety[req.JobId] = SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		JobHash:          pristineHash,
+	}
+	computedHash, err := HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("HashJobRequest() error = %v", err)
+	}
+	if computedHash == pristineHash {
+		t.Fatal("computed hash unexpectedly matched seeded gateway hash")
+	}
+
+	record, err := engine.checkSafetyDecision(context.Background(), req)
+	if err != nil {
+		t.Fatalf("checkSafetyDecision() error = %v", err)
+	}
+	if record.JobHash != pristineHash {
+		t.Fatalf("JobHash=%q want preserved %q", record.JobHash, pristineHash)
+	}
+}
+
+func TestCheckSafetyDecision_ComputesJobHashWhenNoneExists(t *testing.T) {
+	store := newFakeJobStore()
+	engine := NewEngine(&fakeBus{}, &fixedSafetyRecordChecker{record: SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		Reason:           "needs review",
+	}}, newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	req := &pb.JobRequest{
+		JobId:    "job-compute-hash",
+		Topic:    "job.test",
+		TenantId: "tenant-a",
+		Labels:   map[string]string{"workflow_id": "wf-2"},
+	}
+	wantHash, err := HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("HashJobRequest() error = %v", err)
+	}
+
+	record, err := engine.checkSafetyDecision(context.Background(), req)
+	if err != nil {
+		t.Fatalf("checkSafetyDecision() error = %v", err)
+	}
+	if record.JobHash != wantHash {
+		t.Fatalf("JobHash=%q want computed %q", record.JobHash, wantHash)
+	}
+}
+
 func TestProcessJobDecisionLogFailureWarnsAndDoesNotBlock(t *testing.T) {
 	var logBuf strings.Builder
 	prev := slog.Default()
