@@ -33,7 +33,48 @@ these entries into a versioned release note and reset this file.
   for the trade-off analysis and re-visit triggers. Closes
   task-090ab6af.
 
+## Security
+
+- **WebSocket quarantine-redaction fail-closed**
+  (`core/controlplane/gateway/handlers_stream.go`) — the filter that strips
+  `ResultPtr` + `ArtifactPtrs` from DENIED `JobResult` packets before
+  broadcasting to WebSocket subscribers previously FAILED OPEN on
+  `proto.Clone` type-assertion failure AND on the defensive
+  `cloned.GetJobResult() == nil` branch, returning the ORIGINAL packet with
+  sensitive content intact. Redis-stored result payloads may contain PII,
+  user prompts, secrets, or model outputs; leaking them to any WS subscriber
+  (including cross-tenant subscribers with `allowCrossTenant` granted) is a
+  data-exposure bug. The filter now fails CLOSED: on any clone or
+  sanitisation failure it returns nil, `enqueueBusPacket` drops the
+  broadcast, `cordum_gateway_ws_quarantine_redaction_drops_total` increments,
+  and an error is logged with `job_id` + `trace_id`. The next state-change
+  event will follow in the normal stream cadence, so dashboards recover
+  without operator intervention. See task-1d4e6b4c.
+
 ## Fixed
+
+- **gateway: WebSocket `SetReadDeadline` errors at connection setup are now
+  propagated instead of silently discarded.** `handleStream` and
+  `handleJobStream` both called `_ = ws.SetReadDeadline(...)` on the just-
+  accepted connection; if the underlying socket was already compromised
+  (race with client disconnect, tcp reset) the error was dropped and the
+  read loop entered with no deadline, so the server waited indefinitely for
+  a frame that would never arrive. Extracted a small `wsReadDeadliner`
+  interface plus a `setReadDeadlineOrError` helper so both call sites now
+  log at `Warn`, set the disconnect state, `ws.Close()`, and return. The
+  `SetPongHandler` callback already propagated its SetReadDeadline error
+  and is unchanged. See task-1d4e6b4c bug #2.
+
+- **gateway: `revalidateWSAuthWithRetry` now surfaces the last transient
+  error after 3 exhausted retries instead of returning nil (fail-silent).**
+  A NATS timeout or Redis outage during credential revalidation would
+  previously keep a potentially-revoked session alive for the full
+  2-minute revalidation window. The retry loop now returns a wrapped error
+  after exhaustion; the two callers already branch on `err != nil` to close
+  the connection, so the dashboard auto-reconnects and re-authenticates
+  within the revalidation budget rather than running on stale auth. The
+  `ctx.Done()` branch still returns nil — caller-initiated shutdown is not
+  a failure. See task-1d4e6b4c bug #3.
 
 - **safety-kernel: `shadowTimeout` now actually bounds the per-submission
   shadow evaluation loop.** Previously the bounded context returned by

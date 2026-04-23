@@ -79,6 +79,17 @@ var wsReconnections = promauto.NewCounter(prometheus.CounterOpts{
 	Help: "Total WebSocket client reconnections within the recent reconnect window",
 })
 
+// wsQuarantineRedactionDrops counts broadcasts the gateway DROPPED because
+// the quarantine-redaction filter could not produce a sanitised clone of a
+// DENIED JobResult. Dropping is the fail-closed posture — the original
+// packet carries ResultPtr + ArtifactPtrs that may contain PII, secrets, or
+// model outputs; those must not leak to WebSocket subscribers (including
+// cross-tenant ones with allowCrossTenant granted). See task-1d4e6b4c.
+var wsQuarantineRedactionDrops = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "cordum_gateway_ws_quarantine_redaction_drops_total",
+	Help: "Total WebSocket broadcasts dropped because the quarantine-redaction filter could not produce a sanitised clone",
+})
+
 const (
 	defaultWSClientBufSize = 256
 	minWSClientBufSize     = 1
@@ -446,8 +457,16 @@ func (s *server) enqueueBusPacket(p *pb.BusPacket) {
 		return
 	}
 
-	// Filter quarantined/denied job results: strip sensitive content before broadcast.
-	p = filterQuarantinedPacket(p)
+	// Filter quarantined/denied job results: strip sensitive content before
+	// broadcast. filterQuarantinedPacket returns nil on any failure branch
+	// (clone failed, cloned JobResult was nil); in that case the fail-closed
+	// contract says drop the broadcast — the next state-change event will
+	// follow in the normal stream cadence. See task-1d4e6b4c.
+	filtered := filterQuarantinedPacket(p)
+	if filtered == nil {
+		return
+	}
+	p = filtered
 
 	data, err := marshalBusPacketForWS(p)
 	if err != nil {
@@ -634,9 +653,50 @@ func busPacketType(p *pb.BusPacket) string {
 	}
 }
 
-// filterQuarantinedPacket strips result payloads from quarantined/denied job results
-// so that sensitive content (secrets, PII) is not broadcast to WebSocket clients.
-// Status and metadata are preserved so the dashboard can show the state transition.
+// packetCloneForFilter deep-copies a BusPacket for the quarantine-redaction
+// filter. Factored out as a package-level var so tests can inject a failure
+// stub (return nil) that exercises the fail-closed branch without relying on
+// proto-library internals. Production path: proto.Clone + type-assert. On
+// any failure we return nil — the filter translates that into a dropped
+// broadcast, never a leak. See task-1d4e6b4c.
+var packetCloneForFilter = func(p *pb.BusPacket) *pb.BusPacket {
+	clone, ok := proto.Clone(p).(*pb.BusPacket)
+	if !ok || clone == nil {
+		return nil
+	}
+	return clone
+}
+
+// wsReadDeadliner is the minimal subset of *websocket.Conn the gateway
+// needs when setting a read deadline. Exposed as an interface so tests
+// can inject a stub that returns a failure (e.g. io.ErrClosedPipe) and
+// verify the handler closes the connection instead of limping along
+// with no deadline. See task-1d4e6b4c.
+type wsReadDeadliner interface {
+	SetReadDeadline(t time.Time) error
+}
+
+// setReadDeadlineOrError wraps conn.SetReadDeadline so the handler can
+// tell success from silent failure. SetReadDeadline in gorilla/websocket
+// returns an error when the underlying TCP socket is already closed —
+// discarding that error leaves the read loop with no deadline and the
+// server waits indefinitely for a read that never comes. See bug #2 in
+// task-1d4e6b4c.
+func setReadDeadlineOrError(conn wsReadDeadliner, ttl time.Duration) error {
+	return conn.SetReadDeadline(time.Now().Add(ttl))
+}
+
+// filterQuarantinedPacket strips result payloads from quarantined/denied job
+// results so that sensitive content (secrets, PII, prompts, model outputs)
+// is not broadcast to WebSocket clients. Status and metadata are preserved
+// so the dashboard can still show the state transition.
+//
+// Returns nil on any failure branch — packetCloneForFilter returned nil, or
+// the clone's JobResult field was nil. Callers MUST nil-check and skip the
+// broadcast; the next state-change event will follow in the normal stream
+// cadence. This is the fail-CLOSED contract; the pre-fix code returned the
+// original unredacted packet on both failure branches, a data-leak bug
+// surfaced by the 2026-04-23 WebSocket audit. See task-1d4e6b4c.
 func filterQuarantinedPacket(p *pb.BusPacket) *pb.BusPacket {
 	jr := p.GetJobResult()
 	if jr == nil {
@@ -646,13 +706,21 @@ func filterQuarantinedPacket(p *pb.BusPacket) *pb.BusPacket {
 		return p
 	}
 	// Clone packet/proto messages to avoid copying embedded mutex fields.
-	out, ok := proto.Clone(p).(*pb.BusPacket)
-	if !ok || out == nil {
-		return p
+	out := packetCloneForFilter(p)
+	if out == nil {
+		wsQuarantineRedactionDrops.Inc()
+		slog.Error("ws quarantine-redaction: clone failed, dropping broadcast",
+			"job_id", jr.GetJobId(),
+			"trace_id", sanitizeUTF8ForLog(strings.TrimSpace(p.GetTraceId())))
+		return nil
 	}
 	sanitized := out.GetJobResult()
 	if sanitized == nil {
-		return p
+		wsQuarantineRedactionDrops.Inc()
+		slog.Error("ws quarantine-redaction: cloned packet has nil JobResult, dropping broadcast",
+			"job_id", jr.GetJobId(),
+			"trace_id", sanitizeUTF8ForLog(strings.TrimSpace(p.GetTraceId())))
+		return nil
 	}
 	sanitized.ResultPtr = ""
 	sanitized.ArtifactPtrs = nil
@@ -843,7 +911,20 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 	wsClientsActive.Inc()
 	s.statusCacheObj.Invalidate()
 	s.startWSConnectionSummaryLogger()
-	_ = ws.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
+	if err := setReadDeadlineOrError(ws, pingInterval+pongTimeout); err != nil {
+		// The underlying socket is already compromised — limp-along with no
+		// deadline would leave the read loop waiting indefinitely for a
+		// frame that will never arrive. Close cleanly and let the client
+		// reconnect. See task-1d4e6b4c bug #2.
+		slog.Warn("ws initial read deadline failed; closing",
+			"conn_id", connID,
+			"remote", r.RemoteAddr,
+			"tenant", client.tenant,
+			"error", err)
+		disconnectState.SetIfOneOf(disconnectClientClose, err, "", disconnectContextDone)
+		_ = ws.Close()
+		return
+	}
 	ws.SetPongHandler(func(string) error {
 		wsPongsReceived.Inc()
 		return ws.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
@@ -1020,7 +1101,19 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 	pongTimeout := wsPongTimeout
 	revalidateInterval := wsRevalidateInterval
 	revalidateRetryDelay := wsRevalidateRetryDelay
-	_ = ws.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
+	if err := setReadDeadlineOrError(ws, pingInterval+pongTimeout); err != nil {
+		// Compromised socket — close instead of running a deadline-less
+		// read loop. See task-1d4e6b4c bug #2.
+		slog.Warn("ws initial read deadline failed; closing",
+			"conn_id", connID,
+			"remote", r.RemoteAddr,
+			"tenant", client.tenant,
+			"job_id", jobID,
+			"error", err)
+		disconnectState.SetIfOneOf(disconnectClientClose, err, "", disconnectContextDone)
+		_ = ws.Close()
+		return
+	}
 	ws.SetPongHandler(func(string) error {
 		wsPongsReceived.Inc()
 		return ws.SetReadDeadline(time.Now().Add(pingInterval + pongTimeout))
@@ -1150,7 +1243,20 @@ func (s *server) revalidateWSAuth(apiKey string) error {
 	return err
 }
 
+// revalidateWSAuthWithRetry re-checks a WebSocket client's API key against the
+// auth provider. Returns nil when the key is still valid OR when ctx is
+// cancelled (caller-initiated shutdown is not a failure). Returns a
+// non-nil error in two situations: a non-transient failure (e.g. revoked
+// credentials) is surfaced immediately, and the last transient error is
+// surfaced after 3 exhausted retries.
+//
+// Callers MUST close the connection on any non-nil error. Tolerating
+// stale auth for the full 2-minute revalidation window is unacceptable
+// for a revoked or abused session — if the auth backend is transiently
+// unreachable we drop the WS; the dashboard auto-reconnects and
+// re-authenticates on its side. See task-1d4e6b4c bug #3.
 func (s *server) revalidateWSAuthWithRetry(ctx context.Context, apiKey, connID string, retryDelay time.Duration) error {
+	var lastErr error
 	for attempt := 1; attempt <= 3; attempt++ {
 		err := s.revalidateWSAuth(apiKey)
 		if err == nil {
@@ -1162,13 +1268,14 @@ func (s *server) revalidateWSAuthWithRetry(ctx context.Context, apiKey, connID s
 			return err
 		}
 		wsRevalidation.WithLabelValues("transient_error").Inc()
+		lastErr = err
 		if attempt == 3 {
-			slog.Warn("ws auth revalidation transient failure exhausted retries; keeping connection alive",
+			slog.Error("ws auth revalidation transient failures exhausted; closing connection",
 				"conn_id", connID,
 				"attempts", attempt,
 				"retry_delay", retryDelay,
 				"error", err)
-			return nil
+			return fmt.Errorf("ws auth revalidation exhausted %d transient retries: %w", attempt, err)
 		}
 		slog.Warn("ws auth revalidation transient failure; retrying",
 			"conn_id", connID,
@@ -1185,6 +1292,12 @@ func (s *server) revalidateWSAuthWithRetry(ctx context.Context, apiKey, connID s
 			return nil
 		case <-timer.C:
 		}
+	}
+	// Unreachable: the for-loop's attempt==3 branch returns. Kept for
+	// defensive compilation — surface the last error if we somehow fall
+	// through rather than silently returning nil.
+	if lastErr != nil {
+		return fmt.Errorf("ws auth revalidation exhausted retries: %w", lastErr)
 	}
 	return nil
 }

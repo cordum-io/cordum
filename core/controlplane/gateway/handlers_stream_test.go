@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"log/slog"
 	"net"
@@ -1078,7 +1079,12 @@ func TestWSPingKeepsConnectionAlive(t *testing.T) {
 	}
 }
 
-func TestWSRevalidation_TransientError_KeepsConnection(t *testing.T) {
+// TestWSRevalidation_TransientError_ClosesAfterExhaustedRetries locks in the
+// task-1d4e6b4c bug #3 contract: on 3 exhausted transient revalidation
+// errors the WS connection is closed rather than left limping on stale
+// auth state. Prior to the fix this test asserted the opposite
+// ("KeepsConnection") — that was documenting the bug.
+func TestWSRevalidation_TransientError_ClosesAfterExhaustedRetries(t *testing.T) {
 	prevPingInterval := wsPingInterval
 	prevPongTimeout := wsPongTimeout
 	prevRevalidateInterval := wsRevalidateInterval
@@ -1133,22 +1139,34 @@ func TestWSRevalidation_TransientError_KeepsConnection(t *testing.T) {
 	})
 
 	readErr := startTestWSReadPump(conn)
-	time.Sleep(4 * wsRevalidateInterval)
 
 	select {
 	case err := <-readErr:
-		t.Fatalf("expected transient revalidation errors to keep connection alive, got %v", err)
-	default:
+		// Any close signal here is acceptable — the handler closed the
+		// connection on exhausted retries. gorilla returns a variety of
+		// close codes depending on whether the server sent a control
+		// frame or just dropped the socket; we only care that the read
+		// pump sees EOF within the revalidation budget.
+		if err == nil {
+			t.Fatal("expected non-nil read error after exhausted transient revalidation retries")
+		}
+	case <-time.After(8 * wsRevalidateInterval):
+		t.Fatal("expected connection to close after exhausted transient revalidation retries")
 	}
-	if authCalls.Load() < 2 {
-		t.Fatalf("expected revalidation auth calls, got %d", authCalls.Load())
+	if got := authCalls.Load(); got < 4 {
+		// 1 success + 3 retry exhaust = minimum 4 AuthenticateHTTP calls.
+		t.Fatalf("expected at least 4 auth calls (1 success + 3 retries), got %d", got)
 	}
 
-	s.clientsMu.RLock()
-	count := len(s.clients)
-	s.clientsMu.RUnlock()
-	if count != 1 {
-		t.Fatalf("expected connection to remain registered, got %d clients", count)
+	if !waitForCondition(500*time.Millisecond, 10*time.Millisecond, func() bool {
+		s.clientsMu.RLock()
+		defer s.clientsMu.RUnlock()
+		return len(s.clients) == 0
+	}) {
+		s.clientsMu.RLock()
+		count := len(s.clients)
+		s.clientsMu.RUnlock()
+		t.Fatalf("expected connection to be deregistered after exhausted retries, got %d clients", count)
 	}
 }
 
@@ -1824,5 +1842,161 @@ func TestWSClientBufferSizeUsedInHandlers(t *testing.T) {
 	// Verify the server stores the configured buffer size.
 	if s.wsClientBufSz != bufSize {
 		t.Fatalf("expected buffer size %d, got %d", bufSize, s.wsClientBufSz)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// task-1d4e6b4c — fail-closed quarantine redaction, SetReadDeadline error
+// propagation, and exhausted-retry auth revalidation.
+// ---------------------------------------------------------------------------
+
+// fakeDeadliner implements wsReadDeadliner and returns a configurable error.
+type fakeDeadliner struct{ err error }
+
+func (f *fakeDeadliner) SetReadDeadline(time.Time) error { return f.err }
+
+// TestFilterQuarantinedPacket_FailsClosedOnCloneFailure asserts the filter
+// returns nil when packetCloneForFilter returns nil (simulating a
+// proto.Clone type-assertion failure). The pre-fix code returned the
+// ORIGINAL unredacted packet on this branch — a security hole because
+// ResultPtr + ArtifactPtrs are meant to be stripped for DENIED results.
+func TestFilterQuarantinedPacket_FailsClosedOnCloneFailure(t *testing.T) {
+	saved := packetCloneForFilter
+	packetCloneForFilter = func(*pb.BusPacket) *pb.BusPacket { return nil }
+	t.Cleanup(func() { packetCloneForFilter = saved })
+
+	before := testutil.ToFloat64(wsQuarantineRedactionDrops)
+	pkt := &pb.BusPacket{
+		Payload: &pb.BusPacket_JobResult{
+			JobResult: &pb.JobResult{
+				JobId:        "job-1",
+				Status:       pb.JobStatus_JOB_STATUS_DENIED,
+				ResultPtr:    "redis://res:job-1",
+				ArtifactPtrs: []string{"art-1", "art-2"},
+			},
+		},
+	}
+	got := filterQuarantinedPacket(pkt)
+	if got != nil {
+		t.Fatalf("expected nil (fail-closed); got packet with ResultPtr=%q",
+			got.GetJobResult().GetResultPtr())
+	}
+	if diff := testutil.ToFloat64(wsQuarantineRedactionDrops) - before; diff != 1 {
+		t.Fatalf("expected wsQuarantineRedactionDrops +1, got diff=%v", diff)
+	}
+}
+
+// TestFilterQuarantinedPacket_FailsClosedWhenSanitizedNil covers the second
+// fail-open branch — proto.Clone returned a packet but its JobResult field
+// is nil. The pre-fix code returned the original (leaking ResultPtr); the
+// fail-closed contract says drop the broadcast on any anomaly.
+func TestFilterQuarantinedPacket_FailsClosedWhenSanitizedNil(t *testing.T) {
+	saved := packetCloneForFilter
+	packetCloneForFilter = func(*pb.BusPacket) *pb.BusPacket {
+		// Clone returned a valid packet but with no JobResult payload,
+		// so GetJobResult() on the clone returns nil.
+		return &pb.BusPacket{}
+	}
+	t.Cleanup(func() { packetCloneForFilter = saved })
+
+	before := testutil.ToFloat64(wsQuarantineRedactionDrops)
+	pkt := &pb.BusPacket{
+		Payload: &pb.BusPacket_JobResult{
+			JobResult: &pb.JobResult{
+				JobId:     "job-2",
+				Status:    pb.JobStatus_JOB_STATUS_DENIED,
+				ResultPtr: "redis://res:job-2",
+			},
+		},
+	}
+	if got := filterQuarantinedPacket(pkt); got != nil {
+		t.Fatalf("expected nil when clone's JobResult is nil; got %+v", got)
+	}
+	if diff := testutil.ToFloat64(wsQuarantineRedactionDrops) - before; diff != 1 {
+		t.Fatalf("expected wsQuarantineRedactionDrops +1 on sanitized-nil branch, got diff=%v", diff)
+	}
+}
+
+// TestEnqueueBusPacket_DropsPacketWhenFilterReturnsNil pins the caller-side
+// contract: enqueueBusPacket must nil-check the filter's return and skip the
+// broadcast rather than fall through and try to marshal a nil packet.
+func TestEnqueueBusPacket_DropsPacketWhenFilterReturnsNil(t *testing.T) {
+	saved := packetCloneForFilter
+	packetCloneForFilter = func(*pb.BusPacket) *pb.BusPacket { return nil }
+	t.Cleanup(func() { packetCloneForFilter = saved })
+
+	s := &server{
+		clients:       make(map[*websocket.Conn]*wsClient),
+		eventsCh:      make(chan wsEvent, 8),
+		shutdownCh:    make(chan struct{}),
+		wsClientBufSz: 8,
+	}
+	pkt := &pb.BusPacket{
+		Payload: &pb.BusPacket_JobResult{
+			JobResult: &pb.JobResult{
+				JobId:     "job-c",
+				Status:    pb.JobStatus_JOB_STATUS_DENIED,
+				ResultPtr: "redis://res:job-c",
+			},
+		},
+	}
+	s.enqueueBusPacket(pkt)
+
+	select {
+	case e := <-s.eventsCh:
+		t.Fatalf("expected no event enqueued when filter returns nil, got event len=%d", len(e.data))
+	case <-time.After(50 * time.Millisecond):
+		// OK: filter dropped the packet and nothing was enqueued.
+	}
+}
+
+// TestRevalidateWSAuthWithRetry_PropagatesErrorAfterExhaustedTransient
+// asserts the retry loop surfaces the last transient error after 3 exhausted
+// attempts rather than returning nil (which would keep a potentially-revoked
+// session alive for the full 2-minute revalidation window).
+func TestRevalidateWSAuthWithRetry_PropagatesErrorAfterExhaustedTransient(t *testing.T) {
+	prev := wsRevalidateRetryDelay
+	wsRevalidateRetryDelay = 1 * time.Millisecond
+	t.Cleanup(func() { wsRevalidateRetryDelay = prev })
+
+	var authCalls atomic.Int32
+	provider := &mockAuthProvider{
+		authHTTP: func(*http.Request) (*auth.AuthContext, error) {
+			authCalls.Add(1)
+			return nil, transientNetError{}
+		},
+	}
+	s := &server{auth: provider}
+	err := s.revalidateWSAuthWithRetry(context.Background(), "live-key", "conn-exhaust", wsRevalidateRetryDelay)
+	if err == nil {
+		t.Fatal("expected wrapped transient error after 3 exhausted retries; got nil (fail-silent)")
+	}
+	var te transientNetError
+	if !errors.As(err, &te) {
+		t.Fatalf("expected wrapped transientNetError in the error chain, got %v", err)
+	}
+	if got := authCalls.Load(); got != 3 {
+		t.Fatalf("expected 3 auth attempts, got %d", got)
+	}
+}
+
+// TestSetReadDeadlineOrError_PropagatesFailure pins the bug #2 contract: the
+// SetReadDeadline helper must surface the underlying error so handlers can
+// close the ws connection rather than run a read loop with no deadline.
+func TestSetReadDeadlineOrError_PropagatesFailure(t *testing.T) {
+	want := io.ErrClosedPipe
+	got := setReadDeadlineOrError(&fakeDeadliner{err: want}, 5*time.Second)
+	if got == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !errors.Is(got, want) {
+		t.Fatalf("expected errors.Is %v, got %v", want, got)
+	}
+}
+
+// TestSetReadDeadlineOrError_SuccessReturnsNil locks in the happy path.
+func TestSetReadDeadlineOrError_SuccessReturnsNil(t *testing.T) {
+	if err := setReadDeadlineOrError(&fakeDeadliner{err: nil}, 5*time.Second); err != nil {
+		t.Fatalf("expected nil on successful deadline set, got %v", err)
 	}
 }
