@@ -224,9 +224,30 @@ func (s *server) ensurePoolExists(ctx context.Context, pool string) error {
 	return nil
 }
 
-func (s *server) topicRegistrationForSubmit(ctx context.Context, topic string) (*topicregistry.Registration, bool, error) {
+func (s *server) topicRegistrationForSubmit(ctx context.Context, tenantID, topic string) (*topicregistry.Registration, bool, error) {
 	if s == nil || s.topicRegistry == nil {
 		return nil, true, nil
 	}
-	return s.topicRegistry.Get(ctx, topic)
+	return s.topicRegistry.GetForTenant(ctx, tenantID, topic)
+}
+
+func (s *server) registeredTopicNamesForTenant(ctx context.Context, tenantID string, limit int) ([]string, bool, error) {
+	if s == nil || s.topicRegistry == nil {
+		return nil, false, nil
+	}
+	snap, err := s.topicRegistry.ListForTenant(ctx, tenantID)
+	if err != nil {
+		return nil, false, err
+	}
+	names := make([]string, 0, len(snap.Items))
+	for _, item := range snap.Items {
+		if item.Status == topicregistry.StatusDisabled {
+			continue
+		}
+		names = append(names, item.Name)
+	}
+	if limit > 0 && len(names) > limit {
+		return names[:limit], true, nil
+	}
+	return names, false, nil
 }

@@ -33,6 +33,7 @@ var validStatuses = map[string]bool{
 // Registration is the canonical topic authority record persisted in cfg:system:topics.
 type Registration struct {
 	Name           string   `json:"name"`
+	TenantID       string   `json:"tenant_id,omitempty"`
 	Pool           string   `json:"pool"`
 	InputSchemaID  string   `json:"input_schema_id,omitempty"`
 	OutputSchemaID string   `json:"output_schema_id,omitempty"`
@@ -66,6 +67,13 @@ func NewService(cfg *configsvc.Service) *Service {
 // Get resolves a topic registration by name. RegistryEmpty is true only when no
 // canonical registrations exist and migration found no legacy topic mappings.
 func (s *Service) Get(ctx context.Context, name string) (*Registration, bool, error) {
+	return s.GetForTenant(ctx, "", name)
+}
+
+// GetForTenant resolves a topic registration by name, scoped to tenantID when
+// the record declares tenant_id. Records without tenant_id are global and
+// remain visible to all tenants for backwards compatibility.
+func (s *Service) GetForTenant(ctx context.Context, tenantID, name string) (*Registration, bool, error) {
 	if s == nil || s.config == nil {
 		return nil, true, nil
 	}
@@ -81,6 +89,9 @@ func (s *Service) Get(ctx context.Context, name string) (*Registration, bool, er
 	if !ok {
 		return nil, registryEmpty, nil
 	}
+	if !registrationVisibleToTenant(rec, tenantID) {
+		return nil, registryEmpty, nil
+	}
 	out := rec
 	return &out, registryEmpty, nil
 }
@@ -88,6 +99,12 @@ func (s *Service) Get(ctx context.Context, name string) (*Registration, bool, er
 // List returns all registrations sorted by topic name. RegistryEmpty is true
 // only when no canonical registrations exist and no legacy topic mappings were migrated.
 func (s *Service) List(ctx context.Context) (Snapshot, error) {
+	return s.ListForTenant(ctx, "")
+}
+
+// ListForTenant returns all registrations visible to tenantID sorted by topic
+// name. Records without tenant_id are global and are included for every tenant.
+func (s *Service) ListForTenant(ctx context.Context, tenantID string) (Snapshot, error) {
 	if s == nil || s.config == nil {
 		return Snapshot{RegistryEmpty: true}, nil
 	}
@@ -97,6 +114,9 @@ func (s *Service) List(ctx context.Context) (Snapshot, error) {
 	}
 	items := make([]Registration, 0, len(records))
 	for _, rec := range records {
+		if !registrationVisibleToTenant(rec, tenantID) {
+			continue
+		}
 		items = append(items, normalizeRegistration(rec))
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
@@ -374,6 +394,7 @@ func validateRegistration(reg Registration) (Registration, error) {
 
 func normalizeRegistration(reg Registration) Registration {
 	reg.Name = strings.TrimSpace(reg.Name)
+	reg.TenantID = strings.TrimSpace(reg.TenantID)
 	reg.Pool = strings.TrimSpace(reg.Pool)
 	reg.InputSchemaID = strings.TrimSpace(reg.InputSchemaID)
 	reg.OutputSchemaID = strings.TrimSpace(reg.OutputSchemaID)
@@ -385,6 +406,14 @@ func normalizeRegistration(reg Registration) Registration {
 		reg.Status = StatusActive
 	}
 	return reg
+}
+
+func registrationVisibleToTenant(reg Registration, tenantID string) bool {
+	regTenant := strings.TrimSpace(reg.TenantID)
+	if regTenant == "" {
+		return true
+	}
+	return regTenant == strings.TrimSpace(tenantID)
 }
 
 func normalizeStrings(items []string) []string {

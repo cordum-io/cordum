@@ -1,0 +1,118 @@
+name: E2E TLS
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/e2e.yml"
+      - "cmd/**"
+      - "core/**"
+      - "dashboard/**"
+      - "docker-compose*.yml"
+      - "examples/hello-worker-go/**"
+      - "sdk/**"
+      - "tools/scripts/e2e_test.sh"
+      - "tools/scripts/e2e_test_tls_detect_test.sh"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/e2e.yml"
+      - "cmd/**"
+      - "core/**"
+      - "dashboard/**"
+      - "docker-compose*.yml"
+      - "examples/hello-worker-go/**"
+      - "sdk/**"
+      - "tools/scripts/e2e_test.sh"
+      - "tools/scripts/e2e_test_tls_detect_test.sh"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-tls:
+    name: e2e-tls
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Generate credentials
+        run: |
+          api_key="$(openssl rand -hex 32)"
+          redis_password="$(openssl rand -hex 32)"
+          # RedisUserStore validates the seeded admin password for length,
+          # uppercase, digit, and special-character classes.
+          echo "CORDUM_USER_AUTH_ENABLED=true" >> "$GITHUB_ENV"
+          echo "CORDUM_ADMIN_USERNAME=admin" >> "$GITHUB_ENV"
+          admin_password="CordumE2E-$(openssl rand -hex 24)!1"
+          echo "::add-mask::${api_key}"
+          echo "::add-mask::${redis_password}"
+          echo "::add-mask::${admin_password}"
+          echo "CORDUM_API_KEY=${api_key}" >> "$GITHUB_ENV"
+          echo "REDIS_PASSWORD=${redis_password}" >> "$GITHUB_ENV"
+          echo "CORDUM_ADMIN_PASSWORD=${admin_password}" >> "$GITHUB_ENV"
+
+      - name: Generate dev TLS certificates
+        run: |
+          go run ./cmd/cordumctl generate-certs --dir ./certs
+          chmod -R a+rX ./certs
+
+      - name: Start TLS compose stack
+        run: |
+          docker compose up -d --build
+          for i in $(seq 1 60); do
+            if curl -ksf --cacert ./certs/ca/ca.crt https://localhost:8081/health >/dev/null; then
+              echo "gateway healthy"
+              exit 0
+            fi
+            docker compose ps
+            sleep 5
+          done
+          docker compose logs --no-color
+          exit 1
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+          CORDUM_USER_AUTH_ENABLED: ${{ env.CORDUM_USER_AUTH_ENABLED }}
+          CORDUM_ADMIN_USERNAME: ${{ env.CORDUM_ADMIN_USERNAME }}
+          CORDUM_ADMIN_PASSWORD: ${{ env.CORDUM_ADMIN_PASSWORD }}
+
+      - name: Run E2E test through TLS stack
+        run: bash tools/scripts/e2e_test.sh
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+          CORDUM_USER_AUTH_ENABLED: ${{ env.CORDUM_USER_AUTH_ENABLED }}
+          CORDUM_ADMIN_USERNAME: ${{ env.CORDUM_ADMIN_USERNAME }}
+          CORDUM_ADMIN_PASSWORD: ${{ env.CORDUM_ADMIN_PASSWORD }}
+          CORDUM_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+          NATS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+          NATS_TLS_CERT: ${{ github.workspace }}/certs/client/tls.crt
+          NATS_TLS_KEY: ${{ github.workspace }}/certs/client/tls.key
+          REDIS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+          REDIS_TLS_CERT: ${{ github.workspace }}/certs/client/tls.crt
+          REDIS_TLS_KEY: ${{ github.workspace }}/certs/client/tls.key
+          REDIS_TLS_SERVER_NAME: localhost
+
+      - name: Capture compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color > docker-compose-e2e.log 2>&1 || true
+
+      - name: Upload compose logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-tls-compose-logs
+          path: docker-compose-e2e.log
+          if-no-files-found: ignore
+
+      - name: Tear down services
+        if: always()
+        run: docker compose down -v

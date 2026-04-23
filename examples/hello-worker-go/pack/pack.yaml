@@ -1,0 +1,29 @@
+apiVersion: cordum.io/v1alpha1
+kind: Pack
+
+metadata:
+  id: hello-pack
+  version: 1.0.0
+  title: Hello Pack (e2e example)
+  description: Minimal echo worker exercised by tools/scripts/e2e_test.sh.
+
+compatibility:
+  protocolVersion: 1
+  minCoreVersion: 0.6.0
+
+topics:
+  - name: job.hello-pack.echo
+    capability: hello-pack.echo
+    riskTags: [safe]
+
+overlays:
+  config:
+    - name: pools
+      scope: system
+      key: pools
+      strategy: json_merge_patch
+      path: overlays/pools.patch.yaml
+  policy:
+    - name: safety
+      strategy: bundle_fragment
+      path: overlays/policy.fragment.yaml

@@ -106,6 +106,113 @@ func TestSubmitJobUnknownTopicRejects400(t *testing.T) {
 	}
 }
 
+func TestSubmitJob_UnknownTopic_IncludesRegisteredTopics(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.tenant = "default"
+	if err := s.topicRegistry.SetMany(context.Background(), []topicregistry.Registration{
+		{Name: "job.allowed.alpha", Pool: "pool-a", Status: topicregistry.StatusActive},
+		{Name: "job.allowed.beta", Pool: "pool-b", Status: topicregistry.StatusActive},
+	}); err != nil {
+		t.Fatalf("seed topic registry: %v", err)
+	}
+
+	resp := submitUnknownTopicForTenant(t, s, "default", "job.unknown")
+
+	if resp["error_code"] != "unknown_topic" {
+		t.Fatalf("expected error_code unknown_topic, got %#v", resp["error_code"])
+	}
+	if resp["topics_endpoint"] != "/api/v1/topics" {
+		t.Fatalf("topics_endpoint = %#v, want /api/v1/topics", resp["topics_endpoint"])
+	}
+	if resp["truncated"] != false {
+		t.Fatalf("truncated = %#v, want false", resp["truncated"])
+	}
+	registered, ok := resp["registered_topics"].([]any)
+	if !ok {
+		t.Fatalf("registered_topics missing or wrong type: %#v", resp["registered_topics"])
+	}
+	got := make([]string, 0, len(registered))
+	for _, item := range registered {
+		topic, ok := item.(string)
+		if !ok {
+			t.Fatalf("registered_topics item has type %T, want string: %#v", item, item)
+		}
+		got = append(got, topic)
+	}
+	want := []string{"job.allowed.alpha", "job.allowed.beta"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("registered_topics = %#v, want %#v", got, want)
+	}
+}
+
+func TestSubmitJob_UnknownTopic_RegisteredTopicsRespectTenant(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.tenant = "default"
+	ctx := context.Background()
+	if err := s.configSvc.Set(ctx, &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "topics",
+		Data: map[string]any{
+			"job.default.allowed": map[string]any{
+				"name":      "job.default.allowed",
+				"pool":      "pool-default",
+				"status":    topicregistry.StatusActive,
+				"tenant_id": "default",
+			},
+			"job.other.allowed": map[string]any{
+				"name":      "job.other.allowed",
+				"pool":      "pool-other",
+				"status":    topicregistry.StatusActive,
+				"tenant_id": "other",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed topic registry document: %v", err)
+	}
+
+	resp := submitUnknownTopicForTenant(t, s, "default", "job.missing")
+
+	registered, ok := resp["registered_topics"].([]any)
+	if !ok {
+		t.Fatalf("registered_topics missing or wrong type: %#v", resp["registered_topics"])
+	}
+	got := make([]string, 0, len(registered))
+	for _, item := range registered {
+		topic, ok := item.(string)
+		if !ok {
+			t.Fatalf("registered_topics item has type %T, want string: %#v", item, item)
+		}
+		got = append(got, topic)
+	}
+	if strings.Join(got, ",") != "job.default.allowed" {
+		t.Fatalf("registered_topics = %#v, want only caller tenant topic", got)
+	}
+}
+
+func submitUnknownTopicForTenant(t *testing.T, s *server, tenant, topic string) map[string]any {
+	t.Helper()
+	payload := map[string]any{
+		"prompt": "hello",
+		"topic":  topic,
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/jobs", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", tenant)
+	req = withAuth(req, &auth.AuthContext{Tenant: tenant, Role: "admin", PrincipalID: "test-admin"})
+	rec := httptest.NewRecorder()
+
+	s.handleSubmitJobHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	return resp
+}
+
 func TestSubmitJobKnownTopicZeroWorkersAccepted(t *testing.T) {
 	s, bus, _ := newTestGateway(t)
 	s.tenant = "default"
