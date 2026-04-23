@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
 # Cordum Quickstart — zero-config bootstrap with health checks & artifact capture
+# Docs: docs/deployment/quickstart-env-contract.md
 #
 # Usage:
 #   ./tools/scripts/quickstart.sh [--clean] [--artifacts-dir DIR] [--skip-build]
-#                                 [--skip-smoke] [--skip-doctor] [--health-timeout N]
+#                                 [--skip-smoke] [--skip-doctor] [--strict] [--health-timeout N]
 #
 # Flags:
 #   --clean           Tear down existing stack (compose down -v) before starting
@@ -13,6 +14,7 @@
 #   --skip-build      Reuse existing images (do not rebuild)
 #   --skip-smoke      Skip the post-deploy smoke test (also skips doctor)
 #   --skip-doctor     Skip the post-deploy `cordumctl doctor` verification
+#   --strict          Abort on any detected host/container env divergence
 #   --health-timeout  Seconds to wait for health readiness (default: 120)
 #
 # This script auto-creates .env, generates credentials, and starts the full
@@ -108,6 +110,7 @@ preflight_deploy() {
     api_key="$(openssl rand -hex 32)"
     export CORDUM_API_KEY="${api_key}"
     persist_env_var CORDUM_API_KEY "${api_key}"
+    mark_env_source CORDUM_API_KEY "auto-generated" ".env"
     log "CORDUM_API_KEY: auto-generated and persisted to .env"
   fi
 
@@ -115,6 +118,7 @@ preflight_deploy() {
     REDIS_PASSWORD="$(openssl rand -hex 24)"
     export REDIS_PASSWORD
     persist_env_var REDIS_PASSWORD "${REDIS_PASSWORD}"
+    mark_env_source REDIS_PASSWORD "auto-generated" ".env"
     log "REDIS_PASSWORD: auto-generated and persisted to .env"
   fi
 
@@ -261,6 +265,7 @@ ARTIFACTS_DIR=""
 SKIP_BUILD=${CORDUM_SKIP_BUILD:-0}
 SKIP_SMOKE=0
 SKIP_DOCTOR=0
+STRICT=${CORDUM_QUICKSTART_STRICT:-0}
 HEALTH_TIMEOUT=120
 
 while [[ $# -gt 0 ]]; do
@@ -270,6 +275,7 @@ while [[ $# -gt 0 ]]; do
     --skip-build)    SKIP_BUILD=1; shift ;;
     --skip-smoke)    SKIP_SMOKE=1; shift ;;
     --skip-doctor)   SKIP_DOCTOR=1; shift ;;
+    --strict)         STRICT=1; shift ;;
     --health-timeout) HEALTH_TIMEOUT="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,/^# =====/{ /^#/s/^# //p }' "${BASH_SOURCE[0]}"
@@ -298,13 +304,108 @@ warn_port 6379 "redis"
 # using .env's existing values — the /status probe would then 401 for the
 # full health timeout. Only vars that aren't already set in the shell are
 # read; shell-exported overrides still win.
+TRACKED_ENV_VARS=(
+  CORDUM_API_KEY
+  REDIS_PASSWORD
+  CORDUM_ADMIN_PASSWORD
+  CORDUM_ADMIN_EMAIL
+  CORDUM_USER_AUTH_ENABLED
+  CORDUM_TENANT_ID
+  CORDUM_ORG_ID
+)
+
+declare -A QUICKSTART_ENV_SOURCE=()
+declare -A QUICKSTART_ENV_SOURCE_FILE=()
+
+mark_env_source() {
+  local key="$1"
+  local source="$2"
+  local file="${3:--}"
+  QUICKSTART_ENV_SOURCE["${key}"]="${source}"
+  QUICKSTART_ENV_SOURCE_FILE["${key}"]="${file}"
+}
+
+snapshot_shell_env_sources() {
+  local var
+  for var in "${TRACKED_ENV_VARS[@]}"; do
+    if [[ -n "${!var:-}" ]]; then
+      mark_env_source "${var}" "shell-override" "-"
+    fi
+  done
+}
+
+emit_env_source_banner() {
+  local var source file
+  for var in "${TRACKED_ENV_VARS[@]}"; do
+    source="${QUICKSTART_ENV_SOURCE[${var}]:-unset}"
+    file="${QUICKSTART_ENV_SOURCE_FILE[${var}]:--}"
+    log "env.source key=${var} source=${source} file=${file}"
+  done
+}
+
+persist_shell_secret_overrides() {
+  local var
+  for var in CORDUM_API_KEY REDIS_PASSWORD; do
+    if [[ "${QUICKSTART_ENV_SOURCE[${var}]:-}" == "shell-override" && -n "${!var:-}" ]]; then
+      persist_env_var "${var}" "${!var}"
+    fi
+  done
+}
+
+compose_exec_printenv() {
+  local service="$1"
+  local var="$2"
+  if command -v timeout >/dev/null 2>&1; then
+    MSYS_NO_PATHCONV=1 timeout 5s "${compose_cmd[@]}" exec -T "${service}" printenv "${var}"
+  else
+    MSYS_NO_PATHCONV=1 "${compose_cmd[@]}" exec -T "${service}" printenv "${var}"
+  fi
+}
+
+detect_env_divergence() {
+  local existing_containers
+  existing_containers="$("${compose_cmd[@]}" ps -q 2>/dev/null | sed '/^[[:space:]]*$/d' || true)"
+  [[ -n "${existing_containers}" ]] || return 0
+
+  local services
+  services="$("${compose_cmd[@]}" ps --services 2>/dev/null | sed '/^[[:space:]]*$/d' || true)"
+  if [[ -z "${services}" ]]; then
+    services="api-gateway scheduler workflow-engine safety-kernel context-engine dashboard redis nats"
+  fi
+
+  local strict_flag
+  strict_flag="$(echo "${STRICT}" | tr '[:upper:]' '[:lower:]')"
+  local action="warn"
+  if [[ "${strict_flag}" == "1" || "${strict_flag}" == "true" || "${strict_flag}" == "yes" || "${CLEAN}" != "1" ]]; then
+    action="abort"
+  fi
+
+  local diverged=0
+  local service var expected observed
+  for service in ${services}; do
+    for var in "${TRACKED_ENV_VARS[@]}"; do
+      expected="${!var:-}"
+      [[ -n "${expected}" ]] || continue
+      observed="$(compose_exec_printenv "${service}" "${var}" 2>/dev/null || true)"
+      [[ -n "${observed}" ]] || continue
+      if [[ "${observed}" != "${expected}" ]]; then
+        diverged=1
+        log "env.divergence key=${var} container=${service} action=${action}"
+      fi
+    done
+  done
+
+  if [[ "${diverged}" == "1" && "${action}" == "abort" ]]; then
+    log "hint: run with --clean or docker compose up -d --force-recreate to rotate stale containers"
+    exit 2
+  fi
+}
+
 load_from_env_file() {
   local file="$1"
   [[ -f "${file}" ]] || return 0
   local var val
-  for var in CORDUM_API_KEY REDIS_PASSWORD CORDUM_ADMIN_PASSWORD \
-             CORDUM_ADMIN_EMAIL CORDUM_USER_AUTH_ENABLED \
-             CORDUM_TENANT_ID CORDUM_ORG_ID; do
+  for var in "${TRACKED_ENV_VARS[@]}"; do
     if [[ -z "${!var:-}" ]]; then
       # grep exits 1 when the var is absent from .env; with `set -e` +
       # `pipefail` that aborts the script during `local x=$(...)`. Tolerate
@@ -312,16 +413,22 @@ load_from_env_file() {
       val="$(grep -E "^${var}=" "${file}" 2>/dev/null | head -1 | cut -d= -f2- || true)"
       if [[ -n "${val}" ]]; then
         export "${var}=${val}"
+        mark_env_source "${var}" "env-file" "${file}"
       fi
     fi
   done
 }
+snapshot_shell_env_sources
 load_from_env_file ".env"
 
 API_KEY=${CORDUM_API_KEY:-${API_KEY:-}}
+if [[ -z "${CORDUM_API_KEY:-}" && -n "${API_KEY:-}" ]]; then
+  mark_env_source CORDUM_API_KEY "shell-override" "-"
+fi
 export CORDUM_API_KEY="${API_KEY}"
 REDIS_PASSWORD_VAL=${REDIS_PASSWORD:-}
 export REDIS_PASSWORD="${REDIS_PASSWORD_VAL}"
+persist_shell_secret_overrides
 ORG_ID=${CORDUM_ORG_ID:-${CORDUM_TENANT_ID:-default}}
 TENANT_ID=${CORDUM_TENANT_ID:-${ORG_ID}}
 COMPOSE_FILES=${CORDUM_COMPOSE_FILES:-docker-compose.yml}
@@ -333,6 +440,10 @@ export COMPOSE_HTTP_TIMEOUT=${COMPOSE_HTTP_TIMEOUT:-1800}
 export DOCKER_CLIENT_TIMEOUT=${DOCKER_CLIENT_TIMEOUT:-1800}
 
 preflight_deploy "${COMPOSE_FILES}" "${ALLOW_ENTERPRISE}" "${API_KEY}" "${AUTH_ENABLED}" "${ADMIN_PASSWORD}" "${ADMIN_EMAIL}"
+API_KEY=${CORDUM_API_KEY:-${API_KEY:-}}
+REDIS_PASSWORD_VAL=${REDIS_PASSWORD:-}
+emit_env_source_banner
+detect_env_divergence
 
 # --- Capture pre-deploy baseline ---
 if [[ -n "${ARTIFACTS_DIR}" ]]; then

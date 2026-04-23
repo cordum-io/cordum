@@ -43,6 +43,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Readiness filter** — unknown workers allowed (absence ≠ not ready), preventing new worker traffic starvation
 - **Credential cache** — async refresh in NATS handler (prevents scheduler throughput collapse), merge-on-failure (prevents stale cache)
 - **Rollback reporting** — cordumctl rollback errors tracked and returned, non-zero exit on partial rollback
+- **Approval stale_request false negative** — single-step approval workflows no longer get auto-invalidated as `stale_request` immediately after `POST /approve`. The gateway approve endpoint now locks the current `HashJobRequest(req)` into `SafetyDecisionRecord.JobHash`, and `scheduler.checkSafetyDecision` preserves a prior `JobHash` from gateway submit instead of clobbering it with a post-effective-config mutation hash; hash-fence store read failures retry without publishing instead of falling through the input fail-open path. This is a bug fix, not an API contract change; clients that only observed the spurious `invalidate_stale_request` path should now see the benign approval succeed again. Follow-up to commit `297937c7` and guard task `task-035cdc8e`.
 - **Dashboard memory leaks** — duplicate WebSocket, IntersectionObserver, CSV blob URL timing
 - **Dashboard error handling** — LoginPage 4xx, RunDetailPage chat error, PackDetailPage null state
 - **Dashboard a11y** — focus traps on modals, aria-labels on stats, localStorage try-catch
