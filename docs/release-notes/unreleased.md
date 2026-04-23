@@ -29,6 +29,22 @@ these entries into a versioned release note and reset this file.
   task-e1d54a75 (the DiscardExporter hotfix this supersedes).
   Closes task-096de016.
 
+- **scheduler: worker online transitions now trigger an immediate
+  flush of pending dispatch for that pool,** eliminating the first-run
+  latency that previously made scale-from-zero deployments wait up to
+  5 minutes before the first pending job left its queue. The
+  `MemoryRegistry` now exposes `UpdateHeartbeatWithTransition`, the
+  engine's heartbeat handler type-asserts that method and schedules a
+  non-blocking `scheduleFlushOnWorkerOnline` on transition, a
+  per-pool `flushLatch` collapses concurrent heartbeats from a
+  freshly-scaled fleet into a single flush per pool, and
+  `defaultFlushDispatchForPool` reuses the existing
+  `handleJobRequest` dispatch path — no forked dispatch logic. New
+  metric `cordum_scheduler_dispatch_flush_on_worker_online_total{pool}`
+  counts flushes that moved at least one pending job. See
+  [`docs/scheduler.md`](../scheduler.md) §Flush-on-worker-online for
+  the full design. Closes task-7a2514ae.
+
 ## Corrections
 
 - `task-fa783d7a` description references a "three-layer hotfix" (60s
@@ -174,6 +190,24 @@ these entries into a versioned release note and reset this file.
   Publishers rotate keys via additive KID deploys; operators pin
   trusted keys with `--trusted-keys <dir>`. Full operator guide at
   [`docs/packs/signing.md`](../packs/signing.md).
+
+## Retired
+
+- **cordum-enterprise repo retired.** All enterprise features — SAML/OIDC SSO,
+  SCIM provisioning, advanced RBAC, SIEM export (webhook/syslog/Datadog/
+  CloudWatch), legal hold, velocity rules, agent identity — now live in cordum
+  core behind license entitlements per epic-4da6e4f8. The separate repo is
+  archived on GitHub; historical commits and security advisories remain
+  readable. Operators upgrading from a cordum-enterprise binary must switch to
+  the core gateway with an appropriate license; see
+  [`docs/enterprise.md`](../enterprise.md). Workspace wiring removed in the
+  same PR: the `cordum-tools/go.mod` `replace ../cordum-enterprise` directive
+  is gone, and workspace docs (`CLAUDE.md`, `REPOSITORY_MAP.md`,
+  `cordum-tools/CLAUDE.md` + `AGENTS.md` + `docs/enterprise.md` +
+  `docs/dev_sync.md`, this repo's `docs/repo_split.md` + `docs/enterprise.md` +
+  `deploy/k8s/README.md` + `README.md` + `docs-site/docs/concepts/
+  enterprise.md`) all point at the in-core surface and call out the
+  retirement. Closes task-b7c6c2f1.
 
 ## Removed
 

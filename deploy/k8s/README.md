@@ -41,11 +41,11 @@ The monitoring manifests use ServiceMonitor/PrometheusRule CRDs (Prometheus Oper
 The Redis overlay includes a cluster init Job (`cordum-redis-cluster-init`) that
 must complete once after the pods come up.
 
-Enterprise gateway overlay (optional):
-
-```bash
-kubectl apply -n cordum -f /path/to/cordum-enterprise/deploy/k8s/enterprise-gateway.yaml
-```
+Enterprise features (SSO/SAML/SCIM, advanced RBAC, SIEM export, legal hold,
+velocity rules, agent identity) ship in the core gateway and unlock at runtime
+when a valid license is mounted — no separate enterprise gateway overlay is
+needed. Mount the license via the `cordum-license` Secret (`LICENSE_FILE` key)
+and set `CORDUM_LICENSE_FILE` on the gateway pod.
 
 ## Notes
 - Images assume `cordum-<service>` tags; adjust `image:` as needed (e.g., from your registry).

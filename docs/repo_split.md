@@ -1,28 +1,28 @@
-# Cordum Repo Layout (Core, Enterprise, Tools)
+# Cordum Repo Layout (Core, Tools, Packs)
 
-Cordum is split into focused repositories so the core stays clean and the
-enterprise layer can evolve without forking core.
+Cordum lives in focused repositories so the control plane, the license signing
+tooling, and the integration pack catalog can evolve independently. The former
+`cordum-enterprise` repo was retired 2026-04-23 — all enterprise features now
+ship from core behind license entitlements.
 
 ## Core repo (this repo)
 
 - Control plane binaries (gateway, scheduler, safety kernel, workflow engine).
-- Optional dashboard UI.
+- Dashboard UI.
 - CAP protocol integration and public SDK (`sdk/`).
 - Pack format spec and public docs.
-- BUSL-1.1 licensed core (free for self-hosted/internal use; no competing hosted/managed offering).
+- Enterprise surface: SSO/SAML/SCIM, advanced RBAC, SIEM export, legal hold,
+  velocity rules, agent identity — all compiled in, runtime-gated by license
+  entitlements (`core/licensing/`).
+- BUSL-1.1 licensed core (free for self-hosted/internal use; no competing
+  hosted/managed offering).
 
-## Enterprise repo (`cordum-enterprise`)
+## Tools repo (`cordum-tools`)
 
-- Enterprise-only binaries and modules (enterprise auth provider).
-- License enforcement at startup for enterprise binaries.
-- Enterprise deployment notes and ops docs.
-- Commercial EULA.
-
-## Tools repo (internal)
-
-- License generation and signing tools.
-- Internal scripts and operational runbooks.
-- Private/internal only (not public).
+- License generation and signing tools (`cmd/licensegen/`).
+- Enterprise license agreement generator.
+- Pack deployment scripts.
+- Internal/operational only — not published.
 
 ## Packs repo (`cordum-packs`)
 
@@ -33,16 +33,17 @@ enterprise layer can evolve without forking core.
 ## Rules
 
 - Do not commit private keys, customer data, or secrets to any repo.
-- Keep enterprise features out of the OSS build; ship as separate binaries.
-- Use signed licenses to unlock enterprise-only binaries.
+- Enterprise features are gated at runtime by signed license — do not bypass
+  entitlement checks, add shims, or keep compatibility aliases for retired
+  surfaces.
 
 ## Release flow
 
-- OSS: public tags/releases from the core repo.
-- Enterprise: tags/releases from `cordum-enterprise`.
-- Maintain a compatibility matrix (enterprise build <-> OSS core version).
+- Public tags/releases from the core repo cover both the OSS surface and the
+  licensed enterprise surface; entitlements determine which features unlock.
 
-## No duplication
+## Retired: `cordum-enterprise`
 
-Enterprise binaries depend on the public core as a module and use `replace` in
-`go.mod` for local development. Shared changes live in the core repo.
+The separate enterprise repo was archived 2026-04-23 once every enterprise
+feature lived in core behind a license entitlement. See
+`docs/release-notes/unreleased.md` for the retirement note.

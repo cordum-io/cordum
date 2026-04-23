@@ -67,6 +67,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Removed
 
+- Retired the `cordum-enterprise` repo — all enterprise features (SSO/SAML, SCIM, advanced RBAC, SIEM export, legal hold, velocity rules, agent identity) now ship in cordum core behind license entitlements; separate repo archived on GitHub. Closes task-b7c6c2f1. See release notes for full surface list.
 - Removed the legacy OpenAPI sidecars `docs/api/openapi/cordum-rest.yaml`
   and `docs/api/openapi/cordum.swagger.json`. `docs/api/openapi/cordum-api.yaml`
   is now the single canonical OpenAPI 3 spec, `make openapi` is a pure

@@ -466,13 +466,15 @@ Extend Cordum with [30+ integration packs](https://github.com/cordum-io/cordum-p
 
 ## Enterprise
 
-Cordum Enterprise adds:
-- SSO/SAML integration
-- Advanced RBAC
-- SIEM export
+Cordum Enterprise features (shipped in core, unlocked by license entitlement):
+- SSO/SAML/OIDC integration + SCIM provisioning
+- Advanced RBAC with role hierarchy
+- SIEM export (webhook, syslog, Datadog, CloudWatch)
+- Legal hold + velocity rules + agent identity
 - Priority support
 
-See [cordum-enterprise](https://github.com/cordum-io/cordum-enterprise) for details.
+See [`docs/enterprise.md`](docs/enterprise.md) for the full entitlement matrix.
+The formerly separate `cordum-enterprise` repo was retired 2026-04-23.
 
 ## Governance
 
