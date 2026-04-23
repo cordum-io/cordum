@@ -126,6 +126,11 @@ type failingSafetyDecisionStore struct {
 	err error
 }
 
+type failingGetSafetyDecisionStore struct {
+	*fakeJobStore
+	err error
+}
+
 type fakeDecisionLogStore struct {
 	mu      sync.Mutex
 	records []model.DecisionLogRecord
@@ -179,6 +184,11 @@ func (s *failingSafetyDecisionStore) SetSafetyDecision(_ context.Context, jobID 
 	_ = jobID
 	_ = record
 	return s.err
+}
+
+func (s *failingGetSafetyDecisionStore) GetSafetyDecision(_ context.Context, jobID string) (SafetyDecisionRecord, error) {
+	_ = jobID
+	return SafetyDecisionRecord{}, s.err
 }
 
 func (s *fakeDecisionLogStore) AppendDecision(_ context.Context, record model.DecisionLogRecord) error {
@@ -2681,6 +2691,156 @@ func TestCheckSafetyDecisionApprovalGrantedAppendsDecisionLog(t *testing.T) {
 	}
 	if logged[0].PolicyVersion != "snap-approved" {
 		t.Fatalf("PolicyVersion=%q want snap-approved", logged[0].PolicyVersion)
+	}
+}
+
+func TestCheckSafetyDecision_PreservesExistingJobHashOnRequireApproval(t *testing.T) {
+	store := newFakeJobStore()
+	engine := NewEngine(&fakeBus{}, &fixedSafetyRecordChecker{record: SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		Reason:           "needs review",
+	}}, newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	req := &pb.JobRequest{
+		JobId:    "job-preserve-hash",
+		Topic:    "job.test",
+		TenantId: "tenant-a",
+		Labels:   map[string]string{"workflow_id": "wf-1"},
+	}
+	const pristineHash = "pristine-gateway-hash-xyz"
+	store.safety[req.JobId] = SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		JobHash:          pristineHash,
+	}
+	computedHash, err := HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("HashJobRequest() error = %v", err)
+	}
+	if computedHash == pristineHash {
+		t.Fatal("computed hash unexpectedly matched seeded gateway hash")
+	}
+
+	record, err := engine.checkSafetyDecision(context.Background(), req)
+	if err != nil {
+		t.Fatalf("checkSafetyDecision() error = %v", err)
+	}
+	if record.JobHash != pristineHash {
+		t.Fatalf("JobHash=%q want preserved %q", record.JobHash, pristineHash)
+	}
+}
+
+func TestCheckSafetyDecision_PropagatesExistingJobHashReadFailure(t *testing.T) {
+	readErr := errors.New("redis read lost approval hash fence")
+	baseStore := newFakeJobStore()
+	store := &failingGetSafetyDecisionStore{
+		fakeJobStore: baseStore,
+		err:          readErr,
+	}
+	engine := NewEngine(&fakeBus{}, &fixedSafetyRecordChecker{record: SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		Reason:           "needs review",
+	}}, newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	req := &pb.JobRequest{
+		JobId:    "job-read-error-preserve-hash",
+		Topic:    "job.test",
+		TenantId: "tenant-a",
+		Labels:   map[string]string{"workflow_id": "wf-read-error"},
+	}
+	const pristineHash = "gateway-hash-that-must-not-be-clobbered"
+	baseStore.safety[req.JobId] = SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		JobHash:          pristineHash,
+	}
+
+	_, err := engine.checkSafetyDecision(context.Background(), req)
+	if !errors.Is(err, readErr) {
+		t.Fatalf("checkSafetyDecision() error = %v, want %v", err, readErr)
+	}
+	if got := baseStore.safety[req.JobId].JobHash; got != pristineHash {
+		t.Fatalf("stored JobHash=%q want preserved %q after read failure", got, pristineHash)
+	}
+}
+
+func TestProcessJob_HashFenceReadFailureDoesNotFailOpen(t *testing.T) {
+	readErr := errors.New("redis read lost approval hash fence")
+	baseStore := newFakeJobStore()
+	store := &failingGetSafetyDecisionStore{
+		fakeJobStore: baseStore,
+		err:          readErr,
+	}
+	bus := &fakeBus{}
+	engine := NewEngine(bus, &fixedSafetyRecordChecker{record: SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		Reason:           "needs review",
+	}}, newTestRegistry(t), NewNaiveStrategy(), store, nil)
+	engine.WithInputFailMode("open")
+
+	req := &pb.JobRequest{
+		JobId:    "job-process-hash-fence-read-failure",
+		Topic:    "job.test",
+		TenantId: "tenant-a",
+		Labels:   map[string]string{"workflow_id": "wf-hash-fence"},
+	}
+	const pristineHash = "gateway-hash-that-must-survive-processjob"
+	baseStore.safety[req.JobId] = SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		JobHash:          pristineHash,
+	}
+
+	err := engine.processJob(testCtx(t), req, "trace-hash-fence-read-failure")
+	if err == nil {
+		t.Fatal("processJob() error = nil, want retryable hash-fence read error; fail-open would dispatch the job")
+	}
+	if !errors.Is(err, readErr) {
+		t.Fatalf("processJob() error = %v, want to wrap %v", err, readErr)
+	}
+	var retryErr *retryableError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("processJob() error = %T, want retryableError", err)
+	}
+	if got := len(bus.snapshotPublished()); got != 0 {
+		t.Fatalf("published %d messages after hash-fence read failure; want 0", got)
+	}
+	if got := baseStore.states[req.JobId]; got == JobStateRunning || got == JobStateDispatched {
+		t.Fatalf("job state = %s after hash-fence read failure; want no dispatch/running state", got)
+	}
+	if got := baseStore.safety[req.JobId].JobHash; got != pristineHash {
+		t.Fatalf("stored JobHash=%q want preserved %q after processJob read failure", got, pristineHash)
+	}
+}
+
+func TestCheckSafetyDecision_ComputesJobHashWhenNoneExists(t *testing.T) {
+	store := newFakeJobStore()
+	engine := NewEngine(&fakeBus{}, &fixedSafetyRecordChecker{record: SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		Reason:           "needs review",
+	}}, newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	req := &pb.JobRequest{
+		JobId:    "job-compute-hash",
+		Topic:    "job.test",
+		TenantId: "tenant-a",
+		Labels:   map[string]string{"workflow_id": "wf-2"},
+	}
+	wantHash, err := HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("HashJobRequest() error = %v", err)
+	}
+
+	record, err := engine.checkSafetyDecision(context.Background(), req)
+	if err != nil {
+		t.Fatalf("checkSafetyDecision() error = %v", err)
+	}
+	if record.JobHash != wantHash {
+		t.Fatalf("JobHash=%q want computed %q", record.JobHash, wantHash)
 	}
 }
 

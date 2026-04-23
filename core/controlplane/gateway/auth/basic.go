@@ -72,6 +72,7 @@ func NewBasicAuthProvider(defaultTenant string) (*BasicAuthProvider, error) {
 	if defaultTenant == "" {
 		defaultTenant = "default"
 	}
+	logAPIKeySource(keysPath)
 	return &BasicAuthProvider{
 		defaultTenant:        defaultTenant,
 		keys:                 keys,
@@ -85,6 +86,36 @@ func NewBasicAuthProvider(defaultTenant string) (*BasicAuthProvider, error) {
 		jwtRequired:          jwtRequired,
 		usageCtx:             context.Background(),
 	}, nil
+}
+
+func logAPIKeySource(keysPath string) {
+	source := strings.TrimSpace(os.Getenv("CORDUM_API_KEY_SOURCE"))
+	if source == "" {
+		switch {
+		case strings.TrimSpace(keysPath) != "":
+			source = "file"
+		case strings.TrimSpace(os.Getenv("CORDUM_API_KEYS")) != "":
+			source = "env"
+		case NormalizeAPIKey(os.Getenv("CORDUM_API_KEY")) != "":
+			source = "env"
+		default:
+			source = "unset"
+		}
+	}
+
+	sourceFile := strings.TrimSpace(os.Getenv("CORDUM_API_KEY_SOURCE_FILE"))
+	if sourceFile == "" {
+		switch {
+		case strings.TrimSpace(keysPath) != "":
+			sourceFile = keysPath
+		case source == "env" || source == "compose" || source == "shell":
+			sourceFile = ".env"
+		default:
+			sourceFile = "-"
+		}
+	}
+
+	slog.Info("auth.api_key.source", "source", source, "source_file", sourceFile)
 }
 
 // SetUserStore sets the user store for user/password authentication.
