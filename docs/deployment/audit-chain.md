@@ -86,6 +86,13 @@ genesis.
 `Chainer.Append` immediately before `exporter.Export`. Chain append is
 atomic via a CAS Lua script on the head key.
 
+> **Default behavior**
+> The reference `docker-compose.yml` sets
+> `CORDUM_AUDIT_EXPORT_TYPE=null` by default. That engages the audit
+> chain even when no external SIEM destination is configured. Override
+> the env var to `webhook`, `syslog`, `datadog`, or `cloudwatch` to
+> stream to a real backend.
+
 Fail-mode is controlled by `CORDUM_AUDIT_CHAIN_FAIL`:
 
 | Value         | Behaviour                                                                                                         |
@@ -96,6 +103,16 @@ Fail-mode is controlled by `CORDUM_AUDIT_CHAIN_FAIL`:
 Legal hold (`core/audit/legal_hold.go`) is a retention-policy flag, not
 a pipeline filter — events for held tenants flow through the chain
 identically to any other tenant's events.
+
+### Backend types
+
+| `CORDUM_AUDIT_EXPORT_TYPE` value                  | Behaviour |
+|---------------------------------------------------|-----------|
+| `null`, `discard`, `chain-only`, `none`, empty    | Chain engaged, no external export. This is the default compose posture. |
+| `webhook`                                         | HTTP POST to `CORDUM_AUDIT_EXPORT_WEBHOOK_URL`. |
+| `syslog`                                          | RFC 5424 stream to `CORDUM_AUDIT_EXPORT_SYSLOG_ADDR`. |
+| `datadog`                                         | Datadog Logs API using `CORDUM_AUDIT_EXPORT_DD_API_KEY`. |
+| `cloudwatch`                                      | AWS CloudWatch Logs using the configured log group / stream. |
 
 ---
 
@@ -231,6 +248,14 @@ bad; surface it on the dashboard.
 7. **Do NOT attempt to repair the chain.** The chain is append-only and
    cannot be retro-fitted. A compromised chain stays compromised from
    that seq forward — the integrity signal itself is the record.
+
+If `GET /api/v1/audit/verify` returns `503 audit chainer not installed`,
+check `CORDUM_AUDIT_EXPORT_TYPE` first. Older builds silently disabled
+the chain when the env var was unset; current builds treat
+`null`/`discard`/`chain-only`/`none`/empty as "chain on, no SIEM
+destination". With `null` configured, the first policy decision should
+make verify return `status=ok` with non-zero `total_events` /
+`verified_events`.
 
 ---
 

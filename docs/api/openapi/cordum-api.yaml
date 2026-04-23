@@ -3532,6 +3532,63 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/audit/verify:
+    get:
+      operationId: verifyAuditChain
+      summary: Verify audit chain integrity
+      description: Walks the tenant audit chain and reports integrity gaps without returning raw audit event payloads.
+      tags:
+      - AuditExport
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: tenant
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Tenant id to verify; defaults to the authenticated/request tenant.
+      - name: since
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+        description: Lower Redis Stream millisecond timestamp bound.
+      - name: until
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+        description: Upper Redis Stream millisecond timestamp bound.
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 100000
+        description: Maximum number of chain entries to verify.
+      responses:
+        '200':
+          description: Audit chain verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditVerifyResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/audit/export/health:
     get:
       operationId: getAuditExportHealth
@@ -7432,6 +7489,64 @@ components:
       type: object
       properties: {}
       additionalProperties: true
+    AuditVerifyGap:
+      type: object
+      properties:
+        at_seq:
+          type: integer
+          format: int64
+          description: Sequence number where the gap or mismatch was observed.
+        type:
+          type: string
+          enum:
+          - missing
+          - out_of_order
+          - hash_mismatch
+          - retention_trimmed
+      required:
+      - at_seq
+      - type
+    AuditVerifyResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+          - ok
+          - compromised
+          - partial
+        total_events:
+          type: integer
+          description: Number of events walked in the requested range.
+        verified_events:
+          type: integer
+          description: Number of events whose hash and linkage verified.
+        gaps:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditVerifyGap'
+        retention_boundary_seq:
+          type: integer
+          format: int64
+          description: Lowest sequence number still present in the retained stream.
+        retention_window_hours:
+          type: number
+          format: double
+          description: Configured audit retention window in hours.
+        first_seq:
+          type: integer
+          format: int64
+          description: First sequence number observed in the verified range.
+        last_seq:
+          type: integer
+          format: int64
+          description: Last sequence number observed in the verified range.
+      required:
+      - status
+      - total_events
+      - verified_events
+      - gaps
+      - retention_boundary_seq
     RoleDefinition:
       type: object
       properties:
