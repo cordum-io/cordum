@@ -6,6 +6,21 @@ these entries into a versioned release note and reset this file.
 
 ## Changed
 
+- **gateway: removed `packs_compat.go` and `policy_compat.go` (233 lines
+  of pure-alias shims).** Both files existed only to re-export
+  types/consts/functions from the `core/controlplane/gateway/packs` and
+  `core/controlplane/gateway/policybundles` sub-packages back into the
+  gateway package so older call sites could use unqualified names
+  (`packManifest`, `policyBundleSnapshot`, etc.) without importing the
+  sub-packages directly. Every one of the ~40 callers now imports
+  `packs` and/or `policybundles` and references the fully-qualified
+  `packs.PackManifest` / `policybundles.PolicyBundleSnapshot` shape.
+  `resolveAgentForAudit` (the one real method that lived in
+  `policy_compat.go`, not an alias) moved to `handlers_agents.go` near
+  the other agent-identity helpers. Internal refactor only — no public
+  API change, no JSON-on-the-wire change, no behavior change.
+  Closes task-a828e179.
+
 - **core: extracted the Redis CAS retry loop into
   `core/infra/redisutil/Retry`.** Four production call sites across
   `gateway/auth/keystore_redis.go` (RevokeKey) and `gateway/mcp_approvals.go`

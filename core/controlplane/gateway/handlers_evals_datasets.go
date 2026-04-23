@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 )
@@ -177,7 +178,7 @@ func (s *server) handleCreateEvalDataset(w http.ResponseWriter, r *http.Request)
 		Tenant:      tenant,
 		Description: req.Description,
 		Entries:     req.Entries,
-		CreatedBy:   policyActorID(r),
+		CreatedBy:   policybundles.PolicyActorID(r),
 	}
 
 	created, err := s.evalDatasetStore.CreateEvalDataset(r.Context(), dataset)
@@ -202,11 +203,11 @@ func (s *server) handleCreateEvalDataset(w http.ResponseWriter, r *http.Request)
 		"tenant", tenant,
 		"entry_count", created.EntryCount,
 		"content_hash", created.ContentHash,
-		"actor", policyActorID(r),
-		"role", policyRole(r),
+		"actor", policybundles.PolicyActorID(r),
+		"role", policybundles.PolicyRole(r),
 	)
 	s.appendAuditEntryNamed(r.Context(), "create", "eval_dataset", created.ID, created.Name,
-		policyActorID(r), policyRole(r),
+		policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 		"create eval dataset "+created.Name+" v"+strconv.Itoa(created.Version))
 
 	w.WriteHeader(http.StatusCreated)
@@ -269,7 +270,7 @@ func (s *server) handleUpdateEvalDataset(w http.ResponseWriter, r *http.Request)
 		Tenant:      tenant,
 		Description: description,
 		Entries:     req.Entries,
-		CreatedBy:   policyActorID(r),
+		CreatedBy:   policybundles.PolicyActorID(r),
 	}
 
 	created, err := s.evalDatasetStore.CreateEvalDataset(r.Context(), dataset)
@@ -292,11 +293,11 @@ func (s *server) handleUpdateEvalDataset(w http.ResponseWriter, r *http.Request)
 		"tenant", tenant,
 		"entry_count", created.EntryCount,
 		"content_hash", created.ContentHash,
-		"actor", policyActorID(r),
-		"role", policyRole(r),
+		"actor", policybundles.PolicyActorID(r),
+		"role", policybundles.PolicyRole(r),
 	)
 	s.appendAuditEntryNamed(r.Context(), "update", "eval_dataset", created.ID, created.Name,
-		policyActorID(r), policyRole(r),
+		policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 		"create successor version for eval dataset "+created.Name+" v"+strconv.Itoa(created.Version))
 
 	w.WriteHeader(http.StatusCreated)
@@ -537,11 +538,11 @@ func (s *server) handleDeleteEvalDataset(w http.ResponseWriter, r *http.Request)
 		"name", existing.Name,
 		"version", existing.Version,
 		"tenant", tenant,
-		"actor", policyActorID(r),
-		"role", policyRole(r),
+		"actor", policybundles.PolicyActorID(r),
+		"role", policybundles.PolicyRole(r),
 	)
 	s.appendAuditEntryNamed(r.Context(), "delete", "eval_dataset", id, existing.Name,
-		policyActorID(r), policyRole(r),
+		policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 		"force-delete eval dataset "+existing.Name+" v"+strconv.Itoa(existing.Version))
 
 	w.WriteHeader(http.StatusNoContent)

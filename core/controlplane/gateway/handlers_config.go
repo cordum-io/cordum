@@ -10,6 +10,8 @@ import (
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/licensing"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -70,7 +72,7 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 		scopeID = tenant
 	}
 	if scope == configsvc.ScopeSystem && (scopeID == "" || scopeID == "default") {
-		if _, hasBundles := data[policyConfigKey]; hasBundles {
+		if _, hasBundles := data[packs.PolicyConfigKey]; hasBundles {
 			writeErrorJSON(w, http.StatusBadRequest, "bundles must be written to system/policy scope, not system/default")
 			return
 		}
@@ -103,7 +105,7 @@ func (s *server) handleSetConfig(w http.ResponseWriter, r *http.Request) {
 	if mcpConfigTouched(data) {
 		s.reloadMCPConfig(r.Context())
 	}
-	s.appendAuditEntryNamed(r.Context(), "set", "config", scopeStr+"/"+scopeID, scopeStr, policyActorID(r), policyRole(r), "set config "+scopeStr+"/"+scopeID)
+	s.appendAuditEntryNamed(r.Context(), "set", "config", scopeStr+"/"+scopeID, scopeStr, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "set config "+scopeStr+"/"+scopeID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -277,7 +279,7 @@ func (s *server) handleRegisterSchema(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "register", "schema", req.ID, req.ID, policyActorID(r), policyRole(r), "register schema "+req.ID)
+	s.appendAuditEntryNamed(r.Context(), "register", "schema", req.ID, req.ID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "register schema "+req.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -338,7 +340,7 @@ func (s *server) handleDeleteSchema(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "delete", "schema", id, id, policyActorID(r), policyRole(r), "delete schema "+id)
+	s.appendAuditEntryNamed(r.Context(), "delete", "schema", id, id, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete schema "+id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

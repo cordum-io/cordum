@@ -7,6 +7,7 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/model"
 	"google.golang.org/protobuf/encoding/protojson"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 )
 
 func (d submitPolicyDecision) auditVerdict() string {
@@ -54,7 +55,7 @@ func (s *server) appendSubmitSafetyDecisionAudit(
 	agentName string,
 	agentRiskTier string,
 ) {
-	_ = s.appendPolicyAudit(ctx, policyAuditEntry{
+	_ = s.appendPolicyAudit(ctx, policybundles.PolicyAuditEntry{
 		Action:        action,
 		ResourceType:  "job",
 		ResourceID:    strings.TrimSpace(jobID),

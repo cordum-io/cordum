@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 )
 
 func resolveEntitlementResolver(resolvers ...*licensing.EntitlementResolver) *licensing.EntitlementResolver {
@@ -188,7 +189,7 @@ func (s *server) customPolicyBundleCount(ctx context.Context) (int, error) {
 	}
 	count := 0
 	for bundleID := range bundles {
-		if strings.HasPrefix(bundleID, policyStudioPrefix) {
+		if strings.HasPrefix(bundleID, policybundles.PolicyStudioPrefix) {
 			count++
 		}
 	}

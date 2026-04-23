@@ -195,13 +195,13 @@ func (s *server) handlePolicyReplay(w http.ResponseWriter, r *http.Request) {
 	var snapshot string
 
 	if body.UseCurrentPolicy {
-		policy, snapshot, err = buildPolicyFromBundles(bundles)
+		policy, snapshot, err = policybundles.BuildPolicyFromBundles(bundles)
 		if err != nil {
 			writeErrorJSON(w, http.StatusBadRequest, fmt.Sprintf("current policy invalid: %s", err.Error()))
 			return
 		}
 	} else {
-		working := cloneBundleMap(bundles)
+		working := policybundles.CloneBundleMap(bundles)
 		candidateContent := strings.TrimSpace(body.CandidateContent)
 		bundleID := strings.TrimSpace(body.CandidateBundleID)
 		if bundleID == "" {
@@ -213,7 +213,7 @@ func (s *server) handlePolicyReplay(w http.ResponseWriter, r *http.Request) {
 				"enabled": true,
 			}
 		}
-		policy, snapshot, err = buildPolicyFromBundles(working)
+		policy, snapshot, err = policybundles.BuildPolicyFromBundles(working)
 		if err != nil {
 			writeErrorJSON(w, http.StatusBadRequest, fmt.Sprintf("candidate policy invalid: %s", err.Error()))
 			return

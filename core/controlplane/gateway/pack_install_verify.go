@@ -15,6 +15,7 @@ import (
 
 	"github.com/cordum/cordum/core/packs/signing"
 	"github.com/redis/go-redis/v9"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 )
 
 // Gateway-side mirror verification for pack installs (task-9c63baa0
@@ -96,7 +97,7 @@ const (
 )
 
 // gatewayVerifiedPackInstall is the server-side decision record. It's
-// attached to the packRecord before updatePackRegistry so the install
+// attached to the packs.PackRecord before updatePackRegistry so the install
 // state carries the verification outcome the gateway computed (not a
 // client-supplied claim).
 type gatewayVerifiedPackInstall struct {
@@ -456,13 +457,13 @@ func resetGatewayPackStrictCache() {
 }
 
 // verificationFromServerResult lifts a gatewayVerifiedPackInstall into
-// the on-the-wire packRecordVerification shape stored alongside the
+// the on-the-wire packs.PackRecordVerification shape stored alongside the
 // pack record. Nil input returns nil so the JSON field omits cleanly.
-func verificationFromServerResult(v *gatewayVerifiedPackInstall) *packRecordVerification {
+func verificationFromServerResult(v *gatewayVerifiedPackInstall) *packs.PackRecordVerification {
 	if v == nil {
 		return nil
 	}
-	out := &packRecordVerification{
+	out := &packs.PackRecordVerification{
 		Signed:              v.Signed,
 		PublisherID:         v.PublisherID,
 		KID:                 v.KID,

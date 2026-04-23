@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 )
@@ -116,10 +117,10 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		"agent_id", created.ID,
 		"name", created.Name,
 		"risk_tier", created.RiskTier,
-		"actor", policyActorID(r),
-		"role", policyRole(r),
+		"actor", policybundles.PolicyActorID(r),
+		"role", policybundles.PolicyRole(r),
 	)
-	s.appendAuditEntryNamed(r.Context(), "create", "agent_identity", created.ID, created.Name, policyActorID(r), policyRole(r), "create agent identity "+created.Name)
+	s.appendAuditEntryNamed(r.Context(), "create", "agent_identity", created.ID, created.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "create agent identity "+created.Name)
 
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, agentResponseFromIdentity(created))
@@ -321,10 +322,10 @@ func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	slog.Info("agent identity updated",
 		"agent_id", updated.ID,
 		"name", updated.Name,
-		"actor", policyActorID(r),
-		"role", policyRole(r),
+		"actor", policybundles.PolicyActorID(r),
+		"role", policybundles.PolicyRole(r),
 	)
-	s.appendAuditEntryNamed(r.Context(), "update", "agent_identity", updated.ID, updated.Name, policyActorID(r), policyRole(r), "update agent identity "+updated.Name)
+	s.appendAuditEntryNamed(r.Context(), "update", "agent_identity", updated.ID, updated.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "update agent identity "+updated.Name)
 
 	writeJSON(w, agentResponseFromIdentity(updated))
 }
@@ -365,10 +366,10 @@ func (s *server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 	slog.Warn("agent identity revoked",
 		"agent_id", id,
 		"name", existing.Name,
-		"actor", policyActorID(r),
-		"role", policyRole(r),
+		"actor", policybundles.PolicyActorID(r),
+		"role", policybundles.PolicyRole(r),
 	)
-	s.appendAuditEntryNamed(r.Context(), "revoke", "agent_identity", id, existing.Name, policyActorID(r), policyRole(r), "revoke agent identity "+existing.Name)
+	s.appendAuditEntryNamed(r.Context(), "revoke", "agent_identity", id, existing.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "revoke agent identity "+existing.Name)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -459,4 +460,22 @@ func (s *server) handleAgentStats(w http.ResponseWriter, r *http.Request) {
 		"denied_7d":     deniedCount,
 		"last_active":   lastActive,
 	})
+}
+
+// resolveAgentForAudit looks up agent identity from the agent store by ID.
+// Returns (agentID, agentName, agentRiskTier). For unlinked or missing agents,
+// returns ("unlinked", "unlinked", "").
+func (s *server) resolveAgentForAudit(ctx context.Context, agentID string) (string, string, string) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return "unlinked", "unlinked", ""
+	}
+	if s.agentIdentityStore == nil {
+		return agentID, agentID, ""
+	}
+	agent, err := s.agentIdentityStore.Get(ctx, agentID)
+	if err != nil || agent == nil {
+		return agentID, agentID, ""
+	}
+	return agent.ID, agent.Name, agent.RiskTier
 }

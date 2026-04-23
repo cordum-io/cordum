@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/gateway/validation"
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
@@ -239,7 +240,7 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to save workflow")
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "create", "workflow", wfDef.ID, wfDef.Name, policyActorID(r), policyRole(r), "create workflow "+wfDef.ID)
+	s.appendAuditEntryNamed(r.Context(), "create", "workflow", wfDef.ID, wfDef.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "create workflow "+wfDef.ID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, map[string]string{"id": wfDef.ID})
@@ -295,7 +296,7 @@ func (s *server) handleDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete workflow")
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "delete", "workflow", id, delWfName, policyActorID(r), policyRole(r), "delete workflow "+id)
+	s.appendAuditEntryNamed(r.Context(), "delete", "workflow", id, delWfName, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete workflow "+id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -566,7 +567,7 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		"workflowId", wfID,
 		"requestId", reqID,
 	)
-	s.appendAuditEntryNamed(r.Context(), "start", "run", runID, startWfName, policyActorID(r), policyRole(r), "start run "+runID)
+	s.appendAuditEntryNamed(r.Context(), "start", "run", runID, startWfName, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "start run "+runID)
 	// For workflows, the runId serves as the traceId for the entire execution tree.
 	w.Header().Set("X-Trace-Id", runID)
 	w.Header().Set("Content-Type", "application/json")
@@ -686,7 +687,7 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 			rerunWfName = wfDef.Name
 		}
 	}
-	s.appendAuditEntryNamed(r.Context(), "rerun", "run", newID, rerunWfName, policyActorID(r), policyRole(r), "rerun run "+newID)
+	s.appendAuditEntryNamed(r.Context(), "rerun", "run", newID, rerunWfName, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "rerun run "+newID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"run_id": newID})
 }
@@ -938,7 +939,7 @@ func (s *server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete run")
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "delete", "run", id, delRunWfName, policyActorID(r), policyRole(r), "delete run "+id)
+	s.appendAuditEntryNamed(r.Context(), "delete", "run", id, delRunWfName, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete run "+id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

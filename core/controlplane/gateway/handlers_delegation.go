@@ -12,6 +12,7 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/auth/delegation"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/store"
 )
 
@@ -355,7 +356,7 @@ func (s *server) emitDelegationCascadeAudit(r *http.Request, tenant, rootJTI str
 		TenantID:  tenant,
 		Action:    "delegation.revoked_cascade",
 		Reason:    "delegation revoke cascaded",
-		Identity:  policyActorID(r),
+		Identity:  policybundles.PolicyActorID(r),
 		Extra:     extra,
 	})
 }
@@ -379,7 +380,7 @@ func (s *server) emitDelegationRevokedAudit(r *http.Request, tenant, rootJTI, jt
 		TenantID:  tenant,
 		Action:    "delegation.revoked",
 		Reason:    "delegation revoked",
-		Identity:  policyActorID(r),
+		Identity:  policybundles.PolicyActorID(r),
 		Extra:     extra,
 	})
 }
@@ -401,7 +402,7 @@ func (s *server) delegationTokenService() (*delegation.TokenService, error) {
 		keyring,
 		gatewayDelegationPermissionsResolver{store: s.agentIdentityStore},
 		delegation.NewRedisRevocationStoreFromClient(s.jobStore.Client()),
-	), nil
+	)
 }
 
 func (s *server) loadDelegationAgent(w http.ResponseWriter, r *http.Request, agentID, tenant string) (*store.AgentIdentity, bool) {
@@ -533,7 +534,7 @@ func (s *server) emitDelegationAudit(r *http.Request, action, tenant, agentID, t
 		AgentID:   agentID,
 		Action:    "delegation." + action,
 		Reason:    delegationAuditReason(action, outcome, err),
-		Identity:  policyActorID(r),
+		Identity:  policybundles.PolicyActorID(r),
 		Extra:     extra,
 	})
 }

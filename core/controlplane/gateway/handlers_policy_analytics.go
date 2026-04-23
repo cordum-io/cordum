@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 )
 
 // ---------- request / response types ----------
@@ -105,7 +106,7 @@ func (s *server) handlePolicyAnalytics(w http.ResponseWriter, r *http.Request) {
 		"from", body.From, "to", body.To,
 		"rule_filter", ruleFilter,
 		"tenant", callerTenant,
-		"actor", policyActorID(r))
+		"actor", policybundles.PolicyActorID(r))
 
 	// Fetch job IDs in batches.
 	var allJobIDs []string
@@ -283,7 +284,7 @@ func (s *server) handlePolicyAnalytics(w http.ResponseWriter, r *http.Request) {
 		"total_overrides", totalOverrides,
 		"jobs_scanned", len(allJobIDs),
 		"tenant", callerTenant,
-		"actor", policyActorID(r))
+		"actor", policybundles.PolicyActorID(r))
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {

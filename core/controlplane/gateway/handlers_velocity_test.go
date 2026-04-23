@@ -13,6 +13,7 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 )
 
 func velocityRulePayload(id string) map[string]any {
@@ -97,7 +98,7 @@ func TestVelocityRuleHandlersCRUDAndStorage(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected velocity/login-burst fragment to be stored")
 	}
-	content, ok := policyBundleContent(rawBundle)
+	content, ok := policybundles.PolicyBundleContent(rawBundle)
 	if !ok {
 		t.Fatalf("expected stored fragment content")
 	}

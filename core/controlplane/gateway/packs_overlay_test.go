@@ -11,24 +11,25 @@ import (
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/redis/go-redis/v9"
 )
 
 func TestCompareAndParseVersions(t *testing.T) {
-	if compareVersions("1.2.0", "1.10.0") != -1 {
+	if packs.CompareVersions("1.2.0", "1.10.0") != -1 {
 		t.Fatalf("expected 1.2.0 < 1.10.0")
 	}
-	if compareVersions("2.0", "1.9") != 1 {
+	if packs.CompareVersions("2.0", "1.9") != 1 {
 		t.Fatalf("expected 2.0 > 1.9")
 	}
-	if compareVersions("v1.0.0", "1.0.0") != 0 {
+	if packs.CompareVersions("v1.0.0", "1.0.0") != 0 {
 		t.Fatalf("expected version normalization")
 	}
-	if _, ok := parseVersion("1.2.3-beta"); ok {
+	if _, ok := packs.ParseVersion("1.2.3-beta"); ok {
 		t.Fatalf("expected prerelease to be invalid")
 	}
-	if parts, ok := parseVersion("v1.2.3"); !ok || len(parts) != 3 || parts[0] != 1 {
+	if parts, ok := packs.ParseVersion("v1.2.3"); !ok || len(parts) != 3 || parts[0] != 1 {
 		t.Fatalf("expected parsed version parts")
 	}
 }
@@ -37,9 +38,9 @@ func TestFindMarketplaceEntryByURL(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	ctx := context.Background()
 
-	catalog := marketplaceCatalogFile{
+	catalog := packs.MarketplaceCatalogFile{
 		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-		Packs: []marketplaceCatalogPack{{
+		Packs: []packs.MarketplaceCatalogPack{{
 			ID:      "demo-pack",
 			Version: "1.0.0",
 			Title:   "Demo",
@@ -58,7 +59,7 @@ func TestFindMarketplaceEntryByURL(t *testing.T) {
 	catalog.Packs[0].URL = server.URL + "/demo-pack.tgz"
 	if err := s.configSvc.Set(ctx, &configsvc.Document{
 		Scope:   configsvc.ScopeSystem,
-		ScopeID: packCatalogID,
+		ScopeID: packs.PackCatalogID,
 		Data: map[string]any{
 			"catalogs": []any{
 				map[string]any{
@@ -104,7 +105,7 @@ func TestConfigAndPolicyOverlayRollback(t *testing.T) {
 		t.Fatalf("seed config: %v", err)
 	}
 
-	overlay := packAppliedConfigOverlay{
+	overlay := packs.PackAppliedConfigOverlay{
 		Name:    "pools",
 		Scope:   "system",
 		ScopeID: "default",
@@ -129,7 +130,7 @@ func TestConfigAndPolicyOverlayRollback(t *testing.T) {
 		}
 	}
 
-	change := appliedConfigChange{Overlay: overlay, Previous: configDoc.Data["pools"]}
+	change := packs.AppliedConfigChange{Overlay: overlay, Previous: configDoc.Data["pools"]}
 	if err := s.restoreConfigOverlay(ctx, change); err != nil {
 		t.Fatalf("restore config overlay: %v", err)
 	}
@@ -148,9 +149,9 @@ func TestConfigAndPolicyOverlayRollback(t *testing.T) {
 	fragmentID := policyFragmentID("pack", "default")
 	policyDoc := &configsvc.Document{
 		Scope:   configsvc.ScopeSystem,
-		ScopeID: policyConfigID,
+		ScopeID: packs.PolicyConfigID,
 		Data: map[string]any{
-			policyConfigKey: map[string]any{
+			packs.PolicyConfigKey: map[string]any{
 				fragmentID: map[string]any{"content": "policy"},
 			},
 		},
@@ -158,20 +159,20 @@ func TestConfigAndPolicyOverlayRollback(t *testing.T) {
 	if err := s.configSvc.Set(ctx, policyDoc); err != nil {
 		t.Fatalf("seed policy doc: %v", err)
 	}
-	policyOverlay := packAppliedPolicyOverlay{Name: "default", FragmentID: fragmentID}
+	policyOverlay := packs.PackAppliedPolicyOverlay{Name: "default", FragmentID: fragmentID}
 	if err := s.removePolicyOverlay(ctx, policyOverlay); err != nil {
 		t.Fatalf("remove policy overlay: %v", err)
 	}
-	doc, err = s.configSvc.Get(ctx, configsvc.ScopeSystem, policyConfigID)
+	doc, err = s.configSvc.Get(ctx, configsvc.ScopeSystem, packs.PolicyConfigID)
 	if err != nil {
 		t.Fatalf("get policy doc: %v", err)
 	}
-	if bundles, ok := doc.Data[policyConfigKey].(map[string]any); ok {
+	if bundles, ok := doc.Data[packs.PolicyConfigKey].(map[string]any); ok {
 		if _, ok := bundles[fragmentID]; ok {
 			t.Fatalf("expected policy fragment removed")
 		}
 	}
-	policyChange := appliedPolicyChange{Overlay: policyOverlay, Previous: map[string]any{"content": "policy"}, HadPrevious: true}
+	policyChange := packs.AppliedPolicyChange{Overlay: policyOverlay, Previous: map[string]any{"content": "policy"}, HadPrevious: true}
 	if err := s.restorePolicyOverlay(ctx, policyChange); err != nil {
 		t.Fatalf("restore policy overlay: %v", err)
 	}
@@ -190,7 +191,7 @@ func TestRollbackSchemaAndWorkflow(t *testing.T) {
 	if err := json.Unmarshal(data, &schemaMap); err != nil {
 		t.Fatalf("unmarshal schema: %v", err)
 	}
-	plan := schemaPlan{ID: schemaID, HadExisting: true, Existing: schemaMap}
+	plan := packs.SchemaPlan{ID: schemaID, HadExisting: true, Existing: schemaMap}
 	if err := s.rollbackSchema(ctx, plan); err != nil {
 		t.Fatalf("rollback schema: %v", err)
 	}
@@ -199,14 +200,14 @@ func TestRollbackSchemaAndWorkflow(t *testing.T) {
 	if err := s.workflowStore.SaveWorkflow(ctx, wfDef); err != nil {
 		t.Fatalf("save workflow: %v", err)
 	}
-	if err := s.rollbackWorkflow(ctx, workflowPlan{ID: wfDef.ID, HadExisting: true, Existing: workflowToMap(wfDef)}); err != nil {
+	if err := s.rollbackWorkflow(ctx, packs.WorkflowPlan{ID: wfDef.ID, HadExisting: true, Existing: packs.WorkflowToMap(wfDef)}); err != nil {
 		t.Fatalf("rollback workflow: %v", err)
 	}
 
-	if err := s.rollbackSchema(ctx, schemaPlan{ID: "pack/schema2"}); err != nil {
+	if err := s.rollbackSchema(ctx, packs.SchemaPlan{ID: "pack/schema2"}); err != nil {
 		t.Fatalf("rollback schema delete: %v", err)
 	}
-	if err := s.rollbackWorkflow(ctx, workflowPlan{ID: "wf-delete"}); err != nil && !errors.Is(err, redis.Nil) {
+	if err := s.rollbackWorkflow(ctx, packs.WorkflowPlan{ID: "wf-delete"}); err != nil && !errors.Is(err, redis.Nil) {
 		t.Fatalf("rollback workflow delete: %v", err)
 	}
 }
@@ -215,7 +216,7 @@ func TestRunPolicySimulation(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	ctx := context.WithValue(context.Background(), auth.ContextKey{}, &auth.AuthContext{Tenant: "override", PrincipalID: "actor-1"})
 
-	test := packPolicySimulation{Name: "sim", Request: packPolicySimulationRequest{Topic: "job.default"}}
+	test := packs.PackPolicySimulation{Name: "sim", Request: packs.PackPolicySimulationRequest{Topic: "job.default"}}
 	decision, reason, err := s.runPolicySimulation(ctx, test, "pack")
 	if err != nil {
 		t.Fatalf("run policy simulation: %v", err)
@@ -224,7 +225,7 @@ func TestRunPolicySimulation(t *testing.T) {
 		t.Fatalf("expected decision and reason")
 	}
 
-	_, _, err = s.runPolicySimulation(ctx, packPolicySimulation{Name: "bad"}, "pack")
+	_, _, err = s.runPolicySimulation(ctx, packs.PackPolicySimulation{Name: "bad"}, "pack")
 	if err == nil {
 		t.Fatalf("expected error for missing topic")
 	}
@@ -238,7 +239,7 @@ func TestDownloadPackBundleErrors(t *testing.T) {
 
 func TestHashWorkflow(t *testing.T) {
 	wfMap := map[string]any{"id": "wf", "steps": map[string]any{}}
-	hash, err := hashWorkflow(wfMap)
+	hash, err := packs.HashWorkflow(wfMap)
 	if err != nil || hash == "" {
 		t.Fatalf("expected hash for workflow")
 	}

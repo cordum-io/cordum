@@ -12,6 +12,7 @@ import (
 	"github.com/cordum/cordum/core/auth/delegation"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 )
 
 var errDelegationAgentRequired = errors.New("delegation token requires an authenticated agent identity")
@@ -131,7 +132,7 @@ func (s *server) emitSubmitDelegationRejectedAudit(r *http.Request, jobID, topic
 		JobID:     strings.TrimSpace(jobID),
 		Action:    "submit",
 		Reason:    submitDelegationAuditReason(err),
-		Identity:  strings.TrimSpace(policyActorID(r)),
+		Identity:  strings.TrimSpace(policybundles.PolicyActorID(r)),
 		Extra:     extra,
 	})
 }

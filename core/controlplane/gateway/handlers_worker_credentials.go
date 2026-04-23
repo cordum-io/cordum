@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/gateway/pools"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/licensing"
@@ -135,7 +136,7 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	createdBy := strings.TrimSpace(policyActorID(r))
+	createdBy := strings.TrimSpace(policybundles.PolicyActorID(r))
 	if createdBy == "" {
 		createdBy = "admin"
 	}
@@ -185,13 +186,13 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 	slog.Info("worker credential issued",
 		"worker_id", req.WorkerID,
 		"created_by", createdBy,
-		"actor", policyActorID(r),
-		"role", policyRole(r),
+		"actor", policybundles.PolicyActorID(r),
+		"role", policybundles.PolicyRole(r),
 		"rotated", existing != nil,
 		"allowed_pools", len(req.AllowedPools),
 		"allowed_topics", len(req.AllowedTopics),
 	)
-	s.appendAuditEntryNamed(r.Context(), action, "worker_credential", req.WorkerID, req.WorkerID, policyActorID(r), policyRole(r), verb+" worker credential "+req.WorkerID)
+	s.appendAuditEntryNamed(r.Context(), action, "worker_credential", req.WorkerID, req.WorkerID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), verb+" worker credential "+req.WorkerID)
 
 	status := http.StatusCreated
 	if existing != nil {
@@ -255,10 +256,10 @@ func (s *server) handleDeleteWorkerCredential(w http.ResponseWriter, r *http.Req
 		"worker_id", workerID,
 		"created_by", existing.CreatedBy,
 		"pack_id", existing.PackID,
-		"actor", policyActorID(r),
-		"role", policyRole(r),
+		"actor", policybundles.PolicyActorID(r),
+		"role", policybundles.PolicyRole(r),
 	)
-	s.appendAuditEntryNamed(r.Context(), "revoke", "worker_credential", workerID, workerID, policyActorID(r), policyRole(r), "revoke worker credential "+workerID)
+	s.appendAuditEntryNamed(r.Context(), "revoke", "worker_credential", workerID, workerID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "revoke worker credential "+workerID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

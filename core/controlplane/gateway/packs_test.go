@@ -19,6 +19,7 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/infra/locks"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 )
 
 func installTestPack(t *testing.T, s *server) {
@@ -248,11 +249,11 @@ func TestPackInstallGeneratesCredential(t *testing.T) {
 }
 
 func TestPackInstallErrorMessage(t *testing.T) {
-	err := &packInstallError{Err: nil}
+	err := &packs.PackInstallError{Err: nil}
 	if err.Error() == "" {
 		t.Fatalf("expected default error message")
 	}
-	err = &packInstallError{Err: context.DeadlineExceeded}
+	err = &packs.PackInstallError{Err: context.DeadlineExceeded}
 	if err.Error() != context.DeadlineExceeded.Error() {
 		t.Fatalf("expected wrapped error string")
 	}
@@ -267,17 +268,17 @@ func TestPackInstallNonPackError_DoesNotLeakDetails(t *testing.T) {
 	// We call installPackFromDir directly to get the raw error, then verify
 	// the error handling branch in handleInstallPack via the handler.
 
-	// 1. Verify packInstallError returns its controlled message.
-	installErr := &packInstallError{Status: http.StatusBadRequest, Err: fmt.Errorf("manifest not found")}
+	// 1. Verify packs.PackInstallError returns its controlled message.
+	installErr := &packs.PackInstallError{Status: http.StatusBadRequest, Err: fmt.Errorf("manifest not found")}
 	rec1 := httptest.NewRecorder()
 	req1 := adminCtx(httptest.NewRequest(http.MethodGet, "/", nil))
 	var testErr error = installErr
-	var pie *packInstallError
+	var pie *packs.PackInstallError
 	if errors.As(testErr, &pie) {
 		writeErrorJSON(rec1, pie.Status, pie.Error())
 	}
 	if rec1.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for packInstallError, got %d", rec1.Code)
+		t.Fatalf("expected 400 for packs.PackInstallError, got %d", rec1.Code)
 	}
 	var body1 map[string]any
 	_ = json.NewDecoder(rec1.Body).Decode(&body1)
@@ -285,7 +286,7 @@ func TestPackInstallNonPackError_DoesNotLeakDetails(t *testing.T) {
 		t.Fatalf("expected controlled message, got %q", body1["error"])
 	}
 
-	// 2. Verify non-packInstallError uses writeInternalError.
+	// 2. Verify non-packs.PackInstallError uses writeInternalError.
 	genericErr := fmt.Errorf("open /var/lib/cordum/packs/tmp123/pack.yaml: permission denied")
 	rec2 := httptest.NewRecorder()
 	req2 := adminCtx(httptest.NewRequest(http.MethodGet, "/", nil))

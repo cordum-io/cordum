@@ -23,6 +23,7 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
@@ -189,9 +190,9 @@ type server struct {
 	instanceRegistry *registry.InstanceRegistry
 	instanceID       string
 
-	marketplaceMu    sync.Mutex
-	marketplaceCache marketplaceCache
-	stopBusTapsOnce  sync.Once
+	marketplaceMu      sync.Mutex
+	marketplaceCache   packs.MarketplaceCache
+	stopBusTapsOnce    sync.Once
 	eventsStopped    atomic.Bool
 	shutdownCh       chan struct{}
 
@@ -507,7 +508,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		return fmt.Errorf("connect redis config service: %w", err)
 	}
 	defer func() { _ = configSvc.Close() }()
-	if err := seedDefaultPackCatalogs(context.Background(), configSvc); err != nil {
+	if err := packs.SeedDefaultPackCatalogs(context.Background(), configSvc); err != nil {
 		slog.Error("seed pack catalogs failed", "error", err)
 	}
 	if err := configSvc.EnsureDefault(context.Background()); err != nil {
@@ -650,10 +651,10 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	s.telemetry.Start(context.Background())
 	if legacyPolicyBundlesMigrated {
 		s.publishConfigChanged(string(configsvc.ScopeSystem), "default")
-		s.publishConfigChanged(string(configsvc.ScopeSystem), policyConfigID)
+		s.publishConfigChanged(string(configsvc.ScopeSystem), packs.PolicyConfigID)
 		slog.Info("gateway startup migrated legacy policy bundles",
 			"from_scope", "system/default",
-			"to_scope", "system/"+policyConfigID,
+			"to_scope", "system/"+packs.PolicyConfigID,
 			"bundle_count", legacyPolicyBundleCount,
 		)
 	}
@@ -1540,16 +1541,16 @@ func migrateLegacyPolicyBundles(ctx context.Context, svc *configsvc.Service) (bo
 	if defaultDoc.Data == nil {
 		return false, 0, nil
 	}
-	rawLegacyBundles := normalizeJSON(defaultDoc.Data[policyConfigKey])
+	rawLegacyBundles := packs.NormalizeJSON(defaultDoc.Data[packs.PolicyConfigKey])
 	legacyBundles, ok := rawLegacyBundles.(map[string]any)
 	if !ok || len(legacyBundles) == 0 {
 		return false, 0, nil
 	}
-	if err := svc.SetWithRetry(ctx, configsvc.ScopeSystem, policyConfigID, 3, func(doc *configsvc.Document) error {
+	if err := svc.SetWithRetry(ctx, configsvc.ScopeSystem, packs.PolicyConfigID, 3, func(doc *configsvc.Document) error {
 		if doc.Data == nil {
 			doc.Data = map[string]any{}
 		}
-		rawPolicyBundles := normalizeJSON(doc.Data[policyConfigKey])
+		rawPolicyBundles := packs.NormalizeJSON(doc.Data[packs.PolicyConfigKey])
 		policyBundles, _ := rawPolicyBundles.(map[string]any)
 		if policyBundles == nil {
 			policyBundles = map[string]any{}
@@ -1558,14 +1559,14 @@ func migrateLegacyPolicyBundles(ctx context.Context, svc *configsvc.Service) (bo
 			if _, exists := policyBundles[fragmentID]; exists {
 				continue
 			}
-			policyBundles[fragmentID] = deepCopy(bundle)
+			policyBundles[fragmentID] = packs.DeepCopy(bundle)
 		}
-		doc.Data[policyConfigKey] = policyBundles
+		doc.Data[packs.PolicyConfigKey] = policyBundles
 		return nil
 	}); err != nil {
-		return false, 0, fmt.Errorf("merge legacy bundles into system/%s: %w", policyConfigID, err)
+		return false, 0, fmt.Errorf("merge legacy bundles into system/%s: %w", packs.PolicyConfigID, err)
 	}
-	if err := deleteSystemDefaultKeyWithRetry(ctx, svc, policyConfigKey, 3); err != nil {
+	if err := deleteSystemDefaultKeyWithRetry(ctx, svc, packs.PolicyConfigKey, 3); err != nil {
 		return false, 0, fmt.Errorf("remove legacy bundles from system/default: %w", err)
 	}
 	return true, len(legacyBundles), nil

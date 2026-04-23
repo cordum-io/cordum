@@ -15,6 +15,8 @@ import (
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
@@ -184,19 +186,19 @@ func (s *server) handleCreateVelocityRule(w http.ResponseWriter, r *http.Request
 		return
 	}
 	bundles[bundleID] = bundle
-	doc.Data[policyConfigKey] = bundles
+	doc.Data[packs.PolicyConfigKey] = bundles
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
 		writeInternalError(w, r, "velocity rule operation", err)
 		return
 	}
-	s.publishConfigChanged(policyConfigScope, policyConfigID)
-	_ = s.appendPolicyAudit(r.Context(), policyAuditEntry{
+	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
+	_ = s.appendPolicyAudit(r.Context(), policybundles.PolicyAuditEntry{
 		Action:       "create",
 		ResourceType: "velocity_rule",
 		ResourceID:   def.ID,
 		ResourceName: def.Name,
-		ActorID:      policyActorID(r),
-		Role:         policyRole(r),
+		ActorID:      policybundles.PolicyActorID(r),
+		Role:         policybundles.PolicyRole(r),
 		Message:      "create velocity rule " + def.ID,
 	})
 
@@ -296,7 +298,7 @@ func (s *server) handlePutVelocityRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	existingBundle, _ := existingRaw.(map[string]any)
-	createdAt := strings.TrimSpace(stringFromAny(existingBundle["created_at"]))
+	createdAt := strings.TrimSpace(policybundles.StringFromAny(existingBundle["created_at"]))
 	now := time.Now().UTC().Format(time.RFC3339)
 	bundle, err := velocityRuleBundleMap(def, now, createdAt)
 	if err != nil {
@@ -310,19 +312,19 @@ func (s *server) handlePutVelocityRule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bundles[bundleID] = bundle
-	doc.Data[policyConfigKey] = bundles
+	doc.Data[packs.PolicyConfigKey] = bundles
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
 		writeInternalError(w, r, "velocity rule operation", err)
 		return
 	}
-	s.publishConfigChanged(policyConfigScope, policyConfigID)
-	_ = s.appendPolicyAudit(r.Context(), policyAuditEntry{
+	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
+	_ = s.appendPolicyAudit(r.Context(), policybundles.PolicyAuditEntry{
 		Action:       "edit",
 		ResourceType: "velocity_rule",
 		ResourceID:   def.ID,
 		ResourceName: def.Name,
-		ActorID:      policyActorID(r),
-		Role:         policyRole(r),
+		ActorID:      policybundles.PolicyActorID(r),
+		Role:         policybundles.PolicyRole(r),
 		Message:      "edit velocity rule " + def.ID,
 	})
 
@@ -361,34 +363,34 @@ func (s *server) handleDeleteVelocityRule(w http.ResponseWriter, r *http.Request
 	}
 
 	delete(bundles, bundleID)
-	doc.Data[policyConfigKey] = bundles
+	doc.Data[packs.PolicyConfigKey] = bundles
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
 		writeInternalError(w, r, "velocity rule operation", err)
 		return
 	}
-	s.publishConfigChanged(policyConfigScope, policyConfigID)
-	_ = s.appendPolicyAudit(r.Context(), policyAuditEntry{
+	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
+	_ = s.appendPolicyAudit(r.Context(), policybundles.PolicyAuditEntry{
 		Action:       "delete",
 		ResourceType: "velocity_rule",
 		ResourceID:   ruleID,
 		ResourceName: ruleID,
-		ActorID:      policyActorID(r),
-		Role:         policyRole(r),
+		ActorID:      policybundles.PolicyActorID(r),
+		Role:         policybundles.PolicyRole(r),
 		Message:      "delete velocity rule " + ruleID,
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func listVelocityRules(bundles map[string]any) ([]velocityRuleResponse, []policyRuleParseError) {
+func listVelocityRules(bundles map[string]any) ([]velocityRuleResponse, []policybundles.PolicyRuleParseError) {
 	items := make([]velocityRuleResponse, 0)
-	parseErrors := make([]policyRuleParseError, 0)
+	parseErrors := make([]policybundles.PolicyRuleParseError, 0)
 	for bundleID, rawBundle := range bundles {
 		if !strings.HasPrefix(bundleID, velocityRuleBundlePrefix) {
 			continue
 		}
 		item, err := velocityRuleFromBundle(bundleID, rawBundle)
 		if err != nil {
-			parseErrors = append(parseErrors, policyRuleParseError{
+			parseErrors = append(parseErrors, policybundles.PolicyRuleParseError{
 				FragmentID: bundleID,
 				Error:      err.Error(),
 			})
@@ -411,12 +413,12 @@ func velocityRuleFromBundle(bundleID string, rawBundle any) (velocityRuleRespons
 	case string:
 		content = strings.TrimSpace(typed)
 	case map[string]any:
-		content = strings.TrimSpace(stringFromAny(typed["content"]))
+		content = strings.TrimSpace(policybundles.StringFromAny(typed["content"]))
 		if content == "" {
-			content = strings.TrimSpace(stringFromAny(typed["policy"]))
+			content = strings.TrimSpace(policybundles.StringFromAny(typed["policy"]))
 		}
 		if content == "" {
-			content = strings.TrimSpace(stringFromAny(typed["data"]))
+			content = strings.TrimSpace(policybundles.StringFromAny(typed["data"]))
 		}
 	}
 	if content == "" {
@@ -444,16 +446,16 @@ func velocityRuleFromBundle(bundleID string, rawBundle any) (velocityRuleRespons
 
 	return velocityRuleResponse{
 		ID:        respID,
-		Name:      strings.TrimSpace(firstNonEmpty(stringFromAny(bundle["name"]), rule.ID)),
+		Name:      strings.TrimSpace(firstNonEmpty(policybundles.StringFromAny(bundle["name"]), rule.ID)),
 		Match:     velocityRuleMatchFromPolicyMatch(rule.Match),
 		Window:    (time.Duration(rule.Velocity.WindowSeconds) * time.Second).String(),
 		Key:       strings.TrimSpace(rule.Velocity.Key),
 		Threshold: rule.Velocity.MaxRequests,
 		Decision:  normalizeVelocityDecision(rule.Decision),
 		Reason:    strings.TrimSpace(rule.Reason),
-		Enabled:   bundleEnabled(bundle),
-		CreatedAt: strings.TrimSpace(stringFromAny(bundle["created_at"])),
-		UpdatedAt: strings.TrimSpace(stringFromAny(bundle["updated_at"])),
+		Enabled:   policybundles.BundleEnabled(bundle),
+		CreatedAt: strings.TrimSpace(policybundles.StringFromAny(bundle["created_at"])),
+		UpdatedAt: strings.TrimSpace(policybundles.StringFromAny(bundle["updated_at"])),
 	}, nil
 }
 
@@ -586,7 +588,7 @@ func marshalVelocityRuleBundle(def velocityRuleDefinition) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("marshal velocity rule bundle: %w", err)
 	}
-	content := sanitizePolicyBundleYAML(string(data))
+	content := policybundles.SanitizePolicyBundleYAML(string(data))
 	if _, err := config.ParseSafetyPolicy([]byte(content)); err != nil {
 		return "", fmt.Errorf("invalid velocity rule content: %w", err)
 	}
@@ -895,17 +897,17 @@ func (s *server) velocityRuleLimitError(current int64) *licensing.TierLimitError
 }
 
 func (s *server) loadVelocityRuleBundleDoc(ctx context.Context) (*configsvc.Document, map[string]any, error) {
-	doc, err := getConfigDoc(ctx, s.configSvc, policyConfigScope, policyConfigID)
+	doc, err := getConfigDoc(ctx, s.configSvc, packs.PolicyConfigScope, packs.PolicyConfigID)
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			return nil, nil, err
 		}
-		doc = &configsvc.Document{Scope: configsvc.Scope(policyConfigScope), ScopeID: policyConfigID, Data: map[string]any{}}
+		doc = &configsvc.Document{Scope: configsvc.Scope(packs.PolicyConfigScope), ScopeID: packs.PolicyConfigID, Data: map[string]any{}}
 	}
 	if doc.Data == nil {
 		doc.Data = map[string]any{}
 	}
-	rawBundles := normalizeJSON(doc.Data[policyConfigKey])
+	rawBundles := packs.NormalizeJSON(doc.Data[packs.PolicyConfigKey])
 	bundles, _ := rawBundles.(map[string]any)
 	if bundles == nil {
 		bundles = map[string]any{}

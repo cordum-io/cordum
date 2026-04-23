@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 )
 
 // listSignedBundleSnapshots returns the policy bundles that were active
@@ -69,11 +70,11 @@ func (s *server) listSignedBundleSnapshots(ctx context.Context, tenantID string,
 func bundleSnapshotFor(id string, bundle map[string]any) audit.SignedBundleSnapshot {
 	snap := audit.SignedBundleSnapshot{
 		BundleID:      id,
-		Name:          stringFromAny(bundle["name"]),
-		Version:       stringFromAny(bundle["version"]),
+		Name:          policybundles.StringFromAny(bundle["name"]),
+		Version:       policybundles.StringFromAny(bundle["version"]),
 		ActivatedAt:   bundleTimestampFor(bundle, "activated_at", "created_at", "updated_at"),
 		DeactivatedAt: bundleTimestampFor(bundle, "deactivated_at", "disabled_at", "archived_at"),
-		SignedBy:      stringFromAny(bundle["author"]),
+		SignedBy:      policybundles.StringFromAny(bundle["author"]),
 	}
 	sigAny, ok := bundle[policyBundleSignatureKey]
 	if !ok {
@@ -89,7 +90,7 @@ func bundleSnapshotFor(id string, bundle map[string]any) audit.SignedBundleSnaps
 	snap.Ed25519SigBase64 = sig.Value
 	snap.PublicKeyID = sig.KeyID
 	if snap.SignedBy == "" {
-		snap.SignedBy = stringFromAny(bundle["signed_by"])
+		snap.SignedBy = policybundles.StringFromAny(bundle["signed_by"])
 	}
 	return snap
 }
@@ -100,7 +101,7 @@ func bundleSnapshotFor(id string, bundle map[string]any) audit.SignedBundleSnaps
 func bundleTimestampFor(bundle map[string]any, keys ...string) string {
 	for _, k := range keys {
 		if v, ok := bundle[k]; ok {
-			if s := strings.TrimSpace(stringFromAny(v)); s != "" {
+			if s := strings.TrimSpace(policybundles.StringFromAny(v)); s != "" {
 				return s
 			}
 		}

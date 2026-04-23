@@ -12,6 +12,7 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/policyshadow"
 )
 
@@ -64,18 +65,18 @@ func seedActiveBundle(t *testing.T, s *server, bundleID string) {
 	t.Helper()
 	// Policy signing is strict by default; go around the PUT handler and
 	// seed configsvc directly so tests don't need Ed25519 keys.
-	doc, err := getConfigDoc(context.Background(), s.configSvc, policyConfigScope, policyConfigID)
+	doc, err := getConfigDoc(context.Background(), s.configSvc, packs.PolicyConfigScope, packs.PolicyConfigID)
 	if err != nil || doc == nil {
 		doc = &configsvc.Document{
-			Scope:   configsvc.Scope(policyConfigScope),
-			ScopeID: policyConfigID,
+			Scope:   configsvc.Scope(packs.PolicyConfigScope),
+			ScopeID: packs.PolicyConfigID,
 			Data:    map[string]any{},
 		}
 	}
 	if doc.Data == nil {
 		doc.Data = map[string]any{}
 	}
-	bundles, _ := doc.Data[policyConfigKey].(map[string]any)
+	bundles, _ := doc.Data[packs.PolicyConfigKey].(map[string]any)
 	if bundles == nil {
 		bundles = map[string]any{}
 	}
@@ -85,7 +86,7 @@ func seedActiveBundle(t *testing.T, s *server, bundleID string) {
 		"created_at": "2026-04-18T00:00:00Z",
 		"updated_at": "2026-04-18T00:00:00Z",
 	}
-	doc.Data[policyConfigKey] = bundles
+	doc.Data[packs.PolicyConfigKey] = bundles
 	if err := s.configSvc.Set(context.Background(), doc); err != nil {
 		t.Fatalf("seed bundle: %v", err)
 	}

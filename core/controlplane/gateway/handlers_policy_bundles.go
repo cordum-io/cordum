@@ -16,6 +16,8 @@ import (
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
@@ -39,7 +41,7 @@ func (s *server) handlePolicyBundles(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
-	items := bundleSummaryList(bundles)
+	items := policybundles.BundleSummaryList(bundles)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]any{
 		"bundles":    bundles,
@@ -65,11 +67,11 @@ func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(fragmentIDs)
 
 	items := make([]map[string]any, 0)
-	parseErrors := make([]policyRuleParseError, 0)
+	parseErrors := make([]policybundles.PolicyRuleParseError, 0)
 	for _, fragmentID := range fragmentIDs {
 		rawBundle := bundles[fragmentID]
 		bundle, _ := rawBundle.(map[string]any)
-		if bundle != nil && !includeDisabled && !bundleEnabled(bundle) {
+		if bundle != nil && !includeDisabled && !policybundles.BundleEnabled(bundle) {
 			continue
 		}
 		content := ""
@@ -77,12 +79,12 @@ func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 		case string:
 			content = strings.TrimSpace(v)
 		case map[string]any:
-			content = strings.TrimSpace(stringFromAny(v["content"]))
+			content = strings.TrimSpace(policybundles.StringFromAny(v["content"]))
 			if content == "" {
-				content = strings.TrimSpace(stringFromAny(v["policy"]))
+				content = strings.TrimSpace(policybundles.StringFromAny(v["policy"]))
 			}
 			if content == "" {
-				content = strings.TrimSpace(stringFromAny(v["data"]))
+				content = strings.TrimSpace(policybundles.StringFromAny(v["data"]))
 			}
 		}
 		if content == "" {
@@ -92,9 +94,9 @@ func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 		if bundleMeta == nil {
 			bundleMeta = map[string]any{}
 		}
-		rules, err := rulesFromPolicyContent(fragmentID, bundleMeta, content)
+		rules, err := policybundles.RulesFromPolicyContent(fragmentID, bundleMeta, content)
 		if err != nil {
-			parseErrors = append(parseErrors, policyRuleParseError{
+			parseErrors = append(parseErrors, policybundles.PolicyRuleParseError{
 				FragmentID: fragmentID,
 				Error:      err.Error(),
 			})
@@ -128,11 +130,11 @@ func (s *server) handlePolicyOutputRules(w http.ResponseWriter, r *http.Request)
 	sort.Strings(fragmentIDs)
 
 	items := make([]map[string]any, 0)
-	parseErrors := make([]policyRuleParseError, 0)
+	parseErrors := make([]policybundles.PolicyRuleParseError, 0)
 	for _, fragmentID := range fragmentIDs {
 		rawBundle := bundles[fragmentID]
 		bundle, _ := rawBundle.(map[string]any)
-		if bundle != nil && !includeDisabled && !bundleEnabled(bundle) {
+		if bundle != nil && !includeDisabled && !policybundles.BundleEnabled(bundle) {
 			continue
 		}
 		content := ""
@@ -140,12 +142,12 @@ func (s *server) handlePolicyOutputRules(w http.ResponseWriter, r *http.Request)
 		case string:
 			content = strings.TrimSpace(v)
 		case map[string]any:
-			content = strings.TrimSpace(stringFromAny(v["content"]))
+			content = strings.TrimSpace(policybundles.StringFromAny(v["content"]))
 			if content == "" {
-				content = strings.TrimSpace(stringFromAny(v["policy"]))
+				content = strings.TrimSpace(policybundles.StringFromAny(v["policy"]))
 			}
 			if content == "" {
-				content = strings.TrimSpace(stringFromAny(v["data"]))
+				content = strings.TrimSpace(policybundles.StringFromAny(v["data"]))
 			}
 		}
 		if content == "" {
@@ -155,9 +157,9 @@ func (s *server) handlePolicyOutputRules(w http.ResponseWriter, r *http.Request)
 		if bundleMeta == nil {
 			bundleMeta = map[string]any{}
 		}
-		rules, err := outputRulesFromPolicyContent(fragmentID, bundleMeta, content)
+		rules, err := policybundles.OutputRulesFromPolicyContent(fragmentID, bundleMeta, content)
 		if err != nil {
-			parseErrors = append(parseErrors, policyRuleParseError{
+			parseErrors = append(parseErrors, policybundles.PolicyRuleParseError{
 				FragmentID: fragmentID,
 				Error:      err.Error(),
 			})
@@ -268,7 +270,7 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 		writeErrorJSON(w, http.StatusBadRequest, "rule id required")
 		return
 	}
-	var body outputRuleToggleRequest
+	var body policybundles.OutputRuleToggleRequest
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeJSONDecodeError(w, err, "invalid json")
 		return
@@ -296,11 +298,11 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 
 	for _, key := range keys {
 		rawBundle := bundles[key]
-		content, ok := policyBundleContent(rawBundle)
+		content, ok := policybundles.PolicyBundleContent(rawBundle)
 		if !ok || strings.TrimSpace(content) == "" {
 			continue
 		}
-		sanitizedContent := sanitizePolicyBundleYAML(content)
+		sanitizedContent := policybundles.SanitizePolicyBundleYAML(content)
 		policy, err := config.ParseSafetyPolicy([]byte(sanitizedContent))
 		if err != nil || policy == nil || len(policy.OutputRules) == 0 {
 			continue
@@ -342,22 +344,22 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 
 	if doc == nil {
 		doc = &configsvc.Document{
-			Scope:   configsvc.Scope(policyConfigScope),
-			ScopeID: policyConfigID,
+			Scope:   configsvc.Scope(packs.PolicyConfigScope),
+			ScopeID: packs.PolicyConfigID,
 			Data:    map[string]any{},
 		}
 	}
 	if doc.Data == nil {
 		doc.Data = map[string]any{}
 	}
-	doc.Data[policyConfigKey] = bundles
+	doc.Data[packs.PolicyConfigKey] = bundles
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 
 	message := fmt.Sprintf("set output rule %s enabled=%t", ruleID, *body.Enabled)
-	s.appendAuditEntryNamed(r.Context(), "edit", "output_rule", ruleID, updatedBundleID, policyActorID(r), policyRole(r), message)
+	s.appendAuditEntryNamed(r.Context(), "edit", "output_rule", ruleID, updatedBundleID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), message)
 
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]any{
@@ -372,7 +374,7 @@ func (s *server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return
 	}
-	bundleID := bundleIDFromRequest(r)
+	bundleID := policybundles.BundleIDFromRequest(r)
 	if bundleID == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "bundle id required")
 		return
@@ -392,21 +394,21 @@ func (s *server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusNotFound, "bundle invalid")
 		return
 	}
-	content := strings.TrimSpace(stringFromAny(bundle["content"]))
-	resp := policyBundleDetail{
+	content := strings.TrimSpace(policybundles.StringFromAny(bundle["content"]))
+	resp := policybundles.PolicyBundleDetail{
 		ID:        bundleID,
 		Content:   content,
-		Enabled:   bundleEnabled(bundle),
-		Author:    strings.TrimSpace(stringFromAny(bundle["author"])),
-		Message:   strings.TrimSpace(stringFromAny(bundle["message"])),
-		CreatedAt: strings.TrimSpace(stringFromAny(bundle["created_at"])),
-		UpdatedAt: strings.TrimSpace(stringFromAny(bundle["updated_at"])),
+		Enabled:   policybundles.BundleEnabled(bundle),
+		Author:    strings.TrimSpace(policybundles.StringFromAny(bundle["author"])),
+		Message:   strings.TrimSpace(policybundles.StringFromAny(bundle["message"])),
+		CreatedAt: strings.TrimSpace(policybundles.StringFromAny(bundle["created_at"])),
+		UpdatedAt: strings.TrimSpace(policybundles.StringFromAny(bundle["updated_at"])),
 	}
 	// Enrich with the current shadow summary (if any) so the detail API
 	// surfaces what would run against live traffic. Absent shadow stays
 	// nil and is omitted from the JSON body — backward-compatible for
 	// existing clients that don't know the field.
-	enriched := policyBundleDetailWithShadow{policyBundleDetail: resp}
+	enriched := policyBundleDetailWithShadow{PolicyBundleDetail: resp}
 	if s.policyShadowStore != nil {
 		tenantID := strings.TrimSpace(tenantFromRequest(r))
 		if tenantID != "" {
@@ -419,12 +421,12 @@ func (s *server) handleGetPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, enriched)
 }
 
-// policyBundleDetailWithShadow embeds the canonical policyBundleDetail
+// policyBundleDetailWithShadow embeds the canonical policybundles.PolicyBundleDetail
 // and adds the optional Shadow summary. Keeping the field here (not on
 // the shared policybundles type) avoids pulling core/policyshadow into
 // the policybundles package just for a JSON tag.
 type policyBundleDetailWithShadow struct {
-	policyBundleDetail
+	policybundles.PolicyBundleDetail
 	Shadow *policyshadow.ShadowPolicySummary `json:"shadow,omitempty"`
 }
 
@@ -432,21 +434,21 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
-	bundleID := bundleIDFromRequest(r)
+	bundleID := policybundles.BundleIDFromRequest(r)
 	if bundleID == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "bundle id required")
 		return
 	}
-	if !strings.HasPrefix(bundleID, policyStudioPrefix) {
+	if !strings.HasPrefix(bundleID, policybundles.PolicyStudioPrefix) {
 		writeErrorJSON(w, http.StatusBadRequest, "bundle id must start with secops/")
 		return
 	}
-	var body policyBundleUpsertRequest
+	var body policybundles.PolicyBundleUpsertRequest
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
-	content := sanitizePolicyBundleYAML(strings.TrimSpace(body.Content))
+	content := policybundles.SanitizePolicyBundleYAML(strings.TrimSpace(body.Content))
 	if content == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "content required")
 		return
@@ -456,18 +458,18 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	doc, err := getConfigDoc(r.Context(), s.configSvc, policyConfigScope, policyConfigID)
+	doc, err := getConfigDoc(r.Context(), s.configSvc, packs.PolicyConfigScope, packs.PolicyConfigID)
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			writeInternalError(w, r, "policy operation", err)
 			return
 		}
-		doc = &configsvc.Document{Scope: configsvc.Scope(policyConfigScope), ScopeID: policyConfigID, Data: map[string]any{}}
+		doc = &configsvc.Document{Scope: configsvc.Scope(packs.PolicyConfigScope), ScopeID: packs.PolicyConfigID, Data: map[string]any{}}
 	}
 	if doc.Data == nil {
 		doc.Data = map[string]any{}
 	}
-	rawBundles := normalizeJSON(doc.Data[policyConfigKey])
+	rawBundles := packs.NormalizeJSON(doc.Data[packs.PolicyConfigKey])
 	bundles, _ := rawBundles.(map[string]any)
 	if bundles == nil {
 		bundles = map[string]any{}
@@ -475,7 +477,7 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	if _, exists := bundles[bundleID]; !exists {
 		customBundleCount := 0
 		for existingBundleID := range bundles {
-			if strings.HasPrefix(existingBundleID, policyStudioPrefix) {
+			if strings.HasPrefix(existingBundleID, policybundles.PolicyStudioPrefix) {
 				customBundleCount++
 			}
 		}
@@ -519,12 +521,12 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 		delete(bundle, policyBundleSignatureKey)
 	}
 	bundles[bundleID] = bundle
-	doc.Data[policyConfigKey] = bundles
+	doc.Data[packs.PolicyConfigKey] = bundles
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "edit", "policy", bundleID, bundleID, policyActorID(r), policyRole(r), "edit policy bundle "+bundleID)
+	s.appendAuditEntryNamed(r.Context(), "edit", "policy", bundleID, bundleID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "edit policy bundle "+bundleID)
 	w.Header().Set("Content-Type", "application/json")
 	response := map[string]any{
 		"id":         bundleID,
@@ -547,13 +549,13 @@ func (s *server) handleDeletePolicyBundle(w http.ResponseWriter, r *http.Request
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
-	bundleID := bundleIDFromRequest(r)
+	bundleID := policybundles.BundleIDFromRequest(r)
 	if bundleID == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "bundle id required")
 		return
 	}
 
-	doc, err := getConfigDoc(r.Context(), s.configSvc, policyConfigScope, policyConfigID)
+	doc, err := getConfigDoc(r.Context(), s.configSvc, packs.PolicyConfigScope, packs.PolicyConfigID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			writeErrorJSON(w, http.StatusNotFound, "bundle not found")
@@ -566,7 +568,7 @@ func (s *server) handleDeletePolicyBundle(w http.ResponseWriter, r *http.Request
 		writeErrorJSON(w, http.StatusNotFound, "bundle not found")
 		return
 	}
-	rawBundles := normalizeJSON(doc.Data[policyConfigKey])
+	rawBundles := packs.NormalizeJSON(doc.Data[packs.PolicyConfigKey])
 	bundles, _ := rawBundles.(map[string]any)
 	if bundles == nil || bundles[bundleID] == nil {
 		writeErrorJSON(w, http.StatusNotFound, "bundle not found")
@@ -574,14 +576,14 @@ func (s *server) handleDeletePolicyBundle(w http.ResponseWriter, r *http.Request
 	}
 
 	delete(bundles, bundleID)
-	doc.Data[policyConfigKey] = bundles
+	doc.Data[packs.PolicyConfigKey] = bundles
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 
-	slog.Info("policy bundle deleted", "bundle_id", bundleID, "actor", policyActorID(r))
-	s.appendAuditEntryNamed(r.Context(), "delete", "policy", bundleID, bundleID, policyActorID(r), policyRole(r), "delete policy bundle "+bundleID)
+	slog.Info("policy bundle deleted", "bundle_id", bundleID, "actor", policybundles.PolicyActorID(r))
+	s.appendAuditEntryNamed(r.Context(), "delete", "policy", bundleID, bundleID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete policy bundle "+bundleID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -589,7 +591,7 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
-	bundleID := bundleIDFromRequest(r)
+	bundleID := policybundles.BundleIDFromRequest(r)
 	if bundleID == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "bundle id required")
 		return
@@ -627,19 +629,19 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
-	working := cloneBundleMap(bundles)
+	working := policybundles.CloneBundleMap(bundles)
 	if strings.TrimSpace(body.Content) != "" {
 		working[bundleID] = map[string]any{
 			"content": strings.TrimSpace(body.Content),
 			"enabled": true,
 		}
 	}
-	policy, snapshot, err := buildPolicyFromBundles(working)
+	policy, snapshot, err := policybundles.BuildPolicyFromBundles(working)
 	if err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	resp := evaluatePolicyCheck(policy, snapshot, checkReq)
+	resp := policybundles.EvaluatePolicyCheck(policy, snapshot, checkReq)
 	data, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(resp)
 	if err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to encode response")
@@ -655,7 +657,7 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
-	var body policyPublishRequest
+	var body policybundles.PolicyPublishRequest
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeJSONDecodeError(w, err, "invalid json")
 		return
@@ -669,7 +671,7 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 		writeErrorJSON(w, http.StatusBadRequest, "no bundles configured")
 		return
 	}
-	targets := resolvePublishTargets(bundles, body.BundleIDs)
+	targets := policybundles.ResolvePublishTargets(bundles, body.BundleIDs)
 	if len(targets) == 0 {
 		writeErrorJSON(w, http.StatusBadRequest, "no policy bundles to publish")
 		return
@@ -696,27 +698,27 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 		}
 		bundles[bundleID] = bundle
 	}
-	if err := validateBundles(bundles); err != nil {
+	if err := policybundles.ValidateBundles(bundles); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if doc == nil {
-		doc = &configsvc.Document{Scope: configsvc.Scope(policyConfigScope), ScopeID: policyConfigID, Data: map[string]any{}}
+		doc = &configsvc.Document{Scope: configsvc.Scope(packs.PolicyConfigScope), ScopeID: packs.PolicyConfigID, Data: map[string]any{}}
 	}
 	if doc.Data == nil {
 		doc.Data = map[string]any{}
 	}
-	doc.Data[policyConfigKey] = bundles
+	doc.Data[packs.PolicyConfigKey] = bundles
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	afterSnapshot, _ := s.capturePolicyBundleSnapshotWithBundles(r.Context(), bundles, body.Note)
-	_ = s.appendPolicyAudit(r.Context(), policyAuditEntry{
+	_ = s.appendPolicyAudit(r.Context(), policybundles.PolicyAuditEntry{
 		Action:         "publish",
 		ResourceType:   "policy",
-		ActorID:        policyActorID(r),
-		Role:           policyRole(r),
+		ActorID:        policybundles.PolicyActorID(r),
+		Role:           policybundles.PolicyRole(r),
 		BundleIDs:      targets,
 		Message:        strings.TrimSpace(body.Message),
 		SnapshotBefore: beforeSnapshot,
@@ -735,7 +737,7 @@ func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Requ
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyWrite, []string{"admin"}, s.configSvc) {
 		return
 	}
-	var body policyRollbackRequest
+	var body policybundles.PolicyRollbackRequest
 	if err := decodeJSONBody(w, r, &body); err != nil {
 		writeJSONDecodeError(w, err, "invalid json")
 		return
@@ -757,7 +759,7 @@ func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Requ
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
-	var target *policyBundleSnapshot
+	var target *policybundles.PolicyBundleSnapshot
 	for _, snap := range snapshots {
 		if snap.ID == snapshotID {
 			target = &snap
@@ -769,22 +771,22 @@ func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if doc == nil {
-		doc = &configsvc.Document{Scope: configsvc.Scope(policyConfigScope), ScopeID: policyConfigID, Data: map[string]any{}}
+		doc = &configsvc.Document{Scope: configsvc.Scope(packs.PolicyConfigScope), ScopeID: packs.PolicyConfigID, Data: map[string]any{}}
 	}
 	if doc.Data == nil {
 		doc.Data = map[string]any{}
 	}
-	doc.Data[policyConfigKey] = target.Bundles
+	doc.Data[packs.PolicyConfigKey] = target.Bundles
 	if err := s.configSvc.Set(r.Context(), doc); err != nil {
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
 	afterSnapshot, _ := s.capturePolicyBundleSnapshotWithBundles(r.Context(), target.Bundles, body.Note)
-	_ = s.appendPolicyAudit(r.Context(), policyAuditEntry{
+	_ = s.appendPolicyAudit(r.Context(), policybundles.PolicyAuditEntry{
 		Action:         "rollback",
 		ResourceType:   "policy",
-		ActorID:        policyActorID(r),
-		Role:           policyRole(r),
+		ActorID:        policybundles.PolicyActorID(r),
+		Role:           policybundles.PolicyRole(r),
 		BundleIDs:      []string{},
 		Message:        strings.TrimSpace(body.Message),
 		SnapshotBefore: beforeSnapshot,
@@ -835,7 +837,7 @@ func (s *server) handleListPolicyAudit(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
-	filtered := make([]policyAuditEntry, 0, len(entries))
+	filtered := make([]policybundles.PolicyAuditEntry, 0, len(entries))
 	for _, entry := range entries {
 		if ruleID != "" && !strings.EqualFold(strings.TrimSpace(entry.ResourceID), ruleID) {
 			continue
@@ -975,7 +977,7 @@ func (s *server) listOutputPolicyAudit(r *http.Request, ruleID string, limit int
 		items = append(items, entry)
 	}
 	sort.Slice(items, func(i, j int) bool {
-		return stringFromAny(items[i]["created_at"]) > stringFromAny(items[j]["created_at"])
+		return policybundles.StringFromAny(items[i]["created_at"]) > policybundles.StringFromAny(items[j]["created_at"])
 	})
 	return items, nil
 }
@@ -996,9 +998,9 @@ func (s *server) handleListPolicyBundleSnapshots(w http.ResponseWriter, r *http.
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
-	items := make([]policyBundleSnapshotSummary, 0, len(snapshots))
+	items := make([]policybundles.PolicyBundleSnapshotSummary, 0, len(snapshots))
 	for _, snap := range snapshots {
-		items = append(items, policyBundleSnapshotSummary{
+		items = append(items, policybundles.PolicyBundleSnapshotSummary{
 			ID:        snap.ID,
 			CreatedAt: snap.CreatedAt,
 			Note:      snap.Note,
@@ -1023,14 +1025,14 @@ func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *htt
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
-	hash, err := hashValue(bundles)
+	hash, err := packs.HashValue(bundles)
 	if err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to hash bundles")
 		return
 	}
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	id := timestamp + "-" + hash[:10]
-	snapshot := policyBundleSnapshot{
+	snapshot := policybundles.PolicyBundleSnapshot{
 		ID:        id,
 		CreatedAt: timestamp,
 		Note:      strings.TrimSpace(body.Note),
@@ -1042,7 +1044,7 @@ func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *htt
 		writeInternalError(w, r, "policy operation", err)
 		return
 	}
-	snapshots = append([]policyBundleSnapshot{snapshot}, snapshots...)
+	snapshots = append([]policybundles.PolicyBundleSnapshot{snapshot}, snapshots...)
 	if len(snapshots) > 10 {
 		snapshots = snapshots[:10]
 	}
@@ -1051,7 +1053,7 @@ func (s *server) handleCapturePolicyBundleSnapshot(w http.ResponseWriter, r *htt
 		return
 	}
 
-	s.appendAuditEntryNamed(r.Context(), "snapshot", "policy", snapshot.ID, snapshot.ID, policyActorID(r), policyRole(r), "capture policy snapshot "+snapshot.ID)
+	s.appendAuditEntryNamed(r.Context(), "snapshot", "policy", snapshot.ID, snapshot.ID, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "capture policy snapshot "+snapshot.ID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, snapshot)
 }
@@ -1081,14 +1083,14 @@ func (s *server) handleGetPolicyBundleSnapshot(w http.ResponseWriter, r *http.Re
 }
 
 func (s *server) loadPolicyBundles(ctx context.Context) (map[string]any, string, error) {
-	doc, err := s.configSvc.Get(ctx, configsvc.Scope(policyConfigScope), policyConfigID)
+	doc, err := s.configSvc.Get(ctx, configsvc.Scope(packs.PolicyConfigScope), packs.PolicyConfigID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return map[string]any{}, "", nil
 		}
 		return nil, "", err
 	}
-	raw := normalizeJSON(doc.Data[policyConfigKey])
+	raw := packs.NormalizeJSON(doc.Data[packs.PolicyConfigKey])
 	bundles, _ := raw.(map[string]any)
 	if bundles == nil {
 		bundles = map[string]any{}
@@ -1100,32 +1102,32 @@ func (s *server) loadPolicyBundles(ctx context.Context) (map[string]any, string,
 	return bundles, updatedAt, nil
 }
 
-func (s *server) loadPolicySnapshots(ctx context.Context) ([]policyBundleSnapshot, *configsvc.Document, error) {
-	doc, err := s.configSvc.Get(ctx, configsvc.Scope(policySnapshotsScope), policySnapshotsID)
+func (s *server) loadPolicySnapshots(ctx context.Context) ([]policybundles.PolicyBundleSnapshot, *configsvc.Document, error) {
+	doc, err := s.configSvc.Get(ctx, configsvc.Scope(policybundles.PolicySnapshotsScope), policybundles.PolicySnapshotsID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return []policyBundleSnapshot{}, nil, nil
+			return []policybundles.PolicyBundleSnapshot{}, nil, nil
 		}
 		return nil, nil, err
 	}
-	raw := normalizeJSON(doc.Data[policySnapshotsKey])
+	raw := packs.NormalizeJSON(doc.Data[policybundles.PolicySnapshotsKey])
 	if raw == nil {
-		return []policyBundleSnapshot{}, doc, nil
+		return []policybundles.PolicyBundleSnapshot{}, doc, nil
 	}
 	data, err := json.Marshal(raw)
 	if err != nil {
 		return nil, nil, err
 	}
-	var snapshots []policyBundleSnapshot
+	var snapshots []policybundles.PolicyBundleSnapshot
 	if err := json.Unmarshal(data, &snapshots); err != nil {
 		return nil, nil, err
 	}
 	return snapshots, doc, nil
 }
 
-func (s *server) savePolicySnapshots(ctx context.Context, snapshots []policyBundleSnapshot, doc *configsvc.Document) error {
+func (s *server) savePolicySnapshots(ctx context.Context, snapshots []policybundles.PolicyBundleSnapshot, doc *configsvc.Document) error {
 	if doc == nil {
-		doc = &configsvc.Document{Scope: configsvc.Scope(policySnapshotsScope), ScopeID: policySnapshotsID, Data: map[string]any{}}
+		doc = &configsvc.Document{Scope: configsvc.Scope(policybundles.PolicySnapshotsScope), ScopeID: policybundles.PolicySnapshotsID, Data: map[string]any{}}
 	}
 	if doc.Data == nil {
 		doc.Data = map[string]any{}
@@ -1138,19 +1140,19 @@ func (s *server) savePolicySnapshots(ctx context.Context, snapshots []policyBund
 	if err := json.Unmarshal(payload, &data); err != nil {
 		return fmt.Errorf("policy bundle save snapshots unmarshal: %w", err)
 	}
-	doc.Data[policySnapshotsKey] = data
+	doc.Data[policybundles.PolicySnapshotsKey] = data
 	return s.configSvc.Set(ctx, doc)
 }
 
 func (s *server) loadPolicyBundlesWithDoc(ctx context.Context) (map[string]any, *configsvc.Document, error) {
-	doc, err := s.configSvc.Get(ctx, configsvc.Scope(policyConfigScope), policyConfigID)
+	doc, err := s.configSvc.Get(ctx, configsvc.Scope(packs.PolicyConfigScope), packs.PolicyConfigID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return map[string]any{}, nil, nil
 		}
 		return nil, nil, err
 	}
-	raw := normalizeJSON(doc.Data[policyConfigKey])
+	raw := packs.NormalizeJSON(doc.Data[packs.PolicyConfigKey])
 	bundles, _ := raw.(map[string]any)
 	if bundles == nil {
 		bundles = map[string]any{}
@@ -1162,17 +1164,17 @@ func (s *server) capturePolicyBundleSnapshotWithBundles(ctx context.Context, bun
 	if len(bundles) == 0 {
 		return "", nil
 	}
-	hash, err := hashValue(bundles)
+	hash, err := packs.HashValue(bundles)
 	if err != nil {
 		return "", err
 	}
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	id := timestamp + "-" + hash[:10]
-	copyBundles, ok := deepCopy(bundles).(map[string]any)
+	copyBundles, ok := packs.DeepCopy(bundles).(map[string]any)
 	if !ok || copyBundles == nil {
-		copyBundles = cloneBundleMap(bundles)
+		copyBundles = policybundles.CloneBundleMap(bundles)
 	}
-	snapshot := policyBundleSnapshot{
+	snapshot := policybundles.PolicyBundleSnapshot{
 		ID:        id,
 		CreatedAt: timestamp,
 		Note:      strings.TrimSpace(note),
@@ -1182,7 +1184,7 @@ func (s *server) capturePolicyBundleSnapshotWithBundles(ctx context.Context, bun
 	if err != nil {
 		return "", err
 	}
-	snapshots = append([]policyBundleSnapshot{snapshot}, snapshots...)
+	snapshots = append([]policybundles.PolicyBundleSnapshot{snapshot}, snapshots...)
 	if len(snapshots) > 10 {
 		snapshots = snapshots[:10]
 	}
@@ -1192,23 +1194,23 @@ func (s *server) capturePolicyBundleSnapshotWithBundles(ctx context.Context, bun
 	return id, nil
 }
 
-func (s *server) loadPolicyAudit(ctx context.Context) ([]policyAuditEntry, error) {
-	doc, err := s.configSvc.Get(ctx, configsvc.Scope(policyAuditScope), policyAuditID)
+func (s *server) loadPolicyAudit(ctx context.Context) ([]policybundles.PolicyAuditEntry, error) {
+	doc, err := s.configSvc.Get(ctx, configsvc.Scope(policybundles.PolicyAuditScope), policybundles.PolicyAuditID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return []policyAuditEntry{}, nil
+			return []policybundles.PolicyAuditEntry{}, nil
 		}
 		return nil, err
 	}
-	raw := normalizeJSON(doc.Data[policyAuditKey])
+	raw := packs.NormalizeJSON(doc.Data[policybundles.PolicyAuditKey])
 	if raw == nil {
-		return []policyAuditEntry{}, nil
+		return []policybundles.PolicyAuditEntry{}, nil
 	}
 	data, err := json.Marshal(raw)
 	if err != nil {
 		return nil, err
 	}
-	var entries []policyAuditEntry
+	var entries []policybundles.PolicyAuditEntry
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return nil, err
 	}
@@ -1216,19 +1218,19 @@ func (s *server) loadPolicyAudit(ctx context.Context) ([]policyAuditEntry, error
 	return entries, nil
 }
 
-func (s *server) appendPolicyAudit(ctx context.Context, entry policyAuditEntry) error {
-	doc, err := s.configSvc.Get(ctx, configsvc.Scope(policyAuditScope), policyAuditID)
+func (s *server) appendPolicyAudit(ctx context.Context, entry policybundles.PolicyAuditEntry) error {
+	doc, err := s.configSvc.Get(ctx, configsvc.Scope(policybundles.PolicyAuditScope), policybundles.PolicyAuditID)
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			return fmt.Errorf("policy bundle append audit get document: %w", err)
 		}
-		doc = &configsvc.Document{Scope: configsvc.Scope(policyAuditScope), ScopeID: policyAuditID, Data: map[string]any{}}
+		doc = &configsvc.Document{Scope: configsvc.Scope(policybundles.PolicyAuditScope), ScopeID: policybundles.PolicyAuditID, Data: map[string]any{}}
 	}
 	if doc.Data == nil {
 		doc.Data = map[string]any{}
 	}
-	entries := []policyAuditEntry{}
-	raw := normalizeJSON(doc.Data[policyAuditKey])
+	entries := []policybundles.PolicyAuditEntry{}
+	raw := packs.NormalizeJSON(doc.Data[policybundles.PolicyAuditKey])
 	if raw != nil {
 		if data, err := json.Marshal(raw); err == nil {
 			_ = json.Unmarshal(data, &entries)
@@ -1242,7 +1244,7 @@ func (s *server) appendPolicyAudit(ctx context.Context, entry policyAuditEntry) 
 		sum := sha256.Sum256([]byte(payload))
 		entry.ID = entry.CreatedAt + "-" + hex.EncodeToString(sum[:6])
 	}
-	entries = append([]policyAuditEntry{entry}, entries...)
+	entries = append([]policybundles.PolicyAuditEntry{entry}, entries...)
 	if len(entries) > 500 {
 		entries = entries[:500]
 	}
@@ -1254,21 +1256,21 @@ func (s *server) appendPolicyAudit(ctx context.Context, entry policyAuditEntry) 
 	if err := json.Unmarshal(payload, &data); err != nil {
 		return fmt.Errorf("policy bundle append audit unmarshal entries: %w", err)
 	}
-	doc.Data[policyAuditKey] = data
+	doc.Data[policybundles.PolicyAuditKey] = data
 	if err := s.configSvc.Set(ctx, doc); err != nil {
 		return fmt.Errorf("policy bundle append audit save document: %w", err)
 	}
 
 	// Fan-out to SIEM exporter (non-blocking) after persistence.
 	if s.auditExporter != nil {
-		s.auditExporter.Send(auditEntryToSIEM(entry, s.tenant))
+		s.auditExporter.Send(policybundles.AuditEntryToSIEM(entry, s.tenant))
 	}
 
 	return nil
 }
 
 func (s *server) appendAuditEntryNamed(ctx context.Context, action, resourceType, resourceID, resourceName, actorID, role, message string) {
-	_ = s.appendPolicyAudit(ctx, policyAuditEntry{
+	_ = s.appendPolicyAudit(ctx, policybundles.PolicyAuditEntry{
 		Action:       action,
 		ResourceType: resourceType,
 		ResourceID:   resourceID,
@@ -1282,7 +1284,7 @@ func (s *server) appendAuditEntryNamed(ctx context.Context, action, resourceType
 // appendAuditEntryWithAgent is like appendAuditEntryNamed but includes agent
 // identity fields in the audit event for SIEM export.
 func (s *server) appendAuditEntryWithAgent(ctx context.Context, action, resourceType, resourceID, resourceName, actorID, role, message, agentID, agentName, agentRiskTier string) {
-	_ = s.appendPolicyAudit(ctx, policyAuditEntry{
+	_ = s.appendPolicyAudit(ctx, policybundles.PolicyAuditEntry{
 		Action:        action,
 		ResourceType:  resourceType,
 		ResourceID:    resourceID,

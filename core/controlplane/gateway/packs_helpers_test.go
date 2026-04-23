@@ -9,6 +9,7 @@ import (
 
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	wf "github.com/cordum/cordum/core/workflow"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 )
 
 // versionMu guards mutation of the global buildinfo.Version in tests.
@@ -20,18 +21,18 @@ func TestNormalizeWorkflowMapAndHash(t *testing.T) {
 		"created_at": "ignore",
 		"updated_at": "ignore",
 	}
-	normalized := normalizeWorkflowMap(workflow)
+	normalized := packs.NormalizeWorkflowMap(workflow)
 	if _, ok := normalized["created_at"]; ok {
 		t.Fatalf("expected created_at to be removed")
 	}
 	if _, ok := normalized["updated_at"]; ok {
 		t.Fatalf("expected updated_at to be removed")
 	}
-	hash1, err := hashWorkflow(workflow)
+	hash1, err := packs.HashWorkflow(workflow)
 	if err != nil {
 		t.Fatalf("hash workflow: %v", err)
 	}
-	hash2, err := hashWorkflow(normalized)
+	hash2, err := packs.HashWorkflow(normalized)
 	if err != nil {
 		t.Fatalf("hash workflow normalized: %v", err)
 	}
@@ -41,11 +42,11 @@ func TestNormalizeWorkflowMapAndHash(t *testing.T) {
 }
 
 func TestWorkflowToMap(t *testing.T) {
-	if got := workflowToMap(nil); len(got) != 0 {
+	if got := packs.WorkflowToMap(nil); len(got) != 0 {
 		t.Fatalf("expected empty map for nil workflow")
 	}
 	workflow := &wf.Workflow{ID: "wf-2", OrgID: "org"}
-	out := workflowToMap(workflow)
+	out := packs.WorkflowToMap(workflow)
 	if out["id"] != "wf-2" {
 		t.Fatalf("expected workflow id in map: %#v", out)
 	}
@@ -58,7 +59,7 @@ func TestLoadWorkflowFileRejectsInvalidStepID(t *testing.T) {
 	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
 		t.Fatalf("write workflow: %v", err)
 	}
-	_, _, err := loadWorkflowFile(dir, "workflow.json", "pack.wf")
+	_, _, err := packs.LoadWorkflowFile(dir, "workflow.json", "pack.wf")
 	if err == nil || !strings.Contains(err.Error(), "workflow step id") {
 		t.Fatalf("expected invalid step id error, got %v", err)
 	}
@@ -69,7 +70,7 @@ func TestBuildDeletePatch(t *testing.T) {
 		"topics": map[string]any{"job.pack.topic": map[string]any{"timeout": 10}},
 		"pools":  map[string]any{"pack.pool": map[string]any{"requires": []any{"gpu"}}},
 	}
-	out := buildDeletePatch(patch)
+	out := packs.BuildDeletePatch(patch)
 	if out["topics"] == nil || out["pools"] == nil {
 		t.Fatalf("expected delete patch entries")
 	}
@@ -78,11 +79,11 @@ func TestBuildDeletePatch(t *testing.T) {
 func TestCanonicalJSONStable(t *testing.T) {
 	a := map[string]any{"b": 2, "a": 1, "list": []any{"x", "y"}}
 	b := map[string]any{"a": 1, "b": 2, "list": []any{"x", "y"}}
-	hashA, err := hashValue(a)
+	hashA, err := packs.HashValue(a)
 	if err != nil {
 		t.Fatalf("hash value: %v", err)
 	}
-	hashB, err := hashValue(b)
+	hashB, err := packs.HashValue(b)
 	if err != nil {
 		t.Fatalf("hash value: %v", err)
 	}
@@ -95,13 +96,13 @@ func TestValidateTimeoutsPatch(t *testing.T) {
 	patch := map[string]any{
 		"topics": map[string]any{"job.bad": map[string]any{}},
 	}
-	if err := validateTimeoutsPatch(patch, "pack1"); err == nil {
+	if err := packs.ValidateTimeoutsPatch(patch, "pack1"); err == nil {
 		t.Fatalf("expected namespacing error")
 	}
 	patch = map[string]any{
 		"topics": map[string]any{"job.pack1.ok": map[string]any{}},
 	}
-	if err := validateTimeoutsPatch(patch, "pack1"); err != nil {
+	if err := packs.ValidateTimeoutsPatch(patch, "pack1"); err != nil {
 		t.Fatalf("expected valid timeouts patch: %v", err)
 	}
 }
@@ -123,13 +124,13 @@ func TestNormalizeDecision(t *testing.T) {
 
 func TestPackPathHelpers(t *testing.T) {
 	dir := t.TempDir()
-	if got := isTarGz("pack.tgz"); !got {
+	if got := packs.IsTarGz("pack.tgz"); !got {
 		t.Fatalf("expected tgz suffix")
 	}
-	if got := isTarGz("pack.tar.gz"); !got {
+	if got := packs.IsTarGz("pack.tar.gz"); !got {
 		t.Fatalf("expected tar.gz suffix")
 	}
-	if isTarGz("pack.zip") {
+	if packs.IsTarGz("pack.zip") {
 		t.Fatalf("did not expect zip to match")
 	}
 
@@ -137,7 +138,7 @@ func TestPackPathHelpers(t *testing.T) {
 	if err := os.WriteFile(packPath, []byte("id: test"), 0o600); err != nil {
 		t.Fatalf("write pack.yaml: %v", err)
 	}
-	root, err := findPackRoot(dir)
+	root, err := packs.FindPackRoot(dir)
 	if err != nil || root != dir {
 		t.Fatalf("expected pack root at dir, got %s err=%v", root, err)
 	}
@@ -150,23 +151,23 @@ func TestPackPathHelpers(t *testing.T) {
 		t.Fatalf("write pack.yml: %v", err)
 	}
 	parent := filepath.Dir(nested)
-	root, err = findPackRoot(parent)
+	root, err = packs.FindPackRoot(parent)
 	if err != nil || root != nested {
 		t.Fatalf("expected nested pack root, got %s err=%v", root, err)
 	}
 }
 
 func TestSemverHelpers(t *testing.T) {
-	if _, ok := parseSemver("1"); ok {
+	if _, ok := packs.ParseSemver("1"); ok {
 		t.Fatalf("expected short semver invalid")
 	}
-	if _, ok := parseSemver("v1.2.3"); !ok {
+	if _, ok := packs.ParseSemver("v1.2.3"); !ok {
 		t.Fatalf("expected valid semver")
 	}
-	if compareSemver([3]int{1, 2, 3}, [3]int{1, 2, 4}) != -1 {
+	if packs.CompareSemver([3]int{1, 2, 3}, [3]int{1, 2, 4}) != -1 {
 		t.Fatalf("expected compare semver less")
 	}
-	if compareSemver([3]int{2, 0, 0}, [3]int{1, 9, 9}) != 1 {
+	if packs.CompareSemver([3]int{2, 0, 0}, [3]int{1, 9, 9}) != 1 {
 		t.Fatalf("expected compare semver greater")
 	}
 
@@ -178,13 +179,13 @@ func TestSemverHelpers(t *testing.T) {
 		versionMu.Unlock()
 	})
 
-	if err := ensureCoreVersionCompatible("1.3.0"); err == nil {
+	if err := packs.EnsureCoreVersionCompatible("1.3.0"); err == nil {
 		t.Fatalf("expected minCoreVersion error")
 	}
-	if err := ensureCoreVersionCompatible("1.2.0"); err != nil {
+	if err := packs.EnsureCoreVersionCompatible("1.2.0"); err != nil {
 		t.Fatalf("expected minCoreVersion ok: %v", err)
 	}
-	if err := ensureCoreVersionCompatible("bad"); err == nil {
+	if err := packs.EnsureCoreVersionCompatible("bad"); err == nil {
 		t.Fatalf("expected invalid minCoreVersion error")
 	}
 }

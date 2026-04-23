@@ -9,6 +9,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/policyshadow"
 )
@@ -34,7 +35,7 @@ func (s *server) handlePutPolicyShadow(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "policy shadow store unavailable")
 		return
 	}
-	bundleID := bundleIDFromRequest(r)
+	bundleID := policybundles.BundleIDFromRequest(r)
 	if bundleID == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "bundle id required")
 		return
@@ -50,7 +51,7 @@ func (s *server) handlePutPolicyShadow(w http.ResponseWriter, r *http.Request) {
 		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
-	content := sanitizePolicyBundleYAML(strings.TrimSpace(body.Content))
+	content := policybundles.SanitizePolicyBundleYAML(strings.TrimSpace(body.Content))
 	if content == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "content required")
 		return
@@ -67,7 +68,7 @@ func (s *server) handlePutPolicyShadow(w http.ResponseWriter, r *http.Request) {
 		BundleID:  bundleID,
 		TenantID:  tenantID,
 		Content:   content,
-		CreatedBy: policyActorID(r),
+		CreatedBy: policybundles.PolicyActorID(r),
 		Metadata:  body.Metadata,
 	}
 	stored, err := s.policyShadowStore.Put(r.Context(), sp)
@@ -100,7 +101,7 @@ func (s *server) handleGetPolicyShadow(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "policy shadow store unavailable")
 		return
 	}
-	bundleID := bundleIDFromRequest(r)
+	bundleID := policybundles.BundleIDFromRequest(r)
 	if bundleID == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "bundle id required")
 		return
@@ -133,7 +134,7 @@ func (s *server) handleDeletePolicyShadow(w http.ResponseWriter, r *http.Request
 		writeErrorJSON(w, http.StatusServiceUnavailable, "policy shadow store unavailable")
 		return
 	}
-	bundleID := bundleIDFromRequest(r)
+	bundleID := policybundles.BundleIDFromRequest(r)
 	if bundleID == "" {
 		writeErrorJSON(w, http.StatusBadRequest, "bundle id required")
 		return
@@ -193,7 +194,7 @@ func (s *server) emitShadowAuditEvent(r *http.Request, tenantID string, sp *poli
 		Severity:  audit.SeverityInfo,
 		TenantID:  tenantID,
 		Action:    action,
-		Identity:  policyActorID(r),
+		Identity:  policybundles.PolicyActorID(r),
 		Extra:     extra,
 	})
 }

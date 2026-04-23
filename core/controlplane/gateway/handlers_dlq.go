@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
@@ -114,7 +115,7 @@ func (s *server) handleDeleteDLQ(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dlqDeleteTopic, _ := s.jobStore.GetTopic(r.Context(), jobID)
-	s.appendAuditEntryNamed(r.Context(), "delete", "dlq", jobID, dlqDeleteTopic, policyActorID(r), policyRole(r), "delete dlq entry "+jobID)
+	s.appendAuditEntryNamed(r.Context(), "delete", "dlq", jobID, dlqDeleteTopic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete dlq entry "+jobID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -231,7 +232,7 @@ func (s *server) handleRetryDLQ(w http.ResponseWriter, r *http.Request) {
 		slog.Error("dlq delete after retry failed", "job_id", jobID, "error", err) // #nosec -- job id is validated and used for diagnostics.
 	}
 	dlqRetryTopic, _ := s.jobStore.GetTopic(r.Context(), jobID)
-	s.appendAuditEntryNamed(r.Context(), "retry", "dlq", jobID, dlqRetryTopic, policyActorID(r), policyRole(r), "retry dlq entry "+jobID)
+	s.appendAuditEntryNamed(r.Context(), "retry", "dlq", jobID, dlqRetryTopic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "retry dlq entry "+jobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"job_id": newJobID})
 }

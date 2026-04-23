@@ -9,6 +9,7 @@ import (
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/gateway/pools"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/redis/go-redis/v9"
@@ -154,11 +155,11 @@ func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 		"topic", req.Name,
 		"pool", req.Pool,
 		"pack_id", req.PackID,
-		"actor", policyActorID(r),
-		"role", policyRole(r),
+		"actor", policybundles.PolicyActorID(r),
+		"role", policybundles.PolicyRole(r),
 		"replaced", existing != nil,
 	)
-	s.appendAuditEntryNamed(r.Context(), "create", "topic", req.Name, req.Name, policyActorID(r), policyRole(r), "register topic "+req.Name)
+	s.appendAuditEntryNamed(r.Context(), "create", "topic", req.Name, req.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "register topic "+req.Name)
 
 	status := http.StatusCreated
 	if existing != nil {
@@ -199,10 +200,10 @@ func (s *server) handleDeleteTopic(w http.ResponseWriter, r *http.Request) {
 		"topic", name,
 		"pool", existing.Pool,
 		"pack_id", existing.PackID,
-		"actor", policyActorID(r),
-		"role", policyRole(r),
+		"actor", policybundles.PolicyActorID(r),
+		"role", policybundles.PolicyRole(r),
 	)
-	s.appendAuditEntryNamed(r.Context(), "delete", "topic", name, name, policyActorID(r), policyRole(r), "delete topic "+name)
+	s.appendAuditEntryNamed(r.Context(), "delete", "topic", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete topic "+name)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/gateway/pools"
 	"github.com/cordum/cordum/core/infra/config"
 )
@@ -186,7 +187,7 @@ func (s *server) handleCreatePool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.publishConfigChanged("system", "default")
-	s.appendAuditEntryNamed(r.Context(), "create", "pool", name, name, policyActorID(r), policyRole(r), "create pool "+name)
+	s.appendAuditEntryNamed(r.Context(), "create", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "create pool "+name)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, map[string]any{
@@ -265,7 +266,7 @@ func (s *server) handleUpdatePool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.publishConfigChanged("system", "default")
-	s.appendAuditEntryNamed(r.Context(), "update", "pool", name, name, policyActorID(r), policyRole(r), "update pool "+name)
+	s.appendAuditEntryNamed(r.Context(), "update", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "update pool "+name)
 	writeJSON(w, map[string]any{
 		"name":        name,
 		"status":      updated.EffectiveStatus(),
@@ -333,7 +334,7 @@ func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.publishConfigChanged("system", "default")
-	s.appendAuditEntryNamed(r.Context(), "delete", "pool", name, name, policyActorID(r), policyRole(r), "delete pool "+name)
+	s.appendAuditEntryNamed(r.Context(), "delete", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete pool "+name)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -406,7 +407,7 @@ func (s *server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.publishConfigChanged("system", "default")
-	s.appendAuditEntryNamed(r.Context(), "drain", "pool", name, name, policyActorID(r), policyRole(r), "drain pool "+name)
+	s.appendAuditEntryNamed(r.Context(), "drain", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "drain pool "+name)
 	writeJSON(w, map[string]any{
 		"name":                  name,
 		"status":                updated.EffectiveStatus(),
@@ -465,7 +466,7 @@ func (s *server) handleAddTopicToPool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.publishConfigChanged("system", "default")
-	s.appendAuditEntryNamed(r.Context(), "add_topic", "pool", name, name, policyActorID(r), policyRole(r),
+	s.appendAuditEntryNamed(r.Context(), "add_topic", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 		fmt.Sprintf("add topic %s to pool %s", topic, name))
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -521,7 +522,7 @@ func (s *server) handleRemoveTopicFromPool(w http.ResponseWriter, r *http.Reques
 	}
 
 	s.publishConfigChanged("system", "default")
-	s.appendAuditEntryNamed(r.Context(), "remove_topic", "pool", name, name, policyActorID(r), policyRole(r),
+	s.appendAuditEntryNamed(r.Context(), "remove_topic", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 		fmt.Sprintf("remove topic %s from pool %s", topic, name))
 	w.WriteHeader(http.StatusNoContent)
 }

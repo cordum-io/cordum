@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 )
 
 // ensureSSRFProtection makes sure the private IP check is active for these
@@ -251,8 +252,8 @@ func TestLoadMarketplaceEntriesRespectsTimeout(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	doc := &configsvc.Document{
-		Scope:   configsvc.Scope(packCatalogScope),
-		ScopeID: packCatalogID,
+		Scope:   configsvc.Scope(packs.PackCatalogScope),
+		ScopeID: packs.PackCatalogID,
 		Data: map[string]any{
 			"catalogs": []map[string]any{
 				{
@@ -268,9 +269,9 @@ func TestLoadMarketplaceEntriesRespectsTimeout(t *testing.T) {
 		t.Fatalf("set catalog config: %v", err)
 	}
 
-	origTimeout := marketplaceCatalogFetchTimeout
-	marketplaceCatalogFetchTimeout = 10 * time.Millisecond
-	t.Cleanup(func() { marketplaceCatalogFetchTimeout = origTimeout })
+	origTimeout := packs.MarketplaceCatalogFetchTimeout
+	packs.MarketplaceCatalogFetchTimeout = 10 * time.Millisecond
+	t.Cleanup(func() { packs.MarketplaceCatalogFetchTimeout = origTimeout })
 
 	statuses, entries, err := s.loadMarketplaceEntries(context.Background())
 	if err != nil {
@@ -324,12 +325,12 @@ func TestMarketplaceHTTPClient_RedirectAllowsSameHost(t *testing.T) {
 func TestMarketplaceCacheIsolation(t *testing.T) {
 	now := time.Now().UTC()
 	s := &server{
-		marketplaceCache: marketplaceCache{
-			Response: marketplaceResponse{
-				Catalogs: []marketplaceCatalogStatus{
+		marketplaceCache: packs.MarketplaceCache{
+			Response: packs.MarketplaceResponse{
+				Catalogs: []packs.MarketplaceCatalogStatus{
 					{ID: "cat-1", Title: "Catalog One", URL: "https://example.com/catalog.json", Enabled: true},
 				},
-				Items: []marketplacePackItem{
+				Items: []packs.MarketplacePackItem{
 					{
 						ID:           "pack-1",
 						Version:      "1.0.0",
@@ -353,8 +354,8 @@ func TestMarketplaceCacheIsolation(t *testing.T) {
 	first.Items[0].Capabilities[0] = "mutated"
 	first.Items[0].Requires[0] = "mutated"
 	first.Items[0].RiskTags[0] = "mutated"
-	first.Items = append(first.Items, marketplacePackItem{ID: "pack-2"})
-	first.Catalogs = append(first.Catalogs, marketplaceCatalogStatus{ID: "cat-2", URL: "https://example.com/other.json"})
+	first.Items = append(first.Items, packs.MarketplacePackItem{ID: "pack-2"})
+	first.Catalogs = append(first.Catalogs, packs.MarketplaceCatalogStatus{ID: "cat-2", URL: "https://example.com/other.json"})
 
 	second, err := s.marketplaceSnapshot(context.Background(), false)
 	if err != nil {
@@ -398,12 +399,12 @@ func TestMarketplaceCacheIsolation(t *testing.T) {
 func TestMarketplaceCacheConcurrent(t *testing.T) {
 	now := time.Now().UTC()
 	s := &server{
-		marketplaceCache: marketplaceCache{
-			Response: marketplaceResponse{
-				Catalogs: []marketplaceCatalogStatus{
+		marketplaceCache: packs.MarketplaceCache{
+			Response: packs.MarketplaceResponse{
+				Catalogs: []packs.MarketplaceCatalogStatus{
 					{ID: "cat-1", Title: "Catalog One", URL: "https://example.com/catalog.json", Enabled: true},
 				},
-				Items: []marketplacePackItem{
+				Items: []packs.MarketplacePackItem{
 					{
 						ID:           "pack-1",
 						Version:      "1.0.0",

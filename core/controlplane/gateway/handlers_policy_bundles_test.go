@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/model"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -403,7 +404,7 @@ func TestPolicyBundleSnapshotHandlers(t *testing.T) {
 	if captureRec.Code != http.StatusOK {
 		t.Fatalf("capture snapshot: %d %s", captureRec.Code, captureRec.Body.String())
 	}
-	var snap policyBundleSnapshot
+	var snap policybundles.PolicyBundleSnapshot
 	if err := json.NewDecoder(captureRec.Body).Decode(&snap); err != nil {
 		t.Fatalf("decode snapshot: %v", err)
 	}
@@ -672,7 +673,7 @@ func TestMergeSafetyPoliciesPreservesDefaultsAndOutputRules(t *testing.T) {
 		},
 	}
 
-	merged := mergeSafetyPolicies(base, extra)
+	merged := policybundles.MergeSafetyPolicies(base, extra)
 	if merged == nil {
 		t.Fatal("expected merged policy")
 	}
@@ -1026,7 +1027,7 @@ func TestListPolicyAudit_AgentIDFilter(t *testing.T) {
 	ctx := context.Background()
 
 	// Seed audit entries with different agent IDs.
-	entries := []policyAuditEntry{
+	entries := []policybundles.PolicyAuditEntry{
 		{
 			Action:    "safety.decision",
 			AgentID:   "agent-alpha",
@@ -1077,7 +1078,7 @@ func TestListPolicyAudit_AgentIDFilter(t *testing.T) {
 			t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
 		}
 		var result struct {
-			Items []policyAuditEntry `json:"items"`
+			Items []policybundles.PolicyAuditEntry `json:"items"`
 			Total int64              `json:"total"`
 		}
 		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
@@ -1104,7 +1105,7 @@ func TestListPolicyAudit_AgentIDFilter(t *testing.T) {
 			t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
 		}
 		var result struct {
-			Items []policyAuditEntry `json:"items"`
+			Items []policybundles.PolicyAuditEntry `json:"items"`
 			Total int64              `json:"total"`
 		}
 		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
@@ -1129,7 +1130,7 @@ func TestListPolicyAudit_AgentIDFilter(t *testing.T) {
 			t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
 		}
 		var result struct {
-			Items []policyAuditEntry `json:"items"`
+			Items []policybundles.PolicyAuditEntry `json:"items"`
 			Total int64              `json:"total"`
 		}
 		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
@@ -1151,7 +1152,7 @@ func TestListPolicyAudit_AgentIDFilter(t *testing.T) {
 			t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
 		}
 		var result struct {
-			Items []policyAuditEntry `json:"items"`
+			Items []policybundles.PolicyAuditEntry `json:"items"`
 			Total int64              `json:"total"`
 		}
 		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
@@ -1173,7 +1174,7 @@ func TestListPolicyAudit_AgentIDFilter(t *testing.T) {
 			t.Fatalf("expected 200, got %d %s", rec.Code, rec.Body.String())
 		}
 		var result struct {
-			Items []policyAuditEntry `json:"items"`
+			Items []policybundles.PolicyAuditEntry `json:"items"`
 			Total int64              `json:"total"`
 		}
 		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {

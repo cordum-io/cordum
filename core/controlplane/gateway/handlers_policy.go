@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -100,8 +101,8 @@ func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode 
 
 	// Audit: log every policy dry-run call for enumeration detection.
 	s.appendAuditEntryNamed(r.Context(), "policy."+mode, "policy", req.Topic,
-		req.Topic, policyActorID(r), policyRole(r),
-		"policy "+mode+" by "+policyActorID(r))
+		req.Topic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
+		"policy "+mode+" by "+policybundles.PolicyActorID(r))
 
 	// Defense in depth: redact rule internals when configured.
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("CORDUM_POLICY_EVALUATE_REDACT")), "true") && resp != nil {

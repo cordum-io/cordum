@@ -20,6 +20,8 @@ import (
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/env"
@@ -29,7 +31,7 @@ import (
 )
 
 type packInstallResponse struct {
-	packRecord
+	packs.PackRecord
 	WorkerCredential *packWorkerCredentialResponse `json:"worker_credential,omitempty"`
 }
 
@@ -51,7 +53,7 @@ func (s *server) handleListPacks(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, r, "pack operation", err)
 		return
 	}
-	items := make([]packRecord, 0, len(records))
+	items := make([]packs.PackRecord, 0, len(records))
 	for _, rec := range records {
 		items = append(items, rec)
 	}
@@ -91,8 +93,8 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPacksInstall, []string{"admin"}, s.lockStore) {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxPackUploadBytes)
-	if err := r.ParseMultipartForm(maxPackUploadBytes); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, packs.MaxPackUploadBytes)
+	if err := r.ParseMultipartForm(packs.MaxPackUploadBytes); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, "invalid multipart form")
 		return
 	}
@@ -102,26 +104,26 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = file.Close() }()
-	if header != nil && header.Filename != "" && !isTarGz(header.Filename) {
+	if header != nil && header.Filename != "" && !packs.IsTarGz(header.Filename) {
 		writeErrorJSON(w, http.StatusBadRequest, "bundle must be .tgz")
 		return
 	}
-	bundleDir, cleanup, err := loadPackBundleFromReader(file)
+	bundleDir, cleanup, err := packs.LoadPackBundleFromReader(file)
 	if err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	defer cleanup()
 
-	record, workerCredential, err := s.installPackFromDir(r.Context(), bundleDir, packInstallOptions{
+	record, workerCredential, err := s.installPackFromDir(r.Context(), bundleDir, packs.PackInstallOptions{
 		Force:       parseBool(r.FormValue("force")),
 		Upgrade:     parseBool(r.FormValue("upgrade")),
 		Inactive:    parseBool(r.FormValue("inactive")),
 		Owner:       packLockOwner(r),
-		InstalledBy: strings.TrimSpace(policyActorID(r)),
+		InstalledBy: strings.TrimSpace(policybundles.PolicyActorID(r)),
 	})
 	if err != nil {
-		var installErr *packInstallError
+		var installErr *packs.PackInstallError
 		if errors.As(err, &installErr) {
 			writeErrorJSON(w, installErr.Status, installErr.Error())
 			return
@@ -130,31 +132,31 @@ func (s *server) handleInstallPack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.appendAuditEntryNamed(r.Context(), "install", "pack", record.ID, record.Manifest.Metadata.Title, policyActorID(r), policyRole(r), "install pack "+record.ID)
+	s.appendAuditEntryNamed(r.Context(), "install", "pack", record.ID, record.Manifest.Metadata.Title, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "install pack "+record.ID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, packInstallResponse{
-		packRecord:       record,
+		PackRecord:       record,
 		WorkerCredential: workerCredential,
 	})
 }
 
-func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts packInstallOptions) (packRecord, *packWorkerCredentialResponse, error) {
+func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts packs.PackInstallOptions) (packs.PackRecord, *packWorkerCredentialResponse, error) {
 	if s == nil {
-		return packRecord{}, nil, &packInstallError{Status: http.StatusServiceUnavailable, Err: errors.New("gateway unavailable")}
+		return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusServiceUnavailable, Err: errors.New("gateway unavailable")}
 	}
-	manifest, err := loadPackManifest(bundleDir)
+	manifest, err := packs.LoadPackManifest(bundleDir)
 	if err != nil {
-		return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
+		return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
 	}
-	if err := validatePackManifest(manifest); err != nil {
-		return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
+	if err := packs.ValidatePackManifest(manifest); err != nil {
+		return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
 	}
-	if err := ensureProtocolCompatible(manifest); err != nil {
-		return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
+	if err := packs.EnsureProtocolCompatible(manifest); err != nil {
+		return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
 	}
 	if manifest.Compatibility.MinCoreVersion != "" && !opts.Force {
-		if err := ensureCoreVersionCompatible(manifest.Compatibility.MinCoreVersion); err != nil {
-			return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
+		if err := packs.EnsureCoreVersionCompatible(manifest.Compatibility.MinCoreVersion); err != nil {
+			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 	}
 
@@ -163,7 +165,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 	verifyResult, verifyErr := verifyPackInstallBundle(ctx, s.redisClient(), bundleDir, manifest.Metadata.ID)
 	if verifyErr != nil {
 		s.appendAuditEntryNamed(ctx, PackVerificationEventRejected, "pack", manifest.Metadata.ID, manifest.Metadata.Title, opts.InstalledBy, "", verifyErr.Error())
-		return packRecord{}, nil, &packInstallError{
+		return packs.PackRecord{}, nil, &packs.PackInstallError{
 			Status: http.StatusBadRequest,
 			Err:    fmt.Errorf("%s: %s", verifyErr.Code, verifyErr.Message),
 		}
@@ -175,25 +177,25 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 	}
 	release, err := acquirePackLocks(ctx, s.lockStore, manifest.Metadata.ID, owner)
 	if err != nil {
-		return packRecord{}, nil, &packInstallError{Status: http.StatusConflict, Err: err}
+		return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusConflict, Err: err}
 	}
 	defer release()
 
 	schemaPlans, err := s.planSchemas(ctx, bundleDir, manifest, opts.Upgrade)
 	if err != nil {
-		return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
+		return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
 	}
 	workflowPlans, err := s.planWorkflows(ctx, bundleDir, manifest, opts.Upgrade)
 	if err != nil {
-		return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
+		return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
 	}
 
-	appliedConfig := []packAppliedConfigOverlay{}
-	appliedPolicy := []packAppliedPolicyOverlay{}
-	appliedConfigChanges := []appliedConfigChange{}
-	appliedPolicyChanges := []appliedPolicyChange{}
-	appliedSchemas := []schemaPlan{}
-	appliedWorkflows := []workflowPlan{}
+	appliedConfig := []packs.PackAppliedConfigOverlay{}
+	appliedPolicy := []packs.PackAppliedPolicyOverlay{}
+	appliedConfigChanges := []packs.AppliedConfigChange{}
+	appliedPolicyChanges := []packs.AppliedPolicyChange{}
+	appliedSchemas := []packs.SchemaPlan{}
+	appliedWorkflows := []packs.WorkflowPlan{}
 	appliedSchemaDigests := map[string]string{}
 	appliedWorkflowDigests := map[string]string{}
 	for _, plan := range schemaPlans {
@@ -236,7 +238,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		}
 		if err := s.registerSchema(ctx, plan.ID, plan.Schema); err != nil {
 			rollback()
-			return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
+			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 		appliedSchemas = append(appliedSchemas, plan)
 	}
@@ -246,19 +248,19 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		}
 		if err := s.registerWorkflow(ctx, plan.Workflow); err != nil {
 			rollback()
-			return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
+			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 		appliedWorkflows = append(appliedWorkflows, plan)
 	}
 
 	for _, overlay := range manifest.Overlays.Config {
-		if shouldSkipConfigOverlay(opts.Inactive, overlay) {
+		if packs.ShouldSkipConfigOverlay(opts.Inactive, overlay) {
 			continue
 		}
 		applied, err := s.applyConfigOverlay(ctx, overlay, manifest.Metadata.ID, bundleDir)
 		if err != nil {
 			rollback()
-			return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
+			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 		if applied.Overlay.Name != "" {
 			appliedConfig = append(appliedConfig, applied.Overlay)
@@ -269,7 +271,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		applied, err := s.applyPolicyOverlay(ctx, overlay, manifest.Metadata.ID, manifest.Metadata.Version, bundleDir)
 		if err != nil {
 			rollback()
-			return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
+			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 		if applied.Overlay.Name != "" {
 			appliedPolicy = append(appliedPolicy, applied.Overlay)
@@ -278,27 +280,27 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 	}
 
 	status := "ACTIVE"
-	if opts.Inactive || !hasPoolOverlay(appliedConfig) {
+	if opts.Inactive || !packs.HasPoolOverlay(appliedConfig) {
 		status = "INACTIVE"
 	}
 	installedBy := strings.TrimSpace(opts.InstalledBy)
 
-	record := packRecord{
+	record := packs.PackRecord{
 		ID:          manifest.Metadata.ID,
 		Version:     manifest.Metadata.Version,
 		Status:      status,
 		InstalledAt: time.Now().UTC().Format(time.RFC3339),
 		InstalledBy: installedBy,
-		Manifest: packRecordManifest{
+		Manifest: packs.PackRecordManifest{
 			Metadata:      manifest.Metadata,
 			Compatibility: manifest.Compatibility,
 			Topics:        manifest.Topics,
 		},
-		Resources: packRecordResources{
+		Resources: packs.PackRecordResources{
 			Schemas:   appliedSchemaDigests,
 			Workflows: appliedWorkflowDigests,
 		},
-		Overlays: packRecordOverlays{
+		Overlays: packs.PackRecordOverlays{
 			Config: appliedConfig,
 			Policy: appliedPolicy,
 		},
@@ -311,11 +313,11 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		regs, err := s.packTopicRegistrations(ctx, manifest, status)
 		if err != nil {
 			rollback()
-			return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
+			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 		if err := s.topicRegistry.SetMany(ctx, regs); err != nil {
 			rollback()
-			return packRecord{}, nil, &packInstallError{Status: http.StatusInternalServerError, Err: err}
+			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusInternalServerError, Err: err}
 		}
 		for _, reg := range regs {
 			registeredTopicNames = append(registeredTopicNames, reg.Name)
@@ -324,7 +326,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		if err != nil {
 			_ = s.topicRegistry.DeleteMany(ctx, registeredTopicNames)
 			rollback()
-			return packRecord{}, nil, &packInstallError{Status: http.StatusInternalServerError, Err: err}
+			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusInternalServerError, Err: err}
 		}
 	}
 	if err := s.updatePackRegistry(ctx, record); err != nil {
@@ -335,7 +337,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 			_ = s.topicRegistry.DeleteMany(ctx, registeredTopicNames)
 		}
 		rollback()
-		return packRecord{}, nil, &packInstallError{Status: http.StatusInternalServerError, Err: err}
+		return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusInternalServerError, Err: err}
 	}
 	if len(registeredTopicNames) > 0 {
 		s.publishConfigChanged("system", "topics")
@@ -345,7 +347,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		s.publishConfigChanged("system", "workers")
 	}
 	if len(appliedPolicyChanges) > 0 {
-		s.publishConfigChanged(policyConfigScope, policyConfigID)
+		s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
 	}
 	return record, packCredential, nil
 }
@@ -445,12 +447,12 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		}
 		s.publishConfigChanged("system", "workers")
 	}
-	s.appendAuditEntryNamed(r.Context(), "uninstall", "pack", packID, rec.Manifest.Metadata.Title, policyActorID(r), policyRole(r), "uninstall pack "+packID)
+	s.appendAuditEntryNamed(r.Context(), "uninstall", "pack", packID, rec.Manifest.Metadata.Title, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "uninstall pack "+packID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, rec)
 }
 
-func (s *server) packTopicRegistrations(ctx context.Context, manifest *packManifest, packStatus string) ([]topicregistry.Registration, error) {
+func (s *server) packTopicRegistrations(ctx context.Context, manifest *packs.PackManifest, packStatus string) ([]topicregistry.Registration, error) {
 	if manifest == nil {
 		return nil, errors.New("pack manifest required")
 	}
@@ -546,9 +548,9 @@ func (s *server) handleVerifyPack(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusNotFound, "pack not installed")
 		return
 	}
-	results := make([]packVerifyResult, 0, len(rec.Tests.PolicySimulations))
+	results := make([]packs.PackVerifyResult, 0, len(rec.Tests.PolicySimulations))
 	for _, test := range rec.Tests.PolicySimulations {
-		result := packVerifyResult{Name: test.Name, Expected: normalizeDecision(test.ExpectDecision)}
+		result := packs.PackVerifyResult{Name: test.Name, Expected: normalizeDecision(test.ExpectDecision)}
 		got, reason, err := s.runPolicySimulation(r.Context(), test, packID)
 		if err != nil {
 			result.Got = "ERROR"
@@ -568,22 +570,22 @@ func (s *server) handleVerifyPack(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *server) planSchemas(ctx context.Context, dir string, manifest *packManifest, upgrade bool) ([]schemaPlan, error) {
-	plans := make([]schemaPlan, 0, len(manifest.Resources.Schemas))
+func (s *server) planSchemas(ctx context.Context, dir string, manifest *packs.PackManifest, upgrade bool) ([]packs.SchemaPlan, error) {
+	plans := make([]packs.SchemaPlan, 0, len(manifest.Resources.Schemas))
 	for _, ref := range manifest.Resources.Schemas {
-		schemaMap, digest, err := loadSchemaFile(dir, ref.Path)
+		schemaMap, digest, err := packs.LoadSchemaFile(dir, ref.Path)
 		if err != nil {
 			return nil, err
 		}
-		plan := schemaPlan{ID: ref.ID, Schema: schemaMap, Digest: digest}
+		plan := packs.SchemaPlan{ID: ref.ID, Schema: schemaMap, Digest: digest}
 		if s.schemaRegistry != nil {
 			if existing, err := s.schemaRegistry.Get(ctx, ref.ID); err == nil {
 				var existingMap map[string]any
 				if err := json.Unmarshal(existing, &existingMap); err == nil {
-					if normalized, ok := normalizeJSON(existingMap).(map[string]any); ok {
+					if normalized, ok := packs.NormalizeJSON(existingMap).(map[string]any); ok {
 						plan.Existing = normalized
 						plan.HadExisting = true
-						existingDigest, err := hashValue(plan.Existing)
+						existingDigest, err := packs.HashValue(plan.Existing)
 						if err != nil {
 							return nil, err
 						}
@@ -603,19 +605,19 @@ func (s *server) planSchemas(ctx context.Context, dir string, manifest *packMani
 	return plans, nil
 }
 
-func (s *server) planWorkflows(ctx context.Context, dir string, manifest *packManifest, upgrade bool) ([]workflowPlan, error) {
-	plans := make([]workflowPlan, 0, len(manifest.Resources.Workflows))
+func (s *server) planWorkflows(ctx context.Context, dir string, manifest *packs.PackManifest, upgrade bool) ([]packs.WorkflowPlan, error) {
+	plans := make([]packs.WorkflowPlan, 0, len(manifest.Resources.Workflows))
 	for _, ref := range manifest.Resources.Workflows {
-		workflowMap, digest, err := loadWorkflowFile(dir, ref.Path, ref.ID)
+		workflowMap, digest, err := packs.LoadWorkflowFile(dir, ref.Path, ref.ID)
 		if err != nil {
 			return nil, err
 		}
-		plan := workflowPlan{ID: ref.ID, Workflow: workflowMap, Digest: digest}
+		plan := packs.WorkflowPlan{ID: ref.ID, Workflow: workflowMap, Digest: digest}
 		existing, err := s.workflowStore.GetWorkflow(ctx, ref.ID)
 		if err == nil {
 			plan.HadExisting = true
-			plan.Existing = workflowToMap(existing)
-			existingDigest, err := hashWorkflow(plan.Existing)
+			plan.Existing = packs.WorkflowToMap(existing)
+			existingDigest, err := packs.HashWorkflow(plan.Existing)
 			if err != nil {
 				return nil, err
 			}
@@ -733,7 +735,7 @@ func (s *server) saveWorkflowRequest(ctx context.Context, req *createWorkflowReq
 	return s.workflowStore.SaveWorkflow(ctx, wfDef)
 }
 
-func (s *server) rollbackSchema(ctx context.Context, plan schemaPlan) error {
+func (s *server) rollbackSchema(ctx context.Context, plan packs.SchemaPlan) error {
 	if plan.HadExisting && plan.Existing != nil {
 		return s.registerSchema(ctx, plan.ID, plan.Existing)
 	}
@@ -743,29 +745,29 @@ func (s *server) rollbackSchema(ctx context.Context, plan schemaPlan) error {
 	return s.schemaRegistry.Delete(ctx, plan.ID)
 }
 
-func (s *server) rollbackWorkflow(ctx context.Context, plan workflowPlan) error {
+func (s *server) rollbackWorkflow(ctx context.Context, plan packs.WorkflowPlan) error {
 	if plan.HadExisting && plan.Existing != nil {
 		return s.registerWorkflow(ctx, plan.Existing)
 	}
 	return s.workflowStore.DeleteWorkflow(ctx, plan.ID)
 }
 
-func (s *server) applyConfigOverlay(ctx context.Context, overlay packConfigOverlay, packID, dir string) (appliedConfigChange, error) {
+func (s *server) applyConfigOverlay(ctx context.Context, overlay packs.PackConfigOverlay, packID, dir string) (packs.AppliedConfigChange, error) {
 	key := strings.TrimSpace(overlay.Key)
 	if key == "" {
-		return appliedConfigChange{}, errors.New("config overlay key required")
+		return packs.AppliedConfigChange{}, errors.New("config overlay key required")
 	}
 	strategy := strings.TrimSpace(overlay.Strategy)
 	if strategy != "" && strategy != "json_merge_patch" {
-		return appliedConfigChange{}, fmt.Errorf("unsupported config overlay strategy %q", strategy)
+		return packs.AppliedConfigChange{}, fmt.Errorf("unsupported config overlay strategy %q", strategy)
 	}
-	patch, err := loadPatchFile(dir, overlay.Path)
+	patch, err := packs.LoadPatchFile(dir, overlay.Path)
 	if err != nil {
-		return appliedConfigChange{}, err
+		return packs.AppliedConfigChange{}, err
 	}
 	patchMap, ok := patch.(map[string]any)
 	if !ok {
-		return appliedConfigChange{}, errors.New("config overlay patch must be a map")
+		return packs.AppliedConfigChange{}, errors.New("config overlay patch must be a map")
 	}
 	scope := strings.TrimSpace(overlay.Scope)
 	if scope == "" {
@@ -777,24 +779,24 @@ func (s *server) applyConfigOverlay(ctx context.Context, overlay packConfigOverl
 	}
 	doc, err := getConfigDoc(ctx, s.configSvc, scope, scopeID)
 	if err != nil {
-		return appliedConfigChange{}, err
+		return packs.AppliedConfigChange{}, err
 	}
 	if doc.Data == nil {
 		doc.Data = map[string]any{}
 	}
-	current := normalizeJSON(doc.Data[key])
-	if err := validateConfigPatch(key, patchMap, packID, current); err != nil {
-		return appliedConfigChange{}, err
+	current := packs.NormalizeJSON(doc.Data[key])
+	if err := packs.ValidateConfigPatch(key, patchMap, packID, current); err != nil {
+		return packs.AppliedConfigChange{}, err
 	}
-	before := deepCopy(current)
-	updated := mergePatch(current, patchMap)
+	before := packs.DeepCopy(current)
+	updated := packs.MergePatch(current, patchMap)
 	doc.Data[key] = updated
 	if err := s.configSvc.Set(ctx, doc); err != nil {
-		return appliedConfigChange{}, err
+		return packs.AppliedConfigChange{}, err
 	}
 	s.publishConfigChanged(scope, scopeID)
-	return appliedConfigChange{
-		Overlay: packAppliedConfigOverlay{
+	return packs.AppliedConfigChange{
+		Overlay: packs.PackAppliedConfigOverlay{
 			Name:    overlay.Name,
 			Scope:   scope,
 			ScopeID: scopeID,
@@ -805,7 +807,7 @@ func (s *server) applyConfigOverlay(ctx context.Context, overlay packConfigOverl
 	}, nil
 }
 
-func (s *server) removeConfigOverlay(ctx context.Context, overlay packAppliedConfigOverlay) error {
+func (s *server) removeConfigOverlay(ctx context.Context, overlay packs.PackAppliedConfigOverlay) error {
 	doc, err := getConfigDoc(ctx, s.configSvc, overlay.Scope, overlay.ScopeID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
@@ -816,12 +818,12 @@ func (s *server) removeConfigOverlay(ctx context.Context, overlay packAppliedCon
 	if doc.Data == nil {
 		return nil
 	}
-	current := normalizeJSON(doc.Data[overlay.Key])
+	current := packs.NormalizeJSON(doc.Data[overlay.Key])
 	if current == nil {
 		return nil
 	}
-	deletePatch := buildDeletePatch(overlay.Patch)
-	updated := mergePatch(current, deletePatch)
+	deletePatch := packs.BuildDeletePatch(overlay.Patch)
+	updated := packs.MergePatch(current, deletePatch)
 	doc.Data[overlay.Key] = updated
 	if err := s.configSvc.Set(ctx, doc); err != nil {
 		return err
@@ -830,7 +832,7 @@ func (s *server) removeConfigOverlay(ctx context.Context, overlay packAppliedCon
 	return nil
 }
 
-func (s *server) restoreConfigOverlay(ctx context.Context, change appliedConfigChange) error {
+func (s *server) restoreConfigOverlay(ctx context.Context, change packs.AppliedConfigChange) error {
 	overlay := change.Overlay
 	doc, err := getConfigDoc(ctx, s.configSvc, overlay.Scope, overlay.ScopeID)
 	if err != nil {
@@ -845,37 +847,37 @@ func (s *server) restoreConfigOverlay(ctx context.Context, change appliedConfigC
 	if change.Previous == nil {
 		delete(doc.Data, overlay.Key)
 	} else {
-		doc.Data[overlay.Key] = deepCopy(change.Previous)
+		doc.Data[overlay.Key] = packs.DeepCopy(change.Previous)
 	}
 	return s.configSvc.Set(ctx, doc)
 }
 
-func (s *server) applyPolicyOverlay(ctx context.Context, overlay packPolicyOverlay, packID, packVersion, dir string) (appliedPolicyChange, error) {
+func (s *server) applyPolicyOverlay(ctx context.Context, overlay packs.PackPolicyOverlay, packID, packVersion, dir string) (packs.AppliedPolicyChange, error) {
 	strategy := strings.TrimSpace(overlay.Strategy)
 	if strategy != "" && strategy != "bundle_fragment" {
-		return appliedPolicyChange{}, fmt.Errorf("unsupported policy overlay strategy %q", strategy)
+		return packs.AppliedPolicyChange{}, fmt.Errorf("unsupported policy overlay strategy %q", strategy)
 	}
-	path, err := safeJoin(dir, overlay.Path)
+	path, err := packs.SafeJoin(dir, overlay.Path)
 	if err != nil {
-		return appliedPolicyChange{}, err
+		return packs.AppliedPolicyChange{}, err
 	}
-	// #nosec G304 -- path is validated by safeJoin.
+	// #nosec G304 -- path is validated by packs.SafeJoin.
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return appliedPolicyChange{}, err
+		return packs.AppliedPolicyChange{}, err
 	}
 	fragmentID := policyFragmentID(packID, overlay.Name)
-	doc, err := getConfigDoc(ctx, s.configSvc, policyConfigScope, policyConfigID)
+	doc, err := getConfigDoc(ctx, s.configSvc, packs.PolicyConfigScope, packs.PolicyConfigID)
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
-			return appliedPolicyChange{}, err
+			return packs.AppliedPolicyChange{}, err
 		}
-		doc = &configsvc.Document{Scope: configsvc.Scope(policyConfigScope), ScopeID: policyConfigID, Data: map[string]any{}}
+		doc = &configsvc.Document{Scope: configsvc.Scope(packs.PolicyConfigScope), ScopeID: packs.PolicyConfigID, Data: map[string]any{}}
 	}
 	if doc.Data == nil {
 		doc.Data = map[string]any{}
 	}
-	rawBundles := normalizeJSON(doc.Data[policyConfigKey])
+	rawBundles := packs.NormalizeJSON(doc.Data[packs.PolicyConfigKey])
 	bundles, _ := rawBundles.(map[string]any)
 	if bundles == nil {
 		bundles = map[string]any{}
@@ -889,55 +891,55 @@ func (s *server) applyPolicyOverlay(ctx context.Context, overlay packPolicyOverl
 		"sha256":       hex.EncodeToString(sum[:]),
 		"installed_at": installedAt,
 	}
-	doc.Data[policyConfigKey] = bundles
+	doc.Data[packs.PolicyConfigKey] = bundles
 	if err := s.configSvc.Set(ctx, doc); err != nil {
-		return appliedPolicyChange{}, err
+		return packs.AppliedPolicyChange{}, err
 	}
-	s.publishConfigChanged(policyConfigScope, policyConfigID)
-	return appliedPolicyChange{
-		Overlay: packAppliedPolicyOverlay{
+	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
+	return packs.AppliedPolicyChange{
+		Overlay: packs.PackAppliedPolicyOverlay{
 			Name:       overlay.Name,
 			FragmentID: fragmentID,
 		},
-		Previous:    deepCopy(previous),
+		Previous:    packs.DeepCopy(previous),
 		HadPrevious: hadPrevious,
 	}, nil
 }
 
-func (s *server) removePolicyOverlay(ctx context.Context, overlay packAppliedPolicyOverlay) error {
-	doc, err := getConfigDoc(ctx, s.configSvc, policyConfigScope, policyConfigID)
+func (s *server) removePolicyOverlay(ctx context.Context, overlay packs.PackAppliedPolicyOverlay) error {
+	doc, err := getConfigDoc(ctx, s.configSvc, packs.PolicyConfigScope, packs.PolicyConfigID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil
 		}
 		return fmt.Errorf("remove policy overlay %s: %w", overlay.Name, err)
 	}
-	rawBundles := normalizeJSON(doc.Data[policyConfigKey])
+	rawBundles := packs.NormalizeJSON(doc.Data[packs.PolicyConfigKey])
 	bundles, ok := rawBundles.(map[string]any)
 	if !ok || bundles == nil {
 		return nil
 	}
 	delete(bundles, overlay.FragmentID)
-	doc.Data[policyConfigKey] = bundles
+	doc.Data[packs.PolicyConfigKey] = bundles
 	if err := s.configSvc.Set(ctx, doc); err != nil {
 		return err
 	}
-	s.publishConfigChanged(policyConfigScope, policyConfigID)
+	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
 	return nil
 }
 
-func (s *server) restorePolicyOverlay(ctx context.Context, change appliedPolicyChange) error {
-	doc, err := getConfigDoc(ctx, s.configSvc, policyConfigScope, policyConfigID)
+func (s *server) restorePolicyOverlay(ctx context.Context, change packs.AppliedPolicyChange) error {
+	doc, err := getConfigDoc(ctx, s.configSvc, packs.PolicyConfigScope, packs.PolicyConfigID)
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			return fmt.Errorf("restore policy overlay %s: %w", change.Overlay.Name, err)
 		}
-		doc = &configsvc.Document{Scope: configsvc.Scope(policyConfigScope), ScopeID: policyConfigID, Data: map[string]any{}}
+		doc = &configsvc.Document{Scope: configsvc.Scope(packs.PolicyConfigScope), ScopeID: packs.PolicyConfigID, Data: map[string]any{}}
 	}
 	if doc.Data == nil {
 		doc.Data = map[string]any{}
 	}
-	rawBundles := normalizeJSON(doc.Data[policyConfigKey])
+	rawBundles := packs.NormalizeJSON(doc.Data[packs.PolicyConfigKey])
 	bundles, _ := rawBundles.(map[string]any)
 	if bundles == nil {
 		bundles = map[string]any{}
@@ -945,17 +947,17 @@ func (s *server) restorePolicyOverlay(ctx context.Context, change appliedPolicyC
 	if !change.HadPrevious {
 		delete(bundles, change.Overlay.FragmentID)
 	} else {
-		bundles[change.Overlay.FragmentID] = deepCopy(change.Previous)
+		bundles[change.Overlay.FragmentID] = packs.DeepCopy(change.Previous)
 	}
-	doc.Data[policyConfigKey] = bundles
+	doc.Data[packs.PolicyConfigKey] = bundles
 	if err := s.configSvc.Set(ctx, doc); err != nil {
 		return err
 	}
-	s.publishConfigChanged(policyConfigScope, policyConfigID)
+	s.publishConfigChanged(packs.PolicyConfigScope, packs.PolicyConfigID)
 	return nil
 }
 
-func (s *server) runPolicySimulation(ctx context.Context, test packPolicySimulation, packID string) (string, string, error) {
+func (s *server) runPolicySimulation(ctx context.Context, test packs.PackPolicySimulation, packID string) (string, string, error) {
 	if test.Request.Topic == "" {
 		return "", "", fmt.Errorf("policy simulation %q missing topic", test.Name)
 	}
@@ -1021,16 +1023,16 @@ func normalizeDecision(raw string) string {
 	}
 }
 
-func (s *server) loadPackRegistry(ctx context.Context) (map[string]packRecord, *configsvc.Document, error) {
-	doc, err := s.configSvc.Get(ctx, configsvc.Scope(packRegistryScope), packRegistryID)
+func (s *server) loadPackRegistry(ctx context.Context) (map[string]packs.PackRecord, *configsvc.Document, error) {
+	doc, err := s.configSvc.Get(ctx, configsvc.Scope(packs.PackRegistryScope), packs.PackRegistryID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return map[string]packRecord{}, nil, nil
+			return map[string]packs.PackRecord{}, nil, nil
 		}
 		return nil, nil, err
 	}
-	records := map[string]packRecord{}
-	raw := normalizeJSON(doc.Data["installed"])
+	records := map[string]packs.PackRecord{}
+	raw := packs.NormalizeJSON(doc.Data["installed"])
 	if raw == nil {
 		return records, doc, nil
 	}
@@ -1044,7 +1046,7 @@ func (s *server) loadPackRegistry(ctx context.Context) (map[string]packRecord, *
 	return records, doc, nil
 }
 
-func (s *server) updatePackRegistry(ctx context.Context, record packRecord) error {
+func (s *server) updatePackRegistry(ctx context.Context, record packs.PackRecord) error {
 	records, doc, err := s.loadPackRegistry(ctx)
 	if err != nil {
 		return fmt.Errorf("update pack registry: load: %w", err)
@@ -1056,9 +1058,9 @@ func (s *server) updatePackRegistry(ctx context.Context, record packRecord) erro
 	return nil
 }
 
-func (s *server) savePackRegistry(ctx context.Context, records map[string]packRecord, doc *configsvc.Document) error {
+func (s *server) savePackRegistry(ctx context.Context, records map[string]packs.PackRecord, doc *configsvc.Document) error {
 	if doc == nil {
-		doc = &configsvc.Document{Scope: configsvc.Scope(packRegistryScope), ScopeID: packRegistryID, Data: map[string]any{}}
+		doc = &configsvc.Document{Scope: configsvc.Scope(packs.PackRegistryScope), ScopeID: packs.PackRegistryID, Data: map[string]any{}}
 	}
 	if doc.Data == nil {
 		doc.Data = map[string]any{}
@@ -1067,7 +1069,7 @@ func (s *server) savePackRegistry(ctx context.Context, records map[string]packRe
 	return s.configSvc.Set(ctx, doc)
 }
 
-func recordsToAny(records map[string]packRecord) map[string]any {
+func recordsToAny(records map[string]packs.PackRecord) map[string]any {
 	data, err := json.Marshal(records)
 	if err != nil {
 		return map[string]any{}
@@ -1175,7 +1177,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPacksInstall, []string{"admin"}, s.lockStore) {
 		return
 	}
-	var req marketplaceInstallRequest
+	var req packs.MarketplaceInstallRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
 		writeJSONDecodeError(w, err, "invalid json payload")
 		return
@@ -1196,7 +1198,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		}
 		entry, err := s.findMarketplaceEntryByURL(r.Context(), installURL)
 		if err != nil {
-			if errors.Is(err, errMarketplaceNotFound) {
+			if errors.Is(err, packs.ErrMarketplaceNotFound) {
 				writeErrorJSON(w, http.StatusNotFound, "marketplace pack not found")
 			} else {
 				slog.Error("marketplace entry lookup failed", "error", err, "url", installURL)
@@ -1214,7 +1216,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 			writeErrorJSON(w, http.StatusBadRequest, "sha256 mismatch")
 			return
 		}
-		installURL = resolvePackURL(entryURL, entry.CatalogURL)
+		installURL = packs.ResolvePackURL(entryURL, entry.CatalogURL)
 		expectedSha = entrySha
 		fromCatalog = true
 	} else {
@@ -1226,7 +1228,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		}
 		entry, err := s.findMarketplaceEntry(r.Context(), catalogID, packID, strings.TrimSpace(req.Version))
 		if err != nil {
-			if errors.Is(err, errMarketplaceNotFound) {
+			if errors.Is(err, packs.ErrMarketplaceNotFound) {
 				writeErrorJSON(w, http.StatusNotFound, "marketplace pack not found")
 			} else {
 				slog.Error("marketplace entry lookup failed", "error", err, "catalog_id", catalogID, "pack_id", packID)
@@ -1234,7 +1236,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 			}
 			return
 		}
-		installURL = resolvePackURL(strings.TrimSpace(entry.Pack.URL), entry.CatalogURL)
+		installURL = packs.ResolvePackURL(strings.TrimSpace(entry.Pack.URL), entry.CatalogURL)
 		expectedSha = strings.TrimSpace(entry.Pack.Sha256)
 		fromCatalog = true
 	}
@@ -1252,7 +1254,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 			writeErrorJSON(w, http.StatusBadRequest, "invalid pack url")
 			return
 		}
-		if host := hostFromURL(installURL); host != "" {
+		if host := packs.HostFromURL(installURL); host != "" {
 			allowedHosts[host] = struct{}{}
 		}
 	}
@@ -1280,7 +1282,7 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		writeErrorJSON(w, http.StatusInternalServerError, "pack processing failed")
 		return
 	}
-	bundleDir, cleanupDir, err := loadPackBundleFromReader(fp)
+	bundleDir, cleanupDir, err := packs.LoadPackBundleFromReader(fp)
 	_ = fp.Close()
 	if err != nil {
 		slog.Error("pack bundle load failed", "error", err)
@@ -1289,15 +1291,15 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 	}
 	defer cleanupDir()
 
-	record, workerCredential, err := s.installPackFromDir(r.Context(), bundleDir, packInstallOptions{
+	record, workerCredential, err := s.installPackFromDir(r.Context(), bundleDir, packs.PackInstallOptions{
 		Force:       req.Force,
 		Upgrade:     req.Upgrade,
 		Inactive:    req.Inactive,
 		Owner:       packLockOwner(r),
-		InstalledBy: strings.TrimSpace(policyActorID(r)),
+		InstalledBy: strings.TrimSpace(policybundles.PolicyActorID(r)),
 	})
 	if err != nil {
-		var installErr *packInstallError
+		var installErr *packs.PackInstallError
 		if errors.As(err, &installErr) {
 			writeErrorJSON(w, installErr.Status, installErr.Error())
 		} else {
@@ -1307,24 +1309,24 @@ func (s *server) handleMarketplaceInstall(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	s.appendAuditEntryNamed(r.Context(), "install", "pack", record.ID, record.Manifest.Metadata.Title, policyActorID(r), policyRole(r), "install marketplace pack "+record.ID)
+	s.appendAuditEntryNamed(r.Context(), "install", "pack", record.ID, record.Manifest.Metadata.Title, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "install marketplace pack "+record.ID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, packInstallResponse{
-		packRecord:       record,
+		PackRecord:       record,
 		WorkerCredential: workerCredential,
 	})
 }
 
-func (s *server) marketplaceSnapshot(ctx context.Context, refresh bool) (marketplaceResponse, error) {
+func (s *server) marketplaceSnapshot(ctx context.Context, refresh bool) (packs.MarketplaceResponse, error) {
 	if s == nil {
-		return marketplaceResponse{}, errors.New("marketplace unavailable")
+		return packs.MarketplaceResponse{}, errors.New("marketplace unavailable")
 	}
 	if !refresh {
 		// L1: in-memory cache (30s TTL, per-replica).
 		s.marketplaceMu.Lock()
 		cache := s.marketplaceCache
-		if !cache.FetchedAt.IsZero() && time.Since(cache.FetchedAt) < marketplaceCacheTTL {
-			resp := cloneMarketplaceResponse(cache.Response)
+		if !cache.FetchedAt.IsZero() && time.Since(cache.FetchedAt) < packs.MarketplaceCacheTTL {
+			resp := packs.CloneMarketplaceResponse(cache.Response)
 			resp.Cached = true
 			if resp.FetchedAt == "" {
 				resp.FetchedAt = cache.FetchedAt.UTC().Format(time.RFC3339)
@@ -1338,7 +1340,7 @@ func (s *server) marketplaceSnapshot(ctx context.Context, refresh bool) (marketp
 		if resp, err := s.marketplaceFromRedis(ctx); err == nil {
 			// Populate L1 from Redis hit.
 			s.marketplaceMu.Lock()
-			s.marketplaceCache = marketplaceCache{Response: resp, FetchedAt: time.Now().UTC()}
+			s.marketplaceCache = packs.MarketplaceCache{Response: resp, FetchedAt: time.Now().UTC()}
 			s.marketplaceMu.Unlock()
 			resp.Cached = true
 			return resp, nil
@@ -1348,18 +1350,18 @@ func (s *server) marketplaceSnapshot(ctx context.Context, refresh bool) (marketp
 	// L3: upstream fetch (catalogs + HTTP).
 	catalogs, entries, err := s.loadMarketplaceEntries(ctx)
 	if err != nil {
-		return marketplaceResponse{}, err
+		return packs.MarketplaceResponse{}, err
 	}
 	resp, err := s.buildMarketplaceResponse(ctx, catalogs, entries)
 	if err != nil {
-		return marketplaceResponse{}, err
+		return packs.MarketplaceResponse{}, err
 	}
 	fetchedAt := time.Now().UTC()
 	resp.FetchedAt = fetchedAt.Format(time.RFC3339)
 
 	// Populate L1.
 	s.marketplaceMu.Lock()
-	s.marketplaceCache = marketplaceCache{Response: resp, FetchedAt: fetchedAt}
+	s.marketplaceCache = packs.MarketplaceCache{Response: resp, FetchedAt: fetchedAt}
 	s.marketplaceMu.Unlock()
 
 	// Populate L2 (best-effort, don't block on failure).
@@ -1369,26 +1371,26 @@ func (s *server) marketplaceSnapshot(ctx context.Context, refresh bool) (marketp
 }
 
 // marketplaceFromRedis reads the shared marketplace cache from Redis.
-func (s *server) marketplaceFromRedis(ctx context.Context) (marketplaceResponse, error) {
+func (s *server) marketplaceFromRedis(ctx context.Context) (packs.MarketplaceResponse, error) {
 	if s.jobStore == nil {
-		return marketplaceResponse{}, errors.New("no redis client")
+		return packs.MarketplaceResponse{}, errors.New("no redis client")
 	}
 	rc := s.jobStore.Client()
 	readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	data, err := rc.Get(readCtx, marketplaceRedisCacheKey).Bytes()
+	data, err := rc.Get(readCtx, packs.MarketplaceRedisCacheKey).Bytes()
 	if err != nil {
-		return marketplaceResponse{}, err
+		return packs.MarketplaceResponse{}, err
 	}
-	var resp marketplaceResponse
+	var resp packs.MarketplaceResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return marketplaceResponse{}, err
+		return packs.MarketplaceResponse{}, err
 	}
 	return resp, nil
 }
 
 // marketplaceToRedis writes the marketplace response to the shared Redis cache.
-func (s *server) marketplaceToRedis(ctx context.Context, resp marketplaceResponse) {
+func (s *server) marketplaceToRedis(ctx context.Context, resp packs.MarketplaceResponse) {
 	if s.jobStore == nil {
 		return
 	}
@@ -1400,18 +1402,18 @@ func (s *server) marketplaceToRedis(ctx context.Context, resp marketplaceRespons
 	rc := s.jobStore.Client()
 	writeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if err := rc.Set(writeCtx, marketplaceRedisCacheKey, data, marketplaceRedisCacheTTL).Err(); err != nil {
+	if err := rc.Set(writeCtx, packs.MarketplaceRedisCacheKey, data, packs.MarketplaceRedisCacheTTL).Err(); err != nil {
 		slog.Warn("marketplace redis cache write failed", "error", err)
 	}
 }
 
-func (s *server) loadMarketplaceEntries(ctx context.Context) ([]marketplaceCatalogStatus, []marketplaceCatalogEntry, error) {
+func (s *server) loadMarketplaceEntries(ctx context.Context) ([]packs.MarketplaceCatalogStatus, []packs.MarketplaceCatalogEntry, error) {
 	catalogs, err := s.loadPackCatalogs(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	statuses := make([]marketplaceCatalogStatus, 0, len(catalogs))
-	entries := []marketplaceCatalogEntry{}
+	statuses := make([]packs.MarketplaceCatalogStatus, 0, len(catalogs))
+	entries := []packs.MarketplaceCatalogEntry{}
 	for idx, catalog := range catalogs {
 		id := strings.TrimSpace(catalog.ID)
 		if id == "" {
@@ -1421,7 +1423,7 @@ func (s *server) loadMarketplaceEntries(ctx context.Context) ([]marketplaceCatal
 		if catalog.Enabled != nil {
 			enabled = *catalog.Enabled
 		}
-		status := marketplaceCatalogStatus{
+		status := packs.MarketplaceCatalogStatus{
 			ID:      id,
 			Title:   strings.TrimSpace(catalog.Title),
 			URL:     strings.TrimSpace(catalog.URL),
@@ -1432,10 +1434,10 @@ func (s *server) loadMarketplaceEntries(ctx context.Context) ([]marketplaceCatal
 			continue
 		}
 		allowedHosts := map[string]struct{}{}
-		if host := hostFromURL(status.URL); host != "" {
+		if host := packs.HostFromURL(status.URL); host != "" {
 			allowedHosts[host] = struct{}{}
 		}
-		fetchCtx, cancel := context.WithTimeout(ctx, marketplaceCatalogFetchTimeout)
+		fetchCtx, cancel := context.WithTimeout(ctx, packs.MarketplaceCatalogFetchTimeout)
 		catalogFile, err := fetchMarketplaceCatalog(fetchCtx, status.URL, allowedHosts)
 		cancel()
 		if err != nil {
@@ -1447,7 +1449,7 @@ func (s *server) loadMarketplaceEntries(ctx context.Context) ([]marketplaceCatal
 		status.UpdatedAt = catalogFile.UpdatedAt
 		statuses = append(statuses, status)
 		for _, pack := range catalogFile.Packs {
-			entries = append(entries, marketplaceCatalogEntry{
+			entries = append(entries, packs.MarketplaceCatalogEntry{
 				Pack:         pack,
 				CatalogID:    id,
 				CatalogTitle: status.Title,
@@ -1458,11 +1460,11 @@ func (s *server) loadMarketplaceEntries(ctx context.Context) ([]marketplaceCatal
 	return statuses, entries, nil
 }
 
-func (s *server) loadPackCatalogs(ctx context.Context) ([]marketplaceCatalog, error) {
+func (s *server) loadPackCatalogs(ctx context.Context) ([]packs.MarketplaceCatalog, error) {
 	if s.configSvc == nil {
 		return nil, errors.New("marketplace configuration unavailable")
 	}
-	doc, err := s.configSvc.Get(ctx, configsvc.Scope(packCatalogScope), packCatalogID)
+	doc, err := s.configSvc.Get(ctx, configsvc.Scope(packs.PackCatalogScope), packs.PackCatalogID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil, nil
@@ -1472,18 +1474,18 @@ func (s *server) loadPackCatalogs(ctx context.Context) ([]marketplaceCatalog, er
 	if doc == nil || doc.Data == nil {
 		return nil, nil
 	}
-	payload, err := json.Marshal(normalizeJSON(doc.Data))
+	payload, err := json.Marshal(packs.NormalizeJSON(doc.Data))
 	if err != nil {
 		return nil, err
 	}
-	var cfg marketplaceCatalogConfig
+	var cfg packs.MarketplaceCatalogConfig
 	if err := json.Unmarshal(payload, &cfg); err != nil {
 		return nil, err
 	}
 	return cfg.Catalogs, nil
 }
 
-func fetchMarketplaceCatalog(ctx context.Context, catalogURL string, allowedHosts map[string]struct{}) (*marketplaceCatalogFile, error) {
+func fetchMarketplaceCatalog(ctx context.Context, catalogURL string, allowedHosts map[string]struct{}) (*packs.MarketplaceCatalogFile, error) {
 	parsed, err := validateMarketplaceURL(catalogURL, allowedHosts)
 	if err != nil {
 		return nil, err
@@ -1502,31 +1504,31 @@ func fetchMarketplaceCatalog(ctx context.Context, catalogURL string, allowedHost
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("catalog fetch failed: %s", resp.Status)
 	}
-	limit := int64(maxCatalogBytes) + 1
+	limit := int64(packs.MaxCatalogBytes) + 1
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(body)) > int64(maxCatalogBytes) {
-		return nil, fmt.Errorf("catalog exceeds max size (%d bytes)", maxCatalogBytes)
+	if int64(len(body)) > int64(packs.MaxCatalogBytes) {
+		return nil, fmt.Errorf("catalog exceeds max size (%d bytes)", packs.MaxCatalogBytes)
 	}
-	var out marketplaceCatalogFile
+	var out packs.MarketplaceCatalogFile
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
 
-func (s *server) buildMarketplaceResponse(ctx context.Context, catalogs []marketplaceCatalogStatus, entries []marketplaceCatalogEntry) (marketplaceResponse, error) {
-	records := map[string]packRecord{}
+func (s *server) buildMarketplaceResponse(ctx context.Context, catalogs []packs.MarketplaceCatalogStatus, entries []packs.MarketplaceCatalogEntry) (packs.MarketplaceResponse, error) {
+	records := map[string]packs.PackRecord{}
 	if s.configSvc != nil {
 		var err error
 		records, _, err = s.loadPackRegistry(ctx)
 		if err != nil {
-			return marketplaceResponse{}, err
+			return packs.MarketplaceResponse{}, err
 		}
 	}
-	latest := map[string]marketplaceCatalogEntry{}
+	latest := map[string]packs.MarketplaceCatalogEntry{}
 	for _, entry := range entries {
 		id := strings.TrimSpace(entry.Pack.ID)
 		version := strings.TrimSpace(entry.Pack.Version)
@@ -1536,16 +1538,16 @@ func (s *server) buildMarketplaceResponse(ctx context.Context, catalogs []market
 			continue
 		}
 		if existing, ok := latest[id]; ok {
-			if compareVersions(version, existing.Pack.Version) <= 0 {
+			if packs.CompareVersions(version, existing.Pack.Version) <= 0 {
 				continue
 			}
 		}
 		latest[id] = entry
 	}
-	items := make([]marketplacePackItem, 0, len(latest))
+	items := make([]packs.MarketplacePackItem, 0, len(latest))
 	for _, entry := range latest {
 		pack := entry.Pack
-		item := marketplacePackItem{
+		item := packs.MarketplacePackItem{
 			ID:           pack.ID,
 			Version:      pack.Version,
 			Title:        pack.Title,
@@ -1571,24 +1573,24 @@ func (s *server) buildMarketplaceResponse(ctx context.Context, catalogs []market
 		items = append(items, item)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
-	return marketplaceResponse{
+	return packs.MarketplaceResponse{
 		Catalogs: catalogs,
 		Items:    items,
 	}, nil
 }
 
-func (s *server) findMarketplaceEntry(ctx context.Context, catalogID, packID, version string) (marketplaceCatalogEntry, error) {
+func (s *server) findMarketplaceEntry(ctx context.Context, catalogID, packID, version string) (packs.MarketplaceCatalogEntry, error) {
 	catalogID = strings.TrimSpace(catalogID)
 	packID = strings.TrimSpace(packID)
 	version = strings.TrimSpace(version)
 	if packID == "" {
-		return marketplaceCatalogEntry{}, errMarketplaceNotFound
+		return packs.MarketplaceCatalogEntry{}, packs.ErrMarketplaceNotFound
 	}
 	_, entries, err := s.loadMarketplaceEntries(ctx)
 	if err != nil {
-		return marketplaceCatalogEntry{}, err
+		return packs.MarketplaceCatalogEntry{}, err
 	}
-	var best marketplaceCatalogEntry
+	var best packs.MarketplaceCatalogEntry
 	found := false
 	for _, entry := range entries {
 		if catalogID != "" && entry.CatalogID != catalogID {
@@ -1606,32 +1608,32 @@ func (s *server) findMarketplaceEntry(ctx context.Context, catalogID, packID, ve
 			}
 			return entry, nil
 		}
-		if !found || compareVersions(entry.Pack.Version, best.Pack.Version) > 0 {
+		if !found || packs.CompareVersions(entry.Pack.Version, best.Pack.Version) > 0 {
 			best = entry
 			found = true
 		}
 	}
 	if !found {
-		return marketplaceCatalogEntry{}, errMarketplaceNotFound
+		return packs.MarketplaceCatalogEntry{}, packs.ErrMarketplaceNotFound
 	}
 	return best, nil
 }
 
-func (s *server) findMarketplaceEntryByURL(ctx context.Context, rawURL string) (marketplaceCatalogEntry, error) {
+func (s *server) findMarketplaceEntryByURL(ctx context.Context, rawURL string) (packs.MarketplaceCatalogEntry, error) {
 	urlTrim := strings.TrimSpace(rawURL)
 	if urlTrim == "" {
-		return marketplaceCatalogEntry{}, errMarketplaceNotFound
+		return packs.MarketplaceCatalogEntry{}, packs.ErrMarketplaceNotFound
 	}
 	_, entries, err := s.loadMarketplaceEntries(ctx)
 	if err != nil {
-		return marketplaceCatalogEntry{}, err
+		return packs.MarketplaceCatalogEntry{}, err
 	}
 	for _, entry := range entries {
 		if strings.TrimSpace(entry.Pack.URL) == urlTrim {
 			return entry, nil
 		}
 	}
-	return marketplaceCatalogEntry{}, errMarketplaceNotFound
+	return packs.MarketplaceCatalogEntry{}, packs.ErrMarketplaceNotFound
 }
 
 func downloadPackBundle(ctx context.Context, parsed *url.URL, allowedHosts map[string]struct{}) (string, string, func(), error) {
@@ -1658,7 +1660,7 @@ func downloadPackBundle(ctx context.Context, parsed *url.URL, allowedHosts map[s
 	}
 	cleanup := func() { _ = os.Remove(tmpFile.Name()) } // #nosec G703 -- temp file path created by os.CreateTemp
 	hasher := sha256.New()
-	limit := int64(maxPackUploadBytes) + 1
+	limit := int64(packs.MaxPackUploadBytes) + 1
 	limited := &io.LimitedReader{R: resp.Body, N: limit}
 	written, err := io.Copy(io.MultiWriter(tmpFile, hasher), limited)
 	if err != nil {
@@ -1670,9 +1672,9 @@ func downloadPackBundle(ctx context.Context, parsed *url.URL, allowedHosts map[s
 		cleanup()
 		return "", "", func() {}, err
 	}
-	if written > int64(maxPackUploadBytes) {
+	if written > int64(packs.MaxPackUploadBytes) {
 		cleanup()
-		return "", "", func() {}, fmt.Errorf("pack download exceeds max size (%d bytes)", maxPackUploadBytes)
+		return "", "", func() {}, fmt.Errorf("pack download exceeds max size (%d bytes)", packs.MaxPackUploadBytes)
 	}
 	return tmpFile.Name(), hex.EncodeToString(hasher.Sum(nil)), cleanup, nil
 }
@@ -1708,11 +1710,11 @@ func isPrivateIP(host string) bool {
 	if host == "" {
 		return false
 	}
-	if privateHostnames[host] {
+	if packs.PrivateHostnames[host] {
 		return true
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		return isPrivateNet(ip)
+		return packs.IsPrivateNet(ip)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), marketplaceHTTPTimeout())
 	defer cancel()
@@ -1721,7 +1723,7 @@ func isPrivateIP(host string) bool {
 		return true
 	}
 	for _, ip := range ips {
-		if isPrivateNet(ip) {
+		if packs.IsPrivateNet(ip) {
 			return true
 		}
 	}
@@ -1756,7 +1758,7 @@ func validateMarketplaceHost(ctx context.Context, host string, allowedHosts map[
 	if skipPrivateIPCheck.Load() {
 		return resolveMarketplaceIPs(ctx, host)
 	}
-	if privateHostnames[host] {
+	if packs.PrivateHostnames[host] {
 		slog.Warn("marketplace URL blocked: private address", "host", host) // #nosec -- host is validated and used for diagnostics.
 		return nil, errors.New("invalid pack url")
 	}
@@ -1766,7 +1768,7 @@ func validateMarketplaceHost(ctx context.Context, host string, allowedHosts map[
 		return nil, errors.New("invalid pack url")
 	}
 	for _, ip := range ips {
-		if isPrivateNet(ip) {
+		if packs.IsPrivateNet(ip) {
 			slog.Warn("marketplace URL blocked: private address", "host", host, "ip", ip.String()) // #nosec -- host is validated and used for diagnostics.
 			return nil, errors.New("invalid pack url")
 		}
@@ -1787,7 +1789,7 @@ func validateMarketplaceURL(rawURL string, allowedHosts map[string]struct{}) (*u
 	case "https":
 		// ok
 	case "http":
-		if env.IsProduction() && !env.Bool(envMarketplaceAllowHTTP) {
+		if env.IsProduction() && !env.Bool(packs.EnvMarketplaceAllowHTTP) {
 			return nil, fmt.Errorf("http scheme not allowed")
 		}
 	default:
@@ -1806,12 +1808,12 @@ func validateMarketplaceURL(rawURL string, allowedHosts map[string]struct{}) (*u
 }
 
 func marketplaceHTTPTimeout() time.Duration {
-	if raw := strings.TrimSpace(os.Getenv(envMarketplaceHTTPTimeout)); raw != "" {
+	if raw := strings.TrimSpace(os.Getenv(packs.EnvMarketplaceHTTPTimeout)); raw != "" {
 		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
 			return d
 		}
 	}
-	return defaultMarketplaceHTTPTimeout
+	return packs.DefaultMarketplaceHTTPTimeout
 }
 
 func marketplaceHTTPClient(allowedHosts map[string]struct{}, initialHost string) *http.Client {
@@ -1884,18 +1886,18 @@ func (s *server) marketplaceAllowedHosts(ctx context.Context) (map[string]struct
 		return nil, err
 	}
 	if len(catalogs) == 0 {
-		disabled := strings.TrimSpace(os.Getenv(envPackCatalogDisableDefault))
+		disabled := strings.TrimSpace(os.Getenv(packs.EnvPackCatalogDisableDefault))
 		if disabled != "" {
 			switch strings.ToLower(disabled) {
 			case "1", "true", "yes":
 				return hosts, nil
 			}
 		}
-		catalogURL := strings.TrimSpace(os.Getenv(envPackCatalogURL))
+		catalogURL := strings.TrimSpace(os.Getenv(packs.EnvPackCatalogURL))
 		if catalogURL == "" {
-			catalogURL = defaultPackCatalogURL
+			catalogURL = packs.DefaultPackCatalogURL
 		}
-		if host := hostFromURL(catalogURL); host != "" {
+		if host := packs.HostFromURL(catalogURL); host != "" {
 			if isPrivateIP(host) {
 				slog.WarnContext(ctx, "skipping default catalog with private IP", "host", host)
 			} else {
@@ -1912,7 +1914,7 @@ func (s *server) marketplaceAllowedHosts(ctx context.Context) (map[string]struct
 		if !enabled {
 			continue
 		}
-		if host := hostFromURL(catalog.URL); host != "" {
+		if host := packs.HostFromURL(catalog.URL); host != "" {
 			if isPrivateIP(host) {
 				slog.WarnContext(ctx, "skipping catalog with private IP", "host", host, "url", catalog.URL)
 				continue

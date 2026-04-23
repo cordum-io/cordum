@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cordum/cordum/core/policysign"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 )
 
 // policyBundleSignatureKey is the map entry attached to a bundle when
@@ -93,10 +94,10 @@ func signatureFromMap(raw any) (policysign.Signature, bool) {
 		return policysign.Signature{}, false
 	}
 	sig := policysign.Signature{
-		Algorithm: stringFromAny(m["algorithm"]),
-		KeyID:     stringFromAny(m["key_id"]),
-		Value:     stringFromAny(m["value"]),
-		Hash:      stringFromAny(m["hash"]),
+		Algorithm: policybundles.StringFromAny(m["algorithm"]),
+		KeyID:     policybundles.StringFromAny(m["key_id"]),
+		Value:     policybundles.StringFromAny(m["value"]),
+		Hash:      policybundles.StringFromAny(m["hash"]),
 	}
 	switch v := m["signed_bytes"].(type) {
 	case int:

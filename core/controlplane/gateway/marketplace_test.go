@@ -15,13 +15,14 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 )
 
 func TestMarketplacePacks(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	ctx := context.Background()
 
-	if err := s.updatePackRegistry(ctx, packRecord{
+	if err := s.updatePackRegistry(ctx, packs.PackRecord{
 		ID:      "demo-pack",
 		Version: "0.9.0",
 		Status:  "ACTIVE",
@@ -57,9 +58,9 @@ steps:
 `,
 	})
 	sum := sha256.Sum256(packBytes)
-	catalog := marketplaceCatalogFile{
+	catalog := packs.MarketplaceCatalogFile{
 		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-		Packs: []marketplaceCatalogPack{
+		Packs: []packs.MarketplaceCatalogPack{
 			{
 				ID:          "demo-pack",
 				Version:     "1.0.0",
@@ -85,7 +86,7 @@ steps:
 	catalog.Packs[0].URL = server.URL + "/demo-pack.tgz"
 	if err := s.configSvc.Set(ctx, &configsvc.Document{
 		Scope:   configsvc.ScopeSystem,
-		ScopeID: packCatalogID,
+		ScopeID: packs.PackCatalogID,
 		Data: map[string]any{
 			"catalogs": []any{
 				map[string]any{
@@ -109,7 +110,7 @@ steps:
 		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
 	}
 
-	var resp marketplaceResponse
+	var resp packs.MarketplaceResponse
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -191,9 +192,9 @@ tenants:
 	}
 	bundle := buildTarGz(t, files)
 	sum := sha256.Sum256(bundle)
-	catalog := marketplaceCatalogFile{
+	catalog := packs.MarketplaceCatalogFile{
 		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-		Packs: []marketplaceCatalogPack{
+		Packs: []packs.MarketplaceCatalogPack{
 			{
 				ID:          "demo-pack",
 				Version:     "0.1.0",
@@ -222,7 +223,7 @@ tenants:
 	catalog.Packs[0].URL = server.URL + "/demo-pack.tgz"
 	if err := s.configSvc.Set(ctx, &configsvc.Document{
 		Scope:   configsvc.ScopeSystem,
-		ScopeID: packCatalogID,
+		ScopeID: packs.PackCatalogID,
 		Data: map[string]any{
 			"catalogs": []any{
 				map[string]any{
@@ -377,9 +378,9 @@ func TestMarketplaceDialContextRejectsPrivateIP(t *testing.T) {
 // pack entry and seeds configsvc so marketplaceSnapshot can fetch from it.
 func seedCatalogUpstream(t *testing.T, s *server) *httptest.Server {
 	t.Helper()
-	catalog := marketplaceCatalogFile{
+	catalog := packs.MarketplaceCatalogFile{
 		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-		Packs: []marketplaceCatalogPack{
+		Packs: []packs.MarketplaceCatalogPack{
 			{
 				ID:          "cache-test-pack",
 				Version:     "1.0.0",
@@ -405,7 +406,7 @@ func seedCatalogUpstream(t *testing.T, s *server) *httptest.Server {
 	ctx := context.Background()
 	if err := s.configSvc.Set(ctx, &configsvc.Document{
 		Scope:   configsvc.ScopeSystem,
-		ScopeID: packCatalogID,
+		ScopeID: packs.PackCatalogID,
 		Data: map[string]any{
 			"catalogs": []any{
 				map[string]any{
@@ -427,11 +428,11 @@ func TestMarketplaceCacheRedisHit(t *testing.T) {
 	ctx := context.Background()
 
 	// Pre-populate Redis with a cached marketplace response.
-	want := marketplaceResponse{
-		Catalogs: []marketplaceCatalogStatus{
+	want := packs.MarketplaceResponse{
+		Catalogs: []packs.MarketplaceCatalogStatus{
 			{ID: "official", URL: "https://example.com/catalog.json", Enabled: true},
 		},
-		Items: []marketplacePackItem{
+		Items: []packs.MarketplacePackItem{
 			{ID: "redis-cached-pack", Version: "2.0.0", Title: "Redis Cached"},
 		},
 		FetchedAt: time.Now().UTC().Format(time.RFC3339),
@@ -441,13 +442,13 @@ func TestMarketplaceCacheRedisHit(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	rc := s.jobStore.Client()
-	if err := rc.Set(ctx, marketplaceRedisCacheKey, data, marketplaceRedisCacheTTL).Err(); err != nil {
+	if err := rc.Set(ctx, packs.MarketplaceRedisCacheKey, data, packs.MarketplaceRedisCacheTTL).Err(); err != nil {
 		t.Fatalf("seed redis cache: %v", err)
 	}
 
 	// Ensure L1 is empty (no in-memory cache).
 	s.marketplaceMu.Lock()
-	s.marketplaceCache = marketplaceCache{}
+	s.marketplaceCache = packs.MarketplaceCache{}
 	s.marketplaceMu.Unlock()
 
 	// Call marketplaceSnapshot — should hit L2 (Redis) without calling upstream.
@@ -483,11 +484,11 @@ func TestMarketplaceCacheMiss(t *testing.T) {
 
 	// Ensure both L1 and L2 are empty.
 	s.marketplaceMu.Lock()
-	s.marketplaceCache = marketplaceCache{}
+	s.marketplaceCache = packs.MarketplaceCache{}
 	s.marketplaceMu.Unlock()
 
 	rc := s.jobStore.Client()
-	rc.Del(ctx, marketplaceRedisCacheKey)
+	rc.Del(ctx, packs.MarketplaceRedisCacheKey)
 
 	// Should fetch from upstream (L3) and populate both L1 and L2.
 	got, err := s.marketplaceSnapshot(ctx, false)
@@ -502,11 +503,11 @@ func TestMarketplaceCacheMiss(t *testing.T) {
 	}
 
 	// Verify L2 (Redis) was populated.
-	data, err := rc.Get(ctx, marketplaceRedisCacheKey).Bytes()
+	data, err := rc.Get(ctx, packs.MarketplaceRedisCacheKey).Bytes()
 	if err != nil {
 		t.Fatalf("redis cache should be populated after miss: %v", err)
 	}
-	var cached marketplaceResponse
+	var cached packs.MarketplaceResponse
 	if err := json.Unmarshal(data, &cached); err != nil {
 		t.Fatalf("unmarshal redis cache: %v", err)
 	}
@@ -524,12 +525,12 @@ func TestMarketplaceCacheRedisFallback(t *testing.T) {
 
 	// Clear L1.
 	s.marketplaceMu.Lock()
-	s.marketplaceCache = marketplaceCache{}
+	s.marketplaceCache = packs.MarketplaceCache{}
 	s.marketplaceMu.Unlock()
 
 	// Write invalid data to the Redis cache key to simulate corrupt cache.
 	rc := s.jobStore.Client()
-	rc.Set(ctx, marketplaceRedisCacheKey, "not-valid-json", marketplaceRedisCacheTTL)
+	rc.Set(ctx, packs.MarketplaceRedisCacheKey, "not-valid-json", packs.MarketplaceRedisCacheTTL)
 
 	// marketplaceSnapshot should fall through to upstream (L3) gracefully.
 	got, err := s.marketplaceSnapshot(ctx, false)
@@ -546,19 +547,19 @@ func TestMarketplaceCacheTTL(t *testing.T) {
 	ctx := context.Background()
 
 	// Write a response to Redis via the helper.
-	resp := marketplaceResponse{
-		Items:     []marketplacePackItem{{ID: "ttl-test", Version: "1.0.0"}},
+	resp := packs.MarketplaceResponse{
+		Items:     []packs.MarketplacePackItem{{ID: "ttl-test", Version: "1.0.0"}},
 		FetchedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	s.marketplaceToRedis(ctx, resp)
 
 	// Verify the key exists with a positive TTL.
 	rc := s.jobStore.Client()
-	ttl := rc.TTL(ctx, marketplaceRedisCacheKey).Val()
+	ttl := rc.TTL(ctx, packs.MarketplaceRedisCacheKey).Val()
 	if ttl <= 0 {
 		t.Fatalf("expected positive TTL, got %v", ttl)
 	}
-	// TTL should be close to marketplaceRedisCacheTTL (30min), at least > 29min.
+	// TTL should be close to packs.MarketplaceRedisCacheTTL (30min), at least > 29min.
 	if ttl < 29*time.Minute {
 		t.Fatalf("TTL too short: %v, expected ~30min", ttl)
 	}

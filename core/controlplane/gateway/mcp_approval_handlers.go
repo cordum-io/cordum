@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/model"
 	"github.com/redis/go-redis/v9"
 )
@@ -46,8 +47,8 @@ func newMCPApprovalHandler(store *MCPApprovalStore) *mcpApprovalHandler {
 	return &mcpApprovalHandler{
 		store:               store,
 		getApproverIdentity: submitterIdentity,
-		approverPrincipalID: policyActorID,
-		approverRole:        policyRole,
+		approverPrincipalID: policybundles.PolicyActorID,
+		approverRole:        policybundles.PolicyRole,
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/infra/artifacts"
@@ -29,11 +30,11 @@ import (
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/protocol/protoutil"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	oteltrace "go.opentelemetry.io/otel/trace"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -1253,7 +1254,7 @@ func (s *server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cancelTopic, _ := s.jobStore.GetTopic(r.Context(), id)
-	s.appendAuditEntryNamed(r.Context(), "cancel", "job", id, cancelTopic, policyActorID(r), policyRole(r), "cancel job "+id)
+	s.appendAuditEntryNamed(r.Context(), "cancel", "job", id, cancelTopic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "cancel job "+id)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]any{
 		"id":    id,
@@ -1335,8 +1336,8 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	newReq, ok := proto.Clone(origReq).(*pb.JobRequest)
-	if !ok || newReq == nil {
+	newReq, err := protoutil.CloneJobRequest(origReq)
+	if err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to clone job request")
 		return
 	}
@@ -1422,7 +1423,7 @@ func (s *server) handleRemediateJob(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadGateway, "failed to enqueue job")
 		return
 	}
-	s.appendAuditEntryNamed(r.Context(), "remediate", "job", newJobID, newReq.GetTopic(), policyActorID(r), policyRole(r), "remediate job "+newJobID)
+	s.appendAuditEntryNamed(r.Context(), "remediate", "job", newJobID, newReq.GetTopic(), policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "remediate job "+newJobID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{"job_id": newJobID, "trace_id": traceID})
 }
@@ -1787,7 +1788,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist denied job state")
 			return
 		}
-		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_denied", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy denied: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_denied", jobID, req.Topic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "submit-time policy denied: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		writeJSON(w, map[string]any{
@@ -1803,7 +1804,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_throttled", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy throttled: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_throttled", jobID, req.Topic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "submit-time policy throttled: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 		w.Header().Set("Retry-After", "30")
 		writeErrorJSON(w, http.StatusTooManyRequests, reason)
 		return
@@ -1942,7 +1943,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			s.syncApprovalQueueDepth(r.Context())
 		}
-		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_approval_required", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy requires approval: "+policyResult.Reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_approval_required", jobID, req.Topic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "submit-time policy requires approval: "+policyResult.Reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 
 		w.Header().Set("X-Trace-Id", traceID)
 		w.Header().Set("Content-Type", "application/json")
@@ -2115,7 +2116,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		"topic", req.Topic,
 	)
 
-	s.appendSubmitSafetyDecisionAudit(r.Context(), "submit", jobID, req.Topic, policyActorID(r), policyRole(r), "submit job "+jobID, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+	s.appendSubmitSafetyDecisionAudit(r.Context(), "submit", jobID, req.Topic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "submit job "+jobID, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 	w.Header().Set("X-Trace-Id", traceID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{

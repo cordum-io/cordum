@@ -176,11 +176,11 @@ func (s *server) handleRunEvalDataset(w http.ResponseWriter, r *http.Request) {
 			"tenant", tenant,
 			"entry_count", result.Summary.Total,
 			"regressions", result.Summary.Regressions,
-			"actor", policyActorID(r),
-			"role", policyRole(r),
+			"actor", policybundles.PolicyActorID(r),
+			"role", policybundles.PolicyRole(r),
 		)
 		s.appendAuditEntryNamed(r.Context(), "run", "eval_dataset", dataset.ID, dataset.Name,
-			policyActorID(r), policyRole(r),
+			policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 			"run eval dataset "+dataset.Name+" v"+strconv.Itoa(dataset.Version))
 		writeJSON(w, result)
 		return
@@ -222,8 +222,8 @@ func (s *server) handleRunEvalDataset(w http.ResponseWriter, r *http.Request) {
 		"dataset_id", dataset.ID,
 		"tenant", tenant,
 		"entry_count", entryCount,
-		"actor", policyActorID(r),
-		"role", policyRole(r),
+		"actor", policybundles.PolicyActorID(r),
+		"role", policybundles.PolicyRole(r),
 	)
 
 	w.WriteHeader(http.StatusAccepted)
@@ -419,7 +419,7 @@ func (s *server) handleDeleteEvalRun(w http.ResponseWriter, r *http.Request) {
 	_ = s.deleteEvalRunPending(r.Context(), tenant, runID)
 
 	s.appendAuditEntryNamed(r.Context(), "delete", "eval_run", runID, existing.DatasetName,
-		policyActorID(r), policyRole(r),
+		policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 		"force-delete eval run "+runID+" for dataset "+existing.DatasetName)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -485,14 +485,14 @@ func (s *server) loadEvalRunPolicy(ctx context.Context, req runEvalDatasetReques
 		return nil, "", fmt.Errorf("load policy bundles: %w", err)
 	}
 	if req.UseCurrentPolicy {
-		policy, snapshot, err := buildPolicyFromBundles(bundles)
+		policy, snapshot, err := policybundles.BuildPolicyFromBundles(bundles)
 		if err != nil {
 			return nil, "", fmt.Errorf("current policy invalid: %w", err)
 		}
 		return policy, snapshot, nil
 	}
 
-	working := cloneBundleMap(bundles)
+	working := policybundles.CloneBundleMap(bundles)
 	if req.CandidateContent != "" {
 		bundleID := req.CandidateBundleID
 		if bundleID == "" {
@@ -503,7 +503,7 @@ func (s *server) loadEvalRunPolicy(ctx context.Context, req runEvalDatasetReques
 			"enabled": true,
 		}
 	}
-	policy, snapshot, err := buildPolicyFromBundles(working)
+	policy, snapshot, err := policybundles.BuildPolicyFromBundles(working)
 	if err != nil {
 		return nil, "", fmt.Errorf("candidate policy invalid: %w", err)
 	}
