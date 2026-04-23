@@ -68,6 +68,7 @@ type Metrics interface {
 	IncJobLockAbandoned()
 	IncResultPtrWriteFailure()
 	IncDispatchRollback(topic string)
+	IncDispatchFlushOnWorkerOnline(pool string)
 }
 
 // GatewayMetrics captures request metrics for the API gateway.
@@ -127,6 +128,7 @@ func (Noop) IncInputFailOpen(string)                           {}
 func (Noop) IncJobLockAbandoned()                              {}
 func (Noop) IncResultPtrWriteFailure()                         {}
 func (Noop) IncDispatchRollback(string)                        {}
+func (Noop) IncDispatchFlushOnWorkerOnline(string)             {}
 
 // NoopApproval implements ApprovalMetrics without emitting anything.
 type NoopApproval struct{}
@@ -171,6 +173,7 @@ type Prom struct {
 	jobLockAbandoned        prometheus.Counter
 	resultPtrWriteFailure   prometheus.Counter
 	dispatchRollback        *prometheus.CounterVec
+	dispatchFlushOnOnline   *prometheus.CounterVec
 	once                    sync.Once
 }
 
@@ -346,6 +349,13 @@ func NewProm(namespace string) *Prom {
 			Name:      "scheduler_dispatch_rollback_total",
 			Help:      "Dispatch rollbacks after NATS publish failure",
 		}, []string{"topic"}),
+		dispatchFlushOnOnline: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: namespace,
+			Name:      "scheduler_dispatch_flush_on_worker_online_total",
+			Help: "Dispatch flushes triggered by a worker offline→online " +
+				"heartbeat transition that resulted in at least one " +
+				"pending job being dispatched. Counts per pool.",
+		}, []string{"pool"}),
 	}
 	p.register()
 	return p
@@ -387,6 +397,7 @@ func (p *Prom) register() {
 			p.jobLockAbandoned,
 			p.resultPtrWriteFailure,
 			p.dispatchRollback,
+			p.dispatchFlushOnOnline,
 		)
 	})
 }
@@ -531,6 +542,10 @@ func (p *Prom) IncJobLockAbandoned() {
 
 func (p *Prom) IncResultPtrWriteFailure() {
 	p.resultPtrWriteFailure.Inc()
+}
+
+func (p *Prom) IncDispatchFlushOnWorkerOnline(pool string) {
+	p.dispatchFlushOnOnline.WithLabelValues(pool).Inc()
 }
 
 func (p *Prom) IncDispatchRollback(topic string) {

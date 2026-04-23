@@ -197,6 +197,7 @@ func (m *spyMetrics) IncInputFailOpen(string)                           {}
 func (m *spyMetrics) IncJobLockAbandoned()                              {}
 func (m *spyMetrics) IncResultPtrWriteFailure()                         {}
 func (m *spyMetrics) IncDispatchRollback(string)                        {}
+func (m *spyMetrics) IncDispatchFlushOnWorkerOnline(string)             {}
 func (m *spyMetrics) IncOrphanReplayed(topic string) {
 	m.mu.Lock()
 	m.orphanReplayed[topic]++

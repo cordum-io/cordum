@@ -66,6 +66,37 @@ func (r *MemoryRegistry) UpdateHeartbeat(hb *pb.Heartbeat) {
 	r.workers[hb.WorkerId] = &workerEntry{hb: hb, lastSeen: now}
 }
 
+// UpdateHeartbeatWithTransition upserts the heartbeat and reports whether
+// this heartbeat marks an OFFLINE→ONLINE transition. True when (a) no
+// prior entry exists, or (b) the prior entry's lastSeen age exceeds the
+// registry TTL (i.e., the worker was effectively offline before this
+// heartbeat). Callers use this signal to flush pending dispatch on
+// scale-from-zero or fleet-rolling-restart without waiting for the next
+// poll tick.
+//
+// The method is intentionally scoped to the concrete MemoryRegistry
+// type rather than the WorkerRegistry interface. The engine type-
+// asserts at the call site so existing test mocks (panicRegistry et al.)
+// that only implement the legacy interface keep compiling.
+func (r *MemoryRegistry) UpdateHeartbeatWithTransition(hb *pb.Heartbeat) bool {
+	if hb == nil {
+		return false
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	entry, ok := r.workers[hb.WorkerId]
+	wasOffline := !ok || now.Sub(entry.lastSeen) > r.ttl
+	if ok {
+		entry.hb = hb
+		entry.lastSeen = now
+	} else {
+		r.workers[hb.WorkerId] = &workerEntry{hb: hb, lastSeen: now}
+	}
+	return wasOffline
+}
+
 func (r *MemoryRegistry) UpdateHandshake(hs *pb.Handshake) {
 	if hs == nil || hs.ComponentId == "" {
 		return

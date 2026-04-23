@@ -115,6 +115,11 @@ type Engine struct {
 	cancel                  context.CancelFunc
 	traceCtxMu              sync.Mutex
 	lastTraceCtx            context.Context
+	flushLatch              flushLatch // per-pool in-flight guard for flush-on-worker-online (task-7a2514ae)
+	// flushDispatchFn can be swapped by tests via WithFlushDispatchFn. When
+	// nil, the default defaultFlushDispatchForPool runs. The function
+	// returns the number of pending jobs it dispatched.
+	flushDispatchFn func(ctx context.Context, pool, traceID string) int
 }
 
 func jobLockKey(jobID string) string {
@@ -474,6 +479,16 @@ func (e *Engine) WithInputFailMode(mode string) *Engine {
 	return e
 }
 
+// WithFlushDispatchFn replaces the default flush-on-worker-online
+// dispatch function. Used by tests to intercept the flush pipeline
+// without exercising the full dispatch stack. The function signature
+// is (ctx, pool, traceID) → dispatched-count; a nil fn restores the
+// default (defaultFlushDispatchForPool). See task-7a2514ae.
+func (e *Engine) WithFlushDispatchFn(fn func(ctx context.Context, pool, traceID string) int) *Engine {
+	e.flushDispatchFn = fn
+	return e
+}
+
 func (e *Engine) isInputFailOpen() bool {
 	return e.inputFailOpen.Load()
 }
@@ -785,7 +800,14 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 			"active_jobs", hb.ActiveJobs,
 			"pool", hb.Pool,
 		)
-		e.registry.UpdateHeartbeat(hb)
+		isOnlineTransition := false
+		if r, ok := e.registry.(interface {
+			UpdateHeartbeatWithTransition(*pb.Heartbeat) bool
+		}); ok {
+			isOnlineTransition = r.UpdateHeartbeatWithTransition(hb)
+		} else {
+			e.registry.UpdateHeartbeat(hb)
+		}
 		if e.trustMetrics != nil {
 			e.trustMetrics.ObserveHeartbeat(hb)
 		}
@@ -793,6 +815,11 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 			ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
 			e.persistWorkerCount(ctx)
 			cancel()
+		}
+		if isOnlineTransition {
+			if pool := strings.TrimSpace(hb.GetPool()); pool != "" {
+				e.scheduleFlushOnWorkerOnline(pool, hb.GetWorkerId(), p.GetTraceId())
+			}
 		}
 		return nil
 	case *pb.BusPacket_JobRequest:
@@ -3101,3 +3128,155 @@ func extractWorkerFromSubject(subject string) string {
 	}
 	return strings.TrimSuffix(strings.TrimPrefix(subject, "worker."), ".jobs")
 }
+
+// scheduleFlushOnWorkerOnline kicks off a non-blocking flush of any
+// pending-dispatch jobs for the worker's pool after the scheduler
+// detects an offline→online transition (task-7a2514ae). The flush
+// runs on a tracked goroutine (e.wg) so a subsequent Stop() drains
+// cleanly. A per-pool latch collapses concurrent heartbeats from a
+// freshly-scaled fleet into a single flush per pool.
+//
+// The metric is intentionally only incremented when real dispatch
+// work occurred — observability wants "how often does scale-from-zero
+// actually unlock queued jobs", not "how often did we attempt to
+// look". The INFO log always fires so operators can count attempts
+// too.
+func (e *Engine) scheduleFlushOnWorkerOnline(pool, workerID, traceID string) {
+	if e == nil || pool == "" {
+		return
+	}
+	if e.stopped.Load() {
+		return
+	}
+	if !e.flushLatch.acquire(pool) {
+		return
+	}
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		defer e.flushLatch.release(pool)
+
+		ctx := e.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+
+		flushFn := e.flushDispatchFn
+		if flushFn == nil {
+			flushFn = e.defaultFlushDispatchForPool
+		}
+		dispatched := flushFn(ctx, pool, traceID)
+
+		if dispatched > 0 && e.metrics != nil {
+			e.metrics.IncDispatchFlushOnWorkerOnline(pool)
+		}
+		slog.Info("flush on worker online",
+			"pool", pool,
+			"worker_id", workerID,
+			"dispatched", dispatched,
+			"trace_id", traceID,
+		)
+	}()
+}
+
+// defaultFlushDispatchForPool is the production implementation of the
+// flush-on-worker-online dispatch step. Lists pending and scheduled
+// jobs from the job store, filters to the requested pool by topic
+// match (strategies route by topic and a worker's pool drives the
+// eligible-topic set), and replays each through e.handleJobRequest —
+// the same entry point PendingReplayer uses for its poll-tick scans.
+// Returns the number of jobs successfully re-dispatched.
+func (e *Engine) defaultFlushDispatchForPool(ctx context.Context, pool, traceID string) int {
+	if e == nil || e.jobStore == nil || pool == "" {
+		return 0
+	}
+
+	cutoffMicros := time.Now().Add(-defaultFlushLookback).UnixNano() / int64(time.Microsecond)
+	states := []JobState{JobStatePending, JobStateScheduled}
+	dispatched := 0
+	for _, state := range states {
+		if ctx.Err() != nil {
+			return dispatched
+		}
+		records, err := e.jobStore.ListJobsByState(ctx, state, cutoffMicros, defaultFlushBatchSize)
+		if err != nil {
+			slog.Warn("flush on worker online: list jobs failed",
+				"pool", pool,
+				"state", state,
+				"trace_id", traceID,
+				"error", err,
+			)
+			continue
+		}
+		for _, rec := range records {
+			if ctx.Err() != nil {
+				return dispatched
+			}
+			getter, ok := e.jobStore.(interface {
+				GetJobRequest(context.Context, string) (*pb.JobRequest, error)
+			})
+			if !ok {
+				return dispatched
+			}
+			req, err := getter.GetJobRequest(ctx, rec.ID)
+			if err != nil || req == nil {
+				continue
+			}
+			if !reqBelongsToPool(req, pool) {
+				continue
+			}
+			if err := e.handleJobRequest(req, rec.TraceID); err != nil {
+				slog.Warn("flush on worker online: replay failed",
+					"pool", pool,
+					"job_id", rec.ID,
+					"trace_id", traceID,
+					"error", err,
+				)
+				continue
+			}
+			dispatched++
+		}
+	}
+	return dispatched
+}
+
+// reqBelongsToPool reports whether a job request is addressed to the
+// given pool. Callers can tag a request with a "pool" label (simple,
+// explicit) OR a "target_pool" label. Requests without a pool label
+// fall back to the topic prefix check: workers by convention
+// advertise pool="X" and subscribe to "job.X.*", so any req whose
+// topic starts with "job.<pool>." is considered pool-addressed.
+// Requests with a non-matching explicit pool label are rejected even
+// if the topic prefix would match, so operators can disambiguate
+// cross-pool topic reuse.
+func reqBelongsToPool(req *pb.JobRequest, pool string) bool {
+	if req == nil || pool == "" {
+		return false
+	}
+	if labels := req.GetLabels(); labels != nil {
+		if explicit := strings.TrimSpace(labels["pool"]); explicit != "" {
+			return explicit == pool
+		}
+		if explicit := strings.TrimSpace(labels["target_pool"]); explicit != "" {
+			return explicit == pool
+		}
+	}
+	topic := strings.TrimSpace(req.GetTopic())
+	if topic == "" {
+		return false
+	}
+	return strings.HasPrefix(topic, "job."+pool+".") || topic == "job."+pool
+}
+
+const (
+	// defaultFlushLookback bounds how far back ListJobsByState looks
+	// when flushing pending-dispatch after a worker-online transition.
+	// Five minutes matches the original incident window (the 5-min
+	// dispatch lag observed on 2026-04-22) — any job older than that
+	// is already in the PendingReplayer's steady-state range.
+	defaultFlushLookback = 5 * time.Minute
+	// defaultFlushBatchSize caps each ListJobsByState call. Matches
+	// the PendingReplayer batch size so flush and replay pressure on
+	// the store are comparable.
+	defaultFlushBatchSize = 200
+)

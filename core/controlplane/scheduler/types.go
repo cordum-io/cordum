@@ -121,6 +121,11 @@ type Metrics interface {
 	IncJobLockAbandoned()
 	IncResultPtrWriteFailure()
 	IncDispatchRollback(topic string)
+	// IncDispatchFlushOnWorkerOnline counts flush-on-worker-online
+	// invocations that dispatched at least one pending job. See
+	// task-7a2514ae. Emits the cordum_scheduler_dispatch_flush_on_worker_online_total
+	// counter in the Prom backend.
+	IncDispatchFlushOnWorkerOnline(pool string)
 }
 
 // SagaMetrics captures metrics for saga rollbacks and compensation handling.

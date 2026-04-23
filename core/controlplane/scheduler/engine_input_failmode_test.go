@@ -54,6 +54,7 @@ func (m *inputFailOpenSpy) IncValidationRejections()                          {}
 func (m *inputFailOpenSpy) IncJobLockAbandoned()                              {}
 func (m *inputFailOpenSpy) IncResultPtrWriteFailure()                         {}
 func (m *inputFailOpenSpy) IncDispatchRollback(string)                        {}
+func (m *inputFailOpenSpy) IncDispatchFlushOnWorkerOnline(string)             {}
 func (m *inputFailOpenSpy) IncInputFailOpen(topic string) {
 	m.mu.Lock()
 	m.failOpenCalls[topic]++

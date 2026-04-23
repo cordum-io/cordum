@@ -24,6 +24,7 @@ import (
 	"time"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // staleHeartbeatSince rewinds every worker's lastSeen past the TTL
@@ -230,4 +231,73 @@ func TestHeartbeatDemotion_ModeFlipFlipsOutcome(t *testing.T) {
 	if _, ok := outTel["w-flip"]; !ok {
 		t.Fatalf("telemetry mode must admit; got %+v", outTel)
 	}
+}
+
+// TestHeartbeatFlushOnOnlineTransition_DispatchesPendingJobs pins the
+// end-to-end behavior task-7a2514ae is introduced to fix. Before: a
+// pending job enqueued BEFORE any worker is online waited for the
+// next poll tick (up to 5 minutes in prod). After: the scheduler
+// sees the worker's first heartbeat as an offline→online transition
+// and flushes pending dispatch for that pool immediately.
+//
+// This is the integration-tagged variant that exercises the REAL
+// flushDispatchForPool (no flushSpy) against a fakeBus + fakeJobStore
+// with a pending job. The unit coverage in engine_flush_on_online_test.go
+// uses a flushSpy for fine-grained assertions on the flush pipeline;
+// this test is belt-and-suspenders proof the two sides are wired
+// correctly in production.
+func TestHeartbeatFlushOnOnlineTransition_DispatchesPendingJobs(t *testing.T) {
+	reg := NewMemoryRegistry()
+	defer reg.Close()
+
+	bus := &fakeBus{}
+	store := newFakeJobStore()
+	engine := NewEngine(bus, NewSafetyBasic(), reg, NewNaiveStrategy(), store, nil)
+
+	// Enqueue a pending job for pool "integration" BEFORE the worker
+	// comes online — this is the exact ordering that originally
+	// produced the 5-minute stall.
+	req := &pb.JobRequest{
+		JobId:  "job-integration-1",
+		Topic:  "job.integration",
+		Labels: map[string]string{"pool": "integration"},
+	}
+	if err := store.SetJobRequest(context.Background(), req); err != nil {
+		t.Fatalf("set job request: %v", err)
+	}
+	if err := store.SetState(context.Background(), req.JobId, JobStatePending); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+
+	// First heartbeat for this worker → offline→online transition →
+	// scheduler flushes pending dispatch for pool "integration".
+	packet := &pb.BusPacket{
+		SenderId:  "worker-integration",
+		TraceId:   "trace-integration",
+		CreatedAt: timestamppb.Now(),
+		Payload: &pb.BusPacket_Heartbeat{
+			Heartbeat: &pb.Heartbeat{
+				WorkerId: "worker-integration",
+				Pool:     "integration",
+				Type:     "cpu",
+			},
+		},
+	}
+	if err := engine.HandlePacket(packet); err != nil {
+		t.Fatalf("handle heartbeat: %v", err)
+	}
+
+	// Condition-based wait: the flush runs on a goroutine, so poll the
+	// bus for the dispatched job. No wall-clock sleep-and-hope.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		pubs := bus.snapshotPublished()
+		for _, p := range pubs {
+			if p.subject == "job.integration" {
+				return // success
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("pending job was not flush-dispatched within 500ms; bus publications=%+v", bus.snapshotPublished())
 }

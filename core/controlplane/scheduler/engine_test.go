@@ -2196,6 +2196,7 @@ func (m *cancelMetricsSpy) IncInputFailOpen(string)                           {}
 func (m *cancelMetricsSpy) IncJobLockAbandoned()                              {}
 func (m *cancelMetricsSpy) IncResultPtrWriteFailure()                         {}
 func (m *cancelMetricsSpy) IncDispatchRollback(string)                        {}
+func (m *cancelMetricsSpy) IncDispatchFlushOnWorkerOnline(string)             {}
 
 func TestHandlePacket_CancelJob_ErrorPropagates(t *testing.T) {
 	store := &failCancelJobStore{
