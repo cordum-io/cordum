@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,15 +12,14 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/infra/bus"
-	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/protocol/reqhash"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -164,59 +161,14 @@ func normalizeTimestampMicrosUpper(ts int64) int64 {
 	}
 }
 
-// hashApprovalJobRequest computes the store-side canonical hash of
-// a JobRequest for approval-repair classification. It must match
-// scheduler.HashJobRequest (core/controlplane/scheduler/job_hash.go)
-// byte-for-byte on any logically-equivalent input — approval_*
-// labels, bus.LabelBusMsgID, config.EffectiveConfigEnvVar, and proto
-// unknown fields are all stripped so the scheduler's in-memory hash
-// agrees with the reconciler's later re-hash of the Redis-stored
-// request.
-//
-// The protojson roundtrip below is load-bearing: without it, an
-// in-memory proto carrying forward-compat unknown fields (from a
-// newer SDK) would hash differently here than scheduler.HashJobRequest
-// does, and the reconciler's drift-detection would trip StaleRequest
-// on a benign approval. See task-fa783d7a (unification follow-up).
+// hashApprovalJobRequest forwards to reqhash.Hash, the repo-wide
+// canonicaliser for JobRequest. Retained as a package-local alias so
+// store callers and the existing store_test.go suite keep compiling
+// without churn. Behaviour is byte-identical to scheduler.HashJobRequest
+// by construction (both forward to reqhash.Hash). See task-090ab6af
+// for the unification history.
 func hashApprovalJobRequest(req *pb.JobRequest) (string, error) {
-	if req == nil {
-		return "", fmt.Errorf("job request required")
-	}
-	clone, ok := proto.Clone(req).(*pb.JobRequest)
-	if !ok || clone == nil {
-		return "", fmt.Errorf("job request clone failed")
-	}
-	if clone.Labels != nil {
-		for key := range clone.Labels {
-			lower := strings.ToLower(key)
-			if strings.HasPrefix(lower, "approval_") || key == bus.LabelBusMsgID {
-				delete(clone.Labels, key)
-			}
-		}
-		if len(clone.Labels) == 0 {
-			clone.Labels = nil
-		}
-	}
-	if clone.Env != nil {
-		delete(clone.Env, config.EffectiveConfigEnvVar)
-		if len(clone.Env) == 0 {
-			clone.Env = nil
-		}
-	}
-	raw, err := protojson.MarshalOptions{EmitUnpopulated: true}.Marshal(clone)
-	if err != nil {
-		return "", fmt.Errorf("canonical job request marshal: %w", err)
-	}
-	canonical := &pb.JobRequest{}
-	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, canonical); err != nil {
-		return "", fmt.Errorf("canonical job request unmarshal: %w", err)
-	}
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(canonical)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	return reqhash.Hash(req)
 }
 
 // RedisJobStore implements model.JobStore backed by Redis.
