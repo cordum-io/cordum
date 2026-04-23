@@ -72,7 +72,7 @@ if [[ -z "${REDIS_URL}" ]]; then
   if [[ -n "${TLS_CA}" ]]; then
     REDIS_URL="rediss://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379/0"
   else
-    REDIS_URL="redis://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379"
+    REDIS_URL="redis://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379/0"
   fi
 fi
 

@@ -200,7 +200,8 @@ describe("InputSafetySettings page", () => {
       const liveSaveButton = Array.from(view.container.querySelectorAll("button")).find((btn) =>
         btn.textContent?.includes("Save Input Safety Settings"),
       ) as HTMLButtonElement | undefined;
-      liveSaveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      expect(liveSaveButton).toBeTruthy();
+      liveSaveButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     await view.waitFor(() => {
