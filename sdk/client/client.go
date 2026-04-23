@@ -799,7 +799,7 @@ func (c *Client) ListPools(ctx context.Context) ([]PoolItem, error) {
 	var resp struct {
 		Items []PoolItem `json:"items"`
 	}
-	if err := c.doJSON(ctx, "GET", "/pools", nil, &resp); err != nil {
+	if err := c.doJSON(ctx, "GET", "/api/v1/pools", nil, &resp); err != nil {
 		return nil, err
 	}
 	return resp.Items, nil
@@ -807,22 +807,22 @@ func (c *Client) ListPools(ctx context.Context) ([]PoolItem, error) {
 
 func (c *Client) GetPool(ctx context.Context, name string) (*PoolDetail, error) {
 	var pool PoolDetail
-	if err := c.doJSON(ctx, "GET", "/pools/"+name, nil, &pool); err != nil {
+	if err := c.doJSON(ctx, "GET", "/api/v1/pools/"+escapePathSegment(name), nil, &pool); err != nil {
 		return nil, err
 	}
 	return &pool, nil
 }
 
 func (c *Client) CreatePool(ctx context.Context, name string, req *PoolCreateRequest) error {
-	return c.doJSON(ctx, "PUT", "/pools/"+name, req, nil)
+	return c.doJSON(ctx, "PUT", "/api/v1/pools/"+escapePathSegment(name), req, nil)
 }
 
 func (c *Client) UpdatePool(ctx context.Context, name string, req *PoolUpdateRequest) error {
-	return c.doJSON(ctx, "PATCH", "/pools/"+name, req, nil)
+	return c.doJSON(ctx, "PATCH", "/api/v1/pools/"+escapePathSegment(name), req, nil)
 }
 
 func (c *Client) DeletePool(ctx context.Context, name string, force bool) error {
-	path := "/pools/" + name
+	path := "/api/v1/pools/" + escapePathSegment(name)
 	if force {
 		path += "?force=true"
 	}
@@ -830,15 +830,15 @@ func (c *Client) DeletePool(ctx context.Context, name string, force bool) error 
 }
 
 func (c *Client) DrainPool(ctx context.Context, name string, req *PoolDrainRequest) error {
-	return c.doJSON(ctx, "POST", "/pools/"+name+"/drain", req, nil)
+	return c.doJSON(ctx, "POST", "/api/v1/pools/"+escapePathSegment(name)+"/drain", req, nil)
 }
 
 func (c *Client) AddTopicToPool(ctx context.Context, pool, topic string) error {
-	return c.doJSON(ctx, "PUT", "/pools/"+pool+"/topics/"+topic, nil, nil)
+	return c.doJSON(ctx, "PUT", "/api/v1/pools/"+escapePathSegment(pool)+"/topics/"+escapePathSegment(topic), nil, nil)
 }
 
 func (c *Client) RemoveTopicFromPool(ctx context.Context, pool, topic string) error {
-	return c.doJSON(ctx, "DELETE", "/pools/"+pool+"/topics/"+topic, nil, nil)
+	return c.doJSON(ctx, "DELETE", "/api/v1/pools/"+escapePathSegment(pool)+"/topics/"+escapePathSegment(topic), nil, nil)
 }
 
 // AuditVerifyGap mirrors the gateway's audit.VerifyGap response field.

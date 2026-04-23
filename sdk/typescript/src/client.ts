@@ -362,10 +362,10 @@ export class CordumClient {
 
   private createMcpNamespace() {
     return {
-      sse: () => this.request<"/api/v1/mcp/sse", "GET">("GET", "/api/v1/mcp/sse"),
-      message: (body: PostBody<"/api/v1/mcp/message">) =>
-        this.request<"/api/v1/mcp/message", "POST">("POST", "/api/v1/mcp/message", { body }),
-      status: () => this.request<"/api/v1/mcp/status", "GET">("GET", "/api/v1/mcp/status"),
+      sse: () => this.request<"/mcp/sse", "GET">("GET", "/mcp/sse"),
+      message: (body: PostBody<"/mcp/message">) =>
+        this.request<"/mcp/message", "POST">("POST", "/mcp/message", { body }),
+      status: () => this.request<"/mcp/status", "GET">("GET", "/mcp/status"),
     };
   }
 

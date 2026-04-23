@@ -30,7 +30,7 @@ User Settings (JSON)*) and add:
 ```
 
 For HTTP transport, use an MCP-aware extension that supports it — the
-endpoint is `${CORDUM_GATEWAY}/api/v1/mcp/sse`, same Authorization and
+endpoint is `${CORDUM_GATEWAY}/mcp/sse`, same Authorization and
 X-Tenant-ID headers as the other clients.
 
 Reload VS Code. The MCP panel should list `cordum` with the full

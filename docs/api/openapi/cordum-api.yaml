@@ -66,7 +66,7 @@ tags:
 - name: LegalHold
   description: Legal hold management for audit retention compliance (admin only)
 - name: Governance
-  description: Governance-native observability — policy decisions, approval analytics
+  description: Governance-native observability â€” policy decisions, approval analytics
 - name: Agents
   description: Agent identities, delegation, and runtime statistics
 - name: Delegation
@@ -3538,9 +3538,9 @@ paths:
       summary: Verify audit chain integrity
       description: |
         Walks the tenant's audit stream and attests integrity of the hash chain. Reports
-        `status=ok` on a contiguous chain, `status=partial` when the only gaps are below the
-        retention boundary, and `status=compromised` on missing events or a broken hash link.
-        Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
+        `status=ok` on a contiguous chain, `status=partial` when gaps are below the
+        retention boundary, and `status=compromised` for missing sequence numbers or a
+        broken hash link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
         integrity report surface, not event retrieval.
       tags:
       - AuditExport
@@ -3548,34 +3548,42 @@ paths:
       - $ref: '#/components/parameters/TenantID'
       - name: tenant
         in: query
-        description: Tenant id (must match caller scope)
+        required: false
+        description: Tenant id to verify; must match caller scope and defaults to the authenticated/request tenant.
         schema:
           type: string
       - name: since
         in: query
+        required: false
         description: Inclusive lower bound on event time (unix ms)
         schema:
           type: integer
           format: int64
+          minimum: 0
       - name: until
         in: query
+        required: false
         description: Inclusive upper bound on event time (unix ms)
         schema:
           type: integer
           format: int64
+          minimum: 0
       - name: limit
         in: query
+        required: false
         description: Max events to read (default 10000, max 100000)
         schema:
           type: integer
-          format: int32
+          format: int64
+          minimum: 1
+          maximum: 100000
       responses:
         '200':
           description: Chain integrity report
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GenericObject'
+                $ref: '#/components/schemas/AuditVerifyResult'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -3585,11 +3593,7 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
         '503':
-          description: Audit chainer not installed; integrity cannot be attested
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/audit/export:
     get:
       operationId: exportAuditCompliance
@@ -4066,7 +4070,7 @@ paths:
       description: >
         Analyzes policy rule quality over a time range. Returns per-rule metrics
         including hit counts, override rates, approval latency, and daily trends.
-        Read-only — no side effects.
+        Read-only â€” no side effects.
       tags:
       - Policy
       security:
@@ -4183,67 +4187,6 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/mcp/sse:
-    get:
-      operationId: mcpSSEV1
-      summary: MCP Server-Sent Events stream
-      description: 'Opens an SSE connection to the MCP server. The server sends JSON-RPC
-
-        notifications and responses over this channel.
-
-        '
-      tags:
-      - MCP
-      security:
-      - apiKey: []
-      - bearerAuth: []
-      responses:
-        '200':
-          description: SSE stream opened
-          content:
-            text/event-stream:
-              schema:
-                type: string
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-      parameters:
-      - $ref: '#/components/parameters/TenantID'
-  /api/v1/mcp/message:
-    post:
-      operationId: mcpMessageV1
-      summary: Send a JSON-RPC 2.0 message to MCP server
-      tags:
-      - MCP
-      security:
-      - apiKey: []
-      - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/JsonRpcRequest'
-      responses:
-        '200':
-          description: JSON-RPC response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JsonRpcResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-      parameters:
-      - $ref: '#/components/parameters/TenantID'
   /api/v1/agents:
     get:
       operationId: listAgents
@@ -5649,7 +5592,7 @@ paths:
     post:
       operationId: runEvalDataset
       summary: Run an eval dataset against the active or candidate policy
-      description: Synchronous for ≤500 entries (returns 200 with full result), asynchronous for larger datasets (returns 202 with run_id; poll GET /evals/runs/{runId}).
+      description: Synchronous for â‰¤500 entries (returns 200 with full result), asynchronous for larger datasets (returns 202 with run_id; poll GET /evals/runs/{runId}).
       tags:
       - Evals
       parameters:
@@ -5813,28 +5756,6 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/mcp/status:
-    get:
-      operationId: mcpStatusV1
-      summary: Get MCP server status
-      tags:
-      - MCP
-      security:
-      - apiKey: []
-      - bearerAuth: []
-      responses:
-        '200':
-          description: MCP status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/McpStatus'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-      parameters:
-      - $ref: '#/components/parameters/TenantID'
   /api/v1/governance/approvals/analytics:
     get:
       operationId: getApprovalAnalytics
@@ -6032,19 +5953,19 @@ components:
         type: string
   responses:
     BadRequest:
-      description: Bad request — invalid or missing parameters
+      description: Bad request â€” invalid or missing parameters
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     Unauthorized:
-      description: Unauthorized — missing or invalid credentials
+      description: Unauthorized â€” missing or invalid credentials
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: Forbidden — insufficient permissions
+      description: Forbidden â€” insufficient permissions
       content:
         application/json:
           schema:
@@ -6056,7 +5977,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Conflict:
-      description: Conflict — resource state conflict
+      description: Conflict â€” resource state conflict
       content:
         application/json:
           schema:
@@ -6068,7 +5989,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     RateLimited:
-      description: Too many requests — rate limit exceeded
+      description: Too many requests â€” rate limit exceeded
       headers:
         Retry-After:
           schema:
@@ -6085,7 +6006,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     BadGateway:
-      description: Bad gateway — upstream service error
+      description: Bad gateway â€” upstream service error
       content:
         application/json:
           schema:
@@ -6151,7 +6072,7 @@ components:
         avg_time_to_approve_seconds:
           type: number
           nullable: true
-          description: Null when no approvals resolved in the window — distinguishes "no data" from "all resolved in 0 s".
+          description: Null when no approvals resolved in the window â€” distinguishes "no data" from "all resolved in 0 s".
         p50:
           type: number
           nullable: true
@@ -7339,7 +7260,7 @@ components:
       type: object
       description: |
         Pack-signature verification outcome computed by the gateway at
-        install time. Never client-supplied — the gateway discards any
+        install time. Never client-supplied â€” the gateway discards any
         `verification` field on the install payload and computes its own.
         Pre-existing installs default to {signed: false} when this object
         is absent.
@@ -7378,7 +7299,7 @@ components:
           type: array
           description: |
             Non-fatal warnings the gateway wants to surface alongside the
-            verification outcome (for example, "pack accepted unsigned —
+            verification outcome (for example, "pack accepted unsigned â€”
             gateway strict mode disabled").
           items:
             type: string
@@ -7623,6 +7544,64 @@ components:
       type: object
       properties: {}
       additionalProperties: true
+    AuditVerifyGap:
+      type: object
+      properties:
+        at_seq:
+          type: integer
+          format: int64
+          description: Sequence number where the gap or mismatch was observed.
+        type:
+          type: string
+          enum:
+          - missing
+          - out_of_order
+          - hash_mismatch
+          - retention_trimmed
+      required:
+      - at_seq
+      - type
+    AuditVerifyResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+          - ok
+          - compromised
+          - partial
+        total_events:
+          type: integer
+          description: Number of events walked in the requested range.
+        verified_events:
+          type: integer
+          description: Number of events whose hash and linkage verified.
+        gaps:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditVerifyGap'
+        retention_boundary_seq:
+          type: integer
+          format: int64
+          description: Lowest sequence number still present in the retained stream.
+        retention_window_hours:
+          type: number
+          format: double
+          description: Configured audit retention window in hours.
+        first_seq:
+          type: integer
+          format: int64
+          description: First sequence number observed in the verified range.
+        last_seq:
+          type: integer
+          format: int64
+          description: Last sequence number observed in the verified range.
+      required:
+      - status
+      - total_events
+      - verified_events
+      - gaps
+      - retention_boundary_seq
     RoleDefinition:
       type: object
       properties:

@@ -118,6 +118,38 @@ jobs:
     - name: Lint shell scripts for secret leaks
       run: bash tools/scripts/lint_no_secret_log.sh
 
+  dashboard-test:
+    name: Dashboard Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node
+      uses: actions/setup-node@v5
+      with:
+        node-version-file: dashboard/.nvmrc
+        cache: npm
+        cache-dependency-path: dashboard/package-lock.json
+
+    - name: Install dashboard dependencies
+      working-directory: dashboard
+      run: npm ci
+
+    - name: Run dashboard tests
+      working-directory: dashboard
+      run: |
+        mkdir -p test-results
+        npx vitest run --reporter=junit --outputFile=./test-results/vitest.xml
+
+    - name: Upload dashboard test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: dashboard-vitest-results
+        path: dashboard/test-results/vitest.xml
+
   security:
     name: Security Scan
     runs-on: ubuntu-latest

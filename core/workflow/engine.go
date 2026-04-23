@@ -18,12 +18,12 @@ import (
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
-	"go.opentelemetry.io/otel/attribute"
-	oteltrace "go.opentelemetry.io/otel/trace"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -101,7 +101,7 @@ const runLockTTL = 30 * time.Second
 type lockManager struct {
 	mu     sync.Mutex
 	locks  map[string]*runLock
-	locker RunLocker // optional distributed lock; nil = local-only
+	locker RunLocker       // optional distributed lock; nil = local-only
 	ctx    context.Context // engine lifecycle context; renewal goroutines derive from this
 }
 
@@ -384,10 +384,21 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
 	}
 	runID, stepID := splitJobID(res.JobId)
 	if runID == "" || stepID == "" {
+		slog.Warn("workflow step result ignored",
+			"job_id", res.JobId,
+			"reason", "invalid_job_id",
+		)
 		return nil
 	}
 
-	slog.Debug("step result received", "component", "workflow", "runId", runID, "traceId", runID, "stepId", stepID, "jobId", res.JobId)
+	slog.Info("workflow step result received",
+		"run_id", runID,
+		"step_id", stepID,
+		"job_id", res.JobId,
+		"worker_id", strings.TrimSpace(res.GetWorkerId()),
+		"status", res.GetStatus().String(),
+		"result_ptr", strings.TrimSpace(res.GetResultPtr()),
+	)
 
 	unlock, ok := e.lockRun(runID)
 	if !ok {
@@ -398,7 +409,12 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
 	run, err := e.store.GetRun(ctx, runID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			slog.Info("run not found (deleted or never existed)", "run_id", runID)
+			slog.Warn("workflow step result ignored",
+				"run_id", runID,
+				"step_id", stepID,
+				"job_id", res.JobId,
+				"reason", "run_not_found",
+			)
 			return fmt.Errorf("%w: %s", ErrRunNotFound, runID)
 		}
 		slog.Error("get run failed (transient)", "run_id", runID, "error", err)
@@ -444,6 +460,13 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
 			}
 		}
 		if child.JobID != "" && child.JobID != res.JobId {
+			slog.Warn("workflow step result ignored",
+				"run_id", run.ID,
+				"step_id", stepID,
+				"job_id", res.JobId,
+				"expected_job_id", child.JobID,
+				"reason", "job_id_mismatch",
+			)
 			return nil
 		}
 		if child.JobID == "" {
@@ -503,6 +526,13 @@ func (e *Engine) HandleJobResult(ctx context.Context, res *pb.JobResult) error {
 	} else {
 		stepRun := run.Steps[stepID]
 		if stepRun != nil && stepRun.JobID != "" && stepRun.JobID != res.JobId {
+			slog.Warn("workflow step result ignored",
+				"run_id", run.ID,
+				"step_id", stepID,
+				"job_id", res.JobId,
+				"expected_job_id", stepRun.JobID,
+				"reason", "job_id_mismatch",
+			)
 			return nil
 		}
 		if stepRun == nil {

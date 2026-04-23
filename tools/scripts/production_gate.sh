@@ -1158,8 +1158,8 @@ gate_8_extensions() {
     return 1
   }
   code="$(api_code GET /mcp/status)"
-  [[ "${code}" == "200" ]] || {
-    echo "authorized /api/v1/mcp/status should return 200, got ${code}" >&2
+  [[ "${code}" == "404" ]] || {
+    echo "removed /api/v1/mcp/status alias should return 404, got ${code}" >&2
     return 1
   }
 

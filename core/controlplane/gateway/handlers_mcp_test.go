@@ -116,17 +116,17 @@ func TestRegisterMCPRoutesEnforcesAuthAndHandlesPing(t *testing.T) {
 		t.Fatalf("expected result field in response: %+v", payload)
 	}
 
-	aliasReq, _ := http.NewRequest(http.MethodPost, httpSrv.URL+"/api/v1/mcp/message", strings.NewReader(`{"jsonrpc":"2.0","id":3,"method":"ping"}`))
-	aliasReq.Header.Set("Content-Type", "application/json")
-	aliasReq.Header.Set("X-API-Key", "test-key")
-	aliasReq.Header.Set("X-Tenant-ID", "default")
-	aliasResp, err := http.DefaultClient.Do(aliasReq)
+	removedAliasReq, _ := http.NewRequest(http.MethodPost, httpSrv.URL+"/api/v1/mcp/message", strings.NewReader(`{"jsonrpc":"2.0","id":3,"method":"ping"}`))
+	removedAliasReq.Header.Set("Content-Type", "application/json")
+	removedAliasReq.Header.Set("X-API-Key", "test-key")
+	removedAliasReq.Header.Set("X-Tenant-ID", "default")
+	aliasResp, err := http.DefaultClient.Do(removedAliasReq)
 	if err != nil {
-		t.Fatalf("alias request failed: %v", err)
+		t.Fatalf("removed alias request failed: %v", err)
 	}
 	defer func() { _ = aliasResp.Body.Close() }()
-	if aliasResp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 for /api/v1/mcp/message, got %d", aliasResp.StatusCode)
+	if aliasResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 for removed /api/v1/mcp/message alias, got %d", aliasResp.StatusCode)
 	}
 }
 
@@ -210,16 +210,35 @@ func TestRegisterMCPRoutesStatusEndpoint(t *testing.T) {
 		t.Fatalf("expected enabled_resources field in status payload")
 	}
 
-	statusAliasReq, _ := http.NewRequest(http.MethodGet, httpSrv.URL+"/api/v1/mcp/status", nil)
-	statusAliasReq.Header.Set("X-API-Key", "test-key")
-	statusAliasReq.Header.Set("X-Tenant-ID", "default")
-	statusAliasResp, err := http.DefaultClient.Do(statusAliasReq)
-	if err != nil {
-		t.Fatalf("status alias request failed: %v", err)
-	}
-	defer func() { _ = statusAliasResp.Body.Close() }()
-	if statusAliasResp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 from /api/v1/mcp/status, got %d", statusAliasResp.StatusCode)
+	for _, tc := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodGet, path: "/api/v1/mcp/sse"},
+		{method: http.MethodPost, path: "/api/v1/mcp/message", body: `{"jsonrpc":"2.0","id":3,"method":"ping"}`},
+		{method: http.MethodGet, path: "/api/v1/mcp/status"},
+	} {
+		var body *strings.Reader
+		if tc.body != "" {
+			body = strings.NewReader(tc.body)
+		} else {
+			body = strings.NewReader("")
+		}
+		aliasReq, _ := http.NewRequest(tc.method, httpSrv.URL+tc.path, body)
+		aliasReq.Header.Set("Content-Type", "application/json")
+		aliasReq.Header.Set("X-API-Key", "test-key")
+		aliasReq.Header.Set("X-Tenant-ID", "default")
+		aliasResp, err := http.DefaultClient.Do(aliasReq)
+		if err != nil {
+			t.Fatalf("removed alias request %s %s failed: %v", tc.method, tc.path, err)
+		}
+		func() {
+			defer func() { _ = aliasResp.Body.Close() }()
+			if aliasResp.StatusCode != http.StatusNotFound {
+				t.Fatalf("expected 404 from removed alias %s %s, got %d", tc.method, tc.path, aliasResp.StatusCode)
+			}
+		}()
 	}
 }
 
@@ -235,7 +254,7 @@ func TestRegisterMCPRoutesStatusEndpointWhenMCPDisabled(t *testing.T) {
 	httpSrv := httptest.NewServer(mux)
 	defer httpSrv.Close()
 
-	statusReq, _ := http.NewRequest(http.MethodGet, httpSrv.URL+"/api/v1/mcp/status", nil)
+	statusReq, _ := http.NewRequest(http.MethodGet, httpSrv.URL+"/mcp/status", nil)
 	statusReq.Header.Set("X-API-Key", "test-key")
 	statusReq.Header.Set("X-Tenant-ID", "default")
 	statusResp, err := http.DefaultClient.Do(statusReq)
@@ -255,7 +274,7 @@ func TestRegisterMCPRoutesStatusEndpointWhenMCPDisabled(t *testing.T) {
 		t.Fatalf("expected running=false in disabled status payload, got %#v", payload["running"])
 	}
 
-	messageReq, _ := http.NewRequest(http.MethodPost, httpSrv.URL+"/api/v1/mcp/message", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"ping"}`))
+	messageReq, _ := http.NewRequest(http.MethodPost, httpSrv.URL+"/mcp/message", strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"ping"}`))
 	messageReq.Header.Set("Content-Type", "application/json")
 	messageReq.Header.Set("X-API-Key", "test-key")
 	messageReq.Header.Set("X-Tenant-ID", "default")

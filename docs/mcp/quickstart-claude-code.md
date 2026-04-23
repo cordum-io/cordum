@@ -36,7 +36,7 @@ If you prefer HTTP transport (no stdio bridge):
   "mcpServers": {
     "cordum": {
       "type": "http",
-      "url": "${CORDUM_GATEWAY}/api/v1/mcp/sse",
+      "url": "${CORDUM_GATEWAY}/mcp/sse",
       "headers": {
         "Authorization": "Bearer ${CORDUM_API_KEY}",
         "X-Tenant-ID": "default"
