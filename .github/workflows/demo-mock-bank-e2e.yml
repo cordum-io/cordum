@@ -42,11 +42,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Drop local replace directives (CI uses published modules)
-        run: |
-          go mod edit -dropreplace github.com/cordum/cordum/sdk || true
-          go mod tidy
-
       - name: Build cordumctl
         run: |
           mkdir -p ./bin
@@ -79,7 +74,7 @@ jobs:
         run: |
           attempts=0
           max_attempts=30
-          until curl -ksf https://127.0.0.1:8081/api/v1/status >/dev/null; do
+          until curl -ksf -H "X-API-Key: ${CORDUM_API_KEY}" https://127.0.0.1:8081/api/v1/status >/dev/null; do
             attempts=$((attempts + 1))
             if [ "$attempts" -ge "$max_attempts" ]; then
               echo "gateway /api/v1/status did not return 200 within $((max_attempts * 2))s"
@@ -99,18 +94,22 @@ jobs:
           CORDUM_INTEGRATION: "1"
           CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
           CORDUM_API_BASE: https://127.0.0.1:8081
+          CORDUM_GATEWAY: https://127.0.0.1:8081
+          CORDUM_TLS_INSECURE: "1"
           CORDUMCTL_BIN: ${{ github.workspace }}/bin/cordumctl
         run: bash demo/mock-bank/integration_test.sh
 
       - name: Capture logs on failure
         if: failure()
         run: |
+          export CORDUM_API_KEY="${CORDUM_API_KEY:-teardown-placeholder-api-key}"
+          export REDIS_PASSWORD="${REDIS_PASSWORD:-teardown-placeholder-redis-password}"
           mkdir -p /tmp/mock-bank-logs
           docker compose logs --no-color mock-bank-worker > /tmp/mock-bank-logs/mock-bank-worker.log 2>&1 || true
-          docker compose logs --no-color cordum-scheduler > /tmp/mock-bank-logs/scheduler.log 2>&1 || true
-          docker compose logs --no-color cordum-workflow-engine > /tmp/mock-bank-logs/workflow-engine.log 2>&1 || true
-          docker compose logs --no-color cordum-api-gateway > /tmp/mock-bank-logs/api-gateway.log 2>&1 || true
-          docker compose logs --no-color cordum-safety-kernel > /tmp/mock-bank-logs/safety-kernel.log 2>&1 || true
+          docker compose logs --no-color scheduler > /tmp/mock-bank-logs/scheduler.log 2>&1 || true
+          docker compose logs --no-color workflow-engine > /tmp/mock-bank-logs/workflow-engine.log 2>&1 || true
+          docker compose logs --no-color api-gateway > /tmp/mock-bank-logs/api-gateway.log 2>&1 || true
+          docker compose logs --no-color safety-kernel > /tmp/mock-bank-logs/safety-kernel.log 2>&1 || true
           docker compose ps > /tmp/mock-bank-logs/compose-ps.txt || true
 
       - name: Upload failure artifacts
@@ -124,4 +123,6 @@ jobs:
       - name: Tear down compose stack
         if: always()
         run: |
+          export CORDUM_API_KEY="${CORDUM_API_KEY:-teardown-placeholder-api-key}"
+          export REDIS_PASSWORD="${REDIS_PASSWORD:-teardown-placeholder-redis-password}"
           docker compose --profile demo down -v

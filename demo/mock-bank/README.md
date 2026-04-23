@@ -17,16 +17,30 @@ seven agents (transfer / compliance / audit / validator / executor) back
 the workflow; the safety kernel decides each step from the risk tag
 attached at workflow-authoring time.
 
+For the `$200` path, `execute_review.status` can stay `running` while the
+underlying job is waiting in `APPROVAL_REQUIRED`. Use `cordumctl job status
+<job_id>` (or `/api/v1/approvals`) as the pending-approval signal; don't
+wait for the step label to flip before approving.
+
 ## Quickstart
 
 ```bash
 # From the repo root, with the core stack already up (make dev-up).
+export CORDUM_GATEWAY=https://127.0.0.1:8081
+export CORDUM_TLS_INSECURE=1
 cordumctl pack install ./demo/mock-bank/pack --upgrade
 docker compose --profile demo up -d
 
-# Wait for the transfer agents to heartbeat.
+# Wait for the transfer agents to heartbeat recently.
 curl -sk "https://127.0.0.1:8081/api/v1/workers" -H "X-API-Key: $CORDUM_API_KEY" \
-  | jq '.items[] | select(.worker_id | startswith("megacorp-transfer-agent-")) | .worker_id + " online=" + (.online|tostring)'
+  | jq '.items[]
+        | select(.worker_id | startswith("megacorp-transfer-agent-"))
+        | {
+            worker_id,
+            heartbeat_age_seconds,
+            session_state,
+            online
+          }'
 
 # Allow path.
 RUN_ID=$(cordumctl run start demo-mock-bank.transfer \
@@ -37,13 +51,17 @@ cordumctl run get "$RUN_ID" | jq '.status, .steps.execute_low.status'
 RUN_ID=$(cordumctl run start demo-mock-bank.transfer \
   --input '{"amount":200,"currency":"USD","customer":"Alice","reason":"demo","requested_by":"qa"}')
 JOB_ID=$(cordumctl run get "$RUN_ID" | jq -r '.steps.execute_review.job_id')
+cordumctl job status "$JOB_ID"  # APPROVAL_REQUIRED
 cordumctl approval job "$JOB_ID" --approve
 cordumctl run get "$RUN_ID" | jq '.status, .steps.execute_review.status'
 
 # Deny path.
 RUN_ID=$(cordumctl run start demo-mock-bank.transfer \
   --input '{"amount":5000,"currency":"USD","customer":"Alice","reason":"demo","requested_by":"qa"}')
+JOB_ID=$(cordumctl run get "$RUN_ID" | jq -r '.steps.execute_high.job_id')
 cordumctl run get "$RUN_ID" | jq '.status, .steps.execute_high.status'
+curl -sk "https://127.0.0.1:8081/api/v1/jobs/$JOB_ID" -H "X-API-Key: $CORDUM_API_KEY" \
+  | jq '.safety_rule_id'
 ```
 
 `CORDUM_API_KEY` is in `.env` after `make dev-up`.
@@ -79,24 +97,40 @@ docker compose logs mock-bank-worker | grep 'mock-bank job_'
   stack trace.
 - **`job_completed` but workflow still `running`** → *workflow-engine
   side*: the result published but the engine has not transitioned. Look
-  at `cordum-workflow-engine` logs for the run id.
+  at the exact workflow-step logs in `api-gateway` for the run. In the
+  local compose stack, `core/workflow.Engine.HandleJobResult` is invoked
+  from the gateway stream handler.
 
 ```bash
 # 2. Sanity cross-checks (use the run id from cordumctl run start).
 cordumctl run get "$RUN_ID"                                         | jq '.status, .steps'
-docker compose logs cordum-scheduler        | grep "$RUN_ID"
-docker compose logs cordum-workflow-engine  | grep "$RUN_ID"
+docker compose logs scheduler        | grep "$RUN_ID"
+docker compose logs api-gateway      | grep 'workflow step result received'
+docker compose logs api-gateway      | grep 'workflow step transition' | grep "$RUN_ID"
+docker compose logs api-gateway      | grep 'workflow step result ignored' | grep "$RUN_ID"
 ```
 
 ```bash
 # 3. First-run dispatch delay.
 #    If you install the pack BEFORE mock-bank-worker is up, the first
 #    job waits for heartbeats + scheduler pickup — up to several minutes.
-#    Wait for at least one transfer agent to report online before submitting,
-#    or restart the scheduler to flush the dispatch queue.
+#    Wait for at least one transfer agent to show a fresh heartbeat
+#    (`heartbeat_age_seconds <= 10`) before submitting, or restart the
+#    demo workers after the core stack is back so they reconnect.
 curl -sk "https://127.0.0.1:8081/api/v1/workers" -H "X-API-Key: $CORDUM_API_KEY" \
-  | jq '.items[] | select(.worker_id=="megacorp-transfer-agent-01") | .online'
+  | jq '.items[] | select(.worker_id=="megacorp-transfer-agent-01")
+        | {heartbeat_age_seconds, last_heartbeat_at, session_state, online}'
 ```
+
+For this local demo, use `heartbeat_age_seconds` as the readiness gate.
+`online` can remain `false` with `session_state="no_session"` even while
+the scheduler is receiving heartbeats and dispatch succeeds.
+
+`cordumctl` reads `CORDUM_GATEWAY`, not `CORDUM_API_BASE`. For the local
+TLS demo, set `CORDUM_GATEWAY=https://127.0.0.1:8081` plus either
+`CORDUM_TLS_INSECURE=1` or `CORDUM_TLS_CA=<path>` before running CLI
+commands; the integration script mirrors `CORDUM_API_BASE` into
+`CORDUM_GATEWAY` automatically.
 
 ```bash
 # 4. Verify active_jobs is real, not simulated.
@@ -110,7 +144,7 @@ worker process (per `workerDef`, atomic, decremented on return / error /
 panic). A non-zero reading during a run followed by zero afterward is
 the positive signal; a value that doesn't move when jobs are arriving
 means heartbeats are not flowing — fall back to checking
-`cordum-scheduler` logs for the worker id.
+`scheduler` logs for the worker id.
 
 ## Implementation notes
 

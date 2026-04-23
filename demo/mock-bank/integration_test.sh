@@ -60,6 +60,18 @@ if [[ -z "${api_key}" ]]; then
   exit 2
 fi
 
+# Keep cordumctl on the same local TLS gateway as the raw HTTP calls.
+# Otherwise `pack install` falls back to http://localhost:8081 even when the
+# script is polling https://127.0.0.1:8081 via CORDUM_API_BASE.
+export CORDUM_GATEWAY="${CORDUM_GATEWAY:-${api_base}}"
+if [[ -z "${CORDUM_TLS_CA:-}" && -z "${CORDUM_TLS_INSECURE:-}" ]]; then
+  case "${CORDUM_GATEWAY}" in
+    https://127.0.0.1:*|https://localhost:*|https://[::1]:*)
+      export CORDUM_TLS_INSECURE=1
+      ;;
+  esac
+fi
+
 log_file="$(mktemp -t demo-mock-bank-XXXXXX.log)"
 trap 'echo "[integration] artifacts at ${log_file}"' EXIT
 
@@ -78,22 +90,30 @@ curl_api() {
 }
 
 # wait_for_workers — block up to WAIT_WORKERS_SEC (default 30) until at
-# least one megacorp-transfer-agent-* worker reports online.
+# least one megacorp-transfer-agent-* worker reports a fresh heartbeat.
+# For the local demo stack, heartbeat freshness is the reliable readiness
+# signal; the authority-mode `online` bit can remain false while the
+# scheduler is actively receiving heartbeats and dispatch still succeeds.
 wait_for_workers() {
   local timeout="${WAIT_WORKERS_SEC:-30}"
+  local max_age="${WAIT_HEARTBEAT_MAX_AGE_SEC:-10}"
   local deadline=$(( $(date +%s) + timeout ))
-  echo "[integration] waiting for transfer agents (up to ${timeout}s) ..."
+  echo "[integration] waiting for transfer-agent heartbeats (up to ${timeout}s, age <= ${max_age}s) ..."
   while (( $(date +%s) < deadline )); do
-    local online
-    online=$(curl_api GET "/api/v1/workers" 2>/dev/null \
-      | jq -r '[.items[]? | select(.worker_id | startswith("megacorp-transfer-agent-")) | select(.online == true)] | length')
-    if [[ "${online:-0}" -ge 1 ]]; then
-      echo "[integration]   ${online} transfer agent(s) online."
+    local ready
+    ready=$(curl_api GET "/api/v1/workers" 2>/dev/null \
+      | jq -r --argjson max_age "${max_age}" \
+        '[.items[]?
+          | select(.worker_id | startswith("megacorp-transfer-agent-"))
+          | select((.heartbeat_age_seconds // 999999) <= $max_age)
+        ] | length')
+    if [[ "${ready:-0}" -ge 1 ]]; then
+      echo "[integration]   ${ready} transfer agent(s) heartbeating."
       return 0
     fi
     sleep 2
   done
-  echo "FAIL: no megacorp-transfer-agent-* online after ${timeout}s — demo profile up?" >&2
+  echo "FAIL: no fresh megacorp-transfer-agent-* heartbeat after ${timeout}s — demo profile up?" >&2
   return 1
 }
 
@@ -107,6 +127,40 @@ start_run() {
 # run_json <run_id>  —  JSON run snapshot via cordumctl run get.
 run_json() {
   "${cordumctl_bin}" run get "$1"
+}
+
+# wait_for_step_job_id <run_id> <step_id> <timeout_s>
+wait_for_step_job_id() {
+  local run_id="$1" step_id="$2" timeout="$3"
+  local deadline=$(( $(date +%s) + timeout ))
+  local job_id=""
+  while (( $(date +%s) < deadline )); do
+    job_id=$(run_json "${run_id}" | jq -r ".steps.${step_id}.job_id // empty")
+    if [[ -n "${job_id}" ]]; then
+      echo "${job_id}"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "FAIL: step ${step_id} on run ${run_id} did not expose a job_id within ${timeout}s" >&2
+  return 1
+}
+
+# wait_for_job_state <job_id> <desired_state> <timeout_s>
+wait_for_job_state() {
+  local job_id="$1" want="$2" timeout="$3"
+  local deadline=$(( $(date +%s) + timeout ))
+  local last=""
+  while (( $(date +%s) < deadline )); do
+    last=$("${cordumctl_bin}" job status "${job_id}")
+    if [[ "${last}" =~ ^(${want})$ ]]; then
+      echo "${last}"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "FAIL: job ${job_id} did not reach ${want} within ${timeout}s (last=${last})" >&2
+  return 1
 }
 
 # wait_for_status <run_id> <desired_status> <timeout_s>
@@ -124,23 +178,6 @@ wait_for_status() {
     sleep 1
   done
   echo "FAIL: run ${run_id} did not reach ${want} within ${timeout}s (last=${last})" >&2
-  return 1
-}
-
-# wait_for_step_status <run_id> <step_id> <desired_status> <timeout_s>
-wait_for_step_status() {
-  local run_id="$1" step_id="$2" want="$3" timeout="$4"
-  local deadline=$(( $(date +%s) + timeout ))
-  local last=""
-  while (( $(date +%s) < deadline )); do
-    last=$(run_json "${run_id}" | jq -r ".steps.${step_id}.status // \"unknown\"")
-    if [[ "${last}" =~ ^(${want})$ ]]; then
-      echo "${last}"
-      return 0
-    fi
-    sleep 1
-  done
-  echo "FAIL: step ${step_id} on run ${run_id} did not reach ${want} within ${timeout}s (last=${last})" >&2
   return 1
 }
 
@@ -167,12 +204,8 @@ fi
 echo "[integration] case B: amount=200 (require_approval, bank-transfer-review)"
 review_run_id=$(start_run 200)
 echo "[integration]   run_id=${review_run_id}"
-wait_for_step_status "${review_run_id}" 'execute_review' 'require_approval|awaiting_approval|approval_pending' 10 >/dev/null || exit 1
-review_job_id=$(run_json "${review_run_id}" | jq -r '.steps.execute_review.job_id // empty')
-if [[ -z "${review_job_id}" ]]; then
-  echo "FAIL: execute_review.job_id missing on run ${review_run_id}" >&2
-  exit 1
-fi
+review_job_id=$(wait_for_step_job_id "${review_run_id}" 'execute_review' 10) || exit 1
+wait_for_job_state "${review_job_id}" 'APPROVAL_REQUIRED' 10 >/dev/null || exit 1
 echo "[integration]   approving job_id=${review_job_id}"
 "${cordumctl_bin}" approval job "${review_job_id}" --approve
 wait_for_status "${review_run_id}" 'succeeded' 15 >/dev/null || exit 1
@@ -183,14 +216,19 @@ echo "[integration] case C: amount=5000 (deny, bank-transfer-blocked)"
 deny_run_id=$(start_run 5000)
 echo "[integration]   run_id=${deny_run_id}"
 wait_for_status "${deny_run_id}" 'denied|failed' 10 >/dev/null || exit 1
-# Accept either the canonical 'denied' verdict or a 'failed' run where the
-# blocked step carries the rule id. The rule id is the sticky signal.
+# The workflow snapshot does not always carry the denying rule inline; the
+# job record is the durable source of `safety_rule_id`.
+deny_job_id=$(run_json "${deny_run_id}" | jq -r '.steps.execute_high.job_id // empty')
 deny_rule=$(run_json "${deny_run_id}" \
   | jq -r '(.steps.execute_high.violations[0].rule_id
             // .steps.execute_high.reason
             // .steps.execute_high.error.rule_id
             // .error.rule_id
             // "missing")')
+if [[ "${deny_rule}" == "missing" && -n "${deny_job_id}" ]]; then
+  deny_rule=$(curl_api GET "/api/v1/jobs/${deny_job_id}" \
+    | jq -r '.safety_rule_id // .policy_rule_id // .error.rule_id // "missing"')
+fi
 if [[ "${deny_rule}" != *"bank-transfer-blocked"* ]]; then
   echo "FAIL: deny path rule id=\"${deny_rule}\", want contains bank-transfer-blocked" >&2
   echo "      run snapshot:" >&2
