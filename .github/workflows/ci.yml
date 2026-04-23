@@ -21,6 +21,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go-version }}
+        cache: false
 
     - name: Cache Go modules
       uses: actions/cache@v4
@@ -93,6 +94,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.25'
+        cache: false
 
     - name: Cache Go modules
       uses: actions/cache@v4
@@ -128,6 +130,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.25'
+        cache: false
 
     - name: Cache Go modules
       uses: actions/cache@v4
@@ -209,6 +212,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.25'
+        cache: false
 
     - name: Cache Go modules
       uses: actions/cache@v4
@@ -318,6 +322,63 @@ jobs:
       if: always()
       run: docker compose down -v
 
+  quickstart-env-sharing:
+    name: Quickstart Env Sharing
+    runs-on: ubuntu-latest
+    needs: [build]
+    timeout-minutes: 15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Generate TLS certificates
+      run: |
+        go run ./cmd/cordumctl generate-certs --dir ./certs
+        chmod -R a+rX ./certs
+
+    - name: Build compose images
+      run: docker compose build
+      env:
+        CORDUM_API_KEY: quickstart-env-sharing-build-key
+        REDIS_PASSWORD: quickstart-env-sharing-build-redis
+
+    - name: Run quickstart env-sharing test
+      run: bash tools/scripts/quickstart_env_sharing_test.sh
+      env:
+        CORDUM_INTEGRATION: "1"
+        CORDUM_QUICKSTART_ENV_SHARING_MODE: live
+
+    - name: Dump debug logs on failure
+      if: failure()
+      run: |
+        export CORDUM_API_KEY="${CORDUM_API_KEY:-quickstart-env-sharing-debug-key}"
+        export REDIS_PASSWORD="${REDIS_PASSWORD:-quickstart-env-sharing-debug-redis}"
+        echo "=== Docker service logs (last 80 lines each) ==="
+        for svc in scheduler workflow-engine api-gateway safety-kernel nats redis; do
+          echo "--- $svc ---"
+          docker compose logs --tail=80 --no-color "$svc" 2>/dev/null || true
+        done
+
+    - name: Tear down services
+      if: always()
+      run: |
+        export CORDUM_API_KEY="${CORDUM_API_KEY:-quickstart-env-sharing-teardown-key}"
+        export REDIS_PASSWORD="${REDIS_PASSWORD:-quickstart-env-sharing-teardown-redis}"
+        docker compose down -v
+
   openapi:
     name: OpenAPI Validate
     runs-on: ubuntu-latest
@@ -332,6 +393,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: '1.25'
+        cache: false
 
     - name: Cache Go modules
       uses: actions/cache@v4

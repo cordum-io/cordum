@@ -1,0 +1,76 @@
+name: Platform Smoke
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  platform-smoke:
+    name: platform-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Generate API key
+        run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Generate Redis password
+        run: echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Generate TLS certificates
+        run: |
+          go run ./cmd/cordumctl generate-certs --dir ./certs
+          chmod -R a+rX ./certs
+
+      - name: Start services
+        run: docker compose up -d --build
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+
+      - name: Wait for gateway health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -ksf -H "X-API-Key: ${CORDUM_API_KEY}" https://127.0.0.1:8081/api/v1/status > platform-smoke-health.json; then
+              echo "Gateway healthy after $((i * 2))s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Timed out waiting for https://127.0.0.1:8081/api/v1/status" >&2
+          exit 1
+
+      - name: Run platform smoke script
+        run: bash tools/scripts/platform_smoke.sh 2>&1 | tee platform-smoke.log
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          CORDUM_API_BASE: https://localhost:8081
+          CORDUM_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+
+      - name: Capture docker compose logs
+        if: always()
+        run: docker compose logs > docker-compose-platform-smoke.log 2>&1 || true
+
+      - name: Upload platform smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-smoke-artifacts
+          path: |
+            platform-smoke.log
+            platform-smoke-health.json
+            docker-compose-platform-smoke.log
+
+      - name: Tear down services
+        if: always()
+        run: docker compose down -v
