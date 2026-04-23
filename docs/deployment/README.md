@@ -13,4 +13,3 @@ Local and production deployment references:
   GitHub Container Registry.
 - [Images](images.md) — image names and deployment image references.
 - [Policy signing](policy-signing.md) — signing policy bundles for deployment.
-
