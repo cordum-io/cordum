@@ -16,10 +16,3 @@ import (
 func HashJobRequest(req *pb.JobRequest) (string, error) {
 	return reqhash.Hash(req)
 }
-
-// canonicalJobRequest forwards to reqhash.Canonical. Retained as a
-// package-private helper because some scheduler internals still consume
-// the stripped-but-non-hashed form directly.
-func canonicalJobRequest(req *pb.JobRequest) (*pb.JobRequest, error) {
-	return reqhash.Canonical(req)
-}

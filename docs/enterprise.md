@@ -32,7 +32,8 @@ License **issuance** tooling (signing CLI, agreement generator) lives in
 Configuration variables:
 - `CORDUM_LICENSE_FILE` — path to the signed license file
 - `CORDUM_LICENSE_TOKEN` — inline license token (alternative to file)
-- `CORDUM_LICENSE_PUBLIC_KEY` — Ed25519 public key for signature verification
+- `CORDUM_LICENSE_PUBLIC_KEY` — inline Ed25519 public key for signature verification
+- `CORDUM_LICENSE_PUBLIC_KEY_PATH` — path to the Ed25519 public key file (alternative to inline)
 
 ## Authentication
 

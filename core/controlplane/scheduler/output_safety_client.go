@@ -95,7 +95,7 @@ func NewOutputSafetyClientWithRedis(addr, redisURL string) (*OutputSafetyClient,
 func (c *OutputSafetyClient) Close() error {
 	var closeErr error
 	if c != nil && c.resultClient != nil {
-		if err := c.resultClient.Close(); err != nil && closeErr == nil {
+		if err := c.resultClient.Close(); err != nil {
 			closeErr = err
 		}
 	}
