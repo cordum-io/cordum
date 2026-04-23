@@ -14,11 +14,12 @@ these entries into a versioned release note and reset this file.
   `store.hashApprovalJobRequest` to close a divergence that was
   auto-DENYing benign approvals. task-090ab6af finishes the
   unification: the canonicalisation logic now lives in exactly one
-  place (`reqhash.Canonical` + `reqhash.Hash`); the old per-package
-  `scheduler.HashJobRequest` / `store.hashApprovalJobRequest` / the
-  private `scheduler.canonicalJobRequest` are preserved as two-line
-  forwarders so the 20+ call sites across handlers, tests, and the
-  reconciler keep compiling transparently. Also fixed five bare
+  place (`reqhash.Canonical` + `reqhash.Hash`); the public
+  `scheduler.HashJobRequest` and `store.hashApprovalJobRequest` are
+  preserved as two-line forwarders so the 20+ call sites across
+  handlers, tests, and the reconciler keep compiling transparently,
+  while the previously-duplicated private helpers are deleted
+  outright. Also fixed five bare
   `protojson.Unmarshal` call sites in `core/infra/store/job_store.go`
   (`GetJobRequest`, `ApplyApprovalRepair`, `ResolveApproval`, and the
   two `PolicyConstraints` loaders) to pass

@@ -298,6 +298,15 @@ func (s *fakeJobStore) ListExpiredDeadlines(_ context.Context, _ int64, _ int64)
 }
 
 func (s *fakeJobStore) ListJobsByState(_ context.Context, state JobState, _ int64, _ int64) ([]JobRecord, error) {
+	// RLock the s.states map iteration to match every other reader
+	// on this fake (GetState, GetJobRequest, GetTopic, ...). Without
+	// the lock, the race detector fires on
+	// TestProcessJobReadinessRequiredFiltersUnreadyWorkers because
+	// the new flush-on-worker-online goroutine spawned from
+	// HandlePacket (task-7a2514ae) reads s.states concurrently with
+	// SetState writes on the main test goroutine. See task-6f10d4e5.
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var out []JobRecord
 	for id, st := range s.states {
 		if st == state {
