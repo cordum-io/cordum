@@ -110,7 +110,9 @@ these entries into a versioned release note and reset this file.
   and `docs/api/openapi/cordum.swagger.json`. `docs/api/openapi/cordum-api.yaml`
   is now the single canonical OpenAPI 3 spec, `make openapi` is a pure
   Redocly validation pass, and the local/public Swagger UI wrappers now load
-  only that canonical spec.
+  only that canonical spec. See
+  [`docs/cleanup/openapi-legacy-audit.md`](../cleanup/openapi-legacy-audit.md)
+  `Audit re-verification 2026-04-23` for the ground-truth timeline.
 - Removed the pre-GA compat shims `core/licensing/compat.go` and
   `core/controlplane/gateway/auth_compat.go`. License envelopes in the
   legacy top-level `features` + `limits` shape are now hard-rejected

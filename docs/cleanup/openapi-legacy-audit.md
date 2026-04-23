@@ -225,3 +225,44 @@ Select-String -Path docs/api/openapi/cordum-api.yaml -Pattern 'deprecated'
 rg -n "incident|Incident|dataset|/api/v1/evals" docs/api/openapi/cordum-api.yaml
 rg -n "cordum-api\.yaml" sdk/python sdk/typescript sdk/conformance docs
 ```
+
+## Audit re-verification 2026-04-23
+
+This section intentionally re-checks the previous completion notes against the current checkout before doing any deletion work. Result: the earlier notes were memory-rot; the active files still existed before this pass.
+
+```bash
+$ ls -la docs/api/openapi/cordum-rest.yaml docs/api/openapi/cordum.swagger.json
+-rwxrwxrwx 1 sysadmin sysadmin 110889 Apr 23 13:17 docs/api/openapi/cordum-rest.yaml
+-rwxrwxrwx 1 sysadmin sysadmin   8657 Apr 23 13:17 docs/api/openapi/cordum.swagger.json
+
+$ grep -n 'protoc-gen-openapiv2\|openapiv2_out' tools/scripts/gen_openapi.sh
+19:# protoc-gen-openapiv2 plugin installed yet and just want redocly lint).
+26:			--openapiv2_out="$ROOT_DIR/$OUT_DIR" \
+31:			echo "protoc-gen-openapiv2 unavailable; skipping proto swagger regen" >&2
+
+$ ls docs-site/docs/api-reference/rest-api.md
+docs-site/docs/api-reference/rest-api.md
+
+$ grep -n 'deprecated: true\|legacy and prefixed MCP' docs/api/openapi/cordum-api.yaml
+# no matches
+
+$ grep -rln 'cordum-rest\.yaml\|cordum\.swagger\.json' docs docs-site Cordum-site Makefile tools
+docs/cleanup/backward-legacy-sweep-20260420.md
+docs/cleanup/openapi-legacy-audit.md
+docs/cleanup/README.md
+docs/release-notes/unreleased.md
+docs-site/docs/api-reference/rest-api.md
+docs-site/versioned_docs/version-2.9/api-reference/api-overview.md
+docs-site/versioned_docs/version-2.9/api-reference/full-reference.md
+docs-site/versioned_docs/version-2.9/api-reference/rest-api.md
+tools/scripts/gen_openapi.sh
+grep: Cordum-site: No such file or directory
+```
+
+Interpretation:
+
+- `cordum-rest.yaml` and `cordum.swagger.json` were still present at the start of this pass.
+- `tools/scripts/gen_openapi.sh` still contained the OpenAPI v2/protoc swagger generation block.
+- `docs-site/docs/api-reference/rest-api.md` was still present.
+- The canonical `cordum-api.yaml` had no remaining `deprecated: true` or `legacy and prefixed MCP` markers, so that prior cleanup claim was real.
+- Remaining references before deletion were limited to historical audit/release-note records, the active docs-site page to delete, out-of-scope `versioned_docs/`, and `tools/scripts/gen_openapi.sh`.
