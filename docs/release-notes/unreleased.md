@@ -4,6 +4,34 @@ This file captures user-visible changes that have landed on `main` but
 have not yet been cut into a release. When a release is tagged, copy
 these entries into a versioned release note and reset this file.
 
+## Changed
+
+- **core: extracted JobRequest canonicalisation into a single shared
+  helper at `core/protocol/reqhash`.** The scheduler, gateway, and
+  infra/store packages each used to carry their own copy of the same
+  strip-labels + protojson-roundtrip + deterministic-marshal + sha256
+  routine; task-fa783d7a landed a reconciliation inside
+  `store.hashApprovalJobRequest` to close a divergence that was
+  auto-DENYing benign approvals. task-090ab6af finishes the
+  unification: the canonicalisation logic now lives in exactly one
+  place (`reqhash.Canonical` + `reqhash.Hash`); the old per-package
+  `scheduler.HashJobRequest` / `store.hashApprovalJobRequest` / the
+  private `scheduler.canonicalJobRequest` are preserved as two-line
+  forwarders so the 20+ call sites across handlers, tests, and the
+  reconciler keep compiling transparently. Also fixed five bare
+  `protojson.Unmarshal` call sites in `core/infra/store/job_store.go`
+  (`GetJobRequest`, `ApplyApprovalRepair`, `ResolveApproval`, and the
+  two `PolicyConstraints` loaders) to pass
+  `UnmarshalOptions{DiscardUnknown: true}`, so forward-compat proto
+  fields from a newer SDK no longer break the read path or leak into
+  the in-memory proto. New regression test
+  `TestGetJobRequest_DiscardsUnknownJSONFields` pins the invariant at
+  the store boundary. Redis WATCH/MULTI atomic store-and-hash was
+  evaluated and explicitly rejected for this release; see
+  [`docs/decisions/2026-04-atomic-store-and-hash.md`](../decisions/2026-04-atomic-store-and-hash.md)
+  for the trade-off analysis and re-visit triggers. Closes
+  task-090ab6af.
+
 ## Fixed
 
 - **audit: chain is now instantiated unconditionally at gateway boot.**

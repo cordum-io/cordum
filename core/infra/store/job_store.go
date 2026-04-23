@@ -975,7 +975,7 @@ func (s *RedisJobStore) GetJobRequest(ctx context.Context, jobID string) (*pb.Jo
 		return nil, fmt.Errorf("job store get job request %s: %w", jobID, err)
 	}
 	var req pb.JobRequest
-	if err := protojson.Unmarshal(data, &req); err != nil {
+	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(data, &req); err != nil {
 		return nil, fmt.Errorf("unmarshal job request: %w", err)
 	}
 	return &req, nil
@@ -2150,7 +2150,7 @@ func (s *RedisJobStore) ApplyApprovalRepair(ctx context.Context, params Approval
 		var req *pb.JobRequest
 		if len(reqBytes) > 0 {
 			var decoded pb.JobRequest
-			if err := protojson.Unmarshal(reqBytes, &decoded); err != nil {
+			if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(reqBytes, &decoded); err != nil {
 				return fmt.Errorf("unmarshal job request: %w", err)
 			}
 			req = &decoded
@@ -2539,7 +2539,7 @@ func (s *RedisJobStore) ResolveApproval(ctx context.Context, params ApprovalReso
 			return fmt.Errorf("job store resolve approval %s request: %w", jobID, err)
 		}
 		var req pb.JobRequest
-		if err := protojson.Unmarshal(reqBytes, &req); err != nil {
+		if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(reqBytes, &req); err != nil {
 			return fmt.Errorf("unmarshal job request: %w", err)
 		}
 		if params.Decision == model.ApprovalDecisionApprove {
@@ -2772,7 +2772,7 @@ func (s *RedisJobStore) GetSafetyDecision(ctx context.Context, jobID string) (mo
 	}
 	if raw := data[metaFieldSafetyConstraints]; raw != "" {
 		var constraints pb.PolicyConstraints
-		if err := protojson.Unmarshal([]byte(raw), &constraints); err == nil {
+		if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal([]byte(raw), &constraints); err == nil {
 			record.Constraints = &constraints
 		}
 	}
@@ -2827,7 +2827,7 @@ func (s *RedisJobStore) ListSafetyDecisions(ctx context.Context, jobID string, l
 		if rawConstraints, ok := entry["constraints"].(map[string]any); ok && rawConstraints != nil {
 			if data, err := json.Marshal(rawConstraints); err == nil {
 				var constraints pb.PolicyConstraints
-				if err := protojson.Unmarshal(data, &constraints); err == nil {
+				if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(data, &constraints); err == nil {
 					record.Constraints = &constraints
 				}
 			}
