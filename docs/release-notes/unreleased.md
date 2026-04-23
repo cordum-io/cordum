@@ -6,6 +6,17 @@ these entries into a versioned release note and reset this file.
 
 ## Changed
 
+- **core: extracted `proto.Clone((*pb.JobRequest))` guard-pattern into
+  `core/protocol/protoutil/CloneJobRequest`.** Consolidates 4 inline
+  call sites (`handlers_jobs.go`, `scheduler/engine.go`,
+  `scheduler/saga.go`, `reqhash/reqhash.go`) onto one helper with
+  a typed ok-check and nil guard. The saga.go site was missing the
+  ok-check entirely before this migration — see the paired `Fixed`
+  entry for the latent nil-deref that closed. The other 2
+  `proto.Clone(JobMetadata)` sites in saga.go (different type) are
+  NOT migrated here — a separate `CloneJobMetadata` helper can be
+  added later if drift emerges there. Closes task-625b2ed1.
+
 - **gateway: removed `packs_compat.go` and `policy_compat.go` (233 lines
   of pure-alias shims).** Both files existed only to re-export
   types/consts/functions from the `core/controlplane/gateway/packs` and
@@ -90,6 +101,21 @@ these entries into a versioned release note and reset this file.
   without operator intervention. See task-1d4e6b4c.
 
 ## Fixed
+
+- **scheduler/saga.go: fixed a latent nil-deref in the JobRequest
+  clone path at `buildCompensationRequest`.** The inline
+  `req := proto.Clone(base).(*pb.JobRequest)` lacked the ok-check that
+  every other `proto.Clone(x).(*pb.JobRequest)` site in the codebase
+  already had. On a proto.Clone type-assertion failure (vanishingly
+  rare, but reachable on library upgrade or memory-pressure
+  corruption), the next line would dereference nil and panic the
+  scheduler mid-compensation. The migration to the new
+  `core/protocol/protoutil.CloneJobRequest` helper enforces the
+  ok-check at every call site, so this class of drift cannot recur.
+  Operator impact: none in the happy path; on the impossible-to-
+  observe failure path the scheduler now returns a wrapped error
+  (`compensation: clone base job request: ...`) instead of crashing
+  the worker goroutine. Closes task-625b2ed1.
 
 - **audit: `SyslogExporter.Close` now logs at Warn when the underlying
   `net.Conn.Close` returns an error.** Previously the failure was

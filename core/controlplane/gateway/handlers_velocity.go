@@ -18,6 +18,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/timeutil"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
@@ -793,7 +794,7 @@ func collectVelocityRuleStats(ctx context.Context, client redis.UniversalClient,
 			return nil, err
 		}
 		if len(latestEntries) > 0 {
-			triggeredAt := time.Unix(int64(latestEntries[0].Score), 0).UTC().Format(time.RFC3339)
+			triggeredAt := timeutil.FromSeconds(int64(latestEntries[0].Score))
 			if triggeredAt > stats.LastTriggered {
 				stats.LastTriggered = triggeredAt
 			}

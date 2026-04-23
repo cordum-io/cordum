@@ -11,6 +11,7 @@ import (
 
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/protocol/protoutil"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/proto"
@@ -319,7 +320,13 @@ func buildCompensationRequest(base *pb.JobRequest) (*pb.JobRequest, error) {
 		return nil, fmt.Errorf("compensation topic required")
 	}
 
-	req := proto.Clone(base).(*pb.JobRequest)
+	// CloneJobRequest enforces a typed ok-check that this site used to
+	// skip; a bare proto.Clone type-assertion failure used to nil-deref
+	// on the next line. See task-625b2ed1.
+	req, err := protoutil.CloneJobRequest(base)
+	if err != nil {
+		return nil, fmt.Errorf("compensation: clone base job request: %w", err)
+	}
 	req.Compensation = nil
 	req.JobId = ""
 	req.ParentJobId = base.JobId

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/infra/timeutil"
 	"github.com/cordum/cordum/core/model"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -387,11 +388,9 @@ func safeDeref(p *float64) float64 {
 	return *p
 }
 
+// millisToRFC3339 forwards to timeutil.FromMillis. See task-e396a874.
 func millisToRFC3339(ms int64) string {
-	if ms <= 0 {
-		return ""
-	}
-	return time.UnixMilli(ms).UTC().Format(time.RFC3339)
+	return timeutil.FromMillis(ms)
 }
 
 // parseApprovalAnalyticsQuery validates + normalises URL params.

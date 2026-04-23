@@ -19,6 +19,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/timeutil"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
 	"github.com/cordum/cordum/core/policyshadow"
@@ -982,11 +983,9 @@ func (s *server) listOutputPolicyAudit(r *http.Request, ruleID string, limit int
 	return items, nil
 }
 
+// timestampFromMicros forwards to timeutil.FromMicros. See task-e396a874.
 func timestampFromMicros(value int64) string {
-	if value <= 0 {
-		return ""
-	}
-	return time.UnixMicro(value).UTC().Format(time.RFC3339)
+	return timeutil.FromMicros(value)
 }
 
 func (s *server) handleListPolicyBundleSnapshots(w http.ResponseWriter, r *http.Request) {

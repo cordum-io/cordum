@@ -44,7 +44,7 @@ func newTestTokenService(t *testing.T) (*TokenService, *RedisRevocationStore, *m
 	t.Cleanup(func() { _ = client.Close() })
 
 	revocations := NewRedisRevocationStoreFromClient(client)
-	service := NewTokenService(signingKey, map[string]ed25519.PublicKey{
+	service, err := NewTokenService(signingKey, map[string]ed25519.PublicKey{
 		signingKey.KID: signingKey.PublicKey(),
 	}, staticAgentPermissions{
 		entries: map[string]AgentPermissions{
@@ -53,6 +53,9 @@ func newTestTokenService(t *testing.T) (*TokenService, *RedisRevocationStore, *m
 			"agent-c": {AllowedActions: []string{"read"}, AllowedTopics: []string{"job.alpha"}},
 		},
 	}, revocations)
+	if err != nil {
+		t.Fatalf("NewTokenService() error = %v", err)
+	}
 	service.now = func() time.Time { return time.Unix(1_710_000_000, 0).UTC() }
 	return service, revocations, srv
 }
@@ -134,9 +137,12 @@ func TestVerifyDelegationTokenErrors(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GenerateSigningKey() error = %v", err)
 		}
-		otherService := NewTokenService(otherKey, map[string]ed25519.PublicKey{
+		otherService, err := NewTokenService(otherKey, map[string]ed25519.PublicKey{
 			otherKey.KID: otherKey.PublicKey(),
 		}, service.agentPermissions, nil)
+		if err != nil {
+			t.Fatalf("NewTokenService() error = %v", err)
+		}
 		otherService.now = service.now
 		token, _, err := otherService.IssueDelegationToken(context.Background(), IssueRequest{
 			Tenant:            "tenant-a",
@@ -284,11 +290,14 @@ func TestVerifyDelegationTokenRevocationAndScopeDowngrade(t *testing.T) {
 		t.Fatalf("VerifyDelegationToken() error = %v, want ErrRevoked", err)
 	}
 
-	downgraded := NewTokenService(service.signingKey, service.keyring, staticAgentPermissions{
+	downgraded, err := NewTokenService(service.signingKey, service.keyring, staticAgentPermissions{
 		entries: map[string]AgentPermissions{
 			"agent-a": {AllowedActions: []string{"read"}, AllowedTopics: []string{}},
 		},
 	}, nil)
+	if err != nil {
+		t.Fatalf("NewTokenService() error = %v", err)
+	}
 	downgraded.now = service.now
 	_, err = downgraded.VerifyDelegationToken(context.Background(), token, "agent-b")
 	if !errors.Is(err, ErrScopeExceeded) {

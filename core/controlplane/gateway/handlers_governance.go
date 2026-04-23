@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/infra/timeutil"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/prometheus/client_golang/prometheus"
@@ -175,9 +176,9 @@ func parseGovernanceDecisionTime(raw string) (int64, error) {
 	return 0, fmt.Errorf("invalid timestamp")
 }
 
+// governanceTimestamp forwards to timeutil.FromMillis so the RFC3339
+// formatting lives in a single source of truth shared across the
+// handler layer. Input unit (unix millis) unchanged. See task-e396a874.
 func governanceTimestamp(ts int64) string {
-	if ts <= 0 {
-		return ""
-	}
-	return time.UnixMilli(ts).UTC().Format(time.RFC3339)
+	return timeutil.FromMillis(ts)
 }

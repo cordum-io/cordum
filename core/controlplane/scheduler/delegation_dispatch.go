@@ -71,7 +71,7 @@ func (e *Engine) delegationTokenService() (*delegation.TokenService, error) {
 		keyring,
 		schedulerDelegationPermissionsResolver{store: infraStore.NewAgentIdentityStoreFromClient(client)},
 		delegation.NewRedisRevocationStoreFromClient(client),
-	), nil
+	)
 }
 
 func (e *Engine) verifyDelegationBeforeDispatch(ctx context.Context, req *pb.JobRequest) (model.DelegationLineage, bool, error) {

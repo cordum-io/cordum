@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/infra/timeutil"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/google/uuid"
@@ -403,20 +404,12 @@ func chatMessageFromEvent(runID, fallbackID string, ev chatEvent) chatMessage {
 	}
 }
 
+// chatCreatedAt delegates to timeutil.FormatUnixAuto so the magnitude
+// cascade (seconds/millis/micros/nanos) stays in a single source of
+// truth shared with the other handler formatters. Thresholds unchanged
+// from the previous inline implementation. See task-e396a874.
 func chatCreatedAt(ts int64) string {
-	if ts <= 0 {
-		return ""
-	}
-	switch {
-	case ts > 1_000_000_000_000_000_000:
-		return time.Unix(0, ts).UTC().Format(time.RFC3339)
-	case ts > 1_000_000_000_000_000:
-		return time.Unix(0, ts*1_000).UTC().Format(time.RFC3339)
-	case ts > 1_000_000_000_000:
-		return time.Unix(0, ts*1_000_000).UTC().Format(time.RFC3339)
-	default:
-		return time.Unix(ts, 0).UTC().Format(time.RFC3339)
-	}
+	return timeutil.FormatUnixAuto(ts)
 }
 
 var errChatStoreUnavailable = errors.New("chat history unavailable: Redis store not configured")

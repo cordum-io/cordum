@@ -27,6 +27,7 @@ import (
 	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/cordum/cordum/core/protocol/protoutil"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
@@ -2424,8 +2425,12 @@ func (e *Engine) startAsyncOutputCheck(jobID, topic string, res *pb.JobResult, r
 	if !ok || resCopy == nil {
 		resCopy = res
 	}
-	reqCopy, ok := proto.Clone(req).(*pb.JobRequest)
-	if !ok || reqCopy == nil {
+	reqCopy, err := protoutil.CloneJobRequest(req)
+	if err != nil {
+		// Best-effort: fall back to the original on any clone failure so
+		// the output-safety goroutine still runs. Matches the pre-migration
+		// behavior at this site; the protoutil helper just routes through
+		// one canonical guard instead of an ad-hoc inline one.
 		reqCopy = req
 	}
 

@@ -23,6 +23,14 @@ const (
 	defaultClockLeeway    = 30 * time.Second
 )
 
+// NewTokenService returns ErrInvalidSigningKey (declared in keys.go)
+// wrapped with context when the provided signing key's own public key
+// does not have the expected ed25519.PublicKeySize. Surfacing the
+// failure at constructor time turns a silent config-drift bug into a
+// clear boot error — historically the signing key was silently
+// dropped from the keyring, and every downstream verify failed with
+// an opaque "unknown kid" message.
+
 type AgentPermissions struct {
 	AllowedActions []string
 	AllowedTopics  []string
@@ -91,14 +99,16 @@ type TokenService struct {
 	now              func() time.Time
 }
 
-func NewTokenService(signingKey SigningKey, keyring map[string]ed25519.PublicKey, agentPermissions AgentPermissionsResolver, revocations RevocationStore) *TokenService {
+func NewTokenService(signingKey SigningKey, keyring map[string]ed25519.PublicKey, agentPermissions AgentPermissionsResolver, revocations RevocationStore) (*TokenService, error) {
 	copiedKeyring := make(map[string]ed25519.PublicKey, len(keyring)+1)
 	for kid, pub := range keyring {
 		copiedKeyring[kid] = append(ed25519.PublicKey(nil), pub...)
 	}
-	if pub := signingKey.PublicKey(); len(pub) == ed25519.PublicKeySize {
-		copiedKeyring[signingKey.KID] = pub
+	pub := signingKey.PublicKey()
+	if len(pub) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("delegation: signing key %q public key is %d bytes, want %d: %w", signingKey.KID, len(pub), ed25519.PublicKeySize, ErrInvalidSigningKey)
 	}
+	copiedKeyring[signingKey.KID] = pub
 	return &TokenService{
 		signingKey:       signingKey,
 		keyring:          copiedKeyring,
@@ -109,7 +119,7 @@ func NewTokenService(signingKey SigningKey, keyring map[string]ed25519.PublicKey
 		leeway:           defaultClockLeeway,
 		maxDepth:         env.IntOr(envDelegationMaxDepth, defaultMaxDepth),
 		now:              time.Now,
-	}
+	}, nil
 }
 
 func (s *TokenService) KeyID() string {
