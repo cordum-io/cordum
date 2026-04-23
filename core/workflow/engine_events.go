@@ -419,6 +419,23 @@ func (e *Engine) appendTimeline(ctx context.Context, run *WorkflowRun, eventType
 		Message:    message,
 		Data:       data,
 	}
+	if strings.HasPrefix(evt.Type, "step_") {
+		attrs := []any{
+			"run_id", evt.RunID,
+			"workflow_id", evt.WorkflowID,
+			"step_id", evt.StepID,
+			"job_id", evt.JobID,
+			"event_type", evt.Type,
+			"status", evt.Status,
+		}
+		if evt.ResultPtr != "" {
+			attrs = append(attrs, "result_ptr", evt.ResultPtr)
+		}
+		if evt.Message != "" {
+			attrs = append(attrs, "detail", evt.Message)
+		}
+		slog.Info("workflow step transition", attrs...)
+	}
 	if err := e.store.AppendTimelineEvent(ctx, run.ID, evt); err != nil {
 		slog.Error("timeline event append failed", "run_id", run.ID, "event_type", evt.Type, "error", err)
 		slog.Info("timeline event fallback", "run_id", run.ID, "step_id", evt.StepID, "type", evt.Type, "message", evt.Message)

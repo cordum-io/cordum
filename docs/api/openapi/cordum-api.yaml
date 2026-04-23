@@ -3538,9 +3538,9 @@ paths:
       summary: Verify audit chain integrity
       description: |
         Walks the tenant's audit stream and attests integrity of the hash chain. Reports
-        `status=ok` on a contiguous chain, `status=gap` with classification when seq numbers are
-        missing (retention-trimmed vs suspected tampering), and `status=tamper` on a broken hash
-        link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
+        `status=ok` on a contiguous chain, `status=partial` when all gaps are
+        retention-trimmed, and `status=compromised` for missing seq numbers or broken hash
+        links. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
         integrity report surface, not event retrieval.
       tags:
       - AuditExport
@@ -3548,34 +3548,42 @@ paths:
       - $ref: '#/components/parameters/TenantID'
       - name: tenant
         in: query
-        description: Tenant id (must match caller scope)
+        required: false
+        description: Tenant id to verify; must match caller scope and defaults to the authenticated/request tenant.
         schema:
           type: string
       - name: since
         in: query
+        required: false
         description: Inclusive lower bound on event time (unix ms)
         schema:
           type: integer
           format: int64
+          minimum: 0
       - name: until
         in: query
+        required: false
         description: Inclusive upper bound on event time (unix ms)
         schema:
           type: integer
           format: int64
+          minimum: 0
       - name: limit
         in: query
+        required: false
         description: Max events to read (default 10000, max 100000)
         schema:
           type: integer
-          format: int32
+          format: int64
+          minimum: 1
+          maximum: 100000
       responses:
         '200':
           description: Chain integrity report
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GenericObject'
+                $ref: '#/components/schemas/AuditVerifyResult'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -3585,11 +3593,7 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
         '503':
-          description: Audit chainer not installed; integrity cannot be attested
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/audit/export:
     get:
       operationId: exportAuditCompliance
@@ -4183,67 +4187,6 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/mcp/sse:
-    get:
-      operationId: mcpSSEV1
-      summary: MCP Server-Sent Events stream
-      description: 'Opens an SSE connection to the MCP server. The server sends JSON-RPC
-
-        notifications and responses over this channel.
-
-        '
-      tags:
-      - MCP
-      security:
-      - apiKey: []
-      - bearerAuth: []
-      responses:
-        '200':
-          description: SSE stream opened
-          content:
-            text/event-stream:
-              schema:
-                type: string
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-      parameters:
-      - $ref: '#/components/parameters/TenantID'
-  /api/v1/mcp/message:
-    post:
-      operationId: mcpMessageV1
-      summary: Send a JSON-RPC 2.0 message to MCP server
-      tags:
-      - MCP
-      security:
-      - apiKey: []
-      - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/JsonRpcRequest'
-      responses:
-        '200':
-          description: JSON-RPC response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JsonRpcResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-      parameters:
-      - $ref: '#/components/parameters/TenantID'
   /api/v1/agents:
     get:
       operationId: listAgents
@@ -5780,28 +5723,6 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/mcp/status:
-    get:
-      operationId: mcpStatusV1
-      summary: Get MCP server status
-      tags:
-      - MCP
-      security:
-      - apiKey: []
-      - bearerAuth: []
-      responses:
-        '200':
-          description: MCP status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/McpStatus'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-      parameters:
-      - $ref: '#/components/parameters/TenantID'
   /api/v1/governance/approvals/analytics:
     get:
       operationId: getApprovalAnalytics
@@ -7554,6 +7475,64 @@ components:
       type: object
       properties: {}
       additionalProperties: true
+    AuditVerifyGap:
+      type: object
+      properties:
+        at_seq:
+          type: integer
+          format: int64
+          description: Sequence number where the gap or mismatch was observed.
+        type:
+          type: string
+          enum:
+          - missing
+          - out_of_order
+          - hash_mismatch
+          - retention_trimmed
+      required:
+      - at_seq
+      - type
+    AuditVerifyResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+          - ok
+          - compromised
+          - partial
+        total_events:
+          type: integer
+          description: Number of events walked in the requested range.
+        verified_events:
+          type: integer
+          description: Number of events whose hash and linkage verified.
+        gaps:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditVerifyGap'
+        retention_boundary_seq:
+          type: integer
+          format: int64
+          description: Lowest sequence number still present in the retained stream.
+        retention_window_hours:
+          type: number
+          format: double
+          description: Configured audit retention window in hours.
+        first_seq:
+          type: integer
+          format: int64
+          description: First sequence number observed in the verified range.
+        last_seq:
+          type: integer
+          format: int64
+          description: Last sequence number observed in the verified range.
+      required:
+      - status
+      - total_events
+      - verified_events
+      - gaps
+      - retention_boundary_seq
     RoleDefinition:
       type: object
       properties:

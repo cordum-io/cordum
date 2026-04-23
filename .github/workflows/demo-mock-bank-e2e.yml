@@ -1,0 +1,132 @@
+name: demo-mock-bank-e2e
+
+# End-to-end guard for the demo-mock-bank governed-change product.
+# Mock-bank is the flagship proof that Cordum can route, gate, and
+# audit a mixed-risk workload across three distinct policy verdicts
+# (allow / require_approval / deny). Unit tests exercise the worker
+# and the policy fragment in isolation; this workflow is the only
+# thing that drives a real workflow run through the gateway,
+# scheduler, safety kernel, and worker fleet end-to-end.
+#
+# Kept separate from demo-quickstart-e2e so a failure in either
+# surface cannot mask a failure in the other, and so each can be
+# promoted to a required branch-protection check independently
+# when its flake rate is known.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo-mock-bank-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  demo-mock-bank-e2e:
+    name: demo-mock-bank-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build cordumctl
+        run: |
+          mkdir -p ./bin
+          go build -o ./bin/cordumctl ./cmd/cordumctl
+
+      - name: Generate API key + Redis password
+        run: |
+          echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Generate TLS certificates
+        run: |
+          ./bin/cordumctl generate-certs --dir ./certs
+          # Redis container runs as UID 999 — make certs world-readable.
+          chmod -R a+rX ./certs
+
+      - name: Bring up the compose stack (demo profile)
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+        run: |
+          docker compose --profile demo up -d --build
+          docker compose ps
+
+      - name: Wait for gateway /api/v1/status to return 200
+        # Condition-based poll — the order of service startup matters:
+        # safety-kernel and scheduler must be up before mock-bank-worker
+        # can register, and the gateway proxies /api/v1/status once it
+        # can reach both. Bails out early on warm caches.
+        run: |
+          attempts=0
+          max_attempts=30
+          until curl -ksf \
+            --connect-timeout 2 \
+            --max-time 5 \
+            -H "X-API-Key: ${CORDUM_API_KEY}" \
+            https://127.0.0.1:8081/api/v1/status >/dev/null; do
+            attempts=$((attempts + 1))
+            if [ "$attempts" -ge "$max_attempts" ]; then
+              echo "gateway /api/v1/status did not return 200 within $((max_attempts * 2))s"
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "gateway healthy after $((attempts * 2))s"
+
+      - name: Run mock-bank end-to-end integration test
+        # Covers all three verdict paths (allow / require_approval / deny)
+        # per taskRails[1]. The script installs the pack, waits for at
+        # least one transfer agent to heartbeat, and submits the three
+        # amounts sequentially. Exit code 0 = all three terminal states
+        # reached within their wall-clock budgets.
+        env:
+          CORDUM_INTEGRATION: "1"
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          CORDUM_API_BASE: https://127.0.0.1:8081
+          CORDUM_GATEWAY: https://127.0.0.1:8081
+          CORDUM_TLS_INSECURE: "1"
+          CORDUMCTL_BIN: ${{ github.workspace }}/bin/cordumctl
+        run: bash demo/mock-bank/integration_test.sh
+
+      - name: Capture logs on failure
+        if: failure()
+        run: |
+          export CORDUM_API_KEY="${CORDUM_API_KEY:-teardown-placeholder-api-key}"
+          export REDIS_PASSWORD="${REDIS_PASSWORD:-teardown-placeholder-redis-password}"
+          mkdir -p /tmp/mock-bank-logs
+          docker compose logs --no-color mock-bank-worker > /tmp/mock-bank-logs/mock-bank-worker.log 2>&1 || true
+          docker compose logs --no-color scheduler > /tmp/mock-bank-logs/scheduler.log 2>&1 || true
+          docker compose logs --no-color workflow-engine > /tmp/mock-bank-logs/workflow-engine.log 2>&1 || true
+          docker compose logs --no-color api-gateway > /tmp/mock-bank-logs/api-gateway.log 2>&1 || true
+          docker compose logs --no-color safety-kernel > /tmp/mock-bank-logs/safety-kernel.log 2>&1 || true
+          docker compose ps > /tmp/mock-bank-logs/compose-ps.txt || true
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-mock-bank-e2e-failure
+          path: /tmp/mock-bank-logs/
+          retention-days: 7
+
+      - name: Tear down compose stack
+        if: always()
+        run: |
+          export CORDUM_API_KEY="${CORDUM_API_KEY:-teardown-placeholder-api-key}"
+          export REDIS_PASSWORD="${REDIS_PASSWORD:-teardown-placeholder-redis-password}"
+          docker compose --profile demo down -v

@@ -14,6 +14,7 @@ var (
 	_ Exporter = (*DatadogExporter)(nil)
 	_ Exporter = (*SyslogExporter)(nil)
 	_ Exporter = (*CloudWatchExporter)(nil)
+	_ Exporter = (*DiscardExporter)(nil)
 )
 
 func TestSIEMEvent_JSONRoundTrip(t *testing.T) {
@@ -194,5 +195,42 @@ func TestEventConstants(t *testing.T) {
 		if got != want {
 			t.Errorf("severity constant = %q, want %q", got, want)
 		}
+	}
+}
+
+func TestNewExporterFromEnvWithEntitlements_NullBackendAliases(t *testing.T) {
+	for _, typ := range []string{"null", "discard", "chain-only", "none", ""} {
+		t.Run(typ, func(t *testing.T) {
+			t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", typ)
+
+			exp, err := NewExporterFromEnvWithEntitlements(nil)
+			if err != nil {
+				t.Fatalf("NewExporterFromEnvWithEntitlements(%q) error = %v", typ, err)
+			}
+			if exp == nil {
+				t.Fatalf("NewExporterFromEnvWithEntitlements(%q) returned nil exporter", typ)
+			}
+			if _, ok := exp.Backend().(*DiscardExporter); !ok {
+				t.Fatalf("NewExporterFromEnvWithEntitlements(%q) backend = %T, want *DiscardExporter", typ, exp.Backend())
+			}
+			if err := exp.Close(); err != nil {
+				t.Fatalf("close %q exporter: %v", typ, err)
+			}
+		})
+	}
+}
+
+func TestDiscardExporter_ExportClose(t *testing.T) {
+	t.Parallel()
+
+	exp := NewDiscardExporter()
+	if err := exp.Export(context.Background(), []SIEMEvent{{Action: "test"}}); err != nil {
+		t.Fatalf("Export error = %v", err)
+	}
+	if err := exp.Close(); err != nil {
+		t.Fatalf("first Close error = %v", err)
+	}
+	if err := exp.Close(); err != nil {
+		t.Fatalf("second Close error = %v", err)
 	}
 }

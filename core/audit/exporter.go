@@ -68,9 +68,9 @@ const (
 	// Signals that policy drifted between approval time and dispatch time
 	// and the fast-path refused to short-circuit on stale constraints.
 	EventApprovalRevisionMismatch = "approval.revision_mismatch"
-	EventWorkerTrustChange     = "worker_trust_change"
-	EventTopicRegistered       = "topic_registered"
-	EventTopicUnregistered     = "topic_unregistered"
+	EventWorkerTrustChange        = "worker_trust_change"
+	EventTopicRegistered          = "topic_registered"
+	EventTopicUnregistered        = "topic_unregistered"
 	// EventLicenseLegacyRejected is emitted when the licensing layer
 	// rejects a pre-GA top-level features/limits envelope instead of
 	// silently migrating it to the current schema.
@@ -143,7 +143,8 @@ type Exporter interface {
 
 // NewExporterFromEnv reads CORDUM_AUDIT_EXPORT_* environment variables and
 // returns a BufferedExporter wrapping the configured backend.
-// Returns nil (no error) if export is disabled (type "none" or empty).
+// Empty/"none" env values install a discard backend so the audit chain still
+// runs even when no streaming SIEM destination is configured.
 func NewExporterFromEnv() (*BufferedExporter, error) {
 	exp, err := exporterFromEnv()
 	if err != nil || exp == nil {
@@ -157,11 +158,8 @@ func NewExporterFromEnv() (*BufferedExporter, error) {
 // retention. Invalid or missing resolvers gracefully fall back to community
 // defaults.
 func NewExporterFromEnvWithEntitlements(resolver *licensing.EntitlementResolver) (*BufferedExporter, error) {
-	typ := strings.ToLower(os.Getenv("CORDUM_AUDIT_EXPORT_TYPE"))
-	if typ == "" || typ == "none" {
-		return nil, nil
-	}
-	if !siemExportEnabled(currentEntitlements(resolver)) {
+	typ := strings.ToLower(strings.TrimSpace(os.Getenv("CORDUM_AUDIT_EXPORT_TYPE")))
+	if !isDiscardExportType(typ) && !siemExportEnabled(currentEntitlements(resolver)) {
 		slog.Warn("audit SIEM export disabled by entitlement",
 			"type", typ,
 			"plan", resolvedPlan(resolver),
@@ -188,15 +186,19 @@ func parseSyslogAddr(addr string) (network, address string, err error) {
 }
 
 func exporterFromEnv() (Exporter, error) {
-	typ := strings.ToLower(os.Getenv("CORDUM_AUDIT_EXPORT_TYPE"))
-	if typ == "" || typ == "none" {
-		return nil, nil
-	}
+	typ := strings.ToLower(strings.TrimSpace(os.Getenv("CORDUM_AUDIT_EXPORT_TYPE")))
+	discardMode := isDiscardExportType(typ)
 
 	var exp Exporter
 	var err error
 
 	switch typ {
+	case "", "none", "null", "discard", "chain-only":
+		// Keep the audit chain and verification endpoints live even when no
+		// streaming SIEM backend is configured.
+		exp = NewDiscardExporter()
+		typ = "null"
+
 	case "webhook":
 		url := os.Getenv("CORDUM_AUDIT_EXPORT_WEBHOOK_URL")
 		if url == "" {
@@ -248,12 +250,39 @@ func exporterFromEnv() (Exporter, error) {
 		}
 
 	default:
-		return nil, fmt.Errorf("audit config: unknown export type %q (expected webhook|syslog|datadog|cloudwatch|none)", typ)
+		return nil, fmt.Errorf("audit config: unknown export type %q (expected webhook|syslog|datadog|cloudwatch|null|discard|chain-only|none)", typ)
 	}
 
-	slog.Info("audit SIEM export enabled", "type", typ) // #nosec -- value is validated against a fixed allowlist.
+	if discardMode {
+		slog.Info("audit SIEM export disabled; chain-only mode active", "type", typ) // #nosec -- value is validated against a fixed allowlist.
+	} else {
+		slog.Info("audit SIEM export enabled", "type", typ) // #nosec -- value is validated against a fixed allowlist.
+	}
 	return exp, nil
 }
+
+func isDiscardExportType(typ string) bool {
+	switch strings.ToLower(strings.TrimSpace(typ)) {
+	case "", "none", "null", "discard", "chain-only":
+		return true
+	default:
+		return false
+	}
+}
+
+// DiscardExporter implements Exporter by dropping every batch. Used when
+// CORDUM_AUDIT_EXPORT_TYPE=null|discard|chain-only so the Merkle audit
+// chain is still engaged even though no SIEM backend consumes the stream.
+type DiscardExporter struct{}
+
+// NewDiscardExporter returns an Exporter that accepts batches and drops them.
+func NewDiscardExporter() *DiscardExporter { return &DiscardExporter{} }
+
+// Export always succeeds without forwarding events anywhere.
+func (*DiscardExporter) Export(_ context.Context, _ []SIEMEvent) error { return nil }
+
+// Close is a no-op.
+func (*DiscardExporter) Close() error { return nil }
 
 func currentEntitlements(resolver *licensing.EntitlementResolver) licensing.Entitlements {
 	if resolver != nil {

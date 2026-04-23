@@ -23,7 +23,7 @@ For HTTP transport:
 ```json
 {
   "type": "http",
-  "url": "${CORDUM_GATEWAY}/api/v1/mcp/sse",
+  "url": "${CORDUM_GATEWAY}/mcp/sse",
   "headers": {
     "Authorization": "Bearer ${CORDUM_API_KEY}",
     "X-Tenant-ID": "default"

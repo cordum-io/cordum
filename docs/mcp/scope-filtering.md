@@ -118,7 +118,7 @@ and invalidates every cached slice at once.
 
 ### HTTP transport (gateway)
 
-`mcpAuth` middleware on `/mcp/message` + `/api/v1/mcp/message` reads the
+`mcpAuth` middleware on `/mcp/message` reads the
 `X-Agent-Id` header. If present, it resolves via the agent identity store
 and attaches the resulting `*mcp.AgentIdentity` to the request context.
 If absent, it falls back to the auth-principal's linked worker identity

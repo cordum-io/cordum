@@ -113,6 +113,28 @@ if [[ "${status}" != "succeeded" ]]; then
   exit 1
 fi
 
+log "verifying audit chain"
+audit_resp=""
+audit_ok=""
+for attempt in {1..10}; do
+  if audit_resp=$(curl -fsS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" \
+    "${API_BASE}/api/v1/audit/verify?tenant=${TENANT_ID}"); then
+    if echo "${audit_resp}" | jq -e '.status == "ok" and .total_events > 0 and (.gaps | length) == 0' >/dev/null; then
+      audit_ok="true"
+      break
+    fi
+  else
+    audit_resp=""
+  fi
+  log "audit verify not ready (attempt ${attempt}/10); retrying"
+  sleep 0.5
+done
+if [[ -z "${audit_ok}" ]]; then
+  echo "audit/verify did not return healthy chain; got: ${audit_resp}" >&2
+  exit 1
+fi
+log "audit verify passed"
+
 log "deleting run"
 curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" -X DELETE "${API_BASE}/api/v1/workflow-runs/${run_id}" >/dev/null
 

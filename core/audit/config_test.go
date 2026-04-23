@@ -11,8 +11,12 @@ func TestNewExporterFromEnv_EmptyType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if exp != nil {
-		t.Fatal("expected nil exporter for empty type")
+	if exp == nil {
+		t.Fatal("expected discard exporter for empty type")
+	}
+	defer func() { _ = exp.Close() }()
+	if _, ok := exp.Backend().(*DiscardExporter); !ok {
+		t.Fatalf("Backend() = %T, want *DiscardExporter", exp.Backend())
 	}
 }
 
@@ -22,8 +26,12 @@ func TestNewExporterFromEnv_NoneType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if exp != nil {
-		t.Fatal("expected nil exporter for 'none' type")
+	if exp == nil {
+		t.Fatal("expected discard exporter for 'none' type")
+	}
+	defer func() { _ = exp.Close() }()
+	if _, ok := exp.Backend().(*DiscardExporter); !ok {
+		t.Fatalf("Backend() = %T, want *DiscardExporter", exp.Backend())
 	}
 }
 
@@ -33,8 +41,12 @@ func TestNewExporterFromEnv_NoneTypeCaseInsensitive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if exp != nil {
-		t.Fatal("expected nil exporter for 'NONE' type")
+	if exp == nil {
+		t.Fatal("expected discard exporter for 'NONE' type")
+	}
+	defer func() { _ = exp.Close() }()
+	if _, ok := exp.Backend().(*DiscardExporter); !ok {
+		t.Fatalf("Backend() = %T, want *DiscardExporter", exp.Backend())
 	}
 }
 

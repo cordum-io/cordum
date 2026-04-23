@@ -558,23 +558,9 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		}
 	}
 
-	var auditSender audit.AuditSender
-	bufExporter, err := audit.NewExporterFromEnvWithEntitlements(entitlementResolver)
+	auditSender, auditChainer, err := initAuditPipeline(jobStore.Client(), natsBus, entitlementResolver)
 	if err != nil {
 		return fmt.Errorf("init audit exporter: %w", err)
-	}
-	if bufExporter != nil {
-		transport := strings.ToLower(strings.TrimSpace(os.Getenv("AUDIT_TRANSPORT")))
-		if transport == "nats" && natsBus != nil {
-			auditSender = audit.NewNATSAuditPublisher(natsBus, bufExporter)
-			// Start consumer in the same process — queue group ensures only
-			// one replica across the cluster handles each event.
-			if _, err := audit.NewNATSAuditConsumer(natsBus, bufExporter.Backend()); err != nil {
-				slog.Warn("audit NATS consumer failed to start, falling back to local buffer", "error", err)
-			}
-		} else {
-			auditSender = bufExporter
-		}
 	}
 
 	s := &server{
@@ -615,7 +601,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		rbacStore:              rbacStore,
 		permChecker:            permChecker,
 		auditExporter:          auditSender,
-		auditChainer:           audit.NewChainer(jobStore.Client(), ""),
+		auditChainer:           auditChainer,
 		legalHoldStore:         initLegalHoldStore(cfg.RedisURL),
 		statusCacheObj:         newStatusCache(2 * time.Second),
 		policyShadowStore:      policyshadow.NewStore(configSvc),
@@ -854,31 +840,52 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.Server) error {
-	mux := http.NewServeMux()
-	metricsMux := http.NewServeMux()
-	metricsMux.Handle("/metrics", infraMetrics.Handler())
-	if env.IsProduction() {
-		if err := infraMetrics.ValidateBindAddr(metricsAddr, env.Bool(envGatewayMetricsPublic)); err != nil {
-			return fmt.Errorf("metrics bind rejected: %w", err)
-		}
-	}
-	metricsSrv := &http.Server{
-		Addr:              metricsAddr,
-		Handler:           metricsMux,
-		ReadTimeout:       5 * time.Second,
-		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      5 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    defaultMaxHeaderBytes,
-	}
-	go func() {
-		slog.Info("metrics listening", "addr", metricsAddr+"/metrics")
-		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("metrics server error", "error", err)
-		}
-	}()
+func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, entitlementResolver *licensing.EntitlementResolver) (audit.AuditSender, *audit.Chainer, error) {
+	var auditSender audit.AuditSender
+	var auditChainer *audit.Chainer
 
+	bufExporter, err := audit.NewExporterFromEnvWithEntitlements(entitlementResolver)
+	if err != nil {
+		return nil, nil, err
+	}
+	if bufExporter == nil {
+		return nil, nil, nil
+	}
+
+	// Keep the audit chain live whenever the exporter layer is active —
+	// including the null/discard backend used by task-e1d54a75. Without this
+	// the verify endpoint reports total_events=0 even though audit sends
+	// appear healthy at the API boundary.
+	auditChainer = audit.NewChainer(client, "")
+	chainFailMode := audit.ParseChainFailMode(os.Getenv(audit.EnvChainFailMode))
+	slog.Info("audit chain enabled",
+		"stream_prefix", audit.ChainKeyPrefix,
+		"fail_mode", chainFailMode,
+		"tenant_isolation", "per-tenant stream audit:chain:<tenant>",
+	)
+
+	transport := strings.ToLower(strings.TrimSpace(os.Getenv("AUDIT_TRANSPORT")))
+	if transport == "nats" && natsBus != nil {
+		auditSender = audit.NewNATSAuditPublisher(natsBus, bufExporter)
+		// Start consumer in the same process — queue group ensures only one
+		// replica across the cluster handles each event.
+		if _, err := audit.NewNATSAuditConsumer(
+			natsBus,
+			bufExporter.Backend(),
+			audit.WithChainer(auditChainer),
+			audit.WithChainFailMode(chainFailMode),
+		); err != nil {
+			slog.Warn("audit NATS consumer failed to start; events will publish to NATS but local chain verification may lag", "error", err)
+		}
+		return auditSender, auditChainer, nil
+	}
+
+	auditSender = bufExporter
+	return auditSender, auditChainer, nil
+}
+
+func newHTTPHandler(s *server) (http.Handler, error) {
+	mux := http.NewServeMux()
 	// 1. Health probes (/healthz, /readyz, /livez) + backward-compatible aliases.
 	s.probes = health.New()
 	s.probes.RegisterReadiness("nats", func(ctx context.Context) error {
@@ -970,7 +977,6 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	// 2.6 Admin endpoints (read-only, admin auth required)
 	mux.HandleFunc("GET /api/v1/admin/locks", s.instrumented("/api/v1/admin/locks", s.handleAdminLocks))
 
-	// 2.7 Audit export management (admin only, entitlement-gated)
 	// 2.7 Audit export — main endpoint plus operational sub-routes.
 	// The top-level GET /api/v1/audit/export was missing despite the
 	// handler being fully implemented in handlers_audit_compliance.go:61
@@ -1126,7 +1132,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 
 	// 12.5 MCP (HTTP/SSE) routes
 	if err := s.registerMCPRoutes(mux); err != nil {
-		return fmt.Errorf("register mcp routes: %w", err)
+		return nil, fmt.Errorf("register mcp routes: %w", err)
 	}
 
 	// 7. Stream (WebSocket)
@@ -1143,7 +1149,37 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	// absent, rateLimitKey falls back to IP-based keying automatically.
 	readAuditRate := parseFloatEnv("CORDUM_AUDIT_READ_SAMPLE_RATE", 0.0)
 	inner := auditReadMiddleware(s.auditExporter, readAuditRate, tenantMiddleware(s.auth, maxBodyMiddleware(mux, s.entitlements)))
-	handler := requestLoggingMiddleware(tracingMiddleware(corsMiddleware(rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, apiKeyMiddleware(s.auth, inner, s.auditExporter)))))
+	return requestLoggingMiddleware(tracingMiddleware(corsMiddleware(rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, apiKeyMiddleware(s.auth, inner, s.auditExporter))))), nil
+}
+
+func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.Server) error {
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", infraMetrics.Handler())
+	if env.IsProduction() {
+		if err := infraMetrics.ValidateBindAddr(metricsAddr, env.Bool(envGatewayMetricsPublic)); err != nil {
+			return fmt.Errorf("metrics bind rejected: %w", err)
+		}
+	}
+	metricsSrv := &http.Server{
+		Addr:              metricsAddr,
+		Handler:           metricsMux,
+		ReadTimeout:       5 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    defaultMaxHeaderBytes,
+	}
+	go func() {
+		slog.Info("metrics listening", "addr", metricsAddr+"/metrics")
+		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("metrics server error", "error", err)
+		}
+	}()
+
+	handler, err := newHTTPHandler(s)
+	if err != nil {
+		return err
+	}
 
 	httpTLSCert := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSCert))
 	httpTLSKey := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSKey))
