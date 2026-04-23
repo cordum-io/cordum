@@ -66,7 +66,7 @@ fi
 export CORDUM_GATEWAY="${CORDUM_GATEWAY:-${api_base}}"
 if [[ -z "${CORDUM_TLS_CA:-}" && -z "${CORDUM_TLS_INSECURE:-}" ]]; then
   case "${CORDUM_GATEWAY}" in
-    https://127.0.0.1:*|https://localhost:*|https://[::1]:*)
+    https://127.0.0.1:*|https://localhost:*|https://\[::1\]:*)
       export CORDUM_TLS_INSECURE=1
       ;;
   esac
@@ -135,7 +135,9 @@ wait_for_step_job_id() {
   local deadline=$(( $(date +%s) + timeout ))
   local job_id=""
   while (( $(date +%s) < deadline )); do
-    job_id=$(run_json "${run_id}" | jq -r ".steps.${step_id}.job_id // empty")
+    if ! job_id=$(run_json "${run_id}" 2>/dev/null | jq -r ".steps.${step_id}.job_id // empty" 2>/dev/null); then
+      job_id=""
+    fi
     if [[ -n "${job_id}" ]]; then
       echo "${job_id}"
       return 0
@@ -152,7 +154,9 @@ wait_for_job_state() {
   local deadline=$(( $(date +%s) + timeout ))
   local last=""
   while (( $(date +%s) < deadline )); do
-    last=$("${cordumctl_bin}" job status "${job_id}")
+    if ! last=$("${cordumctl_bin}" job status "${job_id}" 2>/dev/null); then
+      last="unknown"
+    fi
     if [[ "${last}" =~ ^(${want})$ ]]; then
       echo "${last}"
       return 0
@@ -170,7 +174,9 @@ wait_for_status() {
   local deadline=$(( $(date +%s) + timeout ))
   local last=""
   while (( $(date +%s) < deadline )); do
-    last=$(run_json "${run_id}" | jq -r '.status // "unknown"')
+    if ! last=$(run_json "${run_id}" 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null); then
+      last="unknown"
+    fi
     if [[ "${last}" =~ ^(${want})$ ]]; then
       echo "${last}"
       return 0
@@ -183,7 +189,7 @@ wait_for_status() {
 
 # --- preflight --------------------------------------------------------------
 
-wait_for_workers || exit 1
+wait_for_workers || exit 2
 
 run_start_epoch="$(date +%s)"
 

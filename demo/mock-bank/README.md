@@ -12,7 +12,7 @@ a mixed-risk workload end-to-end.
 
 [^1]: A second shell approves via `cordumctl approval job <id> --approve`.
 
-Four pools (`demo-mock-bank`, `bank-validators`, `bank-executors`) and
+Three pools (`demo-mock-bank`, `bank-validators`, `bank-executors`) and
 seven agents (transfer / compliance / audit / validator / executor) back
 the workflow; the safety kernel decides each step from the risk tag
 attached at workflow-authoring time.

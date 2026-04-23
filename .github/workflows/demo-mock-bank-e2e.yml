@@ -49,8 +49,8 @@ jobs:
 
       - name: Generate API key + Redis password
         run: |
-          echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
-          echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> $GITHUB_ENV
+          echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
 
       - name: Generate TLS certificates
         run: |
