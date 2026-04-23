@@ -743,12 +743,17 @@ func parseShadowResultsRange(r *http.Request) (int64, int64, *shadowResultsHTTPE
 // extractBundleIDFromPath resolves the {id} path segment in the
 // /api/v1/policy/bundles/{id}/shadow/results/* routes. Returns ("",
 // false) for the empty / whitespace case so the handler can 400.
+// Logical bundle IDs contain "/" (e.g. "secops/safety") and are
+// tilde-encoded on the wire by the dashboard (bundleIDForPath). The
+// decode here must match policybundles.BundleIDFromRequest so both
+// the /shadow and /shadow/results/* handlers resolve the same
+// canonical ID for the same wire path.
 func extractBundleIDFromPath(r *http.Request) (string, bool) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
 		return "", false
 	}
-	return id, true
+	return strings.ReplaceAll(id, "~", "/"), true
 }
 
 // shadowStreamKey is the tenant's audit-chain stream key — the same

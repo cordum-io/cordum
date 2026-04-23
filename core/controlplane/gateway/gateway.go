@@ -1292,6 +1292,26 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "PUT /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handlePutPolicyBundle))
 	s.registerRoute(mux, "DELETE /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleDeletePolicyBundle))
 	s.registerRoute(mux, "POST /api/v1/policy/bundles/{id}/simulate", s.instrumented("/api/v1/policy/bundles/{id}/simulate", s.handleSimulatePolicyBundle))
+	// Policy shadow (task-44807b2c) — shadow-evaluation surface for a bundle.
+	// PUT upserts the shadow policy, GET fetches current status, DELETE removes it.
+	// The three results endpoints expose dashboard analytics (summary counters,
+	// paginated comparisons, and a bucketed timeseries) over the same window.
+	//
+	// URL layout: `/api/v1/policy/shadows/{id}` rather than nesting under
+	// `/bundles/{id}/shadow`. Nesting would overlap with the existing
+	// `/api/v1/policy/bundles/snapshots/{id}` at path
+	// `/api/v1/policy/bundles/snapshots/shadow` — Go 1.22+ ServeMux treats
+	// both patterns as equally specific and panics at registration. Go does
+	// not honor third-pattern disambiguators for this case (verified on go
+	// 1.25.9). The top-level `/shadows/{id}` collection also mirrors the
+	// sibling `/api/v1/policy/snapshots/{id}` pattern so operator muscle
+	// memory carries across the two features.
+	s.registerRoute(mux, "PUT /api/v1/policy/shadows/{id}", s.instrumented("/api/v1/policy/shadows/{id}", s.handlePutPolicyShadow))
+	s.registerRoute(mux, "GET /api/v1/policy/shadows/{id}", s.instrumented("/api/v1/policy/shadows/{id}", s.handleGetPolicyShadow))
+	s.registerRoute(mux, "DELETE /api/v1/policy/shadows/{id}", s.instrumented("/api/v1/policy/shadows/{id}", s.handleDeletePolicyShadow))
+	s.registerRoute(mux, "GET /api/v1/policy/shadows/{id}/results/summary", s.instrumented("/api/v1/policy/shadows/{id}/results/summary", s.handleShadowResultsSummary))
+	s.registerRoute(mux, "GET /api/v1/policy/shadows/{id}/results/comparisons", s.instrumented("/api/v1/policy/shadows/{id}/results/comparisons", s.handleShadowResultsComparisons))
+	s.registerRoute(mux, "GET /api/v1/policy/shadows/{id}/results/timeseries", s.instrumented("/api/v1/policy/shadows/{id}/results/timeseries", s.handleShadowResultsTimeseries))
 	s.registerRoute(mux, "GET /api/v1/policy/bundles/snapshots", s.instrumented("/api/v1/policy/bundles/snapshots", s.handleListPolicyBundleSnapshots))
 	s.registerRoute(mux, "POST /api/v1/policy/bundles/snapshots", s.instrumented("/api/v1/policy/bundles/snapshots", s.handleCapturePolicyBundleSnapshot))
 	s.registerRoute(mux, "GET /api/v1/policy/bundles/snapshots/{id}", s.instrumented("/api/v1/policy/bundles/snapshots/{id}", s.handleGetPolicyBundleSnapshot))

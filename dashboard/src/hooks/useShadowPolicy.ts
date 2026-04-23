@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { get, post, del } from "../api/client";
+import { get, put, del } from "../api/client";
 import type {
   ShadowPolicy,
   ShadowResultsSummary,
@@ -29,7 +29,7 @@ export function useShadowPolicy(bundleID: string | undefined) {
       if (!bundleID) return null;
       try {
         return await get<ShadowPolicy>(
-          `/policy/bundles/${bundleIDForPath(bundleID)}/shadow`,
+          `/policy/shadows/${bundleIDForPath(bundleID)}`,
         );
       } catch (err) {
         if (err instanceof Error && /\b404\b/.test(err.message)) return null;
@@ -51,8 +51,8 @@ export function useActivateShadow() {
   const qc = useQueryClient();
   return useMutation<ShadowPolicy, Error, ActivateShadowInput>({
     mutationFn: ({ bundleID, content, metadata }) =>
-      post<ShadowPolicy>(
-        `/policy/bundles/${bundleIDForPath(bundleID)}/shadow`,
+      put<ShadowPolicy>(
+        `/policy/shadows/${bundleIDForPath(bundleID)}`,
         { content, metadata },
       ),
     onSuccess: (_data, vars) => {
@@ -67,7 +67,7 @@ export function useDeactivateShadow() {
   const qc = useQueryClient();
   return useMutation<void, Error, string>({
     mutationFn: (bundleID) =>
-      del(`/policy/bundles/${bundleIDForPath(bundleID)}/shadow`),
+      del(`/policy/shadows/${bundleIDForPath(bundleID)}`),
     onSuccess: (_data, bundleID) => {
       qc.invalidateQueries({ queryKey: [SHADOW_POLICY_QUERY_KEY, "detail", bundleID] });
       qc.invalidateQueries({ queryKey: ["policy-bundle", bundleID] });
@@ -83,9 +83,12 @@ export interface ShadowResultsWindow {
 }
 
 function windowQS({ fromMs, untilMs }: ShadowResultsWindow): string {
+  // The backend contract (core/controlplane/gateway/handlers_shadow_results.go
+  // parseShadowResultsRange) names the upper bound `to`, not `until`. We keep
+  // the TS field name `untilMs` for local ergonomics but emit `to` on the wire.
   const parts: string[] = [];
   if (fromMs != null) parts.push(`from=${fromMs}`);
-  if (untilMs != null) parts.push(`until=${untilMs}`);
+  if (untilMs != null) parts.push(`to=${untilMs}`);
   return parts.length ? `?${parts.join("&")}` : "";
 }
 
@@ -98,7 +101,7 @@ export function useShadowResultsSummary(opts: ShadowResultsWindow | undefined) {
     queryKey: [SHADOW_POLICY_QUERY_KEY, "summary", opts?.bundleID, opts?.fromMs, opts?.untilMs],
     queryFn: () =>
       get<ShadowResultsSummary>(
-        `/policy/bundles/${bundleIDForPath(opts!.bundleID)}/shadow/results/summary${windowQS(opts!)}`,
+        `/policy/shadows/${bundleIDForPath(opts!.bundleID)}/results/summary${windowQS(opts!)}`,
       ),
     enabled: !!opts?.bundleID,
     staleTime: 60_000,
@@ -128,13 +131,13 @@ export function useShadowResultsComparisons(opts: ShadowComparisonsQuery | undef
     queryFn: ({ pageParam }) => {
       const params = new URLSearchParams();
       if (opts!.fromMs != null) params.set("from", String(opts!.fromMs));
-      if (opts!.untilMs != null) params.set("until", String(opts!.untilMs));
+      if (opts!.untilMs != null) params.set("to", String(opts!.untilMs));
       if (opts!.diff) params.set("diff", opts!.diff);
       if (opts!.pageSize) params.set("limit", String(opts!.pageSize));
       if (typeof pageParam === "string" && pageParam) params.set("cursor", pageParam);
       const qs = params.toString();
       return get<ShadowComparisonsResponse>(
-        `/policy/bundles/${bundleIDForPath(opts!.bundleID)}/shadow/results/comparisons${qs ? `?${qs}` : ""}`,
+        `/policy/shadows/${bundleIDForPath(opts!.bundleID)}/results/comparisons${qs ? `?${qs}` : ""}`,
       );
     },
     enabled: !!opts?.bundleID,
@@ -164,10 +167,10 @@ export function useShadowResultsTimeseries(opts: ShadowTimeseriesQuery | undefin
     queryFn: () => {
       const params = new URLSearchParams();
       if (opts!.fromMs != null) params.set("from", String(opts!.fromMs));
-      if (opts!.untilMs != null) params.set("until", String(opts!.untilMs));
+      if (opts!.untilMs != null) params.set("to", String(opts!.untilMs));
       params.set("bucket", opts!.bucket);
       return get<ShadowTimeseriesResponse>(
-        `/policy/bundles/${bundleIDForPath(opts!.bundleID)}/shadow/results/timeseries?${params.toString()}`,
+        `/policy/shadows/${bundleIDForPath(opts!.bundleID)}/results/timeseries?${params.toString()}`,
       );
     },
     enabled: !!opts?.bundleID && !!opts?.bucket,

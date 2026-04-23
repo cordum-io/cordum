@@ -1,8 +1,19 @@
 // Type-shape coverage for the shadow-policy hook contracts.
-// Runtime behaviour (URL construction, 404 → null) is exercised via
-// the BundleDetailPage Shadow-tab tests which hit the same hooks
-// under a mocked client.
-import { describe, expect, it } from "vitest";
+// Runtime URL/method coverage is at the bottom (task-44807b2c): the hooks
+// must call the new `/policy/shadows/{id}` surface with the correct HTTP
+// method (PUT for activate, DELETE for deactivate) and emit `to=` as the
+// upper-bound query param, not `until=`.
+import { act } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mockFetch, renderWithQueryClient } from "./__tests__/test-utils";
+import {
+  useActivateShadow,
+  useDeactivateShadow,
+  useShadowPolicy,
+  useShadowResultsComparisons,
+  useShadowResultsSummary,
+  useShadowResultsTimeseries,
+} from "./useShadowPolicy";
 import type {
   ShadowComparisonEntry,
   ShadowComparisonsResponse,
@@ -90,5 +101,171 @@ describe("ShadowPolicy types", () => {
     };
     const series: ShadowTimeseriesResponse = { buckets: [b], window_ms: 86400000 };
     expect(series.buckets[0].total).toBe(10);
+  });
+});
+
+// Runtime URL/method coverage (task-44807b2c). These tests hit the fetch
+// layer to lock in the exact wire contract between the hook and
+// core/controlplane/gateway/handlers_policy_shadow.go +
+// handlers_shadow_results.go.
+describe("useShadowPolicy wire contract", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("useActivateShadow PUTs to /policy/shadows/{tildeEncodedID}", async () => {
+    const fetchSpy = mockFetch([
+      {
+        match: "/policy/shadows/secops~bundle-a",
+        method: "PUT",
+        body: {
+          shadow_bundle_id: "shadow-1",
+          bundle_id: "secops/bundle-a",
+          tenant_id: "default",
+          content: "version: 1\nrules: []",
+          created_at: "2026-04-23T00:00:00Z",
+          activated_at: "2026-04-23T00:00:00Z",
+          created_by: "alice",
+        },
+      },
+    ]);
+
+    const hook = renderWithQueryClient(() => useActivateShadow());
+    await act(async () => {
+      await hook.result.current?.mutateAsync({
+        bundleID: "secops/bundle-a",
+        content: "version: 1\nrules: []",
+      });
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const call = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(call[1].method).toBe("PUT");
+    expect(call[0]).toContain("/policy/shadows/secops~bundle-a");
+    expect(call[0]).not.toContain("/policy/bundles/");
+  });
+
+  it("useDeactivateShadow DELETEs /policy/shadows/{tildeEncodedID}", async () => {
+    const fetchSpy = mockFetch([
+      {
+        match: "/policy/shadows/secops~bundle-a",
+        method: "DELETE",
+        status: 204,
+      },
+    ]);
+
+    const hook = renderWithQueryClient(() => useDeactivateShadow());
+    await act(async () => {
+      await hook.result.current?.mutateAsync("secops/bundle-a");
+    });
+
+    const call = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(call[1].method).toBe("DELETE");
+    expect(call[0]).toContain("/policy/shadows/secops~bundle-a");
+  });
+
+  it("useShadowPolicy GETs /policy/shadows/{tildeEncodedID}", async () => {
+    const fetchSpy = mockFetch([
+      {
+        match: "/policy/shadows/secops~bundle-a",
+        method: "GET",
+        body: {
+          shadow_bundle_id: "shadow-1",
+          bundle_id: "secops/bundle-a",
+          tenant_id: "default",
+          content: "",
+          created_at: "",
+          activated_at: "",
+          created_by: "",
+        },
+      },
+    ]);
+
+    const hook = renderWithQueryClient(() => useShadowPolicy("secops/bundle-a"));
+    await hook.waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalled();
+    });
+
+    const call = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect((call[1].method ?? "GET").toUpperCase()).toBe("GET");
+    expect(call[0]).toContain("/policy/shadows/secops~bundle-a");
+  });
+
+  it("useShadowResultsSummary emits `to=` on the wire (not `until=`)", async () => {
+    const fetchSpy = mockFetch([
+      {
+        match: "/policy/shadows/secops~bundle-a/results/summary",
+        method: "GET",
+        body: {
+          total_evaluated: 0,
+          escalated_count: 0,
+          relaxed_count: 0,
+          approval_differ_count: 0,
+          unchanged_count: 0,
+        },
+      },
+    ]);
+
+    const hook = renderWithQueryClient(() =>
+      useShadowResultsSummary({ bundleID: "secops/bundle-a", fromMs: 100, untilMs: 200 }),
+    );
+    await hook.waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalled();
+    });
+
+    const call = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(call[0]).toContain("from=100");
+    expect(call[0]).toContain("to=200");
+    expect(call[0]).not.toContain("until=");
+  });
+
+  it("useShadowResultsComparisons emits `to=` on the wire", async () => {
+    const fetchSpy = mockFetch([
+      {
+        match: "/policy/shadows/secops~bundle-a/results/comparisons",
+        method: "GET",
+        body: { entries: [], truncated_at_max: false },
+      },
+    ]);
+
+    const hook = renderWithQueryClient(() =>
+      useShadowResultsComparisons({ bundleID: "secops/bundle-a", fromMs: 100, untilMs: 200 }),
+    );
+    await hook.waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalled();
+    });
+
+    const call = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(call[0]).toContain("from=100");
+    expect(call[0]).toContain("to=200");
+    expect(call[0]).not.toContain("until=");
+  });
+
+  it("useShadowResultsTimeseries emits `to=` and `bucket=` on the wire", async () => {
+    const fetchSpy = mockFetch([
+      {
+        match: "/policy/shadows/secops~bundle-a/results/timeseries",
+        method: "GET",
+        body: { buckets: [], window_ms: 0 },
+      },
+    ]);
+
+    const hook = renderWithQueryClient(() =>
+      useShadowResultsTimeseries({
+        bundleID: "secops/bundle-a",
+        fromMs: 100,
+        untilMs: 200,
+        bucket: "1m",
+      }),
+    );
+    await hook.waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalled();
+    });
+
+    const call = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(call[0]).toContain("from=100");
+    expect(call[0]).toContain("to=200");
+    expect(call[0]).toContain("bucket=1m");
+    expect(call[0]).not.toContain("until=");
   });
 });

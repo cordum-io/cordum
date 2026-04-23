@@ -1782,6 +1782,306 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/policy/shadows/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: |
+        Tilde-encoded bundle id; `/` in logical IDs (e.g. `secops/safety`)
+        becomes `~` on the wire (`secops~safety`). The server decodes the
+        tilde back to `/` before looking up the shadow.
+      schema:
+        type: string
+    put:
+      operationId: activatePolicyShadow
+      summary: Activate or replace the shadow policy for a bundle
+      description: |
+        PUT upserts the shadow policy for the given bundle. A bundle has at
+        most one shadow at a time; re-activating replaces the current one
+        in place. Validation matches `handlePutPolicyBundle` — malformed
+        YAML returns 400 before any Redis write.
+      tags:
+      - Policy
+      security:
+      - apiKey: []
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyShadowUpsertRequest'
+      responses:
+        '200':
+          description: Shadow policy activated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyShadow'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    get:
+      operationId: getPolicyShadow
+      summary: Get the shadow policy for a bundle
+      description: |
+        Returns the active shadow policy for `{id}` or 404 if none is set.
+        Requires `policy.read` (admin role bypasses). Dashboards translate
+        the 404 into an empty-state render rather than an error.
+      tags:
+      - Policy
+      security:
+      - apiKey: []
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Shadow policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyShadow'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deletePolicyShadow
+      summary: Remove the shadow policy for a bundle
+      description: |
+        Deactivates the shadow. Emits a `safety.policy_change` audit event
+        with `action=shadow_deactivate` and the outgoing shadow's
+        `shadow_bundle_id` so the activate/deactivate pair correlates.
+      tags:
+      - Policy
+      security:
+      - apiKey: []
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '204':
+          description: Shadow policy removed
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/policy/shadows/{id}/results/summary:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Tilde-encoded bundle id (see `/api/v1/policy/shadows/{id}`).
+      schema:
+        type: string
+    get:
+      operationId: getPolicyShadowResultsSummary
+      summary: Aggregate shadow-evaluation counts over a time window
+      description: |
+        Counts shadow-eval outcomes (escalated / relaxed / approval_differ /
+        unchanged) across the audit stream between `from` and `to`.
+        Memoised for 60 s per (tenant, bundle, window) so dashboard polling
+        doesn't thrash Redis XRANGE. Requires `policy.read`.
+      tags:
+      - Policy
+      security:
+      - apiKey: []
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: from
+        in: query
+        required: true
+        description: Inclusive lower bound, unix milliseconds.
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      - name: to
+        in: query
+        required: true
+        description: Exclusive upper bound, unix milliseconds. Must be strictly greater than `from`; the range cannot exceed 30 days.
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      responses:
+        '200':
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowResultsSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/policy/shadows/{id}/results/comparisons:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Tilde-encoded bundle id (see `/api/v1/policy/shadows/{id}`).
+      schema:
+        type: string
+    get:
+      operationId: getPolicyShadowResultsComparisons
+      summary: Paginated shadow-vs-active decision comparisons
+      description: |
+        Returns individual shadow-eval entries with both the active verdict
+        and the shadow's would-be verdict. Paginates via Redis-stream
+        cursors; clients pass `next_cursor` back as `?cursor=` to resume.
+        `truncated_at_max=true` means the page ended because the scan hit
+        its budget before reaching `to`.
+      tags:
+      - Policy
+      security:
+      - apiKey: []
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: from
+        in: query
+        required: true
+        description: Inclusive lower bound, unix milliseconds.
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      - name: to
+        in: query
+        required: true
+        description: Exclusive upper bound, unix milliseconds (≤ 30 days after `from`).
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      - name: diff
+        in: query
+        required: false
+        description: Filter to one diff class (omit for all classes).
+        schema:
+          type: string
+          enum: [escalated, relaxed, approval_differ, unchanged, all]
+      - name: cursor
+        in: query
+        required: false
+        description: Redis stream ID (`<ms>-<seq>`) returned as `next_cursor` from the previous page.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Page size. Default 50, maximum 500.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+      responses:
+        '200':
+          description: Paginated comparisons
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowComparisonsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/policy/shadows/{id}/results/timeseries:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Tilde-encoded bundle id (see `/api/v1/policy/shadows/{id}`).
+      schema:
+        type: string
+    get:
+      operationId: getPolicyShadowResultsTimeseries
+      summary: Zero-filled bucketed timeseries of shadow outcomes
+      description: |
+        Returns one row per bucket (including empty buckets) so the
+        dashboard chart shows gaps rather than stretching the last
+        observation. Bucket widths are a closed whitelist to prevent
+        fine-grained requests blowing out the 2000-bucket ceiling.
+      tags:
+      - Policy
+      security:
+      - apiKey: []
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: from
+        in: query
+        required: true
+        description: Inclusive lower bound, unix milliseconds.
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      - name: to
+        in: query
+        required: true
+        description: Exclusive upper bound, unix milliseconds (≤ 30 days after `from`).
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      - name: bucket
+        in: query
+        required: true
+        description: Bucket width (closed whitelist).
+        schema:
+          type: string
+          enum: [1m, 5m, 15m, 1h, 1d]
+      responses:
+        '200':
+          description: Timeseries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShadowTimeseriesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/policy/publish:
     post:
       operationId: publishPolicy
@@ -7122,6 +7422,204 @@ components:
       required:
       - bundle_ids
       - author
+    PolicyShadow:
+      type: object
+      description: |
+        Full stored representation of a shadow candidate policy. `content`
+        is the raw YAML source — consumers that only need to list shadows
+        may prefer the server-side summary projection (not exposed as a
+        separate endpoint today).
+      properties:
+        shadow_bundle_id:
+          type: string
+          description: Stable `shadow-<12 hex>` handle that persists across reactivation.
+        bundle_id:
+          type: string
+          description: Active bundle this shadow is tied to (one shadow per bundle).
+        tenant_id:
+          type: string
+        content:
+          type: string
+          description: Raw YAML source of the candidate policy.
+        created_at:
+          type: string
+          format: date-time
+        activated_at:
+          type: string
+          format: date-time
+          description: Bumped on each re-activation; equals `created_at` on the first.
+        created_by:
+          type: string
+          description: Principal ID that activated the shadow.
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Arbitrary operator-supplied key/value pairs (e.g. ticket refs).
+      required:
+      - shadow_bundle_id
+      - bundle_id
+      - tenant_id
+      - content
+      - created_at
+      - activated_at
+      - created_by
+    PolicyShadowUpsertRequest:
+      type: object
+      description: PUT body for activating or replacing a shadow policy.
+      properties:
+        content:
+          type: string
+          description: Raw YAML source of the candidate policy. Required.
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Arbitrary operator-supplied key/value pairs; optional.
+      required:
+      - content
+    ShadowResultsSummary:
+      type: object
+      properties:
+        bundle_id:
+          type: string
+        shadow_bundle_id:
+          type: string
+        from_ms:
+          type: integer
+          format: int64
+        to_ms:
+          type: integer
+          format: int64
+        total_evaluated:
+          type: integer
+          format: int64
+        escalated_count:
+          type: integer
+          format: int64
+          description: Shadow would have been stricter than active (e.g. DENY vs ALLOW).
+        relaxed_count:
+          type: integer
+          format: int64
+          description: Shadow would have been more permissive than active.
+        approval_differ_count:
+          type: integer
+          format: int64
+          description: Both reached a terminal decision but differed on REQUIRE_APPROVAL.
+        unchanged_count:
+          type: integer
+          format: int64
+        truncated_at_max:
+          type: boolean
+          description: True when the scan hit its event budget before reaching `to_ms`.
+      required:
+      - bundle_id
+      - from_ms
+      - to_ms
+      - total_evaluated
+      - escalated_count
+      - relaxed_count
+      - approval_differ_count
+      - unchanged_count
+      - truncated_at_max
+    ShadowComparisonEntry:
+      type: object
+      properties:
+        ts_ms:
+          type: integer
+          format: int64
+        job_id:
+          type: string
+        agent_id:
+          type: string
+        shadow_bundle_id:
+          type: string
+        active_verdict:
+          type: string
+        shadow_verdict:
+          type: string
+        diff:
+          type: string
+          enum: [escalated, relaxed, approval_differ, unchanged]
+        active_rule_id:
+          type: string
+        shadow_rule_id:
+          type: string
+        latency_ms:
+          type: string
+          description: Shadow-evaluation latency in ms, stored as a string in the audit event Extra map.
+        seq:
+          type: integer
+          format: int64
+    ShadowComparisonsResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShadowComparisonEntry'
+        next_cursor:
+          type: string
+          description: Redis stream ID (`<ms>-<seq>`) to pass back as `?cursor=` for the next page. Empty when no more rows.
+        truncated_at_max:
+          type: boolean
+      required:
+      - entries
+      - truncated_at_max
+    ShadowTimeseriesBucket:
+      type: object
+      properties:
+        ts_ms:
+          type: integer
+          format: int64
+          description: Bucket start time (aligned down to the bucket boundary).
+        escalated:
+          type: integer
+          format: int64
+        relaxed:
+          type: integer
+          format: int64
+        approval_differ:
+          type: integer
+          format: int64
+        unchanged:
+          type: integer
+          format: int64
+        total:
+          type: integer
+          format: int64
+      required:
+      - ts_ms
+      - escalated
+      - relaxed
+      - approval_differ
+      - unchanged
+      - total
+    ShadowTimeseriesResponse:
+      type: object
+      properties:
+        bucket:
+          type: string
+          description: Bucket width as the caller requested (e.g. `1m`, `5m`).
+          enum: [1m, 5m, 15m, 1h, 1d]
+        from_ms:
+          type: integer
+          format: int64
+        to_ms:
+          type: integer
+          format: int64
+        buckets:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShadowTimeseriesBucket'
+        truncated_at_max:
+          type: boolean
+      required:
+      - bucket
+      - from_ms
+      - to_ms
+      - buckets
+      - truncated_at_max
     RollbackPolicyRequest:
       type: object
       properties:

@@ -34,6 +34,47 @@ these entries into a versioned release note and reset this file.
 
 ## Fixed
 
+- **policy shadow: registered the six shadow-policy gateway routes so the
+  dashboard's PromoteShadowDialog works end-to-end.** The handlers
+  (`handlePutPolicyShadow`, `handleGetPolicyShadow`, `handleDeletePolicyShadow`
+  in `core/controlplane/gateway/handlers_policy_shadow.go`; the three
+  `handleShadowResults*` handlers in `handlers_shadow_results.go`) existed
+  with direct-call tests but were never wired into `registerRoutes`, so every
+  network call from the dashboard — activate, fetch, deactivate, plus the
+  summary / comparisons / timeseries analytics — 404'd at the mux.
+
+  Wired as:
+  - `PUT    /api/v1/policy/shadows/{id}` — activate/replace (idempotent upsert).
+  - `GET    /api/v1/policy/shadows/{id}` — fetch (404 when no shadow active).
+  - `DELETE /api/v1/policy/shadows/{id}` — deactivate.
+  - `GET    /api/v1/policy/shadows/{id}/results/summary?from=&to=`
+  - `GET    /api/v1/policy/shadows/{id}/results/comparisons?from=&to=[&diff=&cursor=&limit=]`
+  - `GET    /api/v1/policy/shadows/{id}/results/timeseries?from=&to=&bucket={1m|5m|15m|1h|1d}`
+
+  The top-level `/policy/shadows/{id}` URL replaces the originally proposed
+  `/policy/bundles/{id}/shadow`: that pattern overlaps
+  `/api/v1/policy/bundles/snapshots/{id}` at `/bundles/snapshots/shadow` and
+  Go 1.22+ ServeMux rejects the conflict at registration (neither pattern is
+  strictly more specific; disambiguator routes are not honored). The new
+  path mirrors the existing `/api/v1/policy/snapshots/{id}` shape so operator
+  muscle memory carries across the two features.
+
+  Also corrected three dashboard wire bugs in
+  `dashboard/src/hooks/useShadowPolicy.ts` that would have prevented a clean
+  end-to-end flow even after registration:
+  - `useActivateShadow` now sends `PUT` (was `POST`) — matches the backend's
+    idempotent-upsert semantics.
+  - Summary / comparisons / timeseries query strings now emit `to=` (was
+    `until=`) to match `parseShadowResultsRange` in
+    `handlers_shadow_results.go`.
+  - All six hooks target the new `/policy/shadows/{id}[/results/*]` paths.
+
+  While touching the results handlers, unified tilde decoding:
+  `extractBundleIDFromPath` in `handlers_shadow_results.go` now decodes
+  `~` → `/` the same way `policybundles.BundleIDFromRequest` does, so the
+  `/shadow` and `/shadow/results/*` surfaces resolve identical canonical
+  bundle IDs for the same wire path. Closes task-44807b2c.
+
 - **audit: chain is now instantiated unconditionally at gateway boot.**
   Previously the Redis-backed Merkle audit chain silently disabled when
   (a) the plan's SIEM export entitlement was blocked for a non-discard
