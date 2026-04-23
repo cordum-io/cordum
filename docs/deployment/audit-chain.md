@@ -84,14 +84,28 @@ genesis.
 
 `NATSAuditConsumer` (in `core/audit/consumer.go`) invokes
 `Chainer.Append` immediately before `exporter.Export`. Chain append is
-atomic via a CAS Lua script on the head key.
+atomic via a CAS Lua script on the head key. In direct-transport mode
+(`AUDIT_TRANSPORT` unset), the gateway wraps the write path in an
+`auditChainSender` that appends to the chain before forwarding to the
+configured exporter, so the chain is populated whether or not a NATS
+consumer is running.
 
 > **Default behavior**
-> The reference `docker-compose.yml` sets
-> `CORDUM_AUDIT_EXPORT_TYPE=null` by default. That engages the audit
-> chain even when no external SIEM destination is configured. Override
+> The audit chain is instantiated unconditionally at gateway boot.
+> `CORDUM_AUDIT_EXPORT_TYPE` controls only the external SIEM
+> destination — leaving it unset does **not** disable the chain. Set
 > the env var to `webhook`, `syslog`, `datadog`, or `cloudwatch` to
-> stream to a real backend.
+> stream to a real backend, or to `null`/`discard`/`chain-only` for an
+> explicit no-op exporter that still emits audit-export counters.
+>
+> Older builds required `CORDUM_AUDIT_EXPORT_TYPE=null` as a
+> chain-keep-alive incantation; the reference `docker-compose.yml`
+> historically hardcoded it for that reason. Current builds no longer
+> need the workaround — explicit `null` is still accepted for operators
+> who want the DiscardExporter shape, but an unset value is equivalent
+> for chain purposes. Cross-ref: task-e1d54a75 (hotfix that kept the
+> chain alive by shipping a DiscardExporter); task-096de016 (this
+> change, which decoupled the chain from the exporter).
 
 Fail-mode is controlled by `CORDUM_AUDIT_CHAIN_FAIL`:
 
@@ -106,13 +120,14 @@ identically to any other tenant's events.
 
 ### Backend types
 
-| `CORDUM_AUDIT_EXPORT_TYPE` value                  | Behaviour |
-|---------------------------------------------------|-----------|
-| `null`, `discard`, `chain-only`, `none`, empty    | Chain engaged, no external export. This is the default compose posture. |
-| `webhook`                                         | HTTP POST to `CORDUM_AUDIT_EXPORT_WEBHOOK_URL`. |
-| `syslog`                                          | RFC 5424 stream to `CORDUM_AUDIT_EXPORT_SYSLOG_ADDR`. |
-| `datadog`                                         | Datadog Logs API using `CORDUM_AUDIT_EXPORT_DD_API_KEY`. |
-| `cloudwatch`                                      | AWS CloudWatch Logs using the configured log group / stream. |
+| `CORDUM_AUDIT_EXPORT_TYPE` value    | Behaviour |
+|-------------------------------------|-----------|
+| unset or empty, `none`              | No external exporter. Chain still engaged. This is the default compose posture. |
+| `null`, `discard`, `chain-only`     | Explicit no-op exporter (DiscardExporter). Chain still engaged; audit-export counters report "a backend exists" for metrics parity with real SIEM targets. |
+| `webhook`                           | HTTP POST to `CORDUM_AUDIT_EXPORT_WEBHOOK_URL`. |
+| `syslog`                            | RFC 5424 stream to `CORDUM_AUDIT_EXPORT_SYSLOG_ADDR`. |
+| `datadog`                           | Datadog Logs API using `CORDUM_AUDIT_EXPORT_DD_API_KEY`. |
+| `cloudwatch`                        | AWS CloudWatch Logs using the configured log group / stream. |
 
 ---
 
@@ -249,13 +264,16 @@ bad; surface it on the dashboard.
    cannot be retro-fitted. A compromised chain stays compromised from
    that seq forward — the integrity signal itself is the record.
 
-If `GET /api/v1/audit/verify` returns `503 audit chainer not installed`,
-check `CORDUM_AUDIT_EXPORT_TYPE` first. Older builds silently disabled
-the chain when the env var was unset; current builds treat
-`null`/`discard`/`chain-only`/`none`/empty as "chain on, no SIEM
-destination". With `null` configured, the first policy decision should
-make verify return `status=ok` with non-zero `total_events` /
-`verified_events`.
+If `GET /api/v1/audit/verify` returns `503 audit chainer not installed`
+on a current build, the gateway failed to construct the chainer at
+boot — the only real path to that outcome is a Redis client failure
+during `initAuditPipeline`. Check the gateway logs for the
+`audit chain enabled` line; if it is missing, Redis connectivity is the
+root cause, not the audit export config. The chain is no longer gated
+on `CORDUM_AUDIT_EXPORT_TYPE`, so setting the env var will not revive
+it. Older builds (pre-task-096de016) did disable the chain when
+`CORDUM_AUDIT_EXPORT_TYPE` was unset; if you are on a pre-fix image,
+set it to `null` as a temporary workaround and upgrade.
 
 ---
 

@@ -193,9 +193,19 @@ func exporterFromEnv() (Exporter, error) {
 	var err error
 
 	switch typ {
-	case "", "none", "null", "discard", "chain-only":
-		// Keep the audit chain and verification endpoints live even when no
-		// streaming SIEM backend is configured.
+	case "", "none":
+		// No external SIEM backend. The audit chain is now instantiated
+		// unconditionally at gateway boot, so returning a nil exporter is
+		// safe: the chain still records every event and /api/v1/audit/verify
+		// stays healthy. Operators who want audit-export metrics to match a
+		// real backend can set CORDUM_AUDIT_EXPORT_TYPE to null|discard|chain-only
+		// instead, handled in the next case.
+		return nil, nil
+
+	case "null", "discard", "chain-only":
+		// Explicit no-op exporter. Behaves like NewDiscardExporter so
+		// audit-export counters reflect "a backend exists" even though
+		// events are not forwarded anywhere external.
 		exp = NewDiscardExporter()
 		typ = "null"
 

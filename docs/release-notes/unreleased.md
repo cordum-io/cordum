@@ -4,34 +4,30 @@ This file captures user-visible changes that have landed on `main` but
 have not yet been cut into a release. When a release is tagged, copy
 these entries into a versioned release note and reset this file.
 
-## Audit chain decoupling (WIP — task-096de016)
+## Fixed
 
-Working entry. Full text lands at step 6; these are the three design
-findings captured in step 1 so reviewers can follow the diff:
-
-1. **Chain currently depends on exporter plumbing.**
-   `core/controlplane/gateway/gateway.go` `initAuditPipeline`
-   (lines 854-896) creates `auditChainer` only after the
-   `bufExporter == nil` guard at line 862; when
-   `NewExporterFromEnvWithEntitlements` returns `(nil, nil)` —
-   i.e. the SIEM entitlement is blocked for the plan — the function
-   short-circuits at line 863 with `return nil, nil, nil` and the
-   whole chain stays dark.
-2. **Direct-transport mode skips the chain on the write path.**
-   When `AUDIT_TRANSPORT != "nats"` the function falls through to
-   line 894: `auditSender = bufExporter`. The raw buffered exporter
-   is not chain-aware, so `appendAuditEntryNamed` never writes to the
-   Redis chain stream in direct mode; only the NATS consumer
-   (started with `audit.WithChainer(...)` inside the `transport == "nats"`
-   branch) feeds the chain.
-3. **A chain-first decorator already exists but is unwired in prod.**
-   `core/controlplane/gateway/audit_chain_sender.go` already defines
-   `newAuditChainSender(chainer, downstream)` with the exact
-   semantics this task needs (chain append first, optional
-   downstream forwarding, 5s timeout, tenant-empty skip, stateless).
-   Grep confirms the only callers are its own test file
-   (`audit_chain_sender_test.go` at lines 25 and 64) — no production
-   code path instantiates it today.
+- **audit: chain is now instantiated unconditionally at gateway boot.**
+  Previously the Redis-backed Merkle audit chain silently disabled when
+  (a) the plan's SIEM export entitlement was blocked for a non-discard
+  `CORDUM_AUDIT_EXPORT_TYPE` — `initAuditPipeline` returned
+  `(nil, nil, nil)` after `NewExporterFromEnvWithEntitlements` returned
+  a nil buffered exporter, or (b) direct transport (`AUDIT_TRANSPORT`
+  unset) was used without routing through the NATS consumer —
+  `auditSender` was assigned the raw buffered exporter on the direct
+  path with no chain wrapper, so `/api/v1/audit/verify` reported
+  `total_events=0` even though audit writes appeared healthy at the API
+  boundary. After this change the chainer is created first and wired
+  through `newAuditChainSender` on every write path, so neither
+  scenario can disable the chain. The `null`/`discard`/`chain-only`
+  backends are no longer required just to keep the chain alive; they
+  remain supported for operators who want a measured no-op SIEM target.
+  Operators who set `CORDUM_AUDIT_EXPORT_TYPE=null` explicitly continue
+  to work unchanged — the compose default moved from `null` to unset,
+  but `${VAR:-default}` respects an explicit value. See
+  [`docs/deployment/audit-chain.md`](../deployment/audit-chain.md) for
+  the updated backend-type table and 503 runbook. Cross-ref:
+  task-e1d54a75 (the DiscardExporter hotfix this supersedes).
+  Closes task-096de016.
 
 ## Corrections
 

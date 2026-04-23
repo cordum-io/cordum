@@ -168,7 +168,8 @@ services:
       safety-kernel:
         condition: service_healthy
     environment:
-      # Audit chain: engaged by default via CORDUM_AUDIT_EXPORT_TYPE=null. See docs/deployment/audit-chain.md.
+      # Audit chain runs unconditionally at gateway boot (task-096de016); CORDUM_AUDIT_EXPORT_TYPE now
+      # controls external SIEM export only. See docs/deployment/audit-chain.md.
       - NATS_URL=tls://nats:4222
       - NATS_USE_JETSTREAM=1
       - NATS_TLS_CA=/etc/cordum/tls/ca/ca.crt
@@ -264,7 +265,10 @@ services:
       - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
       - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
       - CORDUM_TELEMETRY_MODE=off
-      - CORDUM_AUDIT_EXPORT_TYPE=${CORDUM_AUDIT_EXPORT_TYPE:-null}
+      # Unset by default — the audit chain engages unconditionally at gateway boot. Set this to
+      # webhook|syslog|datadog|cloudwatch to stream events to an external SIEM, or to
+      # null|discard|chain-only for an explicit no-op exporter (matches audit-export metrics shape).
+      - CORDUM_AUDIT_EXPORT_TYPE=${CORDUM_AUDIT_EXPORT_TYPE:-}
       - AUDIT_TRANSPORT=${AUDIT_TRANSPORT:-nats}
       - CORDUM_AUDIT_CHAIN_FAIL=${CORDUM_AUDIT_CHAIN_FAIL:-permissive}
       - CORDUM_AUDIT_EXPORT_WEBHOOK_URL=${CORDUM_AUDIT_EXPORT_WEBHOOK_URL:-}

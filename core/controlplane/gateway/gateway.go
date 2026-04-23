@@ -852,22 +852,12 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, entitlementResolver *licensing.EntitlementResolver) (audit.AuditSender, *audit.Chainer, error) {
-	var auditSender audit.AuditSender
-	var auditChainer *audit.Chainer
-
-	bufExporter, err := audit.NewExporterFromEnvWithEntitlements(entitlementResolver)
-	if err != nil {
-		return nil, nil, err
-	}
-	if bufExporter == nil {
-		return nil, nil, nil
-	}
-
-	// Keep the audit chain live whenever the exporter layer is active —
-	// including the null/discard backend used by task-e1d54a75. Without this
-	// the verify endpoint reports total_events=0 even though audit sends
-	// appear healthy at the API boundary.
-	auditChainer = audit.NewChainer(client, "")
+	// The Redis-backed audit chain is the tamper-evident primary record. It
+	// runs unconditionally at boot so a blocked SIEM entitlement or an
+	// operator who explicitly opts out of external SIEM export cannot
+	// silently disable the chain — exporters are consumers of the chain, not
+	// a prerequisite for it.
+	auditChainer := audit.NewChainer(client, "")
 	chainFailMode := audit.ParseChainFailMode(os.Getenv(audit.EnvChainFailMode))
 	slog.Info("audit chain enabled",
 		"stream_prefix", audit.ChainKeyPrefix,
@@ -875,11 +865,25 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 		"tenant_isolation", "per-tenant stream audit:chain:<tenant>",
 	)
 
+	bufExporter, err := audit.NewExporterFromEnvWithEntitlements(entitlementResolver)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if bufExporter == nil {
+		slog.Info("audit chain active, no external SIEM export",
+			"reason", "export type empty/none or SIEM entitlement blocked for plan",
+		)
+		return newAuditChainSender(auditChainer, nil), auditChainer, nil
+	}
+
 	transport := strings.ToLower(strings.TrimSpace(os.Getenv("AUDIT_TRANSPORT")))
 	if transport == "nats" && natsBus != nil {
-		auditSender = audit.NewNATSAuditPublisher(natsBus, bufExporter)
-		// Start consumer in the same process — queue group ensures only one
-		// replica across the cluster handles each event.
+		// The NATS consumer (queue-grouped across replicas) performs the
+		// chain append via audit.WithChainer. Do NOT wrap the publisher
+		// with newAuditChainSender here — that would double-append events
+		// to the chain at publish time and again at consume time.
+		auditSender := audit.NewNATSAuditPublisher(natsBus, bufExporter)
 		if _, err := audit.NewNATSAuditConsumer(
 			natsBus,
 			bufExporter.Backend(),
@@ -891,8 +895,11 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 		return auditSender, auditChainer, nil
 	}
 
-	auditSender = bufExporter
-	return auditSender, auditChainer, nil
+	// Direct transport: chain the event synchronously at the gateway, then
+	// forward to the buffered exporter. This fixes a latent bug where
+	// direct-mode gateways only saw chain appends when a NATS consumer
+	// happened to be reading the stream.
+	return newAuditChainSender(auditChainer, bufExporter), auditChainer, nil
 }
 
 func newHTTPHandler(s *server) (http.Handler, error) {
