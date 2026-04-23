@@ -126,6 +126,11 @@ type failingSafetyDecisionStore struct {
 	err error
 }
 
+type failingGetSafetyDecisionStore struct {
+	*fakeJobStore
+	err error
+}
+
 type fakeDecisionLogStore struct {
 	mu      sync.Mutex
 	records []model.DecisionLogRecord
@@ -179,6 +184,11 @@ func (s *failingSafetyDecisionStore) SetSafetyDecision(_ context.Context, jobID 
 	_ = jobID
 	_ = record
 	return s.err
+}
+
+func (s *failingGetSafetyDecisionStore) GetSafetyDecision(_ context.Context, jobID string) (SafetyDecisionRecord, error) {
+	_ = jobID
+	return SafetyDecisionRecord{}, s.err
 }
 
 func (s *fakeDecisionLogStore) AppendDecision(_ context.Context, record model.DecisionLogRecord) error {
@@ -2718,6 +2728,41 @@ func TestCheckSafetyDecision_PreservesExistingJobHashOnRequireApproval(t *testin
 	}
 	if record.JobHash != pristineHash {
 		t.Fatalf("JobHash=%q want preserved %q", record.JobHash, pristineHash)
+	}
+}
+
+func TestCheckSafetyDecision_PropagatesExistingJobHashReadFailure(t *testing.T) {
+	readErr := errors.New("redis read lost approval hash fence")
+	baseStore := newFakeJobStore()
+	store := &failingGetSafetyDecisionStore{
+		fakeJobStore: baseStore,
+		err:          readErr,
+	}
+	engine := NewEngine(&fakeBus{}, &fixedSafetyRecordChecker{record: SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		Reason:           "needs review",
+	}}, newTestRegistry(t), NewNaiveStrategy(), store, nil)
+
+	req := &pb.JobRequest{
+		JobId:    "job-read-error-preserve-hash",
+		Topic:    "job.test",
+		TenantId: "tenant-a",
+		Labels:   map[string]string{"workflow_id": "wf-read-error"},
+	}
+	const pristineHash = "gateway-hash-that-must-not-be-clobbered"
+	baseStore.safety[req.JobId] = SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		JobHash:          pristineHash,
+	}
+
+	_, err := engine.checkSafetyDecision(context.Background(), req)
+	if !errors.Is(err, readErr) {
+		t.Fatalf("checkSafetyDecision() error = %v, want %v", err, readErr)
+	}
+	if got := baseStore.safety[req.JobId].JobHash; got != pristineHash {
+		t.Fatalf("stored JobHash=%q want preserved %q after read failure", got, pristineHash)
 	}
 }
 

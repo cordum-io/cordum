@@ -168,21 +168,36 @@ func TestApprove_LocksJobHashAgainstReconcilerDrift(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get state: %v", err)
 	}
-	approvalRecord, err := s.jobStore.GetApprovalRecord(ctx, jobID)
-	if err != nil {
-		t.Fatalf("get approval record: %v", err)
+	if state != model.JobStatePending {
+		t.Fatalf("expected live approved job state %q got %q", model.JobStatePending, state)
 	}
-	plan := store.ClassifyApprovalRepair(store.ApprovalRepairSnapshot{
-		JobID:          jobID,
-		State:          state,
-		Topic:          req.GetTopic(),
-		Request:        req,
-		RequestHash:    wantHash,
-		SafetyRecord:   record,
-		ApprovalRecord: approvalRecord,
-	}, store.ApprovalRepairClassifyOptions{})
+	classify := func(safetyRecord model.SafetyDecisionRecord) store.ApprovalRepairPlan {
+		return store.ClassifyApprovalRepair(store.ApprovalRepairSnapshot{
+			JobID:        jobID,
+			State:        model.JobStateApproval,
+			Topic:        req.GetTopic(),
+			Request:      req,
+			RequestHash:  wantHash,
+			SafetyRecord: safetyRecord,
+			// Deliberately do not feed the live post-approve ApprovalRecord here:
+			// ClassifyApprovalRepair would short-circuit into
+			// apply_approved_resolution before reaching the stale_request
+			// comparison. This snapshot simulates the reconciler's stale
+			// awaiting-approval view and proves the JobHash comparison itself.
+		}, store.ApprovalRepairClassifyOptions{})
+	}
+	staleRecord := record
+	staleRecord.JobHash = staleHash
+	stalePlan := classify(staleRecord)
+	if stalePlan.Kind != store.ApprovalRepairInvalidateStaleRequest {
+		t.Fatalf("expected stale hash control to reach stale_request branch, got %q", stalePlan.Kind)
+	}
+	plan := classify(record)
 	if plan.Kind == store.ApprovalRepairInvalidateStaleRequest {
 		t.Fatalf("expected reconcile sweep to avoid stale_request, got %q", plan.Kind)
+	}
+	if plan.Kind != store.ApprovalRepairNone {
+		t.Fatalf("expected locked hash to need no repair, got %q", plan.Kind)
 	}
 	if len(bus.published) != 1 {
 		t.Fatalf("expected 1 publish, got %d", len(bus.published))

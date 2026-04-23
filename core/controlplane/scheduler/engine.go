@@ -2084,10 +2084,14 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 		var existingHash string
 		if e.jobStore != nil {
 			storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
-			if prev, prevErr := e.jobStore.GetSafetyDecision(storeCtx, jobID); prevErr == nil && prev.JobHash != "" {
+			prev, prevErr := e.jobStore.GetSafetyDecision(storeCtx, jobID)
+			cancel()
+			if prevErr != nil {
+				return record, fmt.Errorf("load existing safety decision hash for %s: %w", jobID, prevErr)
+			}
+			if prev.JobHash != "" {
 				existingHash = prev.JobHash
 			}
-			cancel()
 		}
 		// Preserve the JobHash computed at gateway submit time — overwriting with
 		// the post-mutation hash here would cause the reconciler to classify this
@@ -2101,9 +2105,9 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 		}
 	}
 	if e.jobStore != nil {
-		ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+		storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 		defer cancel()
-		if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
+		if err := e.jobStore.SetSafetyDecision(storeCtx, jobID, record); err != nil {
 			return record, err
 		}
 		e.appendDecisionLog(req, record)
