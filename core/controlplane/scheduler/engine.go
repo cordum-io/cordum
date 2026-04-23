@@ -65,6 +65,8 @@ const (
 	outputPolicyAudit    = "sys.audit.output_policy"
 )
 
+var errApprovalHashFenceRead = errors.New("approval hash fence read failed")
+
 // otelMetricsBridge is an optional interface for OTEL metrics dual-emission.
 // Implemented by cordumotel.SchedulerMetricsBridge.
 type otelMetricsBridge interface {
@@ -1422,6 +1424,11 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 
 	record, err := e.checkSafetyDecisionTraced(lockCtx, req)
 	if err != nil {
+		if errors.Is(err, errApprovalHashFenceRead) {
+			slog.Error("approval hash fence read failed, retrying without fail-open",
+				"job_id", jobID, "topic", topic, "error", err, "trace_id", traceID)
+			return RetryAfter(err, retryDelayStore)
+		}
 		slog.Error("safety check failed", "job_id", jobID, "error", err)
 		record.Decision = SafetyUnavailable
 	}
@@ -2081,16 +2088,33 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 		record.Decision = SafetyRequireApproval
 	}
 	if record.Decision == SafetyRequireApproval || record.ApprovalRequired {
-		if hash, err := HashJobRequest(req); err == nil {
+		var existingHash string
+		if e.jobStore != nil {
+			storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
+			prev, prevErr := e.jobStore.GetSafetyDecision(storeCtx, jobID)
+			cancel()
+			if prevErr != nil {
+				return record, fmt.Errorf("%w: load existing safety decision hash for %s: %w", errApprovalHashFenceRead, jobID, prevErr)
+			}
+			if prev.JobHash != "" {
+				existingHash = prev.JobHash
+			}
+		}
+		// Preserve the JobHash computed at gateway submit time — overwriting with
+		// the post-mutation hash here would cause the reconciler to classify this
+		// approval as invalidate_stale_request. See task-035cdc8e / commit 297937c7.
+		if existingHash != "" {
+			record.JobHash = existingHash
+		} else if hash, err := HashJobRequest(req); err == nil {
 			record.JobHash = hash
 		} else {
 			slog.Error("job hash failed", "job_id", jobID, "error", err)
 		}
 	}
 	if e.jobStore != nil {
-		ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+		storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
 		defer cancel()
-		if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
+		if err := e.jobStore.SetSafetyDecision(storeCtx, jobID, record); err != nil {
 			return record, err
 		}
 		e.appendDecisionLog(req, record)
