@@ -6,6 +6,27 @@ these entries into a versioned release note and reset this file.
 
 ## Changed
 
+- **core: extracted the Unix-timestamp → RFC3339 formatter into
+  `core/infra/timeutil`.** Five inline formatters across the
+  dashboard-facing handler layer (`handlers_chat.go` auto-detect,
+  `handlers_governance.go` + `handlers_governance_approvals.go` millis,
+  `handlers_policy_bundles.go` micros, `handlers_velocity.go` seconds)
+  each carried their own copy of `time.Unix*(ts).UTC().Format(RFC3339)`
+  plus a `ts <= 0` guard. A schema change flipping an endpoint's unit
+  used to update only the one matching formatter with no mechanical
+  way to catch drift across siblings. `core/infra/timeutil/format.go`
+  now exports `FormatUnixAuto` (magnitude cascade matching
+  handlers_chat.go byte-for-byte, 1e18/1e15/1e12 cutoffs) plus four
+  typed variants `FromSeconds` / `FromMillis` / `FromMicros` /
+  `FromNanos` for callers that know the unit at compile time. All
+  five helpers return empty string on `ts <= 0`, matching the
+  pre-refactor guards. Output strings are byte-for-byte identical to
+  the inline versions on the same input; no dashboard change
+  required. The named wrappers in each handler (`chatCreatedAt`,
+  `governanceTimestamp`, `millisToRFC3339`, `timestampFromMicros`)
+  stay as 1-line forwarders so their call sites don't change. Closes
+  task-e396a874.
+
 - **core: extracted `proto.Clone((*pb.JobRequest))` guard-pattern into
   `core/protocol/protoutil/CloneJobRequest`.** Consolidates 4 inline
   call sites (`handlers_jobs.go`, `scheduler/engine.go`,
