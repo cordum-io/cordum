@@ -1,6 +1,6 @@
 // Package main is the demo-quickstart greeter worker.
 //
-// It subscribes to a single topic (job.demo.greet) and replies with
+// It subscribes to a single topic (job.demo-quickstart.greet) and replies with
 // "hello, <name>!". The DENY and REQUIRE_APPROVAL paths never reach a
 // worker — the kernel blocks or escalates them before dispatch — so this
 // binary only needs to service the ALLOW rule.
@@ -38,12 +38,12 @@ import (
 const (
 	workerID       = "demo-quickstart-greeter"
 	workerPool     = "demo-quickstart"
-	topicGreet     = "job.demo.greet"
+	topicGreet     = "job.demo-quickstart.greet"
 	metricsAddr    = ":9091"
 	shutdownBudget = 5 * time.Second
 )
 
-// greetPayload is the typed input for job.demo.greet. All fields are
+// greetPayload is the typed input for job.demo-quickstart.greet. All fields are
 // optional — the handler copes with every field being empty.
 type greetPayload struct {
 	Name string `json:"name"`

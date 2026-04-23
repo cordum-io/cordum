@@ -6,9 +6,9 @@ Three topics, three outcomes, one hello-world agent:
 
 | Topic | Rule | Verdict |
 |---|---|---|
-| `job.demo.greet` | `demo-quickstart-greet-allow` | `ALLOW` |
-| `job.demo.delete-all` | `demo-quickstart-delete-deny` | `DENY` |
-| `job.demo.admin` | `demo-quickstart-admin-approve` | `REQUIRE_APPROVAL` |
+| `job.demo-quickstart.greet` | `demo-quickstart-greet-allow` | `ALLOW` |
+| `job.demo-quickstart.delete-all` | `demo-quickstart-delete-deny` | `DENY` |
+| `job.demo-quickstart.admin` | `demo-quickstart-admin-approve` | `REQUIRE_APPROVAL` |
 
 The demo proves that Cordum can evaluate, gate, and escalate every
 agent call — on a single workflow that a new operator can read in under
@@ -39,7 +39,7 @@ demo/quickstart/
 │   └── workflows/
 │       └── hello.yaml                  # 4-step run that fans out to all 3 topics
 ├── worker/
-│   ├── main.go                         # greets — subscribes only to job.demo.greet
+│   ├── main.go                         # greets — subscribes only to job.demo-quickstart.greet
 │   └── main_test.go
 ├── Dockerfile                          # multi-stage Go build, non-root runtime
 ├── test-job.json                       # input fixture

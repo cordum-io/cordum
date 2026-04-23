@@ -82,9 +82,9 @@ var expectedQuickstartSteps = []struct {
 	StepID string
 	Topic  string
 }{
-	{"greet", "job.demo.greet"},
-	{"attempt_delete", "job.demo.delete-all"},
-	{"escalate_admin", "job.demo.admin"},
+	{"greet", "job.demo-quickstart.greet"},
+	{"attempt_delete", "job.demo-quickstart.delete-all"},
+	{"escalate_admin", "job.demo-quickstart.admin"},
 }
 
 // runDemoQuickstart starts demo-quickstart.hello, polls for verdicts on
@@ -197,7 +197,10 @@ func demoQuickstartInput() map[string]any {
 func renderVerdictTable(out io.Writer, rows []demoVerdict) {
 	const (
 		stepW    = 18
-		topicW   = 24
+		// topicW fits the longest demo topic (`job.demo-quickstart.delete-all`
+		// is 30 chars) without truncation. Widening from 24 keeps the
+		// ASCII table readable on a standard 120-col terminal.
+		topicW   = 32
 		verdictW = 18
 		reasonW  = 50
 	)

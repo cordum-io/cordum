@@ -39,9 +39,9 @@ func TestPackManifestParses(t *testing.T) {
 		t.Fatalf("expected 3 topics, got %d", got)
 	}
 	wantTopics := map[string]string{
-		"job.demo.greet":      "demo-quickstart.greet",
-		"job.demo.delete-all": "demo-quickstart.delete-all",
-		"job.demo.admin":      "demo-quickstart.admin",
+		"job.demo-quickstart.greet":      "demo-quickstart.greet",
+		"job.demo-quickstart.delete-all": "demo-quickstart.delete-all",
+		"job.demo-quickstart.admin":      "demo-quickstart.admin",
 	}
 	for _, tp := range manifest.Topics {
 		want, ok := wantTopics[tp.Name]

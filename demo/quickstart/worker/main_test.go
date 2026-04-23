@@ -48,14 +48,14 @@ func newCtx(t *testing.T, topic, jobID string) capruntime.Context {
 }
 
 func TestGreetHandlerNominal(t *testing.T) {
-	out, err := greetHandler(newCtx(t, "job.demo.greet", "job-1"), greetPayload{Name: "Yaron"})
+	out, err := greetHandler(newCtx(t, "job.demo-quickstart.greet", "job-1"), greetPayload{Name: "Yaron"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if out.Greeting != "hello, Yaron!" {
 		t.Errorf("greeting = %q, want 'hello, Yaron!'", out.Greeting)
 	}
-	if out.Topic != "job.demo.greet" {
+	if out.Topic != "job.demo-quickstart.greet" {
 		t.Errorf("topic = %q", out.Topic)
 	}
 	if out.JobID != "job-1" {
@@ -64,7 +64,7 @@ func TestGreetHandlerNominal(t *testing.T) {
 }
 
 func TestGreetHandlerEmptyNameFallback(t *testing.T) {
-	out, err := greetHandler(newCtx(t, "job.demo.greet", "job-2"), greetPayload{})
+	out, err := greetHandler(newCtx(t, "job.demo-quickstart.greet", "job-2"), greetPayload{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestGreetHandlerEmptyNameFallback(t *testing.T) {
 }
 
 func TestGreetHandlerWhitespaceNameFallback(t *testing.T) {
-	out, err := greetHandler(newCtx(t, "job.demo.greet", "job-3"), greetPayload{Name: "   "})
+	out, err := greetHandler(newCtx(t, "job.demo-quickstart.greet", "job-3"), greetPayload{Name: "   "})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestGreetHandlerRespectsContextTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	_ = ctx // pinned in the closure below to keep the timeout contract visible
-	rc := capruntime.Context{Job: &agentv1.JobRequest{JobId: "j", Topic: "job.demo.greet"}}
+	rc := capruntime.Context{Job: &agentv1.JobRequest{JobId: "j", Topic: "job.demo-quickstart.greet"}}
 
 	done := make(chan struct{})
 	go func() {
@@ -154,7 +154,7 @@ func TestMetricsHandlerEmitsCounters(t *testing.T) {
 	m.lastDuration.Store(0)
 
 	// Drive the handler so the counter moves.
-	if _, err := greetHandler(newCtx(t, "job.demo.greet", "metrics-1"), greetPayload{Name: "x"}); err != nil {
+	if _, err := greetHandler(newCtx(t, "job.demo-quickstart.greet", "metrics-1"), greetPayload{Name: "x"}); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
 

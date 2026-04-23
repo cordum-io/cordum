@@ -1,0 +1,7 @@
+topics:
+  job.demo-quickstart.greet: demo-quickstart
+  job.demo-quickstart.delete-all: demo-quickstart
+  job.demo-quickstart.admin: demo-quickstart
+pools:
+  demo-quickstart:
+    requires: []

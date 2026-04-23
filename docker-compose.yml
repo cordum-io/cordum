@@ -468,7 +468,7 @@ services:
           memory: 64M
           cpus: "0.25"
 
-  # Greeter for the demo-quickstart pack. Subscribes to job.demo.greet and
+  # Greeter for the demo-quickstart pack. Subscribes to job.demo-quickstart.greet and
   # echoes "hello, <name>!". Brought up only with `--profile demo` so the
   # default stack stays lean for new users who only want the platform.
   demo-quickstart-worker:

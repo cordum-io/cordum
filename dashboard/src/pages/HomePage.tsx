@@ -3,7 +3,7 @@
  * Revision v2: Balanced KPIs (2 ops + 2 governance)
  * "Orchestration sells. Governance seals. Both are Cordum."
  */
-import { Suspense, lazy, useState, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -43,14 +43,6 @@ import {
   Radio,
 } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
-
-// Approval analytics is a heavy widget (two queries + DataTable). Lazy-
-// mount so the Command Center first paint doesn't block on it.
-const ApprovalAnalyticsWidget = lazy(() =>
-  import("@/components/governance/ApprovalAnalyticsWidget").then((m) => ({
-    default: m.ApprovalAnalyticsWidget,
-  })),
-);
 import { useStatus } from "@/hooks/useStatus";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { ChartTooltip } from "@/components/ui/ChartTooltip";
@@ -430,13 +422,6 @@ export default function HomePage() {
           </>
         )}
       </motion.div>
-
-      {/* Approval analytics — above-the-fold so bottlenecks surface before
-          other ops widgets. Always mounted; the widget owns empty/error
-          handling when the backend has no data yet. */}
-      <Suspense fallback={null}>
-        <ApprovalAnalyticsWidget context="command-center" defaultWindow="24h" />
-      </Suspense>
 
       {/* Onboarding checklist — shown for new users with zero data */}
       {showOnboarding &&

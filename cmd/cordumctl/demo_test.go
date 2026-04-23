@@ -11,17 +11,17 @@ import (
 // escalate_admin) regardless of the order GetRunTimeline returned them.
 func TestRenderVerdictTableOrdersByExpectedSteps(t *testing.T) {
 	rows := []demoVerdict{
-		{StepID: "escalate_admin", Topic: "job.demo.admin", Verdict: "REQUIRE_APPROVAL", Reason: "human sign-off", JobID: "job-3"},
-		{StepID: "greet", Topic: "job.demo.greet", Verdict: "ALLOW", Reason: "safe"},
-		{StepID: "attempt_delete", Topic: "job.demo.delete-all", Verdict: "DENY", Reason: "blocked"},
+		{StepID: "escalate_admin", Topic: "job.demo-quickstart.admin", Verdict: "REQUIRE_APPROVAL", Reason: "human sign-off", JobID: "job-3"},
+		{StepID: "greet", Topic: "job.demo-quickstart.greet", Verdict: "ALLOW", Reason: "safe"},
+		{StepID: "attempt_delete", Topic: "job.demo-quickstart.delete-all", Verdict: "DENY", Reason: "blocked"},
 	}
 	var buf bytes.Buffer
 	renderVerdictTable(&buf, rows)
 	out := buf.String()
 
-	posGreet := strings.Index(out, "job.demo.greet")
-	posDelete := strings.Index(out, "job.demo.delete-all")
-	posAdmin := strings.Index(out, "job.demo.admin")
+	posGreet := strings.Index(out, "job.demo-quickstart.greet")
+	posDelete := strings.Index(out, "job.demo-quickstart.delete-all")
+	posAdmin := strings.Index(out, "job.demo-quickstart.admin")
 	if posGreet == -1 || posDelete == -1 || posAdmin == -1 {
 		t.Fatalf("missing rows in output:\n%s", out)
 	}
@@ -37,9 +37,9 @@ func TestRenderVerdictTableOrdersByExpectedSteps(t *testing.T) {
 // ID would break the demo's narrative.
 func TestRenderVerdictTablePrintsApprovalCommand(t *testing.T) {
 	rows := []demoVerdict{
-		{StepID: "greet", Topic: "job.demo.greet", Verdict: "ALLOW"},
-		{StepID: "attempt_delete", Topic: "job.demo.delete-all", Verdict: "DENY"},
-		{StepID: "escalate_admin", Topic: "job.demo.admin", Verdict: "REQUIRE_APPROVAL", JobID: "job-abc-123"},
+		{StepID: "greet", Topic: "job.demo-quickstart.greet", Verdict: "ALLOW"},
+		{StepID: "attempt_delete", Topic: "job.demo-quickstart.delete-all", Verdict: "DENY"},
+		{StepID: "escalate_admin", Topic: "job.demo-quickstart.admin", Verdict: "REQUIRE_APPROVAL", JobID: "job-abc-123"},
 	}
 	var buf bytes.Buffer
 	renderVerdictTable(&buf, rows)
@@ -55,9 +55,9 @@ func TestRenderVerdictTablePrintsApprovalCommand(t *testing.T) {
 // might miss.
 func TestRenderVerdictTableShowsPendingForMissingVerdict(t *testing.T) {
 	rows := []demoVerdict{
-		{StepID: "greet", Topic: "job.demo.greet"},
-		{StepID: "attempt_delete", Topic: "job.demo.delete-all", Verdict: "DENY"},
-		{StepID: "escalate_admin", Topic: "job.demo.admin", Verdict: "REQUIRE_APPROVAL", JobID: "j"},
+		{StepID: "greet", Topic: "job.demo-quickstart.greet"},
+		{StepID: "attempt_delete", Topic: "job.demo-quickstart.delete-all", Verdict: "DENY"},
+		{StepID: "escalate_admin", Topic: "job.demo-quickstart.admin", Verdict: "REQUIRE_APPROVAL", JobID: "j"},
 	}
 	var buf bytes.Buffer
 	renderVerdictTable(&buf, rows)
@@ -104,9 +104,9 @@ func TestDemoQuickstartInputContractStable(t *testing.T) {
 // silently render the wrong row — this test forces that drift to surface.
 func TestExpectedQuickstartStepsMatchWorkflow(t *testing.T) {
 	want := map[string]string{
-		"greet":          "job.demo.greet",
-		"attempt_delete": "job.demo.delete-all",
-		"escalate_admin": "job.demo.admin",
+		"greet":          "job.demo-quickstart.greet",
+		"attempt_delete": "job.demo-quickstart.delete-all",
+		"escalate_admin": "job.demo-quickstart.admin",
 	}
 	if len(expectedQuickstartSteps) != len(want) {
 		t.Fatalf("expectedQuickstartSteps length = %d, want %d", len(expectedQuickstartSteps), len(want))

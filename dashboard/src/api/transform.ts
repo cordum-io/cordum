@@ -49,9 +49,6 @@ import type {
   SafetyDecisionType,
   PolicyConstraints,
   PolicyBundleSignature,
-  ApprovalAnalyticsGroup,
-  ApprovalAnalyticsResponse,
-  ApprovalAnalyticsSummary,
   DelegationChainLink,
   DelegationListResponse,
   DelegationView,
@@ -1864,42 +1861,6 @@ export function isRegressionRun(run: Pick<EvalRun, "summary">): boolean {
   return (run.summary?.regressions ?? 0) > 0;
 }
 
-// ---------------------------------------------------------------------------
-// Approval analytics mappers
-// ---------------------------------------------------------------------------
-
-export interface BackendApprovalAnalyticsSummary {
-  total?: number;
-  approved?: number;
-  rejected?: number;
-  expired?: number;
-  auto_resolved?: number;
-  manual_resolved?: number;
-  avg_time_to_approve_seconds?: number | null;
-  p50?: number | null;
-  p90?: number | null;
-  p99?: number | null;
-}
-
-export interface BackendApprovalAnalyticsGroup {
-  key?: string;
-  label?: string;
-  total?: number;
-  approved?: number;
-  rejected?: number;
-  expired?: number;
-  auto_count?: number;
-  manual_count?: number;
-  avg_ttar_seconds?: number | null;
-  p90_seconds?: number | null;
-}
-
-export interface BackendApprovalAnalyticsResponse {
-  window?: { since?: string; until?: string };
-  summary?: BackendApprovalAnalyticsSummary;
-  groups?: BackendApprovalAnalyticsGroup[];
-}
-
 export interface BackendDelegationChainLink {
   agent_id?: string;
   issued_at?: string;
@@ -1929,63 +1890,6 @@ export interface BackendDelegationListResponse {
   items?: BackendDelegationView[];
   next_cursor?: string | null;
   nextCursor?: string | null;
-}
-
-function coerceOptionalNumber(raw: unknown): number | null {
-  if (raw === null || raw === undefined) return null;
-  const num = typeof raw === "number" ? raw : Number(raw);
-  if (!Number.isFinite(num)) return null;
-  return num;
-}
-
-function mapApprovalAnalyticsSummary(
-  raw: BackendApprovalAnalyticsSummary | undefined,
-): ApprovalAnalyticsSummary {
-  const s = raw ?? {};
-  return {
-    total: typeof s.total === "number" ? s.total : 0,
-    approved: typeof s.approved === "number" ? s.approved : 0,
-    rejected: typeof s.rejected === "number" ? s.rejected : 0,
-    expired: typeof s.expired === "number" ? s.expired : 0,
-    autoResolved: typeof s.auto_resolved === "number" ? s.auto_resolved : 0,
-    manualResolved: typeof s.manual_resolved === "number" ? s.manual_resolved : 0,
-    avgTimeToApproveSeconds: coerceOptionalNumber(s.avg_time_to_approve_seconds),
-    p50: coerceOptionalNumber(s.p50),
-    p90: coerceOptionalNumber(s.p90),
-    p99: coerceOptionalNumber(s.p99),
-  };
-}
-
-function mapApprovalAnalyticsGroup(
-  raw: BackendApprovalAnalyticsGroup,
-): ApprovalAnalyticsGroup {
-  return {
-    key: raw.key ?? "",
-    label: raw.label ?? raw.key ?? "",
-    total: typeof raw.total === "number" ? raw.total : 0,
-    approved: typeof raw.approved === "number" ? raw.approved : 0,
-    rejected: typeof raw.rejected === "number" ? raw.rejected : 0,
-    expired: typeof raw.expired === "number" ? raw.expired : 0,
-    autoCount: typeof raw.auto_count === "number" ? raw.auto_count : 0,
-    manualCount: typeof raw.manual_count === "number" ? raw.manual_count : 0,
-    avgTtarSeconds: coerceOptionalNumber(raw.avg_ttar_seconds),
-    p90Seconds: coerceOptionalNumber(raw.p90_seconds),
-  };
-}
-
-export function mapApprovalAnalytics(
-  raw: BackendApprovalAnalyticsResponse,
-): ApprovalAnalyticsResponse {
-  return {
-    window: {
-      since: raw.window?.since ?? "",
-      until: raw.window?.until ?? "",
-    },
-    summary: mapApprovalAnalyticsSummary(raw.summary),
-    groups: Array.isArray(raw.groups)
-      ? raw.groups.map(mapApprovalAnalyticsGroup)
-      : undefined,
-  };
 }
 
 export function mapDelegationChainLink(
@@ -2030,35 +1934,5 @@ export function mapDelegationListResponse(
     items: Array.isArray(raw.items) ? raw.items.map(mapDelegationView) : [],
     nextCursor: raw.next_cursor ?? raw.nextCursor ?? undefined,
   };
-}
-
-export interface BottleneckThresholds {
-  multiplier: number;
-  floorSeconds: number;
-}
-
-export const DEFAULT_BOTTLENECK_THRESHOLDS: BottleneckThresholds = {
-  multiplier: 2,
-  floorSeconds: 900,
-};
-
-/**
- * Bottleneck detection rule — a group row is a bottleneck when its
- * avg TTAR exceeds either (a) the configurable multiple of the
- * window-wide avg, or (b) the absolute floor in seconds. Defaults
- * match the plan's `>2x avg OR >15 min` contract.
- */
-export function isBottleneckGroup(
-  group: ApprovalAnalyticsGroup,
-  summaryAvgSeconds: number | null,
-  thresholds: BottleneckThresholds = DEFAULT_BOTTLENECK_THRESHOLDS,
-): boolean {
-  const ttar = group.avgTtarSeconds;
-  if (ttar === null) return false;
-  if (ttar > thresholds.floorSeconds) return true;
-  if (summaryAvgSeconds !== null && ttar > summaryAvgSeconds * thresholds.multiplier) {
-    return true;
-  }
-  return false;
 }
 

@@ -75,7 +75,7 @@ fi
 
 # Tighter verdict assertion: use the per-step Verdict column the CLI
 # prints rather than a free-text grep. Each output line has the shape:
-#   | greet            | job.demo.greet           | ALLOW            | ... |
+#   | greet            | job.demo-quickstart.greet           | ALLOW            | ... |
 # so we awk the 3rd field of every row whose 1st field is one of the
 # three expected step ids, then check that the three distinct verdicts
 # are all present. This stops a future reason-text change that happens

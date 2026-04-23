@@ -14,7 +14,7 @@ steps:
     id: greet
     name: Greet (ALLOW)
     type: worker
-    topic: job.demo.greet
+    topic: job.demo-quickstart.greet
     input:
       name: "${input.name}"
     meta:
@@ -27,7 +27,7 @@ steps:
     id: attempt_delete
     name: Attempt destructive op (DENY)
     type: worker
-    topic: job.demo.delete-all
+    topic: job.demo-quickstart.delete-all
     input:
       target: "${input.target}"
     meta:
@@ -40,7 +40,7 @@ steps:
     id: escalate_admin
     name: Admin operation (REQUIRE_APPROVAL)
     type: worker
-    topic: job.demo.admin
+    topic: job.demo-quickstart.admin
     input:
       action: "${input.admin_action}"
     meta:

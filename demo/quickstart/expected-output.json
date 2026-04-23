@@ -3,19 +3,19 @@
   "verdicts": [
     {
       "step_id": "greet",
-      "topic": "job.demo.greet",
+      "topic": "job.demo-quickstart.greet",
       "verdict": "ALLOW",
       "reason": "Greeter is a safe, read-only demo agent."
     },
     {
       "step_id": "attempt_delete",
-      "topic": "job.demo.delete-all",
+      "topic": "job.demo-quickstart.delete-all",
       "verdict": "DENY",
       "reason": "Destructive operations are blocked by default policy — this is the DENY verdict."
     },
     {
       "step_id": "escalate_admin",
-      "topic": "job.demo.admin",
+      "topic": "job.demo-quickstart.admin",
       "verdict": "REQUIRE_APPROVAL",
       "reason": "Admin operations require human sign-off — this is the APPROVE verdict."
     }

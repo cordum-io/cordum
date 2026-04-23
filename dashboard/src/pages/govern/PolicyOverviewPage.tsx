@@ -47,11 +47,6 @@ const LazyReplayTab = lazy(() => import("@/pages/govern/ReplayPage")) as React.L
 const LazyAnalyticsTab = lazy(() => import("@/pages/govern/PolicyAnalyticsPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
 const LazyBundlesTab = lazy(() => import("@/pages/govern/BundlesPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
 const LazyScopeTab = lazy(() => import("@/pages/govern/TenantsPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
-const LazyApprovalAnalyticsWidget = lazy(() =>
-  import("@/components/governance/ApprovalAnalyticsWidget").then((m) => ({
-    default: m.ApprovalAnalyticsWidget,
-  })),
-);
 
 // ---------------------------------------------------------------------------
 // Tab definitions
@@ -220,9 +215,6 @@ function OverviewTabContent() {
       <GapAlertBanner tenant="default" />
       <ChainIntegrityWidget tenant="default" />
       <PostureSummary bundles={bundles} allRules={allRules} />
-      <Suspense fallback={null}>
-        <LazyApprovalAnalyticsWidget context="governance" defaultWindow="7d" />
-      </Suspense>
       <PolicyFilterBar
         searchText={searchText}
         onSearchChange={setSearchText}
