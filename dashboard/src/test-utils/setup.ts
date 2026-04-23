@@ -23,6 +23,10 @@ function reportQueryClientDiagnostic(value: unknown): boolean {
 let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 let originalConsoleError: typeof console.error;
 
+const onWindowError = (event: ErrorEvent) => {
+  reportQueryClientDiagnostic(event.error ?? event.message);
+};
+
 beforeAll(() => {
   originalConsoleError = console.error.bind(console);
   consoleErrorSpy = vi.spyOn(console, "error").mockImplementation((...args: Parameters<typeof console.error>) => {
@@ -30,9 +34,7 @@ beforeAll(() => {
     reportQueryClientDiagnostic(args.map((arg) => (arg instanceof Error ? arg.message : String(arg))).join("\n"));
   });
 
-  window.addEventListener("error", (event) => {
-    reportQueryClientDiagnostic(event.error ?? event.message);
-  });
+  window.addEventListener("error", onWindowError);
 });
 
 afterEach(() => {
@@ -41,6 +43,7 @@ afterEach(() => {
 });
 
 afterAll(() => {
+  window.removeEventListener("error", onWindowError);
   closeMswServer();
   consoleErrorSpy?.mockRestore();
 });

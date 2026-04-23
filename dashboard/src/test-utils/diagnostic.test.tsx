@@ -15,10 +15,12 @@ describe("QueryClient diagnostic", () => {
       capturedErrorCalls.push(args.map(String).join("\n"));
     });
 
-    expect(() => render(<QueryWithoutProvider />)).toThrow(/No QueryClient set/);
-    reportQueryClientDiagnostic("No QueryClient set, use QueryClientProvider to set one");
-    expect(lastConsoleErrorDiagnostic).toContain("renderWithProviders from");
-
-    probe.mockRestore();
+    try {
+      expect(() => render(<QueryWithoutProvider />)).toThrow(/No QueryClient set/);
+      reportQueryClientDiagnostic("No QueryClient set, use QueryClientProvider to set one");
+      expect(lastConsoleErrorDiagnostic).toContain("renderWithProviders from");
+    } finally {
+      probe.mockRestore();
+    }
   });
 });
