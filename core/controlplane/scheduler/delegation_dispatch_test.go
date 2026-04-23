@@ -77,12 +77,15 @@ func newDelegationDispatchTestStore(t *testing.T) (*infraStore.RedisJobStore, *i
 func issueSchedulerDelegationToken(t *testing.T, jobStore *infraStore.RedisJobStore, agentStore *infraStore.AgentIdentityStore, signingKey delegation.SigningKey, tenant, delegator, target string) (string, delegation.VerifiedToken) {
 	t.Helper()
 
-	service := delegation.NewTokenService(
+	service, err := delegation.NewTokenService(
 		signingKey,
 		map[string]ed25519.PublicKey{signingKey.KID: signingKey.PublicKey()},
 		schedulerDelegationPermissionsResolver{store: agentStore},
 		delegation.NewRedisRevocationStoreFromClient(jobStore.Client()),
 	)
+	if err != nil {
+		t.Fatalf("new token service: %v", err)
+	}
 	token, _, err := service.IssueDelegationToken(context.Background(), delegation.IssueRequest{
 		Tenant:            tenant,
 		DelegatingAgentID: delegator,
