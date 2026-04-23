@@ -9,8 +9,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 )
 
 // ---------- request / response types ----------
@@ -58,7 +56,8 @@ const (
 )
 
 func (s *server) handlePolicyAnalytics(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermPolicyRead, "admin") {
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeForbidden(w, r, err)
 		return
 	}
 	if s.jobStore == nil {

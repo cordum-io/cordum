@@ -2,23 +2,6 @@ import { describe, it, expect } from "vitest";
 import { vi } from "vitest";
 import { downloadFile, toCsv } from "./export";
 
-function ensureObjectUrlApis() {
-  if (typeof URL.createObjectURL !== "function") {
-    Object.defineProperty(URL, "createObjectURL", {
-      configurable: true,
-      writable: true,
-      value: () => "blob:stub-url",
-    });
-  }
-  if (typeof URL.revokeObjectURL !== "function") {
-    Object.defineProperty(URL, "revokeObjectURL", {
-      configurable: true,
-      writable: true,
-      value: () => {},
-    });
-  }
-}
-
 describe("toCsv", () => {
   it("produces header + data rows", () => {
     const csv = toCsv(["Name", "Age"], [["Alice", "30"], ["Bob", "25"]]);
@@ -53,7 +36,6 @@ describe("toCsv", () => {
 
 describe("downloadFile", () => {
   it("creates a blob URL, clicks anchor, and cleans up DOM/url", () => {
-    ensureObjectUrlApis();
     const createObjectURLSpy = vi
       .spyOn(URL, "createObjectURL")
       .mockReturnValue("blob:mock-url");

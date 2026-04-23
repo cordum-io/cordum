@@ -17,16 +17,6 @@ import (
 
 const delegationIssueLimitPerMinute = 60
 
-// maxDelegationTTLSeconds caps `ttl_seconds` on the delegation-issue handler
-// before it is multiplied into time.Duration. Without this bound a caller
-// could submit `ttl_seconds=math.MaxInt64` and wrap the `int64 * time.Second`
-// multiplication past the int64 nanosecond range — the resulting negative
-// duration would silently bypass the service-layer `maxTTL` check (which
-// tests `ttl > maxTTL`) and mint an already-expired-or-far-future token. We
-// cap at one year here; the service layer's configured maxTTL still applies
-// and will reject anything smaller than that bound with its own 400 error.
-const maxDelegationTTLSeconds int64 = 365 * 24 * 60 * 60
-
 type delegateTokenRequest struct {
 	TargetAgentID  string   `json:"target_agent_id"`
 	AllowedActions []string `json:"allowed_actions,omitempty"`
@@ -60,14 +50,8 @@ type verifyDelegationResponse struct {
 }
 
 type revokeDelegationRequest struct {
-	JTI     string `json:"jti"`
-	Reason  string `json:"reason,omitempty"`
-	Cascade *bool  `json:"cascade,omitempty"`
-}
-
-type revokeDelegationResponse struct {
-	JTI           string `json:"jti"`
-	CascadedCount int    `json:"cascaded_count"`
+	JTI    string `json:"jti"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type gatewayDelegationPermissionsResolver struct {
@@ -106,23 +90,10 @@ func (s *server) handleDelegateAgent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Bind the caller's authoritative agent from the authenticated worker
-	// credential, not from authCtx.PrincipalID (which is the worker ID and
-	// has a distinct namespace from agent IDs in this codebase). Admins
-	// bypass the per-agent check; everyone else must prove they are the
-	// delegating agent via their linked credential.
-	if !strings.EqualFold(strings.TrimSpace(authCtx.Role), "admin") {
-		callerAgentID := ""
-		if s.agentIdentityStore != nil {
-			if agent, err := s.agentIdentityStore.GetByWorkerID(r.Context(), strings.TrimSpace(authCtx.PrincipalID)); err == nil && agent != nil {
-				callerAgentID = agent.ID
-			}
-		}
-		if callerAgentID == "" || callerAgentID != delegatingAgentID {
-			writeForbidden(w, r, errors.New("principal access denied"))
-			s.emitDelegationAudit(r, "issue", tenantFromRequest(r), delegatingAgentID, "", "", 0, "denied", errors.New("principal access denied"))
-			return
-		}
+	if !strings.EqualFold(strings.TrimSpace(authCtx.Role), "admin") && strings.TrimSpace(authCtx.PrincipalID) != delegatingAgentID {
+		writeForbidden(w, r, errors.New("principal access denied"))
+		s.emitDelegationAudit(r, "issue", tenantFromRequest(r), delegatingAgentID, "", "", 0, "denied", errors.New("principal access denied"))
+		return
 	}
 
 	var req delegateTokenRequest
@@ -139,14 +110,6 @@ func (s *server) handleDelegateAgent(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, "ttl_seconds must be non-negative")
 		return
 	}
-	if req.TTLSeconds > maxDelegationTTLSeconds {
-		// Enforce the pre-multiplication bound so `time.Duration(foo) *
-		// time.Second` cannot overflow int64 nanoseconds and return a
-		// negative duration that would sneak past the service-layer
-		// maxTTL guard.
-		writeErrorJSON(w, http.StatusBadRequest, "ttl_seconds exceeds maximum (1 year)")
-		return
-	}
 
 	tenant := tenantFromRequest(r)
 	if tenant == "" {
@@ -161,14 +124,7 @@ func (s *server) handleDelegateAgent(w http.ResponseWriter, r *http.Request) {
 		s.emitDelegationAudit(r, "issue", tenant, delegatingAgentID, req.TargetAgentID, "", 0, "denied", errors.New("target agent unavailable"))
 		return
 	}
-	if allowed, quotaErr := s.allowDelegationIssue(r.Context(), tenant, delegatingAgentID); !allowed {
-		if quotaErr != nil {
-			// Rate-limit backend is broken — surface as 503 so operators
-			// see the actual failure class instead of a misleading 429.
-			writeServiceUnavailable(w, r, "delegation rate limiter", quotaErr)
-			s.emitDelegationAudit(r, "issue", tenant, delegatingAgentID, req.TargetAgentID, "", 0, "error", quotaErr)
-			return
-		}
+	if !s.allowDelegationIssue(r.Context(), tenant, delegatingAgentID) {
 		writeErrorJSON(w, http.StatusTooManyRequests, "rate limited")
 		s.emitDelegationAudit(r, "issue", tenant, delegatingAgentID, req.TargetAgentID, "", 0, "rate_limited", errors.New("rate limited"))
 		return
@@ -208,12 +164,6 @@ func (s *server) handleDelegateAgent(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt:  claims.ExpiresAt.Time.UTC().Format(time.RFC3339Nano),
 		ChainDepth: claims.ChainDepth,
 		JTI:        claims.ID,
-	}
-	if listStore := s.delegationListStore(); listStore != nil {
-		if err := listStore.RecordIssuedToken(r.Context(), delegationIssuedView(tenant, claims, req.TargetAgentID)); err != nil {
-			writeInternalError(w, r, "record delegation token", err)
-			return
-		}
 	}
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, resp)
@@ -288,100 +238,14 @@ func (s *server) handleRevokeDelegation(w http.ResponseWriter, r *http.Request) 
 		writeErrorJSON(w, http.StatusServiceUnavailable, "service unavailable")
 		return
 	}
-	tenant := tenantFromRequest(r)
-	listStore := s.delegationListStore()
-	if listStore == nil {
-		writeErrorJSON(w, http.StatusServiceUnavailable, "service unavailable")
-		return
-	}
-	rootView, ok, err := listStore.Get(r.Context(), req.JTI)
-	if err != nil {
-		writeInternalError(w, r, "load delegation token", err)
-		s.emitDelegationAudit(r, "revoke", tenant, "", "", req.JTI, 0, "error", err)
-		return
-	}
-	if !ok || !strings.EqualFold(strings.TrimSpace(rootView.Tenant), tenant) {
-		writeErrorJSON(w, http.StatusNotFound, "delegation token not found")
-		s.emitDelegationAudit(r, "revoke", tenant, "", "", req.JTI, 0, "denied", delegation.ErrNotFound)
-		return
-	}
 	revocations := delegation.NewRedisRevocationStoreFromClient(s.jobStore.Client())
-	revokedAt := time.Now().UTC()
-	cascade := req.Cascade == nil || *req.Cascade
-	result, err := revocations.CascadeRevoke(r.Context(), req.JTI, strings.TrimSpace(req.Reason), revokedAt, cascade)
-	if err != nil {
-		switch {
-		case errors.Is(err, delegation.ErrNotFound):
-			writeErrorJSON(w, http.StatusNotFound, "delegation token not found")
-		case errors.Is(err, delegation.ErrCascadeTooDeep):
-			writeErrorJSON(w, http.StatusUnprocessableEntity, "delegation cascade too deep")
-		default:
-			writeInternalError(w, r, "revoke delegation token", err)
-		}
-		s.emitDelegationAudit(r, "revoke", tenant, "", "", req.JTI, rootView.ChainDepth, "error", err)
+	if err := revocations.Revoke(r.Context(), req.JTI, time.Now().UTC().Add(24*time.Hour)); err != nil {
+		writeInternalError(w, r, "revoke delegation token", err)
+		s.emitDelegationAudit(r, "revoke", tenantFromRequest(r), "", "", req.JTI, 0, "error", err)
 		return
 	}
-	writeJSON(w, revokeDelegationResponse{
-		JTI:           req.JTI,
-		CascadedCount: result.CascadedCount,
-	})
-	s.emitDelegationAudit(r, "revoke", tenant, "", "", req.JTI, rootView.ChainDepth, "ok", nil)
-	if result.CascadedCount > 0 {
-		s.emitDelegationCascadeAudit(r, tenant, req.JTI, result.CascadedCount, strings.TrimSpace(req.Reason))
-	}
-	for _, revokedJTI := range result.RevokedJTIs {
-		if revokedJTI == req.JTI {
-			continue
-		}
-		s.emitDelegationRevokedAudit(r, tenant, req.JTI, revokedJTI, strings.TrimSpace(req.Reason))
-	}
-}
-
-func (s *server) emitDelegationCascadeAudit(r *http.Request, tenant, rootJTI string, cascadedCount int, reason string) {
-	if s == nil || s.auditExporter == nil || cascadedCount <= 0 {
-		return
-	}
-	extra := map[string]string{
-		"root_jti":       strings.TrimSpace(rootJTI),
-		"cascaded_count": strconv.Itoa(cascadedCount),
-	}
-	if trim := strings.TrimSpace(reason); trim != "" {
-		extra["reason"] = trim
-	}
-	s.auditExporter.Send(audit.SIEMEvent{
-		Timestamp: time.Now().UTC(),
-		EventType: audit.EventSystemAuth,
-		Severity:  audit.SeverityInfo,
-		TenantID:  tenant,
-		Action:    "delegation.revoked_cascade",
-		Reason:    "delegation revoke cascaded",
-		Identity:  policyActorID(r),
-		Extra:     extra,
-	})
-}
-
-func (s *server) emitDelegationRevokedAudit(r *http.Request, tenant, rootJTI, jti, reason string) {
-	if s == nil || s.auditExporter == nil {
-		return
-	}
-	extra := map[string]string{
-		"jti":      strings.TrimSpace(jti),
-		"root_jti": strings.TrimSpace(rootJTI),
-		"outcome":  "ok",
-	}
-	if trim := strings.TrimSpace(reason); trim != "" {
-		extra["reason"] = trim
-	}
-	s.auditExporter.Send(audit.SIEMEvent{
-		Timestamp: time.Now().UTC(),
-		EventType: audit.EventSystemAuth,
-		Severity:  audit.SeverityInfo,
-		TenantID:  tenant,
-		Action:    "delegation.revoked",
-		Reason:    "delegation revoked",
-		Identity:  policyActorID(r),
-		Extra:     extra,
-	})
+	w.WriteHeader(http.StatusNoContent)
+	s.emitDelegationAudit(r, "revoke", tenantFromRequest(r), "", "", req.JTI, 0, "ok", nil)
 }
 
 func (s *server) delegationTokenService() (*delegation.TokenService, error) {
@@ -418,37 +282,26 @@ func (s *server) loadDelegationAgent(w http.ResponseWriter, r *http.Request, age
 		writeErrorJSON(w, http.StatusNotFound, "agent identity not found")
 		return nil, false
 	}
-	// Tenant scoping: store.AgentIdentity does not currently carry a
-	// tenant field — agent IDs live in a flat `agent:identity:<id>`
-	// keyspace. Cross-tenant isolation for this endpoint relies on the
-	// upstream tenant middleware (tenantFromRequest + auth context)
-	// already pinning the caller to their tenant. Adding per-agent
-	// tenant binding to the store is tracked separately; until it
-	// lands, this helper treats the tenant argument as advisory.
-	_ = tenant
+	if tenant != "" && identity.TenantID != tenant {
+		writeForbidden(w, r, errors.New("cross-tenant delegation denied"))
+		return nil, false
+	}
 	return identity, true
 }
 
-// allowDelegationIssue returns (allowed, err). allowed=true means the
-// caller is under the per-minute issuance quota. allowed=false means
-// either the quota is exhausted (err==nil — caller should 429) or the
-// rate-limit backend itself is unavailable (err!=nil — caller should
-// 503). Splitting the two lets operators distinguish a noisy client
-// from a Redis outage in logs + responses; previously both collapsed
-// to a single 429 which masked infrastructure failures.
-func (s *server) allowDelegationIssue(ctx context.Context, tenant, agentID string) (bool, error) {
+func (s *server) allowDelegationIssue(ctx context.Context, tenant, agentID string) bool {
 	if s == nil || s.jobStore == nil || s.jobStore.Client() == nil {
-		return true, nil
+		return true
 	}
 	key := fmt.Sprintf("delegation:issue:%s:%s:%s", strings.TrimSpace(tenant), strings.TrimSpace(agentID), time.Now().UTC().Format("200601021504"))
 	count, err := s.jobStore.Client().Incr(ctx, key).Result()
 	if err != nil {
-		return false, fmt.Errorf("delegation rate limiter unavailable: %w", err)
+		return false
 	}
 	if count == 1 {
 		_ = s.jobStore.Client().Expire(ctx, key, 2*time.Minute).Err()
 	}
-	return count <= delegationIssueLimitPerMinute, nil
+	return count <= delegationIssueLimitPerMinute
 }
 
 func delegationIssueStatus(err error) int {
@@ -474,36 +327,6 @@ func delegationIssueMessage(err error) string {
 		return code
 	}
 	return "delegation issue failed"
-}
-
-func (s *server) delegationListStore() *delegation.RedisListStore {
-	if s == nil || s.jobStore == nil {
-		return nil
-	}
-	return delegation.NewRedisListStoreFromClient(s.jobStore.Client())
-}
-
-func delegationIssuedView(tenant string, claims delegation.DelegationClaims, audience string) delegation.DelegationView {
-	rootIssuer := strings.TrimSpace(claims.Subject)
-	if len(claims.DelegationChain) > 0 {
-		if first := strings.TrimSpace(claims.DelegationChain[0].AgentID); first != "" {
-			rootIssuer = first
-		}
-	}
-	return delegation.DelegationView{
-		JTI:            strings.TrimSpace(claims.ID),
-		Tenant:         strings.TrimSpace(tenant),
-		Issuer:         rootIssuer,
-		Subject:        strings.TrimSpace(claims.Subject),
-		Audience:       strings.TrimSpace(audience),
-		AllowedActions: append([]string(nil), claims.AllowedActions...),
-		AllowedTopics:  append([]string(nil), claims.AllowedTopics...),
-		Chain:          append([]delegation.ChainLink(nil), claims.DelegationChain...),
-		ChainDepth:     claims.ChainDepth,
-		IssuedAt:       claims.IssuedAt.UTC(),
-		ExpiresAt:      claims.ExpiresAt.UTC(),
-		ParentJTI:      strings.TrimSpace(claims.ParentTokenJTI),
-	}
 }
 
 func (s *server) emitDelegationAudit(r *http.Request, action, tenant, agentID, target, jti string, chainDepth int, outcome string, err error) {

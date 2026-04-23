@@ -25,7 +25,7 @@ const CHANNEL_LABELS: Record<NotificationChannelType, string> = {
 };
 
 function statusBadge(ch: NotificationChannel) {
-  if (ch.error) return <Badge variant="danger">Error</Badge>;
+  if (ch.error) return <Badge variant="destructive">Error</Badge>;
   if (!ch.enabled) return <Badge variant="default">Disabled</Badge>;
   return <Badge variant="success">Active</Badge>;
 }
@@ -71,11 +71,11 @@ export function NotificationChannelCard({
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface2">
-              <Icon className="h-4 w-4 text-muted-foreground" />
+              <Icon className="h-4 w-4 text-muted" />
             </div>
             <div>
               <p className="text-sm font-semibold text-ink">{channel.name}</p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-muted">
                 {CHANNEL_LABELS[channel.type] ?? channel.type}
               </p>
             </div>
@@ -87,7 +87,7 @@ export function NotificationChannelCard({
           <p className="text-xs text-danger">{channel.error}</p>
         )}
 
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <div className="flex items-center justify-between text-[10px] text-muted">
           <span>Last sent: {timeAgo(channel.lastSentAt)}</span>
         </div>
 
@@ -103,6 +103,7 @@ export function NotificationChannelCard({
             size="sm"
             className="ml-auto text-danger hover:text-danger"
             onClick={() => setConfirmDelete(true)}
+            aria-label={`Delete channel ${channel.name}`}
           >
             <Trash2 className="h-3 w-3" />
           </Button>
@@ -114,7 +115,7 @@ export function NotificationChannelCard({
         title="Delete Channel"
         message={`Delete notification channel "${channel.name}"? This cannot be undone and any routing rules referencing this channel will stop working.`}
         confirmLabel="Delete"
-        confirmVariant="danger"
+        confirmVariant="destructive"
         isPending={isDeleting}
         onConfirm={() => {
           onDelete(channel.id);

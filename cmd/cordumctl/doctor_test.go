@@ -303,13 +303,9 @@ func TestSummaryAndExitCode(t *testing.T) {
 
 func TestRunDoctorChecks_RespectsOverallDeadline(t *testing.T) {
 	t.Parallel()
-	// Use a pre-cancelled context instead of a tiny timeout + sleep: on CI
-	// under -race the 1ms timer + 5ms sleep racy window occasionally lets
-	// the check execute before ctx.Err() fires. Cancelling explicitly is
-	// deterministic and equivalent for the invariant under test (any
-	// terminal ctx state short-circuits the check loop to stateSkip).
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
+	defer cancel()
+	time.Sleep(5 * time.Millisecond)
 	env := &doctorEnv{}
 	results := runDoctorChecks(ctx, env, []doctorCheck{
 		{id: "x", label: "X", run: func(_ context.Context, _ *doctorEnv) checkResult {
@@ -935,6 +931,9 @@ func TestRunInteractiveFixes_EOFIsSkip(t *testing.T) {
 	}
 	if updated[0].State != stateFail {
 		t.Fatalf("EOF must preserve fail state, got %+v", updated[0])
+	}
+	if !errors.Is(nil, errors.New("")) {
+		// silence import linter: ensure `errors` import is used.
 	}
 	_ = errors.New
 }

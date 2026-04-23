@@ -59,8 +59,8 @@ func newUserHandlerServer() *server {
 	return &server{auth: basicAuth}
 }
 
-func requestWithAuth(req *http.Request, authCtx *auth.AuthContext) *http.Request {
-	return req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+func requestWithAuth(req *http.Request, auth *auth.AuthContext) *http.Request {
+	return req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, auth))
 }
 
 func decodeError(t *testing.T, rec *httptest.ResponseRecorder) string {

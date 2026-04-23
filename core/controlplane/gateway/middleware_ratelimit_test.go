@@ -141,13 +141,8 @@ func TestRedisRateLimiterNilReceiver(t *testing.T) {
 }
 
 // TestRedisRateLimiter_RedTeam14_BurstExceeded verifies the red-team finding #14:
-// the dev/scaffold burst=50 must trigger rate-limit rejection under sustained
-// load. The dev .env and cordumctl scaffold both set RPS=30, BURST=50.
-//
-// The loop count is bumped to 200 (was 60) so the test stays deterministic
-// on CI: with a 30 tokens-per-second refill and unpredictable scheduler
-// quantisation on shared runners, 60 requests could occasionally squeeze
-// inside burst+refill. 200 rapid requests leave no plausible refill path.
+// 60 rapid requests with the dev/scaffold burst=50 must trigger rate limit rejection.
+// The dev .env and cordumctl scaffold both set RPS=30, BURST=50.
 func TestRedisRateLimiter_RedTeam14_BurstExceeded(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {
@@ -161,12 +156,11 @@ func TestRedisRateLimiter_RedTeam14_BurstExceeded(t *testing.T) {
 	// Simulate the actual dev/scaffold config: RPS=30, burst=50.
 	// This matches .env (30/50) and cordumctl init scaffold defaults.
 	const devRPS, devBurst = 30, 50
-	const iterations = 200
 	rl := newRedisRateLimiter(client, devRPS, devBurst)
 
 	allowed := 0
 	rejected := 0
-	for i := 0; i < iterations; i++ {
+	for i := 0; i < 60; i++ {
 		if rl.Allow("dev-tenant") {
 			allowed++
 		} else {
@@ -175,26 +169,19 @@ func TestRedisRateLimiter_RedTeam14_BurstExceeded(t *testing.T) {
 	}
 
 	if rejected == 0 {
-		t.Fatalf("RED-TEAM BYPASS: %d rapid requests all allowed (burst=%d) — rate limit not triggered", iterations, devBurst)
+		t.Fatalf("RED-TEAM BYPASS: 60 rapid requests all allowed (burst=%d) — rate limit not triggered", devBurst)
 	}
 	// Under -race the token bucket refills between slow instrumented calls,
-	// so allow a generous margin above burst. Scales with iterations so
-	// heavily-instrumented runs that happen to tick over 1-2 seconds of
-	// wall-clock don't false-fail on headroom.
-	maxExpected := devBurst + (iterations * devRPS / 30) // burst + 1 refill tick per second of work
+	// so allow a generous margin above burst.
+	maxExpected := devBurst + devRPS // burst + one second of refill headroom
 	if allowed > maxExpected {
 		t.Fatalf("expected at most %d allowed (burst+rps headroom), got %d", maxExpected, allowed)
 	}
-	t.Logf("red-team #14: %d allowed, %d rejected (iterations=%d dev burst=%d)", allowed, rejected, iterations, devBurst)
+	t.Logf("red-team #14: %d allowed, %d rejected (dev burst=%d)", allowed, rejected, devBurst)
 }
 
 // TestRedisRateLimiter_120Requests_MostRejected proves the exact red-team #14 scenario:
 // 120 rapid requests with burst=50 must reject the majority.
-//
-// The "most rejected" invariant is the substantive check. The upper bound on
-// `allowed` is asserted separately with generous headroom so a slow CI runner
-// that spills across token-refill boundaries doesn't false-fail this test —
-// the attack scenario is about majority rejection, not exact counts.
 func TestRedisRateLimiter_120Requests_MostRejected(t *testing.T) {
 	srv, err := miniredis.Run()
 	if err != nil {
@@ -208,12 +195,11 @@ func TestRedisRateLimiter_120Requests_MostRejected(t *testing.T) {
 	// Use explicit values (not defaults) so the test is stable regardless
 	// of the production default burst setting.
 	const testRPS, testBurst = 30, 50
-	const iterations = 120
 	rl := newRedisRateLimiter(client, testRPS, testBurst)
 
 	allowed := 0
 	rejected := 0
-	for i := 0; i < iterations; i++ {
+	for i := 0; i < 120; i++ {
 		if rl.Allow("red-team-tenant") {
 			allowed++
 		} else {
@@ -222,14 +208,15 @@ func TestRedisRateLimiter_120Requests_MostRejected(t *testing.T) {
 	}
 
 	if rejected == 0 {
-		t.Fatalf("RED-TEAM BYPASS: %d requests all allowed (burst=%d)", iterations, testBurst)
+		t.Fatalf("RED-TEAM BYPASS: 120 requests all allowed (burst=%d)", testBurst)
 	}
-	// The test's semantic point: the majority of rapid requests MUST be
-	// rejected. This invariant holds regardless of timing jitter on CI.
-	if rejected <= allowed {
-		t.Fatalf("expected majority rejected, got allowed=%d rejected=%d", allowed, rejected)
+	// Under -race the token bucket refills between slow instrumented calls,
+	// so allow headroom: burst + one second of RPS refill.
+	maxAllowed := testBurst + testRPS
+	if allowed > maxAllowed {
+		t.Fatalf("expected at most %d allowed (burst+rps headroom), got %d", maxAllowed, allowed)
 	}
-	t.Logf("red-team #14 (%d requests): %d allowed, %d rejected (burst=%d)", iterations, allowed, rejected, testBurst)
+	t.Logf("red-team #14 (120 requests): %d allowed, %d rejected (burst=%d)", allowed, rejected, testBurst)
 }
 
 // TestKeyedRateLimiter_BurstEnforced validates the in-memory limiter rejects after burst.

@@ -129,34 +129,12 @@ export function useAuditLog(filters: AuditFilters = {}) {
     staleTime: 15_000,
   });
 
-  // Memoize the filter object against each scalar/array field so two
-  // identical-content filter instances reuse the same memo result without
-  // the JSON.stringify allocation on every render. Arrays are joined into
-  // stable scalar keys; deep-nested object filters are not used here.
-  const stableFilters = useMemo<AuditFilters>(
-    () => filters,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [
-      filters.eventType?.join("|") ?? "",
-      filters.actor ?? "",
-      filters.resourceType ?? "",
-      filters.resourceId ?? "",
-      filters.severity?.join("|") ?? "",
-      filters.outcome?.join("|") ?? "",
-      filters.timeRange ?? "",
-      filters.from ?? "",
-      filters.to ?? "",
-      filters.search ?? "",
-      filters.page ?? 0,
-      filters.perPage ?? 0,
-      filters.sort ?? "",
-    ],
-  );
-
+  const filtersKey = JSON.stringify(filters);
   const filtered = useMemo(() => {
     if (!query.data?.items) return [];
-    return applySort(applyFilters(query.data.items, stableFilters), stableFilters.sort);
-  }, [query.data, stableFilters]);
+    return applySort(applyFilters(query.data.items, filters), filters.sort);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query.data, filtersKey]);
 
   return { ...query, filtered };
 }

@@ -16,8 +16,8 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.json_rpc_response_result_type_0 import JsonRpcResponseResultType0
   from ..models.json_rpc_response_error_type_0 import JsonRpcResponseErrorType0
+  from ..models.json_rpc_response_result_type_0 import JsonRpcResponseResultType0
 
 
 
@@ -44,8 +44,8 @@ class JsonRpcResponse:
 
 
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.json_rpc_response_result_type_0 import JsonRpcResponseResultType0
         from ..models.json_rpc_response_error_type_0 import JsonRpcResponseErrorType0
+        from ..models.json_rpc_response_result_type_0 import JsonRpcResponseResultType0
         jsonrpc: Union[Unset, str] = UNSET
         if not isinstance(self.jsonrpc, Unset):
             jsonrpc = self.jsonrpc.value
@@ -93,8 +93,8 @@ class JsonRpcResponse:
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.json_rpc_response_result_type_0 import JsonRpcResponseResultType0
         from ..models.json_rpc_response_error_type_0 import JsonRpcResponseErrorType0
+        from ..models.json_rpc_response_result_type_0 import JsonRpcResponseResultType0
         d = src_dict.copy()
         _jsonrpc = d.pop("jsonrpc", UNSET)
         jsonrpc: Union[Unset, JsonRpcResponseJsonrpc]

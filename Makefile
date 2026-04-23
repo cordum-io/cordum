@@ -53,9 +53,6 @@ coverage-core:
 openapi:
 	./tools/scripts/gen_openapi.sh
 
-openapi-validate:
-	./tools/scripts/openapi-validate.sh
-
 docker:
 	@test -n "$(SERVICE)" || (echo "SERVICE is required (e.g. SERVICE=cordum-scheduler)" && exit 1)
 	@BASE="$(SERVICE)"; BASE="$${BASE#cordum-}"; \
@@ -94,7 +91,7 @@ help:
 	@echo "  make test-integration   Run integration tests (requires Docker)"
 	@echo "  make coverage           Full coverage report"
 	@echo "  make coverage-core      Core coverage check (80% minimum)"
-	@echo "  make openapi            Validate cordum-api.yaml (Redocly lint)"
+	@echo "  make openapi            Regenerate protobuf swagger + validate cordum-api.yaml"
 	@echo "  make docker SERVICE=X   Build Docker image for a service"
 	@echo "  make smoke              Run platform smoke tests"
 	@echo "  make verify-images      Verify published GHCR images (pull + cosign + multi-arch)"
@@ -119,4 +116,4 @@ soak-ws-full:
 	@echo "Running 2-hour full WebSocket soak test..."
 	./tools/scripts/ws_soak_test.sh full
 
-.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi openapi-validate docker smoke verify-images demo-quickstart-test dev-up dev-down dev-logs soak-ws soak-ws-quick soak-ws-full
+.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi docker smoke verify-images demo-quickstart-test dev-up dev-down dev-logs soak-ws soak-ws-quick soak-ws-full

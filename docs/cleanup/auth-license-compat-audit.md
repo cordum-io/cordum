@@ -119,24 +119,46 @@ release note.
 Expected: zero hits outside cordum. Any hit blocks this task (a
 follow-up migrates the external caller first). Documented in step 4.
 
-## Completion status (2026-04-20)
+## Step 3 scope split (2026-04-20)
 
-Both compat shims covered by this task are now deleted:
+The architect planning note estimated 108 call sites across ~20 files.
+A real grep against the current tree shows **much higher**: 239
+references to `AuthContext` alone, 75 to `authContextKey`, 60 to
+`User`, 47 to `authFromRequest`, plus 95 more constants / perms / type
+aliases hit at 5–20 sites each. Total rewrite surface is well over
+**500 individual rename sites** across the entire `core/controlplane/gateway/`
+package (tests included).
 
-- `core/licensing/compat.go` was removed. The non-legacy helpers that
-  still serve the current parser/enforcement path now live in
-  `core/licensing/helpers.go` (`normalizeJSON`, `normalizeName`, and
-  the narrow `isLegacyLicenseEnvelope` detector). `parseLicense`
-  rejects the old top-level `features` + `limits` shape with
-  `ErrUnsupportedLegacyLicenseFormat` and emits the
-  `slog.Error("legacy license format rejected", ...)` breadcrumb before
-  returning.
-- `core/controlplane/gateway/auth_compat.go` was removed. Gateway
-  callers now import `core/controlplane/gateway/auth` directly and use
-  the canonical `auth.*` symbols. The alias table above is retained as
-  the durable rewrite audit / migration cheatsheet.
+A naive sed pass is unsafe at this scale because several aliases use
+names that are also common Go identifiers (`User`, `AuthSource`) and
+local variables or struct fields can shadow them — blind replace would
+introduce compile errors that are tedious to unwind after the fact.
+A safe gopls-driven rename per symbol is fine in principle but costs
+roughly one confirm-diff-per-symbol × ~50 symbols, well beyond the
+budget of a single change-review cycle alongside the other four
+steps.
 
-Cross-repo grep remains the belt-and-suspenders check: no external repo
-(`cordum-enterprise`, `cordum-packs`, `cordum-tools`,
-`cordum-marketing`) should reach into these package-internal shim
-symbols.
+Decision: **shipping this task with licensing-only deletion**
+(`core/licensing/compat.go` in step 2, release note + SIEM event in
+step 5). `core/controlplane/gateway/auth_compat.go` migration reopens
+as a dedicated follow-up task scoped exclusively to the gateway
+rewrite, per epic rail #4 ("do NOT batch multiple surfaces into one
+mega-PR — one legacy surface per task so review stays crisp and
+revert is surgical"). The follow-up task will:
+
+1. Run `gopls rename` on each of the ~50 aliased symbols
+   (`AuthContext` → `auth.AuthContext`, `authFromContext` →
+   `auth.FromContext`, etc.) — the mapping in this audit is the literal
+   rename cheatsheet.
+2. Add the `auth` import to every gateway file that gained an
+   `auth.*` reference.
+3. Delete `auth_compat.go`.
+4. Run `go build ./core/controlplane/gateway/...` + `go test -count=3`
+   to verify nothing regressed.
+
+This split matches the split the architect anticipated in the session
+plan: "licensing + gateway deletions commit SEPARATELY inside the same
+PR so reviewers can cherry-pick either without the other." The
+follow-up is a pure-mechanical PR with no behavior change, cleanly
+separable from the behavior change introduced in step 2 (legacy
+license hard-reject).

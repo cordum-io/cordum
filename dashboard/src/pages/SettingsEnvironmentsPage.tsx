@@ -34,19 +34,13 @@ function statusVariant(status: "active" | "maintenance" | "degraded") {
 }
 
 export default function SettingsEnvironmentsPage() {
-  const { data: envs, isLoading, isError, error, refetch } = useEnvironments();
-
-  if (isError) {
-    return (
-      <ErrorBanner
-        title="Unable to load environment inventory"
-        message={error instanceof Error ? error.message : "Failed to load environment config"}
-        onRetry={() => {
-          void refetch();
-        }}
-      />
-    );
-  }
+  const { data: envs, isLoading } = useQuery({
+    queryKey: ["environments"],
+    queryFn: async () => {
+      const res = await get<{ data?: Environment[] }>("/environments");
+      return res.data || [];
+    },
+  });
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">

@@ -2,7 +2,6 @@ package policysign
 
 import (
 	"crypto/ed25519"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
@@ -31,12 +30,6 @@ const (
 	// EnvSigningKeyID identifies which public key verifiers should use.
 	// Falls back to "default".
 	EnvSigningKeyID = "CORDUM_POLICY_SIGNING_KEY_ID"
-
-	// EnvDevSigningSeed derives a deterministic development-only Ed25519 key
-	// pair when explicit signing keys are not configured. This is intended for
-	// local Docker/demo stacks so they can exercise signed-policy flows without
-	// checking a private key into the repo.
-	EnvDevSigningSeed = "CORDUM_POLICY_DEV_SIGNING_SEED"
 
 	// EnvPublicKeyPrefix is the common prefix for trusted verification keys.
 	// Each key is exported as CORDUM_POLICY_PUBLIC_KEY_<ID>=<base64>.
@@ -150,9 +143,6 @@ func LoadPrivateKeyFromEnv() (ed25519.PrivateKey, string, error) {
 		}
 		return key, keyID, nil
 	}
-	if seed := strings.TrimSpace(os.Getenv(EnvDevSigningSeed)); seed != "" {
-		return derivePrivateKeyFromSeed(seed), keyID, nil
-	}
 	return nil, "", ErrSigningKeyNotConfigured
 }
 
@@ -206,23 +196,7 @@ func LoadTrustStoreFromEnv() (*TrustStore, error) {
 			}
 		}
 	}
-	if store.Len() == 0 {
-		if seed := strings.TrimSpace(os.Getenv(EnvDevSigningSeed)); seed != "" {
-			keyID := strings.TrimSpace(os.Getenv(EnvSigningKeyID))
-			if keyID == "" {
-				keyID = DefaultKeyID
-			}
-			if err := store.Add(keyID, derivePrivateKeyFromSeed(seed).Public().(ed25519.PublicKey)); err != nil {
-				return nil, fmt.Errorf("%s: %w", EnvDevSigningSeed, err)
-			}
-		}
-	}
 	return store, nil
-}
-
-func derivePrivateKeyFromSeed(raw string) ed25519.PrivateKey {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(raw)))
-	return ed25519.NewKeyFromSeed(sum[:ed25519.SeedSize])
 }
 
 // ParsePrivateKey is the exported form of parsePrivateKey. It is used

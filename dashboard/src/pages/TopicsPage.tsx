@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { SkeletonTable } from "@/components/ui/Skeleton";
-import { StatTile } from "@/components/ui/StatTile";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { useTopics } from "@/hooks/useTopics";
 import type { TopicRegistration } from "@/api/types";
@@ -60,7 +59,7 @@ function TopicNameCell({ topic }: { topic: TopicRegistration }) {
             "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border",
             topic.activeWorkers > 0
               ? "border-cordum/20 bg-cordum/10 text-cordum"
-              : "border-amber-500/20 bg-amber-500/10 text-amber-400",
+              : "border-[var(--color-warning)]/20 bg-[var(--color-warning)]/10 text-[var(--color-warning)]",
           )}
         >
           {topic.activeWorkers > 0 ? (
@@ -97,13 +96,12 @@ function TopicNameCell({ topic }: { topic: TopicRegistration }) {
             </span>
           ))}
           {topic.riskTags.map((riskTag) => (
-            <StatusBadge
+            <span
               key={`risk-${topic.name}-${riskTag}`}
-              variant="warning"
-              className="px-2 py-0.5 text-[11px] font-mono"
+              className="rounded-full bg-[var(--color-warning)]/10 px-2 py-0.5 text-[11px] font-mono text-[var(--color-warning)]"
             >
               risk:{riskTag}
-            </StatusBadge>
+            </span>
           ))}
         </div>
       )}
@@ -174,26 +172,59 @@ export default function TopicsPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatTile
-          label="Registered"
-          value={isLoading ? "—" : topics.length}
-          helperText="Topics known to the registry."
-          icon={<Hash className="h-4 w-4 text-cordum" aria-hidden="true" />}
-        />
-        <StatTile
-          label="Active"
-          value={isLoading ? "—" : activeCount}
-          helperText="Topics with live worker coverage."
-          icon={<Radio className="h-4 w-4 text-emerald-400" aria-hidden="true" />}
-          accent="healthy"
-        />
-        <StatTile
-          label="Degraded"
-          value={isLoading ? "—" : degradedCount}
-          helperText="Known topics with zero active workers."
-          icon={<AlertTriangle className="h-4 w-4 text-amber-400" aria-hidden="true" />}
-          accent="warning"
-        />
+        <div className="instrument-card">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+              Registered
+            </span>
+            <span className="inline-flex items-center text-cordum">
+              <Hash className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">Registered topics</span>
+            </span>
+          </div>
+          <div className="font-mono text-3xl font-bold text-foreground">
+            {isLoading ? "—" : topics.length}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Topics known to the registry
+          </p>
+        </div>
+
+        <div className="instrument-card">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+              Active
+            </span>
+            <span className="inline-flex items-center text-[var(--color-success)]">
+              <Radio className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">Topics with active workers</span>
+            </span>
+          </div>
+          <div className="font-mono text-3xl font-bold text-[var(--color-success)]">
+            {isLoading ? "—" : activeCount}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Topics with live worker coverage
+          </p>
+        </div>
+
+        <div className="instrument-card">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+              Degraded
+            </span>
+            <span className="inline-flex items-center text-[var(--color-warning)]">
+              <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">Degraded topics</span>
+            </span>
+          </div>
+          <div className="font-mono text-3xl font-bold text-[var(--color-warning)]">
+            {isLoading ? "—" : degradedCount}
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Known topics with zero active workers
+          </p>
+        </div>
       </div>
 
       {isLoading ? (

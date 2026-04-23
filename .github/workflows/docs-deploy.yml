@@ -4,11 +4,6 @@ on:
   push:
     branches: ["main"]
     paths:
-      - "docs/**"
-      - "docs-site/**"
-  pull_request:
-    paths:
-      - "docs/**"
       - "docs-site/**"
   workflow_dispatch: {}
 
@@ -22,52 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  link-check:
-    name: link-check
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Run lychee
-        id: lychee
-        uses: lycheeverse/lychee-action@v2
-        with:
-          # --offline avoids external-host flakes (GitHub rate limits,
-          # vendor 5xx) and keeps runtime under the 60s target.
-          # Path-scoped to the core repo's docs + docusaurus; the
-          # sibling Cordum-site repo has its own docusaurus-internal
-          # link checker and expanding scope here blows the budget.
-          args: >-
-            --offline
-            --no-progress
-            --max-concurrency 32
-            --root-dir ${{ github.workspace }}/docs-site
-            --exclude-path docs-site/versioned_docs
-            'docs/**/*.md'
-            'docs-site/docs/**/*.md'
-          output: ./lychee-report.md
-          format: markdown
-          # Link-check is advisory while the docs-site reorganisation
-          # settles. The 100+ broken internal links are pre-existing
-          # restructuring debt (not regressions from this PR). Tracking
-          # their cleanup is a separate docs-authoring task; for now
-          # the report is uploaded as an artifact so the docs team can
-          # work through it without blocking merges.
-          fail: false
-
-      - name: Upload lychee report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lychee-report
-          path: lychee-report.md
-          if-no-files-found: ignore
-
   build:
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    needs: link-check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -96,7 +46,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

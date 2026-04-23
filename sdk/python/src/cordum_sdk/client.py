@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import logging
-from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, Dict, Optional, Union
 
@@ -27,15 +25,6 @@ from .auth import ApiKeyAuth, AuthProvider
 from .errors import CordumError, _raise_for_status, map_httpx_error
 
 DEFAULT_USER_AGENT = "cordum-sdk-python/{version}".format(version=__version__)
-
-
-@dataclass(frozen=True)
-class RequestResponse:
-    status_code: int
-    headers: Dict[str, str]
-    content: bytes
-    data: Any
-    text: str
 
 
 def _normalize_base_url(base_url: str) -> str:
@@ -59,30 +48,6 @@ def _to_httpx_response(response: Any) -> httpx.Response:
         int(response.status_code),
         headers=response.headers,
         content=response.content,
-    )
-
-
-def _parse_httpx_response(response: httpx.Response) -> RequestResponse:
-    content = response.content
-    text = response.text
-    content_type = response.headers.get("Content-Type", "").lower()
-
-    data: Any = None
-    if content:
-        if "application/json" in content_type:
-            try:
-                data = response.json()
-            except json.JSONDecodeError:
-                data = text
-        else:
-            data = text
-
-    return RequestResponse(
-        status_code=int(response.status_code),
-        headers=dict(response.headers),
-        content=content,
-        data=data,
-        text=text,
     )
 
 
@@ -247,86 +212,6 @@ class CordumClient(_ClientCommon):
 
         return stream_events(self._httpx_client, *args, **kwargs)
 
-    def request_detailed(
-        self,
-        method: str,
-        path: str,
-        *,
-        query: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
-        json_body: Any = None,
-        content: Any = None,
-    ) -> RequestResponse:
-        try:
-            response = self._httpx_client.request(
-                method,
-                path,
-                params=query,
-                headers=headers,
-                json=json_body,
-                content=content,
-            )
-        except CordumError:
-            raise
-        except httpx.HTTPError as exc:
-            raise map_httpx_error(exc) from exc
-
-        if response.status_code == 401 and self._refresh_auth_if_needed(response):
-            try:
-                response = self._httpx_client.request(
-                    method,
-                    path,
-                    params=query,
-                    headers=headers,
-                    json=json_body,
-                    content=content,
-                )
-            except CordumError:
-                raise
-            except httpx.HTTPError as exc:
-                raise map_httpx_error(exc) from exc
-
-        _raise_for_status(response)
-        return _parse_httpx_response(response)
-
-    def request(
-        self,
-        method: str,
-        path: str,
-        *,
-        query: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
-        json_body: Any = None,
-        content: Any = None,
-    ) -> Any:
-        return self.request_detailed(
-            method,
-            path,
-            query=query,
-            headers=headers,
-            json_body=json_body,
-            content=content,
-        ).data
-
-    def stream(
-        self,
-        *,
-        path: str = "/api/v1/stream",
-        method: str = "GET",
-        headers: Optional[Dict[str, str]] = None,
-        query: Optional[Dict[str, Any]] = None,
-        json_body: Any = None,
-        content: Any = None,
-    ) -> Any:
-        return self._stream(
-            path=path,
-            method=method,
-            headers=headers,
-            params=query,
-            json_body=json_body,
-            content=content,
-        )
-
     def close(self) -> None:
         self._httpx_client.close()
         close = getattr(self.auth, "close", None)
@@ -430,87 +315,6 @@ class AsyncCordumClient(_ClientCommon):
         from .streaming import stream_events_async
 
         return stream_events_async(self._httpx_client, *args, **kwargs)
-
-    async def request_detailed(
-        self,
-        method: str,
-        path: str,
-        *,
-        query: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
-        json_body: Any = None,
-        content: Any = None,
-    ) -> RequestResponse:
-        try:
-            response = await self._httpx_client.request(
-                method,
-                path,
-                params=query,
-                headers=headers,
-                json=json_body,
-                content=content,
-            )
-        except CordumError:
-            raise
-        except httpx.HTTPError as exc:
-            raise map_httpx_error(exc) from exc
-
-        if response.status_code == 401 and self._refresh_auth_if_needed(response):
-            try:
-                response = await self._httpx_client.request(
-                    method,
-                    path,
-                    params=query,
-                    headers=headers,
-                    json=json_body,
-                    content=content,
-                )
-            except CordumError:
-                raise
-            except httpx.HTTPError as exc:
-                raise map_httpx_error(exc) from exc
-
-        _raise_for_status(response)
-        return _parse_httpx_response(response)
-
-    async def request(
-        self,
-        method: str,
-        path: str,
-        *,
-        query: Optional[Dict[str, Any]] = None,
-        headers: Optional[Dict[str, str]] = None,
-        json_body: Any = None,
-        content: Any = None,
-    ) -> Any:
-        response = await self.request_detailed(
-            method,
-            path,
-            query=query,
-            headers=headers,
-            json_body=json_body,
-            content=content,
-        )
-        return response.data
-
-    def stream(
-        self,
-        *,
-        path: str = "/api/v1/stream",
-        method: str = "GET",
-        headers: Optional[Dict[str, str]] = None,
-        query: Optional[Dict[str, Any]] = None,
-        json_body: Any = None,
-        content: Any = None,
-    ) -> Any:
-        return self._stream(
-            path=path,
-            method=method,
-            headers=headers,
-            params=query,
-            json_body=json_body,
-            content=content,
-        )
 
     def close(self) -> None:
         try:

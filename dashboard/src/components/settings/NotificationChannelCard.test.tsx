@@ -180,9 +180,8 @@ describe("NotificationChannelCard delete", () => {
     // Initially no "Delete Channel" text (dialog closed)
     expect(container.textContent).not.toContain("Delete Channel");
     // Click trash button (last button, no text)
-    const buttons = container.querySelectorAll("button");
-    const trashBtn = Array.from(buttons).find(
-      (b) => !b.textContent?.includes("Edit") && !b.textContent?.includes("Test") && b.className.includes("danger"),
+    const trashBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.getAttribute("aria-label")?.startsWith("Delete channel"),
     );
     act(() => trashBtn?.click());
     // Confirmation dialog should now be visible
@@ -197,7 +196,7 @@ describe("NotificationChannelCard delete", () => {
     const { container, cleanup } = render({ channel: ch, onDelete });
     // Open confirm dialog
     const trashBtn = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.className.includes("danger") && !b.textContent?.includes("Edit"),
+      (b) => b.getAttribute("aria-label")?.startsWith("Delete channel"),
     );
     act(() => trashBtn?.click());
     // Click "Delete" confirm button
@@ -215,7 +214,7 @@ describe("NotificationChannelCard delete", () => {
     const { container, cleanup } = render({ onDelete });
     // Open confirm dialog
     const trashBtn = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.className.includes("danger") && !b.textContent?.includes("Edit"),
+      (b) => b.getAttribute("aria-label")?.startsWith("Delete channel"),
     );
     act(() => trashBtn?.click());
     expect(container.textContent).toContain("Delete Channel");
@@ -224,6 +223,7 @@ describe("NotificationChannelCard delete", () => {
       (b) => b.textContent?.trim() === "Cancel",
     );
     act(() => cancelBtn?.click());
+    expect(container.textContent).not.toContain("Delete Channel");
     expect(onDelete).not.toHaveBeenCalled();
     cleanup();
   });

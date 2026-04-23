@@ -382,8 +382,8 @@ jobs:
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
-          cosign sign --yes "ghcr.io/cordum-io/cordum/demo-quickstart-worker@${DIGEST}"
-          cosign sign --yes "docker.io/cordum/demo-quickstart-worker@${DIGEST}"
+          cosign sign --yes ghcr.io/cordum-io/cordum/demo-quickstart-worker@${DIGEST}
+          cosign sign --yes docker.io/cordum/demo-quickstart-worker@${DIGEST}
 
   smoke-published-images:
     needs: [control-plane, dashboard, demo-quickstart-worker]

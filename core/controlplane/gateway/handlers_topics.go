@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/cordum/cordum/core/configsvc"
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/pools"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/redis/go-redis/v9"
@@ -43,7 +42,8 @@ const (
 )
 
 func (s *server) handleListTopics(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermTopicsRead, "admin", "operator", "viewer") {
+	if err := s.requireRole(r, "admin", "operator", "viewer"); err != nil {
+		writeForbidden(w, r, err)
 		return
 	}
 	if s.topicRegistry == nil {
@@ -83,7 +83,8 @@ func (s *server) handleListTopics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermTopicsWrite, "admin") {
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeForbidden(w, r, err)
 		return
 	}
 	if s.topicRegistry == nil || s.configSvc == nil {
@@ -169,7 +170,8 @@ func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleDeleteTopic(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermTopicsWrite, "admin") {
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeForbidden(w, r, err)
 		return
 	}
 	if s.topicRegistry == nil {

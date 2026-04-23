@@ -18,18 +18,6 @@ interface ConstraintRow {
   icon: LucideIcon;
 }
 
-// safeStringify wraps JSON.stringify so we never crash the governance
-// detail view on a malformed constraint payload (circular ref, BigInt,
-// accidental function). Constraints come from the gateway, which we trust,
-// but defence-in-depth on user-visible JSON rendering costs nothing.
-function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return "// unrenderable constraint payload — see raw audit event";
-  }
-}
-
 interface ConstraintsPanelProps {
   constraints?: PolicyConstraints;
 }
@@ -187,7 +175,7 @@ export function ConstraintsPanel({ constraints }: ConstraintsPanelProps) {
           copyable={false}
           maxHeight={220}
         >
-          {safeStringify(unknownEntries)}
+          {JSON.stringify(unknownEntries, null, 2)}
         </CodeBlock>
       )}
       {(rows.length > 1 || hasUnknownEntries) && (

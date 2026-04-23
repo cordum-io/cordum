@@ -75,11 +75,9 @@ func NewGatewayApprovalGate(store *MCPApprovalStore) mcp.ApprovalGate {
 // WithPreapprovalLookup attaches a preapproval resolver. Exposed as a
 // chaining helper so existing call sites don't need to change; wire
 // from registerMCPRoutes via:
-//
-//	gate := NewGatewayApprovalGate(store).(*gatewayApprovalGate)
-//	gate.preapproval = ... // or use this method if you need the
-//	// interface form.
-//
+//   gate := NewGatewayApprovalGate(store).(*gatewayApprovalGate)
+//   gate.preapproval = ... // or use this method if you need the
+//   // interface form.
 // Kept simple — concrete struct method over an opaque option so the
 // callsite intent is obvious.
 func (g *gatewayApprovalGate) WithPreapproval(lookup PreapprovalLookup) *gatewayApprovalGate {

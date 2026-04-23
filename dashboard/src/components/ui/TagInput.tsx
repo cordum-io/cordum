@@ -63,7 +63,7 @@ export function TagInput({
   return (
     <div className={cn("relative", className)}>
       <div
-        className="flex min-h-[42px] flex-wrap items-center gap-1.5 rounded-2xl border border-border bg-card/70 px-3 py-2 shadow-sm transition-all duration-200 focus-within:border-accent focus-within:ring-2 focus-within:ring-[color:var(--ring)]"
+        className="flex min-h-[42px] flex-wrap items-center gap-1.5 rounded-md border border-border bg-input px-3 py-2 transition-all duration-micro focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/35 focus-within:ring-offset-1 focus-within:ring-offset-surface-0"
         onClick={() => inputRef.current?.focus()}
       >
         {value.map((tag, idx) => (
@@ -75,7 +75,8 @@ export function TagInput({
                 e.stopPropagation();
                 removeTag(idx);
               }}
-              className="rounded-full p-0.5 transition hover:bg-ink/10"
+              className="rounded-full p-0.5 transition-colors duration-micro hover:bg-surface-3/60"
+              aria-label={`Remove tag ${tag}`}
             >
               <X className="h-3 w-3" />
             </button>
@@ -93,20 +94,20 @@ export function TagInput({
           onFocus={() => setShowSuggestions(true)}
           onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
           placeholder={value.length === 0 ? placeholder : ""}
-          className="min-w-[120px] flex-1 border-none bg-transparent text-sm text-ink outline-none placeholder:text-muted/60"
+          className="min-w-[120px] flex-1 border-none bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground/75"
         />
       </div>
 
       {/* Suggestions dropdown */}
       {showSuggestions && input && filtered && filtered.length > 0 && (
-        <ul className="absolute z-20 mt-1 max-h-40 w-full overflow-y-auto rounded-xl border border-border bg-surface shadow-lift">
+        <ul className="absolute z-20 mt-1 max-h-40 w-full overflow-y-auto rounded-lg border border-border bg-surface-1 shadow-soft">
           {filtered.map((s) => (
             <li key={s}>
               <button
                 type="button"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => addTag(s)}
-                className="w-full px-3 py-2 text-left text-sm text-ink transition hover:bg-surface2/50"
+                className="w-full px-3 py-2 text-left text-sm text-foreground transition-colors duration-micro hover:bg-surface-2/70"
               >
                 {s}
               </button>

@@ -39,7 +39,7 @@ func generatePEMPublic(t *testing.T, pub ed25519.PublicKey) string {
 func clearPolicyEnv(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{
-		EnvSigningKey, EnvSigningKeyPath, EnvSigningKeyID, EnvDevSigningSeed,
+		EnvSigningKey, EnvSigningKeyPath, EnvSigningKeyID,
 		envLegacyPublicKey, envLegacyKeyID,
 	} {
 		t.Setenv(name, "")
@@ -134,22 +134,6 @@ func TestLoadPrivateKeyFromEnv_NotConfigured(t *testing.T) {
 	}
 }
 
-func TestLoadPrivateKeyFromEnv_DevSeedFallback(t *testing.T) {
-	clearPolicyEnv(t)
-	t.Setenv(EnvSigningKeyID, "dev-local")
-	t.Setenv(EnvDevSigningSeed, "cordum-local-policy-signing-v1")
-	got, id, err := LoadPrivateKeyFromEnv()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if id != "dev-local" {
-		t.Fatalf("id = %q want dev-local", id)
-	}
-	if !derivePrivateKeyFromSeed("cordum-local-policy-signing-v1").Equal(got) {
-		t.Fatal("derived private key mismatch")
-	}
-}
-
 func TestLoadPrivateKeyFromEnv_Malformed(t *testing.T) {
 	clearPolicyEnv(t)
 	t.Setenv(EnvSigningKey, "not-a-key")
@@ -240,27 +224,6 @@ func TestLoadTrustStoreFromEnv_EmptySkipped(t *testing.T) {
 	}
 	if store.Len() != 0 {
 		t.Errorf("store should ignore blank values, got %d", store.Len())
-	}
-}
-
-func TestLoadTrustStoreFromEnv_DevSeedFallback(t *testing.T) {
-	clearPolicyEnv(t)
-	t.Setenv(EnvSigningKeyID, "dev-local")
-	t.Setenv(EnvDevSigningSeed, "cordum-local-policy-signing-v1")
-	store, err := LoadTrustStoreFromEnv()
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	if store.Len() != 1 {
-		t.Fatalf("len = %d want 1", store.Len())
-	}
-	pub, ok := store.Lookup("dev-local")
-	if !ok {
-		t.Fatal("dev-local key missing")
-	}
-	want := derivePrivateKeyFromSeed("cordum-local-policy-signing-v1").Public().(ed25519.PublicKey)
-	if !want.Equal(pub) {
-		t.Fatal("derived public key mismatch")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -299,7 +300,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				}
 				// Set httpOnly cookie so browser auth doesn't require localStorage
 				ttl := sessionTTL()
-				auth.SetSessionCookie(w, r, resp.Token, time.Now().UTC().Add(ttl))
+				auth.SetSessionCookie(w, r, resp.Token, time.Now().Add(ttl))
 				w.Header().Set("Content-Type", "application/json")
 				writeJSON(w, resp)
 				return
@@ -349,7 +350,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Set httpOnly cookie so browser auth doesn't require localStorage
 	ttl := sessionTTL()
-	auth.SetSessionCookie(w, r, apiKey, time.Now().UTC().Add(ttl))
+	auth.SetSessionCookie(w, r, apiKey, time.Now().Add(ttl))
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, resp)
 }
@@ -401,7 +402,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // buildLoginResponse creates the AuthLoginResponse from auth context.
 // SECURITY: Token is masked to prevent API key leakage in responses.
 func buildLoginResponse(authCtx *auth.AuthContext, token string) AuthLoginResponse {
-	now := time.Now().UTC()
+	now := time.Now()
 	expiresAt := now.Add(sessionTTL())
 
 	// Use principal ID or generate from API key prefix
@@ -439,22 +440,10 @@ func buildLoginResponse(authCtx *auth.AuthContext, token string) AuthLoginRespon
 	}
 }
 
-// errSessionTokenEntropy is the opaque, caller-visible signal that session
-// token minting failed because the entropy source (crypto/rand) returned an
-// error. The underlying reader error is deliberately NOT wrapped — the
-// handler maps this to a generic 500, and the upstream error may carry
-// kernel- or driver-level details that must not reach the HTTP body.
-var errSessionTokenEntropy = errors.New("session token entropy unavailable")
-
 // buildUserLoginResponse creates the AuthLoginResponse for user/password auth.
 // For user auth, we generate a session token rather than exposing the password.
-//
-// SECURITY: Any failure of the entropy source returns errSessionTokenEntropy
-// with the zero-value response, so the caller never mints a token backed by
-// a zero-filled or partially-filled buffer. The underlying rand error is
-// logged server-side only.
 func buildUserLoginResponse(ctx context.Context, user *auth.User) (AuthLoginResponse, error) {
-	now := time.Now().UTC()
+	now := time.Now()
 	expiresAt := now.Add(sessionTTL())
 
 	var roles []string
@@ -463,16 +452,10 @@ func buildUserLoginResponse(ctx context.Context, user *auth.User) (AuthLoginResp
 	}
 
 	// Generate a cryptographically random session token (256 bits entropy).
-	// io.ReadFull guarantees the full buffer is populated on success; on any
-	// error (short read or reader failure) we abandon the token entirely
-	// rather than emit a zero-filled / partial buffer.
 	var tokenBytes [32]byte
 	if _, err := io.ReadFull(rand.Reader, tokenBytes[:]); err != nil {
-		slog.ErrorContext(ctx, "session token entropy source failed",
-			"error", err,
-			"user_id", user.ID,
-		)
-		return AuthLoginResponse{}, errSessionTokenEntropy
+		slog.ErrorContext(ctx, "crypto/rand failed", "error", err)
+		return AuthLoginResponse{}, fmt.Errorf("crypto/rand: %w", err)
 	}
 	sessionToken := "session-" + base64.RawURLEncoding.EncodeToString(tokenBytes[:])
 
@@ -1049,7 +1032,7 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusBadRequest, "invalid expiresAt format, use RFC3339")
 			return
 		}
-		if parsed.Before(time.Now().UTC()) {
+		if parsed.Before(time.Now()) {
 			writeErrorJSON(w, http.StatusBadRequest, "expiresAt must be in the future")
 			return
 		}

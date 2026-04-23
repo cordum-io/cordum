@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { usePolicyRules } from "../../hooks/usePolicies";
 import { Badge } from "../ui/Badge";
+import { FrameworkTagBadge } from "./FrameworkTagBadge";
 import { cn } from "../../lib/utils";
 import type { PolicyRule } from "../../api/types";
 
@@ -8,9 +9,9 @@ import type { PolicyRule } from "../../api/types";
 // Constants
 // ---------------------------------------------------------------------------
 
-const decisionVariant: Record<string, "success" | "danger" | "warning" | "info" | "default" | "governance"> = {
+const decisionVariant: Record<string, "success" | "danger" | "warning" | "info" | "default"> = {
   allow: "success",
-  deny: "governance",
+  deny: "danger",
   require_approval: "warning",
   throttle: "info",
 };
@@ -37,12 +38,12 @@ function MatchCriteria({ criteria }: { criteria: Record<string, unknown> }) {
     ...tags.map((t) => ({ label: t, variant: "warning" as const })),
   ];
   if (items.length === 0) {
-    return <span className="text-xs text-muted-foreground">any</span>;
+    return <span className="text-xs text-muted">any</span>;
   }
   return (
     <div className="flex flex-wrap gap-1">
       {items.map((item, idx) => (
-        <Badge key={idx} variant={item.variant} className="text-xs px-2 py-0.5">
+        <Badge key={idx} variant={item.variant} className="text-[10px] px-2 py-0.5">
           {item.label}
         </Badge>
       ))}
@@ -68,6 +69,29 @@ function SkeletonRows({ count = 6 }: { count?: number }) {
       ))}
     </>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function timeAgo(iso?: string): string {
+  if (!iso) return "never";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "never";
+    const diff = Date.now() - d.getTime();
+    const secs = Math.floor(diff / 1_000);
+    if (secs < 60) return `${secs}s ago`;
+    const mins = Math.floor(secs / 60);
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
+  } catch {
+    return "never";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -106,8 +130,8 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
             className={cn(
               "rounded-lg px-3 py-1 text-xs font-medium capitalize transition",
               filter === f
-                ? "bg-accent text-primary-foreground"
-                : "text-muted-foreground hover:text-ink hover:bg-surface2/60",
+                ? "bg-accent text-white"
+                : "text-muted hover:text-ink hover:bg-surface2/60",
             )}
           >
             {f === "require_approval" ? "Approval" : f}
@@ -120,16 +144,22 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
           <table className="w-full text-sm">
             <thead className="border-b border-border">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
                   ID
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
                   Match Criteria
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
                   Decision
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                  24h Hits
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
+                  Last Triggered
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
                   Source
                 </th>
               </tr>
@@ -139,7 +169,7 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
 
               {!isLoading && isError && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
+                  <td colSpan={6} className="px-4 py-12 text-center text-muted">
                     Failed to load policy rules.
                   </td>
                 </tr>
@@ -147,37 +177,58 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
 
               {!isLoading && !isError && sorted.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
+                  <td colSpan={6} className="px-4 py-12 text-center text-muted">
                     No rules match the selected filter.
                   </td>
                 </tr>
               )}
 
               {!isLoading &&
-                sorted.map((rule: PolicyRule) => (
-                  <tr
-                    key={rule.id}
-                    className="cursor-pointer transition-colors hover:bg-surface2/60"
-                    onClick={() => handleRowClick(rule)}
-                  >
-                    <td className="px-4 py-3 font-mono text-xs text-ink">
-                      {rule.id.slice(0, 8)}
-                    </td>
-                    <td className="px-4 py-3 max-w-xs">
-                      <MatchCriteria criteria={rule.matchCriteria ?? {}} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <Badge variant={decisionVariant[rule.decisionType ?? ""] ?? "default"}>
-                        {decisionLabel[rule.decisionType ?? ""] ?? rule.decisionType}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">
-                      {rule.source && "fragment_id" in rule.source
-                        ? String((rule.source as Record<string, unknown>).fragment_id ?? "—")
-                        : "\u2014"}
-                    </td>
-                  </tr>
-                ))}
+                sorted.map((rule: PolicyRule) => {
+                  const frameworkTags = (rule.frameworkTags ?? [])
+                    .filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0);
+
+                  return (
+                    <tr
+                      key={rule.id}
+                      className="cursor-pointer transition-colors hover:bg-surface2/60"
+                      onClick={() => handleRowClick(rule)}
+                    >
+                      <td className="px-4 py-3 font-mono text-xs text-ink">
+                        {rule.id.slice(0, 8)}
+                      </td>
+                      <td className="px-4 py-3 max-w-xs">
+                        <MatchCriteria criteria={rule.matchCriteria} />
+                        {frameworkTags.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap gap-1">
+                            {frameworkTags.map((tag) => (
+                              <FrameworkTagBadge key={tag} tag={tag} />
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <Badge variant={decisionVariant[rule.decisionType] ?? "default"}>
+                          {decisionLabel[rule.decisionType] ?? rule.decisionType}
+                        </Badge>
+                      </td>
+                      <td className={cn(
+                        "px-4 py-3 font-mono text-xs",
+                        (rule.hitCount24h ?? 0) > 100 ? "font-bold text-ink" : "text-muted"
+                      )}>
+                        {rule.hitCount24h ?? 0}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[11px] text-muted whitespace-nowrap">
+                        {timeAgo(rule.lastTriggered)}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted">
+                        {rule.source && "fragment_id" in rule.source
+                          ? String((rule.source as Record<string, unknown>).fragment_id ?? "—")
+                          : "\u2014"}
+                      </td>
+                    </tr>
+                  );
+                })}
             </tbody>
           </table>
         </div>

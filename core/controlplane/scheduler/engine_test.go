@@ -19,7 +19,6 @@ import (
 	"github.com/cordum/cordum/core/infra/redisutil"
 	infraSchema "github.com/cordum/cordum/core/infra/schema"
 	infraStore "github.com/cordum/cordum/core/infra/store"
-	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/encoding/protowire"
@@ -108,8 +107,6 @@ type fakeJobStore struct {
 	tenants        map[string]string
 	teams          map[string]string
 	safety         map[string]SafetyDecisionRecord
-	lineage        map[string]model.DelegationLineage
-	dispatchTokens map[string]model.DelegationDispatchToken
 	output         map[string]OutputSafetyRecord
 	attempts       map[string]int
 	locks          map[string]time.Time
@@ -166,8 +163,6 @@ func newFakeJobStore() *fakeJobStore {
 		tenants:        make(map[string]string),
 		teams:          make(map[string]string),
 		safety:         make(map[string]SafetyDecisionRecord),
-		lineage:        make(map[string]model.DelegationLineage),
-		dispatchTokens: make(map[string]model.DelegationDispatchToken),
 		output:         make(map[string]OutputSafetyRecord),
 		attempts:       make(map[string]int),
 		locks:          make(map[string]time.Time),
@@ -215,14 +210,6 @@ func (s *fakeJobStore) SetState(_ context.Context, jobID string, state JobState)
 		s.attempts[jobID]++
 	}
 	return nil
-}
-
-func (s *fakeJobStore) SetStateWithContext(ctx context.Context, jobID string, state JobState, _ *model.StateEventContext) error {
-	return s.SetState(ctx, jobID, state)
-}
-
-func (s *fakeJobStore) GetJobEvents(_ context.Context, _ string) ([]model.JobEvent, error) {
-	return nil, nil
 }
 
 func (s *fakeJobStore) GetState(_ context.Context, jobID string) (JobState, error) {
@@ -324,32 +311,6 @@ func (s *fakeJobStore) GetSafetyDecision(_ context.Context, jobID string) (Safet
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.safety[jobID], nil
-}
-
-func (s *fakeJobStore) SetDelegationLineage(_ context.Context, jobID string, lineage model.DelegationLineage) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.lineage[jobID] = lineage
-	return nil
-}
-
-func (s *fakeJobStore) GetDelegationLineage(_ context.Context, jobID string) (model.DelegationLineage, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.lineage[jobID], nil
-}
-
-func (s *fakeJobStore) SetDelegationDispatchToken(_ context.Context, jobID string, token model.DelegationDispatchToken) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.dispatchTokens[jobID] = token
-	return nil
-}
-
-func (s *fakeJobStore) GetDelegationDispatchToken(_ context.Context, jobID string) (model.DelegationDispatchToken, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.dispatchTokens[jobID], nil
 }
 
 func (s *fakeJobStore) GetAttempts(_ context.Context, jobID string) (int, error) {
@@ -1295,9 +1256,8 @@ func TestProcessJobApprovalGateApprovedAutoCompletes(t *testing.T) {
 		JobId: "job-gate-2",
 		Topic: capsdk.SubjectApprovalGate,
 		Labels: map[string]string{
-			"approval_granted":  "true",
-			"approval_snapshot": workflowGateSnapshot,
-			"gate_type":         "workflow_approval",
+			"approval_granted": "true",
+			"gate_type":        "workflow_approval",
 		},
 	}
 	jobHash, err := HashJobRequest(req)
@@ -1372,8 +1332,7 @@ func TestProcessJobApprovalGatePublishFailureReturnsRetryableError(t *testing.T)
 		JobId: "job-gate-4",
 		Topic: capsdk.SubjectApprovalGate,
 		Labels: map[string]string{
-			"approval_granted":  "true",
-			"approval_snapshot": workflowGateSnapshot,
+			"approval_granted": "true",
 		},
 	}
 	jobHash, err := HashJobRequest(req)
@@ -1473,9 +1432,8 @@ func TestApprovalGateTopicStillAutoCompletes(t *testing.T) {
 			JobId: jobID,
 			Topic: topic,
 			Labels: map[string]string{
-				"approval_granted":  "true",
-				"approval_snapshot": workflowGateSnapshot,
-				"gate_type":         "workflow_approval",
+				"approval_granted": "true",
+				"gate_type":        "workflow_approval",
 			},
 		}
 		jobHash, err := HashJobRequest(req)
@@ -1776,7 +1734,7 @@ func TestCheckSafetyDecision_EngineShutdown_DeniesImmediately(t *testing.T) {
 	// Simulate engine shutdown by cancelling the engine context.
 	engine.cancel()
 
-	record, err := engine.checkSafetyDecision(context.Background(), req)
+	record, err := engine.checkSafetyDecision(req, "")
 	if err == nil {
 		t.Fatal("expected error during shutdown, got nil")
 	}
@@ -2585,7 +2543,7 @@ func TestCheckSafetyDecisionAppendsDecisionLog(t *testing.T) {
 				Labels:   map[string]string{"agent_id": "agent-123"},
 			}
 
-			record, err := engine.checkSafetyDecision(context.Background(), req)
+			record, err := engine.checkSafetyDecision(req)
 			if err != nil {
 				t.Fatalf("checkSafetyDecision() error = %v", err)
 			}
@@ -2646,9 +2604,8 @@ func TestCheckSafetyDecisionApprovalGrantedAppendsDecisionLog(t *testing.T) {
 		Topic:    "job.test",
 		TenantId: "tenant-a",
 		Labels: map[string]string{
-			"approval_granted":  "true",
-			"approval_snapshot": "snap-approved|sha256:abc",
-			"agent_id":          "agent-approved",
+			"approval_granted": "true",
+			"agent_id":         "agent-approved",
 		},
 	}
 	jobHash, err := HashJobRequest(req)
@@ -2664,7 +2621,7 @@ func TestCheckSafetyDecisionApprovalGrantedAppendsDecisionLog(t *testing.T) {
 		CheckedAt:        time.Date(2026, time.April, 20, 10, 0, 0, 0, time.UTC).UnixNano() / int64(time.Microsecond),
 	}
 
-	record, err := engine.checkSafetyDecision(context.Background(), req)
+	record, err := engine.checkSafetyDecision(req)
 	if err != nil {
 		t.Fatalf("checkSafetyDecision() error = %v", err)
 	}
@@ -2763,7 +2720,7 @@ func TestCheckSafetyDecisionShutdownDeniesNotFailOpen(t *testing.T) {
 	// Cancel the engine context to simulate shutdown
 	engine.cancel()
 
-	record, err := engine.checkSafetyDecision(context.Background(), req)
+	record, err := engine.checkSafetyDecision(req, "")
 	if err == nil {
 		t.Fatal("expected error from checkSafetyDecision during shutdown, got nil")
 	}

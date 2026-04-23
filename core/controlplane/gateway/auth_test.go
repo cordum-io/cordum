@@ -91,10 +91,10 @@ func newBasicAuthForTest(t *testing.T, env map[string]string) *auth.BasicAuthPro
 	return provider
 }
 
-func requestWithAuthContext(authCtx *auth.AuthContext) *http.Request {
+func requestWithAuthContext(auth *auth.AuthContext) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/test", nil)
 	req.Header.Set("X-Tenant-ID", "default")
-	return req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+	return req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, auth))
 }
 
 func TestNormalizeRole(t *testing.T) {
@@ -505,8 +505,8 @@ func TestPublicPathCeilingAllowsWhitelistedPaths(t *testing.T) {
 }
 
 func TestPublicPathCeilingAllowsSCIMPrefixPaths(t *testing.T) {
-	provider := &scimPrefixAuth{}
-	handler := apiKeyMiddleware(provider, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	auth := &scimPrefixAuth{}
+	handler := apiKeyMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -572,8 +572,8 @@ func TestTenantMiddlewareCeilingAllowsWhitelistedPaths(t *testing.T) {
 }
 
 func TestTenantMiddlewareCeilingAllowsSCIMPrefixPaths(t *testing.T) {
-	provider := &scimPrefixAuth{}
-	handler := tenantMiddleware(provider, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	auth := &scimPrefixAuth{}
+	handler := tenantMiddleware(auth, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 

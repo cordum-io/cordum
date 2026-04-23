@@ -15,16 +15,13 @@ import (
 	"sync/atomic"
 
 	capvalidate "github.com/cordum-io/cap/v2/sdk/go"
-	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/config"
-	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	infraSchema "github.com/cordum/cordum/core/infra/schema"
 	infraStore "github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
-	"github.com/cordum/cordum/core/model"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
@@ -84,14 +81,11 @@ type Engine struct {
 	registry                WorkerRegistry
 	strategy                SchedulingStrategy
 	jobStore                JobStore
-	decisionLog             model.DecisionLogStore
 	dlqSink                 DLQSink
 	metrics                 Metrics
 	config                  ConfigProvider
 	topicRegistry           *topicregistry.Service
 	workerCredentialCache   *WorkerCredentialCache
-	sessionMiddleware       *SessionTokenMiddleware
-	agentResolver           *AgentResolver
 	workerAttestation       WorkerAttestationMode
 	workerReadinessRequired bool
 	schemaRegistry          *infraSchema.Registry
@@ -99,11 +93,6 @@ type Engine struct {
 	saga                    *SagaManager
 	entitlements            *licensing.EntitlementResolver
 	contextClient           redis.UniversalClient // optional, for loading payloads referenced by ContextPtr
-	failModeResolver        *FailModeResolver
-	dispatchGate            *DispatchGate
-	dispatchAuditSink       AuditSink
-	trustMetrics            *WorkerTrustMetrics
-	otelMetrics             otelMetricsBridge     // optional OTEL dual-emission bridge
 	counterClient           redis.UniversalClient // optional, for operational counters shared across services
 	stopped                 atomic.Bool
 	activeHandlers          atomic.Int64
@@ -111,8 +100,6 @@ type Engine struct {
 	wg                      sync.WaitGroup
 	ctx                     context.Context
 	cancel                  context.CancelFunc
-	traceCtxMu              sync.Mutex
-	lastTraceCtx            context.Context
 }
 
 func jobLockKey(jobID string) string {
@@ -267,7 +254,6 @@ func NewEngine(bus Bus, safety SafetyChecker, registry WorkerRegistry, strategy 
 		registry:                registry,
 		strategy:                strategy,
 		jobStore:                jobStore,
-		decisionLog:             NoopDecisionLogStore{},
 		metrics:                 metrics,
 		contextClient:           contextClient,
 		workerAttestation:       ParseWorkerAttestationMode(os.Getenv("WORKER_ATTESTATION")),
@@ -290,36 +276,6 @@ func (e *Engine) WithTopicRegistry(registry *topicregistry.Service) *Engine {
 	return e
 }
 
-// WithDispatchGate wires the optional session-authority dispatch gate used by
-// the heartbeat-demotion rollout. Nil preserves legacy heartbeat-TTL semantics.
-func (e *Engine) WithDispatchGate(gate *DispatchGate) *Engine {
-	if e == nil {
-		return nil
-	}
-	e.dispatchGate = gate
-	return e
-}
-
-// WithDispatchAuditSink wires the audit sink used for heartbeat disagreement
-// events emitted during warn-mode dispatch.
-func (e *Engine) WithDispatchAuditSink(sink AuditSink) *Engine {
-	if e == nil {
-		return nil
-	}
-	e.dispatchAuditSink = sink
-	return e
-}
-
-// WithTrustMetrics wires the optional trust metrics bridge used by the
-// heartbeat-demotion rollout.
-func (e *Engine) WithTrustMetrics(metrics *WorkerTrustMetrics) *Engine {
-	if e == nil {
-		return nil
-	}
-	e.trustMetrics = metrics
-	return e
-}
-
 func (e *Engine) WithSchemaRegistry(registry *infraSchema.Registry) *Engine {
 	e.schemaRegistry = registry
 	return e
@@ -327,11 +283,6 @@ func (e *Engine) WithSchemaRegistry(registry *infraSchema.Registry) *Engine {
 
 func (e *Engine) WithWorkerCredentialCache(cache *WorkerCredentialCache) *Engine {
 	e.workerCredentialCache = cache
-	return e
-}
-
-func (e *Engine) WithAgentResolver(resolver *AgentResolver) *Engine {
-	e.agentResolver = resolver
 	return e
 }
 
@@ -599,138 +550,6 @@ func (e *Engine) Start() error {
 	return nil
 }
 
-func (e *Engine) eligibleWorkers(ctx context.Context) (map[string]*pb.Heartbeat, []HeartbeatDisagreement) {
-	if e == nil || e.registry == nil {
-		return map[string]*pb.Heartbeat{}, nil
-	}
-	if ctx == nil {
-		ctx = e.ctx
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if e.dispatchGate == nil {
-		return e.registry.Snapshot(), nil
-	}
-	return e.dispatchGate.EligibleWorkers(ctx, e.registry)
-}
-
-func (e *Engine) recordDispatchDisagreements(jobID, topic string, disagreements []HeartbeatDisagreement) {
-	if len(disagreements) == 0 {
-		return
-	}
-	for _, disagreement := range disagreements {
-		e.emitHeartbeatDisagreement(jobID, topic, disagreement)
-	}
-}
-
-func (e *Engine) emitHeartbeatDisagreement(jobID, topic string, disagreement HeartbeatDisagreement) {
-	if e == nil {
-		return
-	}
-	slog.Error("heartbeat/session disagreement during dispatch",
-		"job_id", jobID,
-		"topic", topic,
-		"worker_id", disagreement.WorkerID,
-		"tenant", disagreement.Tenant,
-		"jti", disagreement.JTI,
-		"direction", disagreement.Direction,
-		"session_auth_alive", disagreement.SessionAuthAlive,
-		"heartbeat_alive", disagreement.HeartbeatAlive,
-	)
-	if e.dispatchAuditSink == nil {
-		return
-	}
-	ctx := e.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	extra := map[string]string{
-		"worker_id":          disagreement.WorkerID,
-		"tenant":             disagreement.Tenant,
-		"jti":                disagreement.JTI,
-		"direction":          disagreement.Direction,
-		"session_auth_alive": fmt.Sprintf("%t", disagreement.SessionAuthAlive),
-		"heartbeat_alive":    fmt.Sprintf("%t", disagreement.HeartbeatAlive),
-	}
-	if topic != "" {
-		extra["topic"] = topic
-	}
-	e.dispatchAuditSink.Emit(ctx, audit.SIEMEvent{
-		Timestamp: time.Now().UTC(),
-		EventType: audit.EventHeartbeatDisagreement,
-		Severity:  audit.SeverityMedium,
-		TenantID:  disagreement.Tenant,
-		AgentID:   disagreement.WorkerID,
-		JobID:     jobID,
-		Action:    "dispatch.heartbeat_disagreement",
-		Reason:    disagreement.Direction,
-		Extra:     extra,
-	})
-}
-
-// emitApprovalRevisionMismatch records a SIEM event when the approval
-// fast-path refuses to short-circuit to SafetyAllow because the
-// approval_snapshot label on the resubmitted JobRequest does not match
-// (base-compared) the PolicySnapshot currently stored on the job's
-// SafetyDecisionRecord. Callers fall through to a full safety re-check;
-// this event gives SIEM operators a tamper/stale-approval signal
-// independent of whether the subsequent re-check allows or denies.
-func (e *Engine) emitApprovalRevisionMismatch(req *pb.JobRequest, stored, asserted string) {
-	if e == nil || req == nil {
-		return
-	}
-	jobID := strings.TrimSpace(req.GetJobId())
-	topic := strings.TrimSpace(req.GetTopic())
-	if e.dispatchAuditSink == nil {
-		return
-	}
-	ctx := e.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	extra := map[string]string{
-		"stored_snapshot":   stored,
-		"asserted_snapshot": asserted,
-	}
-	if topic != "" {
-		extra["topic"] = topic
-	}
-	// Canonical tenant source is req.TenantId (set by the gateway from the
-	// authenticated principal). Fall back to the "tenant" label only when
-	// the request body omits it, so SIEM alerts are scoped correctly.
-	tenant := strings.TrimSpace(req.TenantId)
-	if tenant == "" && req.Labels != nil {
-		tenant = strings.TrimSpace(req.Labels["tenant"])
-	}
-	e.dispatchAuditSink.Emit(ctx, audit.SIEMEvent{
-		Timestamp:     time.Now().UTC(),
-		EventType:     audit.EventApprovalRevisionMismatch,
-		Severity:      audit.SeverityHigh,
-		TenantID:      tenant,
-		JobID:         jobID,
-		Action:        "scheduler.approval_fast_path_reject",
-		Reason:        "approval_snapshot label does not match stored PolicySnapshot",
-		PolicyVersion: snapshotBase(stored),
-		Extra:         extra,
-	})
-}
-
-// HandlePacketWithContext is the context-aware version of HandlePacket.
-// It receives trace context extracted from NATS headers and threads it
-// through to processJob for distributed tracing continuity.
-func (e *Engine) HandlePacketWithContext(ctx context.Context, p *pb.BusPacket) error {
-	// Store the trace context so processJob can pick it up.
-	// We merge the incoming trace context with the engine's lifecycle context.
-	if ctx != nil && ctx != context.Background() {
-		// Use the trace span from the incoming context if present.
-		e.traceCtxMu.Lock()
-		e.lastTraceCtx = ctx
-		e.traceCtxMu.Unlock()
-	}
-	return e.HandlePacket(p)
-}
-
 func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -769,9 +588,6 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 		if hb == nil {
 			return nil
 		}
-		if !e.verifySessionToken(p, hb.GetWorkerId(), "heartbeat") {
-			return nil
-		}
 		if !e.allowWorkerHeartbeat(p, hb) {
 			return nil
 		}
@@ -784,9 +600,6 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 			"pool", hb.Pool,
 		)
 		e.registry.UpdateHeartbeat(hb)
-		if e.trustMetrics != nil {
-			e.trustMetrics.ObserveHeartbeat(hb)
-		}
 		if e.counterClient != nil {
 			ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
 			e.persistWorkerCount(ctx)
@@ -840,9 +653,6 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 		if res == nil {
 			return nil
 		}
-		if !e.verifySessionToken(p, res.GetWorkerId(), "job_result") {
-			return nil
-		}
 		if err := capvalidate.ValidateJobResult(res); err != nil {
 			slog.Warn("invalid job result rejected",
 				"job_id", res.GetJobId(),
@@ -864,9 +674,6 @@ func (e *Engine) HandlePacket(p *pb.BusPacket) (err error) {
 	case *pb.BusPacket_JobCancel:
 		cancelReq := payload.JobCancel
 		if cancelReq == nil {
-			return nil
-		}
-		if !e.verifySessionToken(p, strings.TrimSpace(cancelReq.GetRequestedBy()), "job_cancel") {
 			return nil
 		}
 		slog.Info("job cancel received",
@@ -961,43 +768,6 @@ func (e *Engine) handleConfigChangedPacket(p *pb.BusPacket) (err error) {
 
 func (e *Engine) workerAttestationMode() WorkerAttestationMode {
 	return e.workerAttestation.Normalized()
-}
-
-func (e *Engine) verifySessionToken(packet *pb.BusPacket, workerID, packetType string) bool {
-	if e == nil || e.sessionMiddleware == nil {
-		return true
-	}
-	ctx := e.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	result := e.sessionMiddleware.Verify(ctx, workerID, packet)
-	switch result.Verdict {
-	case TokenVerdictPass, TokenVerdictWarnMissing:
-		if result.Err != nil {
-			slog.Warn("session token missing; admitting packet",
-				"packet_type", packetType,
-				"worker_id", workerID,
-				"mode", e.sessionMiddleware.Mode().String(),
-				"error", result.Err,
-			)
-		}
-		return true
-	case TokenVerdictRejectMissing, TokenVerdictRejectInvalid:
-		fields := []any{
-			"packet_type", packetType,
-			"worker_id", workerID,
-			"mode", e.sessionMiddleware.Mode().String(),
-			"verdict", result.Verdict.String(),
-		}
-		if result.Err != nil {
-			fields = append(fields, "error", result.Err)
-		}
-		slog.Error("session token rejected inbound packet", fields...)
-		return false
-	default:
-		return true
-	}
 }
 
 func (e *Engine) allowWorkerHeartbeat(packet *pb.BusPacket, hb *pb.Heartbeat) bool {
@@ -1197,8 +967,8 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 							dlqStatus = pb.JobStatus_JOB_STATUS_DENIED
 						}
 						if dlqErr := e.emitDLQWithRetry(jobID, topic, dlqStatus, "terminal state redelivery", "redelivery_dlq_retry"); dlqErr != nil {
-							slog.Error("dlq emit failed on terminal redelivery", "job_id", jobID, "topic", topic, "error", dlqErr)
-						}
+								slog.Error("dlq emit failed on terminal redelivery", "job_id", jobID, "topic", topic, "error", dlqErr)
+							}
 					}
 					return nil
 				}
@@ -1236,20 +1006,9 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 			}
 		}
 
-		switch currentState {
-		case "":
+		if currentState == "" {
 			if err := e.setJobState(jobID, JobStatePending); err != nil {
 				return RetryAfter(err, retryDelayStore)
-			}
-		case JobStateScheduled:
-			if inc, ok := e.jobStore.(interface {
-				IncrAttempts(context.Context, string) error
-			}); ok {
-				ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-				if err := inc.IncrAttempts(ctx, jobID); err != nil {
-					slog.Warn("attempt counter increment failed on scheduled replay", "job_id", jobID, "error", err)
-				}
-				cancel()
 			}
 		}
 
@@ -1376,49 +1135,6 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	}
 
 	e.attachEffectiveConfig(req)
-
-	verifyCtx, verifyCancel := context.WithTimeout(lockCtx, storeOpTimeout)
-	lineage, hasDelegation, delegationErr := e.verifyDelegationBeforeDispatch(verifyCtx, req)
-	verifyCancel()
-	if delegationErr != nil {
-		reason, reasonCode, retry := classifyDelegationDispatchError(delegationErr)
-		slog.Warn("delegation dispatch verification failed",
-			"job_id", jobID,
-			"topic", topic,
-			"reason_code", reasonCode,
-			"error", delegationErr,
-		)
-		if retry {
-			return RetryAfter(delegationErr, retryDelayStore)
-		}
-		if hasDelegation {
-			e.emitDelegationDispatchFailureAudit(lockCtx, req, reasonCode)
-		}
-		if hasDelegation && e.jobStore != nil {
-			ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-			failureReason := reason
-			if reasonCode != "" {
-				failureReason = reasonCode
-			}
-			if err := e.jobStore.SetFailureReason(ctx, jobID, failureReason); err != nil {
-				slog.Warn("failed to persist delegation dispatch failure reason", "job_id", jobID, "error", err)
-			}
-			cancel()
-		}
-		if err := e.setJobState(jobID, JobStateFailed); err != nil {
-			slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
-			return RetryAfter(err, retryDelayStore)
-		}
-		e.incJobsCompleted(topic, pb.JobStatus_JOB_STATUS_FAILED.String())
-		if err := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED, reason, reasonCode); err != nil {
-			slog.Error("dlq emit failed, retrying", "job_id", jobID, "error", err)
-			return RetryAfter(err, retryDelayPublish)
-		}
-		return nil
-	}
-	if hasDelegation {
-		e.emitDelegationLineageAudit(lockCtx, req, lineage)
-	}
 
 	record, err := e.checkSafetyDecisionTraced(lockCtx, req)
 	if err != nil {
@@ -1619,8 +1335,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		}
 	}
 
-	workers, disagreements := e.eligibleWorkers(lockCtx)
-	e.recordDispatchDisagreements(jobID, topic, disagreements)
+	workers := e.registry.Snapshot()
 	var readiness map[string]WorkerReadiness
 	if e.workerReadinessRequired {
 		readiness = e.registry.ReadinessSnapshot()
@@ -1634,8 +1349,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	var subject string
 	for dispatchAttempt := range maxDispatchRetries {
 		if dispatchAttempt > 0 {
-			workers, disagreements = e.eligibleWorkers(lockCtx)
-			e.recordDispatchDisagreements(jobID, topic, disagreements)
+			workers = e.registry.Snapshot()
 			if e.workerReadinessRequired {
 				readiness = e.registry.ReadinessSnapshot()
 			}
@@ -1645,21 +1359,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			break
 		}
 		workerID := extractWorkerFromSubject(subject)
-		if workerID == "" {
+		if workerID == "" || e.registry.IsAlive(workerID) {
 			break
-		}
-		if e.dispatchGate == nil {
-			if e.registry.IsAlive(workerID) {
-				break
-			}
-		} else {
-			eligible, disagreement := e.dispatchGate.IsWorkerEligible(lockCtx, workerID, e.registry.IsAlive)
-			if disagreement != nil {
-				e.recordDispatchDisagreements(jobID, topic, []HeartbeatDisagreement{*disagreement})
-			}
-			if eligible {
-				break
-			}
 		}
 		slog.Warn("stale worker detected, retrying dispatch",
 			"job_id", jobID,
@@ -1932,38 +1633,7 @@ func (e *Engine) failSchemaValidation(req *pb.JobRequest, traceID, schemaID, rea
 	return true, nil
 }
 
-func (e *Engine) checkSafetyDecisionTraced(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
-	tracer := cordumotel.Tracer("cordum-scheduler")
-	_, safetySpan := tracer.Start(ctx, "scheduler.safety_check",
-		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
-	)
-	defer safetySpan.End()
-
-	if req != nil {
-		safetySpan.SetAttributes(attribute.String("cordum.job_id", strings.TrimSpace(req.JobId)))
-	}
-
-	record, err := e.checkSafetyDecision(ctx, req)
-	if err != nil {
-		safetySpan.SetStatus(otelcodes.Error, err.Error())
-		safetySpan.RecordError(err)
-	} else {
-		safetySpan.SetAttributes(
-			attribute.String("cordum.safety_decision", string(record.Decision)),
-			attribute.String("cordum.safety_rule_id", record.RuleID),
-		)
-	}
-	return record, err
-}
-
-// checkSafetyDecision evaluates safety for a job. The caller's ctx MUST be the
-// lock-fenced context from withJobLock — any state mutations derived from this
-// call (notably the approval fast-path SetSafetyDecision) must be cancelled
-// when the lock is lost to prevent stale-lock writes racing a takeover handler.
-func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (SafetyDecisionRecord, error) {
-	if ctx == nil {
-		ctx = e.ctx
-	}
+func (e *Engine) checkSafetyDecision(req *pb.JobRequest) (SafetyDecisionRecord, error) {
 	record := SafetyDecisionRecord{}
 	if req == nil {
 		return record, fmt.Errorf("missing job request")
@@ -1981,67 +1651,32 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 	}
 	if approved {
 		if e.jobStore != nil {
-			storeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
+			ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
 			defer cancel()
-			prev, err := e.jobStore.GetSafetyDecision(storeCtx, jobID)
+			prev, err := e.jobStore.GetSafetyDecision(ctx, jobID)
 			if err == nil && (prev.ApprovalRequired || prev.Decision == SafetyRequireApproval) && prev.JobHash != "" {
 				hash, err := HashJobRequest(req)
 				if err == nil && hash == prev.JobHash {
-					// Bind the fast-path to the PolicySnapshot this approval
-					// was admitted against. The gateway stamps approval_snapshot
-					// onto the resubmitted request when it resolves the
-					// approval; we compare it (base only, to ignore config-
-					// overlay churn) against the stored safety record's
-					// PolicySnapshot — which ResolveApproval rotates to the
-					// human-approved snapshot on approve. A mismatch means the
-					// stored safety decision drifted after admission (reconciler
-					// invalidated it, or the label predates this binding), so
-					// we fall through to a full safety check instead of
-					// short-circuiting to SafetyAllow.
-					asserted := strings.TrimSpace(req.Labels["approval_snapshot"])
-					stored := strings.TrimSpace(prev.PolicySnapshot)
-					// Workflow approval gates (sys.approval.gate /
-					// sys.workflow.approval.gate) carry no policy decision —
-					// SafetyBasic returns an empty PolicySnapshot for them.
-					// There is no TOCTOU concern to bind to, so skip the
-					// snapshot match for gate topics. Regular jobs still
-					// require the binding.
-					isGate := isApprovalGateTopic(strings.TrimSpace(req.GetTopic()))
-					if !isGate && (asserted == "" || stored == "" || snapshotBase(asserted) != snapshotBase(stored)) {
-						e.emitApprovalRevisionMismatch(req, stored, asserted)
-						slog.Warn("approval fast-path rejected: policy snapshot mismatch",
-							"job_id", jobID,
-							"stored_snapshot", stored,
-							"asserted_snapshot", asserted,
-						)
-					} else {
-						record = SafetyDecisionRecord{
-							Decision:       SafetyAllow,
-							Reason:         "approval granted",
-							CheckedAt:      time.Now().UTC().UnixNano() / int64(time.Microsecond),
-							Constraints:    prev.Constraints,
-							PolicySnapshot: prev.PolicySnapshot,
-							RuleID:         prev.RuleID,
-							JobHash:        prev.JobHash,
-						}
-						if e.jobStore != nil {
-							// Derive the store-op timeout from the caller's
-							// lock-fenced ctx, NOT e.ctx. If the lock is lost
-							// mid-evaluation the fenced ctx is cancelled and
-							// this write must not complete after the takeover
-							// handler has already mutated the job state.
-							writeCtx, cancel := context.WithTimeout(ctx, storeOpTimeout)
-							defer cancel()
-							if err := e.jobStore.SetSafetyDecision(writeCtx, jobID, record); err != nil {
-								return record, err
-							}
-							e.appendDecisionLog(req, record)
-						}
-						return record, nil
+					record = SafetyDecisionRecord{
+						Decision:       SafetyAllow,
+						Reason:         "approval granted",
+						CheckedAt:      time.Now().UTC().UnixNano() / int64(time.Microsecond),
+						Constraints:    prev.Constraints,
+						PolicySnapshot: prev.PolicySnapshot,
+						RuleID:         prev.RuleID,
+						JobHash:        prev.JobHash,
 					}
-				} else {
-					slog.Warn("approval label ignored (hash mismatch)", "job_id", jobID)
+					if e.jobStore != nil {
+						ctx, cancel := context.WithTimeout(e.ctx, storeOpTimeout)
+						defer cancel()
+						if err := e.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
+							return record, err
+						}
+						e.appendDecisionLog(req, record)
+					}
+					return record, nil
 				}
+				slog.Warn("approval label ignored (hash mismatch)", "job_id", jobID)
 			} else {
 				slog.Warn("approval label ignored (no approval record)", "job_id", jobID)
 			}
@@ -2060,7 +1695,7 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 		}, e.ctx.Err()
 	}
 
-	safetyCtx, safetyCancel := context.WithTimeout(ctx, safetyCheckTimeout)
+	safetyCtx, safetyCancel := context.WithTimeout(e.ctx, safetyCheckTimeout)
 	defer safetyCancel()
 
 	record, err := e.safety.Check(safetyCtx, req)

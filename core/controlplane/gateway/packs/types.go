@@ -29,17 +29,12 @@ type PackCompatibility struct {
 
 // PackTopic describes a job topic provided by the pack.
 type PackTopic struct {
-	Name           string   `yaml:"name" json:"name"`
-	Requires       []string `yaml:"requires" json:"requires"`
-	RiskTags       []string `yaml:"riskTags" json:"riskTags"`
-	Capability     string   `yaml:"capability" json:"capability"`
-	InputSchemaID  string   `yaml:"inputSchema,omitempty" json:"input_schema_id,omitempty"`
-	OutputSchemaID string   `yaml:"outputSchema,omitempty" json:"output_schema_id,omitempty"`
-	// RiskTagDeriver names a built-in server-side risk tag derivation strategy
-	// for this topic. When set, the safety kernel derives authoritative risk tags
-	// from job content instead of trusting client-supplied tags.
-	// Built-in derivers: "amount-threshold" (parses amount from JSON payload).
-	RiskTagDeriver string `yaml:"riskTagDeriver,omitempty" json:"risk_tag_deriver,omitempty"`
+	Name       string   `yaml:"name" json:"name"`
+	Requires   []string `yaml:"requires" json:"requires"`
+	RiskTags   []string `yaml:"riskTags" json:"riskTags"`
+	Capability string   `yaml:"capability" json:"capability"`
+	InputSchemaID  string `yaml:"inputSchema,omitempty" json:"input_schema_id,omitempty"`
+	OutputSchemaID string `yaml:"outputSchema,omitempty" json:"output_schema_id,omitempty"`
 }
 
 // PackResources lists schemas and workflows bundled in the pack.
@@ -104,32 +99,15 @@ type PackPolicySimulationRequest struct {
 
 // PackRecord is the stored state of an installed pack.
 type PackRecord struct {
-	ID           string                  `json:"id"`
-	Version      string                  `json:"version"`
-	Status       string                  `json:"status"`
-	InstalledAt  string                  `json:"installed_at,omitempty"`
-	InstalledBy  string                  `json:"installed_by,omitempty"`
-	Manifest     PackRecordManifest      `json:"manifest,omitempty"`
-	Resources    PackRecordResources     `json:"resources,omitempty"`
-	Overlays     PackRecordOverlays      `json:"overlays,omitempty"`
-	Tests        PackTests               `json:"tests,omitempty"`
-	Verification *PackRecordVerification `json:"verification,omitempty"`
-}
-
-// PackRecordVerification carries the server-verified signature state
-// alongside an installed pack. The gateway computes this; client-
-// supplied values on the install payload are discarded. Pre-existing
-// records that predate signature verification read as nil (the
-// handler defaults to {signed: false} when rendering the wire shape).
-type PackRecordVerification struct {
-	Signed              bool     `json:"signed"`
-	PublisherID         string   `json:"publisher_id,omitempty"`
-	KID                 string   `json:"kid,omitempty"`
-	VerifiedAt          string   `json:"verified_at,omitempty"`
-	HasCordumCounterSig bool     `json:"has_cordum_counter_sig,omitempty"`
-	SignatureAlgorithm  string   `json:"signature_algorithm,omitempty"`
-	PackSignatureVer    int      `json:"pack_signature_version,omitempty"`
-	Warnings            []string `json:"warnings,omitempty"`
+	ID          string              `json:"id"`
+	Version     string              `json:"version"`
+	Status      string              `json:"status"`
+	InstalledAt string              `json:"installed_at,omitempty"`
+	InstalledBy string              `json:"installed_by,omitempty"`
+	Manifest    PackRecordManifest  `json:"manifest,omitempty"`
+	Resources   PackRecordResources `json:"resources,omitempty"`
+	Overlays    PackRecordOverlays  `json:"overlays,omitempty"`
+	Tests       PackTests           `json:"tests,omitempty"`
 }
 
 // PackRecordManifest is the subset of the manifest stored in the registry.

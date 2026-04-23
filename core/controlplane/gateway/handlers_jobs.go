@@ -56,67 +56,6 @@ func safeUnmarshal(data []byte, v any, field, jobID string) bool {
 	return true
 }
 
-func hasDelegationLineage(lineage model.DelegationLineage) bool {
-	return strings.TrimSpace(lineage.TokenJTI) != "" ||
-		strings.TrimSpace(lineage.Audience) != "" ||
-		strings.TrimSpace(lineage.RootIssuer) != "" ||
-		strings.TrimSpace(lineage.ParentIssuer) != "" ||
-		strings.TrimSpace(lineage.ExpiresAt) != "" ||
-		lineage.ChainDepth > 0 ||
-		len(lineage.IssuerChain) > 0 ||
-		len(lineage.Scope) > 0 ||
-		lineage.VerifiedAt > 0
-}
-
-func delegationLineageResponse(lineage model.DelegationLineage) map[string]any {
-	chain := make([]map[string]any, 0, len(lineage.IssuerChain))
-	for _, link := range lineage.IssuerChain {
-		item := map[string]any{}
-		if agentID := strings.TrimSpace(link.AgentID); agentID != "" {
-			item["agent_id"] = agentID
-		}
-		if issuedAt := strings.TrimSpace(link.IssuedAt); issuedAt != "" {
-			item["issued_at"] = issuedAt
-		}
-		if expiresAt := strings.TrimSpace(link.ExpiresAt); expiresAt != "" {
-			item["expires_at"] = expiresAt
-		}
-		if jti := strings.TrimSpace(link.JTI); jti != "" {
-			item["jti"] = jti
-		}
-		if parentJTI := strings.TrimSpace(link.ParentJTI); parentJTI != "" {
-			item["parent_jti"] = parentJTI
-		}
-		if len(item) > 0 {
-			chain = append(chain, item)
-		}
-	}
-
-	resp := map[string]any{
-		"chain_depth":            lineage.ChainDepth,
-		"chain":                  chain,
-		"scope":                  append([]string(nil), lineage.Scope...),
-		"verified_at":            lineage.VerifiedAt,
-		"reverified_at_dispatch": lineage.VerifiedAt > 0,
-	}
-	if jti := strings.TrimSpace(lineage.TokenJTI); jti != "" {
-		resp["jti"] = jti
-	}
-	if audience := strings.TrimSpace(lineage.Audience); audience != "" {
-		resp["audience"] = audience
-	}
-	if rootIssuer := strings.TrimSpace(lineage.RootIssuer); rootIssuer != "" {
-		resp["root_issuer"] = rootIssuer
-	}
-	if parentIssuer := strings.TrimSpace(lineage.ParentIssuer); parentIssuer != "" {
-		resp["parent_issuer"] = parentIssuer
-	}
-	if expiresAt := strings.TrimSpace(lineage.ExpiresAt); expiresAt != "" {
-		resp["expires_at"] = expiresAt
-	}
-	return resp
-}
-
 // --- Handlers ---
 
 func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +76,7 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 			items = append(items, s.workerStatusFromSummary(r.Context(), ws, snap.CapturedAt))
 		}
 		w.Header().Set("Content-Type", "application/json")
-		writeJSON(w, map[string]any{"items": items})
+		writeJSON(w, map[string]any{"items": workerSummariesToHeartbeats(workers)})
 		return
 	}
 	if err != nil {
@@ -157,7 +96,7 @@ func (s *server) handleGetWorkers(w http.ResponseWriter, r *http.Request) {
 		items = append(items, s.workerStatusResponse(r.Context(), hb, seenCopy[hb.GetWorkerId()]))
 	}
 	w.Header().Set("Content-Type", "application/json")
-	writeJSON(w, map[string]any{"items": items})
+	writeJSON(w, map[string]any{"items": out})
 }
 
 func (s *server) activeWorkersSnapshot(now time.Time) []*pb.Heartbeat {
@@ -327,8 +266,52 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Cache the response for subsequent requests
-	s.statusCacheObj.Set(resp)
+	// HA-aware fields (additive — existing consumers ignore unknown fields).
+	resp["instance_id"] = s.instanceID
+	resp["rate_limiter"] = map[string]any{
+		"mode": rateLimiterMode(s.apiRL),
+	}
+
+	// Circuit breaker status from Redis (read-only).
+	var cbRedis redis.UniversalClient
+	if s.jobStore != nil {
+		cbRedis = s.jobStore.Client()
+	}
+	resp["circuit_breakers"] = map[string]any{
+		"input":  readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety"),
+		"output": readCircuitBreakerStatus(r.Context(), cbRedis, "cordum:cb:safety:output"),
+	}
+
+	// Input fail-open counter from Redis (incremented by scheduler).
+	if cbRedis != nil {
+		if val, err := cbRedis.Get(r.Context(), "cordum:scheduler:input_fail_open_total").Int64(); err == nil {
+			resp["input_fail_open_total"] = val
+		}
+	}
+
+	// HA environment variables (read-only, startup-only).
+	haEnv := map[string]any{
+		"redis_pool_size":      os.Getenv("REDIS_POOL_SIZE"),
+		"redis_min_idle_conns": os.Getenv("REDIS_MIN_IDLE_CONNS"),
+		"audit_transport":      os.Getenv("AUDIT_TRANSPORT"),
+	}
+	resp["ha_env"] = haEnv
+
+	// Worker snapshot metadata (writer ID + age).
+	if snap, snapErr := s.snapshotFromRedis(); snapErr == nil && snap != nil {
+		resp["snapshot_meta"] = map[string]any{
+			"writer_id":   snap.WriterID,
+			"captured_at": snap.CapturedAt,
+		}
+	}
+
+	// Replica registry from Redis SCAN.
+	if s.instanceRegistry != nil && s.jobStore != nil {
+		replicas, err := registry.ListAllInstances(r.Context(), s.jobStore.Client())
+		if err == nil {
+			resp["replicas"] = replicas
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Cache", "MISS")
@@ -622,7 +605,6 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	workflowID := ""
 	runID := ""
 	stepID := ""
-	var delegationLineage model.DelegationLineage
 	if s.jobStore != nil {
 		if req, err := s.jobStore.GetJobRequest(r.Context(), id); err == nil && req != nil {
 			if req.WorkflowId != "" {
@@ -638,9 +620,6 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 				runID = req.Labels["run_id"]
 				stepID = req.Labels["step_id"]
 			}
-		}
-		if lineage, err := s.jobStore.GetDelegationLineage(r.Context(), id); err == nil {
-			delegationLineage = lineage
 		}
 	}
 
@@ -755,9 +734,6 @@ func (s *server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if approvalRecord.Decision != "" {
 		resp["approval_decision"] = approvalRecord.Decision
-	}
-	if hasDelegationLineage(delegationLineage) {
-		resp["delegation"] = delegationLineageResponse(delegationLineage)
 	}
 	writeJSON(w, resp)
 }
@@ -1086,14 +1062,14 @@ func (s *server) handlePutArtifact(w http.ResponseWriter, r *http.Request) {
 		Retention:   parseRetention(req.Retention),
 		Labels:      req.Labels,
 	}
-	authCtx := auth.FromRequest(r)
+	auth := auth.FromRequest(r)
 	tenant := strings.TrimSpace(auth.HeaderValue(r, "X-Tenant-ID"))
 	allowCrossTenant := false
-	if authCtx != nil {
-		if authCtx.Tenant != "" {
-			tenant = strings.TrimSpace(authCtx.Tenant)
+	if auth != nil {
+		if auth.Tenant != "" {
+			tenant = strings.TrimSpace(auth.Tenant)
 		}
-		allowCrossTenant = authCtx.AllowCrossTenant
+		allowCrossTenant = auth.AllowCrossTenant
 	}
 	if tenant != "" {
 		if meta.Labels == nil {
@@ -1155,14 +1131,14 @@ func (s *server) handleGetArtifact(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	authCtx := auth.FromRequest(r)
+	auth := auth.FromRequest(r)
 	tenant := strings.TrimSpace(auth.HeaderValue(r, "X-Tenant-ID"))
 	allowCrossTenant := false
-	if authCtx != nil {
-		if authCtx.Tenant != "" {
-			tenant = strings.TrimSpace(authCtx.Tenant)
+	if auth != nil {
+		if auth.Tenant != "" {
+			tenant = strings.TrimSpace(auth.Tenant)
 		}
-		allowCrossTenant = authCtx.AllowCrossTenant
+		allowCrossTenant = auth.AllowCrossTenant
 	}
 	if tenant != "" && !allowCrossTenant {
 		labelTenant := strings.TrimSpace(meta.Labels["tenant_id"])
@@ -1629,68 +1605,25 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		meta.Labels = req.Labels
 	}
 
-	// Bind agent_id to the authenticated principal. Never trust
-	// client-supplied labels.agent_id: a client that can reach this
-	// handler already has a worker credential, and that credential's
-	// agent identity is the only authoritative one. A mismatch between
-	// client-asserted and credential-derived agent_id is an
-	// impersonation attempt and rejects 403.
-	var authDerivedAgentID string
-	if s.agentIdentityStore != nil {
+	// Inject agent_id from linked worker credential if not already set.
+	if req.Labels["agent_id"] == "" && s.agentIdentityStore != nil {
 		if agent, err := s.agentIdentityStore.GetByWorkerID(r.Context(), principalID); err == nil && agent != nil {
-			authDerivedAgentID = agent.ID
-		}
-	}
-	if clientAgentID := req.Labels["agent_id"]; clientAgentID != "" {
-		if authDerivedAgentID == "" {
-			writeErrorJSON(w, http.StatusForbidden, "client-supplied agent_id requires an authenticated worker credential")
-			return
-		}
-		if clientAgentID != authDerivedAgentID {
-			writeErrorJSON(w, http.StatusForbidden, "client-supplied agent_id does not match authenticated principal")
-			return
-		}
-	}
-	if authDerivedAgentID != "" {
-		if req.Labels == nil {
-			req.Labels = map[string]string{}
-		}
-		req.Labels["agent_id"] = authDerivedAgentID
-		if meta.Labels == nil {
-			meta.Labels = map[string]string{}
-		}
-		meta.Labels["agent_id"] = authDerivedAgentID
-	}
-
-	// Gate delegation audience override. When the caller supplies an
-	// explicit delegation_audience_agent_id that differs from the
-	// auth-derived agent_id, they are asking the gateway to verify a
-	// token whose audience is a DIFFERENT agent — effectively
-	// impersonating that agent at delegation-verification time.
-	// Without a permission gate, any caller could widen their own
-	// identity by pointing the audience at a more-privileged agent.
-	// Require PermDelegationImpersonate (or admin) for this path and
-	// audit every denial.
-	audienceOverride := strings.TrimSpace(req.DelegationAudienceAgentID)
-	if audienceOverride != "" && audienceOverride != authDerivedAgentID {
-		if !s.requirePermissionOrRole(w, r, auth.PermDelegationImpersonate, "admin") {
-			actorID, role := "anonymous", "none"
-			if ac := auth.FromRequest(r); ac != nil {
-				actorID, role = ac.PrincipalID, ac.Role
+			if req.Labels == nil {
+				req.Labels = map[string]string{}
 			}
-			s.appendAuditEntryNamed(r.Context(), "submit_delegation_impersonation_denied", "job", "", req.Topic, actorID, role,
-				"delegation audience override denied: caller agent_id "+authDerivedAgentID+" requested audience "+audienceOverride+" without "+auth.PermDelegationImpersonate)
-			return
+			req.Labels["agent_id"] = agent.ID
+			if meta.Labels == nil {
+				meta.Labels = map[string]string{}
+			}
+			meta.Labels["agent_id"] = agent.ID
 		}
 	}
 
-	if req.Labels, err = s.applySubmitDelegationWithAudience(r.Context(), orgID, req.Labels["agent_id"], req.DelegationToken, req.DelegationAudienceAgentID, req.Labels, meta); err != nil {
-		s.emitSubmitDelegationRejectedAudit(r, jobID, req.Topic, req.Labels["agent_id"], err)
+	if req.Labels, err = s.applySubmitDelegation(r.Context(), orgID, req.Labels["agent_id"], req.DelegationToken, req.Labels, meta); err != nil {
 		status, message := submitDelegationErrorStatus(err)
-		writeDelegationSubmitErrorJSON(w, status, message)
+		writeErrorJSON(w, status, message)
 		return
 	}
-	delegationExpectedAudience := submitDelegationExpectedAudience(req.Labels["agent_id"], req.DelegationAudienceAgentID)
 
 	// Inject job content into labels so the safety kernel's tag deriver can
 	// inspect the payload for server-side risk tag derivation.
@@ -1731,7 +1664,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_denied", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy denied: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+		s.appendAuditEntryWithAgent(r.Context(), "submit_denied", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy denied: "+reason, submitAgentID, submitAgentName, submitAgentRiskTier)
 		writeErrorJSON(w, http.StatusForbidden, reason)
 		return
 	}
@@ -1740,7 +1673,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		if policyResult.Reason != "" {
 			reason = policyResult.Reason
 		}
-		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_throttled", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy throttled: "+reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+		s.appendAuditEntryWithAgent(r.Context(), "submit_throttled", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy throttled: "+reason, submitAgentID, submitAgentName, submitAgentRiskTier)
 		w.Header().Set("Retry-After", "30")
 		writeErrorJSON(w, http.StatusTooManyRequests, reason)
 		return
@@ -1753,6 +1686,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 	if policyResult.ApprovalRequired {
 		slog.Info("submit-time policy requires approval",
 			"job_id", jobID, "topic", req.Topic, "reason", policyResult.Reason)
+		s.appendAuditEntryWithAgent(r.Context(), "submit_approval_required", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy requires approval: "+policyResult.Reason, submitAgentID, submitAgentName, submitAgentRiskTier)
 
 		// Reserve idempotency key to prevent duplicate approval jobs.
 		if key != "" && s.jobStore != nil {
@@ -1847,12 +1781,6 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			if err := s.jobStore.SetJobRequest(r.Context(), jobReq); err != nil {
 				slog.Error("failed to persist approval job request", "job_id", jobID, "error", err)
 			}
-			if err := s.persistSubmitDelegationToken(r.Context(), jobID, req.DelegationToken, delegationExpectedAudience); err != nil {
-				slog.Error("failed to persist approval delegation token", "job_id", jobID, "error", err)
-				_ = s.jobStore.SetState(r.Context(), jobID, model.JobStateFailed)
-				writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist delegation metadata")
-				return
-			}
 			if identity := submitterIdentity(r); identity != "" {
 				if err := s.jobStore.SetSubmittedBy(r.Context(), jobID, identity); err != nil {
 					slog.Error("failed to persist submitter identity for approval", "job_id", jobID, "error", err)
@@ -1879,7 +1807,6 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			s.syncApprovalQueueDepth(r.Context())
 		}
-		s.appendSubmitSafetyDecisionAudit(r.Context(), "submit_approval_required", jobID, req.Topic, policyActorID(r), policyRole(r), "submit-time policy requires approval: "+policyResult.Reason, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
 
 		w.Header().Set("X-Trace-Id", traceID)
 		w.Header().Set("Content-Type", "application/json")
@@ -2014,12 +1941,6 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist job metadata")
 			return
 		}
-		if err := s.persistSubmitDelegationToken(r.Context(), jobID, req.DelegationToken, delegationExpectedAudience); err != nil {
-			slog.Error("failed to persist delegation token", "job_id", jobID, "error", err)
-			_ = s.jobStore.SetState(r.Context(), jobID, model.JobStateFailed)
-			writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist delegation metadata")
-			return
-		}
 		if identity := submitterIdentity(r); identity != "" {
 			if err := s.jobStore.SetSubmittedBy(r.Context(), jobID, identity); err != nil {
 				slog.Error("failed to persist submitter identity", "job_id", jobID, "error", err)
@@ -2052,7 +1973,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		"topic", req.Topic,
 	)
 
-	s.appendSubmitSafetyDecisionAudit(r.Context(), "submit", jobID, req.Topic, policyActorID(r), policyRole(r), "submit job "+jobID, policyResult, req.Labels, submitAgentID, submitAgentName, submitAgentRiskTier)
+	s.appendAuditEntryNamed(r.Context(), "submit", "job", jobID, req.Topic, policyActorID(r), policyRole(r), "submit job "+jobID)
 	w.Header().Set("X-Trace-Id", traceID)
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, map[string]string{

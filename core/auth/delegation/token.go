@@ -401,7 +401,7 @@ func numericDateTime(value *jwt.NumericDate) time.Time {
 	if value == nil {
 		return time.Time{}
 	}
-	return value.UTC()
+	return value.Time.UTC()
 }
 
 func normalizeStringSet(values []string) []string {

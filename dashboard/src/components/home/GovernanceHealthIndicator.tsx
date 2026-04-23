@@ -8,8 +8,16 @@
 import { motion } from "framer-motion";
 import { ShieldCheck, ShieldAlert, AlertTriangle } from "lucide-react";
 import { cn } from "../../lib/utils";
-import type { GovernanceHealth } from "../../api/types";
+import type { GovernanceGrade, GovernanceHealth } from "../../api/types";
 import { useGovernanceHealth } from "../../hooks/useGovernanceHealth";
+
+const GRADE_BAND: Record<GovernanceGrade, "green" | "amber" | "red"> = {
+  A: "green",
+  B: "green",
+  C: "amber",
+  D: "amber",
+  F: "red",
+};
 
 const BAND_CLASSES: Record<"green" | "amber" | "red", string> = {
   green: "text-emerald-500 border-emerald-500/30 bg-emerald-500/5",

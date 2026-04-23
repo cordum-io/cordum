@@ -157,18 +157,6 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 			return packRecord{}, nil, &packInstallError{Status: http.StatusBadRequest, Err: err}
 		}
 	}
-
-	// Zero-trust rail: re-verify the pack signature server-side even
-	// when cordumctl verified locally. The client is untrusted.
-	verifyResult, verifyErr := verifyPackInstallBundle(ctx, s.redisClient(), bundleDir, manifest.Metadata.ID)
-	if verifyErr != nil {
-		s.appendAuditEntryNamed(ctx, PackVerificationEventRejected, "pack", manifest.Metadata.ID, manifest.Metadata.Title, opts.InstalledBy, "", verifyErr.Error())
-		return packRecord{}, nil, &packInstallError{
-			Status: http.StatusBadRequest,
-			Err:    fmt.Errorf("%s: %s", verifyErr.Code, verifyErr.Message),
-		}
-	}
-	s.appendAuditEntryNamed(ctx, PackVerificationEventVerified, "pack", manifest.Metadata.ID, manifest.Metadata.Title, opts.InstalledBy, "", fmt.Sprintf("signed=%t kid=%s cordum=%t", verifyResult.Signed, verifyResult.KID, verifyResult.HasCordumCounterSig))
 	owner := strings.TrimSpace(opts.Owner)
 	if owner == "" {
 		owner = packLockOwner(nil)
@@ -302,8 +290,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 			Config: appliedConfig,
 			Policy: appliedPolicy,
 		},
-		Tests:        manifest.Tests,
-		Verification: verificationFromServerResult(verifyResult),
+		Tests: manifest.Tests,
 	}
 	registeredTopicNames := []string{}
 	var packCredential *packWorkerCredentialResponse
@@ -339,7 +326,6 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 	}
 	if len(registeredTopicNames) > 0 {
 		s.publishConfigChanged("system", "topics")
-		s.emitTopicRegisteredAudit(ctx, manifest.Metadata.ID, registeredTopicNames, opts.InstalledBy)
 	}
 	if packCredential != nil {
 		s.publishConfigChanged("system", "workers")
@@ -435,7 +421,6 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(names) > 0 {
 			s.publishConfigChanged("system", "topics")
-			s.emitTopicUnregisteredAudit(r.Context(), packID, names, packOpActor(r))
 		}
 	}
 	if s.workerCredentialStore != nil {
@@ -481,7 +466,6 @@ func (s *server) packTopicRegistrations(ctx context.Context, manifest *packManif
 			Requires:       topic.Requires,
 			RiskTags:       topic.RiskTags,
 			Status:         status,
-			RiskTagDeriver: strings.TrimSpace(topic.RiskTagDeriver),
 		})
 	}
 	return out, nil
@@ -1816,14 +1800,7 @@ func marketplaceHTTPTimeout() time.Duration {
 
 func marketplaceHTTPClient(allowedHosts map[string]struct{}, initialHost string) *http.Client {
 	initialHost = strings.ToLower(strings.TrimSpace(initialHost))
-	// DefaultTransport is *http.Transport in stdlib; if tests or a future
-	// runtime injected a different transport, fall back to a fresh one
-	// rather than panic on the type assertion.
-	base, ok := http.DefaultTransport.(*http.Transport)
-	if !ok {
-		base = &http.Transport{}
-	}
-	transport := base.Clone()
+	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.DialContext = marketplaceDialContext(allowedHosts)
 	return &http.Client{
 		Timeout:   marketplaceHTTPTimeout(),

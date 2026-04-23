@@ -123,46 +123,6 @@ function buildParams(filters: JobFilters): string {
   return qs ? `?${qs}` : "";
 }
 
-function filterJobsForClient(items: Job[], filters: JobFilters): Job[] {
-  let filtered = items;
-  if (filters.state && filters.state.length > 0) {
-    filtered = filtered.filter((job) => filters.state?.includes(job.status));
-  }
-  if (filters.decision && filters.decision.length > 0) {
-    filtered = filtered.filter((job) =>
-      job.safetyDecision && filters.decision?.includes(job.safetyDecision.type),
-    );
-  }
-  return filtered;
-}
-
-function applyOptimisticCancelToList(
-  old: ApiResponse<Job[]> | undefined,
-  id: string,
-): ApiResponse<Job[]> | undefined {
-  if (!old?.items) return old;
-  return {
-    ...old,
-    items: old.items.map((job) =>
-      job.id === id ? { ...job, status: "cancelled" as JobStatus } : job,
-    ),
-  };
-}
-
-function applyOptimisticCancelToDetail(
-  old: Job | undefined,
-): Job | undefined {
-  return old ? { ...old, status: "cancelled" as JobStatus } : old;
-}
-
-function validateRemediateJobId(jobId: string): string {
-  const trimmedJobID = jobId.trim();
-  if (!trimmedJobID) {
-    throw new Error("job id is required");
-  }
-  return trimmedJobID;
-}
-
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
@@ -174,8 +134,17 @@ export function useJobs(filters: JobFilters = {}) {
       const res = await get<{ items: BackendJobRecord[]; next_cursor?: number | null }>(
         `/jobs${buildParams(filters)}`,
       );
-      const mapped = (res.items ?? []).map(mapJobRecord);
-      const items = filterJobsForClient(mapped, filters);
+      let items = (res.items ?? []).map(mapJobRecord);
+      // Defensive client-side filter: backend receives repeated state params but
+      // may not support multi-status filtering, so we re-filter here as a fallback.
+      if (filters.state && filters.state.length > 0) {
+        items = items.filter((j) => filters.state?.includes(j.status));
+      }
+      if (filters.decision && filters.decision.length > 0) {
+        items = items.filter((j) =>
+          j.safetyDecision && filters.decision?.includes(j.safetyDecision.type),
+        );
+      }
       return {
         items,
         next_cursor: res.next_cursor ?? null,
@@ -261,10 +230,13 @@ export function useCancelJob() {
       const previousDetail = queryClient.getQueryData<Job>(queryKeys.jobs.detail(id));
       queryClient.setQueriesData<ApiResponse<Job[]>>(
         { queryKey: queryKeys.jobs.all },
-        (old) => applyOptimisticCancelToList(old, id),
+        (old) => {
+          if (!old?.items) return old;
+          return { ...old, items: old.items.map((j) => j.id === id ? { ...j, status: "cancelled" as JobStatus } : j) };
+        },
       );
       queryClient.setQueryData<Job>(queryKeys.jobs.detail(id), (old) =>
-        applyOptimisticCancelToDetail(old),
+        old ? { ...old, status: "cancelled" as JobStatus } : old,
       );
       return { previousList, previousDetail, id };
     },
@@ -323,7 +295,10 @@ export function useRemediateJob() {
     { jobId: string; input: RemediateJobInput }
   >({
     mutationFn: ({ jobId, input }) => {
-      const trimmedJobID = validateRemediateJobId(jobId);
+      const trimmedJobID = jobId.trim();
+      if (!trimmedJobID) {
+        throw new Error("job id is required");
+      }
       logger.info("jobs", "Remediating job", {
         jobId: trimmedJobID,
       });
@@ -348,8 +323,4 @@ export const __jobsInternal = {
   stateToBackend,
   rangeToMicros,
   buildParams,
-  filterJobsForClient,
-  applyOptimisticCancelToList,
-  applyOptimisticCancelToDetail,
-  validateRemediateJobId,
 };

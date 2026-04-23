@@ -248,16 +248,11 @@ func (t *HTTPTransport) HandleMessage(w http.ResponseWriter, r *http.Request) {
 		sessionID = "direct-" + uuid.NewString()
 	}
 	msg.sessionID = sessionID
-	// Carry request-scoped agent identity through dispatcher.
+	// Carry the request-scoped agent identity through the dispatcher so
+	// tools/list and tools/call see the caller's scope. Set by the gateway
+	// middleware via mcp.ContextWithIdentity; nil when the request did
+	// not carry an X-Agent-Id header (handled fail-closed by the filter).
 	msg.identity = IdentityFromContext(r.Context())
-	// Carry the full request ctx so the dispatcher also sees tenant
-	// (mcp.WithTenant), MCPCallMetadata (approval gate key), approval
-	// id, and any future request-scoped values the gateway middleware
-	// installs. Without this the dispatcher previously rebuilt ctx
-	// from context.Background() and lost everything except identity,
-	// which made approval-gated HTTP calls misfire and the audit event
-	// drop tenant_id/approval_status.
-	msg.requestCtx = r.Context()
 
 	var responseCh chan *JSONRPCMessage
 	if messageHasID(msg.ID) {

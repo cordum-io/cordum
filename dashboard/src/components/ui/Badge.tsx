@@ -1,29 +1,42 @@
 import type { HTMLAttributes } from "react";
 import { cn } from "../../lib/utils";
 
-const variants: Record<string, string> = {
-  default: "bg-surface2 text-ink",
-  success: "bg-[color:rgba(31,122,87,0.12)] text-success",
-  warning: "bg-[color:rgba(197,138,28,0.18)] text-warning",
-  danger: "bg-[color:rgba(184,58,58,0.14)] text-danger",
-  info: "bg-[color:rgba(15,127,122,0.12)] text-accent",
-  enterprise: "bg-gradient-to-r from-primary/10 to-primary/5 text-primary border border-primary/20",
-  governance: "bg-[color:rgba(124,58,237,0.14)] text-[var(--color-governance)]",
+export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
+  variant?: "default" | "success" | "warning" | "danger" | "destructive" | "info" | "enterprise";
+  density?: "default" | "compact";
+  icon?: React.ReactNode;
+}
+
+const variantStyles: Record<NonNullable<BadgeProps["variant"]>, string> = {
+  default: "border-border bg-surface-2 text-foreground",
+  success: "border-status-success-border bg-status-success-bg text-success",
+  warning: "border-status-warning-border bg-status-warning-bg text-warning",
+  danger: "border-status-danger-border bg-status-danger-bg text-danger",
+  destructive: "border-status-danger-border bg-status-danger-bg text-danger",
+  info: "border-status-info-border bg-status-info-bg text-info",
+  enterprise: "border-status-info-border bg-status-info-bg text-info",
 };
 
 export function Badge({
   className,
   variant = "default",
+  density = "default",
+  icon,
+  children,
   ...props
-}: HTMLAttributes<HTMLSpanElement> & { variant?: keyof typeof variants }) {
+}: BadgeProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold transition-colors duration-200",
-        variants[variant],
+        "inline-flex items-center gap-1.5 border font-mono font-semibold uppercase transition-colors duration-micro",
+        density === "compact" ? "rounded-sm px-1.5 py-0 text-[10px] tracking-[0.1em]" : "rounded-sm px-2 py-0.5 text-[10px] tracking-[0.12em]",
+        variantStyles[variant],
         className
       )}
       {...props}
-    />
+    >
+      {icon && <span className="h-3 w-3 shrink-0">{icon}</span>}
+      {children}
+    </span>
   );
 }

@@ -12,15 +12,15 @@ compatibility:
   minCoreVersion: 0.6.0
 
 topics:
-  - name: job.demo-quickstart.greet
+  - name: job.demo.greet
     capability: demo-quickstart.greet
     riskTags:
       - safe
-  - name: job.demo-quickstart.delete-all
+  - name: job.demo.delete-all
     capability: demo-quickstart.delete-all
     riskTags:
       - destructive
-  - name: job.demo-quickstart.admin
+  - name: job.demo.admin
     capability: demo-quickstart.admin
     riskTags:
       - admin
@@ -31,12 +31,6 @@ resources:
       path: workflows/hello.yaml
 
 overlays:
-  config:
-    - name: pools
-      scope: system
-      key: pools
-      strategy: json_merge_patch
-      path: overlays/pools.patch.yaml
   policy:
     - name: demo-quickstart
       strategy: bundle_fragment

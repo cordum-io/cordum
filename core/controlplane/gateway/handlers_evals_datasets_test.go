@@ -23,7 +23,11 @@ func bindEvalDatasetRoutes(t *testing.T, s *server) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/evals/datasets", s.handleCreateEvalDataset)
 	mux.HandleFunc("GET /api/v1/evals/datasets", s.handleListEvalDatasets)
-	mux.HandleFunc("/api/v1/evals/datasets/", s.handleEvalDatasetSubroutes)
+	mux.HandleFunc("GET /api/v1/evals/datasets/by-name/{name}", s.handleListEvalDatasetVersions)
+	mux.HandleFunc("GET /api/v1/evals/datasets/by-name/{name}/versions/{version}", s.handleGetEvalDatasetByNameVersion)
+	mux.HandleFunc("GET /api/v1/evals/datasets/{id}", s.handleGetEvalDataset)
+	mux.HandleFunc("PUT /api/v1/evals/datasets/{id}", s.handleUpdateEvalDataset)
+	mux.HandleFunc("DELETE /api/v1/evals/datasets/{id}", s.handleDeleteEvalDataset)
 	return mux
 }
 
@@ -512,31 +516,6 @@ func TestEvalDatasetListByNameSortsDesc(t *testing.T) {
 	if resp.Items[0].Version != 3 || resp.Items[1].Version != 2 || resp.Items[2].Version != 1 {
 		t.Fatalf("expected desc order 3,2,1, got %d,%d,%d",
 			resp.Items[0].Version, resp.Items[1].Version, resp.Items[2].Version)
-	}
-}
-
-func TestEvalDatasetSubroutesPreferByNameOverRunHistory(t *testing.T) {
-	s, _, _ := newTestGateway(t)
-	mux := bindEvalDatasetRoutes(t, s)
-
-	if rr := evalPostCreate(t, mux, evalCreateBody("runs", 1, 1), "admin"); rr.Code != http.StatusCreated {
-		t.Fatalf("seed runs dataset: %d %s", rr.Code, rr.Body.String())
-	}
-
-	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/evals/datasets/by-name/runs", nil),
-		evalAuthCtx(testEvalTenant, "viewer"))
-	rr := httptest.NewRecorder()
-	mux.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("by-name runs: %d %s", rr.Code, rr.Body.String())
-	}
-
-	var resp evalDatasetVersionsResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(resp.Items) != 1 || resp.Items[0].Name != "runs" || resp.Items[0].Version != 1 {
-		t.Fatalf("unexpected versions response: %+v", resp.Items)
 	}
 }
 

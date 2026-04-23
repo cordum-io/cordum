@@ -249,11 +249,8 @@ export default function VelocityRulesPage({
   );
   const enabledRules = rules.filter((rule) => rule.enabled).length;
   const limitReached = limit !== UNLIMITED_LIMIT && limit > 0 && rules.length >= limit;
-  const velocityEntitled = license.data?.entitlements.velocityRules === true;
   const canCreate =
-    velocityEntitled &&
-    policyAccess.canEdit &&
-    (limit === UNLIMITED_LIMIT || (limit > 0 && rules.length < limit));
+    policyAccess.canEdit && (limit === UNLIMITED_LIMIT || (limit > 0 && rules.length < limit));
 
   useEffect(() => {
     if (!editorOpen) {

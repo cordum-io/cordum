@@ -33,6 +33,12 @@ def process(lines: list[str]) -> tuple[list[str], int, int]:
     patched_413 = 0
     in_paths = False
 
+    # Rolling deprecated flag — set when we cross a `deprecated: true`
+    # line at operation indent and cleared at the next operation
+    # boundary (any line at op-indent that isn't tags/responses/etc).
+    deprecated_window = False
+    deprecated_op_indent = -1
+
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
@@ -47,39 +53,30 @@ def process(lines: list[str]) -> tuple[list[str], int, int]:
             i += 1
             continue
 
+        # Track deprecated: true at any indent inside an op. The
+        # indent of the keyword tells us which op block we're in.
+        if stripped == "deprecated: true":
+            deprecated_window = True
+            deprecated_op_indent = len(line) - len(line.lstrip(" "))
+            out.append(line)
+            i += 1
+            continue
+
+        # Reset the deprecated window when we see a `responses:` at a
+        # SHALLOWER indent than the deprecated marker (i.e. a sibling
+        # of the deprecated key — same op) — actually we want to stay
+        # deprecated for the same op. Reset only when we see the next
+        # operation header (shallower indent than deprecated_op_indent).
+        if deprecated_window and stripped:
+            cur_indent = len(line) - len(line.lstrip(" "))
+            if cur_indent < deprecated_op_indent:
+                deprecated_window = False
+                deprecated_op_indent = -1
+
         if stripped == "responses:":
             base_indent = len(line) - len(line.lstrip(" "))
-            # Detect actual inner indent from the first non-blank child
-            # so the patcher tolerates non-2-space specs.
             inner_indent = base_indent + 2
             status_indent = inner_indent + 2
-            for probe in lines[i + 1:]:
-                if probe.strip() == "":
-                    continue
-                probe_indent = len(probe) - len(probe.lstrip(" "))
-                if probe_indent > base_indent:
-                    inner_indent = probe_indent
-                    status_indent = inner_indent + (inner_indent - base_indent)
-                break
-            # Deprecation window: scan the already-emitted lines for the
-            # CURRENT operation, regardless of whether the deprecated
-            # flag appeared before or after other op fields. Walk back
-            # while indent > base_indent (still inside the op body);
-            # stop on the first line at or shallower than base_indent
-            # (that's the parent op key or a sibling op's end). If any
-            # line at base_indent level says 'deprecated: true', skip.
-            deprecated_window = False
-            for back in range(len(out) - 1, -1, -1):
-                bline = out[back]
-                bstripped = bline.strip()
-                if not bstripped:
-                    continue
-                bindent = len(bline) - len(bline.lstrip(" "))
-                if bindent < base_indent:
-                    break
-                if bindent == base_indent and bstripped == "deprecated: true":
-                    deprecated_window = True
-                    break
             out.append(line)
             i += 1
 

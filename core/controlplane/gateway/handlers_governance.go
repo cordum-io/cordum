@@ -46,9 +46,7 @@ type governanceDecisionsResponse struct {
 
 func (s *server) handleListGovernanceDecisions(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	defer func() {
-		governanceDecisionsHandlerLatency.WithLabelValues("governance.decisions").Observe(time.Since(start).Seconds())
-	}()
+	defer governanceDecisionsHandlerLatency.WithLabelValues("governance.decisions").Observe(time.Since(start).Seconds())
 
 	if s.decisionLogStore == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "decision log store unavailable")

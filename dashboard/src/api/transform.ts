@@ -1,21 +1,13 @@
 import YAML from "yaml";
-import { generateUUID } from "../lib/uuid";
 import { logger } from "../lib/logger";
-import { normalizeRunStatusValue } from "../lib/runVisibility";
 import type {
   Job,
   JobStatus,
-  ApprovalActionability,
   OutputDecision,
   OutputFinding,
   OutputSafetyRecord,
   SafetyDecision,
   Approval,
-  ApprovalStatus,
-  ApprovalContextStatus,
-  ApprovalDecisionSummary,
-  ApprovalDecisionSummaryCompleteness,
-  ApprovalDecisionSummarySource,
   UrgencyLevel,
   AuditEntry,
   AuditCategory,
@@ -25,33 +17,14 @@ import type {
   Workflow,
   WorkflowRun,
   WorkflowStep,
-  RunStatus,
   PolicyBundle,
   Worker,
-  Pool,
   DLQEntry,
   Pack,
   MarketplacePack,
   MarketplaceCatalog,
   PolicyRule,
-  PolicyRuleMatch,
-  ApprovalContext,
-  ApprovalPolicySnapshot,
-  GovernanceDecision,
-  GovernanceVerdict,
-  EvalDataset,
-  EvalEntry,
-  EvalRun,
-  EvalRunStatus,
-  EvalRunSummary,
-  EvalEntryResult,
-  EvalDriftDirection,
-  SafetyDecisionType,
-  PolicyConstraints,
-  PolicyBundleSignature,
-  DelegationChainLink,
-  DelegationListResponse,
-  DelegationView,
+  FrameworkTag,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -60,7 +33,6 @@ import type {
 
 export interface BackendJobRecord {
   id: string;
-  worker_id?: string;
   trace_id?: string;
   updated_at?: number;
   state?: string;
@@ -125,10 +97,6 @@ export interface BackendJobDetail extends BackendJobRecord {
   approval_at?: number;
   approval_reason?: string;
   approval_note?: string;
-  approval_status?: ApprovalStatus;
-  approval_actionability?: ApprovalActionability;
-  approval_revision?: number;
-  approval_decision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
 }
 
 export interface BackendWorkflowStep {
@@ -176,8 +144,6 @@ export interface BackendWorkflowStep {
   delay_sec?: number;
   delay_until?: string;
   route_labels?: Record<string, string>;
-  on_error?: string;
-  config?: Record<string, unknown>;
   status?: string;
   output?: Record<string, unknown>;
   error?: string;
@@ -236,40 +202,6 @@ export interface BackendWorkflowRun {
   }>;
 }
 
-export interface BackendApprovalDecisionSummary {
-  source?: ApprovalDecisionSummarySource;
-  completeness?: ApprovalDecisionSummaryCompleteness;
-  context_status?: ApprovalContextStatus;
-  title?: string;
-  subject?: string;
-  why?: string;
-  next_effect?: string;
-  amount?: number;
-  currency?: string;
-  vendor?: string;
-  item_count?: number;
-  items_preview?: string[];
-  escalation_reason?: string;
-  missing_fields?: string[];
-}
-
-export interface BackendGovernanceDecision {
-  job_id?: string;
-  run_id?: string;
-  step_id?: string;
-  topic?: string;
-  matched_rule?: string;
-  rule_name?: string;
-  verdict?: string;
-  reason?: string;
-  constraints?: Record<string, unknown>;
-  approval_status?: ApprovalStatus;
-  approval_decision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
-  agent_id?: string;
-  policy_version?: string;
-  timestamp?: string;
-}
-
 export interface BackendApprovalItem {
   job?: BackendJobRecord;
   decision?: string;
@@ -283,47 +215,12 @@ export interface BackendApprovalItem {
   resolved_at?: number;
   resolved_by?: string;
   resolved_comment?: string;
-  approval_status?: ApprovalStatus;
-  approval_actionability?: ApprovalActionability;
-  approval_revision?: number;
-  approval_decision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
   constraints?: Record<string, unknown>;
-  job_input?: Record<string, unknown>;
-  decision_summary?: BackendApprovalDecisionSummary;
   workflow_id?: string;
-  workflow_name?: string;
   workflow_run_id?: string;
-  workflow_step_id?: string;
   step_index?: number;
   step_name?: string;
   total_steps?: number;
-  // Enriched context fields for decision-grade UX.
-  blast_radius?: {
-    systems?: string[];
-    namespaces?: string[];
-    resources?: string[];
-    scope_description?: string;
-  };
-  prior_approvals?: Array<{
-    job_id?: string;
-    topic?: string;
-    tenant?: string;
-    decision?: string;
-    resolved_by?: string;
-    resolved_at?: number;
-    was_approved?: boolean;
-  }>;
-  rollback_hint?: string;
-  policy_snapshot_summary?: {
-    rule_count?: number;
-    matched_rule?: {
-      id?: string;
-      description?: string;
-      decision?: string;
-      constraints_summary?: string;
-    };
-    policy_version?: string;
-  };
 }
 
 export interface BackendDLQEntry {
@@ -464,8 +361,6 @@ export interface BackendHeartbeat {
   memory_load?: number;
   progress_pct?: number;
   last_memo?: string;
-  last_heartbeat?: string;
-  status?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -478,20 +373,19 @@ function logInvalidDateInput(fn: string, raw: unknown): void {
   }
 }
 
-export function microsToISO(raw: unknown): string | null {
+export function microsToISO(raw: unknown): string {
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
     logInvalidDateInput("microsToISO", raw);
-    return null;
+    return "";
   }
   const ms = Math.floor(raw / 1000);
   const d = new Date(ms);
-  return isNaN(d.getTime()) ? null : d.toISOString();
+  return isNaN(d.getTime()) ? "" : d.toISOString();
 }
 
 export function normalizeJobStatus(raw?: string): JobStatus {
   switch ((raw || "").toUpperCase()) {
     case "PENDING":
-    case "":
       return "pending";
     case "SCHEDULED":
       return "scheduled";
@@ -516,9 +410,6 @@ export function normalizeJobStatus(raw?: string): JobStatus {
     case "OUTPUT_QUARANTINED":
       return "output_quarantined";
     default:
-      // Unknown backend states should not silently become "pending".
-      // Log and return "pending" but with visibility.
-      logger.warn("transform", "Unknown job status from backend, defaulting to pending", { raw });
       return "pending";
   }
 }
@@ -547,68 +438,6 @@ export function normalizeDecisionType(raw?: string): SafetyDecision["type"] {
   }
 }
 
-export function normalizeGovernanceVerdict(raw?: string): GovernanceVerdict {
-  switch ((raw || "").trim().toUpperCase()) {
-    case "ALLOW":
-      return "allow";
-    case "CONSTRAIN":
-    case "CONSTRAINED":
-    case "ALLOW_WITH_CONSTRAINTS":
-      return "constrain";
-    case "DENY":
-      return "deny";
-    case "REQUIRE_APPROVAL":
-    case "REQUIRE_HUMAN":
-      return "require_approval";
-    case "THROTTLE":
-      return "throttle";
-    default:
-      if (raw) {
-        console.warn(
-          `[transform] Unknown governance verdict "${raw}", defaulting to deny`,
-        );
-      }
-      return "deny";
-  }
-}
-
-function normalizeIsoTimestamp(raw: unknown): string | null {
-  if (typeof raw !== "string" || !raw.trim()) {
-    return null;
-  }
-  const parsed = new Date(raw);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
-}
-
-export function mapGovernanceDecision(
-  decision: BackendGovernanceDecision,
-): GovernanceDecision | null {
-  const timestamp = normalizeIsoTimestamp(decision.timestamp);
-  if (!timestamp) {
-    return null;
-  }
-  const constraints =
-    decision.constraints && typeof decision.constraints === "object"
-      ? (decision.constraints as GovernanceDecision["constraints"])
-      : undefined;
-  return {
-    jobId: decision.job_id ?? "",
-    topic: decision.topic ?? "",
-    matchedRule: decision.matched_rule ?? "",
-    verdict: normalizeGovernanceVerdict(decision.verdict),
-    reason: decision.reason ?? "",
-    agentId: decision.agent_id ?? "",
-    timestamp,
-    ...(decision.run_id ? { runId: decision.run_id } : {}),
-    ...(decision.step_id ? { stepId: decision.step_id } : {}),
-    ...(decision.rule_name ? { ruleName: decision.rule_name } : {}),
-    ...(constraints ? { constraints } : {}),
-    ...(decision.approval_status ? { approvalStatus: decision.approval_status } : {}),
-    ...(decision.approval_decision ? { approvalDecision: decision.approval_decision } : {}),
-    ...(decision.policy_version ? { policyVersion: decision.policy_version } : {}),
-  };
-}
-
 export function mapSafetyDecision(
   decision?: string,
   reason?: string,
@@ -622,7 +451,7 @@ export function mapSafetyDecision(
   };
 }
 
-export function normalizeOutputDecision(raw?: string): OutputDecision {
+function normalizeOutputDecision(raw?: string): OutputDecision {
   switch ((raw || "").toUpperCase()) {
     case "ALLOW":
       return "ALLOW";
@@ -633,25 +462,20 @@ export function normalizeOutputDecision(raw?: string): OutputDecision {
     case "DENY":
       return "QUARANTINE";
     default:
-      // Fail-closed: unknown output decisions must NOT default to ALLOW.
-      // An unrecognized decision from the backend should quarantine for safety.
-      if (raw) {
-        logger.warn("transform", "Unknown output decision, defaulting to QUARANTINE", { raw });
-      }
-      return raw ? "QUARANTINE" : "ALLOW";
+      return "ALLOW";
   }
 }
 
 function mapOutputFinding(raw: BackendOutputFinding): OutputFinding {
   return {
-    type: raw.type ?? "",
-    severity: raw.severity ?? "",
-    detail: raw.detail ?? "",
-    scanner: raw.scanner ?? undefined,
-    confidence: raw.confidence ?? undefined,
-    matched_pattern: raw.matched_pattern ?? undefined,
-    offset: raw.offset ?? undefined,
-    length: raw.length ?? undefined,
+    type: raw.type || "",
+    severity: raw.severity || "",
+    detail: raw.detail || "",
+    scanner: raw.scanner,
+    confidence: raw.confidence,
+    matched_pattern: raw.matched_pattern,
+    offset: raw.offset,
+    length: raw.length,
   };
 }
 
@@ -678,7 +502,7 @@ export function mapOutputSafetyRecord(
 export function mapJobRecord(record: BackendJobRecord): Job {
   let id = record.id;
   if (!id) {
-    id = generateUUID();
+    id = crypto.randomUUID();
     logger.warn("transform", "Job record with empty ID, assigned placeholder", { placeholderId: id });
   }
   const updatedAt = microsToISO(record.updated_at);
@@ -696,7 +520,6 @@ export function mapJobRecord(record: BackendJobRecord): Job {
   );
   return {
     id,
-    workerId: record.worker_id,
     type: record.topic || "",
     topic: record.topic || "",
     status: normalizeJobStatus(record.state),
@@ -763,16 +586,11 @@ export function mapJobDetail(detail: BackendJobDetail): Job {
     approvalAt: detail.approval_at,
     approvalReason: detail.approval_reason,
     approvalNote: detail.approval_note,
-    approvalStatus: detail.approval_status,
-    approvalActionability: detail.approval_actionability,
-    approvalRevision: detail.approval_revision,
-    approvalDecision: detail.approval_decision,
   };
 }
 
 const WORKFLOW_NODE_TYPES = new Set([
   "job",
-  "worker",
   "agent-task",
   "pack-action",
   "tool-call",
@@ -794,26 +612,227 @@ const WORKFLOW_NODE_TYPES = new Set([
 function normalizeWorkflowNodeType(
   raw?: string,
   meta?: Record<string, unknown>,
-): string {
+): { uiType: string; backendType?: string } {
   const trimmed = (raw || "").trim().toLowerCase();
-  if (!trimmed) return "agent-task";
-  if (trimmed === "subworkflow") return "sub-workflow";
-  if (WORKFLOW_NODE_TYPES.has(trimmed) && trimmed !== "job" && trimmed !== "worker") return trimmed;
-  // Backend "job" or "worker" → differentiate into agent-task / pack-action / tool-call
-  if ((trimmed === "job" || trimmed === "worker") && meta) {
-    if (typeof meta.pack_id === "string" && meta.pack_id) return "pack-action";
-    if (typeof meta.capability === "string" && meta.capability && !meta.prompt) return "tool-call";
+  if (!trimmed) {
+    return { uiType: "agent-task" };
   }
-  return "agent-task";
+  if (trimmed === "subworkflow") {
+    return { uiType: "sub-workflow" };
+  }
+  if (WORKFLOW_NODE_TYPES.has(trimmed) && trimmed !== "job") {
+    return { uiType: trimmed };
+  }
+  // Backend "job" → differentiate into agent-task / pack-action / tool-call
+  if (trimmed === "job" && meta) {
+    if (typeof meta.pack_id === "string" && meta.pack_id) {
+      return { uiType: "pack-action" };
+    }
+    if (typeof meta.capability === "string" && meta.capability && !meta.prompt) {
+      return { uiType: "tool-call" };
+    }
+  }
+  if (trimmed === "job") {
+    return { uiType: "agent-task" };
+  }
+  return { uiType: "agent-task", backendType: trimmed };
+}
+
+function normalizeSwitchCases(value: unknown): Array<{ matchValue: string; stepId: string }> {
+  const fromRecord = (record: Record<string, unknown>) => {
+    const matchRaw = record.match ?? record.when ?? record.value ?? record.matchValue;
+    const stepRaw = record.next ?? record.step ?? record.target ?? record.step_id ?? record.goto ?? record.stepId;
+    const stepId = typeof stepRaw === "string" ? stepRaw.trim() : "";
+    if (!stepId) return null;
+    return {
+      matchValue: matchRaw == null ? "" : String(matchRaw),
+      stepId,
+    };
+  };
+
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => (entry && typeof entry === "object" ? fromRecord(entry as Record<string, unknown>) : null))
+      .filter((entry): entry is { matchValue: string; stepId: string } => entry !== null);
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([matchValue, stepRaw]) => {
+        const stepId = typeof stepRaw === "string" ? stepRaw.trim() : "";
+        if (!stepId) return null;
+        return { matchValue, stepId };
+      })
+      .filter((entry): entry is { matchValue: string; stepId: string } => entry !== null);
+  }
+  return [];
+}
+
+function buildWorkflowStepConfig(step: BackendWorkflowStep): Record<string, unknown> {
+  const config: Record<string, unknown> = {};
+
+  if (step.topic) config.topic = step.topic;
+  if (step.worker_id) config.workerId = step.worker_id;
+  if (typeof step.timeout_sec === "number" && step.timeout_sec > 0) {
+    config.timeout = `${step.timeout_sec}s`;
+  }
+  if (step.retry && typeof step.retry.max_retries === "number") {
+    config.retryMax = step.retry.max_retries;
+  }
+  if (step.condition) config.expression = step.condition;
+  if (step.for_each) config.forEach = step.for_each;
+  if (typeof step.max_parallel === "number") {
+    config.parallelism = step.max_parallel;
+  }
+  if (typeof step.delay_sec === "number" && step.delay_sec > 0) {
+    config.duration = `${step.delay_sec}s`;
+  } else if (step.delay_until) {
+    config.duration = step.delay_until;
+  }
+  if (step.input && typeof step.input === "object") {
+    config.input = step.input;
+    const input = step.input as Record<string, unknown>;
+    if (step.type === "parallel") {
+      if (Array.isArray(input.steps)) {
+        config.parallelSteps = input.steps.map((entry) => String(entry).trim()).filter(Boolean);
+      }
+      if (typeof input.strategy === "string" && input.strategy.trim()) {
+        config.completionStrategy = input.strategy.trim();
+      }
+      if (typeof input.required === "number" && Number.isFinite(input.required)) {
+        config.requiredCount = Math.floor(input.required);
+      }
+    }
+    if (step.type === "loop") {
+      if (typeof input.body_step === "string" && input.body_step.trim()) {
+        config.bodyStep = input.body_step.trim();
+      } else if (typeof input.body === "string" && input.body.trim()) {
+        config.bodyStep = input.body.trim();
+      }
+      if (typeof input.max_iterations === "number" && Number.isFinite(input.max_iterations)) {
+        config.maxIterations = Math.floor(input.max_iterations);
+      } else if (typeof input.maxIterations === "number" && Number.isFinite(input.maxIterations)) {
+        config.maxIterations = Math.floor(input.maxIterations);
+      }
+      if (typeof input.condition === "string" && input.condition.trim()) {
+        config.condition = input.condition.trim();
+      } else if (typeof input.while === "string" && input.while.trim()) {
+        config.condition = input.while.trim();
+      }
+      if (typeof input.until === "string" && input.until.trim()) {
+        config.until = input.until.trim();
+      }
+    }
+    if (step.type === "subworkflow" || step.type === "sub-workflow") {
+      if (typeof input.workflow_id === "string" && input.workflow_id.trim()) {
+        config.workflowId = input.workflow_id.trim();
+      }
+      if (input.input_mapping !== undefined) {
+        config.inputMapping = input.input_mapping;
+      }
+      if (input.output_mapping !== undefined) {
+        config.outputMapping = input.output_mapping;
+      }
+    }
+    if (step.type === "switch") {
+      const switchCases = normalizeSwitchCases(input.cases);
+      if (switchCases.length > 0) {
+        config.switchCases = switchCases;
+        config.cases = switchCases;
+      }
+      if (typeof input.default === "string" && input.default.trim()) {
+        config.defaultBranch = input.default.trim();
+      } else if (typeof input.default_step === "string" && input.default_step.trim()) {
+        config.defaultBranch = input.default_step.trim();
+      }
+    }
+    if (typeof input.message === "string" && input.message.trim()) {
+      config.messageTemplate = input.message;
+    }
+    if (typeof input.component === "string" && input.component.trim()) {
+      config.channel = input.component;
+    }
+    if (typeof input.prompt === "string" && input.prompt.trim()) {
+      config.prompt = input.prompt;
+    }
+    // Budget from input.budget or input itself
+    const budget = (input.budget ?? input) as Record<string, unknown>;
+    if (typeof budget.input_tokens === "number") config.maxInputTokens = budget.input_tokens;
+    if (typeof budget.output_tokens === "number") config.maxOutputTokens = budget.output_tokens;
+    if (typeof budget.total_tokens === "number") config.maxTotalTokens = budget.total_tokens;
+  }
+  if (step.meta && typeof step.meta === "object") {
+    config.meta = step.meta;
+    const caps: string[] = [];
+    if (typeof step.meta.capability === "string" && step.meta.capability.trim()) {
+      caps.push(step.meta.capability);
+    }
+    if (Array.isArray(step.meta.requires)) {
+      for (const req of step.meta.requires) {
+        const trimmed = String(req).trim();
+        if (trimmed) caps.push(trimmed);
+      }
+    }
+    if (caps.length > 0) {
+      config.capabilities = caps;
+    }
+    if (Array.isArray(step.meta.risk_tags) && step.meta.risk_tags.length > 0) {
+      config.riskTags = step.meta.risk_tags;
+    }
+    if (step.meta.labels) config.labels = step.meta.labels;
+    if (step.meta.pack_id) config.packId = step.meta.pack_id;
+    if (step.meta.actor_id) config.actorId = step.meta.actor_id;
+    if (step.meta.actor_type) config.actorType = step.meta.actor_type;
+    if (typeof step.meta.adapter_id === "string" && step.meta.adapter_id) {
+      config.adapterId = step.meta.adapter_id;
+    }
+    if (typeof step.meta.memory_id === "string" && step.meta.memory_id) {
+      config.memoryId = step.meta.memory_id;
+    }
+    if (typeof step.meta.context_mode === "string" && step.meta.context_mode) {
+      config.contextMode = step.meta.context_mode;
+    }
+    if (typeof step.meta.allow_summarization === "boolean") {
+      config.allowSummarization = step.meta.allow_summarization;
+    }
+    if (typeof step.meta.allow_retrieval === "boolean") {
+      config.allowRetrieval = step.meta.allow_retrieval;
+    }
+    if (typeof step.meta.deadline_ms === "number") {
+      config.deadlineMs = step.meta.deadline_ms;
+    }
+    if (typeof step.meta.priority === "string" && step.meta.priority) {
+      config.priority = step.meta.priority;
+    }
+    // Budget fallback from meta.budget
+    const metaBudget = step.meta.budget as Record<string, unknown> | undefined;
+    if (metaBudget && typeof metaBudget === "object") {
+      if (typeof metaBudget.input_tokens === "number" && !config.maxInputTokens) config.maxInputTokens = metaBudget.input_tokens;
+      if (typeof metaBudget.output_tokens === "number" && !config.maxOutputTokens) config.maxOutputTokens = metaBudget.output_tokens;
+      if (typeof metaBudget.total_tokens === "number" && !config.maxTotalTokens) config.maxTotalTokens = metaBudget.total_tokens;
+    }
+  }
+  if (step.route_labels) config.routeLabels = step.route_labels;
+  if (step.input_schema) config.inputSchema = step.input_schema;
+  if (step.input_schema_id) config.inputSchemaId = step.input_schema_id;
+  if (step.output_schema) config.outputSchema = step.output_schema;
+  if (step.output_schema_id) config.outputSchemaId = step.output_schema_id;
+  if (step.output_path) config.outputPath = step.output_path;
+
+  return config;
 }
 
 export function mapWorkflowStep(step: BackendWorkflowStep, fallbackId: string): WorkflowStep {
-  let uiType = normalizeWorkflowNodeType(
+  let { uiType, backendType } = normalizeWorkflowNodeType(
     step.type,
     step.meta as Record<string, unknown> | undefined,
   );
   if (uiType === "agent-task" && step.for_each) {
     uiType = "fan-out";
+  }
+  // Legacy config bag for backward compat during migration
+  const config = buildWorkflowStepConfig(step);
+  if (backendType) {
+    config.backendType = backendType;
   }
   return {
     id: step.id || fallbackId,
@@ -842,9 +861,9 @@ export function mapWorkflowStep(step: BackendWorkflowStep, fallbackId: string): 
     delay_sec: step.delay_sec,
     delay_until: step.delay_until,
     route_labels: step.route_labels,
-    on_error: step.on_error,
-    // Raw backend config (branches, parallel steps, etc.)
-    config: step.config,
+    // Legacy compat
+    config,
+    dependsOn: step.depends_on,
     // Run-time fields
     status: step.status as WorkflowStep["status"],
     output: step.output,
@@ -884,21 +903,12 @@ export function mapWorkflow(def: BackendWorkflow): Workflow {
   };
 }
 
-function normalizeRunStatus(raw?: string): WorkflowStep["status"] {
-  return normalizeRunStatusValue(raw) ?? "pending";
-}
-
 export function mapWorkflowRunStep(step: BackendStepRun, fallbackId: string): WorkflowStep {
-  // Detect quarantined steps: status is "failed" but error.code is "output_quarantined"
-  let status = normalizeRunStatus(step.status);
-  if (status === "failed" && step.error?.code === "output_quarantined") {
-    status = "quarantined" as RunStatus;
-  }
   return {
     id: step.step_id || fallbackId,
     name: step.step_id || fallbackId,
     type: "step",
-    status,
+    status: step.status as WorkflowStep["status"],
     output: (step.output as Record<string, unknown>) ?? undefined,
     error: step.error ? JSON.stringify(step.error) : undefined,
     startedAt: step.started_at || undefined,
@@ -913,7 +923,7 @@ export function mapWorkflowRun(run: BackendWorkflowRun): WorkflowRun {
   return {
     id: run.id,
     workflowId: run.workflow_id || "",
-    status: normalizeRunStatus(run.status) as WorkflowRun["status"] || "pending",
+    status: (run.status as WorkflowRun["status"]) || "pending",
     steps,
     startedAt: run.started_at ?? null,
     completedAt: run.completed_at ?? null,
@@ -935,7 +945,6 @@ export function mapWorkflowRun(run: BackendWorkflowRun): WorkflowRun {
 }
 
 export function computeUrgencyLevel(waitMs: number): UrgencyLevel {
-  if (!Number.isFinite(waitMs) || waitMs < 0) return "fresh";
   if (waitMs < 2 * 60_000) return "fresh";
   if (waitMs < 15 * 60_000) return "aging";
   if (waitMs < 60 * 60_000) return "critical";
@@ -945,71 +954,18 @@ export function computeUrgencyLevel(waitMs: number): UrgencyLevel {
 export function deriveApprovalStatus(
   jobState: string | undefined,
   decision: string | undefined,
-  resolvedBy?: string,
-  explicitStatus?: string,
-  explicitDecision?: string,
-): ApprovalStatus {
-  const normalizedExplicit = (explicitStatus || "").trim().toLowerCase();
-  if (
-    normalizedExplicit === "pending" ||
-    normalizedExplicit === "approved" ||
-    normalizedExplicit === "rejected" ||
-    normalizedExplicit === "expired" ||
-    normalizedExplicit === "invalidated" ||
-    normalizedExplicit === "repaired"
-  ) {
-    return normalizedExplicit;
-  }
-  const d = (explicitDecision || decision || "").toLowerCase();
+): string {
+  const d = (decision || "").toLowerCase();
   const s = (jobState || "").toLowerCase();
   if (d === "approve" || d === "approved") return "approved";
   if (d === "reject" || d === "rejected" || d === "deny")
     return "rejected";
-  if (d === "expire" || d === "expired") return "expired";
-  if (d === "invalidate" || d === "invalidated") return "invalidated";
-  if (d === "repair" || d === "repaired") return "repaired";
   if (s === "denied") return "rejected";
-  if (s === "output_quarantined") return "approved";
-  if (s === "timeout") return "expired";
+  if (s === "output_quarantined") return "quarantined";
   if (s === "approval_required") return "pending";
-  // Job resolved through approval flow — derive from post-approval state.
-  if (resolvedBy) {
-    if (s === "denied") return "rejected";
-    return "approved";
-  }
-  if (s === "succeeded" || s === "failed" || s === "cancelled" || s === "pending")
-    return "approved";
+  if (s === "succeeded" || s === "failed" || s === "cancelled")
+    return "resolved";
   return "pending";
-}
-
-export function deriveApprovalActionability(
-  explicitActionability: string | undefined,
-  status: ApprovalStatus,
-): ApprovalActionability {
-  const normalizedExplicit = (explicitActionability || "").trim().toLowerCase();
-  if (
-    normalizedExplicit === "actionable" ||
-    normalizedExplicit === "resolved" ||
-    normalizedExplicit === "expired" ||
-    normalizedExplicit === "invalidated" ||
-    normalizedExplicit === "repaired"
-  ) {
-    return normalizedExplicit;
-  }
-  switch (status) {
-    case "pending":
-      return "actionable";
-    case "expired":
-      return "expired";
-    case "invalidated":
-      return "invalidated";
-    case "repaired":
-      return "repaired";
-    case "approved":
-    case "rejected":
-    default:
-      return "resolved";
-  }
 }
 
 function deriveHumanSummary(
@@ -1031,25 +987,11 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
   const now = Date.now();
   const requestedAt = job.updatedAt || new Date().toISOString();
   const waitMs = now - new Date(requestedAt).getTime();
-  const decisionSummary = mapApprovalDecisionSummary(item.decision_summary);
-  const status = deriveApprovalStatus(
-    item.job.state,
-    item.decision,
-    item.resolved_by,
-    item.approval_status,
-    item.approval_decision,
-  );
-  const actionability = deriveApprovalActionability(
-    item.approval_actionability,
-    status,
-  );
 
   const workflowContext =
     item.workflow_id || item.workflow_run_id
       ? {
           workflowId: item.workflow_id || "",
-          workflowName: item.workflow_name,
-          stepId: item.workflow_step_id,
           runId: item.workflow_run_id || "",
           stepIndex: item.step_index,
           stepName: item.step_name,
@@ -1060,15 +1002,14 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
   return {
     id: item.approval_ref || job.id,
     jobId: job.id,
-    status,
+    status: deriveApprovalStatus(item.job.state, item.decision),
     requestedAt,
-    resolvedAt: (item.resolved_at ? microsToISO(item.resolved_at) : undefined) ?? undefined,
+    resolvedAt: item.resolved_at ? microsToISO(item.resolved_at) : undefined,
     actor: item.resolved_by,
     actorId: job.actorId,
-    reason: decisionSummary?.why || item.policy_reason,
+    reason: item.policy_reason,
     comment: item.resolved_comment,
     policyRule: item.policy_rule_id,
-    decisionSummary,
     jobContext: {
       topic: job.topic,
       tenant: job.tenant,
@@ -1080,9 +1021,11 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
     riskTags: job.riskTags,
     capabilities: job.capabilities,
     workflowContext,
-    humanSummary:
-      decisionSummary?.title ||
-      deriveHumanSummary(job.topic, job.capabilities, item.policy_reason),
+    humanSummary: deriveHumanSummary(
+      job.topic,
+      job.capabilities,
+      item.policy_reason,
+    ),
     urgencyLevel: computeUrgencyLevel(Math.max(0, waitMs)),
     waitMs: Math.max(0, waitMs),
     policySnapshot: item.policy_snapshot,
@@ -1090,141 +1033,7 @@ export function mapApprovalItem(item: BackendApprovalItem): Approval | null {
     approvalRef: item.approval_ref,
     tenant: job.tenant,
     contextPtr: item.context_ptr,
-    jobInput: item.job_input as Record<string, unknown> | undefined,
     constraints: item.constraints,
-    actionability,
-    revision: item.approval_revision,
-    approvalDecision: item.approval_decision,
-    approval_status: item.approval_status ?? status,
-    approval_actionability: item.approval_actionability ?? actionability,
-    approval_revision: item.approval_revision,
-    approval_decision: item.approval_decision,
-    blastRadius: item.blast_radius
-      ? {
-          systems: item.blast_radius.systems ?? [],
-          namespaces: item.blast_radius.namespaces ?? [],
-          resources: item.blast_radius.resources ?? [],
-          scopeDescription: item.blast_radius.scope_description ?? "",
-        }
-      : undefined,
-    priorApprovals: (item.prior_approvals ?? []).map((pa) => ({
-      jobId: pa.job_id ?? "",
-      topic: pa.topic ?? "",
-      tenant: pa.tenant ?? "",
-      decision: pa.decision ?? "",
-      resolvedBy: pa.resolved_by ?? "",
-      resolvedAt: pa.resolved_at ?? 0,
-      wasApproved: pa.was_approved ?? false,
-    })),
-    rollbackHint: item.rollback_hint ?? "",
-    policySnapshotSummary: item.policy_snapshot_summary
-      ? {
-          ruleCount: item.policy_snapshot_summary.rule_count ?? 0,
-          matchedRule: {
-            id: item.policy_snapshot_summary.matched_rule?.id ?? "",
-            description:
-              item.policy_snapshot_summary.matched_rule?.description ?? "",
-            decision:
-              item.policy_snapshot_summary.matched_rule?.decision ?? "",
-            constraintsSummary:
-              item.policy_snapshot_summary.matched_rule?.constraints_summary ??
-              "",
-          },
-          policyVersion: item.policy_snapshot_summary.policy_version ?? "",
-        }
-      : undefined,
-  };
-}
-
-function mapApprovalDecisionSummary(
-  summary?: BackendApprovalDecisionSummary,
-): ApprovalDecisionSummary | undefined {
-  if (!summary || typeof summary !== "object") return undefined;
-  const title = typeof summary.title === "string" ? summary.title.trim() : "";
-  if (!title) return undefined;
-  return {
-    source: summary.source ?? "policy_only",
-    completeness: summary.completeness ?? "minimal",
-    contextStatus: summary.context_status ?? "absent",
-    title,
-    subject: typeof summary.subject === "string" ? summary.subject : undefined,
-    why: typeof summary.why === "string" ? summary.why : undefined,
-    nextEffect:
-      typeof summary.next_effect === "string"
-        ? summary.next_effect
-        : undefined,
-    amount:
-      typeof summary.amount === "number" && Number.isFinite(summary.amount)
-        ? summary.amount
-        : undefined,
-    currency:
-      typeof summary.currency === "string" ? summary.currency : undefined,
-    vendor: typeof summary.vendor === "string" ? summary.vendor : undefined,
-    itemCount:
-      typeof summary.item_count === "number" && Number.isFinite(summary.item_count)
-        ? summary.item_count
-        : undefined,
-    itemsPreview: Array.isArray(summary.items_preview)
-      ? summary.items_preview.filter(
-          (value): value is string => typeof value === "string" && value.length > 0,
-        )
-      : undefined,
-    escalationReason:
-      typeof summary.escalation_reason === "string"
-        ? summary.escalation_reason
-        : undefined,
-    missingFields: Array.isArray(summary.missing_fields)
-      ? summary.missing_fields.filter(
-          (value): value is string => typeof value === "string" && value.length > 0,
-        )
-      : undefined,
-  };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapPolicySnapshotSummaryFromRaw(raw?: any): ApprovalPolicySnapshot | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  return {
-    ruleCount: raw.rule_count ?? 0,
-    matchedRule: {
-      id: raw.matched_rule?.id ?? "",
-      description: raw.matched_rule?.description ?? "",
-      decision: raw.matched_rule?.decision ?? "",
-      constraintsSummary: raw.matched_rule?.constraints_summary ?? "",
-    },
-    policyVersion: raw.policy_version ?? "",
-  };
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function mapApprovalContext(raw: any): ApprovalContext {
-  return {
-    approval: raw.approval ?? {},
-    blastRadius: raw.blast_radius
-      ? {
-          systems: raw.blast_radius.systems ?? [],
-          namespaces: raw.blast_radius.namespaces ?? [],
-          resources: raw.blast_radius.resources ?? [],
-          scopeDescription: raw.blast_radius.scope_description ?? "",
-        }
-      : { systems: [], namespaces: [], resources: [], scopeDescription: "" },
-    priorApprovals: (raw.prior_approvals ?? []).map((pa: any) => ({
-      jobId: pa.job_id ?? "",
-      topic: pa.topic ?? "",
-      tenant: pa.tenant ?? "",
-      decision: pa.decision ?? "",
-      resolvedBy: pa.resolved_by ?? "",
-      resolvedAt: pa.resolved_at ?? 0,
-      wasApproved: pa.was_approved ?? false,
-    })),
-    rollbackHint: raw.rollback_hint ?? "",
-    policySnapshotSummary: mapPolicySnapshotSummaryFromRaw(raw.policy_snapshot_summary) ?? {
-      ruleCount: 0,
-      matchedRule: { id: "", description: "", decision: "", constraintsSummary: "" },
-      policyVersion: "",
-    },
-    timeRemainingMs: raw.time_remaining_ms ?? null,
-    constraints: raw.constraints ?? null,
   };
 }
 
@@ -1249,9 +1058,64 @@ export function mapDLQEntry(entry: BackendDLQEntry): DLQEntry {
 function normalizeMatchCriteria(raw: Record<string, unknown>): PolicyRuleMatch {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(raw)) {
-    out[key] = value;
+    switch (key) {
+      case "risk_tags":
+        out.riskTags = value;
+        break;
+      case "pack_ids":
+        out.packIds = value;
+        break;
+      case "actor_ids":
+        out.actorIds = value;
+        break;
+      case "actor_types":
+        out.actorTypes = value;
+        break;
+      case "secrets_present":
+        out.secretsPresent = value;
+        break;
+      default:
+        out[key] = value;
+    }
   }
   return out as PolicyRuleMatch;
+}
+
+const FRAMEWORK_TAG_ALIASES: Record<string, FrameworkTag> = {
+  soc2: "soc2",
+  soc_2: "soc2",
+  "soc-2": "soc2",
+  iso27001: "iso27001",
+  "iso-27001": "iso27001",
+  "iso_27001": "iso27001",
+  nist: "nist-rmf",
+  gdpr: "gdpr",
+  "owasp-llm-top10": "owasp-llm-top10",
+  "owasp_llm_top10": "owasp-llm-top10",
+  "owasp llm top 10": "owasp-llm-top10",
+  "nist-rmf": "nist-rmf",
+  nist_rmf: "nist-rmf",
+  "eu-ai-act": "eu-ai-act",
+  eu_ai_act: "eu-ai-act",
+  "iso-42001": "iso-42001",
+  iso_42001: "iso-42001",
+};
+
+function normalizeFrameworkTag(raw: unknown): FrameworkTag | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const normalizedKey = trimmed.toLowerCase();
+  return FRAMEWORK_TAG_ALIASES[normalizedKey] ?? normalizedKey;
+}
+
+function normalizeFrameworkTags(raw: unknown): FrameworkTag[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const normalized = raw
+    .map(normalizeFrameworkTag)
+    .filter((tag): tag is FrameworkTag => Boolean(tag));
+  if (normalized.length === 0) return undefined;
+  return Array.from(new Set(normalized));
 }
 
 export function mapPolicyRule(raw: Record<string, unknown>): PolicyRule {
@@ -1261,20 +1125,16 @@ export function mapPolicyRule(raw: Record<string, unknown>): PolicyRule {
   const match = (raw.match as Record<string, unknown>) ?? {};
   const priority = typeof raw.priority === "number" ? raw.priority : undefined;
   const logic = typeof raw.logic === "string" ? raw.logic : undefined;
-  const name = typeof raw.name === "string" ? raw.name : id;
-  const normalizedDecision = normalizeDecisionType(decision);
-  const normalizedMatch = normalizeMatchCriteria(match);
   return {
     id,
-    name,
-    description: typeof raw.description === "string" ? raw.description : undefined,
-    match: normalizedMatch,
-    decision: normalizedDecision,
-    matchCriteria: normalizedMatch as Record<string, unknown>,
-    decisionType: normalizedDecision,
+    matchCriteria: normalizeMatchCriteria(match),
+    decisionType: normalizeDecisionType(decision),
     reason,
-    priority: priority ?? 0,
+    priority,
     logic,
+    hitCount24h: typeof raw.hit_count_24h === "number" ? raw.hit_count_24h : (typeof raw.hitCount24h === "number" ? raw.hitCount24h : undefined),
+    lastTriggered: typeof raw.last_triggered === "string" ? raw.last_triggered : (typeof raw.lastTriggered === "string" ? raw.lastTriggered : undefined),
+    frameworkTags: normalizeFrameworkTags(raw.framework_tags) ?? normalizeFrameworkTags(raw.frameworkTags),
     source: typeof raw.source === "object" && raw.source ? (raw.source as Record<string, unknown>) : undefined,
     enabled: typeof raw.enabled === "boolean" ? raw.enabled : true,
     constraints: raw.constraints && typeof raw.constraints === "object" ? (raw.constraints as Record<string, unknown>) : undefined,
@@ -1310,40 +1170,6 @@ export function mapPolicyBundleSummary(summary: BackendPolicyBundleSummary, cont
     sha256: summary.sha256,
     rule_count: summary.rule_count,
     healthStatus: undefined,
-  };
-}
-
-export function readPolicyBundleSignature(
-  raw: unknown,
-): PolicyBundleSignature | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const bundle = raw as Record<string, unknown>;
-  const rawSig = bundle._signature ?? bundle.signature;
-  if (!rawSig || typeof rawSig !== "object") return undefined;
-
-  const sig = rawSig as Record<string, unknown>;
-  const algorithm =
-    typeof sig.algorithm === "string" ? sig.algorithm.trim() : "";
-  const keyID = typeof sig.key_id === "string" ? sig.key_id.trim() : "";
-  const value = typeof sig.value === "string" ? sig.value.trim() : "";
-  const hash = typeof sig.hash === "string" ? sig.hash.trim() : "";
-  const signedBytes =
-    typeof sig.signed_bytes === "number"
-      ? sig.signed_bytes
-      : typeof sig.signed_bytes === "string"
-        ? Number.parseInt(sig.signed_bytes, 10)
-        : Number.NaN;
-
-  if (!algorithm || !keyID || !value || !hash || !Number.isFinite(signedBytes)) {
-    return undefined;
-  }
-
-  return {
-    algorithm,
-    key_id: keyID,
-    value,
-    hash,
-    signed_bytes: signedBytes,
   };
 }
 
@@ -1434,9 +1260,9 @@ export function auditResourceLink(
 ): string {
   switch (resourceType.toLowerCase()) {
     case "job": return `/jobs/${resourceId}`;
-    case "workflow": return `/workflows/${resourceId}/studio`;
+    case "workflow": return `/workflows/${resourceId}`;
     case "run": return `/workflows`;
-    case "policy": return `/govern/overview?tab=bundles`;
+    case "policy": return `/policies`;
     case "user": return `/settings`;
     case "pack": return `/packs`;
     case "approval": return `/approvals`;
@@ -1503,7 +1329,7 @@ export function mapPolicySnapshotSummary(snapshot: BackendPolicySnapshotSummary)
 export function mapPolicySnapshot(snapshot: BackendPolicySnapshot) {
   // Extract rules from all bundles in the snapshot
   const rules: ReturnType<typeof mapPolicyRule>[] = [];
-  if (snapshot.bundles && typeof snapshot.bundles === "object") {
+  if (snapshot.bundles) {
     for (const bundle of Object.values(snapshot.bundles)) {
       const b = bundle as Record<string, unknown>;
       const bundleRules = Array.isArray(b.rules) ? b.rules : [];
@@ -1615,7 +1441,7 @@ export function mapHeartbeatToWorker(hb: BackendHeartbeat): Worker | null {
   const name =
     (hb.labels && (hb.labels.name || hb.labels.worker_name || hb.labels.worker)) ||
     hb.worker_id;
-  const status = hb.status ?? (activeJobs > 0 ? "busy" : "idle");
+  const status = activeJobs > 0 ? "active" : "online";
   return {
     id: hb.worker_id,
     name,
@@ -1625,7 +1451,6 @@ export function mapHeartbeatToWorker(hb: BackendHeartbeat): Worker | null {
     activeJobs,
     // capacity fallback: if backend reports 0 max_parallel_jobs, use at least 1
     capacity: capacity > 0 ? capacity : Math.max(1, activeJobs),
-    lastHeartbeat: hb.last_heartbeat,
     region: hb.region,
     type: hb.type,
     cpuLoad: hb.cpu_load,
@@ -1633,306 +1458,3 @@ export function mapHeartbeatToWorker(hb: BackendHeartbeat): Worker | null {
     memoryLoad: hb.memory_load,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Pool mapper
-// ---------------------------------------------------------------------------
-
-export interface BackendPoolSummary {
-  name: string;
-  workers: number;
-  active_jobs: number;
-  capacity: number;
-  utilization: number;
-  topics?: string[];
-  worker_list?: BackendHeartbeat[];
-  captured_at?: string;
-}
-
-export function mapPoolResponse(bp: BackendPoolSummary, mapWorker = mapHeartbeatToWorker): Pool {
-  return {
-    name: bp.name,
-    workerCount: bp.workers ?? 0,
-    activeJobs: bp.active_jobs ?? 0,
-    capacity: bp.capacity ?? 0,
-    utilization: Math.round((bp.utilization ?? 0) * 100),
-    topics: bp.topics ?? [],
-    workers: (bp.worker_list ?? []).map(mapWorker).filter((w): w is Worker => !!w),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Evals mappers
-// ---------------------------------------------------------------------------
-
-const EVAL_RUN_STATUSES: ReadonlySet<EvalRunStatus> = new Set([
-  "pass",
-  "fail",
-  "regression",
-  "error",
-]);
-
-const EVAL_DRIFT_DIRECTIONS: ReadonlySet<EvalDriftDirection> = new Set([
-  "escalated",
-  "relaxed",
-  "unchanged",
-]);
-
-const SAFETY_DECISION_TYPES: ReadonlySet<SafetyDecisionType> = new Set([
-  "allow",
-  "deny",
-  "require_approval",
-  "allow_with_constraints",
-  "throttle",
-]);
-
-export interface BackendEvalDataset {
-  id?: string;
-  name?: string;
-  version?: number;
-  tenant?: string;
-  description?: string;
-  entry_count?: number;
-  content_hash?: string;
-  created_at?: string;
-  updated_at?: string;
-  created_by?: string;
-}
-
-export interface BackendEvalEntry {
-  id?: string;
-  input?: Record<string, unknown>;
-  expected_decision?: string;
-  rule_id?: string;
-  metadata?: Record<string, unknown>;
-  source?: string;
-  source_ref?: string;
-  notes?: string;
-}
-
-export interface BackendEvalRunSummary {
-  total?: number;
-  passed?: number;
-  failed?: number;
-  regressions?: number;
-  errored?: number;
-  score_percent?: number | null;
-}
-
-export interface BackendEvalEntryResult {
-  entry_id?: string;
-  input?: Record<string, unknown>;
-  expected_decision?: string;
-  actual_decision?: string;
-  rule_id?: string;
-  reason?: string;
-  status?: string;
-  drift_direction?: string;
-  constraints?: Record<string, unknown>;
-}
-
-export interface BackendEvalRun {
-  run_id?: string;
-  dataset_id?: string;
-  dataset_name?: string;
-  dataset_version?: number;
-  policy_snapshot?: string;
-  started_at?: string;
-  completed_at?: string;
-  summary?: BackendEvalRunSummary;
-  entries?: BackendEvalEntryResult[];
-}
-
-function normalizeEvalRunStatus(raw: unknown): EvalRunStatus {
-  if (typeof raw === "string") {
-    const lower = raw.toLowerCase();
-    if (EVAL_RUN_STATUSES.has(lower as EvalRunStatus)) {
-      return lower as EvalRunStatus;
-    }
-  }
-  logger.warn("evals", "unknown run status, falling back to error", { raw });
-  return "error";
-}
-
-function normalizeDriftDirection(raw: unknown): EvalDriftDirection {
-  if (typeof raw === "string") {
-    const lower = raw.toLowerCase();
-    if (EVAL_DRIFT_DIRECTIONS.has(lower as EvalDriftDirection)) {
-      return lower as EvalDriftDirection;
-    }
-  }
-  return "unchanged";
-}
-
-function normalizeSafetyDecisionType(raw: unknown): SafetyDecisionType {
-  if (typeof raw === "string") {
-    const lower = raw.toLowerCase();
-    if (SAFETY_DECISION_TYPES.has(lower as SafetyDecisionType)) {
-      return lower as SafetyDecisionType;
-    }
-  }
-  return "deny";
-}
-
-function coerceScorePercent(raw: unknown): number | null {
-  if (raw === null || raw === undefined) return null;
-  const num = typeof raw === "number" ? raw : Number(raw);
-  if (!Number.isFinite(num)) return null;
-  return num;
-}
-
-export function mapEvalDataset(raw: BackendEvalDataset): EvalDataset {
-  return {
-    id: raw.id ?? "",
-    name: raw.name ?? "",
-    version: typeof raw.version === "number" ? raw.version : Number(raw.version ?? 1),
-    tenant: raw.tenant ?? "",
-    description: raw.description,
-    entryCount: typeof raw.entry_count === "number" ? raw.entry_count : 0,
-    contentHash: raw.content_hash ?? "",
-    createdAt: raw.created_at ?? "",
-    updatedAt: raw.updated_at ?? raw.created_at ?? "",
-    createdBy: raw.created_by,
-  };
-}
-
-export function mapEvalEntry(raw: BackendEvalEntry): EvalEntry {
-  return {
-    id: raw.id ?? "",
-    input: raw.input ?? {},
-    expectedDecision: normalizeSafetyDecisionType(raw.expected_decision),
-    ruleId: raw.rule_id,
-    metadata: raw.metadata,
-    source: raw.source ?? "unknown",
-    sourceRef: raw.source_ref,
-    notes: raw.notes,
-  };
-}
-
-export function mapEvalEntryResult(raw: BackendEvalEntryResult): EvalEntryResult {
-  const expected = normalizeSafetyDecisionType(raw.expected_decision);
-  const actualRaw = typeof raw.actual_decision === "string" ? raw.actual_decision.toLowerCase() : "";
-  const actual: SafetyDecisionType | string = SAFETY_DECISION_TYPES.has(
-    actualRaw as SafetyDecisionType,
-  )
-    ? (actualRaw as SafetyDecisionType)
-    : actualRaw || "unknown";
-  return {
-    entryId: raw.entry_id ?? "",
-    input: raw.input ?? {},
-    expectedDecision: expected,
-    actualDecision: actual,
-    ruleId: raw.rule_id,
-    reason: raw.reason,
-    status: normalizeEvalRunStatus(raw.status),
-    driftDirection: normalizeDriftDirection(raw.drift_direction),
-    constraints: raw.constraints as PolicyConstraints | undefined,
-  };
-}
-
-function mapEvalRunSummary(raw: BackendEvalRunSummary | undefined): EvalRunSummary {
-  const summary = raw ?? {};
-  return {
-    total: typeof summary.total === "number" ? summary.total : 0,
-    passed: typeof summary.passed === "number" ? summary.passed : 0,
-    failed: typeof summary.failed === "number" ? summary.failed : 0,
-    regressions: typeof summary.regressions === "number" ? summary.regressions : 0,
-    errored: typeof summary.errored === "number" ? summary.errored : 0,
-    scorePercent: coerceScorePercent(summary.score_percent),
-  };
-}
-
-export function mapEvalRun(raw: BackendEvalRun): EvalRun {
-  return {
-    runId: raw.run_id ?? "",
-    datasetId: raw.dataset_id ?? "",
-    datasetName: raw.dataset_name ?? "",
-    datasetVersion:
-      typeof raw.dataset_version === "number" ? raw.dataset_version : Number(raw.dataset_version ?? 0),
-    policySnapshot: raw.policy_snapshot ?? "",
-    startedAt: raw.started_at ?? "",
-    completedAt: raw.completed_at,
-    summary: mapEvalRunSummary(raw.summary),
-    entries: Array.isArray(raw.entries) ? raw.entries.map(mapEvalEntryResult) : undefined,
-  };
-}
-
-export function isRegressionRun(run: Pick<EvalRun, "summary">): boolean {
-  return (run.summary?.regressions ?? 0) > 0;
-}
-
-export interface BackendDelegationChainLink {
-  agent_id?: string;
-  issued_at?: string;
-  expires_at?: string;
-  jti?: string;
-  parent_jti?: string;
-  issued_by?: string;
-}
-
-export interface BackendDelegationView {
-  jti?: string;
-  issuer?: string;
-  subject?: string;
-  audience?: string;
-  allowed_actions?: string[];
-  allowed_topics?: string[];
-  chain?: BackendDelegationChainLink[];
-  chain_depth?: number;
-  issued_at?: string;
-  expires_at?: string;
-  revoked?: boolean;
-  revoked_at?: string;
-  revoked_reason?: string;
-}
-
-export interface BackendDelegationListResponse {
-  items?: BackendDelegationView[];
-  next_cursor?: string | null;
-  nextCursor?: string | null;
-}
-
-export function mapDelegationChainLink(
-  raw: BackendDelegationChainLink,
-): DelegationChainLink {
-  return {
-    agentId: raw.agent_id ?? "",
-    issuedAt: raw.issued_at ?? "",
-    expiresAt: raw.expires_at ?? "",
-    jti: raw.jti ?? "",
-    parentJti: raw.parent_jti || undefined,
-    issuedBy: raw.issued_by ?? "",
-  };
-}
-
-export function mapDelegationView(raw: BackendDelegationView): DelegationView {
-  return {
-    jti: raw.jti ?? "",
-    issuer: raw.issuer ?? "",
-    subject: raw.subject ?? "",
-    audience: raw.audience ?? "",
-    allowedActions: Array.isArray(raw.allowed_actions)
-      ? raw.allowed_actions.filter((value): value is string => typeof value === "string")
-      : [],
-    allowedTopics: Array.isArray(raw.allowed_topics)
-      ? raw.allowed_topics.filter((value): value is string => typeof value === "string")
-      : [],
-    chain: Array.isArray(raw.chain) ? raw.chain.map(mapDelegationChainLink) : [],
-    chainDepth: typeof raw.chain_depth === "number" ? raw.chain_depth : 0,
-    issuedAt: raw.issued_at ?? "",
-    expiresAt: raw.expires_at ?? "",
-    revoked: raw.revoked ?? false,
-    revokedAt: raw.revoked_at || undefined,
-    revokedReason: raw.revoked_reason || undefined,
-  };
-}
-
-export function mapDelegationListResponse(
-  raw: BackendDelegationListResponse,
-): DelegationListResponse {
-  return {
-    items: Array.isArray(raw.items) ? raw.items.map(mapDelegationView) : [],
-    nextCursor: raw.next_cursor ?? raw.nextCursor ?? undefined,
-  };
-}
-

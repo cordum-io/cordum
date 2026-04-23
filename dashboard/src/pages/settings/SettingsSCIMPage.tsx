@@ -260,15 +260,10 @@ export default function SettingsSCIMPage() {
     : scim.data.bearerTokenMasked?.trim() || "No bearer token configured";
 
   const handleRotate = () => {
-    // Snapshot "was configured" at mutation-call time so the success toast
-    // doesn't depend on stale `scim.data` when the onSuccess callback fires.
-    // The query cache may have been invalidated, evicted, or the component
-    // may be mid-unmount by the time onSuccess runs.
-    const wasConfigured = Boolean(scim.data?.configured);
     rotateToken.mutate(undefined, {
       onSuccess: () => {
         setShowSecret(true);
-        toast.success(wasConfigured ? "SCIM bearer token rotated" : "SCIM bearer token generated");
+        toast.success(scim.data?.configured ? "SCIM bearer token rotated" : "SCIM bearer token generated");
       },
       onError: (error) => {
         toast.error(error instanceof Error ? error.message : "Failed to rotate SCIM token");

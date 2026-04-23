@@ -16,7 +16,6 @@ import (
 
 	"github.com/cordum/cordum/core/infra/env"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
-	"github.com/cordum/cordum/core/infra/tlsutil"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/nats-io/nats.go"
@@ -415,20 +414,29 @@ func (b *NatsBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) e
 	return err
 }
 
-// SubscribeWithContext is the context-aware variant of Subscribe. When the
-// underlying transport carries trace headers, they are extracted and passed to
-// the handler so downstream services can join the same distributed trace.
-func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(context.Context, *pb.BusPacket) error) error {
+// ReplaceSubscription unsubscribes the previous subscription (when valid) and
+// installs a fresh subscription for the same handler. This is primarily used by
+// reconnect callbacks that need to force a clean re-subscribe.
+func (b *NatsBus) ReplaceSubscription(prev *nats.Subscription, subject, queue string, handler func(*pb.BusPacket) error) (*nats.Subscription, error) {
+	if prev != nil && prev.IsValid() {
+		if err := prev.Unsubscribe(); err != nil && !errors.Is(err, nats.ErrBadSubscription) {
+			return nil, fmt.Errorf("unsubscribe %s: %w", subject, err)
+		}
+	}
+	return b.subscribe(subject, queue, handler)
+}
+
+func (b *NatsBus) subscribe(subject, queue string, handler func(*pb.BusPacket) error) (*nats.Subscription, error) {
 	if b == nil || b.nc == nil {
-		return errNilBus
+		return nil, errNilBus
 	}
 	if subject == "" {
-		return errEmptyTopic
+		return nil, errEmptyTopic
 	}
-	if handler == nil {
-		return errors.New("nil handler")
-	}
+
+	// For JetStream durable subjects, use the full ack/nak path with trace extraction.
 	if b.jsEnabled && isDurableSubject(subject) {
+		cb := b.jsCallbackCtx(subject, handler)
 		opts := []nats.SubOpt{
 			nats.ManualAck(),
 			nats.AckExplicit(),
@@ -439,44 +447,36 @@ func (b *NatsBus) SubscribeWithContext(subject, queue string, handler func(conte
 		if durable := durableName(subject, queue); durable != "" {
 			opts = append(opts, nats.Durable(durable))
 		}
-
-		var (
-			sub *nats.Subscription
-			err error
-		)
-		cb := b.jsCallbackCtx(subject, handler)
+		var sub *nats.Subscription
+		var err error
 		if queue == "" {
 			sub, err = b.js.Subscribe(subject, cb, opts...)
 		} else {
 			sub, err = b.js.QueueSubscribe(subject, queue, cb, opts...)
 		}
 		if err != nil {
-			return fmt.Errorf("subscribe %s: %w", subject, err)
+			return fmt.Errorf("subscribe (ctx) %s: %w", subject, err)
 		}
 		b.trackSub(sub)
 		return nil
 	}
 
+	// Plain NATS path.
 	cb := func(msg *nats.Msg) {
-		ctx := cordumotel.ExtractTraceContext(context.Background(), msg.Header)
-		action, _ := processBusMsgCtx(ctx, msg.Data, handler, 0)
-		if action != msgActionAck {
-			slog.Error("bus: handler error", "subject", subject)
-		}
+		_, _ = ctxWrapped(msg)
 	}
-	var (
-		sub *nats.Subscription
-		err error
-	)
-	if queue == "" {
-		sub, err = b.nc.Subscribe(subject, cb)
-	} else {
+	var sub *nats.Subscription
+	var err error
+	if queue != "" {
 		sub, err = b.nc.QueueSubscribe(subject, queue, cb)
+	} else {
+		sub, err = b.nc.Subscribe(subject, cb)
 	}
 	if err != nil {
-		return fmt.Errorf("subscribe %s: %w", subject, err)
+		return fmt.Errorf("subscribe (ctx) %s: %w", subject, err)
 	}
 	b.trackSub(sub)
+	_ = wrapped // suppress unused
 	return nil
 }
 
@@ -854,21 +854,6 @@ func initJetStreamEnabled() bool {
 	}
 }
 
-// firstLeaf returns the parsed leaf certificate from a tls.Certificate, or
-// nil if tls.LoadX509KeyPair somehow didn't populate the chain. Used only
-// for metric emission; failing silently here is fine because the actual
-// keypair loaded successfully — metrics are observability, not correctness.
-func firstLeaf(cert tls.Certificate) *x509.Certificate {
-	if len(cert.Certificate) == 0 {
-		return nil
-	}
-	leaf, err := x509.ParseCertificate(cert.Certificate[0])
-	if err != nil {
-		return nil
-	}
-	return leaf
-}
-
 func natsTLSConfigFromEnv() (*tls.Config, error) {
 	caPath := strings.TrimSpace(os.Getenv(envNATSTLSCA))
 	certPath := strings.TrimSpace(os.Getenv(envNATSTLSCert))
@@ -916,33 +901,6 @@ func natsTLSConfigFromEnv() (*tls.Config, error) {
 		cert, err := tls.LoadX509KeyPair(certPath, keyPath)
 		if err != nil {
 			return nil, fmt.Errorf("nats tls keypair: %w", err)
-		}
-		// Verify the client cert actually chains to the configured CA BEFORE
-		// we hand it to nats.Connect. Without this check, a CA/client drift
-		// (e.g. CA rotated without regenerating client cert) surfaces only
-		// as "remote error: tls: certificate required" from the server — the
-		// operator has no signal what's wrong. ChainError prints both cert
-		// DNs, both validity windows, and the exact cordumctl command to fix.
-		if caPath != "" && !insecure {
-			if verr := tlsutil.VerifyChain(certPath, caPath, tlsutil.RoleClient); verr != nil {
-				// Emit metrics before failing so a one-off restart loop
-				// still leaves a measurable signal in /metrics. The gauge
-				// goes to 0 and Grafana fires, even though this goroutine
-				// is about to return err and crash the service.
-				if leaf := firstLeaf(cert); leaf != nil {
-					tlsutil.EmitCertMetrics("nats", "client", certPath, leaf.NotAfter, false)
-				}
-				return nil, fmt.Errorf("nats tls: %w", verr)
-			}
-		}
-		// Emit the success gauge. chainValid MUST reflect whether chain
-		// verification actually ran — when caPath is empty or insecure
-		// is set, VerifyChain was skipped, so we cannot claim chain
-		// validity and must emit false to avoid false-positive TLS
-		// health signals in cordum_cert_chain_valid.
-		chainValid := caPath != "" && !insecure
-		if leaf := firstLeaf(cert); leaf != nil {
-			tlsutil.EmitCertMetrics("nats", "client", certPath, leaf.NotAfter, chainValid)
 		}
 		cfg.Certificates = []tls.Certificate{cert}
 	}

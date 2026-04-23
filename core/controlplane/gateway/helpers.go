@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
@@ -26,7 +25,6 @@ import (
 	"github.com/cordum/cordum/core/infra/locks"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
-	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
@@ -64,8 +62,7 @@ type submitJobRequest struct {
 	MaxOutputTokens    int64             `json:"max_output_tokens"`
 	MaxTotalTokens     int64             `json:"max_total_tokens"`
 	DeadlineMs         int64             `json:"deadline_ms"`
-	DelegationToken            string `json:"delegation_token,omitempty"`
-	DelegationAudienceAgentID string `json:"delegation_audience_agent_id,omitempty"`
+	DelegationToken    string            `json:"delegation_token,omitempty"`
 }
 
 type policyMetaRequest struct {
@@ -133,14 +130,13 @@ func (r *submitJobRequest) validate(defaultTenant string, promptLimits ...int) e
 			break
 		}
 	}
-	promptLen := utf8.RuneCountInString(r.Prompt)
-	if promptLen > promptLimit {
+	if len(r.Prompt) > promptLimit {
 		return fmt.Errorf(
-			"prompt too long (%d chars, max %d): %w",
-			promptLen, promptLimit,
+			"prompt too long (>%d chars): %w",
+			promptLimit,
 			&licensing.TierLimitError{
 				Limit:      "max_prompt_chars",
-				Current:    int64(promptLen),
+				Current:    int64(len(r.Prompt)),
 				Allowed:    int64(promptLimit),
 				UpgradeURL: licensing.DefaultUpgradeURL,
 			},
@@ -354,27 +350,6 @@ func stripReservedLabels(labels map[string]string) map[string]string {
 		clean[k] = v
 	}
 	return clean
-}
-
-// mapDecisionTypeToSafety converts a wire-level pb.DecisionType into the
-// model.SafetyDecision enum used on SafetyDecisionRecord. Used by paths that
-// translate a fresh PolicyCheckResponse back onto the persisted record
-// (approval drift re-evaluation, policy replay, etc.).
-func mapDecisionTypeToSafety(d pb.DecisionType) model.SafetyDecision {
-	switch d {
-	case pb.DecisionType_DECISION_TYPE_ALLOW:
-		return model.SafetyAllow
-	case pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS:
-		return model.SafetyAllowWithConstraints
-	case pb.DecisionType_DECISION_TYPE_DENY:
-		return model.SafetyDeny
-	case pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN:
-		return model.SafetyRequireApproval
-	case pb.DecisionType_DECISION_TYPE_THROTTLE:
-		return model.SafetyThrottle
-	default:
-		return model.SafetyUnavailable
-	}
 }
 
 // maxContentLabelBytes is the maximum payload size to include in policy check
@@ -1035,39 +1010,6 @@ func writeTierLimitJSON(w http.ResponseWriter, limitErr *licensing.TierLimitErro
 		"upgrade_url": payload.UpgradeURL,
 	}); err != nil {
 		slog.Warn("json encode tier limit response failed", "error", err)
-	}
-}
-
-func writeTierFeatureJSON(w http.ResponseWriter, feature, message string) {
-	feature = strings.TrimSpace(feature)
-	if feature == "" {
-		feature = "feature"
-	}
-	message = strings.TrimSpace(message)
-	if message == "" {
-		message = "feature requires a higher tier"
-	}
-	payload := licensing.TierLimitHTTPError{
-		Code:       "tier_limit_exceeded",
-		Message:    message,
-		Limit:      feature,
-		Current:    0,
-		Allowed:    0,
-		UpgradeURL: licensing.DefaultUpgradeURL,
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusForbidden)
-	if err := json.NewEncoder(w).Encode(map[string]any{
-		"error":       payload.Code,
-		"code":        payload.Code,
-		"status":      http.StatusForbidden,
-		"message":     payload.Message,
-		"limit":       payload.Limit,
-		"current":     payload.Current,
-		"allowed":     payload.Allowed,
-		"upgrade_url": payload.UpgradeURL,
-	}); err != nil {
-		slog.Warn("json encode tier feature response failed", "error", err)
 	}
 }
 

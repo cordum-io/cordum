@@ -10,10 +10,6 @@ interface DataFreshnessProps {
 }
 
 function formatRelative(ts: number): string {
-  // Clamp invalid timestamps so we never render "Updated NaN ago". Callers
-  // can pass 0 (no successful fetch yet) or NaN (corrupt state) via the
-  // React Query dataUpdatedAt field; surface both as "Not updated".
-  if (!Number.isFinite(ts) || ts <= 0) return "Not updated";
   const diff = Math.max(0, Date.now() - ts);
   const seconds = Math.floor(diff / 1000);
   if (seconds < 60) return "Updated just now";
@@ -33,15 +29,11 @@ export function DataFreshness({
 
   useEffect(() => {
     setLabel(formatRelative(dataUpdatedAt));
-    // Skip the 10s ticker when the timestamp is invalid — the static
-    // "Not updated" label from formatRelative never changes with time, so
-    // there's no reason to churn React state.
-    if (!Number.isFinite(dataUpdatedAt) || dataUpdatedAt <= 0) return;
     const id = setInterval(() => setLabel(formatRelative(dataUpdatedAt)), 10_000);
     return () => clearInterval(id);
   }, [dataUpdatedAt]);
 
-  if (!dataUpdatedAt || !Number.isFinite(dataUpdatedAt)) return null;
+  if (!dataUpdatedAt) return null;
 
   return (
     <button

@@ -58,9 +58,9 @@ function diffRules(rulesA: PolicyRule[], rulesB: PolicyRule[]): RuleDiff[] {
 // Decision badge mapping
 // ---------------------------------------------------------------------------
 
-const decisionVariant: Record<string, "success" | "danger" | "warning" | "info" | "governance"> = {
+const decisionVariant: Record<string, "success" | "danger" | "warning" | "info"> = {
   allow: "success",
-  deny: "governance",
+  deny: "danger",
   require_approval: "warning",
   throttle: "info",
 };
@@ -84,19 +84,19 @@ function RuleCard({ rule, highlight }: { rule: PolicyRule; highlight?: string })
       )}
     >
       <div className="flex items-center justify-between">
-        <span className="font-mono text-muted-foreground">{rule.id.slice(0, 12)}</span>
-        <Badge variant={decisionVariant[rule.decisionType ?? ""] ?? "default"}>
+        <span className="font-mono text-muted">{rule.id.slice(0, 12)}</span>
+        <Badge variant={decisionVariant[rule.decisionType] ?? "default"}>
           {rule.decisionType}
         </Badge>
       </div>
-      {rule.reason && <p className="mt-1 text-muted-foreground italic">{rule.reason}</p>}
+      {rule.reason && <p className="mt-1 text-muted italic">{rule.reason}</p>}
       {(capabilities.length > 0 || riskTags.length > 0) && (
         <div className="mt-1 flex flex-wrap gap-1">
           {capabilities.map((c) => (
-            <Badge key={c} variant="info" className="text-xs">{c}</Badge>
+            <Badge key={c} variant="info" className="text-[10px]">{c}</Badge>
           ))}
           {riskTags.map((t) => (
-            <Badge key={t} variant="danger" className="text-xs">{t}</Badge>
+            <Badge key={t} variant="destructive" className="text-[10px]">{t}</Badge>
           ))}
         </div>
       )}
@@ -161,13 +161,13 @@ export function PolicyReviewModal({ bundle, onClose, onApproved }: PolicyReviewM
             <h3 className="font-display text-lg font-semibold text-ink">
               Review: {bundle.name}
             </h3>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted">
               v{bundle.version ?? "draft"}
               {bundle.author && <> &middot; by {bundle.author}</>}
               {changedCount > 0 && <> &middot; {changedCount} change{changedCount !== 1 ? "s" : ""}</>}
             </p>
           </div>
-          <button type="button" onClick={onClose} className="rounded-lg p-1 text-muted-foreground hover:bg-surface2 hover:text-ink transition-colors">
+          <button onClick={onClose} className="rounded-lg p-1 text-muted hover:bg-surface2 hover:text-ink transition-colors">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -192,21 +192,21 @@ export function PolicyReviewModal({ bundle, onClose, onApproved }: PolicyReviewM
               </span>
             )}
             {diffs.filter((d) => d.kind === "unchanged").length > 0 && (
-              <span className="text-muted-foreground">
+              <span className="text-muted">
                 {diffs.filter((d) => d.kind === "unchanged").length} unchanged
               </span>
             )}
           </div>
 
           {snapLoading && (
-            <div className="flex items-center justify-center py-8 text-xs text-muted-foreground">
+            <div className="flex items-center justify-center py-8 text-xs text-muted">
               <Loader className="mr-2 h-3.5 w-3.5 animate-spin" />
               Loading snapshot for comparison...
             </div>
           )}
 
           {!snapLoading && !latestSnapshotId && (
-            <div className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
+            <div className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted">
               No previous snapshot to compare against. This will be the first publish.
             </div>
           )}
@@ -233,7 +233,7 @@ export function PolicyReviewModal({ bundle, onClose, onApproved }: PolicyReviewM
                           diff.kind === "added" ? "success" :
                           diff.kind === "removed" ? "danger" : "warning"
                         }
-                        className="mt-1 text-xs shrink-0"
+                        className="mt-1 text-[10px] shrink-0"
                       >
                         {diff.kind}
                       </Badge>
@@ -260,7 +260,7 @@ export function PolicyReviewModal({ bundle, onClose, onApproved }: PolicyReviewM
                 <Button variant="ghost" size="sm" onClick={() => setShowRejectForm(false)}>
                   Cancel
                 </Button>
-                <Button variant="danger" size="sm" onClick={handleReject} disabled={!rejectReason.trim()}>
+                <Button variant="destructive" size="sm" onClick={handleReject} disabled={!rejectReason.trim()}>
                   Confirm Reject
                 </Button>
               </div>
@@ -282,7 +282,7 @@ export function PolicyReviewModal({ bundle, onClose, onApproved }: PolicyReviewM
             </Button>
             {!showRejectForm && (
               <Button
-                variant="danger"
+                variant="destructive"
                 onClick={() => setShowRejectForm(true)}
               >
                 <ThumbsDown className="h-4 w-4" />

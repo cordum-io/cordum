@@ -29,9 +29,19 @@ vi.mock("@/hooks/useAuditChainVerify", () => ({
   useAuditChainVerify: () => ({
     data: undefined,
     isLoading: false,
-    isFetching: false,
     isError: false,
     dataUpdatedAt: 0,
+  }),
+}));
+vi.mock("@/hooks/useAuth", () => ({
+  useAuth: () => ({ tenantId: "default" }),
+}));
+vi.mock("@/hooks/usePageTitle", () => ({ usePageTitle: () => {} }));
+vi.mock("@/hooks/useStatus", () => ({ useStatus: () => ({ data: null, isLoading: false }) }));
+vi.mock("@/hooks/usePolicyAccess", () => ({
+  usePolicyAccess: () => ({
+    canEdit: true, canPublish: true, canRelease: true, isReadOnly: false,
+    canManageOutputRules: true, canManageTenants: true,
   }),
 }));
 vi.mock("@/hooks/useAuditVerify", () => ({
@@ -161,8 +171,8 @@ describe("PolicyOverviewPage tab rendering", () => {
     expect(getActiveLabels()).toContain("Overview");
   });
 
-  it("mounts the ChainIntegrityWidget inside the Overview tab content", async () => {
-    await renderPage("overview");
+  it("mounts the ChainIntegrityWidget inside the Overview tab content", () => {
+    renderPage("overview");
     const widget = container.querySelector(
       "[data-testid=chain-integrity-widget]",
     );
@@ -172,8 +182,8 @@ describe("PolicyOverviewPage tab rendering", () => {
     expect(widget?.getAttribute("data-state")).toBe("not_checked");
   });
 
-  it("does NOT mount the GapAlertBanner when verify data is absent or ok", async () => {
-    await renderPage("overview");
+  it("does NOT mount the GapAlertBanner when verify data is absent or ok", () => {
+    renderPage("overview");
     expect(container.querySelector("[data-testid=gap-alert-banner]")).toBeNull();
   });
 });

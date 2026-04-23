@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { get } from "../../api/client";
 import { Card, CardHeader, CardTitle } from "../ui/Card";
@@ -6,12 +6,22 @@ import { Badge } from "../ui/Badge";
 import { ProgressBar } from "../ProgressBar";
 import { cn } from "../../lib/utils";
 import {
+  Loader,
   CheckCircle,
   AlertTriangle,
   XCircle,
   RefreshCw,
+  ChevronDown,
+  ChevronUp,
+  Users,
+  Activity,
+  Database,
+  Clock,
 } from "lucide-react";
 import { useStatus } from "../../hooks/useStatus";
+import { useWorkers } from "../../hooks/useWorkers";
+import { MetricCard } from "../MetricCard";
+import { RateLimiterModeBadge } from "../home/RateLimiterModeBadge";
 import { ReplicaTable } from "./ReplicaTable";
 import { LockInspector } from "./LockInspector";
 import { CircuitBreakerPanel } from "./CircuitBreakerPanel";
@@ -283,7 +293,7 @@ function OverallSummary({
                 ? `${total - healthy} component${total - healthy !== 1 ? "s" : ""} degraded`
                 : `${total - healthy} component${total - healthy !== 1 ? "s" : ""} down`}
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted">
             {healthy}/{total} components healthy &middot; checked {timeAgo(health.checkedAt)}
           </p>
         </div>
@@ -291,7 +301,7 @@ function OverallSummary({
           type="button"
           onClick={onRefresh}
           disabled={isRefreshing}
-          className="rounded-lg p-2 text-muted-foreground hover:text-ink hover:bg-surface2 transition-colors disabled:opacity-50"
+          className="rounded-lg p-2 text-muted hover:text-ink hover:bg-surface2 transition-colors disabled:opacity-50"
           title="Refresh now"
         >
           <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
@@ -336,11 +346,11 @@ function ComponentCard({
           {component.status}
         </Badge>
       </CardHeader>
-      <div className="space-y-1.5 text-xs text-muted-foreground">
+      <div className="space-y-1.5 text-xs text-muted">
         {component.version && (
           <div className="flex items-center justify-between">
             <span>Version</span>
-            <Badge variant="info" className="text-xs">{component.version}</Badge>
+            <Badge variant="info" className="text-[10px]">{component.version}</Badge>
           </div>
         )}
         <div className="flex justify-between">
@@ -417,6 +427,40 @@ function HealthSkeleton() {
 }
 
 // ---------------------------------------------------------------------------
+// Collapsible section (default collapsed)
+// ---------------------------------------------------------------------------
+
+function CollapsibleSection({
+  title,
+  children,
+  defaultOpen = false,
+}: {
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div>
+      <button
+        type="button"
+        className="flex w-full items-center justify-between rounded-xl border border-border bg-surface px-4 py-2.5 text-left transition-colors hover:bg-surface2/50"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="text-xs font-semibold text-ink">{title}</span>
+        {open ? (
+          <ChevronUp className="h-4 w-4 text-muted" />
+        ) : (
+          <ChevronDown className="h-4 w-4 text-muted" />
+        )}
+      </button>
+      {open && <div className="mt-3">{children}</div>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // SystemHealthTab (exported)
 // ---------------------------------------------------------------------------
 
@@ -424,6 +468,13 @@ export function SystemHealthTab() {
   const queryClient = useQueryClient();
   const { data, isLoading, isFetching, error } = useSystemHealth();
   const { data: statusData } = useStatus();
+  const { data: workers } = useWorkers();
+
+  // Derived metrics for MetricCards
+  const workerCount = workers?.length ?? statusData?.workers?.count ?? 0;
+  const activeJobs = workers?.reduce((sum, w) => sum + (w.activeJobs ?? 0), 0) ?? 0;
+  const natsConnected = statusData?.nats?.connected;
+  const redisOk = statusData?.redis?.ok;
 
   // Track latency history per component (last 30 data points)
   const latencyHistoryRef = useRef<Record<string, number[]>>({});
@@ -445,6 +496,7 @@ export function SystemHealthTab() {
 
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: ["system-health"] });
+    queryClient.invalidateQueries({ queryKey: ["status"] });
   };
 
   if (isLoading) {
@@ -461,8 +513,44 @@ export function SystemHealthTab() {
     );
   }
 
+  const iconClass = "h-5 w-5 text-muted";
+
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-ink">System Health</h2>
+        <RateLimiterModeBadge mode={statusData?.rate_limiter?.mode} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+        <MetricCard
+          title="Workers"
+          value={workerCount}
+          detail="online"
+          icon={<Users className={iconClass} />}
+        />
+        <MetricCard
+          title="Active Jobs"
+          value={activeJobs}
+          icon={<Activity className={iconClass} />}
+        />
+        <MetricCard
+          title="NATS"
+          value={natsConnected ? "Connected" : "Disconnected"}
+          icon={<Activity className={iconClass} />}
+        />
+        <MetricCard
+          title="Redis"
+          value={redisOk ? "OK" : "Degraded"}
+          icon={<Database className={iconClass} />}
+        />
+        <MetricCard
+          title="Uptime"
+          value={formatUptime(statusData?.uptime_seconds)}
+          icon={<Clock className={iconClass} />}
+        />
+      </div>
+
       <OverallSummary
         health={data}
         onRefresh={handleRefresh}
@@ -488,7 +576,7 @@ export function SystemHealthTab() {
       {/* Distributed lock inspector */}
       <LockInspector />
 
-      <p className="text-xs text-muted-foreground">
+      <p className="text-[11px] text-muted">
         Auto-refreshes every 30 seconds.
       </p>
     </div>

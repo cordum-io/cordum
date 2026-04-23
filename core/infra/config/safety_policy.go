@@ -222,7 +222,6 @@ type PolicyMatch struct {
 	LabelThreshold           map[string]float64  `yaml:"label_threshold,omitempty"` // deny when label value > threshold
 	SecretsPresent           *bool               `yaml:"secrets_present,omitempty"`
 	Predicate                string              `yaml:"predicate,omitempty"`
-	Delegation               *DelegationMatch    `yaml:"delegation,omitempty"`
 	MCP                      MCPPolicy           `yaml:"mcp"`
 }
 
@@ -359,9 +358,6 @@ func ParseSafetyPolicy(data []byte) (*SafetyPolicy, error) {
 			if err := rule.Velocity.Validate(rule.ID); err != nil {
 				return nil, fmt.Errorf("parse safety policy: %w", err)
 			}
-		}
-		if err := rule.Match.Delegation.Validate(); err != nil {
-			return nil, fmt.Errorf("parse safety policy: rule %q: %w", rule.ID, err)
 		}
 		if err := validateDelegationPredicate(rule.Match.Predicate); err != nil {
 			return nil, fmt.Errorf("parse safety policy: rule %q: %w", rule.ID, err)
@@ -544,9 +540,6 @@ func matchRule(match PolicyMatch, input PolicyInput) bool {
 		return false
 	}
 	if !delegationPredicateMatch(match.Predicate, input.Delegation) {
-		return false
-	}
-	if !evaluateDelegationMatch(match.Delegation, input.Delegation) {
 		return false
 	}
 	if !mcpMatch(match.MCP, input.MCP) {

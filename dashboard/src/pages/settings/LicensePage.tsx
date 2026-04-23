@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -21,12 +21,9 @@ import { TierLimitBar } from "@/components/TierLimitBar";
 import { UpgradePrompt, shouldShowUpgradePrompt } from "@/components/UpgradePrompt";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
-import { DetailList } from "@/components/ui/DetailList";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { SkeletonCard } from "@/components/ui/Skeleton";
-import { StatTile } from "@/components/ui/StatTile";
-import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useLicenseOverview, useReloadLicense } from "@/hooks/useLicense";
 import { cn } from "@/lib/utils";
 
@@ -55,7 +52,6 @@ const FEATURE_ROWS: Array<{ key: keyof LicenseEntitlements; label: string }> = [
   { key: "legalHold", label: "Legal hold" },
   { key: "velocityRules", label: "Velocity rules" },
   { key: "breakGlassAdmin", label: "Break-glass admin" },
-  { key: "agentIdentity", label: "Agent identity directory" },
 ];
 
 const RIGHTS_ROWS: Array<{ key: keyof LicenseRights; label: string }> = [
@@ -149,15 +145,15 @@ function formatPlanLabel(plan?: string | null): string {
 
 function renderFeatureState(enabled: boolean) {
   return enabled ? (
-    <StatusBadge variant="healthy">
+    <span className="inline-flex items-center gap-1 text-[var(--color-success)]">
       <CheckCircle2 className="h-3.5 w-3.5" />
       Enabled
-    </StatusBadge>
+    </span>
   ) : (
-    <StatusBadge variant="muted">
+    <span className="inline-flex items-center gap-1 text-muted-foreground">
       <XCircle className="h-3.5 w-3.5" />
       Not included
-    </StatusBadge>
+    </span>
   );
 }
 
@@ -171,6 +167,8 @@ function metricDetails(label: string, metric?: TierUsageMetric<number>): string 
 
 export default function LicensePage() {
   const { license, usage, isLoading, isError } = useLicenseOverview();
+  const [selectedFileName, setSelectedFileName] = useState<string>("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const telemetryStatus = useQuery<TelemetryStatus>({
     queryKey: ["telemetry", "status"],
@@ -297,13 +295,26 @@ export default function LicensePage() {
             <TierBadge plan={licenseSummary?.plan ?? usageSummary?.plan} />
           </div>
 
-          <DetailList
-            items={[
-              { label: "Customer / org", value: licenseSummary?.license?.orgId ?? "Default tenant", mono: true },
-              { label: "License ID", value: licenseSummary?.license?.licenseId ?? "Community mode", mono: true },
-              { label: "Deployment", value: licenseSummary?.license?.deploymentType ?? "self-hosted", mono: true },
-            ]}
-          />
+          <dl className="space-y-3 text-sm">
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-muted-foreground">Customer / org</dt>
+              <dd className="font-mono text-right text-foreground">
+                {licenseSummary?.license?.orgId ?? "Default tenant"}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-muted-foreground">License ID</dt>
+              <dd className="font-mono text-right text-foreground">
+                {licenseSummary?.license?.licenseId ?? "Community mode"}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-muted-foreground">Deployment</dt>
+              <dd className="font-mono text-right text-foreground">
+                {licenseSummary?.license?.deploymentType ?? "self-hosted"}
+              </dd>
+            </div>
+          </dl>
         </motion.section>
 
         <motion.section
@@ -329,13 +340,26 @@ export default function LicensePage() {
               </p>
             </div>
 
-            <DetailList
-              items={[
-                { label: "Issued", value: formatDate(licenseSummary?.license?.issuedAt), mono: true },
-                { label: "Valid from", value: formatDate(licenseSummary?.license?.notBefore), mono: true },
-                { label: "Expires", value: formatDate(licenseSummary?.license?.expiresAt), mono: true },
-              ]}
-            />
+            <dl className="space-y-3 text-sm">
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-muted-foreground">Issued</dt>
+                <dd className="font-mono text-right text-foreground">
+                  {formatDate(licenseSummary?.license?.issuedAt)}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-muted-foreground">Valid from</dt>
+                <dd className="font-mono text-right text-foreground">
+                  {formatDate(licenseSummary?.license?.notBefore)}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-muted-foreground">Expires</dt>
+                <dd className="font-mono text-right text-foreground">
+                  {formatDate(licenseSummary?.license?.expiresAt)}
+                </dd>
+              </div>
+            </dl>
           </div>
 
           <div className="rounded-2xl border border-border bg-surface-1 px-3 py-2 text-xs text-muted-foreground">
@@ -360,23 +384,35 @@ export default function LicensePage() {
             {(["off", "local_only", "anonymous"] as const).map((mode) => {
               const isActive = (runtimeTelemetryMode ?? "").toString().toLowerCase() === mode;
               return (
-                <StatusBadge
+                <span
                   key={mode}
-                  variant={isActive ? "cordum" : "muted"}
-                  className={cn(!isActive && "bg-surface-1")}
+                  className={cn(
+                    "inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium",
+                    isActive
+                      ? "border-cordum/25 bg-cordum/10 text-cordum"
+                      : "border-border bg-surface-1 text-muted-foreground",
+                  )}
                 >
                   {formatTelemetryMode(mode)}
-                </StatusBadge>
+                </span>
               );
             })}
           </div>
 
-          <DetailList
-            items={[
-              { label: "Last collected", value: formatDateTime(telemetryStatus.data?.lastCollectedAt), mono: true },
-              { label: "Last reported", value: formatDateTime(telemetryStatus.data?.lastReportedAt), mono: true },
-            ]}
-          />
+          <dl className="space-y-3 text-sm">
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-muted-foreground">Last collected</dt>
+              <dd className="font-mono text-right text-foreground">
+                {formatDateTime(telemetryStatus.data?.lastCollectedAt)}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-muted-foreground">Last reported</dt>
+              <dd className="font-mono text-right text-foreground">
+                {formatDateTime(telemetryStatus.data?.lastReportedAt)}
+              </dd>
+            </div>
+          </dl>
 
           <p className="text-xs leading-relaxed text-muted-foreground">
             Telemetry mode is configured on the server. Update{" "}
@@ -517,43 +553,36 @@ export default function LicensePage() {
           <div className="flex items-center gap-2">
             <FileUp className="h-4 w-4 text-cordum" />
             <h2 className="text-sm font-display font-semibold text-foreground">
-              License update handoff
+              License file updates
             </h2>
           </div>
 
           <p className="text-sm leading-relaxed text-muted-foreground">
-            Cordum reads signed licenses from server-side runtime configuration. Replace the file referenced by{" "}
-            <span className="font-mono text-foreground">CORDUM_LICENSE_FILE</span> or update{" "}
-            <span className="font-mono text-foreground">CORDUM_LICENSE_TOKEN</span>, then reload or restart the gateway.
+            Cordum reads signed licenses from the host filesystem. Select a replacement file here to stage the update, then replace the file referenced by{" "}
+            <span className="font-mono text-foreground">CORDUM_LICENSE_FILE</span> on the server and restart the gateway.
           </p>
 
-          <InfoBanner variant="info" title="No dashboard upload path">
-            The dashboard does not upload or install license files. Use your deployment workflow or host shell to replace the signed license artifact, then come back here to verify the new entitlements.
-          </InfoBanner>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(event) => setSelectedFileName(event.target.files?.[0]?.name ?? "")}
+          />
 
-          <div className="grid gap-3">
-            {[
-              {
-                label: "Step 1",
-                detail: "Replace the signed license file or token in the deployment environment.",
-              },
-              {
-                label: "Step 2",
-                detail: "Restart the gateway or use the reload action once the new file is mounted.",
-              },
-              {
-                label: "Step 3",
-                detail: "Verify plan, expiry, and runtime ceilings on this page after the reload completes.",
-              },
-            ].map((step) => (
-              <div key={step.label} className="rounded-3xl border border-border bg-surface-1/70 p-4">
-                <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">{step.label}</p>
-                <p className="mt-2 text-sm text-foreground">{step.detail}</p>
-              </div>
-            ))}
+          <div className="rounded-3xl border border-border bg-surface-1/70 p-4">
+            <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+              Selected replacement
+            </p>
+            <p className="mt-2 truncate text-sm text-foreground">
+              {selectedFileName || "No file selected"}
+            </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+              Select file
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -568,14 +597,26 @@ export default function LicensePage() {
             Applying a new signed license does not delete data. If the current license is expired, Cordum preserves audit visibility and break-glass admin access while enforcing Community limits.
           </InfoBanner>
 
-          <DetailList
-            className="rounded-3xl border border-border bg-surface-1/70 px-4 py-1 text-sm"
-            items={[
-              { label: "Telemetry endpoint", value: telemetryStatus.data?.endpoint ?? "Not reporting", mono: true },
-              { label: "Tenant scope", value: usageSummary?.tenantId ?? "default", mono: true },
-              { label: "Plan mode", value: licenseSummary?.license?.mode ?? normalizeLicensePlan(licenseSummary?.plan), mono: true },
-            ]}
-          />
+          <div className="space-y-3 rounded-3xl border border-border bg-surface-1/70 p-4 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted-foreground">Telemetry endpoint</span>
+              <span className="truncate font-mono text-right text-foreground">
+                {telemetryStatus.data?.endpoint ?? "Not reporting"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted-foreground">Tenant scope</span>
+              <span className="font-mono text-right text-foreground">
+                {usageSummary?.tenantId ?? "default"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted-foreground">Plan mode</span>
+              <span className="font-mono text-right text-foreground">
+                {licenseSummary?.license?.mode ?? normalizeLicensePlan(licenseSummary?.plan)}
+              </span>
+            </div>
+          </div>
         </motion.section>
       </div>
 
@@ -600,19 +641,25 @@ export default function LicensePage() {
             icon: RadioTower,
           },
         ].map((item, index) => {
+          const Icon = item.icon;
           return (
             <motion.div
               key={item.label}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.28 + index * 0.04 }}
+              className="instrument-card"
             >
-              <StatTile
-                label={item.label}
-                value={item.value}
-                helperText={item.helper}
-                icon={<item.icon className="h-5 w-5 text-cordum" />}
-              />
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+                    {item.label}
+                  </p>
+                  <p className="mt-2 font-mono text-2xl font-bold text-foreground">{item.value}</p>
+                </div>
+                <Icon className="h-5 w-5 text-cordum" />
+              </div>
+              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{item.helper}</p>
             </motion.div>
           );
         })}

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -83,7 +82,6 @@ type Entitlements struct {
 	LegalHold          bool             `json:"legal_hold,omitempty"`
 	VelocityRules      bool             `json:"velocity_rules,omitempty"`
 	BreakGlassAdmin    bool             `json:"break_glass_admin,omitempty"`
-	AgentIdentity      bool             `json:"agent_identity,omitempty"`
 	Features           map[string]bool  `json:"features,omitempty"`
 	Limits             map[string]int64 `json:"limits,omitempty"`
 }
@@ -133,8 +131,6 @@ func (e *Entitlements) FeatureEnabled(name string) bool {
 		return e.VelocityRules
 	case "break_glass_admin":
 		return e.BreakGlassAdmin
-	case "agent_identity":
-		return e.AgentIdentity
 	default:
 		if e.Features == nil {
 			return false
@@ -301,13 +297,14 @@ func parseLicense(data []byte) (*License, error) {
 		return nil, fmt.Errorf("compact license payload: %w", err)
 	}
 
-	if isLegacyLicenseEnvelope(raw.Payload) {
-		logLegacyLicenseFormatRejected(raw.KID, raw.Payload)
-		return nil, ErrUnsupportedLegacyLicenseFormat
-	}
-
 	var claims Claims
-	if err := json.Unmarshal(raw.Payload, &claims); err != nil {
+	if isLegacyClaims(raw.Payload) {
+		var legacy legacyClaims
+		if err := json.Unmarshal(raw.Payload, &legacy); err != nil {
+			return nil, fmt.Errorf("parse legacy claims: %w", err)
+		}
+		claims = migrateLegacyClaims(legacy)
+	} else if err := json.Unmarshal(raw.Payload, &claims); err != nil {
 		return nil, fmt.Errorf("parse claims: %w", err)
 	}
 
@@ -318,22 +315,6 @@ func parseLicense(data []byte) (*License, error) {
 		ExpiryState:   ExpiryStateValid,
 		signedPayload: payload,
 	}, nil
-}
-
-func logLegacyLicenseFormatRejected(kid string, payload json.RawMessage) {
-	var legacyMeta struct {
-		OrgID     string `json:"org_id"`
-		LicenseID string `json:"license_id"`
-	}
-	_ = json.Unmarshal(payload, &legacyMeta)
-	slog.Error(
-		"legacy license format rejected",
-		"kid", strings.TrimSpace(kid),
-		"org_id", strings.TrimSpace(legacyMeta.OrgID),
-		"license_id", strings.TrimSpace(legacyMeta.LicenseID),
-		"suggested_action", "regenerate with cordum-tools license-generator in the current schema",
-		"error", ErrUnsupportedLegacyLicenseFormat,
-	)
 }
 
 func decodePublicKey(raw string) (ed25519.PublicKey, error) {

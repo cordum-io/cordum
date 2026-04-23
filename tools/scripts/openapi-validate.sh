@@ -18,11 +18,8 @@ GATEWAY_DIR="$ROOT_DIR/core/controlplane/gateway"
 GO_CMD="${GO_CMD:-go}"
 
 echo "==> redocly lint"
-# Pin @redocly/cli so CI behaviour is deterministic across runs; bump
-# REDOCLY_CLI_VERSION here to take a new release.
-REDOCLY_CLI_VERSION="${REDOCLY_CLI_VERSION:-1.34.1}"
 if command -v npx >/dev/null 2>&1; then
-	npx --yes "@redocly/cli@${REDOCLY_CLI_VERSION}" lint "$SPEC"
+	npx --yes @redocly/cli@latest lint "$SPEC"
 else
 	echo "npx not found; skipping redocly lint (CI always has npm)" >&2
 fi

@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import type { ReactNode } from "react";
-import { useForm, Controller, type UseFormSetError, type Resolver } from "react-hook-form";
+import { useForm, Controller, type UseFormSetError } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { ChevronDown, ChevronRight, Loader, RefreshCw, X } from "lucide-react";
@@ -16,7 +16,6 @@ import { Textarea } from "../ui/Textarea";
 import { TagInput } from "../ui/TagInput";
 import { KeyValueEditor } from "../ui/KeyValueEditor";
 import { ComboboxInput } from "../ui/ComboboxInput";
-import { generateUUID } from "@/lib/uuid";
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -157,9 +156,9 @@ function Field({
 }) {
   return (
     <div className="space-y-1.5">
-      <label className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+      <label className="flex items-center gap-2 text-xs font-semibold text-muted">
         {label}
-        {hint && <span className="text-xs font-normal text-muted/80">{hint}</span>}
+        {hint && <span className="text-[11px] font-normal text-muted/80">{hint}</span>}
       </label>
       {children}
       {error && <p className="text-xs text-danger">{error}</p>}
@@ -193,7 +192,7 @@ export function JobSubmitDrawer({ open, onClose, onSuccess }: JobSubmitDrawerPro
     reset,
     formState: { errors },
   } = useForm<FormValues>({
-    resolver: zodResolver(submitJobSchema) as Resolver<FormValues>,
+    resolver: zodResolver(submitJobSchema),
     defaultValues: DEFAULT_VALUES,
   });
 
@@ -270,13 +269,13 @@ export function JobSubmitDrawer({ open, onClose, onSuccess }: JobSubmitDrawerPro
         <div className="mb-5 flex items-center justify-between">
           <div>
             <h2 className="font-display text-lg font-semibold text-ink">Submit New Job</h2>
-            <p className="text-xs text-muted-foreground">Create and dispatch a new agent job.</p>
+            <p className="text-xs text-muted">Create and dispatch a new agent job.</p>
           </div>
           <button
             type="button"
             onClick={handleClose}
             disabled={submitJob.isPending}
-            className="rounded-full p-1.5 text-muted-foreground transition hover:bg-surface2 disabled:opacity-50"
+            className="rounded-full p-1.5 text-muted transition hover:bg-surface2 disabled:opacity-50"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -370,7 +369,7 @@ export function JobSubmitDrawer({ open, onClose, onSuccess }: JobSubmitDrawerPro
               <button
                 type="button"
                 onClick={() => setAdvancedOpen((v) => !v)}
-                className="flex items-center gap-1 text-xs font-semibold text-muted-foreground transition hover:text-ink"
+                className="flex items-center gap-1 text-xs font-semibold text-muted transition hover:text-ink"
               >
                 {advancedOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                 Advanced
@@ -421,7 +420,7 @@ export function JobSubmitDrawer({ open, onClose, onSuccess }: JobSubmitDrawerPro
                       variant="outline"
                       size="sm"
                       onClick={() =>
-                        setValue("idempotency_key", generateUUID(), {
+                        setValue("idempotency_key", crypto.randomUUID(), {
                           shouldDirty: true,
                           shouldTouch: true,
                         })

@@ -29,7 +29,6 @@ type Reconciler struct {
 	mu               sync.RWMutex
 	metrics          Metrics
 	approvalMetrics  approvalMetrics
-	snapshotProvider SnapshotProvider
 }
 
 type approvalMetrics interface {
@@ -68,14 +67,6 @@ func (r *Reconciler) WithMetrics(m Metrics) *Reconciler {
 // WithApprovalMetrics attaches approval workflow metrics to the reconciler.
 func (r *Reconciler) WithApprovalMetrics(m approvalMetrics) *Reconciler {
 	r.approvalMetrics = m
-	return r
-}
-
-// WithSnapshotProvider attaches a safety kernel snapshot provider so the
-// reconciler can detect and auto-invalidate approvals whose policy snapshot
-// has become stale.
-func (r *Reconciler) WithSnapshotProvider(p SnapshotProvider) *Reconciler {
-	r.snapshotProvider = p
 	return r
 }
 
@@ -267,13 +258,6 @@ func (r *Reconciler) handleApprovalRepairs(ctx context.Context, now time.Time) {
 		return
 	}
 
-	// Pre-fetch the current policy snapshot once per repair sweep so we can
-	// detect approvals that have become stale due to policy reloads.
-	var currentSnapshot string
-	if r.snapshotProvider != nil {
-		currentSnapshot = r.snapshotProvider.CurrentPolicySnapshot(ctx)
-	}
-
 	const maxIterations = 100
 	cutoffMicros := now.Add(time.Second).UnixNano() / int64(time.Microsecond)
 	for i := 0; i < maxIterations; i++ {
@@ -293,14 +277,7 @@ func (r *Reconciler) handleApprovalRepairs(ctx context.Context, now time.Time) {
 				slog.Warn("inspect approval repair failed", "job_id", rec.ID, "error", err)
 				continue
 			}
-			classifyOpts := infraStore.ApprovalRepairClassifyOptions{}
-			if currentSnapshot != "" {
-				storedSnap := snapshot.SafetyRecord.PolicySnapshot
-				if storedSnap != "" && snapshotBase(currentSnapshot) != snapshotBase(storedSnap) {
-					classifyOpts.StaleSnapshot = true
-				}
-			}
-			plan := infraStore.ClassifyApprovalRepair(*snapshot, classifyOpts)
+			plan := infraStore.ClassifyApprovalRepair(*snapshot, infraStore.ApprovalRepairClassifyOptions{})
 			if !plan.Repairable || !autoApplyApprovalRepair(plan) {
 				continue
 			}
@@ -337,22 +314,9 @@ func autoApplyApprovalRepair(plan infraStore.ApprovalRepairPlan) bool {
 	switch plan.Kind {
 	case infraStore.ApprovalRepairApplyApprovedResolution,
 		infraStore.ApprovalRepairApplyRejectedResolution,
-		infraStore.ApprovalRepairInvalidateStaleRequest,
-		infraStore.ApprovalRepairInvalidateStaleSnapshot:
+		infraStore.ApprovalRepairInvalidateStaleRequest:
 		return true
 	default:
 		return false
 	}
-}
-
-// snapshotBase returns the base policy hash from a combined snapshot string.
-// Combined snapshots have the form "base|cfg:hash"; this extracts just "base"
-// so that config-overlay changes don't affect approval-binding comparisons.
-// Shared by the reconciler's stale-snapshot detection and the engine's
-// approval fast-path revision check.
-func snapshotBase(snap string) string {
-	if i := strings.Index(snap, "|"); i >= 0 {
-		return snap[:i]
-	}
-	return snap
 }

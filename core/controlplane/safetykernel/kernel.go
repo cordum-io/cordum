@@ -31,7 +31,6 @@ import (
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/env"
 	infraHealth "github.com/cordum/cordum/core/infra/health"
-	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
@@ -73,18 +72,6 @@ type server struct {
 	cacheMaxSize      int
 	entitlements      *licensing.EntitlementResolver
 	customBundleCount int
-	shadowEvaluator   *ShadowEvaluator
-
-	// Agent identity store for enriching policy evaluation with agent context.
-	agentStore    *store.AgentIdentityStore
-	agentCacheMu  sync.Mutex
-	agentCache    map[string]agentCacheEntry
-	agentCacheTTL time.Duration
-
-	// Server-side risk tag derivation registry. When a deriver is registered
-	// for a topic, it replaces client-supplied risk_tags with authoritative
-	// tags derived from the job content. Prevents risk tag spoofing.
-	tagDeriverRegistry *TagDeriverRegistry
 }
 
 const (
@@ -274,61 +261,28 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		return fmt.Errorf("safety kernel tls required in production")
 	}
 
-	cacheMax := resolveDecisionCacheMax()
+	cacheMax := parseIntEnv(envDecisionCacheMaxSize, defaultDecisionCacheMaxSize)
+	if cacheMax <= 0 {
+		cacheMax = defaultDecisionCacheMaxSize
+	}
 	resultClient, err := redisutil.NewClient(cfg.RedisURL)
 	if err != nil {
 		slog.Warn("safety-kernel: output result redis client disabled", "err", err)
 	}
-	var agentStore *store.AgentIdentityStore
-	if resultClient != nil {
-		agentStore = store.NewAgentIdentityStoreFromClient(resultClient)
-	}
-	tagRegistry := NewTagDeriverRegistry()
-	registerBuiltinTagDerivers(tagRegistry)
-	// Load deriver registrations from topic registry (pack-installed derivers).
-	// These take precedence over built-in registrations.
-	if loader.configSvc != nil {
-		if entries, err := loadTopicDeriverEntries(context.Background(), loader.configSvc); err != nil {
-			slog.Warn("safety-kernel: failed to load tag derivers from topic registry", "err", err)
-		} else if n := loadTagDeriversFromTopics(tagRegistry, entries); n > 0 {
-			slog.Info("safety-kernel: loaded tag derivers from topic registry", "count", n)
-		}
-	}
-
 	srv := &server{
-		cacheTTL:           parseDurationEnv(envDecisionCacheTTL),
-		cache:              map[string]cacheEntry{},
-		cacheMaxSize:       cacheMax,
-		scanners:           loadOutputScanners(),
-		resultClient:       resultClient,
-		velocityChecker:    newVelocityChecker(resultClient),
-		entitlements:       resolver,
-		agentStore:         agentStore,
-		agentCacheTTL:      defaultAgentCacheTTL,
-		tagDeriverRegistry: tagRegistry,
+		cacheTTL:        parseDurationEnv(envDecisionCacheTTL),
+		cache:           map[string]cacheEntry{},
+		cacheMaxSize:    cacheMax,
+		scanners:        loadOutputScanners(),
+		resultClient:    resultClient,
+		velocityChecker: newVelocityChecker(resultClient),
+		entitlements:    resolver,
 	}
-
-	// Phase-2 shadow dual-evaluation: constructs the shadow loader +
-	// evaluator and attaches them to srv via SetShadowEvaluator so
-	// evaluate() can Submit active decisions without a nil-panic. When
-	// configsvc or NATS is unavailable setupShadowEvaluation returns
-	// (nil, nil) and the kernel still boots with shadow eval as a no-op
-	// — see shadow_eval.go for the fallback chain.
-	shadowLoader, shadowEvaluator := setupShadowEvaluation(srv, loader, natsBus)
-	if shadowEvaluator != nil {
-		defer shadowEvaluator.Close()
-	}
-	if shadowLoader != nil {
-		defer shadowLoader.Close()
-	}
+	srv.setPolicyWithBundleCount(policy, snapshot, customBundleCount)
 
 	// Lifecycle context for background goroutines — cancelled when Run returns.
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	defer lifecycleCancel()
-
-	if err := srv.setPolicyWithBundleCount(lifecycleCtx, policy, snapshot, customBundleCount); err != nil {
-		return fmt.Errorf("initial policy load: %w", err)
-	}
 
 	var wg sync.WaitGroup
 	if loader.ShouldWatch() {
@@ -341,7 +295,6 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 
 	grpcServer := grpc.NewServer(
 		serverCreds,
-		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			MaxConnectionAge:      env.DurationOr(envGRPCServerMaxConnectionAge, 2*time.Hour),
 			MaxConnectionAgeGrace: env.DurationOr(envGRPCServerMaxConnectionGrace, 30*time.Second),
@@ -536,7 +489,6 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	snapshot := s.snapshot
 	inputRules := s.inputRules
 	scanners := s.scanners
-	shadowEvaluator := s.shadowEvaluator
 	defaultTenant := ""
 	if policy != nil {
 		defaultTenant = strings.TrimSpace(policy.DefaultTenant)
@@ -781,21 +733,6 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 		ApprovalRef:      approvalRef,
 		Remediations:     toProtoRemediations(policyDecision.Remediations),
 	}
-	if shadowEvaluator != nil {
-		shadowEvaluator.Submit(
-			config.PolicyDecision{
-				Decision:         shadowDecisionName(decision, approvalRequired),
-				Reason:           reason,
-				RuleID:           ruleID,
-				Constraints:      policyDecision.Constraints,
-				Remediations:     policyDecision.Remediations,
-				ApprovalRequired: approvalRequired,
-			},
-			input,
-			tenant,
-			req.GetJobId(),
-		)
-	}
 
 	slog.Info("policy evaluation result", "component", "safety", "tenant", tenant, "topic", topic, "jobId", req.GetJobId(), "decision", resp.Decision.String(), "ruleId", resp.RuleId)
 
@@ -806,29 +743,6 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	}
 
 	return resp, nil
-}
-
-func shadowDecisionName(decision pb.DecisionType, approvalRequired bool) string {
-	switch decision {
-	case pb.DecisionType_DECISION_TYPE_DENY:
-		return "deny"
-	case pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN:
-		return "require_approval"
-	case pb.DecisionType_DECISION_TYPE_THROTTLE:
-		return "throttle"
-	case pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS:
-		return "allow_with_constraints"
-	case pb.DecisionType_DECISION_TYPE_ALLOW:
-		if approvalRequired {
-			return "require_approval"
-		}
-		return "allow"
-	default:
-		if approvalRequired {
-			return "require_approval"
-		}
-		return "deny"
-	}
 }
 
 func cacheKeyForRequest(req *pb.PolicyCheckRequest, snapshot string) string {
@@ -945,26 +859,6 @@ func parseIntEnv(key string, defaultVal int) int {
 		return defaultVal
 	}
 	return val
-}
-
-// resolveDecisionCacheMax reads envDecisionCacheMaxSize and enforces the
-// non-positive guard. A non-positive override (zero, negative, or a parse
-// fallback that landed below 1) is treated as operator error and falls back
-// to defaultDecisionCacheMaxSize with a WARN — silently honoring cacheMax==0
-// would disable the cache entirely and push every request to the policy
-// evaluator, and cacheMax<0 is a programmer typo that must never reach
-// runtime.
-func resolveDecisionCacheMax() int {
-	cacheMax := parseIntEnv(envDecisionCacheMaxSize, defaultDecisionCacheMaxSize)
-	if cacheMax <= 0 {
-		slog.Warn("safety-kernel: ignoring non-positive decision cache size override",
-			"env", envDecisionCacheMaxSize,
-			"override", cacheMax,
-			"default", defaultDecisionCacheMaxSize,
-		)
-		return defaultDecisionCacheMaxSize
-	}
-	return cacheMax
 }
 
 func toProtoRemediations(remediations []config.PolicyRemediation) []*pb.PolicyRemediation {
@@ -1210,9 +1104,7 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 	defer ticker.Stop()
 
 	reload := func(trigger string) {
-		if trigger != "poll" {
-			slog.Info("safety-kernel: policy reload triggered", "trigger", trigger)
-		}
+		slog.Info("safety-kernel: policy reload triggered", "trigger", trigger)
 
 		policy, snapshot, customBundleCount, err := loader.Load(ctx)
 		if err != nil {
@@ -1226,22 +1118,8 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 		current := s.snapshot
 		s.mu.RUnlock()
 		if snapshot != "" && snapshot != current {
-			if err := s.setPolicyWithBundleCount(ctx, policy, snapshot, customBundleCount); err != nil {
-				slog.Error("safety-kernel: setPolicyWithBundleCount failed", "err", err, "trigger", trigger)
-				return
-			}
+			s.setPolicyWithBundleCount(policy, snapshot, customBundleCount)
 			slog.Info("safety-kernel: policy snapshot updated", "snapshot", snapshot, "trigger", trigger)
-		}
-
-		// Reload tag derivers from topic registry. Pack installs update the
-		// topic registry and publish a config change notification, so this
-		// picks up newly installed pack derivers without a kernel restart.
-		if loader.configSvc != nil && s.tagDeriverRegistry != nil {
-			if entries, err := loadTopicDeriverEntries(ctx, loader.configSvc); err != nil {
-				slog.Warn("safety-kernel: tag deriver reload failed", "err", err, "trigger", trigger)
-			} else if n := loadTagDeriversFromTopics(s.tagDeriverRegistry, entries); n > 0 {
-				slog.Info("safety-kernel: tag derivers reloaded from topic registry", "count", n, "trigger", trigger)
-			}
 		}
 	}
 
@@ -1257,21 +1135,11 @@ func (s *server) watchPolicy(ctx context.Context, loader *policyLoader, notifyCh
 	}
 }
 
-func (s *server) setPolicy(ctx context.Context, policy *config.SafetyPolicy, snapshot string) error {
-	return s.setPolicyWithBundleCount(ctx, policy, snapshot, 0)
+func (s *server) setPolicy(policy *config.SafetyPolicy, snapshot string) {
+	s.setPolicyWithBundleCount(policy, snapshot, 0)
 }
 
-// setPolicyWithBundleCount atomically swaps the active policy, trims the
-// snapshot history and persists the new snapshot to Redis for cross-replica
-// consistency. Callers MUST pass a non-nil ctx — the Redis persistence call
-// derives its deadline from the caller so lock-contention paths (policy
-// reload, graceful shutdown) cannot orphan a hung Redis write behind a
-// detached context.Background(). Tests in this package construct a ctx via
-// context.Background() or t.Context() at the call site.
-func (s *server) setPolicyWithBundleCount(ctx context.Context, policy *config.SafetyPolicy, snapshot string, customBundleCount int) error {
-	if ctx == nil {
-		return fmt.Errorf("safety-kernel: setPolicyWithBundleCount: nil context")
-	}
+func (s *server) setPolicyWithBundleCount(policy *config.SafetyPolicy, snapshot string, customBundleCount int) {
 	newVersion := s.policyVersion.Add(1)
 
 	s.mu.Lock()
@@ -1288,16 +1156,13 @@ func (s *server) setPolicyWithBundleCount(ctx context.Context, policy *config.Sa
 	}
 	s.mu.Unlock()
 
-	// Persist snapshot to Redis for cross-replica consistency. The deadline
-	// is derived from the caller's ctx — if the caller (watchPolicy reload
-	// or Run() startup) is cancelled, this write unblocks promptly rather
-	// than orphaning a Redis round-trip behind context.Background().
+	// Persist snapshot to Redis for cross-replica consistency.
 	if snapshot != "" && s.resultClient != nil {
-		rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		if err := s.resultClient.LPush(rctx, snapshotHistoryKey, snapshot).Err(); err != nil {
+		if err := s.resultClient.LPush(ctx, snapshotHistoryKey, snapshot).Err(); err != nil {
 			slog.Warn("safety-kernel: snapshot redis LPUSH failed", "err", err)
-		} else if err := s.resultClient.LTrim(rctx, snapshotHistoryKey, 0, snapshotHistoryMax-1).Err(); err != nil {
+		} else if err := s.resultClient.LTrim(ctx, snapshotHistoryKey, 0, snapshotHistoryMax-1).Err(); err != nil {
 			slog.Warn("safety-kernel: snapshot redis LTRIM failed", "err", err)
 		}
 	}
@@ -1308,7 +1173,6 @@ func (s *server) setPolicyWithBundleCount(ctx context.Context, policy *config.Sa
 	s.cacheMu.Unlock()
 
 	slog.Info("safety-kernel: policy updated, cache invalidated", "version", newVersion)
-	return nil
 }
 
 type policyLoader struct {
@@ -1443,6 +1307,13 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 		if !ok || strings.TrimSpace(content) == "" {
 			continue
 		}
+		// Verify the bundle signature under the active strict mode.
+		// In enforce mode, any failure propagates an error so the
+		// previous known-good policy stays active. In warn/off mode
+		// the call returns nil and continues.
+		if err := verifyBundleSignature(key, []byte(content), fragmentSignature(rawBundles[key]), verifier.mode, verifier.store); err != nil {
+			return nil, "", 0, err
+		}
 		isCustomBundle := strings.HasPrefix(key, customPolicyBundlePrefix)
 		if isCustomBundle && bundleLimit != licensing.Unlimited {
 			projected := int64(customBundleCount + 1)
@@ -1456,9 +1327,6 @@ func (l *policyLoader) loadFragments(ctx context.Context) (*config.SafetyPolicy,
 				skippedCount++
 				continue
 			}
-		}
-		if err := verifyBundleSignature(key, []byte(content), fragmentSignature(rawBundles[key]), verifier.mode, verifier.store); err != nil {
-			return nil, "", customBundleCount, err
 		}
 		policy, err := config.ParseSafetyPolicy([]byte(content))
 		if err != nil {
@@ -1711,7 +1579,7 @@ func loadPolicyBundle(source string) (*config.SafetyPolicy, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	if err := verifyPolicySignature(data, source); err != nil {
+	if err := verifyFilePolicySignature(data, source); err != nil {
 		return nil, "", err
 	}
 	policy, err := config.ParseSafetyPolicy(data)

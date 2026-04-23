@@ -486,6 +486,19 @@ func (s *server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 			writeTierLimitJSON(w, limitErr)
 			return
 		}
+		if limitErr := licensing.CheckActiveWorkflows(int64(count+1), s.currentEntitlements()); limitErr != nil {
+			if reservedKey && idempotencyKey != "" {
+				cleanupRunIdempotencyReservation(
+					r.Context(),
+					idempotencyKey,
+					runID,
+					"failed to cleanup idempotency key after tier workflow limit rejection",
+					s.workflowStore.DeleteRunIdempotencyKey,
+				)
+			}
+			writeTierLimitJSON(w, limitErr)
+			return
+		}
 	}
 	reqID := requestIdFromContext(r.Context())
 	run := &wf.WorkflowRun{
@@ -622,14 +635,7 @@ func (s *server) handleRerunRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if configLimit > 0 && count >= configLimit {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusTooManyRequests)
-			writeJSON(w, map[string]any{
-				"error":   "max concurrent workflow runs exceeded",
-				"status":  http.StatusTooManyRequests,
-				"current": count,
-				"limit":   configLimit,
-			})
+			writeErrorJSON(w, http.StatusTooManyRequests, "max concurrent runs reached")
 			return
 		}
 		if limitErr := licensing.CheckActiveWorkflows(int64(count+1), s.currentEntitlements()); limitErr != nil {

@@ -33,9 +33,7 @@ type TierDefaultSpec struct {
 	SCIM               bool
 	SIEMExport         bool
 	LegalHold          bool
-	VelocityRules      bool
 	BreakGlassAdmin    bool
-	AgentIdentity      bool
 	SupportSLA         bool
 }
 
@@ -71,9 +69,7 @@ var TierDefaults = map[Plan]TierDefaultSpec{
 		SCIM:               true,
 		SIEMExport:         true,
 		LegalHold:          true,
-		VelocityRules:      true,
 		BreakGlassAdmin:    true,
-		AgentIdentity:      true,
 		SupportSLA:         true,
 	},
 }
@@ -149,8 +145,6 @@ func applyTierDefaultSpec(target *Entitlements, spec TierDefaultSpec) {
 	setNamedBoolField(target, spec.SCIM, "SCIM")
 	setNamedBoolField(target, spec.SIEMExport, "SIEMExport", "AuditExport")
 	setNamedBoolField(target, spec.LegalHold, "LegalHold")
-	setNamedBoolField(target, spec.VelocityRules, "VelocityRules")
 	setNamedBoolField(target, spec.BreakGlassAdmin, "BreakGlassAdmin")
-	setNamedBoolField(target, spec.AgentIdentity, "AgentIdentity")
 	setNamedBoolField(target, spec.SupportSLA, "SupportSLA")
 }

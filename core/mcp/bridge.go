@@ -540,26 +540,6 @@ func (b *HTTPServiceBridge) doRequest(ctx context.Context, method, path string, 
 			Transport:     &http.Transport{DialContext: pinnedDialer(pinnedIPs)},
 		}
 	}
-	// Start the invocation audit BEFORE client.Do so latency is measured
-	// across the full transport. FinishRequest always fires (defer) so
-	// both the success path and every error path (DNS failure, TLS
-	// failure, body-read failure) produce a terminal SIEMEvent — the
-	// DoD requires "every outbound call produces an audit event", which
-	// must include transport-level failures that previously slipped
-	// through the per-sign hook.
-	var handle OutboundRequestHandle
-	if b.outboundInvocationAuditor != nil {
-		handle = b.outboundInvocationAuditor.StartRequest(ctx, method, path, payloadBytes)
-	}
-	status := 0
-	var data []byte
-	var callErr error
-	defer func() {
-		if b.outboundInvocationAuditor != nil {
-			b.outboundInvocationAuditor.FinishRequest(handle, status, data, callErr)
-		}
-	}()
-
 	// #nosec G704 -- URL is validated and DNS-pinned via validateAndResolveOutboundURL above.
 	resp, err := client.Do(req)
 	if err != nil {

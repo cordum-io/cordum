@@ -21,7 +21,6 @@ if TYPE_CHECKING:
   from ..models.job_detail_result_type_0 import JobDetailResultType0
   from ..models.safety_decision import SafetyDecision
   from ..models.job_detail_labels import JobDetailLabels
-  from ..models.delegation_lineage_view import DelegationLineageView
 
 
 
@@ -55,7 +54,6 @@ class JobDetail:
             error (Union[None, Unset, str]):
             retry_count (Union[Unset, int]):
             decisions (Union[List['SafetyDecision'], None, Unset]):
-            delegation (Union[Unset, DelegationLineageView]):
      """
 
     id: Union[Unset, str] = UNSET
@@ -79,7 +77,6 @@ class JobDetail:
     error: Union[None, Unset, str] = UNSET
     retry_count: Union[Unset, int] = UNSET
     decisions: Union[List['SafetyDecision'], None, Unset] = UNSET
-    delegation: Union[Unset, 'DelegationLineageView'] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -87,7 +84,6 @@ class JobDetail:
         from ..models.job_detail_result_type_0 import JobDetailResultType0
         from ..models.safety_decision import SafetyDecision
         from ..models.job_detail_labels import JobDetailLabels
-        from ..models.delegation_lineage_view import DelegationLineageView
         id = self.id
 
         state = self.state
@@ -181,10 +177,6 @@ class JobDetail:
         else:
             decisions = self.decisions
 
-        delegation: Union[Unset, Dict[str, Any]] = UNSET
-        if not isinstance(self.delegation, Unset):
-            delegation = self.delegation.to_dict()
-
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -232,8 +224,6 @@ class JobDetail:
             field_dict["retry_count"] = retry_count
         if decisions is not UNSET:
             field_dict["decisions"] = decisions
-        if delegation is not UNSET:
-            field_dict["delegation"] = delegation
 
         return field_dict
 
@@ -244,7 +234,6 @@ class JobDetail:
         from ..models.job_detail_result_type_0 import JobDetailResultType0
         from ..models.safety_decision import SafetyDecision
         from ..models.job_detail_labels import JobDetailLabels
-        from ..models.delegation_lineage_view import DelegationLineageView
         d = src_dict.copy()
         id = d.pop("id", UNSET)
 
@@ -414,16 +403,6 @@ class JobDetail:
         decisions = _parse_decisions(d.pop("decisions", UNSET))
 
 
-        _delegation = d.pop("delegation", UNSET)
-        delegation: Union[Unset, DelegationLineageView]
-        if isinstance(_delegation,  Unset):
-            delegation = UNSET
-        else:
-            delegation = DelegationLineageView.from_dict(_delegation)
-
-
-
-
         job_detail = cls(
             id=id,
             state=state,
@@ -446,7 +425,6 @@ class JobDetail:
             error=error,
             retry_count=retry_count,
             decisions=decisions,
-            delegation=delegation,
         )
 
 

@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -127,9 +125,10 @@ func main() {
 	)
 
 	if id := strings.TrimSpace(*agentID); id != "" {
-		// Scope enforcement only makes sense when we actually resolved an
-		// identity to enforce against. Keeps the legacy dev-mode path
-		// working for users running stdio without --agent-id.
+		// Scope enforcement only makes sense when we actually resolved
+		// an identity to enforce against. Enabling it here preserves
+		// the legacy "unauthenticated dev tool" mode when --agent-id
+		// is not provided.
 		toolRegistry.SetScopeEnforcement(true)
 		stdio, ok := transport.(*mcp.StdioTransport)
 		if ok {
@@ -137,6 +136,7 @@ func main() {
 			identity, err := toolClient.FetchAgentIdentity(bootCtx, id)
 			bootCancel()
 			if err != nil {
+				// Fail-closed: cannot verify identity against the gateway.
 				slog.Error("cordum-mcp: resolve agent identity failed, refusing to start",
 					"agent_id", id, "error", err)
 				os.Exit(1)
@@ -155,15 +155,6 @@ func main() {
 		}
 	}
 
-	// Register first-party prompts (draft_safety_rule, explain_denial,
-	// summarize_approvals, policy_migration_helper) so the stdio MCP
-	// server exposes them in lockstep with the HTTP gateway. Without
-	// this, a Claude Code / Cursor client connected via stdio would
-	// see prompts/list empty even though the backend has them.
-	promptRegistry := mcp.NewPromptRegistry()
-	if err := mcp.RegisterAllPrompts(promptRegistry); err != nil {
-		slog.Error("cordum-mcp: prompt registration failed; prompts/list will be empty", "error", err)
-	}
 	server := mcp.NewServer(transport, toolRegistry, resourceRegistry, mcp.ServerConfig{
 		Name:            "cordum",
 		Version:         buildinfo.Version,

@@ -161,33 +161,6 @@ func (r *EntitlementResolver) clock() func() time.Time {
 	}
 }
 
-// ForceState is a test helper that bypasses env/file loading and stores a
-// synthetic resolver snapshot directly.
-func (r *EntitlementResolver) ForceState(plan Plan, entitlements Entitlements, rights *Rights) {
-	r.ForceStateWithStatus(plan, entitlements, rights, "active")
-}
-
-// ForceStateWithStatus is the same as ForceState, but allows tests to set an
-// explicit runtime status such as grace, degraded, or invalid.
-func (r *EntitlementResolver) ForceStateWithStatus(plan Plan, entitlements Entitlements, rights *Rights, status string) {
-	if r == nil {
-		return
-	}
-
-	var license *License
-	if rights != nil {
-		cloned := *rights
-		license = &License{Payload: Claims{Rights: &cloned}}
-	}
-
-	status = strings.TrimSpace(status)
-	if status == "" {
-		status = "active"
-	}
-
-	r.state.Store(buildResolverSnapshot(plan, entitlements, license, status))
-}
-
 func buildResolverSnapshot(plan Plan, entitlements Entitlements, license *License, status string) resolverSnapshot {
 	plan = plan.Normalized()
 	info := LicenseInfo{

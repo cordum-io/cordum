@@ -18,12 +18,6 @@ function ScopeSelector({
   params: EffectiveConfigParams;
   onApply: (params: EffectiveConfigParams) => void;
 }) {
-  // Seed scope inputs from the parent's current scope exactly once. This is
-  // a draft-form: the user edits locally and then commits via "Apply Scope"
-  // which updates the parent params. We intentionally ignore subsequent
-  // prop updates so a background query refresh can't overwrite an in-flight
-  // edit. If a caller ever needs to force-reset the form, that requires an
-  // explicit key-remount at the call site.
   const [orgId, setOrgId] = useState(params.orgId ?? "");
   const [teamId, setTeamId] = useState(params.teamId ?? "");
   const [workflowId, setWorkflowId] = useState(params.workflowId ?? "");
@@ -44,7 +38,7 @@ function ScopeSelector({
         <Layers className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
         <div>
           <h3 className="font-display text-base font-semibold text-ink">Scope Selector</h3>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted">
             Narrow the scope to see which config values apply at a specific level.
             Leave empty for global defaults.
           </p>
@@ -53,7 +47,7 @@ function ScopeSelector({
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="space-y-1">
-          <label className="text-xs font-semibold text-muted-foreground">Org ID</label>
+          <label className="text-xs font-semibold text-muted">Org ID</label>
           <Input
             placeholder="(global)"
             value={orgId}
@@ -61,7 +55,7 @@ function ScopeSelector({
           />
         </div>
         <div className="space-y-1">
-          <label className="text-xs font-semibold text-muted-foreground">Team ID</label>
+          <label className="text-xs font-semibold text-muted">Team ID</label>
           <Input
             placeholder="(org default)"
             value={teamId}
@@ -69,7 +63,7 @@ function ScopeSelector({
           />
         </div>
         <div className="space-y-1">
-          <label className="text-xs font-semibold text-muted-foreground">Workflow ID</label>
+          <label className="text-xs font-semibold text-muted">Workflow ID</label>
           <Input
             placeholder="(team default)"
             value={workflowId}
@@ -77,7 +71,7 @@ function ScopeSelector({
           />
         </div>
         <div className="space-y-1">
-          <label className="text-xs font-semibold text-muted-foreground">Step ID</label>
+          <label className="text-xs font-semibold text-muted">Step ID</label>
           <Input
             placeholder="(workflow default)"
             value={stepId}
@@ -100,11 +94,11 @@ function ScopeSelector({
 // ---------------------------------------------------------------------------
 
 const SCOPE_COLORS: Record<string, string> = {
-  global: "bg-muted text-muted-foreground",
-  org: "bg-[var(--color-info)]/10 text-[var(--color-info)]",
-  team: "bg-[var(--color-success)]/10 text-[var(--color-success)]",
-  workflow: "bg-primary/10 text-primary",
-  step: "bg-[var(--color-warning)]/10 text-[var(--color-warning)]",
+  global: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
+  org: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
+  team: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300",
+  workflow: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
+  step: "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300",
 };
 
 function inferScope(params: EffectiveConfigParams): string {
@@ -119,7 +113,7 @@ function ScopeBadge({ scope }: { scope: string }) {
   return (
     <span
       className={cn(
-        "ml-2 inline-flex items-center rounded-full px-1.5 py-0.5 text-xs font-semibold",
+        "ml-2 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
         SCOPE_COLORS[scope] ?? SCOPE_COLORS.global,
       )}
       title={`Set at ${scope} level`}
@@ -138,10 +132,10 @@ function formatValue(value: unknown): string {
 }
 
 function valueColor(value: unknown): string {
-  if (typeof value === "string") return "text-[var(--color-success)]";
-  if (typeof value === "number") return "text-[var(--color-info)]";
-  if (typeof value === "boolean") return "text-primary";
-  if (value === null) return "text-muted-foreground";
+  if (typeof value === "string") return "text-emerald-600 dark:text-emerald-400";
+  if (typeof value === "number") return "text-blue-600 dark:text-blue-400";
+  if (typeof value === "boolean") return "text-purple-600 dark:text-purple-400";
+  if (value === null) return "text-muted";
   return "text-ink";
 }
 
@@ -176,12 +170,12 @@ function TreeNode({
           onClick={() => setOpen(!open)}
         >
           {open ? (
-            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <ChevronDown className="h-3.5 w-3.5 text-muted shrink-0" />
           ) : (
-            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <ChevronRight className="h-3.5 w-3.5 text-muted shrink-0" />
           )}
           <span className="text-ink font-semibold">{name}</span>
-          <span className="text-muted-foreground ml-1">
+          <span className="text-muted ml-1">
             {isArray ? `[${entries.length}]` : `{${entries.length}}`}
           </span>
         </button>
@@ -238,9 +232,9 @@ export default function EffectiveConfigPanel() {
             <h3 className="font-display text-base font-semibold text-ink">
               Effective Configuration
             </h3>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted">
               Merged configuration that applies at the{" "}
-              <Badge className="text-xs px-1.5 py-0">{scope}</Badge> level.
+              <Badge className="text-[10px] px-1.5 py-0">{scope}</Badge> level.
               Values cascade: global → org → team → workflow → step.
             </p>
           </div>
@@ -263,7 +257,7 @@ export default function EffectiveConfigPanel() {
         {data && !isLoading && (
           <div className="space-y-0.5">
             {Object.keys(data).length === 0 ? (
-              <p className="text-sm text-muted-foreground">No configuration values at this scope.</p>
+              <p className="text-sm text-muted">No configuration values at this scope.</p>
             ) : (
               Object.entries(data).map(([key, val]) => (
                 <TreeNode

@@ -26,15 +26,7 @@ const (
 	PermAgentsRead             = "agents.read"
 	PermAgentsWrite            = "agents.write"
 	PermAgentsDelegate         = "agents.delegate"
-	PermDelegationRead         = "delegation.read"
-	// PermDelegationImpersonate authorises a caller to submit a job
-	// asserting a delegation_audience_agent_id that differs from the
-	// caller's authenticated agent_id. Without this permission, any
-	// audience widening on submit is rejected 403 to prevent quiet
-	// impersonation through the delegation wire path. See #198
-	// Blocker 1 follow-up on split/delegation-security.
-	PermDelegationImpersonate = "delegation.impersonate"
-	PermWorkflowsRead         = "workflows.read"
+	PermWorkflowsRead          = "workflows.read"
 	PermWorkflowsWrite         = "workflows.write"
 	PermWorkersRead            = "workers.read"
 	PermWorkersWrite           = "workers.write"
@@ -83,16 +75,13 @@ const (
 	PermEvalsDatasetsRead   = "evals.datasets.read"
 	PermEvalsDatasetsWrite  = "evals.datasets.write"
 	PermEvalsDatasetsDelete = "evals.datasets.delete"
-	PermEvalsRunsExecute    = "evals.runs.execute"
-	PermEvalsRunsRead       = "evals.runs.read"
-	PermEvalsRunsDelete     = "evals.runs.delete"
 )
 
 // AllPermissions is the canonical list of permissions for validation.
 var AllPermissions = []string{
 	PermAdminAll,
 	PermJobsRead, PermJobsWrite, PermJobsApprove,
-	PermAgentsRead, PermAgentsWrite, PermAgentsDelegate, PermDelegationRead,
+	PermAgentsRead, PermAgentsWrite, PermAgentsDelegate,
 	PermWorkflowsRead, PermWorkflowsWrite,
 	PermWorkersRead, PermWorkersWrite,
 	PermConfigRead, PermConfigWrite,
@@ -115,7 +104,6 @@ var AllPermissions = []string{
 	PermUsersRead, PermUsersWrite,
 	PermRolesRead, PermRolesWrite,
 	PermEvalsDatasetsRead, PermEvalsDatasetsWrite, PermEvalsDatasetsDelete,
-	PermEvalsRunsExecute, PermEvalsRunsRead, PermEvalsRunsDelete,
 }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +146,6 @@ func DefaultRoles() []*RoleDefinition {
 				PermSchemasRead, PermSchemasWrite,
 				PermPolicyRead,
 				PermGovernanceRead,
-				PermDelegationRead,
 				PermAuditRead,
 				PermConfigRead,
 			},
@@ -181,7 +168,6 @@ func DefaultRoles() []*RoleDefinition {
 				PermSchemasRead,
 				PermPolicyRead,
 				PermGovernanceRead,
-				PermDelegationRead,
 			},
 			BuiltIn:   true,
 			CreatedAt: now,
@@ -208,7 +194,6 @@ var basicRolePermissions = map[string][]string{
 		PermSchemasRead, PermSchemasWrite,
 		PermPolicyRead,
 		PermGovernanceRead,
-		PermDelegationRead,
 		PermAuditRead,
 		PermConfigRead,
 	},
@@ -223,7 +208,6 @@ var basicRolePermissions = map[string][]string{
 		PermSchemasRead,
 		PermPolicyRead,
 		PermGovernanceRead,
-		PermDelegationRead,
 	},
 }
 

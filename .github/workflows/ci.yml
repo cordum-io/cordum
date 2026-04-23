@@ -45,16 +45,7 @@ jobs:
         flags: unittests
         name: codecov-umbrella
 
-    # Benchmarks + their storage step are advisory (continue-on-error).
-    # They're informational performance tracking, not a correctness
-    # gate — flakes (e.g. occasional benchmark panics on shared CI
-    # runners, or the action's gh-pages auto-push tripping on a dirty
-    # working tree after `> benchmark_raw.txt` creates an untracked
-    # file) should not block merges. The benchmark-action writes to a
-    # separate gh-pages branch, so skipping a run has no impact on
-    # code correctness.
     - name: Run benchmarks
-      continue-on-error: true
       run: |
         go test -run=^$ -bench=. -benchmem ./... > benchmark_raw.txt
         # Keep only valid Go benchmark output lines (results + header).
@@ -64,9 +55,8 @@ jobs:
 
     - name: Check benchmark output
       id: benchmark_check
-      continue-on-error: true
       run: |
-        if [ -f benchmark.txt ] && grep -q '^Benchmark' benchmark.txt; then
+        if grep -q '^Benchmark' benchmark.txt; then
           echo "has_benchmark=true" >> $GITHUB_OUTPUT
         else
           echo "has_benchmark=false" >> $GITHUB_OUTPUT
@@ -74,7 +64,6 @@ jobs:
 
     - name: Store benchmark result
       uses: benchmark-action/github-action-benchmark@v1
-      continue-on-error: true
       if: github.ref == 'refs/heads/main' && steps.benchmark_check.outputs.has_benchmark == 'true'
       with:
         tool: 'go'
@@ -221,9 +210,6 @@ jobs:
     - name: Generate API key
       run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
 
-    - name: Generate Redis password
-      run: echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> $GITHUB_ENV
-
     - name: Generate TLS certificates
       run: |
         go run ./cmd/cordumctl generate-certs --dir ./certs
@@ -252,14 +238,12 @@ jobs:
         done
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
-        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
 
     - name: Run Go integration tests
       run: go test -v -tags=integration -timeout 5m ./...
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
-        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
-        REDIS_URL: rediss://:${{ env.REDIS_PASSWORD }}@localhost:6379
+        REDIS_URL: rediss://:cordum-dev@localhost:6379
         REDIS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
         REDIS_TLS_INSECURE: "false"
         NATS_URL: tls://localhost:4222
@@ -283,13 +267,12 @@ jobs:
         fi
       env:
         CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
-        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
         NATS_URL: tls://localhost:4222
         NATS_TOKEN: cordum-dev-token
         NATS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
         NATS_TLS_CERT: ${{ github.workspace }}/certs/client/tls.crt
         NATS_TLS_KEY: ${{ github.workspace }}/certs/client/tls.key
-        REDIS_URL: rediss://:${{ env.REDIS_PASSWORD }}@localhost:6379
+        REDIS_URL: rediss://:cordum-dev@localhost:6379
         REDIS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
         REDIS_TLS_CERT: ${{ github.workspace }}/certs/client/tls.crt
         REDIS_TLS_KEY: ${{ github.workspace }}/certs/client/tls.key
@@ -342,22 +325,14 @@ jobs:
           ${{ runner.os }}-go-
 
     - name: Install oasdiff
-      run: go install github.com/oasdiff/oasdiff@v1.11.7
+      run: go install github.com/oasdiff/oasdiff@latest
 
     - name: Mark allow-breaking if commit message requests it
       id: allow_breaking
-      # On pull_request events, checkout@v4 creates a synthetic merge commit
-      # so `git log -1` reads the merge message rather than the contributor's
-      # commit. Inspect the contributor commit (HEAD^2 on PR merges, HEAD
-      # otherwise) so the allow-breaking-openapi marker actually takes effect.
       run: |
-        TARGET_REF="HEAD"
-        if [[ "${{ github.event_name }}" == "pull_request" ]] && git rev-parse --verify HEAD^2 >/dev/null 2>&1; then
-          TARGET_REF="HEAD^2"
-        fi
-        if git log -1 --pretty=%B "$TARGET_REF" | grep -q 'allow-breaking-openapi'; then
-          echo "OPENAPI_ALLOW_BREAKING=1" >> "$GITHUB_ENV"
-          echo "::notice::allow-breaking-openapi marker found on $TARGET_REF; oasdiff will not fail on breaking changes"
+        if git log -1 --pretty=%B | grep -q 'allow-breaking-openapi'; then
+          echo "OPENAPI_ALLOW_BREAKING=1" >> $GITHUB_ENV
+          echo "::notice::allow-breaking-openapi marker found; oasdiff will not fail on breaking changes"
         fi
 
     - name: Validate OpenAPI

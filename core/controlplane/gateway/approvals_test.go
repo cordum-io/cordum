@@ -22,8 +22,8 @@ import (
 	"github.com/google/uuid"
 )
 
-func withAuth(req *http.Request, authCtx *auth.AuthContext) *http.Request {
-	return req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, authCtx))
+func withAuth(req *http.Request, auth *auth.AuthContext) *http.Request {
+	return req.WithContext(context.WithValue(req.Context(), auth.ContextKey{}, auth))
 }
 
 func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
@@ -370,10 +370,9 @@ func TestApproveJobRefreshesStaleSnapshot(t *testing.T) {
 
 	jobID := "job-mismatch"
 	req := &pb.JobRequest{
-		JobId:       jobID,
-		Topic:       "job.test",
-		TenantId:    "default",
-		PrincipalId: "agent-submitter",
+		JobId:    jobID,
+		Topic:    "job.test",
+		TenantId: "default",
 	}
 	if err := s.jobStore.SetJobMeta(context.Background(), req); err != nil {
 		t.Fatalf("set job meta: %v", err)
@@ -454,6 +453,13 @@ func TestApproveJobRejectsWhenSnapshotUnavailable(t *testing.T) {
 	// Safety kernel unreachable — should return 502.
 	if rr.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502 got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["code"] != string(model.ApprovalConflictStaleSnapshot) {
+		t.Fatalf("expected stale snapshot code, got %#v", resp["code"])
 	}
 	state, _ := s.jobStore.GetState(context.Background(), jobID)
 	if state != model.JobStateApproval {

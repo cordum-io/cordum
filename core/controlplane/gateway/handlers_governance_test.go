@@ -33,11 +33,11 @@ func (governanceAuth) AuthenticateGRPC(ctx context.Context) (*auth.AuthContext, 
 }
 
 func (governanceAuth) RequireRole(r *http.Request, roles ...string) error {
-	authCtx := auth.FromRequest(r)
-	if authCtx == nil {
+	auth := auth.FromRequest(r)
+	if auth == nil {
 		return errors.New("unauthorized")
 	}
-	role := auth.NormalizeRole(authCtx.Role)
+	role := auth.NormalizeRole(auth.Role)
 	for _, candidate := range roles {
 		if auth.NormalizeRole(candidate) == role {
 			return nil
@@ -47,26 +47,26 @@ func (governanceAuth) RequireRole(r *http.Request, roles ...string) error {
 }
 
 func (governanceAuth) ResolveTenant(r *http.Request, requested, _ string) (string, error) {
-	authCtx := auth.FromRequest(r)
-	if authCtx == nil {
+	auth := auth.FromRequest(r)
+	if auth == nil {
 		return "", errors.New("unauthorized")
 	}
 	requested = strings.TrimSpace(requested)
 	if requested == "" {
-		return strings.TrimSpace(authCtx.Tenant), nil
+		return strings.TrimSpace(auth.Tenant), nil
 	}
-	if requested != strings.TrimSpace(authCtx.Tenant) && !authCtx.AllowCrossTenant {
+	if requested != strings.TrimSpace(auth.Tenant) && !auth.AllowCrossTenant {
 		return "", errors.New("tenant access denied")
 	}
 	return requested, nil
 }
 
 func (governanceAuth) RequireTenantAccess(r *http.Request, tenant string) error {
-	authCtx := auth.FromRequest(r)
-	if authCtx == nil {
+	auth := auth.FromRequest(r)
+	if auth == nil {
 		return errors.New("unauthorized")
 	}
-	if authCtx.AllowCrossTenant || strings.TrimSpace(authCtx.Tenant) == strings.TrimSpace(tenant) {
+	if auth.AllowCrossTenant || strings.TrimSpace(auth.Tenant) == strings.TrimSpace(tenant) {
 		return nil
 	}
 	return errors.New("tenant access denied")
@@ -76,11 +76,11 @@ func (governanceAuth) ResolvePrincipal(r *http.Request, requested string) (strin
 	if requested != "" {
 		return requested, nil
 	}
-	authCtx := auth.FromRequest(r)
-	if authCtx == nil {
+	auth := auth.FromRequest(r)
+	if auth == nil {
 		return "", errors.New("unauthorized")
 	}
-	return authCtx.PrincipalID, nil
+	return auth.PrincipalID, nil
 }
 
 type stubDecisionLogStore struct {

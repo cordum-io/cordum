@@ -609,7 +609,7 @@ func BenchmarkListEvalDatasets1k(b *testing.B) {
 	}
 	defer srv.Close()
 	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer func() { _ = client.Close() }()
+	defer client.Close()
 	s := NewEvalDatasetStoreFromClient(client)
 	ctx := context.Background()
 

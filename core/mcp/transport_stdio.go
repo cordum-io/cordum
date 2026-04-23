@@ -31,8 +31,10 @@ type StdioTransport struct {
 }
 
 // SetDefaultIdentity stamps every subsequent ReadMessage result with
-// the given agent identity. Stdio is single-session, so the identity
-// is resolved once at process boot.
+// the given agent identity. Stdio is a single-session transport, so the
+// identity is resolved once at process boot (from --agent-id or
+// CORDUM_MCP_AGENT_ID) and applied to all inbound messages. Passing nil
+// clears the stamp — the server will then see fail-closed filtering.
 func (t *StdioTransport) SetDefaultIdentity(id *AgentIdentity) {
 	if t == nil {
 		return

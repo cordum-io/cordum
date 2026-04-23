@@ -174,12 +174,13 @@ describe("InputSafetySettings page", () => {
       expect(view.container.textContent).toContain("Input Safety");
     });
 
-    // Change the select to "open"
+    // Toggle fail mode to ensure a dirty state regardless of baseline.
     const select = view.container.querySelector("select") as HTMLSelectElement | null;
     expect(select).toBeTruthy();
+    const nextMode = select?.value === "open" ? "closed" : "open";
     await act(async () => {
       if (select) {
-        select.value = "open";
+        select.value = nextMode;
         select.dispatchEvent(new Event("change", { bubbles: true }));
       }
     });
@@ -201,7 +202,7 @@ describe("InputSafetySettings page", () => {
       const [, putInit] = putCall as [string, RequestInit];
       const payload = JSON.parse(String(putInit.body)) as Record<string, unknown>;
       const data = payload.data as Record<string, unknown>;
-      expect(data.policy_check_fail_mode).toBe("open");
+      expect(data.policy_check_fail_mode).toBe(nextMode);
     });
 
     view.unmount();

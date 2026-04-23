@@ -8,10 +8,6 @@ interface UpgradePromptProps {
   plan?: string | null;
   className?: string;
   href?: string;
-  forceVisible?: boolean;
-  title?: string;
-  description?: string;
-  ctaLabel?: string;
 }
 
 export function shouldShowUpgradePrompt(
@@ -32,24 +28,15 @@ export function UpgradePrompt({
   plan,
   className,
   href = "https://cordum.io/pricing",
-  forceVisible = false,
-  title,
-  description,
-  ctaLabel = "View pricing",
 }: UpgradePromptProps) {
-  if (!forceVisible && !shouldShowUpgradePrompt(metric)) {
+  if (!shouldShowUpgradePrompt(metric)) {
     return null;
   }
 
   const current = typeof metric?.current === "number" ? metric.current : 0;
   const allowed = typeof metric?.allowed === "number" ? metric.allowed : 0;
-  const atLimit = !forceVisible && allowed > 0 && current >= allowed;
+  const atLimit = allowed > 0 && current >= allowed;
   const Icon = atLimit ? AlertTriangle : Sparkles;
-  const heading =
-    title ?? (atLimit ? `${label} limit reached` : `${label} nearing its tier limit`);
-  const body =
-    description ??
-    `You are using ${current.toLocaleString()} of ${allowed.toLocaleString()} ${label.toLowerCase()}${plan ? ` on ${plan}.` : "."} Upgrade before automation slows down.`;
 
   return (
     <div
@@ -70,9 +57,12 @@ export function UpgradePrompt({
                 atLimit ? "text-destructive" : "text-[var(--color-warning)]",
               )}
             />
-            {heading}
+            {atLimit ? `${label} limit reached` : `${label} nearing its tier limit`}
           </div>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{body}</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            You are using {current.toLocaleString()} of {allowed.toLocaleString()} {label.toLowerCase()}
+            {plan ? ` on ${plan}.` : "."} Upgrade before automation slows down.
+          </p>
         </div>
 
         <a
@@ -86,7 +76,7 @@ export function UpgradePrompt({
               : "border border-[var(--color-warning)]/25 text-foreground hover:bg-[var(--color-warning)]/15",
           )}
         >
-          {ctaLabel}
+          View pricing
           <ArrowUpRight className="h-3.5 w-3.5" />
         </a>
       </div>

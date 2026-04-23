@@ -52,7 +52,7 @@ const config: Config = {
       {
         redirects: [
           // Legacy URLs referenced in codebase (GOVERNANCE.md, dashboard settings)
-          {from: '/api', to: '/api-reference/full-reference'},
+          {from: '/api', to: '/api-reference/rest-api'},
           {from: '/configuration', to: '/operations/configuration-guide'},
           {from: '/deployment', to: '/operations/deployment'},
           {from: '/quickstart', to: '/'},
@@ -137,7 +137,7 @@ const config: Config = {
           title: 'Docs',
           items: [
             {label: 'Getting Started', to: '/'},
-            {label: 'API Reference', to: '/api-reference/full-reference'},
+            {label: 'API Reference', to: '/api-reference/rest-api'},
             {label: 'Operations', to: '/operations/deployment'},
           ],
         },

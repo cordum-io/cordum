@@ -503,8 +503,7 @@ func main() {
 
 	dispatchTimeout, runningTimeout, scanInterval := reconcilerTimeouts(snapshot.Timeouts)
 	reconciler := scheduler.NewReconciler(jobStore, dispatchTimeout, runningTimeout, scanInterval).
-		WithApprovalMetrics(approvalMetrics).
-		WithSnapshotProvider(safetyClient)
+		WithApprovalMetrics(approvalMetrics)
 	go reconciler.Start(ctx)
 	pendingReplayer := scheduler.NewPendingReplayer(engine, jobStore, dispatchTimeout, scanInterval)
 	go pendingReplayer.Start(ctx)

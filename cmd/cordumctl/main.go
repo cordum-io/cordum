@@ -63,16 +63,6 @@ func main() {
 		runPolicyCmd(args)
 	case "audit":
 		runAuditCmd(args)
-	case "evals":
-		runEvalsCmd(args)
-	case "auth":
-		runAuthCmd(args)
-	case "doctor":
-		runDoctorCmd(args)
-	case "delegation":
-		runDelegationCmd(args)
-	case "governance":
-		runGovernanceCmd(args)
 	default:
 		usage()
 		os.Exit(1)
@@ -418,12 +408,6 @@ Usage:
   cordumctl policy sign --in <path> [--out <path>.sig] [--key-env NAME] [--key-id ID]
   cordumctl policy verify --in <path> [--sig <path>] [--public-key-env NAME]
   cordumctl audit verify [tenant] [--since ms] [--until ms] [--limit N] [--json]
-  cordumctl evals extract --name <dataset> [--dry-run]
-  cordumctl evals run --dataset <id> [--use-current] [--wait]
-  cordumctl auth <subcommand> [...]
-  cordumctl doctor [--json] [--verbose] [--strict] [--timeout SEC] [--skip-workers] [--fix]
-  cordumctl delegation <subcommand> [...]
-  cordumctl governance <subcommand> [...]
 
 Global flags:
   --gateway    Gateway base URL (default from CORDUM_GATEWAY)

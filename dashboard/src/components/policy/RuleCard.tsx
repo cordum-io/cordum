@@ -2,13 +2,14 @@ import { useState, useCallback } from "react";
 import { GripVertical, Pencil, Trash2, AlertTriangle, Zap } from "lucide-react";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
+import { FrameworkTagBadge } from "./FrameworkTagBadge";
 import { cn } from "../../lib/utils";
 import { formatCount } from "../../lib/format";
 import type { PolicyRule } from "../../api/types";
 
-const decisionStyles: Record<string, { label: string; variant: "success" | "governance" | "warning" | "info" }> = {
+const decisionStyles: Record<string, { label: string; variant: "success" | "danger" | "warning" | "info" }> = {
   allow: { label: "Allow", variant: "success" },
-  deny: { label: "Deny", variant: "governance" },
+  deny: { label: "Deny", variant: "danger" },
   require_approval: { label: "Require Approval", variant: "warning" },
   throttle: { label: "Throttle", variant: "info" },
 };
@@ -59,7 +60,7 @@ export function RuleCard({
   onDrop,
 }: RuleCardProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const decision = decisionStyles[rule.decisionType ?? "allow"] ?? decisionStyles.allow;
+  const decision = decisionStyles[rule.decisionType] ?? decisionStyles.allow;
   const isDisabled = rule.enabled === false;
 
   const handleToggle = useCallback(() => {
@@ -72,6 +73,8 @@ export function RuleCard({
 
   const capabilities = (rule.matchCriteria?.capabilities as string[] | undefined) ?? [];
   const riskTags = (rule.matchCriteria?.riskTags as string[] | undefined) ?? [];
+  const frameworkTags = (rule.frameworkTags ?? [])
+    .filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0);
   const logic = rule.logic === "OR" ? "any of" : "all of";
   const hasMatch = capabilities.length > 0 || riskTags.length > 0;
 
@@ -90,7 +93,7 @@ export function RuleCard({
       {/* Drag handle */}
       <button
         type="button"
-        className="mt-1 cursor-grab text-muted/50 hover:text-muted-foreground active:cursor-grabbing"
+        className="mt-1 cursor-grab text-muted/50 hover:text-muted active:cursor-grabbing"
         aria-label="Drag to reorder"
       >
         <GripVertical className="h-4 w-4" />
@@ -111,7 +114,7 @@ export function RuleCard({
         >
           <span
             className={cn(
-              "pointer-events-none inline-block h-4 w-4 rounded-full bg-card shadow transition-transform",
+              "pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
               isDisabled ? "translate-x-0" : "translate-x-4",
             )}
           />
@@ -119,25 +122,25 @@ export function RuleCard({
       )}
 
       {/* Priority number */}
-      <span className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-lg bg-accent/10 text-xs font-bold text-accent">
+      <span className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-lg bg-accent/10 text-[10px] font-bold text-accent">
         {index + 1}
       </span>
 
       {/* Disabled badge */}
       {isDisabled && (
-        <Badge variant="warning" className="mt-0.5 text-xs">Disabled</Badge>
+        <Badge variant="warning" className="mt-0.5 text-[10px]">Disabled</Badge>
       )}
 
       {/* Rule sentence */}
       <div className="flex-1 space-y-2">
         <p className="text-sm leading-relaxed text-ink">
-          <span className="text-muted-foreground">When a job has </span>
+          <span className="text-muted">When a job has </span>
           {hasMatch ? (
             <>
-              <span className="text-muted-foreground">{logic} </span>
+              <span className="text-muted">{logic} </span>
               {capabilities.length > 0 && (
                 <>
-                  <span className="text-muted-foreground">capabilities </span>
+                  <span className="text-muted">capabilities </span>
                   {capabilities.map((cap) => (
                     <Badge key={cap} variant="info" className="mx-0.5">
                       {cap}
@@ -146,13 +149,13 @@ export function RuleCard({
                 </>
               )}
               {capabilities.length > 0 && riskTags.length > 0 && (
-                <span className="text-muted-foreground"> and </span>
+                <span className="text-muted"> and </span>
               )}
               {riskTags.length > 0 && (
                 <>
-                  <span className="text-muted-foreground">risk tags </span>
+                  <span className="text-muted">risk tags </span>
                   {riskTags.map((tag) => (
-                    <Badge key={tag} variant="danger" className="mx-0.5">
+                    <Badge key={tag} variant="destructive" className="mx-0.5">
                       {tag}
                     </Badge>
                   ))}
@@ -160,22 +163,22 @@ export function RuleCard({
               )}
             </>
           ) : (
-            <span className="text-muted-foreground">any match criteria </span>
+            <span className="text-muted">any match criteria </span>
           )}
-          <span className="text-muted-foreground"> then </span>
+          <span className="text-muted"> then </span>
           <Badge variant={decision.variant} className="mx-0.5 text-sm">
             {decision.label}
           </Badge>
           {rule.reason && (
             <>
-              <span className="text-muted-foreground"> because </span>
+              <span className="text-muted"> because </span>
               <span className="italic text-ink/80">{rule.reason}</span>
             </>
           )}
         </p>
 
         {/* Inline stats */}
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <div className="flex items-center gap-3 text-[11px] text-muted">
           {rule.hitCount24h !== undefined && (
             <span className="flex items-center gap-1.5">
               <MiniSparkline value={rule.hitCount24h} />
@@ -187,11 +190,18 @@ export function RuleCard({
               last: {new Date(rule.lastTriggered).toLocaleString()}
             </span>
           )}
+          {frameworkTags.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {frameworkTags.map((tag) => (
+                <FrameworkTagBadge key={tag} tag={tag} />
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Conflict warning */}
         {conflictWarning && (
-          <div className="flex items-center gap-1.5 text-xs text-warning">
+          <div className="flex items-center gap-1.5 text-[11px] text-warning">
             <AlertTriangle className="h-3 w-3" />
             {conflictWarning}
           </div>
@@ -210,7 +220,7 @@ export function RuleCard({
         </Button>
         {confirmDelete ? (
           <div className="flex items-center gap-1">
-            <Button variant="danger" size="sm" type="button" onClick={onDelete}>
+            <Button variant="destructive" size="sm" type="button" onClick={onDelete}>
               Confirm
             </Button>
             <Button variant="ghost" size="sm" type="button" onClick={() => setConfirmDelete(false)}>
@@ -218,7 +228,7 @@ export function RuleCard({
             </Button>
           </div>
         ) : (
-          <Button variant="ghost" size="sm" type="button" aria-label="Delete rule" onClick={() => setConfirmDelete(true)}>
+          <Button variant="ghost" size="sm" type="button" onClick={() => setConfirmDelete(true)}>
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         )}

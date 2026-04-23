@@ -10,6 +10,7 @@ import (
 
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -20,16 +21,6 @@ const (
 	// EnvChainFailMode selects the consumer's behaviour when the audit
 	// chain append fails. Values: "strict" (default) or "permissive".
 	EnvChainFailMode = "CORDUM_AUDIT_CHAIN_FAIL"
-
-	// maxAuditEventBytes bounds the JSON payload the consumer will attempt
-	// to unmarshal. A normal SIEMEvent is kilobytes at worst (identity +
-	// reason + a small labels map); anything north of 1 MiB is treated as
-	// malformed / malicious and dropped at the subscription boundary so a
-	// crafted producer cannot pin the json decoder on a large allocation
-	// and starve the queue-group worker. Oversized messages are acked so
-	// JetStream does not redeliver them indefinitely — they would just
-	// re-trigger the same guard and block legitimate traffic behind them.
-	maxAuditEventBytes = 1 << 20 // 1 MiB
 )
 
 // ChainFailMode controls consumer behaviour when Chainer.Append fails.
@@ -89,22 +80,10 @@ func ParseChainFailMode(raw string) ChainFailMode {
 // the handler only returns nil (triggering ack) after a successful Export.
 // On Export failure the handler returns an error (triggering nak and
 // redelivery).
-//
-// The lifecycle ctx/cancel pair bounds every chain-append and exporter call:
-// handle() derives per-message timeouts from lifecycleCtx so Close() can
-// abort in-flight work by cancelling the parent. Without this the handler
-// would orphan its timeout from context.Background() and could hang past
-// the NATS ack deadline during shutdown, leaving messages re-delivered.
 type NATSAuditConsumer struct {
 	exporter Exporter
 	chainer  *Chainer
 	failMode ChainFailMode
-
-	// lifecycleCtx is cancelled by Close(); handle() derives per-message
-	// timeouts from it so in-flight chain-append and Export calls observe
-	// shutdown promptly and return within the JetStream ack window.
-	lifecycleCtx    context.Context
-	lifecycleCancel context.CancelFunc
 }
 
 // ConsumerOption configures a NATSAuditConsumer.
@@ -128,18 +107,14 @@ func WithChainFailMode(m ChainFailMode) ConsumerOption {
 // fail mode (unless a WithChainFailMode option is passed, in which case
 // the option wins — tests and explicit wiring take precedence over env).
 func NewNATSAuditConsumer(bus AuditBus, exporter Exporter, opts ...ConsumerOption) (*NATSAuditConsumer, error) {
-	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	c := &NATSAuditConsumer{
-		exporter:        exporter,
-		failMode:        ParseChainFailMode(os.Getenv(EnvChainFailMode)),
-		lifecycleCtx:    lifecycleCtx,
-		lifecycleCancel: lifecycleCancel,
+		exporter: exporter,
+		failMode: ParseChainFailMode(os.Getenv(EnvChainFailMode)),
 	}
 	for _, o := range opts {
 		o(c)
 	}
 	if err := bus.Subscribe(capsdk.SubjectAuditExport, QueueAuditExporters, c.handle); err != nil {
-		lifecycleCancel()
 		return nil, fmt.Errorf("audit consumer subscribe: %w", err)
 	}
 	slog.Info("audit NATS consumer started",
@@ -170,22 +145,6 @@ func (c *NATSAuditConsumer) handle(packet *pb.BusPacket) error {
 		return nil
 	}
 
-	// Defensive size bound. A single SIEMEvent is expected to be at most
-	// a few kilobytes of JSON; a multi-MiB payload is either a
-	// misconfigured producer (e.g. a runaway reason string) or an attempt
-	// to starve the queue-group worker. We ack-skip — the subscription
-	// loop must NOT fail, otherwise one malformed-large event would block
-	// every well-formed event queued behind it on the same JetStream
-	// consumer.
-	if len(alert.Message) > maxAuditEventBytes {
-		slog.Warn("audit consumer: oversized event dropped",
-			"bytes", len(alert.Message),
-			"max_bytes", maxAuditEventBytes,
-			"source", alert.SourceComponent,
-		)
-		return nil
-	}
-
 	var event SIEMEvent
 	if err := json.Unmarshal([]byte(alert.Message), &event); err != nil {
 		slog.Error("audit consumer: unmarshal event failed", "error", err)
@@ -193,15 +152,7 @@ func (c *NATSAuditConsumer) handle(packet *pb.BusPacket) error {
 		return nil
 	}
 
-	// Derive the per-message timeout from the consumer's lifecycle context so
-	// Close() can abort in-flight chain-append / Export calls. Orphaning from
-	// context.Background() would let a stalled handler run past the JetStream
-	// ack deadline and trigger redelivery storms.
-	parent := c.lifecycleCtx
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(parent, defaultExportTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultExportTimeout)
 	defer cancel()
 
 	if c.chainer != nil {
@@ -234,21 +185,11 @@ func (c *NATSAuditConsumer) handle(packet *pb.BusPacket) error {
 	return nil
 }
 
-// Close cancels the lifecycle context — aborting any in-flight chain-append
-// or Export calls — then shuts down the underlying SIEM exporter.
-//
-// Cancelling before the exporter close ensures stalled calls observe ctx.Done
-// and return promptly; without it Exporter.Close() could race with a handler
-// still blocked on a network round-trip.
+// Close shuts down the underlying SIEM exporter.
 func (c *NATSAuditConsumer) Close() error {
-	if c == nil {
-		return nil
-	}
-	if c.lifecycleCancel != nil {
-		c.lifecycleCancel()
-	}
-	if c.exporter == nil {
+	if c == nil || c.exporter == nil {
 		return nil
 	}
 	return c.exporter.Close()
 }
+

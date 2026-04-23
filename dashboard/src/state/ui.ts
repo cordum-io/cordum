@@ -8,7 +8,7 @@ export type AgentsView = "table" | "cards";
 function resolveTheme(pref: Theme): ResolvedTheme {
   if (pref === "system") {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return "light";
+      return "dark";
     }
     return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
@@ -20,13 +20,14 @@ interface UiState {
   resolvedTheme: ResolvedTheme;
   globalSearch: string;
   commandOpen: boolean;
+  commandQuery: string;
   agentsView: AgentsView;
   shortcutsHelpOpen: boolean;
   toggleTheme: () => void;
   setTheme: (theme: Theme) => void;
   syncSystemTheme: () => void;
   setGlobalSearch: (value: string) => void;
-  setCommandOpen: (open: boolean) => void;
+  setCommandOpen: (open: boolean, query?: string) => void;
   setAgentsView: (view: AgentsView) => void;
   setShortcutsHelpOpen: (open: boolean) => void;
 }
@@ -41,14 +42,15 @@ const storedAgentsView =
     ? (window.localStorage.getItem("cordum-agents-view") as AgentsView | null)
     : null;
 
-// Default to 'system' if no preference saved
-const initialTheme: Theme = stored ?? "system";
+// Default to 'dark' if no preference saved
+const initialTheme: Theme = stored ?? "dark";
 
 export const useUiStore = create<UiState>((set) => ({
   theme: initialTheme,
   resolvedTheme: resolveTheme(initialTheme),
   globalSearch: "",
   commandOpen: false,
+  commandQuery: "",
   agentsView: storedAgentsView === "cards" ? "cards" : "table",
   shortcutsHelpOpen: false,
   toggleTheme: () =>
@@ -56,14 +58,12 @@ export const useUiStore = create<UiState>((set) => ({
       const next: Theme =
         s.theme === "light" ? "dark" : s.theme === "dark" ? "system" : "light";
       const resolved = resolveTheme(next);
-      window.localStorage.setItem("cordum-theme", next);
       broadcastSync({ type: "theme-change", theme: next });
       return { theme: next, resolvedTheme: resolved };
     }),
   setTheme: (theme) =>
     set(() => {
       const resolved = resolveTheme(theme);
-      window.localStorage.setItem("cordum-theme", theme);
       return { theme, resolvedTheme: resolved };
     }),
   syncSystemTheme: () =>
@@ -72,7 +72,7 @@ export const useUiStore = create<UiState>((set) => ({
       return { resolvedTheme: resolveTheme("system") };
     }),
   setGlobalSearch: (value) => set({ globalSearch: value }),
-  setCommandOpen: (open) => set({ commandOpen: open }),
+  setCommandOpen: (open, query = "") => set({ commandOpen: open, commandQuery: open ? query : "" }),
   setAgentsView: (view) => {
     window.localStorage.setItem("cordum-agents-view", view);
     set({ agentsView: view });

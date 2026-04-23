@@ -161,21 +161,18 @@ func TestExporter_FailThenSucceed(t *testing.T) {
 
 func TestEventConstants(t *testing.T) {
 	events := map[string]string{
-		"safety.decision":                    EventSafetyDecision,
-		"delegation.lineage":                 EventDelegationLineage,
-		"delegation.rejected":                EventDelegationRejected,
-		"delegation.revoked_before_dispatch": EventDelegationRevokedBeforeDispatch,
-		"safety.approval":                    EventSafetyApproval,
-		"safety.policy_change":               EventPolicyChange,
-		"safety.violation":                   EventSafetyViolation,
-		"system.auth":                        EventSystemAuth,
-		"mcp.tool_approval":                  EventMCPToolApproval,
-		"mcp.tool_denied":                    EventMCPToolDenied,
+		"safety.decision":      EventSafetyDecision,
+		"safety.approval":      EventSafetyApproval,
+		"safety.policy_change": EventPolicyChange,
+		"safety.violation":     EventSafetyViolation,
+		"system.auth":          EventSystemAuth,
+		"mcp.tool_approval":    EventMCPToolApproval,
+		"mcp.tool_denied":      EventMCPToolDenied,
 		// shadow_eval is the Phase-2 dual-evaluation signal — pinned
 		// here because SIEM correlation rules and the results API both
 		// filter on the literal string; an accidental rename would
 		// silently drop events from downstream dashboards.
-		"shadow_eval": EventShadowEval,
+		"shadow_eval":          EventShadowEval,
 	}
 	for want, got := range events {
 		if got != want {

@@ -12,8 +12,6 @@ var (
 	ErrChainTooDeep     = errors.New("delegation token chain too deep")
 	ErrScopeExceeded    = errors.New("delegation token scope exceeded")
 	ErrRevoked          = errors.New("delegation token revoked")
-	ErrNotFound         = errors.New("delegation token not found")
-	ErrCascadeTooDeep   = errors.New("delegation revocation cascade too deep")
 )
 
 func ErrorCode(err error) string {

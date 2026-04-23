@@ -62,30 +62,6 @@ if ! docker info >/dev/null 2>&1; then
   die "cannot connect to the Docker daemon. Ensure Docker is running."
 fi
 
-# persist_env_var writes KEY=VALUE into .env, replacing any existing KEY line.
-# Keeps the shell (used for /status probe) and docker-compose (reads .env)
-# in agreement after auto-generation. Creates .env if absent.
-persist_env_var() {
-  local key="$1"
-  local value="$2"
-  local file=".env"
-  if [[ ! -f "${file}" ]]; then
-    echo "${key}=${value}" > "${file}"
-    return 0
-  fi
-  if grep -qE "^${key}=" "${file}"; then
-    # Replace existing line in place; awk avoids sed's escaping headache
-    # with hex secrets that can contain characters like / or &.
-    local tmp
-    tmp="$(mktemp)"
-    awk -v k="${key}" -v v="${value}" 'BEGIN{p=0} {
-      if ($0 ~ "^" k "=") { print k "=" v; p=1 } else { print $0 }
-    } END{ if (!p) print k "=" v }' "${file}" > "${tmp}" && mv "${tmp}" "${file}"
-  else
-    echo "${key}=${value}" >> "${file}"
-  fi
-}
-
 preflight_deploy() {
   local compose_files="$1"
   local allow_enterprise="$2"
@@ -99,23 +75,12 @@ preflight_deploy() {
   log "docker daemon: reachable"
   log "compose command: ${compose_cmd[*]}"
 
-  # Zero-config bootstrap: generate fresh secrets when the caller hasn't
-  # pre-seeded them via env. Both values are written to .env so subsequent
-  # runs + the advertised `cat .env` discovery path keep working. Callers
-  # who need deterministic values can still override via the env before
-  # invocation.
   if [[ -z "${api_key}" ]]; then
-    api_key="$(openssl rand -hex 32)"
-    export CORDUM_API_KEY="${api_key}"
-    persist_env_var CORDUM_API_KEY "${api_key}"
-    log "CORDUM_API_KEY: auto-generated and persisted to .env"
+    die "CORDUM_API_KEY is required; export it before running quickstart."
   fi
 
   if [[ -z "${REDIS_PASSWORD:-}" ]]; then
-    REDIS_PASSWORD="$(openssl rand -hex 24)"
-    export REDIS_PASSWORD
-    persist_env_var REDIS_PASSWORD "${REDIS_PASSWORD}"
-    log "REDIS_PASSWORD: auto-generated and persisted to .env"
+    die "REDIS_PASSWORD is required; export REDIS_PASSWORD before running quickstart."
   fi
 
   # Optional auth vars become required only when user auth is enabled.
@@ -291,33 +256,6 @@ warn_port 4222 "nats client"
 warn_port 6379 "redis"
 
 # --- Env vars ---
-# If .env exists from a prior run, share its values with THIS shell so the
-# health probe uses the same API_KEY/REDIS_PASSWORD/admin creds that docker-
-# compose is feeding the containers. Without this the script would auto-
-# generate fresh secrets into its own shell env while the containers kept
-# using .env's existing values — the /status probe would then 401 for the
-# full health timeout. Only vars that aren't already set in the shell are
-# read; shell-exported overrides still win.
-load_from_env_file() {
-  local file="$1"
-  [[ -f "${file}" ]] || return 0
-  local var val
-  for var in CORDUM_API_KEY REDIS_PASSWORD CORDUM_ADMIN_PASSWORD \
-             CORDUM_ADMIN_EMAIL CORDUM_USER_AUTH_ENABLED \
-             CORDUM_TENANT_ID CORDUM_ORG_ID; do
-    if [[ -z "${!var:-}" ]]; then
-      # grep exits 1 when the var is absent from .env; with `set -e` +
-      # `pipefail` that aborts the script during `local x=$(...)`. Tolerate
-      # the missing-var case by catching the non-zero explicitly.
-      val="$(grep -E "^${var}=" "${file}" 2>/dev/null | head -1 | cut -d= -f2- || true)"
-      if [[ -n "${val}" ]]; then
-        export "${var}=${val}"
-      fi
-    fi
-  done
-}
-load_from_env_file ".env"
-
 API_KEY=${CORDUM_API_KEY:-${API_KEY:-}}
 export CORDUM_API_KEY="${API_KEY}"
 REDIS_PASSWORD_VAL=${REDIS_PASSWORD:-}
@@ -473,7 +411,7 @@ else
   doctor_env=(CORDUM_API_KEY="${API_KEY}" CORDUM_TENANT_ID="${TENANT_ID}")
   if [[ -n "${TLS_CA}" ]]; then
     doctor_env+=(CORDUM_GATEWAY="https://127.0.0.1:8081")
-    env "${doctor_env[@]}" cordumctl doctor --timeout 30 --cacert "${TLS_CA}" || \
+    env "${doctor_env[@]}" cordumctl doctor --timeout 30 --cacert ./certs/ca/ca.crt || \
       log "cordumctl doctor reported issues — see docs/troubleshooting/install.md"
   else
     doctor_env+=(CORDUM_GATEWAY="http://127.0.0.1:8081")

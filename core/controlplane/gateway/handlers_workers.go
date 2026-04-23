@@ -131,6 +131,30 @@ func (s *server) emitWorkerHandshakeRevokeAudit(ctx context.Context, workerID, t
 	_ = ctx
 }
 
+// buildTrustChangeEvent shapes the worker_trust_change SIEMEvent. In
+// its own helper so the revoke handler stays focused on HTTP semantics
+// and the audit-chain shape can evolve in one place.
+func buildTrustChangeEvent(workerID, tenant, actor string) audit.SIEMEvent {
+	return audit.SIEMEvent{
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventWorkerTrustChange,
+		Severity:  audit.SeverityHigh,
+		TenantID:  tenant,
+		AgentID:   workerID,
+		Action:    "trust.revoke",
+		Reason:    scheduler.TrustChangeReasonSessionRevoked,
+		Identity:  actor,
+		Extra: map[string]string{
+			"worker_id": workerID,
+			"tenant":    tenant,
+			"from":      "valid",
+			"to":        "revoked",
+			"reason":    scheduler.TrustChangeReasonSessionRevoked,
+			"actor":     actor,
+		},
+	}
+}
+
 // handleGetWorker returns a single worker by ID from the Redis snapshot.
 func (s *server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermWorkersRead, "admin") {

@@ -269,74 +269,8 @@ func TestBuildUserLoginResponseRandFailure(t *testing.T) {
 	rand.Reader = failingReader{}
 	t.Cleanup(func() { rand.Reader = original })
 
-	resp, err := buildUserLoginResponse(context.Background(), user)
-	if err == nil {
+	if _, err := buildUserLoginResponse(context.Background(), user); err == nil {
 		t.Fatal("expected error on rand failure")
-	}
-	// The error sentinel is intentionally opaque so the handler layer can
-	// translate it to a generic 500 without leaking entropy-source details
-	// (which can carry kernel or driver diagnostics) to the HTTP body.
-	if !errors.Is(err, errSessionTokenEntropy) {
-		t.Fatalf("expected errSessionTokenEntropy sentinel, got %v", err)
-	}
-	// No partial response may be returned — a zero-value struct keeps the
-	// caller from accidentally emitting a session cookie / response body
-	// backed by a zero-filled token buffer.
-	if resp.Token != "" || resp.ExpiresAt != "" || resp.User.ID != "" {
-		t.Fatalf("expected zero-value response on entropy failure, got %+v", resp)
-	}
-}
-
-// TestHandleLogin_EntropyFailureReturns500 drives the full handleLogin HTTP
-// path with a user-store-backed login that should mint a session token, but
-// with the crypto/rand source failing. The handler must return 500 with a
-// generic body that does NOT leak the underlying reader error, must not emit
-// a Set-Cookie header, and must not write a token field to the response body.
-func TestHandleLogin_EntropyFailureReturns500(t *testing.T) {
-	hash, err := bcrypt.GenerateFromPassword([]byte("correct-password"), auth.BcryptCostFromEnv())
-	if err != nil {
-		t.Fatalf("generate hash: %v", err)
-	}
-	us := &timingUserStore{
-		user: &auth.User{
-			ID:           "u-entropy",
-			Username:     "exists",
-			Tenant:       "default",
-			PasswordHash: string(hash),
-		},
-	}
-	provider := newBasicAuthForTest(t, map[string]string{
-		"CORDUM_API_KEYS": `[{"key":"fallback-key"}]`,
-	})
-	provider.SetUserStore(us)
-	s := &server{auth: provider, tenant: "default"}
-
-	original := rand.Reader
-	rand.Reader = failingReader{}
-	t.Cleanup(func() { rand.Reader = original })
-
-	body := `{"username":"exists","password":"correct-password"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-
-	s.handleLogin(rec, req)
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 on entropy failure, got %d: %s", rec.Code, rec.Body.String())
-	}
-	// Body must not carry the raw reader error (security rail).
-	if strings.Contains(rec.Body.String(), "entropy exhausted") ||
-		strings.Contains(rec.Body.String(), "crypto/rand") {
-		t.Fatalf("response leaked entropy error detail: %s", rec.Body.String())
-	}
-	// No session token may be minted — response body must contain no token.
-	if strings.Contains(rec.Body.String(), "session-") {
-		t.Fatalf("response leaked a session token on entropy failure: %s", rec.Body.String())
-	}
-	// No Set-Cookie header may be emitted for a failed session.
-	if cookies := rec.Result().Cookies(); len(cookies) != 0 { //nolint:bodyclose // httptest.ResponseRecorder
-		t.Fatalf("expected zero cookies on entropy failure, got %d: %+v", len(cookies), cookies)
 	}
 }
 

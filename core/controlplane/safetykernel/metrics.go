@@ -3,7 +3,6 @@ package safetykernel
 import (
 	"time"
 
-	"github.com/cordum/cordum/core/infra/config"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -56,19 +55,6 @@ var (
 		Help:    "Wall-clock latency of a single shadow-policy Evaluate call",
 		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 5},
 	})
-
-	// safety_rule_delegation_match_total counts how often a PolicyRule with
-	// a `delegation:` match block rejects an input, partitioned by the
-	// sub-field that short-circuited the rule. Operators use this to see
-	// which delegation constraint is doing the most work (or which one is
-	// accidentally over-blocking legitimate chains). `outcome="deny"` is
-	// currently the only value emitted; the label is kept for forward
-	// compatibility with a future "match" outcome if we ever need to count
-	// rules that matched via their delegation block.
-	safetyRuleDelegationMatchTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "safety_rule_delegation_match_total",
-		Help: "Counter of safety-rule delegation match outcomes, partitioned by the sub-field that fired",
-	}, []string{"field", "outcome"})
 )
 
 func init() {
@@ -76,22 +62,6 @@ func init() {
 	prometheus.MustRegister(shadowEvalDropped)
 	prometheus.MustRegister(shadowEvalQueueDepth)
 	prometheus.MustRegister(shadowEvalDuration)
-	prometheus.MustRegister(safetyRuleDelegationMatchTotal)
-
-	// Pre-materialise counter series for every known deny field so Prometheus
-	// scrapes surface a stable zero-baseline rather than missing series
-	// (dashboards that use rate() over a series that only appears on first
-	// occurrence produce stair-step artefacts otherwise).
-	for _, field := range config.DelegationMatchDenyFields {
-		safetyRuleDelegationMatchTotal.WithLabelValues(field, "deny").Add(0)
-	}
-
-	// Wire the config-layer deny callback to the collector. The config
-	// package stays metric-library-agnostic; swapping Prometheus for OTel
-	// changes only this file.
-	config.SetDelegationMatchDenyCallback(func(field string) {
-		safetyRuleDelegationMatchTotal.WithLabelValues(field, "deny").Inc()
-	})
 
 	// Wire the evaluator's callback hooks to the Prometheus collectors.
 	// The evaluator itself is metric-library-agnostic — keeping the

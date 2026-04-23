@@ -47,15 +47,9 @@ const (
 	metaFieldRiskTags              = "risk_tags"
 	metaFieldRequires              = "requires"
 	metaFieldPackID                = "pack_id"
-	metaFieldAgentID               = "agent_id"
-	metaFieldAgentName             = "agent_name"
-	metaFieldAgentRiskTier         = "agent_risk_tier"
-	metaFieldSubmittedBy           = "submitted_by"
 	metaFieldAttempts              = "attempts"
 	metaFieldDeadline              = "deadline_unix"
 	metaFieldSafetyDecision        = "safety_decision"
-	metaFieldDelegationLineage     = "delegation_lineage"
-	metaFieldDelegationDispatch    = "delegation_dispatch_token"
 	metaFieldSafetyReason          = "safety_reason"
 	metaFieldSafetyRuleID          = "safety_rule_id"
 	metaFieldSafetySnapshot        = "safety_snapshot"
@@ -465,11 +459,7 @@ func (s *RedisJobStore) CancelJob(ctx context.Context, jobID string) (model.JobS
 			pipe.Expire(ctx, jobResultPtrKey(jobID), s.metaTTL)
 		}
 
-		cancelEvtStr, serErr := serializeJobEvent(model.JobStateCancelled, now, nil)
-		if serErr != nil {
-			return serErr
-		}
-		pipe.RPush(ctx, jobEventsKey(jobID), cancelEvtStr)
+		pipe.RPush(ctx, jobEventsKey(jobID), fmt.Sprintf("%d|%s", now, model.JobStateCancelled))
 
 		if _, err := pipe.Exec(ctx); err != nil {
 			return fmt.Errorf("job store cancel %s: %w", jobID, err)
@@ -588,7 +578,88 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 }
 
 func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state model.JobState) error {
-	return s.SetStateWithContext(ctx, jobID, state, nil)
+	if jobID == "" || state == "" {
+		return fmt.Errorf("invalid jobID or state")
+	}
+
+	now := nowUnixMicros()
+	metaKey := jobMetaKey(jobID)
+
+	return s.client.Watch(ctx, func(tx *redis.Tx) error {
+		prev, err := tx.HGet(ctx, metaKey, "state").Result()
+		if err != nil && err != redis.Nil {
+			return fmt.Errorf("job store set state %s: %w", jobID, err)
+		}
+		prevState := model.JobState(prev)
+		if !isAllowedTransition(prevState, state) {
+			return fmt.Errorf("invalid transition %s -> %s", prevState, state)
+		}
+		attempts := 0
+		if raw, err := tx.HGet(ctx, metaKey, metaFieldAttempts).Result(); err == nil {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+				attempts = parsed
+			}
+		}
+		// Count every scheduling attempt, including replays that remain in
+		// SCHEDULED due to downstream publish failures. This keeps retry budgets
+		// accurate under redelivery loops.
+		if state == model.JobStateScheduled {
+			attempts++
+		}
+		tenant, _ := tx.HGet(ctx, metaKey, metaFieldTenant).Result()
+
+		pipe := tx.TxPipeline()
+		pipe.HSet(ctx, metaKey, map[string]any{
+			"state":           string(state),
+			"updated_at":      now,
+			metaFieldAttempts: attempts,
+		})
+		// keep legacy key for compatibility
+		pipe.Set(ctx, jobStateKey(jobID), string(state), 0)
+
+		// maintain per-state index for reconciliation
+		prevIdx := stateIndexKey(prevState)
+		if prevIdx != "" {
+			pipe.ZRem(ctx, prevIdx, jobID)
+		}
+		idx := stateIndexKey(state)
+		if idx != "" {
+			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
+		}
+
+		// Tenant active set: no TTL — self-manages via SAdd/SRem.
+		// A TTL would expire the key for long-running jobs, making them
+		// vanish from active counts while still running.
+		if tenant != "" {
+			activeKey := tenantActiveKey(tenant)
+			if isActiveState(state) {
+				pipe.SAdd(ctx, activeKey, jobID)
+			} else if terminalStates[state] {
+				pipe.SRem(ctx, activeKey, jobID)
+			}
+		}
+
+		// Maintain global recent jobs list (score = updated_at)
+		pipe.ZAdd(ctx, "job:recent", redis.Z{Score: float64(now), Member: jobID})
+		// Keep only last 1000
+		pipe.ZRemRangeByRank(ctx, "job:recent", 0, -1001)
+		if s.metaTTL > 0 {
+			pipe.Expire(ctx, metaKey, s.metaTTL)
+			pipe.Expire(ctx, jobStateKey(jobID), s.metaTTL)
+			pipe.Expire(ctx, jobResultPtrKey(jobID), s.metaTTL)
+		}
+
+		// append event
+		pipe.RPush(ctx, jobEventsKey(jobID), fmt.Sprintf("%d|%s", now, state))
+
+		if terminalStates[state] {
+			pipe.ZRem(ctx, deadlineIndexKey(), jobID)
+			pipe.HDel(ctx, metaKey, metaFieldDeadline)
+		}
+
+		_, execErr := pipe.Exec(ctx)
+		return execErr
+	}, metaKey, jobStateKey(jobID))
 }
 
 // ListRecentJobs returns the N most recently updated jobs.
@@ -1677,112 +1748,6 @@ func (s *RedisJobStore) SetSafetyDecision(ctx context.Context, jobID string, rec
 	return nil
 }
 
-// SetDelegationLineage stores the verified dispatch-time delegation lineage on
-// the job metadata hash as a JSON blob.
-func (s *RedisJobStore) SetDelegationLineage(ctx context.Context, jobID string, lineage model.DelegationLineage) error {
-	if jobID == "" {
-		return fmt.Errorf("jobID required")
-	}
-	encoded, err := json.Marshal(lineage)
-	if err != nil {
-		return fmt.Errorf("marshal delegation lineage: %w", err)
-	}
-	pipe := s.client.TxPipeline()
-	pipe.HSet(ctx, jobMetaKey(jobID), metaFieldDelegationLineage, string(encoded))
-	if s.metaTTL > 0 {
-		pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("job store set delegation lineage %s: %w", jobID, err)
-	}
-	return nil
-}
-
-// GetDelegationLineage loads the verified dispatch-time delegation lineage from
-// the job metadata hash.
-func (s *RedisJobStore) GetDelegationLineage(ctx context.Context, jobID string) (model.DelegationLineage, error) {
-	if jobID == "" {
-		return model.DelegationLineage{}, fmt.Errorf("jobID required")
-	}
-	raw, err := s.client.HGet(ctx, jobMetaKey(jobID), metaFieldDelegationLineage).Result()
-	if err == redis.Nil || raw == "" {
-		return model.DelegationLineage{}, nil
-	}
-	if err != nil {
-		return model.DelegationLineage{}, fmt.Errorf("job store get delegation lineage %s: %w", jobID, err)
-	}
-	var lineage model.DelegationLineage
-	if err := json.Unmarshal([]byte(raw), &lineage); err != nil {
-		return model.DelegationLineage{}, fmt.Errorf("decode delegation lineage %s: %w", jobID, err)
-	}
-	return lineage, nil
-}
-
-// SetDelegationDispatchToken stores the raw delegation token required for
-// dispatch-time re-verification. It is intentionally persisted separately from
-// the public job request snapshot.
-func (s *RedisJobStore) SetDelegationDispatchToken(ctx context.Context, jobID string, token model.DelegationDispatchToken) error {
-	if jobID == "" {
-		return fmt.Errorf("jobID required")
-	}
-	if strings.TrimSpace(token.Token) == "" {
-		return nil
-	}
-	token.Token = strings.TrimSpace(token.Token)
-	token.Audience = strings.TrimSpace(token.Audience)
-	encoded, err := json.Marshal(token)
-	if err != nil {
-		return fmt.Errorf("marshal delegation dispatch token: %w", err)
-	}
-	pipe := s.client.TxPipeline()
-	pipe.HSet(ctx, jobMetaKey(jobID), metaFieldDelegationDispatch, string(encoded))
-	if s.metaTTL > 0 {
-		pipe.Expire(ctx, jobMetaKey(jobID), s.metaTTL)
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("job store set delegation dispatch token %s: %w", jobID, err)
-	}
-	return nil
-}
-
-// ClearDelegationDispatchToken deletes the raw delegation bearer token from
-// the job metadata hash. Callers MUST invoke this as soon as dispatch-time
-// re-verification completes (successfully or with a fail-closed decision)
-// so the raw token does not sit in the 7-day job-metadata TTL where it
-// could be recovered via admin tooling, backups, or operator access. The
-// persisted DelegationLineage on the job record continues to carry the
-// non-sensitive chain metadata (JTI, issuer chain, scope) for audit and
-// read-side APIs after this wipe.
-func (s *RedisJobStore) ClearDelegationDispatchToken(ctx context.Context, jobID string) error {
-	if jobID == "" {
-		return fmt.Errorf("jobID required")
-	}
-	if _, err := s.client.HDel(ctx, jobMetaKey(jobID), metaFieldDelegationDispatch).Result(); err != nil {
-		return fmt.Errorf("job store clear delegation dispatch token %s: %w", jobID, err)
-	}
-	return nil
-}
-
-// GetDelegationDispatchToken loads the raw delegation token stored for
-// dispatch-time re-verification.
-func (s *RedisJobStore) GetDelegationDispatchToken(ctx context.Context, jobID string) (model.DelegationDispatchToken, error) {
-	if jobID == "" {
-		return model.DelegationDispatchToken{}, fmt.Errorf("jobID required")
-	}
-	raw, err := s.client.HGet(ctx, jobMetaKey(jobID), metaFieldDelegationDispatch).Result()
-	if err == redis.Nil || raw == "" {
-		return model.DelegationDispatchToken{}, nil
-	}
-	if err != nil {
-		return model.DelegationDispatchToken{}, fmt.Errorf("job store get delegation dispatch token %s: %w", jobID, err)
-	}
-	var token model.DelegationDispatchToken
-	if err := json.Unmarshal([]byte(raw), &token); err != nil {
-		return model.DelegationDispatchToken{}, fmt.Errorf("decode delegation dispatch token %s: %w", jobID, err)
-	}
-	return token, nil
-}
-
 // SetOutputSafety stores output policy evaluation data on the job metadata hash.
 func (s *RedisJobStore) SetOutputSafety(ctx context.Context, jobID string, record model.OutputSafetyRecord) error {
 	return s.SetOutputDecision(ctx, jobID, record)
@@ -2674,20 +2639,6 @@ func (s *RedisJobStore) ResolveApproval(ctx context.Context, params ApprovalReso
 		if resolvedRecord.PublishTarget != "" {
 			fields[metaFieldApprovalPublishTarget] = string(resolvedRecord.PublishTarget)
 		}
-		// On approve, rotate the SafetyDecisionRecord.PolicySnapshot to the
-		// snapshot under which the human actually approved. The gateway has
-		// already refreshed params.PolicySnapshot to the current snapshot if
-		// it detected drift, so anchoring the stored safety record here keeps
-		// the scheduler's fast-path comparison against safety.PolicySnapshot
-		// aligned with the approval_snapshot label written onto the request.
-		if params.Decision == model.ApprovalDecisionApprove && strings.TrimSpace(resolvedRecord.PolicySnapshot) != "" {
-			fields[metaFieldSafetySnapshot] = resolvedRecord.PolicySnapshot
-			// Keep the returned SafetyRecord aligned with what we just wrote
-			// to Redis. Callers (e.g. the approval publish step) that read
-			// ApprovalResolutionResult.SafetyRecord.PolicySnapshot must see
-			// the rotated snapshot, not the pre-rotation value.
-			safetyRecord.PolicySnapshot = resolvedRecord.PolicySnapshot
-		}
 		if len(req.Labels) > 0 {
 			if labelsJSON, err := json.Marshal(req.Labels); err == nil {
 				fields[metaFieldLabels] = string(labelsJSON)
@@ -3026,152 +2977,4 @@ func stringFromEntry(entry map[string]any, key string) string {
 		}
 	}
 	return ""
-}
-
-// parseJobEvent parses a raw event string from the job:events:{id} LIST.
-// It tries JSON first (new format), then falls back to "timestamp|state"
-// (old format). Returns (zero, false) for malformed entries.
-func parseJobEvent(raw string) (model.JobEvent, bool) {
-	var evt model.JobEvent
-	if err := json.Unmarshal([]byte(raw), &evt); err == nil && evt.State != "" {
-		return evt, true
-	}
-
-	// Fall back to old "timestamp|state" format.
-	parts := strings.SplitN(raw, "|", 2)
-	if len(parts) != 2 {
-		slog.Warn("malformed job event entry", "raw", raw)
-		return model.JobEvent{}, false
-	}
-	ts, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		slog.Warn("malformed job event timestamp", "raw", raw, "err", err)
-		return model.JobEvent{}, false
-	}
-	return model.JobEvent{Timestamp: ts, State: parts[1]}, true
-}
-
-// serializeJobEvent creates the JSON string for a job event entry.
-func serializeJobEvent(state model.JobState, nowMicros int64, evtCtx *model.StateEventContext) (string, error) {
-	evt := model.JobEvent{
-		Timestamp: nowMicros,
-		State:     string(state),
-		Context:   evtCtx,
-	}
-	b, err := json.Marshal(evt)
-	if err != nil {
-		return "", fmt.Errorf("marshal job event: %w", err)
-	}
-	return string(b), nil
-}
-
-// SetStateWithContext transitions a job to a new state and appends a rich
-// JSON event (with optional context) to the job:events:{id} LIST.
-// When evtCtx is nil, a minimal {"ts":...,"state":"..."} event is stored.
-func (s *RedisJobStore) SetStateWithContext(ctx context.Context, jobID string, state model.JobState, evtCtx *model.StateEventContext) error {
-	if jobID == "" || state == "" {
-		return fmt.Errorf("invalid jobID or state")
-	}
-
-	now := nowUnixMicros()
-	metaKey := jobMetaKey(jobID)
-
-	return s.client.Watch(ctx, func(tx *redis.Tx) error {
-		prev, err := tx.HGet(ctx, metaKey, "state").Result()
-		if err != nil && err != redis.Nil {
-			return fmt.Errorf("job store set state %s: %w", jobID, err)
-		}
-		prevState := model.JobState(prev)
-		if !isAllowedTransition(prevState, state) {
-			return fmt.Errorf("invalid transition %s -> %s", prevState, state)
-		}
-		attempts := 0
-		if raw, err := tx.HGet(ctx, metaKey, metaFieldAttempts).Result(); err == nil {
-			if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
-				attempts = parsed
-			}
-		}
-		if state == model.JobStateScheduled && prevState != model.JobStateScheduled {
-			attempts++
-		}
-		tenant, _ := tx.HGet(ctx, metaKey, metaFieldTenant).Result()
-
-		pipe := tx.TxPipeline()
-		pipe.HSet(ctx, metaKey, map[string]any{
-			"state":           string(state),
-			"updated_at":      now,
-			metaFieldAttempts: attempts,
-		})
-		// keep legacy key for compatibility
-		pipe.Set(ctx, jobStateKey(jobID), string(state), 0)
-
-		// maintain per-state index for reconciliation
-		prevIdx := stateIndexKey(prevState)
-		if prevIdx != "" {
-			pipe.ZRem(ctx, prevIdx, jobID)
-		}
-		idx := stateIndexKey(state)
-		if idx != "" {
-			pipe.ZAdd(ctx, idx, redis.Z{Score: float64(now), Member: jobID})
-		}
-
-		if tenant != "" {
-			activeKey := tenantActiveKey(tenant)
-			if isActiveState(state) {
-				pipe.SAdd(ctx, activeKey, jobID)
-			} else if terminalStates[state] {
-				pipe.SRem(ctx, activeKey, jobID)
-			}
-			if s.metaTTL > 0 {
-				pipe.Expire(ctx, activeKey, s.metaTTL)
-			}
-		}
-
-		// Maintain global recent jobs list (score = updated_at)
-		pipe.ZAdd(ctx, "job:recent", redis.Z{Score: float64(now), Member: jobID})
-		// Keep only last 1000
-		pipe.ZRemRangeByRank(ctx, "job:recent", 0, -1001)
-		if s.metaTTL > 0 {
-			pipe.Expire(ctx, metaKey, s.metaTTL)
-			pipe.Expire(ctx, jobStateKey(jobID), s.metaTTL)
-			pipe.Expire(ctx, jobResultPtrKey(jobID), s.metaTTL)
-		}
-
-		// append rich event
-		eventStr, err := serializeJobEvent(state, now, evtCtx)
-		if err != nil {
-			return err
-		}
-		pipe.RPush(ctx, jobEventsKey(jobID), eventStr)
-
-		if terminalStates[state] {
-			pipe.ZRem(ctx, deadlineIndexKey(), jobID)
-			pipe.HDel(ctx, metaKey, metaFieldDeadline)
-		}
-
-		_, execErr := pipe.Exec(ctx)
-		return execErr
-	}, metaKey, jobStateKey(jobID))
-}
-
-// GetJobEvents returns all state transition events for a job, parsed from
-// the job:events:{id} LIST. Handles both JSON (new) and "timestamp|state"
-// (old) formats. Malformed entries are skipped with a warning log.
-func (s *RedisJobStore) GetJobEvents(ctx context.Context, jobID string) ([]model.JobEvent, error) {
-	if jobID == "" {
-		return nil, fmt.Errorf("job store get events: empty jobID")
-	}
-	raw, err := s.client.LRange(ctx, jobEventsKey(jobID), 0, -1).Result()
-	if err != nil {
-		return nil, fmt.Errorf("job store get events %s: %w", jobID, err)
-	}
-	events := make([]model.JobEvent, 0, len(raw))
-	for _, entry := range raw {
-		evt, ok := parseJobEvent(entry)
-		if !ok {
-			continue
-		}
-		events = append(events, evt)
-	}
-	return events, nil
 }

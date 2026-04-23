@@ -39,8 +39,7 @@ Datasets have **no TTL** — they are durable by design. Destruction is a
 two-key admin-only escape hatch:
 
 - The caller must have the `evals.datasets.delete` permission (or the
-  superseding `admin` role, which carries every permission by
-  default).
+  legacy `admin` role).
 - The request must carry `force=true` as a query parameter, spelled
   exactly. `force=1`, `force=TRUE`, `force=yes`, and no value are all
   rejected with `400 Bad Request`.

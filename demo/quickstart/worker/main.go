@@ -1,6 +1,6 @@
 // Package main is the demo-quickstart greeter worker.
 //
-// It subscribes to a single topic (job.demo-quickstart.greet) and replies with
+// It subscribes to a single topic (job.demo.greet) and replies with
 // "hello, <name>!". The DENY and REQUIRE_APPROVAL paths never reach a
 // worker — the kernel blocks or escalates them before dispatch — so this
 // binary only needs to service the ALLOW rule.
@@ -38,12 +38,12 @@ import (
 const (
 	workerID       = "demo-quickstart-greeter"
 	workerPool     = "demo-quickstart"
-	topicGreet     = "job.demo-quickstart.greet"
+	topicGreet     = "job.demo.greet"
 	metricsAddr    = ":9091"
 	shutdownBudget = 5 * time.Second
 )
 
-// greetPayload is the typed input for job.demo-quickstart.greet. All fields are
+// greetPayload is the typed input for job.demo.greet. All fields are
 // optional — the handler copes with every field being empty.
 type greetPayload struct {
 	Name string `json:"name"`
@@ -229,18 +229,18 @@ func metricsHandler() http.Handler {
 		total := m.jobsTotal.Load()
 		failed := m.jobsFailed.Load()
 		lastMicros := m.lastDuration.Load()
-		_, _ = fmt.Fprintf(w, "# HELP demo_quickstart_jobs_total Total jobs processed.\n")
-		_, _ = fmt.Fprintf(w, "# TYPE demo_quickstart_jobs_total counter\n")
-		_, _ = fmt.Fprintf(w, "demo_quickstart_jobs_total %d\n", total)
-		_, _ = fmt.Fprintf(w, "# HELP demo_quickstart_jobs_failed_total Jobs that returned an error.\n")
-		_, _ = fmt.Fprintf(w, "# TYPE demo_quickstart_jobs_failed_total counter\n")
-		_, _ = fmt.Fprintf(w, "demo_quickstart_jobs_failed_total %d\n", failed)
-		_, _ = fmt.Fprintf(w, "# HELP demo_quickstart_last_duration_microseconds Duration of the most recent handler invocation.\n")
-		_, _ = fmt.Fprintf(w, "# TYPE demo_quickstart_last_duration_microseconds gauge\n")
-		_, _ = fmt.Fprintf(w, "demo_quickstart_last_duration_microseconds %d\n", lastMicros)
+		fmt.Fprintf(w, "# HELP demo_quickstart_jobs_total Total jobs processed.\n")
+		fmt.Fprintf(w, "# TYPE demo_quickstart_jobs_total counter\n")
+		fmt.Fprintf(w, "demo_quickstart_jobs_total %d\n", total)
+		fmt.Fprintf(w, "# HELP demo_quickstart_jobs_failed_total Jobs that returned an error.\n")
+		fmt.Fprintf(w, "# TYPE demo_quickstart_jobs_failed_total counter\n")
+		fmt.Fprintf(w, "demo_quickstart_jobs_failed_total %d\n", failed)
+		fmt.Fprintf(w, "# HELP demo_quickstart_last_duration_microseconds Duration of the most recent handler invocation.\n")
+		fmt.Fprintf(w, "# TYPE demo_quickstart_last_duration_microseconds gauge\n")
+		fmt.Fprintf(w, "demo_quickstart_last_duration_microseconds %d\n", lastMicros)
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprintln(w, "ok")
+		fmt.Fprintln(w, "ok")
 	})
 	return mux
 }

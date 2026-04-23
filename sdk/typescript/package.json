@@ -5,7 +5,7 @@
   "type": "module",
   "sideEffects": false,
   "engines": {
-    "node": ">=20"
+    "node": ">=18"
   },
   "files": [
     "dist"
@@ -69,7 +69,7 @@
     "tsup": "^8.5.0",
     "typescript": "^5.8.3",
     "vite": "^8.0.9",
-    "vitest": "^4.1.5"
+    "vitest": "^1.6.1"
   },
   "msw": {
     "workerDirectory": [

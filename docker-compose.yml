@@ -116,7 +116,6 @@ services:
       - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
-      - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
       - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
       - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
@@ -126,14 +125,11 @@ services:
       - SAFETY_KERNEL_TLS_CERT=/etc/cordum/tls/server/tls.crt
       - SAFETY_KERNEL_TLS_KEY=/etc/cordum/tls/server/tls.key
       - SAFETY_POLICY_PATH=/etc/cordum/safety.yaml
-      - SAFETY_POLICY_RELOAD_INTERVAL=${SAFETY_POLICY_RELOAD_INTERVAL:-60s}
-      - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
-      - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
+      - SAFETY_POLICY_RELOAD_INTERVAL=5s
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
     volumes:
       - ./config/safety.yaml:/etc/cordum/safety.yaml:ro
-      - ./config/safety.yaml.sig:/etc/cordum/safety.yaml.sig:ro
       - ./certs:/etc/cordum/tls:ro
     ports:
       - "50051:50051"
@@ -174,7 +170,6 @@ services:
       - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
-      - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
       - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
       - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
@@ -241,7 +236,6 @@ services:
       - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
-      - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
       - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
       - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
@@ -258,8 +252,6 @@ services:
       - TENANT_ID=default
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
-      - CORDUM_POLICY_SIGNING_KEY_ID=${CORDUM_POLICY_SIGNING_KEY_ID:-dev-local}
-      - CORDUM_POLICY_DEV_SIGNING_SEED=${CORDUM_POLICY_DEV_SIGNING_SEED:-cordum-local-policy-signing-v1}
       - CORDUM_TELEMETRY_MODE=off
       - API_RATE_LIMIT_RPS=2000
       - API_RATE_LIMIT_BURST=4000
@@ -337,7 +329,6 @@ services:
       - NATS_TLS_CERT=/etc/cordum/tls/client/tls.crt
       - NATS_TLS_KEY=/etc/cordum/tls/client/tls.key
       - NATS_TLS_SERVER_NAME=nats
-      - NATS_TOKEN=${NATS_TOKEN:-cordum-dev-token}
       - REDIS_URL=rediss://:${REDIS_PASSWORD:?REDIS_PASSWORD_not_set}@redis:6379
       - REDIS_TLS_CA=/etc/cordum/tls/ca/ca.crt
       - REDIS_TLS_CERT=/etc/cordum/tls/client/tls.crt
@@ -456,7 +447,7 @@ services:
           memory: 64M
           cpus: "0.25"
 
-  # Greeter for the demo-quickstart pack. Subscribes to job.demo-quickstart.greet and
+  # Greeter for the demo-quickstart pack. Subscribes to job.demo.greet and
   # echoes "hello, <name>!". Brought up only with `--profile demo` so the
   # default stack stays lean for new users who only want the platform.
   demo-quickstart-worker:

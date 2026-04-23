@@ -82,8 +82,8 @@ function TypeFilter({
         className={cn(
           "rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
           active === "all"
-            ? "bg-accent text-primary-foreground"
-            : "bg-surface2 text-muted-foreground hover:text-ink",
+            ? "bg-accent text-white"
+            : "bg-surface2 text-muted hover:text-ink",
         )}
         onClick={() => onChange("all")}
       >
@@ -96,8 +96,8 @@ function TypeFilter({
           className={cn(
             "rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
             active === t
-              ? "bg-accent text-primary-foreground"
-              : "bg-surface2 text-muted-foreground hover:text-ink",
+              ? "bg-accent text-white"
+              : "bg-surface2 text-muted hover:text-ink",
           )}
           onClick={() => onChange(t)}
         >
@@ -122,10 +122,10 @@ function LockRow({ lock }: { lock: AdminLock }) {
         <span className="text-xs font-mono text-ink">{shortenKey(lock.key)}</span>
       </td>
       <td className="px-4 py-2">
-        <Badge variant="info" className="text-xs">{lock.type}</Badge>
+        <Badge variant="info" className="text-[10px]">{lock.type}</Badge>
       </td>
       <td className="px-4 py-2">
-        <span className="text-xs font-mono text-muted-foreground">{lock.holder}</span>
+        <span className="text-xs font-mono text-muted">{lock.holder}</span>
       </td>
       <td className="px-4 py-2">
         <div className="flex items-center gap-2">
@@ -163,7 +163,7 @@ export function LockInspector() {
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
-            <Lock className="h-4 w-4 text-muted-foreground" />
+            <Lock className="h-4 w-4 text-muted" />
             <CardTitle className="text-sm">Distributed Locks</CardTitle>
           </div>
         </CardHeader>
@@ -182,7 +182,7 @@ export function LockInspector() {
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
-            <Lock className="h-4 w-4 text-muted-foreground" />
+            <Lock className="h-4 w-4 text-muted" />
             <CardTitle className="text-sm">Distributed Locks</CardTitle>
           </div>
         </CardHeader>
@@ -206,11 +206,11 @@ export function LockInspector() {
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
-            <Lock className="h-4 w-4 text-muted-foreground" />
+            <Lock className="h-4 w-4 text-muted" />
             <CardTitle className="text-sm">Distributed Locks</CardTitle>
           </div>
         </CardHeader>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 text-sm text-muted">
           <Info className="h-4 w-4" />
           No active locks — normal for idle clusters
         </div>
@@ -222,14 +222,14 @@ export function LockInspector() {
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2">
-          <Lock className="h-4 w-4 text-muted-foreground" />
+          <Lock className="h-4 w-4 text-muted" />
           <CardTitle className="text-sm">Distributed Locks</CardTitle>
-          <Badge variant="default" className="text-xs">{locks.length}</Badge>
+          <Badge variant="default" className="text-[10px]">{locks.length}</Badge>
         </div>
         <button
           type="button"
           onClick={() => queryClient.invalidateQueries({ queryKey: ["admin-locks"] })}
-          className="rounded-lg p-1.5 text-muted-foreground hover:text-ink hover:bg-surface2 transition-colors"
+          className="rounded-lg p-1.5 text-muted hover:text-ink hover:bg-surface2 transition-colors"
           title="Refresh now"
         >
           <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
@@ -245,7 +245,7 @@ export function LockInspector() {
       <div className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full text-xs">
           <thead>
-            <tr className="bg-surface2/30 text-left text-muted-foreground">
+            <tr className="bg-surface2/30 text-left text-muted">
               <th className="px-4 py-2 font-medium">Key</th>
               <th className="px-4 py-2 font-medium">Type</th>
               <th className="px-4 py-2 font-medium">Holder</th>
@@ -260,7 +260,7 @@ export function LockInspector() {
         </table>
       </div>
 
-      <p className="mt-2 text-xs text-muted-foreground">
+      <p className="mt-2 text-[10px] text-muted">
         Auto-refreshes every 5 seconds. Read-only.
       </p>
     </Card>

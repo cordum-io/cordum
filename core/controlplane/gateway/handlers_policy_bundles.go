@@ -329,6 +329,19 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 		}
 		bundle["content"] = string(payload)
 		bundle["updated_at"] = now
+		// Re-sign the mutated content. See handlePutPolicyBundle for the
+		// rationale — a stale _signature over the pre-toggle YAML would
+		// fail verification in the kernel.
+		signResult := signPolicyBundleContent(r.Context(), payload)
+		if signResult.Status != 0 {
+			writeErrorJSON(w, signResult.Status, signResult.Message)
+			return
+		}
+		if signResult.Signature != nil {
+			bundle[policyBundleSignatureKey] = signResult.Signature
+		} else {
+			delete(bundle, policyBundleSignatureKey)
+		}
 		bundles[key] = bundle
 		updatedBundleID = key
 		updated = true
@@ -484,16 +497,6 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Sign the bundle content BEFORE persisting so the signature and the
-	// content land in Redis atomically. When CORDUM_POLICY_STRICT != off
-	// and no key is configured, this short-circuits with a 503 and a
-	// remediation hint so the operator knows exactly what to fix.
-	outcome := signPolicyBundleContent(r.Context(), []byte(content))
-	if outcome.Status != 0 {
-		writeErrorJSON(w, outcome.Status, outcome.Message)
-		return
-	}
-
 	now := time.Now().UTC().Format(time.RFC3339)
 	bundle, _ := bundles[bundleID].(map[string]any)
 	if bundle == nil {
@@ -511,11 +514,18 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	if body.Enabled != nil {
 		bundle["enabled"] = *body.Enabled
 	}
-	if outcome.Signature != nil {
-		bundle[policyBundleSignatureKey] = outcome.Signature
+	// Sign the canonical content bytes. A non-zero Status means strict
+	// mode requires a signature but the signing key is absent; abort the
+	// save rather than persist an unsigned bundle that the kernel will
+	// later reject.
+	signResult := signPolicyBundleContent(r.Context(), []byte(content))
+	if signResult.Status != 0 {
+		writeErrorJSON(w, signResult.Status, signResult.Message)
+		return
+	}
+	if signResult.Signature != nil {
+		bundle[policyBundleSignatureKey] = signResult.Signature
 	} else {
-		// strict=off with no key: drop any stale signature so the bundle
-		// does not carry one that no longer matches the current content.
 		delete(bundle, policyBundleSignatureKey)
 	}
 	bundles[bundleID] = bundle

@@ -19,7 +19,6 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/env"
-	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
@@ -153,6 +152,7 @@ type redisRateLimiter struct {
 const (
 	rateLimitRedisTimeout = 200 * time.Millisecond
 	rateLimitKeyPrefix    = "cordum:rl:"
+	rateLimitWindowSec    = 1 // 1-second sliding window
 	rateLimitTTLSec       = 2 // 2× window for clock-skew safety
 )
 
@@ -310,12 +310,12 @@ func requestHostname(hostport string) string {
 	return hostport
 }
 
-func apiKeyUnaryInterceptor(provider auth.AuthProvider) grpc.UnaryServerInterceptor {
+func apiKeyUnaryInterceptor(auth auth.AuthProvider) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if provider == nil {
+		if auth == nil {
 			return handler(ctx, req)
 		}
-		authCtx, err := provider.AuthenticateGRPC(ctx)
+		authCtx, err := auth.AuthenticateGRPC(ctx)
 		if err != nil {
 			return nil, status.Error(codes.Unauthenticated, "unauthorized")
 		}
@@ -484,11 +484,11 @@ func publicPathWithinCeiling(path string) bool {
 
 // isAllowedPublicPath returns true only when BOTH the provider AND the
 // hardcoded ceiling agree the path is public.
-func isAllowedPublicPath(provider auth.AuthProvider, path string) bool {
+func isAllowedPublicPath(auth auth.AuthProvider, path string) bool {
 	if !publicPathWithinCeiling(path) {
 		return false
 	}
-	if pp, ok := provider.(auth.PublicPathProvider); ok {
+	if pp, ok := auth.(auth.PublicPathProvider); ok {
 		return pp.IsPublicPath(path)
 	}
 	return false
@@ -496,8 +496,8 @@ func isAllowedPublicPath(provider auth.AuthProvider, path string) bool {
 
 // apiKeyMiddleware enforces API key auth and injects auth context.
 // An optional auditSender emits audit events on authentication failures.
-func apiKeyMiddleware(provider auth.AuthProvider, next http.Handler, auditSender ...audit.AuditSender) http.Handler {
-	if provider == nil {
+func apiKeyMiddleware(auth auth.AuthProvider, next http.Handler, auditSender ...audit.AuditSender) http.Handler {
+	if auth == nil {
 		return next
 	}
 	var aSender audit.AuditSender
@@ -509,11 +509,11 @@ func apiKeyMiddleware(provider auth.AuthProvider, next http.Handler, auditSender
 			next.ServeHTTP(w, r)
 			return
 		}
-		if isAllowedPublicPath(provider, r.URL.Path) {
+		if isAllowedPublicPath(auth, r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		authCtx, err := provider.AuthenticateHTTP(r)
+		authCtx, err := auth.AuthenticateHTTP(r)
 		if err != nil {
 			if aSender != nil {
 				aSender.Send(audit.SIEMEvent{
@@ -618,7 +618,7 @@ func auditReadMiddleware(sender audit.AuditSender, sampleRate float64, next http
 	})
 }
 
-func tenantMiddleware(provider auth.AuthProvider, next http.Handler) http.Handler {
+func tenantMiddleware(auth auth.AuthProvider, next http.Handler) http.Handler {
 	if next == nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			writeErrorJSON(w, http.StatusNotFound, "not found")
@@ -629,7 +629,7 @@ func tenantMiddleware(provider auth.AuthProvider, next http.Handler) http.Handle
 			next.ServeHTTP(w, r)
 			return
 		}
-		if isAllowedPublicPath(provider, r.URL.Path) {
+		if isAllowedPublicPath(auth, r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}

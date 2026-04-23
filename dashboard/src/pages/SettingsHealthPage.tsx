@@ -99,7 +99,7 @@ export default function SettingsHealthPage() {
             const Icon = item.icon;
             return (
               <motion.div key={item.label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
-                className="instrument-card">
+                className="instrument-card p-5">
                 <div className="flex items-center gap-2 mb-2">
                   <Icon className="w-4 h-4 text-cordum" />
                   <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider">{item.label}</span>

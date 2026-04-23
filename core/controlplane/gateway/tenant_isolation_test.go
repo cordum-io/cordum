@@ -26,12 +26,12 @@ func (a *tenantStrictAuth) AuthenticateGRPC(context.Context) (*auth.AuthContext,
 	return &auth.AuthContext{Tenant: a.tenant, Role: a.role}, nil
 }
 func (a *tenantStrictAuth) RequireRole(r *http.Request, roles ...string) error {
-	authCtx := auth.FromRequest(r)
-	if authCtx == nil {
+	auth := auth.FromRequest(r)
+	if auth == nil {
 		return errors.New("unauthorized")
 	}
 	for _, role := range roles {
-		if authCtx.Role == role {
+		if auth.Role == role {
 			return nil
 		}
 	}
@@ -41,11 +41,11 @@ func (a *tenantStrictAuth) ResolveTenant(_ *http.Request, requested, _ string) (
 	return requested, nil
 }
 func (a *tenantStrictAuth) RequireTenantAccess(r *http.Request, tenant string) error {
-	authCtx := auth.FromRequest(r)
-	if authCtx == nil {
+	auth := auth.FromRequest(r)
+	if auth == nil {
 		return errors.New("unauthorized")
 	}
-	if authCtx.Tenant != tenant {
+	if auth.Tenant != tenant {
 		return errors.New("tenant access denied")
 	}
 	return nil

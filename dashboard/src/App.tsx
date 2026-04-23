@@ -1,9 +1,8 @@
-import { Suspense, useEffect, type ReactNode } from "react";
-import { safeLazy as lazy } from "./lib/safeLazy";
-import { BrowserRouter, Routes, Route, Navigate, useLocation, useSearchParams } from "react-router-dom";
+import { Suspense, lazy, useEffect, type ReactNode } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "sonner";
-import { registerQueryClient } from "./state/config";
+import { useConfigStore } from "./state/config";
 import { useUiStore } from "./state/ui";
 import { AppShell } from "./components/layout/AppShell";
 import { LoadingScreen } from "./components/layout/LoadingScreen";
@@ -11,21 +10,16 @@ import { useRequireAuth } from "./hooks/useAuth";
 import { useEventStream } from "./hooks/useEventStream";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastBridge } from "./components/ToastBridge";
-import { FEATURE_FLAGS } from "./config/flags";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 10_000,
       retry: 2,
-      refetchOnWindowFocus: true,
-      refetchIntervalInBackground: true,
+      refetchOnWindowFocus: false,
     },
   },
 });
-
-// Register QueryClient so config store can clear cache on logout/tenant-switch
-registerQueryClient(queryClient);
 
 // Lazy-loaded pages
 const LoginPage = lazy(() => import("./pages/LoginPage"));
@@ -34,18 +28,22 @@ const JobsPage = lazy(() => import("./pages/JobsPage"));
 const JobDetailPage = lazy(() => import("./pages/JobDetailPage"));
 const AgentsPage = lazy(() => import("./pages/AgentsPage"));
 const AgentDetailPage = lazy(() => import("./pages/AgentDetailPage"));
-const AgentIdentityDetailPage = lazy(() => import("./pages/AgentIdentityDetailPage"));
-const DelegationsPage = lazy(() => import("./pages/DelegationsPage"));
 const ApprovalsPage = lazy(() => import("./pages/ApprovalsPage"));
-const ApprovalDetailPage = lazy(() => import("./pages/approvals/ApprovalDetailPage"));
 const WorkflowsPage = lazy(() => import("./pages/WorkflowsPage"));
-const WorkflowStudioPage = lazy(() => import("./pages/WorkflowStudioPage"));
+const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage"));
+const WorkflowCreatePage = lazy(() => import("./pages/WorkflowCreatePage"));
 const RunDetailPage = lazy(() => import("./pages/RunDetailPage"));
+const PoliciesOverviewPage = lazy(() => import("./pages/PoliciesOverviewPage"));
+const PoliciesBundlesPage = lazy(() => import("./pages/PoliciesBundlesPage"));
+const PoliciesRulesPage = lazy(() => import("./pages/PoliciesRulesPage"));
+const PoliciesBuilderPage = lazy(() => import("./pages/PoliciesBuilderPage"));
+const PoliciesSimulatorPage = lazy(() => import("./pages/PoliciesSimulatorPage"));
+const PoliciesHistoryPage = lazy(() => import("./pages/PoliciesHistoryPage"));
+const PoliciesAnalyticsPage = lazy(() => import("./pages/PoliciesAnalyticsPage"));
+const PoliciesPublishPage = lazy(() => import("./pages/PoliciesPublishPage"));
 const PacksPage = lazy(() => import("./pages/PacksPage"));
-const PackDetailPage = lazy(() => import("./pages/PackDetailPage"));
 const SchemasPage = lazy(() => import("./pages/SchemasPage"));
 const SchemaDetailPage = lazy(() => import("./pages/SchemaDetailPage"));
-const TopicsPage = lazy(() => import("./pages/TopicsPage"));
 const AuditLogPage = lazy(() => import("./pages/AuditLogPage"));
 const DLQPage = lazy(() => import("./pages/DLQPage"));
 const SettingsHealthPage = lazy(() => import("./pages/SettingsHealthPage"));
@@ -55,35 +53,12 @@ const SettingsNotificationsPage = lazy(() => import("./pages/SettingsNotificatio
 const SettingsEnvironmentsPage = lazy(() => import("./pages/SettingsEnvironmentsPage"));
 const SettingsConfigPage = lazy(() => import("./pages/SettingsConfigPage"));
 const SettingsMcpPage = lazy(() => import("./pages/SettingsMcpPage"));
-const SettingsLicensePage = lazy(() => import("./pages/settings/LicensePage"));
-const SettingsSSOPage = lazy(() => import("./pages/settings/SettingsSSOPage"));
-const SettingsSCIMPage = lazy(() => import("./pages/settings/SettingsSCIMPage"));
-const SettingsAuditExportPage = lazy(() => import("./pages/settings/SettingsAuditExportPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const SettingsHubPage = lazy(() => import("./pages/SettingsHubPage"));
-const GovernPolicyOverviewPage = lazy(() => import("./pages/govern/PolicyOverviewPage"));
-const GovernTenantDetailPage = lazy(() => import("./pages/govern/TenantDetailPage"));
-const GovernBundleDetailPage = lazy(() => import("./pages/govern/BundleDetailPage"));
-const GovernQuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"));
-const EvalsPage = lazy(() => import("./pages/EvalsPage"));
-const EvalDatasetDetailPage = lazy(() => import("./pages/EvalDatasetDetailPage"));
-const EvalRunDetailPage = lazy(() => import("./pages/EvalRunDetailPage"));
-
-// Policy Studio tab redirects — canonical `/govern/<tab>` aliases land on
-// the tabbed overview with the right tab/mode pre-selected. These are not
-// legacy redirects; they are the current public shortcuts operators use
-// to deep-link into a specific Policy Studio tab.
-function PolicyTabRedirect({ tab, mode }: { tab: string; mode?: string }) {
-  const [searchParams] = useSearchParams();
-  const params = new URLSearchParams(searchParams);
-  params.set("tab", tab);
-  if (mode) {
-    params.set("mode", mode);
-  } else {
-    params.delete("mode");
-  }
-  return <Navigate to={`/govern/overview?${params.toString()}`} replace />;
-}
+const PoliciesInputPage = lazy(() => import("./pages/PoliciesInputPage"));
+const PoliciesOutputPage = lazy(() => import("./pages/PoliciesOutputPage"));
+const PoliciesHierarchyPage = lazy(() => import("./pages/PoliciesHierarchyPage"));
+const QuarantineQueuePage = lazy(() => import("./pages/QuarantineQueuePage"));
 
 function ThemeSync() {
   const resolvedTheme = useUiStore((s) => s.resolvedTheme);
@@ -119,46 +94,35 @@ function ProtectedRoutes() {
           <Route path="/" element={<HomePage />} />
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/agents/:id" element={<AgentDetailPage />} />
-          <Route path="/agents/identity/:id" element={<AgentIdentityDetailPage />} />
-          {FEATURE_FLAGS.delegationDashboard && (
-            <Route path="/delegations" element={<DelegationsPage />} />
-          )}
           <Route path="/jobs" element={<JobsPage />} />
           <Route path="/jobs/:id" element={<JobDetailPage />} />
 
           {/* ORCHESTRATE */}
           <Route path="/workflows" element={<WorkflowsPage />} />
-          <Route path="/workflows/studio/new" element={<WorkflowStudioPage />} />
-          <Route path="/workflows/:id/studio" element={<WorkflowStudioPage />} />
+          <Route path="/workflows/new" element={<WorkflowCreatePage />} />
+          <Route path="/workflows/:id/edit" element={<WorkflowCreatePage />} />
+          <Route path="/workflows/:id" element={<WorkflowDetailPage />} />
           <Route path="/workflows/:id/runs/:runId" element={<RunDetailPage />} />
           <Route path="/approvals" element={<ApprovalsPage />} />
-          <Route path="/approvals/:jobId" element={<ApprovalDetailPage />} />
 
           {/* GOVERN */}
-          <Route path="/govern/overview" element={<GovernPolicyOverviewPage />} />
-          <Route path="/govern/input-rules" element={<PolicyTabRedirect tab="input-rules" />} />
-          <Route path="/govern/output-rules" element={<PolicyTabRedirect tab="output-rules" />} />
-          <Route path="/govern/velocity-rules" element={<PolicyTabRedirect tab="velocity" />} />
-          <Route path="/govern/tenants" element={<PolicyTabRedirect tab="scope" />} />
-          <Route path="/govern/tenants/:id" element={<GovernTenantDetailPage />} />
-          <Route path="/govern/bundles/:id" element={<GovernBundleDetailPage />} />
-          <Route path="/govern/bundles" element={<PolicyTabRedirect tab="bundles" />} />
-          <Route path="/govern/simulator" element={<PolicyTabRedirect tab="evaluation" mode="simulator" />} />
-          <Route path="/govern/quarantine" element={<GovernQuarantinePage />} />
-          <Route path="/govern/replay" element={<PolicyTabRedirect tab="evaluation" mode="replay" />} />
-          <Route path="/govern/analytics" element={<PolicyTabRedirect tab="evaluation" mode="analytics" />} />
-          {FEATURE_FLAGS.evalsPage && (
-            <>
-              <Route path="/evals" element={<EvalsPage />} />
-              <Route path="/evals/:datasetId" element={<EvalDatasetDetailPage />} />
-              <Route path="/evals/runs/:runId" element={<EvalRunDetailPage />} />
-            </>
-          )}
+          <Route path="/policies" element={<PoliciesOverviewPage />} />
+          <Route path="/policies/bundles" element={<PoliciesBundlesPage />} />
+          <Route path="/policies/rules" element={<PoliciesRulesPage />} />
+          <Route path="/policies/rules/new" element={<PoliciesBuilderPage />} />
+          <Route path="/policies/rules/:id" element={<PoliciesBuilderPage />} />
+          <Route path="/policies/builder" element={<PoliciesBuilderPage />} />
+          <Route path="/policies/simulator" element={<PoliciesSimulatorPage />} />
+          <Route path="/policies/history" element={<PoliciesHistoryPage />} />
+          <Route path="/policies/analytics" element={<PoliciesAnalyticsPage />} />
+          <Route path="/policies/publish" element={<PoliciesPublishPage />} />
+          <Route path="/policies/input" element={<PoliciesInputPage />} />
+          <Route path="/policies/output" element={<PoliciesOutputPage />} />
+          <Route path="/policies/hierarchy" element={<PoliciesHierarchyPage />} />
+          <Route path="/quarantine" element={<QuarantineQueuePage />} />
 
           {/* EXTEND */}
           <Route path="/packs" element={<PacksPage />} />
-          <Route path="/packs/:id" element={<PackDetailPage />} />
-          <Route path="/topics" element={<TopicsPage />} />
           <Route path="/schemas" element={<SchemasPage />} />
           <Route path="/schemas/:id" element={<SchemaDetailPage />} />
 
@@ -175,11 +139,14 @@ function ProtectedRoutes() {
           <Route path="/settings/environments" element={<SettingsEnvironmentsPage />} />
           <Route path="/settings/config" element={<SettingsConfigPage />} />
           <Route path="/settings/mcp" element={<SettingsMcpPage />} />
-          <Route path="/settings/sso" element={<SettingsSSOPage />} />
-          <Route path="/settings/scim" element={<SettingsSCIMPage />} />
-          <Route path="/settings/audit-export" element={<SettingsAuditExportPage />} />
-          <Route path="/settings/license" element={<SettingsLicensePage />} />
 
+          {/* Legacy redirects */}
+          <Route path="/pools" element={<Navigate to="/agents" replace />} />
+          <Route path="/system" element={<Navigate to="/settings/health" replace />} />
+          <Route path="/security" element={<Navigate to="/" replace />} />
+          <Route path="/traces" element={<Navigate to="/jobs" replace />} />
+          <Route path="/safety/input" element={<Navigate to="/policies/input" replace />} />
+          <Route path="/safety/output" element={<Navigate to="/policies/output" replace />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Suspense>

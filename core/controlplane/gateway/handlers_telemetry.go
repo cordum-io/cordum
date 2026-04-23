@@ -6,12 +6,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/telemetry"
 )
 
 func (s *server) handleGetTelemetryStatus(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermTelemetryRead, "admin") {
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeForbidden(w, r, err)
 		return
 	}
 	if s.telemetry == nil {
@@ -27,7 +27,8 @@ func (s *server) handleGetTelemetryStatus(w http.ResponseWriter, r *http.Request
 }
 
 func (s *server) handleGetTelemetryInspect(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermTelemetryExport, "admin") {
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeForbidden(w, r, err)
 		return
 	}
 	if s.telemetry == nil {
@@ -43,7 +44,8 @@ func (s *server) handleGetTelemetryInspect(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *server) handleGetTelemetryExport(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermTelemetryExport, "admin") {
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeForbidden(w, r, err)
 		return
 	}
 	if s.telemetry == nil {
@@ -66,7 +68,8 @@ func (s *server) handleGetTelemetryExport(w http.ResponseWriter, r *http.Request
 }
 
 func (s *server) handleGetTelemetryUsage(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermTelemetryRead, "admin") {
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeForbidden(w, r, err)
 		return
 	}
 	if s.telemetry == nil {
@@ -82,7 +85,8 @@ func (s *server) handleGetTelemetryUsage(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *server) handleSetTelemetryConsent(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermTelemetryWrite, "admin") {
+	if err := s.requireRole(r, "admin"); err != nil {
+		writeForbidden(w, r, err)
 		return
 	}
 	if s.telemetry == nil {

@@ -46,25 +46,25 @@ describe("AppShell systemStatus derivation", () => {
 });
 
 describe("AppShell GOVERN navigation", () => {
-  it("keeps Delegations hidden until the delegation dashboard feature flag is enabled", () => {
+  it("exposes six GOVERN entries (Policy Studio, Velocity Rules, Policy Replay, Rule Analytics, Tenants, Quarantine)", () => {
     const govern = APP_SHELL_NAV_SECTIONS.find((section) => section.label === "Govern");
     expect(govern).toBeDefined();
 
     const labels = govern?.items.map((item) => item.label);
     expect(labels).toEqual([
       "Policy Studio",
+      "Velocity Rules",
+      "Policy Replay",
+      "Rule Analytics",
+      "Tenants",
       "Quarantine",
     ]);
   });
 
-  it("keeps the default governance nav paths aligned to the studio and quarantine views", () => {
+  it("points GOVERN entries at /govern routes and keeps quarantine badge behavior", () => {
     const govern = APP_SHELL_NAV_SECTIONS.find((section) => section.label === "Govern");
     expect(govern).toBeDefined();
-
-    expect(govern?.items.map((item) => item.path)).toEqual([
-      "/govern/overview",
-      "/govern/quarantine",
-    ]);
+    expect(govern?.items.every((item) => item.path.startsWith("/govern/"))).toBe(true);
 
     const quarantine = govern?.items.find((item) => item.label === "Quarantine");
     expect(quarantine?.path).toBe("/govern/quarantine");

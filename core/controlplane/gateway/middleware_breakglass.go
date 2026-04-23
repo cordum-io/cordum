@@ -30,7 +30,7 @@ func (s *server) requireLicensePermission(w http.ResponseWriter, r *http.Request
 
 	state := s.currentBreakGlassState()
 	if licensing.IsAllowedUnderLicenseState(state, permission) {
-		if isBreakGlassState(state) {
+		if state == licensing.BreakGlassStateDegraded || state == licensing.BreakGlassStateInvalid {
 			s.emitBreakGlassAudit(r, state, permission)
 		}
 		s.logBreakGlassDecision(r, state, permission, "allow")
@@ -73,7 +73,6 @@ func (s *server) emitBreakGlassAudit(r *http.Request, state licensing.BreakGlass
 			"decision":   "allow",
 			"method":     r.Method,
 			"path":       r.URL.Path,
-			"route":      r.URL.Path,
 			"permission": permission,
 			"state":      string(state),
 		},
@@ -81,10 +80,9 @@ func (s *server) emitBreakGlassAudit(r *http.Request, state licensing.BreakGlass
 }
 
 func (s *server) logBreakGlassDecision(r *http.Request, state licensing.BreakGlassState, permission, decision string) {
-	if !isBreakGlassState(state) {
+	if state != licensing.BreakGlassStateGrace && state != licensing.BreakGlassStateDegraded && state != licensing.BreakGlassStateInvalid {
 		return
 	}
-	observeBreakGlassDecision(decision, state)
 
 	identity := "anonymous"
 	if authCtx := auth.FromRequest(r); authCtx != nil {
@@ -97,20 +95,13 @@ func (s *server) logBreakGlassDecision(r *http.Request, state licensing.BreakGla
 
 	slog.Warn("license break-glass decision",
 		"decision", decision,
-		"state", string(state),
+		"state", state,
 		"permission", permission,
 		"method", r.Method,
-		"route", r.URL.Path,
 		"path", r.URL.Path,
 		"tenant", tenantFromRequest(r),
 		"principal", identity,
 	)
-}
-
-func isBreakGlassState(state licensing.BreakGlassState) bool {
-	return state == licensing.BreakGlassStateGrace ||
-		state == licensing.BreakGlassStateDegraded ||
-		state == licensing.BreakGlassStateInvalid
 }
 
 func writeBreakGlassDenied(w http.ResponseWriter, state licensing.BreakGlassState) {

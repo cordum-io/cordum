@@ -128,14 +128,14 @@ function CreateUserModal({
           <h3 className="font-display text-lg font-semibold text-ink">
             Create User
           </h3>
-          <button type="button" onClick={onClose} className="rounded-full p-1 hover:bg-surface2">
-            <X className="h-4 w-4 text-muted-foreground" />
+          <button onClick={onClose} className="rounded-full p-1 hover:bg-surface2">
+            <X className="h-4 w-4 text-muted" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
+            <label className="mb-1 block text-xs font-semibold text-muted">
               Username
             </label>
             <Input placeholder="e.g. jane.doe" {...register("username")} />
@@ -145,18 +145,18 @@ function CreateUserModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
+            <label className="mb-1 block text-xs font-semibold text-muted">
               Password
             </label>
             <Input type="password" placeholder="Min 12 characters" {...register("password")} />
-            <p className="mt-1 text-xs text-muted-foreground">Min 12 chars, 1 uppercase, 1 digit, 1 special character</p>
+            <p className="mt-1 text-xs text-muted">Min 12 chars, 1 uppercase, 1 digit, 1 special character</p>
             {errors.password && (
               <p className="mt-1 text-xs text-danger">{errors.password.message}</p>
             )}
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
+            <label className="mb-1 block text-xs font-semibold text-muted">
               Role
             </label>
             <Select {...register("role")}>
@@ -234,8 +234,8 @@ function ChangePasswordModal({
           <h3 className="font-display text-lg font-semibold text-ink">
             Reset Password for {user.username}
           </h3>
-          <button type="button" onClick={onClose} className="rounded-full p-1 hover:bg-surface2">
-            <X className="h-4 w-4 text-muted-foreground" />
+          <button onClick={onClose} className="rounded-full p-1 hover:bg-surface2">
+            <X className="h-4 w-4 text-muted" />
           </button>
         </div>
 
@@ -247,11 +247,11 @@ function ChangePasswordModal({
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
+            <label className="mb-1 block text-xs font-semibold text-muted">
               New Password
             </label>
             <Input type="password" placeholder="Min 12 characters" {...register("password")} />
-            <p className="mt-1 text-xs text-muted-foreground">{PASSWORD_REQUIREMENTS_TEXT}</p>
+            <p className="mt-1 text-xs text-muted">{PASSWORD_REQUIREMENTS_TEXT}</p>
             <div className="mt-2">
               <PasswordStrengthIndicator password={password ?? ""} />
             </div>
@@ -261,7 +261,7 @@ function ChangePasswordModal({
           </div>
 
           <div>
-            <label className="mb-1 block text-xs font-semibold text-muted-foreground">
+            <label className="mb-1 block text-xs font-semibold text-muted">
               Confirm Password
             </label>
             <Input type="password" placeholder="Repeat password" {...register("confirm")} />
@@ -305,7 +305,7 @@ function ConfirmDelete({
         <h3 className="mb-4 font-display text-lg font-semibold text-ink">
           Delete User
         </h3>
-        <p className="mb-6 text-sm text-muted-foreground">
+        <p className="mb-6 text-sm text-muted">
           Are you sure you want to delete{" "}
           <strong className="text-ink">{user.username}</strong>? This action
           cannot be undone.
@@ -314,7 +314,7 @@ function ConfirmDelete({
           <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
             Cancel
           </Button>
-          <Button variant="danger" size="sm" onClick={onConfirm} disabled={isPending}>
+          <Button variant="destructive" size="sm" onClick={onConfirm} disabled={isPending}>
             {isPending ? "Deleting..." : "Delete"}
           </Button>
         </div>
@@ -348,7 +348,7 @@ function BulkConfirmDialog({
         <h3 className="mb-4 font-display text-lg font-semibold text-ink">
           {action === "delete" ? "Delete Users" : "Change Role"}
         </h3>
-        <p className="mb-6 text-sm text-muted-foreground">
+        <p className="mb-6 text-sm text-muted">
           {action === "delete"
             ? `Are you sure you want to delete ${count} user${count !== 1 ? "s" : ""}? This action cannot be undone.`
             : `Change the role of ${count} user${count !== 1 ? "s" : ""} to ${role}?`}
@@ -403,7 +403,7 @@ function BulkActionBar({
           <option key={r} value={r}>{r}</option>
         ))}
       </Select>
-      <Button variant="danger" size="sm" onClick={onDelete}>
+      <Button variant="destructive" size="sm" onClick={onDelete}>
         <Trash2 className="mr-1 h-3 w-3" />
         Delete
       </Button>
@@ -529,16 +529,16 @@ export function UsersTab() {
                     />
                   )}
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
                   Username
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
                   Role
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
                   Created
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted">
                   Last Login
                 </th>
                 <th className="px-4 py-3" />
@@ -558,7 +558,7 @@ export function UsersTab() {
 
               {!isLoading && isError && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
+                  <td colSpan={6} className="px-4 py-12 text-center text-muted">
                     Failed to load users.
                   </td>
                 </tr>
@@ -566,7 +566,7 @@ export function UsersTab() {
 
               {!isLoading && !isError && users.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
+                  <td colSpan={6} className="px-4 py-12 text-center text-muted">
                     No users yet. Create one to get started.
                   </td>
                 </tr>
@@ -598,7 +598,7 @@ export function UsersTab() {
                       <td className="px-4 py-3 font-medium text-ink">
                         {user.username}
                         {self && (
-                          <span className="ml-2 text-xs text-muted-foreground">(you)</span>
+                          <span className="ml-2 text-xs text-muted">(you)</span>
                         )}
                       </td>
                       <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
@@ -621,10 +621,10 @@ export function UsersTab() {
                           {primaryRole}
                         </Badge>
                       </td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">
+                      <td className="px-4 py-3 text-xs text-muted">
                         {timeAgo(user.createdAt)}
                       </td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">
+                      <td className="px-4 py-3 text-xs text-muted">
                         {timeAgo(user.lastLogin)}
                       </td>
                       <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
@@ -644,7 +644,6 @@ export function UsersTab() {
                             className="text-danger hover:bg-danger/10"
                             onClick={() => setDeleteTarget(user)}
                             disabled={self}
-                            aria-label={self ? "Cannot delete yourself" : "Delete user"}
                             title={self ? "Cannot delete yourself" : "Delete user"}
                           >
                             <Trash2 className="h-3.5 w-3.5" />

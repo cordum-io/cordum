@@ -196,11 +196,7 @@ type specDoc struct {
 // loadSpecOps returns a slice of SpecOp and a map of path -> anyMethod flag.
 // An op appearing under an x-any-method path is still enumerated as
 // "<method> <path>" for each declared method so the diff can assert both
-// directions accurately. `x-subroute-dispatch: true` is a companion
-// extension for Go 1.22 sub-mux dispatch: it lets the canonical collection
-// path (for example `/api/v1/evals/datasets`) declare that an internal
-// catch-all route exists at `/api/v1/evals/datasets/` without forcing the
-// OpenAPI document to model an invalid trailing-slash path.
+// directions accurately.
 func loadSpecOps(specPath string) ([]SpecOp, map[string]bool, error) {
 	data, err := os.ReadFile(specPath)
 	if err != nil {
@@ -223,15 +219,6 @@ func loadSpecOps(specPath string) ([]SpecOp, map[string]bool, error) {
 			case "x-any-method":
 				if node.Content[i+1].Value == "true" {
 					anyMethod[path] = true
-				}
-				continue
-			case "x-subroute-dispatch":
-				if node.Content[i+1].Value == "true" {
-					dispatchPath := path
-					if !strings.HasSuffix(dispatchPath, "/") {
-						dispatchPath += "/"
-					}
-					anyMethod[dispatchPath] = true
 				}
 				continue
 			case "get", "post", "put", "patch", "delete", "head", "options", "trace":
@@ -329,21 +316,6 @@ func diff(routes []Route, ops []SpecOp, anyMethod map[string]bool) ([]Route, []S
 		return missing[i].Method < missing[j].Method
 	})
 
-	// Collect any-method prefix roots so sub-path ops can be considered
-	// covered when they share a prefix with an x-any-method route. This is
-	// the gateway's "sub-mux dispatch" pattern: a single catch-all
-	// HandleFunc at `/api/v1/foo/` dispatches internally to concrete
-	// `/api/v1/foo/{id}`, `/api/v1/foo/by-name/{name}` ops because Go's
-	// strict mux refuses to register ambiguous sibling patterns. Each
-	// dispatched op is still documented separately; the prefix only
-	// signals "coverage is delegated".
-	var anyPrefixes []string
-	for np := range specAnyMethod {
-		if strings.HasSuffix(np, "/") {
-			anyPrefixes = append(anyPrefixes, np)
-		}
-	}
-
 	var unrouted []SpecOp
 	for _, op := range ops {
 		np := normalisePath(op.Path)
@@ -353,47 +325,34 @@ func diff(routes []Route, ops []SpecOp, anyMethod map[string]bool) ([]Route, []S
 		if routeMethods[np][op.Method] != (Route{}) {
 			continue
 		}
-		// Op is covered by a prefix-level any-method route when its path
-		// starts with the prefix (the prefix itself counts as routed via
-		// its own any-method declaration earlier in this loop).
-		covered := false
-		for _, prefix := range anyPrefixes {
-			if strings.HasPrefix(np, prefix) {
-				covered = true
-				break
-			}
-		}
-		if covered {
-			continue
-		}
 		unrouted = append(unrouted, op)
 	}
 	return missing, unrouted
 }
 
 func writeText(w *os.File, report Report) {
-	_, _ = fmt.Fprintf(w, "Routes seen:   %d\n", report.Routes)
-	_, _ = fmt.Fprintf(w, "Spec ops seen: %d\n", report.SpecOps)
-	_, _ = fmt.Fprintln(w)
+	fmt.Fprintf(w, "Routes seen:   %d\n", report.Routes)
+	fmt.Fprintf(w, "Spec ops seen: %d\n", report.SpecOps)
+	fmt.Fprintln(w)
 	if len(report.MissingFromSpec) == 0 {
-		_, _ = fmt.Fprintln(w, "Routes missing from spec: (none)")
+		fmt.Fprintln(w, "Routes missing from spec: (none)")
 	} else {
-		_, _ = fmt.Fprintln(w, "Routes missing from spec:")
+		fmt.Fprintln(w, "Routes missing from spec:")
 		for _, r := range report.MissingFromSpec {
 			m := r.Method
 			if m == "" {
 				m = "ANY"
 			}
-			_, _ = fmt.Fprintf(w, "  %-6s %s  (%s:%d)\n", strings.ToUpper(m), r.Path, r.File, r.Line)
+			fmt.Fprintf(w, "  %-6s %s  (%s:%d)\n", strings.ToUpper(m), r.Path, r.File, r.Line)
 		}
 	}
-	_, _ = fmt.Fprintln(w)
+	fmt.Fprintln(w)
 	if len(report.UnroutedInSpec) == 0 {
-		_, _ = fmt.Fprintln(w, "Spec ops without a route: (none)")
+		fmt.Fprintln(w, "Spec ops without a route: (none)")
 	} else {
-		_, _ = fmt.Fprintln(w, "Spec ops without a route:")
+		fmt.Fprintln(w, "Spec ops without a route:")
 		for _, op := range report.UnroutedInSpec {
-			_, _ = fmt.Fprintf(w, "  %-6s %s\n", strings.ToUpper(op.Method), op.Path)
+			fmt.Fprintf(w, "  %-6s %s\n", strings.ToUpper(op.Method), op.Path)
 		}
 	}
 }
@@ -403,12 +362,12 @@ func writeText(w *os.File, report Report) {
 func run(specPath, gatewayDir string, asJSON bool, stdout, stderr *os.File) int {
 	routes, err := collectRoutes(gatewayDir)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, err)
+		fmt.Fprintln(stderr, err)
 		return 2
 	}
 	ops, anyMethod, err := loadSpecOps(specPath)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, err)
+		fmt.Fprintln(stderr, err)
 		return 2
 	}
 	missing, unrouted := diff(routes, ops, anyMethod)
@@ -422,7 +381,7 @@ func run(specPath, gatewayDir string, asJSON bool, stdout, stderr *os.File) int 
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(report); err != nil {
-			_, _ = fmt.Fprintln(stderr, err)
+			fmt.Fprintln(stderr, err)
 			return 2
 		}
 	} else {

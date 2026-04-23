@@ -36,12 +36,12 @@ describe("useUiStore", () => {
     vi.clearAllMocks();
   });
 
-  it("defaults to system theme and table view when nothing is stored", async () => {
+  it("defaults to dark theme and table view when nothing is stored", async () => {
     const { useUiStore } = await loadUiModule();
     const state = useUiStore.getState();
 
-    expect(state.theme).toBe("system");
-    expect(state.resolvedTheme).toBe("light");
+    expect(state.theme).toBe("dark");
+    expect(state.resolvedTheme).toBe("dark");
     expect(state.commandOpen).toBe(false);
     expect(state.agentsView).toBe("table");
     expect(state.shortcutsHelpOpen).toBe(false);

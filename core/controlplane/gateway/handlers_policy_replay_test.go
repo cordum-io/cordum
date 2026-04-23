@@ -31,11 +31,11 @@ func (a *policyReplayAuth) AuthenticateGRPC(ctx context.Context) (*auth.AuthCont
 }
 
 func (a *policyReplayAuth) RequireRole(r *http.Request, roles ...string) error {
-	authCtx := auth.FromRequest(r)
-	if authCtx == nil {
+	auth := auth.FromRequest(r)
+	if auth == nil {
 		return errors.New("unauthorized")
 	}
-	role := auth.NormalizeRole(authCtx.Role)
+	role := auth.NormalizeRole(auth.Role)
 	if role == "" {
 		return errors.New("role required")
 	}
@@ -48,13 +48,13 @@ func (a *policyReplayAuth) RequireRole(r *http.Request, roles ...string) error {
 }
 
 func (a *policyReplayAuth) ResolveTenant(r *http.Request, requested, _ string) (string, error) {
-	authCtx := auth.FromRequest(r)
-	if authCtx == nil {
+	auth := auth.FromRequest(r)
+	if auth == nil {
 		return "", errors.New("unauthorized")
 	}
 	requested = strings.TrimSpace(requested)
 	if requested == "" {
-		return strings.TrimSpace(authCtx.Tenant), nil
+		return strings.TrimSpace(auth.Tenant), nil
 	}
 	return requested, nil
 }
@@ -67,9 +67,9 @@ func (a *policyReplayAuth) ResolvePrincipal(r *http.Request, requested string) (
 	if requested != "" {
 		return requested, nil
 	}
-	authCtx := auth.FromRequest(r)
-	if authCtx != nil {
-		return authCtx.PrincipalID, nil
+	auth := auth.FromRequest(r)
+	if auth != nil {
+		return auth.PrincipalID, nil
 	}
 	return "", errors.New("principal required")
 }

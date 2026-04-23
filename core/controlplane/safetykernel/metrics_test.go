@@ -103,66 +103,28 @@ func TestShadowEvalDurationBucketsCoverRealisticRange(t *testing.T) {
 	t.Fatal("duration histogram not found in gathered metrics")
 }
 
-// TestSafetyRuleDelegationMatchMetricRegistered asserts the delegation
-// deny counter is present in the default registry with a zero-baseline
-// series for every known deny field, so rate() queries on dashboards
-// don't suffer from "series first appears on incident" stair-steps.
-func TestSafetyRuleDelegationMatchMetricRegistered(t *testing.T) {
-	t.Parallel()
-	gathered, err := prometheus.DefaultGatherer.Gather()
-	if err != nil {
-		t.Fatalf("gather: %v", err)
-	}
-	seenFields := map[string]bool{}
-	for _, mf := range gathered {
-		if mf.GetName() != "safety_rule_delegation_match_total" {
-			continue
-		}
-		for _, m := range mf.GetMetric() {
-			var field, outcome string
-			for _, lp := range m.GetLabel() {
-				switch lp.GetName() {
-				case "field":
-					field = lp.GetValue()
-				case "outcome":
-					outcome = lp.GetValue()
-				}
-			}
-			if outcome == "deny" {
-				seenFields[field] = true
-			}
-		}
-	}
-	wantFields := []string{"forbid_delegated", "max_depth", "issuers", "require_issuer", "required_scope"}
-	for _, want := range wantFields {
-		if !seenFields[want] {
-			t.Errorf("metric safety_rule_delegation_match_total{field=%q,outcome=\"deny\"} not pre-materialised", want)
-		}
-	}
-}
-
 func formatFloat(f float64) string {
 	// Rough but readable; we only need substring matches for the test.
-	switch f {
-	case 0.001:
+	switch {
+	case f == 0.001:
 		return "0.001"
-	case 0.005:
+	case f == 0.005:
 		return "0.005"
-	case 0.01:
+	case f == 0.01:
 		return "0.01"
-	case 0.025:
+	case f == 0.025:
 		return "0.025"
-	case 0.05:
+	case f == 0.05:
 		return "0.05"
-	case 0.1:
+	case f == 0.1:
 		return "0.1"
-	case 0.25:
+	case f == 0.25:
 		return "0.25"
-	case 0.5:
+	case f == 0.5:
 		return "0.5"
-	case 1:
+	case f == 1:
 		return "1"
-	case 5:
+	case f == 5:
 		return "5"
 	default:
 		return ""

@@ -40,8 +40,6 @@ const maxEvalDatasetRequestBytes = model.MaxEvalDatasetBytes + (256 * 1024)
 // JS `new Date().toISOString()` value works out of the box.
 var evalDatasetQueryTimestampFormats = []string{time.RFC3339Nano, time.RFC3339}
 
-const evalDatasetRoutePrefix = "/api/v1/evals/datasets/"
-
 type createEvalDatasetRequest struct {
 	Name        string            `json:"name"`
 	Version     int               `json:"version"`
@@ -62,74 +60,6 @@ type evalDatasetsListResponse struct {
 
 type evalDatasetVersionsResponse struct {
 	Items []model.EvalDataset `json:"items"`
-}
-
-func (s *server) handleEvalDatasetSubroutes(w http.ResponseWriter, r *http.Request) {
-	subpath := strings.Trim(strings.TrimPrefix(r.URL.Path, evalDatasetRoutePrefix), "/")
-	if subpath == "" {
-		http.NotFound(w, r)
-		return
-	}
-
-	parts := strings.Split(subpath, "/")
-	switch {
-	case len(parts) == 2 && parts[0] == "by-name":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w, http.MethodGet)
-			return
-		}
-		r.SetPathValue("name", parts[1])
-		s.handleListEvalDatasetVersions(w, r)
-		return
-	case len(parts) == 4 && parts[0] == "by-name" && parts[2] == "versions":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w, http.MethodGet)
-			return
-		}
-		r.SetPathValue("name", parts[1])
-		r.SetPathValue("version", parts[3])
-		s.handleGetEvalDatasetByNameVersion(w, r)
-		return
-	case len(parts) == 1:
-		r.SetPathValue("id", parts[0])
-		switch r.Method {
-		case http.MethodGet:
-			s.handleGetEvalDataset(w, r)
-		case http.MethodPut:
-			s.handleUpdateEvalDataset(w, r)
-		case http.MethodDelete:
-			s.handleDeleteEvalDataset(w, r)
-		default:
-			writeMethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodDelete)
-		}
-		return
-	case len(parts) == 2 && parts[1] == "run":
-		if r.Method != http.MethodPost {
-			writeMethodNotAllowed(w, http.MethodPost)
-			return
-		}
-		r.SetPathValue("id", parts[0])
-		s.handleRunEvalDataset(w, r)
-		return
-	case len(parts) == 2 && parts[1] == "runs":
-		if r.Method != http.MethodGet {
-			writeMethodNotAllowed(w, http.MethodGet)
-			return
-		}
-		r.SetPathValue("id", parts[0])
-		s.handleListEvalRuns(w, r)
-		return
-	default:
-		http.NotFound(w, r)
-		return
-	}
-}
-
-func writeMethodNotAllowed(w http.ResponseWriter, methods ...string) {
-	if len(methods) > 0 {
-		w.Header().Set("Allow", strings.Join(methods, ", "))
-	}
-	http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 }
 
 func decodeEvalDatasetJSON(w http.ResponseWriter, r *http.Request, dst any) bool {

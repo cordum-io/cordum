@@ -69,10 +69,10 @@ export function NotificationRulesTable({
       {rules.length === 0 ? (
         <Card>
           <div className="py-8 text-center">
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted">
               No routing rules configured.
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="mt-1 text-xs text-muted">
               Events will not trigger notifications.
             </p>
           </div>
@@ -82,19 +82,19 @@ export function NotificationRulesTable({
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border bg-surface2/50">
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                <th className="px-3 py-2 text-left font-medium text-muted">
                   Event Pattern
                 </th>
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                <th className="px-3 py-2 text-left font-medium text-muted">
                   Channels
                 </th>
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                <th className="px-3 py-2 text-left font-medium text-muted">
                   Throttle
                 </th>
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">
+                <th className="px-3 py-2 text-left font-medium text-muted">
                   Mute Until
                 </th>
-                <th className="px-3 py-2 text-center font-medium text-muted-foreground">
+                <th className="px-3 py-2 text-center font-medium text-muted">
                   Enabled
                 </th>
                 <th className="px-3 py-2" />
@@ -119,14 +119,14 @@ export function NotificationRulesTable({
                         );
                       })}
                       {rule.channelIds.length === 0 && (
-                        <span className="text-muted-foreground">{"\u2014"}</span>
+                        <span className="text-muted">{"\u2014"}</span>
                       )}
                     </div>
                   </td>
-                  <td className="px-3 py-2.5 text-muted-foreground">
+                  <td className="px-3 py-2.5 text-muted">
                     {formatThrottle(rule.throttleMs)}
                   </td>
-                  <td className="px-3 py-2.5 text-muted-foreground">
+                  <td className="px-3 py-2.5 text-muted">
                     {formatMuteUntil(rule.muteUntil)}
                   </td>
                   <td className="px-3 py-2.5 text-center">
@@ -144,7 +144,7 @@ export function NotificationRulesTable({
                         className="rounded p-1 hover:bg-surface2"
                         onClick={() => onEditRule(rule)}
                       >
-                        <Pencil className="h-3 w-3 text-muted-foreground" />
+                        <Pencil className="h-3 w-3 text-muted" />
                       </button>
                       <button
                         type="button"
@@ -167,7 +167,7 @@ export function NotificationRulesTable({
         title="Delete Routing Rule"
         message="Delete this routing rule? Events matching this pattern will no longer trigger notifications."
         confirmLabel="Delete"
-        confirmVariant="danger"
+        confirmVariant="destructive"
         isPending={isDeleting}
         onConfirm={() => {
           if (deleteId) {

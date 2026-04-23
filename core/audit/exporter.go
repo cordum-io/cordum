@@ -17,24 +17,11 @@ import (
 
 // Event types emitted by the audit subsystem.
 const (
-	EventSafetyDecision = "safety.decision"
-	// EventDelegationLineage captures the full human-readable delegation chain
-	// once per (job_id, token_jti) at dispatch so downstream SIEM rules can
-	// correlate the compact safety.decision delegation fields back to the
-	// complete issuer ancestry.
-	EventDelegationLineage = "delegation.lineage"
-	// EventDelegationRejected captures submit-time delegation verification
-	// failures before a job is accepted. Reason carries the delegation error
-	// code (for example malformed, revoked, or audience_mismatch).
-	EventDelegationRejected = "delegation.rejected"
-	// EventDelegationRevokedBeforeDispatch captures dispatch-time delegation
-	// re-verification failures after a submit already succeeded. Reason carries
-	// the stable failure code persisted onto the job / DLQ record.
-	EventDelegationRevokedBeforeDispatch = "delegation.revoked_before_dispatch"
-	EventSafetyApproval                  = "safety.approval"
-	EventPolicyChange                    = "safety.policy_change"
-	EventSafetyViolation                 = "safety.violation"
-	EventSystemAuth                      = "system.auth"
+	EventSafetyDecision  = "safety.decision"
+	EventSafetyApproval  = "safety.approval"
+	EventPolicyChange    = "safety.policy_change"
+	EventSafetyViolation = "safety.violation"
+	EventSystemAuth      = "system.auth"
 	// EventMCPToolApproval is emitted for every MCP per-tool approval
 	// lifecycle transition: enqueue, approve, reject, expire, consume.
 	// The Extra map carries tool_name, args_hash, approval_id,
@@ -47,43 +34,6 @@ const (
 	// agent_id, and tenant so downstream SIEM rules can detect
 	// privilege-escalation probes.
 	EventMCPToolDenied = "mcp.tool_denied"
-	// EventMCPToolInvocation is emitted for every completed tools/call
-	// regardless of outcome. Extra carries tool_name, agent_id, tenant,
-	// duration_ms, and result_size so downstream SIEM rules can correlate
-	// activity volume without parsing natural-language Reason fields.
-	EventMCPToolInvocation = "mcp.tool_invocation"
-	// EventMCPToolOutboundInvocation is emitted when Cordum acts as an
-	// MCP client (outbound) — e.g. brokering a remote tool call via the
-	// MCP bridge. Extra carries server, tool_name, tenant, duration_ms,
-	// and outcome for SIEM correlation of egress activity.
-	EventMCPToolOutboundInvocation = "mcp.tool_outbound_invocation"
-	EventMCPSignatureInvalid       = "mcp.signature_invalid"
-	// EventHeartbeatDisagreement is emitted while heartbeat demotion is in
-	// warn mode and session-token authority disagrees with legacy heartbeat
-	// recency for the same worker liveness decision.
-	EventHeartbeatDisagreement = "heartbeat_disagreement"
-	// EventApprovalRevisionMismatch is emitted when the scheduler's
-	// approval fast-path rejects a job because the approval_snapshot
-	// label does not match the stored SafetyDecisionRecord.PolicySnapshot.
-	// Signals that policy drifted between approval time and dispatch time
-	// and the fast-path refused to short-circuit on stale constraints.
-	EventApprovalRevisionMismatch = "approval.revision_mismatch"
-	EventWorkerTrustChange     = "worker_trust_change"
-	EventTopicRegistered       = "topic_registered"
-	EventTopicUnregistered     = "topic_unregistered"
-	// EventLicenseLegacyRejected is emitted when the licensing layer
-	// rejects a pre-GA top-level features/limits envelope instead of
-	// silently migrating it to the current schema.
-	EventLicenseLegacyRejected = "license.legacy_format_rejected"
-	// EventLicenseBreakglassActivated is emitted whenever an expired or
-	// invalid license still admits a request through one of the explicit
-	// break-glass recovery paths.
-	EventLicenseBreakglassActivated = "license.breakglass_activated"
-	// EventShadowEval is emitted by the Safety Kernel when an active
-	// policy evaluation is mirrored against the shadow policy for
-	// A/B impact analysis. Extra carries shadow_bundle_id, bundle_id,
-	// active_verdict, shadow_verdict, diff, and latency_ms.
-	EventShadowEval = "shadow_eval"
 )
 
 // Severity levels for SIEM events.

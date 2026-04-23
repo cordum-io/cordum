@@ -82,9 +82,9 @@ var expectedQuickstartSteps = []struct {
 	StepID string
 	Topic  string
 }{
-	{"greet", "job.demo-quickstart.greet"},
-	{"attempt_delete", "job.demo-quickstart.delete-all"},
-	{"escalate_admin", "job.demo-quickstart.admin"},
+	{"greet", "job.demo.greet"},
+	{"attempt_delete", "job.demo.delete-all"},
+	{"escalate_admin", "job.demo.admin"},
 }
 
 // runDemoQuickstart starts demo-quickstart.hello, polls for verdicts on
@@ -197,10 +197,7 @@ func demoQuickstartInput() map[string]any {
 func renderVerdictTable(out io.Writer, rows []demoVerdict) {
 	const (
 		stepW    = 18
-		// topicW fits the longest demo topic (`job.demo-quickstart.delete-all`
-		// is 30 chars) without truncation. Widening from 24 keeps the
-		// ASCII table readable on a standard 120-col terminal.
-		topicW   = 32
+		topicW   = 24
 		verdictW = 18
 		reasonW  = 50
 	)
@@ -229,28 +226,28 @@ func renderVerdictTable(out io.Writer, rows []demoVerdict) {
 		})
 	}
 
-	_, _ = fmt.Fprintln(out)
-	_, _ = fmt.Fprintln(out, "  Demo verdicts")
-	_, _ = fmt.Fprintln(out, hr)
-	_, _ = fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s |\n",
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "  Demo verdicts")
+	fmt.Fprintln(out, hr)
+	fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s |\n",
 		stepW, "Step", topicW, "Topic", verdictW, "Verdict", reasonW, "Reason")
-	_, _ = fmt.Fprintln(out, hr)
+	fmt.Fprintln(out, hr)
 	for _, row := range rendered {
 		verdict := row.Verdict
 		if verdict == "" {
 			verdict = "PENDING"
 		}
-		_, _ = fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s |\n",
+		fmt.Fprintf(out, "  | %-*s | %-*s | %-*s | %-*s |\n",
 			stepW, demoTruncate(row.StepID, stepW),
 			topicW, demoTruncate(row.Topic, topicW),
 			verdictW, demoTruncate(verdict, verdictW),
 			reasonW, demoTruncate(row.Reason, reasonW))
 	}
-	_, _ = fmt.Fprintln(out, hr)
+	fmt.Fprintln(out, hr)
 
 	for _, row := range rendered {
 		if row.Verdict == "REQUIRE_APPROVAL" && row.JobID != "" {
-			_, _ = fmt.Fprintf(out, "\n  To approve %s: cordumctl approval job %s --approve\n",
+			fmt.Fprintf(out, "\n  To approve %s: cordumctl approval job %s --approve\n",
 				row.StepID, row.JobID)
 		}
 	}

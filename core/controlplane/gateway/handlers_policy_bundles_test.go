@@ -82,11 +82,11 @@ func (a *policySimAuth) AuthenticateGRPC(ctx context.Context) (*auth.AuthContext
 }
 
 func (a *policySimAuth) RequireRole(r *http.Request, roles ...string) error {
-	authCtx := auth.FromRequest(r)
-	if authCtx == nil {
+	auth := auth.FromRequest(r)
+	if auth == nil {
 		return errors.New("unauthorized")
 	}
-	role := auth.NormalizeRole(authCtx.Role)
+	role := auth.NormalizeRole(auth.Role)
 	if role == "" {
 		return errors.New("role required")
 	}
@@ -99,13 +99,13 @@ func (a *policySimAuth) RequireRole(r *http.Request, roles ...string) error {
 }
 
 func (a *policySimAuth) ResolveTenant(r *http.Request, requested, _ string) (string, error) {
-	authCtx := auth.FromRequest(r)
-	if authCtx == nil {
+	auth := auth.FromRequest(r)
+	if auth == nil {
 		return "", errors.New("unauthorized")
 	}
 	requested = strings.TrimSpace(requested)
-	authTenant := strings.TrimSpace(authCtx.Tenant)
-	if requested != "" && !authCtx.AllowCrossTenant && authTenant != "" && requested != authTenant {
+	authTenant := strings.TrimSpace(auth.Tenant)
+	if requested != "" && !auth.AllowCrossTenant && authTenant != "" && requested != authTenant {
 		return "", errors.New("tenant access denied")
 	}
 	if requested == "" {
@@ -118,18 +118,18 @@ func (a *policySimAuth) ResolveTenant(r *http.Request, requested, _ string) (str
 }
 
 func (a *policySimAuth) RequireTenantAccess(r *http.Request, tenant string) error {
-	authCtx := auth.FromRequest(r)
-	if authCtx == nil {
+	auth := auth.FromRequest(r)
+	if auth == nil {
 		return errors.New("unauthorized")
 	}
 	tenant = strings.TrimSpace(tenant)
 	if tenant == "" {
 		return errors.New("tenant required")
 	}
-	if authCtx.AllowCrossTenant {
+	if auth.AllowCrossTenant {
 		return nil
 	}
-	if strings.TrimSpace(authCtx.Tenant) != tenant {
+	if strings.TrimSpace(auth.Tenant) != tenant {
 		return errors.New("tenant access denied")
 	}
 	return nil
@@ -140,11 +140,11 @@ func (a *policySimAuth) ResolvePrincipal(r *http.Request, requested string) (str
 	if requested != "" {
 		return requested, nil
 	}
-	authCtx := auth.FromRequest(r)
-	if authCtx == nil || strings.TrimSpace(authCtx.PrincipalID) == "" {
+	auth := auth.FromRequest(r)
+	if auth == nil || strings.TrimSpace(auth.PrincipalID) == "" {
 		return "", errors.New("principal required")
 	}
-	return strings.TrimSpace(authCtx.PrincipalID), nil
+	return strings.TrimSpace(auth.PrincipalID), nil
 }
 
 func TestPolicyBundleHandlers(t *testing.T) {

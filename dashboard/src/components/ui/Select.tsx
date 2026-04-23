@@ -1,11 +1,16 @@
-import { forwardRef, type SelectHTMLAttributes } from "react";
-import { cn } from "@/lib/utils";
-import { ChevronDown } from "lucide-react";
+import type { SelectHTMLAttributes } from "react";
+import { cn } from "../../lib/utils";
 
-export interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
-  options?: { value: string; label: string }[];
-  placeholder?: string;
-  children?: React.ReactNode;
+export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select
+      className={cn(
+        "w-full rounded-md border border-border bg-input px-4 py-2.5 text-sm text-foreground shadow-sm transition-all duration-micro ease-[cubic-bezier(0.16,1,0.3,1)] cursor-pointer hover:border-accent/40 hover:shadow-soft focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 aria-[invalid=true]:border-danger disabled:bg-surface-1 disabled:text-muted-foreground disabled:cursor-not-allowed",
+        className
+      )}
+      {...props}
+    />
+  );
 }
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(

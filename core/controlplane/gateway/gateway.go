@@ -33,7 +33,6 @@ import (
 	"github.com/cordum/cordum/core/infra/health"
 	"github.com/cordum/cordum/core/infra/locks"
 	infraMetrics "github.com/cordum/cordum/core/infra/metrics"
-	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/schema"
@@ -118,14 +117,10 @@ type server struct {
 	memStore         store.Store
 	jobStore         *store.RedisJobStore // Typed for ListRecentJobs
 	decisionLogStore model.DecisionLogStore
-	// approvalAnalyticsCache memoises approval-analytics responses
-	// per (tenant, window, group_by, limit) for
-	// approvalAnalyticsCacheTTL (30s) to smooth dashboard polling.
-	approvalAnalyticsCache *approvalAnalyticsMemCache
-	bus                    model.Bus
-	workers                map[string]*pb.Heartbeat
-	workerSeen             map[string]time.Time
-	workerMu               sync.RWMutex
+	bus              model.Bus
+	workers          map[string]*pb.Heartbeat
+	workerSeen       map[string]time.Time
+	workerMu         sync.RWMutex
 
 	clients             map[*websocket.Conn]*wsClient
 	clientsMu           sync.RWMutex
@@ -135,7 +130,6 @@ type server struct {
 	wsSummaryOnce       sync.Once
 
 	metrics         infraMetrics.GatewayMetrics
-	otelMetrics     *cordumotel.GatewayMetricsBridge
 	approvalMetrics infraMetrics.ApprovalMetrics
 	tenant          string
 	started         time.Time
@@ -150,24 +144,16 @@ type server struct {
 	topicRegistry         *topicregistry.Service
 	workerCredentialStore *workercredentials.Service
 	agentIdentityStore    *store.AgentIdentityStore
-	// evalDatasetStore holds curated, immutable policy-regression test
-	// fixtures that the sibling eval-runner task (epic-e1c4321a) will
-	// replay through the policy engine. Only the CRUD surface lives in
-	// this field — the coupling to replay is intentionally deferred so
-	// this task stays scope-clean.
-	evalDatasetStore  model.EvalDatasetStore
-	evalRunStore      *store.EvalRunStore
-	dlqStore          *store.DLQStore
-	artifactStore     artifacts.Store
-	lockStore         locks.Store
-	schemaRegistry    *schema.Registry
-	schemaEnforcement schema.EnforcementMode
-	safetyConn        *grpc.ClientConn
-	safetyClient      pb.SafetyKernelClient
-	userStore         auth.UserStore
-	keyStore          auth.KeyStore
-	rbacStore         *auth.RBACStore
-	permChecker       *auth.PermissionChecker
+	mcpDenyRing           *denyEventRing
+	dlqStore              *store.DLQStore
+	artifactStore         artifacts.Store
+	lockStore             locks.Store
+	schemaRegistry        *schema.Registry
+	schemaEnforcement     schema.EnforcementMode
+	safetyConn            *grpc.ClientConn
+	safetyClient          pb.SafetyKernelClient
+	userStore             auth.UserStore
+	keyStore              auth.KeyStore
 
 	auditExporter     audit.AuditSender
 	auditChainer      *audit.Chainer
@@ -226,6 +212,28 @@ func (s *server) workersFromRedisSnapshot() ([]registry.WorkerSummary, error) {
 		return nil, err
 	}
 	return snap.Workers, nil
+}
+
+// workerSummariesToHeartbeats converts snapshot summaries to the Heartbeat
+// protobuf format used by the workers API, preserving the API contract.
+func workerSummariesToHeartbeats(workers []registry.WorkerSummary) []*pb.Heartbeat {
+	out := make([]*pb.Heartbeat, len(workers))
+	for i, w := range workers {
+		out[i] = &pb.Heartbeat{
+			WorkerId:        w.WorkerID,
+			Pool:            w.Pool,
+			ActiveJobs:      w.ActiveJobs,
+			MaxParallelJobs: w.MaxParallelJobs,
+			Capabilities:    w.Capabilities,
+			CpuLoad:         w.CpuLoad,
+			GpuUtilization:  w.GpuUtilization,
+			MemoryLoad:      w.MemoryLoad,
+			Region:          w.Region,
+			Type:            w.Type,
+			Labels:          w.Labels,
+		}
+	}
+	return out
 }
 
 // Close releases resources owned by the server, notably the user store
@@ -295,22 +303,6 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		cfg = config.Load()
 	}
 	entitlementResolver := resolveEntitlementResolver(entitlementResolvers...)
-
-	if _, err := cordumotel.InitTracer("cordum-api-gateway"); err != nil {
-		slog.Error("otel tracer init failed", "error", err)
-	}
-	if err := cordumotel.InitMetrics("cordum-api-gateway"); err != nil {
-		slog.Error("otel metrics init failed", "error", err)
-	}
-	defer func() {
-		if err := cordumotel.Shutdown(context.Background()); err != nil {
-			slog.Error("otel tracer shutdown failed", "error", err)
-		}
-		if err := cordumotel.ShutdownMetrics(); err != nil {
-			slog.Error("otel metrics shutdown failed", "error", err)
-		}
-	}()
-
 	grpcAddr := addrFromEnv(envGatewayGrpcAddr, defaultGrpcAddr)
 	httpAddr := addrFromEnv(envGatewayHTTPAddr, defaultHttpAddr)
 	metricsAddr := addrFromEnv(envGatewayMetricsAddr, defaultMetricsAddr)
@@ -321,7 +313,6 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	}
 
 	gwMetrics := infraMetrics.NewGatewayProm("cordum_api_gateway")
-	otelGwMetrics := cordumotel.NewGatewayMetricsBridge()
 	approvalMetrics := infraMetrics.NewApprovalProm("cordum")
 	var userStore auth.UserStore
 	var keyStore auth.KeyStore
@@ -578,51 +569,38 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	}
 
 	s := &server{
-		memStore:               memStore,
-		jobStore:               jobStore,
-		decisionLogStore:       decisionLogStore,
-		approvalAnalyticsCache: newApprovalAnalyticsCache(),
-		bus:                    natsBus,
-		workers:                make(map[string]*pb.Heartbeat),
-		workerSeen:             make(map[string]time.Time),
-		clients:                make(map[*websocket.Conn]*wsClient),
-		eventsCh:               make(chan wsEvent, 512),
-		wsClientBufSz:          wsClientBufferSize(),
-		metrics:                gwMetrics,
-		otelMetrics:            otelGwMetrics,
-		approvalMetrics:        approvalMetrics,
-		tenant:                 tenantID,
-		auth:                   provider,
-		entitlements:           entitlementResolver,
-		started:                time.Now().UTC(),
-		workflowStore:          workflowStore,
-		workflowEng:            workflowEng,
-		configSvc:              configSvc,
-		topicRegistry:          topicregistry.NewService(configSvc),
-		workerCredentialStore:  workercredentials.NewService(configSvc),
-		agentIdentityStore:     store.NewAgentIdentityStoreFromClient(jobStore.Client()),
-		evalDatasetStore:       store.NewEvalDatasetStoreFromClient(jobStore.Client()),
-		evalRunStore:           store.NewEvalRunStoreFromClient(jobStore.Client()),
-		dlqStore:               dlqStore,
-		artifactStore:          artifactStore,
-		lockStore:              lockStore,
-		schemaRegistry:         schemaRegistry,
-		schemaEnforcement:      schema.ParseEnforcementMode(os.Getenv("SCHEMA_ENFORCEMENT")),
-		safetyConn:             safetyConn,
-		safetyClient:           safetyClient,
-		userStore:              userStore,
-		keyStore:               keyStore,
-		rbacStore:              rbacStore,
-		permChecker:            permChecker,
-		auditExporter:          auditSender,
-		auditChainer:           audit.NewChainer(jobStore.Client(), ""),
-		legalHoldStore:         initLegalHoldStore(cfg.RedisURL),
-		statusCacheObj:         newStatusCache(2 * time.Second),
-		policyShadowStore:      policyshadow.NewStore(configSvc),
-		mcpDenyRing:            newDenyEventRing(500),
-		trustResolver:          scheduler.NewTrustResolver(jobStore.Client()),
-		heartbeatMode:          scheduler.ParseHeartbeatMode(os.Getenv(scheduler.EnvHeartbeatMode)),
-		shutdownCh:             make(chan struct{}),
+		memStore:              memStore,
+		jobStore:              jobStore,
+		bus:                   natsBus,
+		workers:               make(map[string]*pb.Heartbeat),
+		workerSeen:            make(map[string]time.Time),
+		clients:               make(map[*websocket.Conn]*wsClient),
+		eventsCh:              make(chan wsEvent, 512),
+		wsClientBufSz:         wsClientBufferSize(),
+		metrics:               gwMetrics,
+		approvalMetrics:       approvalMetrics,
+		tenant:                tenantID,
+		auth:                  provider,
+		entitlements:          entitlementResolver,
+		started:               time.Now().UTC(),
+		workflowStore:         workflowStore,
+		workflowEng:           workflowEng,
+		configSvc:             configSvc,
+		topicRegistry:         topicregistry.NewService(configSvc),
+		workerCredentialStore: workercredentials.NewService(configSvc),
+		agentIdentityStore:    store.NewAgentIdentityStoreFromClient(jobStore.Client()),
+		mcpDenyRing:           newDenyEventRing(500),
+		dlqStore:              dlqStore,
+		artifactStore:         artifactStore,
+		lockStore:             lockStore,
+		schemaRegistry:        schemaRegistry,
+		schemaEnforcement:     schema.ParseEnforcementMode(os.Getenv("SCHEMA_ENFORCEMENT")),
+		safetyConn:            safetyConn,
+		safetyClient:          safetyClient,
+		userStore:             userStore,
+		keyStore:              keyStore,
+		auditExporter:         auditSender,
+		shutdownCh:            make(chan struct{}),
 	}
 	s.syncApprovalQueueDepth(context.Background())
 	defer s.Close()
@@ -813,10 +791,6 @@ func (s *server) redisHealthStatus(ctx context.Context) (string, error) {
 }
 
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	if !s.requireLicensePermission(w, r, licensing.BreakGlassPermissionSystemHealth) {
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 
@@ -879,22 +853,13 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 		}
 	}()
 
-	// 1. Health probes (/healthz, /readyz, /livez) + backward-compatible aliases.
-	s.probes = health.New()
-	s.probes.RegisterReadiness("nats", func(ctx context.Context) error {
-		_, connected := s.natsHealthStatus()
-		if !connected {
-			return fmt.Errorf("nats disconnected")
-		}
-		return nil
-	})
-	s.probes.RegisterReadiness("redis", func(ctx context.Context) error {
-		_, err := s.redisHealthStatus(ctx)
-		return err
-	})
-	s.probes.Register(mux)
-	mux.HandleFunc("GET /health", s.handleHealth)
-	mux.HandleFunc("GET /api/v1/health", s.instrumented("/api/v1/health", s.handleHealth))
+	// 1. Health (root path for k8s probes + /api/v1 alias for dashboard)
+	healthHandler := func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}
+	mux.HandleFunc("GET /health", healthHandler)
+	mux.HandleFunc("GET /api/v1/health", s.instrumented("/api/v1/health", healthHandler))
 
 	// 1.5 Auth config (public)
 	mux.HandleFunc("GET /api/v1/auth/config", s.instrumented("/api/v1/auth/config", s.handleAuthConfig))
@@ -938,11 +903,9 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("PUT /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleUpdateAgent))
 	mux.HandleFunc("DELETE /api/v1/agents/{id}", s.instrumented("/api/v1/agents/{id}", s.handleDeleteAgent))
 	mux.HandleFunc("GET /api/v1/agents/{id}/stats", s.instrumented("/api/v1/agents/{id}/stats", s.handleAgentStats))
-	mux.HandleFunc("GET /api/v1/agents/{id}/delegations", s.instrumented("/api/v1/agents/{id}/delegations", s.handleListAgentDelegations))
-	mux.HandleFunc("POST /api/v1/agents/{id}/delegate", s.instrumented("/api/v1/agents/{id}/delegate", s.handleDelegateAgent))
-	mux.HandleFunc("GET /api/v1/delegations", s.instrumented("/api/v1/delegations", s.handleListDelegations))
-	mux.HandleFunc("POST /api/v1/agents/verify-delegation", s.instrumented("/api/v1/agents/verify-delegation", s.handleVerifyDelegation))
-	mux.HandleFunc("POST /api/v1/agents/revoke-delegation", s.instrumented("/api/v1/agents/revoke-delegation", s.handleRevokeDelegation))
+	mux.HandleFunc("GET /api/v1/agents/{id}/tools", s.instrumented("/api/v1/agents/{id}/tools", s.handleAgentToolVisibility))
+	mux.HandleFunc("GET /api/v1/agents/{id}/denied-events", s.instrumented("/api/v1/agents/{id}/denied-events", s.handleAgentDeniedEvents))
+	mux.HandleFunc("GET /api/v1/mcp/tools", s.instrumented("/api/v1/mcp/tools", s.handleListMCPTools))
 
 	mux.HandleFunc("GET /api/v1/pools", s.instrumented("/api/v1/pools", s.handleListPools))
 	mux.HandleFunc("GET /api/v1/pools/{name}", s.instrumented("/api/v1/pools/{name}", s.handleGetPool))
@@ -971,19 +934,11 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("GET /api/v1/admin/locks", s.instrumented("/api/v1/admin/locks", s.handleAdminLocks))
 
 	// 2.7 Audit export management (admin only, entitlement-gated)
-	// 2.7 Audit export — main endpoint plus operational sub-routes.
-	// The top-level GET /api/v1/audit/export was missing despite the
-	// handler being fully implemented in handlers_audit_compliance.go:61
-	// (same wire-up gap class as /api/v1/audit/verify below).
-	mux.HandleFunc("GET /api/v1/audit/export", s.instrumented("/api/v1/audit/export", s.handleAuditExport))
 	mux.HandleFunc("GET /api/v1/audit/export/health", s.instrumented("/api/v1/audit/export/health", s.handleAuditExportHealth))
 	mux.HandleFunc("GET /api/v1/audit/export/config", s.instrumented("/api/v1/audit/export/config", s.handleAuditExportConfig))
 	mux.HandleFunc("POST /api/v1/audit/export/test", s.instrumented("/api/v1/audit/export/test", s.handleAuditExportTest))
 
-	// 2.7.1 Audit chain verify (admin only) — handler lives in
-	// handlers_audit_verify.go; missing this line was a wire-up regression
-	// that had /api/v1/audit/verify 404ing on fresh deploys despite the
-	// handler being fully implemented and unit-tested.
+	// 2.7.1 Audit chain tamper-evidence verification (admin only).
 	mux.HandleFunc("GET /api/v1/audit/verify", s.instrumented("/api/v1/audit/verify", s.handleAuditVerify))
 
 	// 2.8 Legal hold management (admin only, entitlement-gated)
@@ -1071,19 +1026,16 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("POST /api/v1/approvals/{job_id}/reject", s.instrumented("/api/v1/approvals/{job_id}/reject", s.handleRejectJob))
 	mux.HandleFunc("POST /api/v1/approvals/{job_id}/repair", s.instrumented("/api/v1/approvals/{job_id}/repair", s.handleRepairApproval))
 	mux.HandleFunc("GET /api/v1/approvals/{job_id}/context", s.instrumented("/api/v1/approvals/{job_id}/context", s.handleApprovalContext))
-	mux.HandleFunc("GET /api/v1/governance/decisions", s.instrumented("/api/v1/governance/decisions", s.handleListGovernanceDecisions))
-	mux.HandleFunc("GET /api/v1/governance/approvals/analytics", s.instrumented("/api/v1/governance/approvals/analytics", s.handleApprovalAnalytics))
-	mux.HandleFunc("GET /api/v1/mcp/approvals", s.instrumented("/api/v1/mcp/approvals", s.handleMCPApprovalList))
-	mux.HandleFunc("GET /api/v1/mcp/approvals/{id}", s.instrumented("/api/v1/mcp/approvals/{id}", s.handleMCPApprovalGet))
-	mux.HandleFunc("POST /api/v1/mcp/approvals/{id}/approve", s.instrumented("/api/v1/mcp/approvals/{id}/approve", s.handleMCPApprovalApprove))
-	mux.HandleFunc("POST /api/v1/mcp/approvals/{id}/reject", s.instrumented("/api/v1/mcp/approvals/{id}/reject", s.handleMCPApprovalReject))
-	mux.HandleFunc("POST /api/v1/mcp/verify-signature", s.instrumented("/api/v1/mcp/verify-signature", s.handleMCPVerifySignature))
-	mux.HandleFunc("GET /api/v1/mcp/outbound", s.instrumented("/api/v1/mcp/outbound", s.handleMCPOutbound))
-	mux.HandleFunc("GET /api/v1/mcp/usage", s.instrumented("/api/v1/mcp/usage", s.handleMCPUsage))
-	// MCP tool visibility (dashboard consumes these via src/hooks/useAgentTools.ts):
-	mux.HandleFunc("GET /api/v1/mcp/tools", s.instrumented("/api/v1/mcp/tools", s.handleListMCPTools))
-	mux.HandleFunc("GET /api/v1/agents/{id}/tools", s.instrumented("/api/v1/agents/{id}/tools", s.handleAgentToolVisibility))
-	mux.HandleFunc("GET /api/v1/agents/{id}/denied-events", s.instrumented("/api/v1/agents/{id}/denied-events", s.handleAgentDeniedEvents))
+
+	// 11.6 MCP per-tool approvals. The handler is resolved at request
+	// time because the MCP runtime (and therefore the approval store)
+	// may not exist when the mux is built — e.g. dev deploys without
+	// Redis. Each handler function short-circuits with 503 when MCP is
+	// disabled, so the API surface is discoverable even in degraded mode.
+	mux.HandleFunc("GET /api/v1/approvals/mcp", s.instrumented("/api/v1/approvals/mcp", s.handleMCPApprovalList))
+	mux.HandleFunc("GET /api/v1/approvals/mcp/{id}", s.instrumented("/api/v1/approvals/mcp/{id}", s.handleMCPApprovalGet))
+	mux.HandleFunc("POST /api/v1/approvals/mcp/{id}/approve", s.instrumented("/api/v1/approvals/mcp/{id}/approve", s.handleMCPApprovalApprove))
+	mux.HandleFunc("POST /api/v1/approvals/mcp/{id}/reject", s.instrumented("/api/v1/approvals/mcp/{id}/reject", s.handleMCPApprovalReject))
 
 	// 12. Policy endpoints
 	mux.HandleFunc("POST /api/v1/policy/evaluate", s.instrumented("/api/v1/policy/evaluate", s.handlePolicyEvaluate))
@@ -1113,17 +1065,6 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	mux.HandleFunc("POST /api/v1/policy/replay", s.instrumented("/api/v1/policy/replay", s.handlePolicyReplay))
 	mux.HandleFunc("POST /api/v1/policy/analytics", s.instrumented("/api/v1/policy/analytics", s.handlePolicyAnalytics))
 
-	// 12.6 Eval datasets — curated, immutable policy-regression fixtures.
-	// The sibling eval-runner task (epic-e1c4321a) will replay these
-	// through the policy engine. PUT creates a successor version; it does
-	// not mutate an existing dataset in place.
-	mux.HandleFunc("POST /api/v1/evals/datasets/from-incidents", s.instrumented("/api/v1/evals/datasets/from-incidents", s.handleCreateDatasetFromIncidents))
-	mux.HandleFunc("POST /api/v1/evals/datasets", s.instrumented("/api/v1/evals/datasets", s.handleCreateEvalDataset))
-	mux.HandleFunc("GET /api/v1/evals/datasets", s.instrumented("/api/v1/evals/datasets", s.handleListEvalDatasets))
-	mux.HandleFunc("/api/v1/evals/datasets/", s.instrumented("/api/v1/evals/datasets/*", s.handleEvalDatasetSubroutes))
-	mux.HandleFunc("GET /api/v1/evals/runs/{run_id}", s.instrumented("/api/v1/evals/runs/{run_id}", s.handleGetEvalRun))
-	mux.HandleFunc("DELETE /api/v1/evals/runs/{run_id}", s.instrumented("/api/v1/evals/runs/{run_id}", s.handleDeleteEvalRun))
-
 	// 12.5 MCP (HTTP/SSE) routes
 	if err := s.registerMCPRoutes(mux); err != nil {
 		return fmt.Errorf("register mcp routes: %w", err)
@@ -1143,7 +1084,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	// absent, rateLimitKey falls back to IP-based keying automatically.
 	readAuditRate := parseFloatEnv("CORDUM_AUDIT_READ_SAMPLE_RATE", 0.0)
 	inner := auditReadMiddleware(s.auditExporter, readAuditRate, tenantMiddleware(s.auth, maxBodyMiddleware(mux, s.entitlements)))
-	handler := requestLoggingMiddleware(tracingMiddleware(corsMiddleware(rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, apiKeyMiddleware(s.auth, inner, s.auditExporter)))))
+	handler := requestLoggingMiddleware(corsMiddleware(rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, apiKeyMiddleware(s.auth, inner, s.auditExporter))))
 
 	httpTLSCert := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSCert))
 	httpTLSKey := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSKey))

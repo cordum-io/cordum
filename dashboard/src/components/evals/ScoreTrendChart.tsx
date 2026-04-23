@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import {
   CartesianGrid,
+  Dot,
   Line,
   LineChart,
   ResponsiveContainer,
