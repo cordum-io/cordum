@@ -74,7 +74,11 @@ jobs:
         run: |
           attempts=0
           max_attempts=30
-          until curl -ksf -H "X-API-Key: ${CORDUM_API_KEY}" https://127.0.0.1:8081/api/v1/status >/dev/null; do
+          until curl -ksf \
+            --connect-timeout 2 \
+            --max-time 5 \
+            -H "X-API-Key: ${CORDUM_API_KEY}" \
+            https://127.0.0.1:8081/api/v1/status >/dev/null; do
             attempts=$((attempts + 1))
             if [ "$attempts" -ge "$max_attempts" ]; then
               echo "gateway /api/v1/status did not return 200 within $((max_attempts * 2))s"

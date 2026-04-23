@@ -83,7 +83,10 @@ echo "[integration] installing mock-bank pack ..."
 # curl_api <method> <path>  —  auth-wrapped, tolerates self-signed TLS.
 curl_api() {
   local method="$1" path="$2"
-  curl -skf -X "${method}" \
+  curl -skf \
+    --connect-timeout "${CURL_CONNECT_TIMEOUT_SEC:-2}" \
+    --max-time "${CURL_MAX_TIME_SEC:-5}" \
+    -X "${method}" \
     -H "X-API-Key: ${api_key}" \
     -H "Accept: application/json" \
     "${api_base}${path}"
