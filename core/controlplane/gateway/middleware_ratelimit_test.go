@@ -20,6 +20,7 @@ func TestRedisRateLimiterBasic(t *testing.T) {
 	defer func() { _ = client.Close() }()
 
 	rl := newRedisRateLimiter(client, 10, 10)
+	waitForRateLimitWindowStart(t)
 
 	// First 10 requests should be allowed.
 	for i := 0; i < 10; i++ {
@@ -55,6 +56,7 @@ func TestRedisRateLimiterMultiReplica(t *testing.T) {
 
 	rl1 := newRedisRateLimiter(client1, 10, 10)
 	rl2 := newRedisRateLimiter(client2, 10, 10)
+	waitForRateLimitWindowStart(t)
 
 	// Each replica uses 5 of the 10-burst quota.
 	for i := 0; i < 5; i++ {
@@ -74,6 +76,22 @@ func TestRedisRateLimiterMultiReplica(t *testing.T) {
 	}
 	if rl2.Allow("shared-key") {
 		t.Fatal("replica2 request 6: expected reject (combined burst exceeded)")
+	}
+}
+
+func waitForRateLimitWindowStart(t *testing.T) {
+	t.Helper()
+	// redisRateLimiter keys by time.Now().Unix(). Under -race + coverage on
+	// shared CI runners, a test that starts at the last few milliseconds of a
+	// second can cross into a fresh Redis key before the rejection assertion.
+	// Start these exact-burst assertions near the beginning of a wall-clock
+	// second so the test measures burst enforcement rather than scheduler jitter.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Nanosecond() > int(100*time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for rate-limit window boundary")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

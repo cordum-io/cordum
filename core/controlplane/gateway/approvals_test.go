@@ -105,6 +105,105 @@ func TestApproveJobBindsSnapshotAndHash(t *testing.T) {
 	}
 }
 
+func TestApprove_LocksJobHashAgainstReconcilerDrift(t *testing.T) {
+	s, bus, safety := newTestGateway(t)
+	safety.setSnapshots([]string{"snap-1"})
+
+	ctx := context.Background()
+	jobID := uuid.NewString()
+	req := &pb.JobRequest{
+		JobId:    jobID,
+		Topic:    "job.test",
+		TenantId: "default",
+		Labels:   map[string]string{"workflow_id": "wf-1"},
+	}
+	if err := s.jobStore.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("set job meta: %v", err)
+	}
+	if err := s.jobStore.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job req: %v", err)
+	}
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStateApproval); err != nil {
+		t.Fatalf("set state: %v", err)
+	}
+	wantHash, err := scheduler.HashJobRequest(req)
+	if err != nil {
+		t.Fatalf("hash job: %v", err)
+	}
+	const staleHash = "stale-job-hash"
+	if staleHash == wantHash {
+		t.Fatal("stale test hash unexpectedly matched canonical request hash")
+	}
+	if err := s.jobStore.SetSafetyDecision(ctx, jobID, model.SafetyDecisionRecord{
+		Decision:         model.SafetyRequireApproval,
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-1",
+		JobHash:          staleHash,
+	}); err != nil {
+		t.Fatalf("set safety decision: %v", err)
+	}
+
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(`{"reason":"ok"}`))
+	httpReq.Header.Set("X-Tenant-ID", "default")
+	httpReq.SetPathValue("job_id", jobID)
+	httpReq = withAuth(httpReq, &auth.AuthContext{Tenant: "default", PrincipalID: "alice", Role: "admin"})
+	rr := httptest.NewRecorder()
+
+	s.handleApproveJob(rr, httpReq)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 got %d body=%s", rr.Code, rr.Body.String())
+	}
+	record, err := s.jobStore.GetSafetyDecision(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get safety decision: %v", err)
+	}
+	if record.JobHash != wantHash {
+		t.Fatalf("expected locked job hash %q got %q", wantHash, record.JobHash)
+	}
+	if record.JobHash == staleHash {
+		t.Fatalf("expected approve path to replace stale hash %q", staleHash)
+	}
+	state, err := s.jobStore.GetState(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get state: %v", err)
+	}
+	if state != model.JobStatePending {
+		t.Fatalf("expected live approved job state %q got %q", model.JobStatePending, state)
+	}
+	classify := func(safetyRecord model.SafetyDecisionRecord) store.ApprovalRepairPlan {
+		return store.ClassifyApprovalRepair(store.ApprovalRepairSnapshot{
+			JobID:        jobID,
+			State:        model.JobStateApproval,
+			Topic:        req.GetTopic(),
+			Request:      req,
+			RequestHash:  wantHash,
+			SafetyRecord: safetyRecord,
+			// Deliberately do not feed the live post-approve ApprovalRecord here:
+			// ClassifyApprovalRepair would short-circuit into
+			// apply_approved_resolution before reaching the stale_request
+			// comparison. This snapshot simulates the reconciler's stale
+			// awaiting-approval view and proves the JobHash comparison itself.
+		}, store.ApprovalRepairClassifyOptions{})
+	}
+	staleRecord := record
+	staleRecord.JobHash = staleHash
+	stalePlan := classify(staleRecord)
+	if stalePlan.Kind != store.ApprovalRepairInvalidateStaleRequest {
+		t.Fatalf("expected stale hash control to reach stale_request branch, got %q", stalePlan.Kind)
+	}
+	plan := classify(record)
+	if plan.Kind == store.ApprovalRepairInvalidateStaleRequest {
+		t.Fatalf("expected reconcile sweep to avoid stale_request, got %q", plan.Kind)
+	}
+	if plan.Kind != store.ApprovalRepairNone {
+		t.Fatalf("expected locked hash to need no repair, got %q", plan.Kind)
+	}
+	if len(bus.published) != 1 {
+		t.Fatalf("expected 1 publish, got %d", len(bus.published))
+	}
+}
+
 func TestApproveJobMarksPublishIntentComplete(t *testing.T) {
 	s, _, safety := newTestGateway(t)
 	safety.setSnapshots([]string{"snap-1"})

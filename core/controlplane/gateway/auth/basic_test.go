@@ -246,3 +246,55 @@ func TestUsageRecordingErrorLogged(t *testing.T) {
 		t.Fatalf("expected key_id in log, got %q", logOutput)
 	}
 }
+
+func TestNewBasicAuthProviderLogsAPIKeySource(t *testing.T) {
+	for _, key := range []string{
+		"CORDUM_API_KEYS",
+		"CORDUM_API_KEY",
+		"CORDUM_API_KEYS_PATH",
+		"CORDUM_API_KEY_SOURCE",
+		"CORDUM_API_KEY_SOURCE_FILE",
+		"CORDUM_ALLOW_INSECURE_NO_AUTH",
+		"CORDUM_ENV",
+		"CORDUM_PRODUCTION",
+		"CORDUM_JWT_HMAC_SECRET",
+		"CORDUM_JWT_PUBLIC_KEY",
+		"CORDUM_JWT_PUBLIC_KEY_PATH",
+		"CORDUM_JWT_REQUIRED",
+		"CORDUM_JWT_ISSUER",
+		"CORDUM_JWT_AUDIENCE",
+	} {
+		t.Setenv(key, "")
+	}
+	const apiKey = "test-key-source-log-000000000000000000000000000000"
+	t.Setenv("CORDUM_API_KEY", apiKey)
+	t.Setenv("CORDUM_API_KEY_SOURCE_FILE", ".env")
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	previous := slog.Default()
+	slog.SetDefault(logger)
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	provider, err := NewBasicAuthProvider("default")
+	if err != nil {
+		t.Fatalf("NewBasicAuthProvider() error = %v", err)
+	}
+	if provider == nil {
+		t.Fatalf("NewBasicAuthProvider() returned nil provider")
+	}
+
+	logs := buf.String()
+	for _, want := range []string{
+		"msg=auth.api_key.source",
+		"source=env",
+		"source_file=.env",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected log to contain %q, got:\n%s", want, logs)
+		}
+	}
+	if strings.Contains(logs, apiKey) {
+		t.Fatalf("api key value leaked in logs: %s", logs)
+	}
+}
