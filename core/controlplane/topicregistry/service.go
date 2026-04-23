@@ -19,6 +19,8 @@ const (
 	scopeIDTopics  = "topics"
 	scopeIDDefault = "default"
 
+	tenantTopicKeyPrefix = "tenant:"
+
 	StatusActive     = "active"
 	StatusDeprecated = "deprecated"
 	StatusDisabled   = "disabled"
@@ -33,6 +35,7 @@ var validStatuses = map[string]bool{
 // Registration is the canonical topic authority record persisted in cfg:system:topics.
 type Registration struct {
 	Name           string   `json:"name"`
+	TenantID       string   `json:"tenant_id,omitempty"`
 	Pool           string   `json:"pool"`
 	InputSchemaID  string   `json:"input_schema_id,omitempty"`
 	OutputSchemaID string   `json:"output_schema_id,omitempty"`
@@ -66,10 +69,18 @@ func NewService(cfg *configsvc.Service) *Service {
 // Get resolves a topic registration by name. RegistryEmpty is true only when no
 // canonical registrations exist and migration found no legacy topic mappings.
 func (s *Service) Get(ctx context.Context, name string) (*Registration, bool, error) {
+	return s.GetForTenant(ctx, "", name)
+}
+
+// GetForTenant resolves a topic registration by name, scoped to tenantID when
+// the record declares tenant_id. Records without tenant_id are global and
+// remain visible to all tenants for backwards compatibility.
+func (s *Service) GetForTenant(ctx context.Context, tenantID, name string) (*Registration, bool, error) {
 	if s == nil || s.config == nil {
 		return nil, true, nil
 	}
 	name = strings.TrimSpace(name)
+	tenantID = strings.TrimSpace(tenantID)
 	if name == "" {
 		return nil, false, fmt.Errorf("topic name required")
 	}
@@ -77,15 +88,20 @@ func (s *Service) Get(ctx context.Context, name string) (*Registration, bool, er
 	if err != nil {
 		return nil, false, err
 	}
-	rec, ok := records[name]
-	if !ok {
-		return nil, registryEmpty, nil
+	if tenantID != "" {
+		if rec, ok := records[topicStorageKey(tenantID, name)]; ok {
+			out := normalizeRegistration(rec)
+			return &out, registryEmpty, nil
+		}
 	}
-	out := rec
-	return &out, registryEmpty, nil
+	if rec, ok := records[topicStorageKey("", name)]; ok {
+		out := normalizeRegistration(rec)
+		return &out, registryEmpty, nil
+	}
+	return nil, registryEmpty, nil
 }
 
-// List returns all registrations sorted by topic name. RegistryEmpty is true
+// List returns all registrations sorted by tenant then topic name. RegistryEmpty is true
 // only when no canonical registrations exist and no legacy topic mappings were migrated.
 func (s *Service) List(ctx context.Context) (Snapshot, error) {
 	if s == nil || s.config == nil {
@@ -99,7 +115,40 @@ func (s *Service) List(ctx context.Context) (Snapshot, error) {
 	for _, rec := range records {
 		items = append(items, normalizeRegistration(rec))
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+	sortRegistrations(items)
+	return Snapshot{Items: items, RegistryEmpty: registryEmpty}, nil
+}
+
+// ListForTenant returns all registrations visible to tenantID sorted by topic
+// name. Records without tenant_id are global and are included for every tenant.
+func (s *Service) ListForTenant(ctx context.Context, tenantID string) (Snapshot, error) {
+	if s == nil || s.config == nil {
+		return Snapshot{RegistryEmpty: true}, nil
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	records, _, registryEmpty, err := s.loadRecords(ctx)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	byName := make(map[string]Registration, len(records))
+	for _, rec := range records {
+		rec = normalizeRegistration(rec)
+		if rec.TenantID == "" {
+			if _, exists := byName[rec.Name]; !exists {
+				byName[rec.Name] = rec
+			}
+			continue
+		}
+		if rec.TenantID != tenantID {
+			continue
+		}
+		byName[rec.Name] = rec
+	}
+	items := make([]Registration, 0, len(byName))
+	for _, rec := range byName {
+		items = append(items, rec)
+	}
+	sortRegistrations(items)
 	return Snapshot{Items: items, RegistryEmpty: registryEmpty}, nil
 }
 
@@ -130,7 +179,7 @@ func (s *Service) SetMany(ctx context.Context, regs []Registration) error {
 			return err
 		}
 		for _, reg := range normalized {
-			existing[reg.Name] = reg
+			existing[topicStorageKey(reg.TenantID, reg.Name)] = reg
 		}
 		doc.Scope = configsvc.ScopeSystem
 		doc.ScopeID = scopeIDTopics
@@ -167,8 +216,10 @@ func (s *Service) DeleteMany(ctx context.Context, names []string) error {
 		if err != nil {
 			return err
 		}
-		for name := range targets {
-			delete(existing, name)
+		for key, reg := range existing {
+			if _, ok := targets[reg.Name]; ok {
+				delete(existing, key)
+			}
 		}
 		doc.Scope = configsvc.ScopeSystem
 		doc.ScopeID = scopeIDTopics
@@ -328,13 +379,16 @@ func decodeDocument(doc *configsvc.Document) (map[string]Registration, error) {
 			return nil, fmt.Errorf("decode topic %s: %w", topic, err)
 		}
 		if strings.TrimSpace(reg.Name) == "" {
-			reg.Name = topic
+			reg.Name = topicNameFromStorageKey(topic)
+		}
+		if strings.TrimSpace(reg.TenantID) == "" {
+			reg.TenantID = topicTenantFromStorageKey(topic)
 		}
 		norm, err := validateRegistration(reg)
 		if err != nil {
 			return nil, fmt.Errorf("decode topic %s: %w", topic, err)
 		}
-		out[norm.Name] = norm
+		out[topicStorageKey(norm.TenantID, norm.Name)] = norm
 	}
 	return out, nil
 }
@@ -374,6 +428,7 @@ func validateRegistration(reg Registration) (Registration, error) {
 
 func normalizeRegistration(reg Registration) Registration {
 	reg.Name = strings.TrimSpace(reg.Name)
+	reg.TenantID = strings.TrimSpace(reg.TenantID)
 	reg.Pool = strings.TrimSpace(reg.Pool)
 	reg.InputSchemaID = strings.TrimSpace(reg.InputSchemaID)
 	reg.OutputSchemaID = strings.TrimSpace(reg.OutputSchemaID)
@@ -400,6 +455,48 @@ func normalizeStrings(items []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func topicStorageKey(tenantID, name string) string {
+	tenantID = strings.TrimSpace(tenantID)
+	name = strings.TrimSpace(name)
+	if tenantID == "" {
+		return name
+	}
+	return tenantTopicKeyPrefix + tenantID + ":" + name
+}
+
+func topicNameFromStorageKey(key string) string {
+	if !strings.HasPrefix(key, tenantTopicKeyPrefix) {
+		return key
+	}
+	rest := strings.TrimPrefix(key, tenantTopicKeyPrefix)
+	idx := strings.LastIndex(rest, ":job.")
+	if idx < 0 {
+		return key
+	}
+	return rest[idx+1:]
+}
+
+func topicTenantFromStorageKey(key string) string {
+	if !strings.HasPrefix(key, tenantTopicKeyPrefix) {
+		return ""
+	}
+	rest := strings.TrimPrefix(key, tenantTopicKeyPrefix)
+	idx := strings.LastIndex(rest, ":job.")
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(rest[:idx])
+}
+
+func sortRegistrations(items []Registration) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].TenantID != items[j].TenantID {
+			return items[i].TenantID < items[j].TenantID
+		}
+		return items[i].Name < items[j].Name
+	})
 }
 
 func firstPool(pools []string) string {

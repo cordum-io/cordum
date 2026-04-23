@@ -1463,19 +1463,41 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	reg, registryEmpty, err := s.topicRegistrationForSubmit(r.Context(), req.Topic)
+	orgID, err := s.resolveTenant(r, req.OrgId)
+	if err != nil {
+		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+		return
+	}
+	req.OrgId = orgID
+	req.TenantId = orgID
+
+	reg, registryEmpty, err := s.topicRegistrationForSubmit(r.Context(), orgID, req.Topic)
 	if err != nil {
 		writeInternalError(w, r, "topic validation", err)
 		return
 	}
 	if !registryEmpty {
 		if reg == nil {
+			registeredTopics, truncated, err := s.registeredTopicNamesForTenant(r.Context(), orgID, 20)
+			if err != nil {
+				writeInternalError(w, r, "list registered topics", err)
+				return
+			}
+			slog.Info("unknown_topic rejected",
+				"tenant_id", orgID,
+				"offending_topic", req.Topic,
+				"registered_count", len(registeredTopics),
+				"truncated", truncated,
+			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			writeJSON(w, map[string]any{
-				"error":      "unknown topic",
-				"status":     http.StatusBadRequest,
-				"error_code": "unknown_topic",
+				"error":             "unknown topic",
+				"status":            http.StatusBadRequest,
+				"error_code":        "unknown_topic",
+				"registered_topics": registeredTopics,
+				"truncated":         truncated,
+				"topics_endpoint":   "/api/v1/topics",
 			})
 			return
 		}
@@ -1491,13 +1513,6 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	orgID, err := s.resolveTenant(r, req.OrgId)
-	if err != nil {
-		writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-		return
-	}
-	req.OrgId = orgID
-	req.TenantId = orgID
 	if violations, err := s.validateSubmitJobSchema(r.Context(), req, orgID, reg); err != nil {
 		writeInternalError(w, r, "submit schema validation", err)
 		return

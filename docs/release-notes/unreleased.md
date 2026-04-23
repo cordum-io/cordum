@@ -209,6 +209,20 @@ these entries into a versioned release note and reset this file.
 
 ## Fixed
 
+- `tools/scripts/e2e_test.sh` Phase 4 no longer fails on TLS compose
+  stacks because `examples/hello-worker-go` started with plaintext bus
+  URLs and `hello-pack` was missing from the topic registry
+  (`task-73bc2227`). The script now auto-detects `./certs/ca/ca.crt`,
+  uses `tls://` / `rediss://`, passes `NATS_TLS_CA` / `NATS_TLS_CERT` /
+  `NATS_TLS_KEY` plus `REDIS_TLS_CA` / `REDIS_TLS_CERT` / `REDIS_TLS_KEY`
+  to the worker using the same env-var names as core services, and installs
+  the new `examples/hello-worker-go/pack/pack.yaml` before job submit so
+  `job.hello-pack.echo` is registered. Missing Phase 4 readiness/completion
+  is a hard failure, and the readiness probe handles the canonical
+  `/api/v1/workers` `items` response shape. Gateway `unknown_topic` errors now
+  include tenant-filtered `registered_topics` (capped at 20) and
+  `topics_endpoint` for faster diagnosis.
+
 - Single-step approval workflows no longer get auto-invalidated as
   `stale_request` immediately after `POST /approve`. The gateway
   approve endpoint now locks the current `HashJobRequest(req)` into

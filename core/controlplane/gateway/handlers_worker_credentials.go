@@ -278,7 +278,7 @@ func (s *server) validateWorkerCredentialAccess(r *http.Request, allowedPools, a
 		if err := pools.ValidateTopicName(topic); err != nil {
 			return err
 		}
-		reg, registryEmpty, err := s.topicRegistrationForSubmit(r.Context(), topic)
+		reg, registryEmpty, err := s.topicRegistrationForSubmit(r.Context(), "", topic)
 		if err != nil {
 			return err
 		}

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -35,10 +37,33 @@ func main() {
 
 	workerID := envOr("WORKER_ID", "hello-worker")
 	natsURL := envOr("NATS_URL", defaultNatsURL)
+	redisURL := envOr("REDIS_URL", defaultRedisURL)
+
+	slog.Info("hello-worker starting",
+		"nats_scheme", parseScheme(natsURL),
+		"redis_scheme", parseScheme(redisURL),
+	)
+
+	store, err := runtime.NewRedisBlobStoreWithPing(redisURL)
+	if err != nil {
+		log.Fatalf("redis connect: %v", err)
+	}
+	natsOpts, err := natsConnectOptions(workerID)
+	if err != nil {
+		_ = store.Close()
+		log.Fatalf("nats tls config: %v", err)
+	}
+	nc, err := nats.Connect(natsURL, natsOpts...)
+	if err != nil {
+		_ = store.Close()
+		log.Fatalf("nats connect: %v", err)
+	}
 
 	agent := &runtime.Agent{
 		NATSURL:  natsURL,
-		RedisURL: envOr("REDIS_URL", defaultRedisURL),
+		RedisURL: redisURL,
+		NATS:     nc,
+		Store:    store,
 		SenderID: workerID,
 	}
 
@@ -57,21 +82,12 @@ func main() {
 	runtime.Register(agent, runtime.DirectSubject(workerID), handler)
 
 	if err := agent.Start(); err != nil {
+		_ = agent.Close()
 		log.Fatalf("runtime start: %v", err)
 	}
 	defer func() {
 		if err := agent.Close(); err != nil {
 			log.Printf("runtime close: %v", err)
-		}
-	}()
-
-	nc, err := nats.Connect(natsURL, nats.Name(workerID), nats.Timeout(5*time.Second))
-	if err != nil {
-		log.Fatalf("nats connect: %v", err)
-	}
-	defer func() {
-		if err := nc.Drain(); err != nil {
-			log.Printf("nats drain: %v", err)
 		}
 	}()
 
@@ -93,4 +109,31 @@ func envOr(key, fallback string) string {
 		return val
 	}
 	return fallback
+}
+
+func parseScheme(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if !strings.Contains(raw, "://") {
+		return "unknown"
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" {
+		return "unknown"
+	}
+	return strings.ToLower(parsed.Scheme)
+}
+
+func natsConnectOptions(workerID string) ([]nats.Option, error) {
+	opts := []nats.Option{
+		nats.Name(workerID),
+		nats.Timeout(5 * time.Second),
+	}
+	tlsCfg, err := runtime.NATSTLSConfigFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	if tlsCfg != nil {
+		opts = append(opts, nats.Secure(tlsCfg))
+	}
+	return opts, nil
 }
