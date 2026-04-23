@@ -187,6 +187,7 @@ func parseSyslogAddr(addr string) (network, address string, err error) {
 
 func exporterFromEnv() (Exporter, error) {
 	typ := strings.ToLower(strings.TrimSpace(os.Getenv("CORDUM_AUDIT_EXPORT_TYPE")))
+	discardMode := isDiscardExportType(typ)
 
 	var exp Exporter
 	var err error
@@ -252,7 +253,11 @@ func exporterFromEnv() (Exporter, error) {
 		return nil, fmt.Errorf("audit config: unknown export type %q (expected webhook|syslog|datadog|cloudwatch|null|discard|chain-only|none)", typ)
 	}
 
-	slog.Info("audit SIEM export enabled", "type", typ) // #nosec -- value is validated against a fixed allowlist.
+	if discardMode {
+		slog.Info("audit SIEM export disabled; chain-only mode active", "type", typ) // #nosec -- value is validated against a fixed allowlist.
+	} else {
+		slog.Info("audit SIEM export enabled", "type", typ) // #nosec -- value is validated against a fixed allowlist.
+	}
 	return exp, nil
 }
 

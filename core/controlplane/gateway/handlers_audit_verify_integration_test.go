@@ -45,6 +45,7 @@ func (b *loopbackAuditBus) Subscribe(subject, queue string, handler func(*pb.Bus
 
 func TestAuditVerifyEndpointReportsHealthyChainWithNullBackend(t *testing.T) {
 	t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", "null")
+	apiKey := "test-api-key"
 
 	bufExporter, err := audit.NewExporterFromEnvWithEntitlements(nil)
 	if err != nil {
@@ -56,13 +57,30 @@ func TestAuditVerifyEndpointReportsHealthyChainWithNullBackend(t *testing.T) {
 	t.Cleanup(func() { _ = bufExporter.Close() })
 
 	s, _, _ := newTestGateway(t)
+	s.auth = newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{
+			"key":"test-api-key",
+			"tenant":"default",
+			"role":"admin"
+		}]`,
+	})
+	chainer := audit.NewChainer(s.redisClient(), "")
+	s.auditChainer = chainer
+
 	bus := newLoopbackAuditBus()
-	consumer, err := audit.NewNATSAuditConsumer(bus, bufExporter.Backend(), audit.WithChainer(audit.NewChainer(s.redisClient(), "")))
+	consumer, err := audit.NewNATSAuditConsumer(bus, bufExporter.Backend(), audit.WithChainer(chainer))
 	if err != nil {
 		t.Fatalf("NewNATSAuditConsumer: %v", err)
 	}
 	t.Cleanup(func() { _ = consumer.Close() })
 	publisher := audit.NewNATSAuditPublisher(bus, bufExporter)
+
+	handler, err := newHTTPHandler(s)
+	if err != nil {
+		t.Fatalf("newHTTPHandler: %v", err)
+	}
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
 
 	publisher.Send(audit.SIEMEvent{
 		EventType: audit.EventSafetyDecision,
@@ -72,23 +90,13 @@ func TestAuditVerifyEndpointReportsHealthyChainWithNullBackend(t *testing.T) {
 		JobID:     "job-audit-null-backend",
 	})
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/v1/audit/verify", func(w http.ResponseWriter, r *http.Request) {
-		s.handleAuditVerify(w, adminCtx(r))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
 	deadline := time.Now().Add(2 * time.Second)
 	var (
 		res audit.VerifyResult
 		ok  bool
 	)
 	for time.Now().Before(deadline) {
-		resp, err := http.Get(srv.URL + "/api/v1/audit/verify?tenant=default")
-		if err != nil {
-			t.Fatalf("GET /api/v1/audit/verify: %v", err)
-		}
+		resp := doAuditVerifyRequest(t, srv.URL, apiKey)
 		func() {
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
@@ -108,4 +116,19 @@ func TestAuditVerifyEndpointReportsHealthyChainWithNullBackend(t *testing.T) {
 	if !ok {
 		t.Fatalf("verify result = %+v, want status=ok total_events>=1 gaps=0", res)
 	}
+}
+
+func doAuditVerifyRequest(t *testing.T, baseURL, apiKey string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/api/v1/audit/verify?tenant=default", nil)
+	if err != nil {
+		t.Fatalf("new audit verify request: %v", err)
+	}
+	req.Header.Set("X-API-Key", apiKey)
+	req.Header.Set("X-Tenant-ID", "default")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/v1/audit/verify: %v", err)
+	}
+	return resp
 }

@@ -875,7 +875,7 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 			audit.WithChainer(auditChainer),
 			audit.WithChainFailMode(chainFailMode),
 		); err != nil {
-			slog.Warn("audit NATS consumer failed to start, falling back to local buffer", "error", err)
+			slog.Warn("audit NATS consumer failed to start; events will publish to NATS but local chain verification may lag", "error", err)
 		}
 		return auditSender, auditChainer, nil
 	}
@@ -884,31 +884,8 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 	return auditSender, auditChainer, nil
 }
 
-func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.Server) error {
+func newHTTPHandler(s *server) (http.Handler, error) {
 	mux := http.NewServeMux()
-	metricsMux := http.NewServeMux()
-	metricsMux.Handle("/metrics", infraMetrics.Handler())
-	if env.IsProduction() {
-		if err := infraMetrics.ValidateBindAddr(metricsAddr, env.Bool(envGatewayMetricsPublic)); err != nil {
-			return fmt.Errorf("metrics bind rejected: %w", err)
-		}
-	}
-	metricsSrv := &http.Server{
-		Addr:              metricsAddr,
-		Handler:           metricsMux,
-		ReadTimeout:       5 * time.Second,
-		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      5 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		MaxHeaderBytes:    defaultMaxHeaderBytes,
-	}
-	go func() {
-		slog.Info("metrics listening", "addr", metricsAddr+"/metrics")
-		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("metrics server error", "error", err)
-		}
-	}()
-
 	// 1. Health probes (/healthz, /readyz, /livez) + backward-compatible aliases.
 	s.probes = health.New()
 	s.probes.RegisterReadiness("nats", func(ctx context.Context) error {
@@ -1146,7 +1123,7 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 
 	// 12.5 MCP (HTTP/SSE) routes
 	if err := s.registerMCPRoutes(mux); err != nil {
-		return fmt.Errorf("register mcp routes: %w", err)
+		return nil, fmt.Errorf("register mcp routes: %w", err)
 	}
 
 	// 7. Stream (WebSocket)
@@ -1163,7 +1140,37 @@ func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.S
 	// absent, rateLimitKey falls back to IP-based keying automatically.
 	readAuditRate := parseFloatEnv("CORDUM_AUDIT_READ_SAMPLE_RATE", 0.0)
 	inner := auditReadMiddleware(s.auditExporter, readAuditRate, tenantMiddleware(s.auth, maxBodyMiddleware(mux, s.entitlements)))
-	handler := requestLoggingMiddleware(tracingMiddleware(corsMiddleware(rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, apiKeyMiddleware(s.auth, inner, s.auditExporter)))))
+	return requestLoggingMiddleware(tracingMiddleware(corsMiddleware(rateLimitMiddleware(s.auth, s.apiRL, s.publicRL, apiKeyMiddleware(s.auth, inner, s.auditExporter))))), nil
+}
+
+func startHTTPServer(s *server, httpAddr, metricsAddr string, grpcServer *grpc.Server) error {
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", infraMetrics.Handler())
+	if env.IsProduction() {
+		if err := infraMetrics.ValidateBindAddr(metricsAddr, env.Bool(envGatewayMetricsPublic)); err != nil {
+			return fmt.Errorf("metrics bind rejected: %w", err)
+		}
+	}
+	metricsSrv := &http.Server{
+		Addr:              metricsAddr,
+		Handler:           metricsMux,
+		ReadTimeout:       5 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    defaultMaxHeaderBytes,
+	}
+	go func() {
+		slog.Info("metrics listening", "addr", metricsAddr+"/metrics")
+		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("metrics server error", "error", err)
+		}
+	}()
+
+	handler, err := newHTTPHandler(s)
+	if err != nil {
+		return err
+	}
 
 	httpTLSCert := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSCert))
 	httpTLSKey := strings.TrimSpace(os.Getenv(envGatewayHTTPTLSKey))
