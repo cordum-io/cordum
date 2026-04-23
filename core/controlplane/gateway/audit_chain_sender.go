@@ -36,6 +36,7 @@ func (s *auditChainSender) Send(event audit.SIEMEvent) {
 	}
 	if s.chainer != nil && strings.TrimSpace(event.TenantID) != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), auditChainAppendTimeout)
+		defer cancel()
 		if err := s.chainer.Append(ctx, &event); err != nil {
 			slog.Error("audit chain append failed",
 				"event_type", event.EventType,
@@ -44,7 +45,6 @@ func (s *auditChainSender) Send(event audit.SIEMEvent) {
 				"error", err,
 			)
 		}
-		cancel()
 	}
 	if s.downstream != nil {
 		s.downstream.Send(event)

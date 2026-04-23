@@ -438,6 +438,13 @@ func computeChainIntegrity(ctx context.Context, deps HealthDeps) HealthFactor {
 		s = 85
 	case ChainStatusCompromised:
 		s = 0
+	case ChainStatusUnavailable:
+		return HealthFactor{
+			Score:  NeutralFactorScore,
+			Weight: WeightChainIntegrity,
+			Raw:    status,
+			Notes:  "audit chain unavailable",
+		}
 	default:
 		s = NeutralFactorScore
 	}

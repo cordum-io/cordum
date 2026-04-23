@@ -111,6 +111,23 @@ func TestComputeHealth_CompromisedChainFloors(t *testing.T) {
 	}
 }
 
+func TestComputeHealth_UnavailableChainExplainsNeutralFactor(t *testing.T) {
+	t.Parallel()
+	deps := baseDeps()
+	deps.chain = ChainStatusUnavailable
+	got, err := ComputeHealth(context.Background(), deps, nil)
+	if err != nil {
+		t.Fatalf("ComputeHealth: %v", err)
+	}
+	factor := got.Factors[FactorChainIntegrity]
+	if factor.Score != NeutralFactorScore {
+		t.Fatalf("chain score = %d, want neutral %d", factor.Score, NeutralFactorScore)
+	}
+	if factor.Notes == "" {
+		t.Fatal("chain unavailable factor should explain why it is neutral")
+	}
+}
+
 func TestComputeHealth_PerFactorFailureIsPartial(t *testing.T) {
 	t.Parallel()
 	deps := baseDeps()

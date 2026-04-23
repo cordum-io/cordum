@@ -103,6 +103,39 @@ func TestGovernanceHealthApprovalLatenciesSkipsPendingRecords(t *testing.T) {
 	}
 }
 
+func TestGovernanceHealthApprovalLatenciesIncludeRejectedTerminalRecords(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	jobID := "approval-rejected"
+	decisionAt := now.Add(-2 * time.Minute).UnixMilli()
+	resolvedAt := decisionAt + int64((75*time.Second)/time.Millisecond)
+
+	if err := s.decisionLogStore.AppendDecision(ctx, model.DecisionLogRecord{
+		JobID:     jobID,
+		Tenant:    "default",
+		Verdict:   model.SafetyRequireApproval,
+		Timestamp: decisionAt,
+	}); err != nil {
+		t.Fatalf("append decision: %v", err)
+	}
+	if err := s.jobStore.SetApprovalRecord(ctx, jobID, model.ApprovalRecord{
+		ApprovedAt: resolvedAt,
+		Status:     model.ApprovalStatusRejected,
+		Decision:   model.ApprovalDecisionReject,
+	}); err != nil {
+		t.Fatalf("set approval record: %v", err)
+	}
+
+	samples, err := newGovernanceHealthDeps(s, "default").ApprovalLatencies(ctx, 24*time.Hour, now)
+	if err != nil {
+		t.Fatalf("ApprovalLatencies: %v", err)
+	}
+	if len(samples) != 1 || samples[0] != 75*time.Second {
+		t.Fatalf("samples = %+v, want one rejected approval latency of 75s", samples)
+	}
+}
+
 func TestGovernanceHealthApprovalLatencyLookupErrorMarksUnavailable(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	ctx := context.Background()

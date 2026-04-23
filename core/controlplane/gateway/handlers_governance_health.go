@@ -129,15 +129,29 @@ func (d *governanceHealthDeps) ApprovalLatencies(ctx context.Context, window tim
 		if err != nil {
 			return nil, fmt.Errorf("approval latency lookup %s: %w", item.JobID, err)
 		}
-		// Missing or still-pending approvals have no resolution timestamp yet.
-		// They should not make the health endpoint unavailable; real store
-		// lookup errors above do.
-		if record.ApprovedAt == 0 || record.ApprovedAt <= item.Timestamp {
+		// Missing or still-pending approvals have no terminal resolution
+		// timestamp yet. They should not make the health endpoint unavailable;
+		// real store lookup errors above do. ApprovedAt is the legacy
+		// resolution timestamp field for both approved and rejected approvals.
+		resolvedAt, resolved := approvalResolutionTimestamp(record)
+		if !resolved || resolvedAt <= item.Timestamp {
 			continue
 		}
-		samples = append(samples, time.Duration(record.ApprovedAt-item.Timestamp)*time.Millisecond)
+		samples = append(samples, time.Duration(resolvedAt-item.Timestamp)*time.Millisecond)
 	}
 	return samples, nil
+}
+
+func approvalResolutionTimestamp(record model.ApprovalRecord) (int64, bool) {
+	if record.ApprovedAt <= 0 {
+		return 0, false
+	}
+	switch record.Status {
+	case "", model.ApprovalStatusApproved, model.ApprovalStatusRejected, model.ApprovalStatusExpired, model.ApprovalStatusInvalidated, model.ApprovalStatusRepaired:
+		return record.ApprovedAt, true
+	default:
+		return 0, false
+	}
 }
 
 func (d *governanceHealthDeps) ListTopics(ctx context.Context) ([]string, error) {
