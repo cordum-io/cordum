@@ -255,6 +255,8 @@ services:
       - GRPC_TLS_CERT=/etc/cordum/tls/server/tls.crt
       - GRPC_TLS_KEY=/etc/cordum/tls/server/tls.key
       - "CORDUM_API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}"
+      - CORDUM_API_KEY_SOURCE=${CORDUM_API_KEY_SOURCE:-compose}
+      - CORDUM_API_KEY_SOURCE_FILE=${CORDUM_API_KEY_SOURCE_FILE:-.env}
       - TENANT_ID=default
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
