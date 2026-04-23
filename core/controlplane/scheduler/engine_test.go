@@ -2766,6 +2766,56 @@ func TestCheckSafetyDecision_PropagatesExistingJobHashReadFailure(t *testing.T) 
 	}
 }
 
+func TestProcessJob_HashFenceReadFailureDoesNotFailOpen(t *testing.T) {
+	readErr := errors.New("redis read lost approval hash fence")
+	baseStore := newFakeJobStore()
+	store := &failingGetSafetyDecisionStore{
+		fakeJobStore: baseStore,
+		err:          readErr,
+	}
+	bus := &fakeBus{}
+	engine := NewEngine(bus, &fixedSafetyRecordChecker{record: SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		Reason:           "needs review",
+	}}, newTestRegistry(t), NewNaiveStrategy(), store, nil)
+	engine.WithInputFailMode("open")
+
+	req := &pb.JobRequest{
+		JobId:    "job-process-hash-fence-read-failure",
+		Topic:    "job.test",
+		TenantId: "tenant-a",
+		Labels:   map[string]string{"workflow_id": "wf-hash-fence"},
+	}
+	const pristineHash = "gateway-hash-that-must-survive-processjob"
+	baseStore.safety[req.JobId] = SafetyDecisionRecord{
+		Decision:         SafetyRequireApproval,
+		ApprovalRequired: true,
+		JobHash:          pristineHash,
+	}
+
+	err := engine.processJob(testCtx(t), req, "trace-hash-fence-read-failure")
+	if err == nil {
+		t.Fatal("processJob() error = nil, want retryable hash-fence read error; fail-open would dispatch the job")
+	}
+	if !errors.Is(err, readErr) {
+		t.Fatalf("processJob() error = %v, want to wrap %v", err, readErr)
+	}
+	var retryErr *retryableError
+	if !errors.As(err, &retryErr) {
+		t.Fatalf("processJob() error = %T, want retryableError", err)
+	}
+	if got := len(bus.snapshotPublished()); got != 0 {
+		t.Fatalf("published %d messages after hash-fence read failure; want 0", got)
+	}
+	if got := baseStore.states[req.JobId]; got == JobStateRunning || got == JobStateDispatched {
+		t.Fatalf("job state = %s after hash-fence read failure; want no dispatch/running state", got)
+	}
+	if got := baseStore.safety[req.JobId].JobHash; got != pristineHash {
+		t.Fatalf("stored JobHash=%q want preserved %q after processJob read failure", got, pristineHash)
+	}
+}
+
 func TestCheckSafetyDecision_ComputesJobHashWhenNoneExists(t *testing.T) {
 	store := newFakeJobStore()
 	engine := NewEngine(&fakeBus{}, &fixedSafetyRecordChecker{record: SafetyDecisionRecord{

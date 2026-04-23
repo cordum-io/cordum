@@ -210,7 +210,9 @@ these entries into a versioned release note and reset this file.
   `SafetyDecisionRecord.JobHash`, and
   `scheduler.checkSafetyDecision` preserves a prior JobHash from
   gateway submit instead of clobbering it with a
-  post-effective-config-mutation hash. This is a bug fix, not an API
+  post-effective-config-mutation hash. Hash-fence store read failures
+  now retry without publishing instead of falling through the input
+  fail-open path. This is a bug fix, not an API
   contract change; any client that only observed the spurious
   `invalidate_stale_request` path should now see the benign approval
   succeed again. Follow-up to commit `297937c7` and guard task

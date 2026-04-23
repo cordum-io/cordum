@@ -65,6 +65,8 @@ const (
 	outputPolicyAudit    = "sys.audit.output_policy"
 )
 
+var errApprovalHashFenceRead = errors.New("approval hash fence read failed")
+
 // otelMetricsBridge is an optional interface for OTEL metrics dual-emission.
 // Implemented by cordumotel.SchedulerMetricsBridge.
 type otelMetricsBridge interface {
@@ -1422,6 +1424,11 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 
 	record, err := e.checkSafetyDecisionTraced(lockCtx, req)
 	if err != nil {
+		if errors.Is(err, errApprovalHashFenceRead) {
+			slog.Error("approval hash fence read failed, retrying without fail-open",
+				"job_id", jobID, "topic", topic, "error", err, "trace_id", traceID)
+			return RetryAfter(err, retryDelayStore)
+		}
 		slog.Error("safety check failed", "job_id", jobID, "error", err)
 		record.Decision = SafetyUnavailable
 	}
@@ -2087,7 +2094,7 @@ func (e *Engine) checkSafetyDecision(ctx context.Context, req *pb.JobRequest) (S
 			prev, prevErr := e.jobStore.GetSafetyDecision(storeCtx, jobID)
 			cancel()
 			if prevErr != nil {
-				return record, fmt.Errorf("load existing safety decision hash for %s: %w", jobID, prevErr)
+				return record, fmt.Errorf("%w: load existing safety decision hash for %s: %w", errApprovalHashFenceRead, jobID, prevErr)
 			}
 			if prev.JobHash != "" {
 				existingHash = prev.JobHash
