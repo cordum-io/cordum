@@ -42,7 +42,8 @@ const (
 	// A.
 	NeutralFactorScore = 70
 
-	defaultCacheTTL = 60 * time.Second
+	defaultCacheTTL        = 60 * time.Second
+	defaultCacheMaxEntries = 1024
 )
 
 // Factor names. Exported so tests and the HTTP handler can reference
@@ -183,14 +184,15 @@ type cachedEntry struct {
 	at    time.Time
 }
 
-// Cache is a tiny concurrency-safe per-tenant LRU of HealthScore values.
+// Cache is a tiny concurrency-safe per-tenant TTL cache of HealthScore values.
 // The dashboard polls at ~15s; 60s TTL keeps the recompute rate ≤ 1/m
 // per tenant. Exported so the gateway can wire one up as a server field
 // and share it across handlers.
 type Cache struct {
-	mu   sync.RWMutex
-	ttl  time.Duration
-	data map[string]cachedEntry
+	mu         sync.RWMutex
+	ttl        time.Duration
+	maxEntries int
+	data       map[string]cachedEntry
 }
 
 // NewCache returns a cache with the given TTL. Zero or negative TTL
@@ -199,7 +201,11 @@ func NewCache(ttl time.Duration) *Cache {
 	if ttl <= 0 {
 		ttl = defaultCacheTTL
 	}
-	return &Cache{ttl: ttl, data: map[string]cachedEntry{}}
+	return &Cache{
+		ttl:        ttl,
+		maxEntries: defaultCacheMaxEntries,
+		data:       map[string]cachedEntry{},
+	}
 }
 
 // Get returns the cached value for tenant if fresh, else (nil, false).
@@ -208,12 +214,17 @@ func (c *Cache) Get(tenant string, now time.Time) (*HealthScore, bool) {
 		return nil, false
 	}
 	c.mu.RLock()
-	defer c.mu.RUnlock()
 	entry, ok := c.data[tenant]
+	c.mu.RUnlock()
 	if !ok {
 		return nil, false
 	}
 	if now.Sub(entry.at) > c.ttl {
+		c.mu.Lock()
+		if current, exists := c.data[tenant]; exists && current.at.Equal(entry.at) {
+			delete(c.data, tenant)
+		}
+		c.mu.Unlock()
 		return nil, false
 	}
 	// Return a copy so callers can't mutate the cached value.
@@ -228,6 +239,8 @@ func (c *Cache) Put(tenant string, value *HealthScore, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.data[tenant] = cachedEntry{value: cloneHealthScore(value), at: now}
+	c.purgeExpiredLocked(now)
+	c.enforceMaxEntriesLocked()
 }
 
 // Invalidate drops the tenant's cached entry. Used after operator-driven
@@ -239,6 +252,34 @@ func (c *Cache) Invalidate(tenant string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.data, tenant)
+}
+
+func (c *Cache) purgeExpiredLocked(now time.Time) {
+	for tenant, entry := range c.data {
+		if now.Sub(entry.at) > c.ttl {
+			delete(c.data, tenant)
+		}
+	}
+}
+
+func (c *Cache) enforceMaxEntriesLocked() {
+	if c.maxEntries <= 0 {
+		return
+	}
+	for len(c.data) > c.maxEntries {
+		var oldestTenant string
+		var oldestAt time.Time
+		for tenant, entry := range c.data {
+			if oldestTenant == "" || entry.at.Before(oldestAt) {
+				oldestTenant = tenant
+				oldestAt = entry.at
+			}
+		}
+		if oldestTenant == "" {
+			return
+		}
+		delete(c.data, oldestTenant)
+	}
 }
 
 // ComputeHealth builds a HealthScore for deps.Tenant() from the four

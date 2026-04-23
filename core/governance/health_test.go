@@ -252,6 +252,61 @@ func TestCache_GetPutInvalidate(t *testing.T) {
 	}
 }
 
+func TestCache_GetEvictsExpiredEntries(t *testing.T) {
+	t.Parallel()
+	c := NewCache(1 * time.Second)
+	now := time.Now().UTC()
+	c.Put("t1", &HealthScore{Score: 87}, now)
+
+	if _, ok := c.Get("t1", now.Add(2*time.Second)); ok {
+		t.Fatal("expired entry should miss")
+	}
+
+	c.mu.RLock()
+	_, exists := c.data["t1"]
+	c.mu.RUnlock()
+	if exists {
+		t.Fatal("expired entry should be removed from the cache map")
+	}
+}
+
+func TestCache_PutPurgesExpiredEntriesAndBoundsSize(t *testing.T) {
+	t.Parallel()
+	c := NewCache(1 * time.Second)
+	c.maxEntries = 2
+	now := time.Now().UTC()
+
+	c.Put("expired", &HealthScore{Score: 1}, now)
+	c.Put("oldest", &HealthScore{Score: 2}, now.Add(1500*time.Millisecond))
+	c.Put("newest", &HealthScore{Score: 3}, now.Add(1600*time.Millisecond))
+
+	c.mu.RLock()
+	if _, exists := c.data["expired"]; exists {
+		t.Error("Put should purge entries older than the cache TTL")
+	}
+	if got := len(c.data); got != 2 {
+		t.Errorf("cache size after TTL purge = %d want 2", got)
+	}
+	c.mu.RUnlock()
+
+	c.Put("overflow", &HealthScore{Score: 4}, now.Add(1700*time.Millisecond))
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if got := len(c.data); got != 2 {
+		t.Fatalf("cache size after max-entry enforcement = %d want 2", got)
+	}
+	if _, exists := c.data["oldest"]; exists {
+		t.Fatal("oldest entry should be evicted when maxEntries is exceeded")
+	}
+	if _, exists := c.data["newest"]; !exists {
+		t.Fatal("newest existing entry should be retained")
+	}
+	if _, exists := c.data["overflow"]; !exists {
+		t.Fatal("newly inserted entry should be retained")
+	}
+}
+
 func TestCache_DeepCopiesFactorsOnPutAndGet(t *testing.T) {
 	t.Parallel()
 	c := NewCache(1 * time.Minute)

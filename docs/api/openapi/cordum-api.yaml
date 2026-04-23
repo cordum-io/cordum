@@ -66,7 +66,7 @@ tags:
 - name: LegalHold
   description: Legal hold management for audit retention compliance (admin only)
 - name: Governance
-  description: Governance-native observability â€” policy decisions, approval analytics
+  description: Governance-native observability — policy decisions, approval analytics
 - name: Agents
   description: Agent identities, delegation, and runtime statistics
 - name: Delegation
@@ -4070,7 +4070,7 @@ paths:
       description: >
         Analyzes policy rule quality over a time range. Returns per-rule metrics
         including hit counts, override rates, approval latency, and daily trends.
-        Read-only â€” no side effects.
+        Read-only — no side effects.
       tags:
       - Policy
       security:
@@ -5592,7 +5592,7 @@ paths:
     post:
       operationId: runEvalDataset
       summary: Run an eval dataset against the active or candidate policy
-      description: Synchronous for â‰¤500 entries (returns 200 with full result), asynchronous for larger datasets (returns 202 with run_id; poll GET /evals/runs/{runId}).
+      description: Synchronous for ≤500 entries (returns 200 with full result), asynchronous for larger datasets (returns 202 with run_id; poll GET /evals/runs/{runId}).
       tags:
       - Evals
       parameters:
@@ -5953,19 +5953,19 @@ components:
         type: string
   responses:
     BadRequest:
-      description: Bad request â€” invalid or missing parameters
+      description: Bad request — invalid or missing parameters
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     Unauthorized:
-      description: Unauthorized â€” missing or invalid credentials
+      description: Unauthorized — missing or invalid credentials
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: Forbidden â€” insufficient permissions
+      description: Forbidden — insufficient permissions
       content:
         application/json:
           schema:
@@ -5977,7 +5977,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Conflict:
-      description: Conflict â€” resource state conflict
+      description: Conflict — resource state conflict
       content:
         application/json:
           schema:
@@ -5989,7 +5989,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     RateLimited:
-      description: Too many requests â€” rate limit exceeded
+      description: Too many requests — rate limit exceeded
       headers:
         Retry-After:
           schema:
@@ -6006,7 +6006,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     BadGateway:
-      description: Bad gateway â€” upstream service error
+      description: Bad gateway — upstream service error
       content:
         application/json:
           schema:
@@ -6072,7 +6072,7 @@ components:
         avg_time_to_approve_seconds:
           type: number
           nullable: true
-          description: Null when no approvals resolved in the window â€” distinguishes "no data" from "all resolved in 0 s".
+          description: Null when no approvals resolved in the window — distinguishes "no data" from "all resolved in 0 s".
         p50:
           type: number
           nullable: true
@@ -7260,7 +7260,7 @@ components:
       type: object
       description: |
         Pack-signature verification outcome computed by the gateway at
-        install time. Never client-supplied â€” the gateway discards any
+        install time. Never client-supplied — the gateway discards any
         `verification` field on the install payload and computes its own.
         Pre-existing installs default to {signed: false} when this object
         is absent.
@@ -7299,7 +7299,7 @@ components:
           type: array
           description: |
             Non-fatal warnings the gateway wants to surface alongside the
-            verification outcome (for example, "pack accepted unsigned â€”
+            verification outcome (for example, "pack accepted unsigned —
             gateway strict mode disabled").
           items:
             type: string
