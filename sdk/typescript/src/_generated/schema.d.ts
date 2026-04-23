@@ -313,6 +313,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/audit/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream compliance audit export
+         * @description Streams a compliance-shaped audit export (ndjson or csv) for a bounded time window.
+         *     Admin-only; gated by the `siem_export` or `audit_export` entitlement. The response is
+         *     retention-aware: windows older than the configured retention + skew are rejected. The
+         *     body carries SOC2 mapping columns when the operator has configured a mapping table.
+         */
+        get: operations["exportAuditCompliance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/audit/export/config": {
         parameters: {
             query?: never;
@@ -412,6 +435,30 @@ export interface paths {
         };
         /** List legal holds */
         get: operations["listLegalHolds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Verify audit chain integrity
+         * @description Walks the tenant's audit stream and attests integrity of the hash chain. Reports
+         *     `status=ok` on a contiguous chain, `status=gap` with classification when seq numbers are
+         *     missing (retention-trimmed vs suspected tampering), and `status=tamper` on a broken hash
+         *     link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
+         *     integrity report surface, not event retrieval.
+         */
+        get: operations["verifyAuditChain"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4566,6 +4613,52 @@ export interface operations {
             500: components["responses"]["InternalServerError"];
         };
     };
+    exportAuditCompliance: {
+        parameters: {
+            query?: {
+                /** @description Output format */
+                format?: "ndjson" | "csv";
+                /** @description Inclusive lower bound (RFC3339 timestamp) */
+                from?: string;
+                /** @description Cap on events emitted (clamped to entitlement ceiling) */
+                max_events?: number;
+                /** @description Exclusive upper bound (RFC3339 timestamp) */
+                to?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Streaming compliance export body (ndjson or csv) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": string;
+                    "text/csv": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["TierLimit"];
+            500: components["responses"]["InternalServerError"];
+            /** @description Audit stream unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     getAuditExportConfig: {
         parameters: {
             query?: never;
@@ -4735,6 +4828,51 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["TierLimit"];
             503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    verifyAuditChain: {
+        parameters: {
+            query?: {
+                /** @description Max events to read (default 10000, max 100000) */
+                limit?: number;
+                /** @description Inclusive lower bound on event time (unix ms) */
+                since?: number;
+                /** @description Tenant id (must match caller scope) */
+                tenant?: string;
+                /** @description Inclusive upper bound on event time (unix ms) */
+                until?: number;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Chain integrity report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenericObject"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalServerError"];
+            /** @description Audit chainer not installed; integrity cannot be attested */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getAuthConfig: {
@@ -9453,6 +9591,8 @@ export enum ApiPaths {
     getTelemetryUsage = "/api/v1/telemetry/usage",
     setTelemetryConsent = "/api/v1/telemetry/consent",
     listAdminLocks = "/api/v1/admin/locks",
+    verifyAuditChain = "/api/v1/audit/verify",
+    exportAuditCompliance = "/api/v1/audit/export",
     getAuditExportHealth = "/api/v1/audit/export/health",
     getAuditExportConfig = "/api/v1/audit/export/config",
     testAuditExport = "/api/v1/audit/export/test",
