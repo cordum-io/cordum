@@ -4824,8 +4824,10 @@ paths:
         denial-rate, approval-latency p95, policy coverage, and audit-chain integrity
         rolled up into a 0-100 score plus A-F grade.
 
-        Admin-only. Results are cached per tenant for 60 seconds so dashboards can poll
-        without forcing a full recompute on every refresh.
+        Admin-only. When governance-health caching is enabled, results are cached
+        per tenant for 60 seconds so dashboards can poll without forcing a full
+        recompute on every refresh. If caching is disabled, the handler falls
+        back to a fresh per-request cache and the endpoint behaves as uncached.
       tags:
       - Governance
       security:

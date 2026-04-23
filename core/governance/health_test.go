@@ -10,18 +10,19 @@ import (
 
 // fakeDeps satisfies HealthDeps with injectable behaviour per test.
 type fakeDeps struct {
-	tenant      string
-	now         time.Time
-	decisions   DecisionCounts
-	decisionErr error
-	latencies   []time.Duration
-	latencyErr  error
-	topics      []string
-	topicsErr   error
-	covered     []string
-	coveredErr  error
-	chain       ChainStatus
-	chainErr    error
+	tenant           string
+	now              time.Time
+	decisions        DecisionCounts
+	decisionErr      error
+	latencies        []time.Duration
+	latencyTruncated bool
+	latencyErr       error
+	topics           []string
+	topicsErr        error
+	covered          []string
+	coveredErr       error
+	chain            ChainStatus
+	chainErr         error
 
 	// Call counters — used to verify the cache hits vs misses.
 	scanCalls    int
@@ -30,21 +31,37 @@ type fakeDeps struct {
 	coveredCalls int
 	chainCalls   int
 	mu           sync.Mutex
+
+	scanStarted chan struct{}
+	releaseScan chan struct{}
 }
 
 func (f *fakeDeps) Tenant() string { return f.tenant }
 func (f *fakeDeps) Now() time.Time { return f.now }
 func (f *fakeDeps) ScanDecisions(_ context.Context, _ time.Duration, _ time.Time) (DecisionCounts, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.scanCalls++
-	return f.decisions, f.decisionErr
+	decisions := f.decisions
+	err := f.decisionErr
+	scanStarted := f.scanStarted
+	releaseScan := f.releaseScan
+	f.mu.Unlock()
+	if scanStarted != nil {
+		select {
+		case scanStarted <- struct{}{}:
+		default:
+		}
+	}
+	if releaseScan != nil {
+		<-releaseScan
+	}
+	return decisions, err
 }
-func (f *fakeDeps) ApprovalLatencies(_ context.Context, _ time.Duration, _ time.Time) ([]time.Duration, error) {
+func (f *fakeDeps) ApprovalLatencies(_ context.Context, _ time.Duration, _ time.Time) ([]time.Duration, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.latencyCalls++
-	return f.latencies, f.latencyErr
+	return f.latencies, f.latencyTruncated, f.latencyErr
 }
 func (f *fakeDeps) ListTopics(_ context.Context) ([]string, error) {
 	f.mu.Lock()
@@ -142,6 +159,26 @@ func TestComputeHealth_PerFactorFailureIsPartial(t *testing.T) {
 	}
 	if dr.Score != NeutralFactorScore {
 		t.Errorf("failed factor Score = %d want %d", dr.Score, NeutralFactorScore)
+	}
+}
+
+func TestComputeHealth_ApprovalLatencyTruncationMarksAggregate(t *testing.T) {
+	t.Parallel()
+	deps := baseDeps()
+	deps.latencyTruncated = true
+	got, err := ComputeHealth(context.Background(), deps, nil)
+	if err != nil {
+		t.Fatalf("ComputeHealth: %v", err)
+	}
+	if !got.TruncatedAtMax {
+		t.Fatal("approval latency truncation should mark aggregate as truncated")
+	}
+	raw, ok := got.Factors[FactorApprovalLatencyP95].Raw.(map[string]any)
+	if !ok {
+		t.Fatalf("approval latency raw = %T want map[string]any", got.Factors[FactorApprovalLatencyP95].Raw)
+	}
+	if raw["truncated"] != true {
+		t.Fatalf("approval latency raw truncated=%v want true", raw["truncated"])
 	}
 }
 
@@ -379,6 +416,52 @@ func TestComputeHealth_CacheHitSkipsDeps(t *testing.T) {
 	_, _ = ComputeHealth(context.Background(), deps, cache)
 	if deps.scanCalls != before {
 		t.Errorf("second call should hit cache; scanCalls went %d → %d", before, deps.scanCalls)
+	}
+}
+
+func TestComputeHealth_DeduplicatesConcurrentCacheMisses(t *testing.T) {
+	deps := baseDeps()
+	deps.scanStarted = make(chan struct{}, 1)
+	deps.releaseScan = make(chan struct{})
+	cache := NewCache(1 * time.Minute)
+
+	const followers = 4
+	errs := make(chan error, followers+1)
+	var wg sync.WaitGroup
+	call := func() {
+		defer wg.Done()
+		score, err := ComputeHealth(context.Background(), deps, cache)
+		if err != nil {
+			errs <- err
+			return
+		}
+		if score == nil || score.Score == 0 {
+			errs <- errors.New("missing score from ComputeHealth")
+		}
+	}
+
+	wg.Add(1)
+	go call()
+	<-deps.scanStarted
+
+	wg.Add(followers)
+	for i := 0; i < followers; i++ {
+		go call()
+	}
+	close(deps.releaseScan)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("ComputeHealth returned error: %v", err)
+		}
+	}
+
+	deps.mu.Lock()
+	scans := deps.scanCalls
+	deps.mu.Unlock()
+	if scans != 1 {
+		t.Fatalf("concurrent cache miss should run one backend scan, got %d", scans)
 	}
 }
 

@@ -130,8 +130,9 @@ func (d DecisionCounts) Total() int {
 type ApprovalsLister interface {
 	// ApprovalLatencies returns resolution durations (Resolve - Enqueue)
 	// in milliseconds for approvals that hit a terminal state inside
-	// the window.
-	ApprovalLatencies(ctx context.Context, window time.Duration, now time.Time) ([]time.Duration, error)
+	// the window. Truncated is true when the backing query hit its scan
+	// limit and the sample set is approximate.
+	ApprovalLatencies(ctx context.Context, window time.Duration, now time.Time) ([]time.Duration, bool, error)
 }
 
 // TopicsLister returns all topics the tenant can publish to.
@@ -184,6 +185,12 @@ type cachedEntry struct {
 	at    time.Time
 }
 
+type cacheInflight struct {
+	done  chan struct{}
+	value *HealthScore
+	err   error
+}
+
 // Cache is a tiny concurrency-safe per-tenant TTL cache of HealthScore values.
 // The dashboard polls at ~15s; 60s TTL keeps the recompute rate ≤ 1/m
 // per tenant. Exported so the gateway can wire one up as a server field
@@ -193,6 +200,7 @@ type Cache struct {
 	ttl        time.Duration
 	maxEntries int
 	data       map[string]cachedEntry
+	inflight   map[string]*cacheInflight
 }
 
 // NewCache returns a cache with the given TTL. Zero or negative TTL
@@ -205,6 +213,7 @@ func NewCache(ttl time.Duration) *Cache {
 		ttl:        ttl,
 		maxEntries: defaultCacheMaxEntries,
 		data:       map[string]cachedEntry{},
+		inflight:   map[string]*cacheInflight{},
 	}
 }
 
@@ -282,6 +291,42 @@ func (c *Cache) enforceMaxEntriesLocked() {
 	}
 }
 
+func (c *Cache) computeOnce(ctx context.Context, tenant string, fn func() (*HealthScore, error)) (*HealthScore, error) {
+	if c == nil {
+		return fn()
+	}
+	c.mu.Lock()
+	if c.inflight == nil {
+		c.inflight = map[string]*cacheInflight{}
+	}
+	if call, ok := c.inflight[tenant]; ok {
+		c.mu.Unlock()
+		select {
+		case <-call.done:
+			if call.err != nil {
+				return nil, call.err
+			}
+			return cloneHealthScore(call.value), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	call := &cacheInflight{done: make(chan struct{})}
+	c.inflight[tenant] = call
+	c.mu.Unlock()
+
+	value, err := fn()
+	call.value = cloneHealthScore(value)
+	call.err = err
+	close(call.done)
+
+	c.mu.Lock()
+	delete(c.inflight, tenant)
+	c.mu.Unlock()
+
+	return value, err
+}
+
 // ComputeHealth builds a HealthScore for deps.Tenant() from the four
 // factor inputs. Per-factor failures are captured as Notes on the
 // factor rather than aborting the whole call — a partial score is more
@@ -301,6 +346,24 @@ func ComputeHealth(ctx context.Context, deps HealthDeps, cache *Cache) (*HealthS
 		return cached, nil
 	}
 
+	if cache != nil {
+		return cache.computeOnce(ctx, tenant, func() (*HealthScore, error) {
+			if cached, ok := cache.Get(tenant, now); ok {
+				return cached, nil
+			}
+			score, err := computeHealthScore(ctx, deps, now)
+			if err != nil {
+				return nil, err
+			}
+			cache.Put(tenant, score, now)
+			return score, nil
+		})
+	}
+
+	return computeHealthScore(ctx, deps, now)
+}
+
+func computeHealthScore(ctx context.Context, deps HealthDeps, now time.Time) (*HealthScore, error) {
 	score := &HealthScore{
 		GeneratedAt: now,
 		Factors:     make(map[string]HealthFactor, 4),
@@ -319,6 +382,11 @@ func ComputeHealth(ctx context.Context, deps HealthDeps, cache *Cache) (*HealthS
 	for _, f := range score.Factors {
 		if raw, ok := f.Raw.(DecisionCounts); ok && raw.Truncated {
 			score.TruncatedAtMax = true
+		}
+		if raw, ok := f.Raw.(map[string]any); ok {
+			if truncated, ok := raw["truncated"].(bool); ok && truncated {
+				score.TruncatedAtMax = true
+			}
 		}
 	}
 
@@ -340,7 +408,6 @@ func ComputeHealth(ctx context.Context, deps HealthDeps, cache *Cache) (*HealthS
 	}
 	score.Grade = gradeFor(score.Score)
 
-	cache.Put(tenant, score, now)
 	return score, nil
 }
 
@@ -379,7 +446,7 @@ func computeDenialRate(ctx context.Context, deps HealthDeps, now time.Time) Heal
 // computeApprovalLatency is the last-24h approval-latency-p95 factor.
 func computeApprovalLatency(ctx context.Context, deps HealthDeps, now time.Time) HealthFactor {
 	window := 24 * time.Hour
-	samples, err := deps.ApprovalLatencies(ctx, window, now)
+	samples, truncated, err := deps.ApprovalLatencies(ctx, window, now)
 	if err != nil {
 		slog.Warn("governance: ApprovalLatencies failed", "err", err)
 		return HealthFactor{
@@ -392,8 +459,11 @@ func computeApprovalLatency(ctx context.Context, deps HealthDeps, now time.Time)
 		return HealthFactor{
 			Score:  NeutralFactorScore,
 			Weight: WeightApprovalLatencyP95,
-			Raw:    map[string]any{"samples": 0},
-			Notes:  "no approvals resolved in the last 24h",
+			Raw: map[string]any{
+				"samples":   0,
+				"truncated": truncated,
+			},
+			Notes: "no approvals resolved in the last 24h",
 		}
 	}
 	p95 := percentileDuration(samples, 95)
@@ -401,8 +471,9 @@ func computeApprovalLatency(ctx context.Context, deps HealthDeps, now time.Time)
 		Score:  linearDurationScore(p95, latencyBest, latencyWorst),
 		Weight: WeightApprovalLatencyP95,
 		Raw: map[string]any{
-			"p95_ms":  p95.Milliseconds(),
-			"samples": len(samples),
+			"p95_ms":    p95.Milliseconds(),
+			"samples":   len(samples),
+			"truncated": truncated,
 		},
 	}
 }

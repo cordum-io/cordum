@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -94,9 +95,12 @@ func TestGovernanceHealthApprovalLatenciesSkipsPendingRecords(t *testing.T) {
 		t.Fatalf("append decision: %v", err)
 	}
 
-	samples, err := newGovernanceHealthDeps(s, "default").ApprovalLatencies(ctx, 24*time.Hour, now)
+	samples, truncated, err := newGovernanceHealthDeps(s, "default").ApprovalLatencies(ctx, 24*time.Hour, now)
 	if err != nil {
 		t.Fatalf("ApprovalLatencies returned error for pending/missing approval record: %v", err)
+	}
+	if truncated {
+		t.Fatal("pending-only approval latency query should not be truncated")
 	}
 	if len(samples) != 0 {
 		t.Fatalf("samples = %d, want 0 for pending/missing approval record", len(samples))
@@ -127,12 +131,40 @@ func TestGovernanceHealthApprovalLatenciesIncludeRejectedTerminalRecords(t *test
 		t.Fatalf("set approval record: %v", err)
 	}
 
-	samples, err := newGovernanceHealthDeps(s, "default").ApprovalLatencies(ctx, 24*time.Hour, now)
+	samples, truncated, err := newGovernanceHealthDeps(s, "default").ApprovalLatencies(ctx, 24*time.Hour, now)
 	if err != nil {
 		t.Fatalf("ApprovalLatencies: %v", err)
 	}
+	if truncated {
+		t.Fatal("single approval latency query should not be truncated")
+	}
 	if len(samples) != 1 || samples[0] != 75*time.Second {
 		t.Fatalf("samples = %+v, want one rejected approval latency of 75s", samples)
+	}
+}
+
+func TestGovernanceHealthApprovalLatenciesReportsTruncation(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	for i := 0; i < model.MaxDecisionQueryLimit+1; i++ {
+		if err := s.decisionLogStore.AppendDecision(ctx, model.DecisionLogRecord{
+			JobID:     fmt.Sprintf("approval-truncated-%03d", i),
+			Tenant:    "default",
+			Verdict:   model.SafetyRequireApproval,
+			Timestamp: now.Add(-time.Duration(i) * time.Second).UnixMilli(),
+		}); err != nil {
+			t.Fatalf("append decision %d: %v", i, err)
+		}
+	}
+
+	_, truncated, err := newGovernanceHealthDeps(s, "default").ApprovalLatencies(ctx, 24*time.Hour, now)
+	if err != nil {
+		t.Fatalf("ApprovalLatencies: %v", err)
+	}
+	if !truncated {
+		t.Fatal("approval latency query should report truncation when a next page exists")
 	}
 }
 

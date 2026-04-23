@@ -98,9 +98,9 @@ func (d *governanceHealthDeps) ScanDecisions(ctx context.Context, window time.Du
 	return counts, nil
 }
 
-func (d *governanceHealthDeps) ApprovalLatencies(ctx context.Context, window time.Duration, now time.Time) ([]time.Duration, error) {
+func (d *governanceHealthDeps) ApprovalLatencies(ctx context.Context, window time.Duration, now time.Time) ([]time.Duration, bool, error) {
 	if d == nil || d.s == nil || d.s.decisionLogStore == nil || d.s.jobStore == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	query := model.DecisionQuery{
@@ -112,13 +112,14 @@ func (d *governanceHealthDeps) ApprovalLatencies(ctx context.Context, window tim
 	}
 	query, err := query.Normalize(now)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	page, err := d.s.decisionLogStore.QueryDecisions(ctx, query)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	truncated := strings.TrimSpace(page.NextCursor) != ""
 
 	samples := make([]time.Duration, 0, len(page.Items))
 	for _, item := range page.Items {
@@ -127,7 +128,7 @@ func (d *governanceHealthDeps) ApprovalLatencies(ctx context.Context, window tim
 		}
 		record, err := d.s.jobStore.GetApprovalRecord(ctx, item.JobID)
 		if err != nil {
-			return nil, fmt.Errorf("approval latency lookup %s: %w", item.JobID, err)
+			return nil, truncated, fmt.Errorf("approval latency lookup %s: %w", item.JobID, err)
 		}
 		// Missing or still-pending approvals have no terminal resolution
 		// timestamp yet. They should not make the health endpoint unavailable;
@@ -139,7 +140,7 @@ func (d *governanceHealthDeps) ApprovalLatencies(ctx context.Context, window tim
 		}
 		samples = append(samples, time.Duration(resolvedAt-item.Timestamp)*time.Millisecond)
 	}
-	return samples, nil
+	return samples, truncated, nil
 }
 
 func approvalResolutionTimestamp(record model.ApprovalRecord) (int64, bool) {
