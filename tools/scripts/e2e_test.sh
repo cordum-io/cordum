@@ -116,6 +116,8 @@ else
 fi
 
 BASE="${CORDUM_E2E_BASE:-http://localhost:8082/api/v1}"
+DASHBOARD_ROOT="${CORDUM_E2E_DASHBOARD_ROOT:-${BASE%/api/v1}}"
+DASHBOARD_ROOT="${DASHBOARD_ROOT%/}"
 GW="${CORDUM_E2E_GW_BASE:-${GW_SCHEME}://localhost:8081/api/v1}"
 GW_ROOT="${GW%/api/v1}"
 
@@ -141,7 +143,7 @@ wait_for_ready() {
   local gateway_code=""
 
   for _ in $(seq 1 60); do
-    dashboard_code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8082/healthz || true)
+    dashboard_code=$(curl -s -o /dev/null -w "%{http_code}" "${CURL_TLS_OPTS[@]}" "${DASHBOARD_ROOT}/healthz" || true)
     gateway_code=$(curl -s -o /dev/null -w "%{http_code}" "${CURL_TLS_OPTS[@]}" "${GW_ROOT}/health" || true)
     if [[ "${dashboard_code}" == "200" && "${gateway_code}" == "200" ]]; then
       return 0

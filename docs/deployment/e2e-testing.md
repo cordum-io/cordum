@@ -54,8 +54,9 @@ has zero skipped checks.
 ## Troubleshooting
 
 - **Phase 4 fails before job dispatch**: run
-  `CORDUM_API_KEY=$CORDUM_API_KEY cordumctl pack list | grep hello-pack`.
-  If absent, rerun `cordumctl pack install ./examples/hello-worker-go/pack`.
+  `cordumctl pack list --gateway https://localhost:8081 --cacert ./certs/ca/ca.crt --api-key "$CORDUM_API_KEY" --tenant "${CORDUM_TENANT_ID:-default}" | grep hello-pack`.
+  If absent, rerun
+  `cordumctl pack install --gateway https://localhost:8081 --cacert ./certs/ca/ca.crt --api-key "$CORDUM_API_KEY" --tenant "${CORDUM_TENANT_ID:-default}" ./examples/hello-worker-go/pack`.
 - **NATS or Redis connection errors**: confirm the script detected
   `./certs/ca/ca.crt`; the worker should log `nats_scheme=tls` and
   `redis_scheme=rediss`.
