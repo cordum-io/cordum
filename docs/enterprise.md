@@ -51,10 +51,10 @@ The platform supports multiple authentication methods:
 - Admin can create users via `POST /api/v1/users`
 - Users can change password via `POST /api/v1/auth/password`
 
-### SSO/SAML (Enterprise entitlement)
-- Integrates with identity providers (Okta, Azure AD, etc.)
+### SSO (SAML and OIDC) (Enterprise entitlement)
+- Integrates with SAML and OIDC identity providers (Okta, Azure AD, Google Workspace, Auth0)
 - Marked with "Enterprise" badge in dashboard
-- Configure via SAML environment variables
+- Configure via SAML environment variables or OIDC environment variables — see `docs/configuration-reference.md`
 
 ## Planned enterprise extensions
 

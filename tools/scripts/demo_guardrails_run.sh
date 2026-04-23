@@ -38,6 +38,57 @@ elif [[ -n "${TLS_CA}" ]]; then
   export CORDUM_TLS_CA="${TLS_CA}"
 fi
 
+# absolutise_path resolves a relative TLS path against ROOT_DIR so the
+# worker process (which runs from a different CWD) sees the same file.
+# POSIX absolute (/) and Windows absolute (C:\, D:/) paths are returned
+# unchanged.
+absolutise_path() {
+  local p="${1:-}"
+  if [[ -z "${p}" ]]; then
+    printf ''
+    return 0
+  fi
+  if [[ "${p}" = /* || "${p}" =~ ^[A-Za-z]:[\\/] ]]; then
+    printf '%s' "${p}"
+    return 0
+  fi
+  local dir base
+  dir="$(dirname "${p}")"
+  base="$(basename "${p}")"
+  if ( cd "${ROOT_DIR}" && cd "${dir}" >/dev/null 2>&1 ); then
+    local abs_dir
+    abs_dir="$( cd "${ROOT_DIR}" && cd "${dir}" && pwd -P )"
+    printf '%s/%s' "${abs_dir}" "${base}"
+  else
+    printf '%s' "${p}"
+  fi
+}
+
+# nats_tls_active / redis_tls_active return 0 (success) when any TLS
+# signal is in play for that transport. They let each URL's scheme be
+# derived independently so NATS can be tls:// while Redis stays
+# redis:// when only NATS_TLS_CA is set (or vice versa). The union
+# logic: TLS_CA set OR CORDUM_TLS_INSECURE truthy OR the per-service
+# NATS_TLS_CA / REDIS_TLS_CA env is non-empty.
+nats_tls_active() {
+  [[ -n "${TLS_CA}" ]] && return 0
+  [[ "${CORDUM_TLS_INSECURE:-}" =~ ^(1|true|TRUE|yes|YES)$ ]] && return 0
+  [[ -n "${NATS_TLS_CA:-}" ]] && return 0
+  return 1
+}
+
+redis_tls_active() {
+  [[ -n "${TLS_CA}" ]] && return 0
+  [[ "${CORDUM_TLS_INSECURE:-}" =~ ^(1|true|TRUE|yes|YES)$ ]] && return 0
+  [[ -n "${REDIS_TLS_CA:-}" ]] && return 0
+  return 1
+}
+
+TLS_CA="$(absolutise_path "${TLS_CA}")"
+if [[ -n "${TLS_CA}" ]]; then
+  export CORDUM_TLS_CA="${TLS_CA}"
+fi
+
 to_worker_tls_path() {
   local path="${1:-}"
   if [[ -z "${path}" ]]; then
@@ -62,14 +113,14 @@ to_worker_tls_path() {
 NATS_URL=${NATS_URL:-}
 REDIS_URL=${REDIS_URL:-}
 if [[ -z "${NATS_URL}" ]]; then
-  if [[ -n "${TLS_CA}" ]]; then
+  if nats_tls_active; then
     NATS_URL="tls://localhost:4222"
   else
     NATS_URL="nats://localhost:4222"
   fi
 fi
 if [[ -z "${REDIS_URL}" ]]; then
-  if [[ -n "${TLS_CA}" ]]; then
+  if redis_tls_active; then
     REDIS_URL="rediss://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379/0"
   else
     REDIS_URL="redis://:${REDIS_PASSWORD:-cordum-dev}@localhost:6379/0"
@@ -86,6 +137,8 @@ if [[ -n "${TLS_CA}" ]]; then
     CLIENT_KEY="${ROOT_DIR}/certs/client/tls.key"
   fi
 fi
+CLIENT_CERT="$(absolutise_path "${CLIENT_CERT}")"
+CLIENT_KEY="$(absolutise_path "${CLIENT_KEY}")"
 NATS_TLS_CA="${NATS_TLS_CA:-$(to_worker_tls_path "${TLS_CA}")}"
 NATS_TLS_CERT="${NATS_TLS_CERT:-$(to_worker_tls_path "${CLIENT_CERT}")}"
 NATS_TLS_KEY="${NATS_TLS_KEY:-$(to_worker_tls_path "${CLIENT_KEY}")}"

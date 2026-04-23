@@ -28,63 +28,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `publishHandshake()` added to Python and Node SDKs (previously Go-only)
 - Migrated all deprecated `SystemAlert` fields (`Level`, `Component`, `Code`) to structured replacements (`Severity`, `SourceComponent`, `ErrorCodeEnum`)
 
-### Fixed
-
-- **safety-kernel (task-681f83cd)** — `shadowTimeout` now actually bounds the per-submission shadow evaluation loop. The `context.WithTimeout` return was previously discarded; captured + plumbed through `evalShadowSafely` with a `ctx.Err()` check at bundle-iteration top.
-
-#### Critical
-- **NATS reconnect** — Safety kernel and scheduler re-subscribe to `sys.config.changed` on NATS reconnect. Previously degraded silently to 30s polling on network partition.
-- **Config scope corruption** — `SetWithRetry` now deep-merges config updates, preserving existing keys. Policy bundles no longer silently wiped by pools config pushes. Startup migration moves stale bundles to correct scope.
-- **E2E TLS job dispatch** (`task-73bc2227`) — fixed `tools/scripts/e2e_test.sh` Phase 4 on TLS compose stacks. The script now auto-detects `./certs/ca/ca.crt`, uses `tls://` / `rediss://`, passes `NATS_TLS_CA` / `NATS_TLS_CERT` / `NATS_TLS_KEY` plus `REDIS_TLS_CA` / `REDIS_TLS_CERT` / `REDIS_TLS_KEY` to `examples/hello-worker-go`, installs `./examples/hello-worker-go/pack/pack.yaml` so `job.hello-pack.echo` is registered before submit, treats missing Phase 4 readiness/completion as hard failures while parsing the canonical `/api/v1/workers` `items` response, and the gateway `unknown_topic` response now includes tenant-filtered `registered_topics` (capped at 20) plus `topics_endpoint`.
-- **cordumctl topic registration** — `pack install` now registers topics in topic registry; `pack uninstall` removes them. Fixes #171.
-- **cordumctl lock release** — `runPackInstall` and `runPackUninstall` return errors instead of `os.Exit(1)`, ensuring deferred lock release fires on all error paths.
-- **Safety Kernel NATS subscription** — subscribes to `sys.config.changed` for immediate policy reload (was poll-only with 30s delay).
-- **cordumctl JSON tags** — `packTests` structs now have `json:"..."` tags matching YAML tags, fixing silent registry data corruption.
-
-#### High
-- **Panic recovery** — all NATS subscription callbacks wrapped with `defer recover()` + stack trace logging
-- **Readiness filter** — unknown workers allowed (absence ≠ not ready), preventing new worker traffic starvation
-- **Credential cache** — async refresh in NATS handler (prevents scheduler throughput collapse), merge-on-failure (prevents stale cache)
-- **Rollback reporting** — cordumctl rollback errors tracked and returned, non-zero exit on partial rollback
-- **Approval stale_request false negative** — single-step approval workflows no longer get auto-invalidated as `stale_request` immediately after `POST /approve`. The gateway approve endpoint now locks the current `HashJobRequest(req)` into `SafetyDecisionRecord.JobHash`, and `scheduler.checkSafetyDecision` preserves a prior `JobHash` from gateway submit instead of clobbering it with a post-effective-config mutation hash; hash-fence store read failures retry without publishing instead of falling through the input fail-open path. This is a bug fix, not an API contract change; clients that only observed the spurious `invalidate_stale_request` path should now see the benign approval succeed again. Follow-up to commit `297937c7` and guard task `task-035cdc8e`.
-- **Dashboard memory leaks** — duplicate WebSocket, IntersectionObserver, CSV blob URL timing
-- **Dashboard error handling** — LoginPage 4xx, RunDetailPage chat error, PackDetailPage null state
-- **Dashboard a11y** — focus traps on modals, aria-labels on stats, localStorage try-catch
-- **Security logging** — `slog.Info`/`slog.Warn` for credential and topic operations
-- **Input validation** — array length limits (max 100 items, 128 chars), URL encoding on dynamic links
-- **lodash** — CVE-2026-4800, CVE-2026-2950 fixed upstream in 4.18.0; bumped to 4.18.1 as the latest safe release.
-
-### Changed
-
-- **core: unified JobRequest canonicalisation into `core/protocol/reqhash`** — single `Canonical` + `Hash` helper shared by scheduler, gateway, and store; five bare `protojson.Unmarshal` sites in `core/infra/store/job_store.go` now pass `DiscardUnknown: true`. See release notes for the Redis WATCH/MULTI atomic-store decision. Closes task-090ab6af.
-
-#### CAP v2.5.2 Protocol Integration
-- Upgraded CAP protocol dependency from v2.0.19 to v2.5.2 (both `go.mod` and `sdk/go.mod`)
-- All NATS-connected services publish `Handshake` on `sys.handshake` at startup for capability discovery (gateway, scheduler, workflow-engine; workers via SDK runtime)
-- `SystemAlert` now includes `severity` enum, `error_code_enum`, `source_component`, `details` map, and `trace_id` (deprecated string fields still populated)
-- `JobResult` error codes use structured `ErrorCode` enum alongside string `error_code` for backward compatibility
-- Bus-layer validation rejects malformed `JobRequest`/`JobResult` messages using CAP SDK helpers (`validation_rejections_total` metric)
-- Scheduler handles `BusPacket{Handshake}` in its message switch, updating the worker registry with component capabilities
-- Dashboard displays structured error code badges on job detail page and enhanced alert severity in audit log
-- Added conformance test fixtures for all 8 CAP packet types with signature verification
-- SDK runtime exposes `ValidateJobRequest`, `ValidateJobResult`, `Handshake`, `ComponentRole`, `ErrorCode`, `AlertSeverity` types
-
-### Removed
-
-- Retired the `cordum-enterprise` repo — all enterprise features (SSO/SAML, SCIM, advanced RBAC, SIEM export, legal hold, velocity rules, agent identity) now ship in cordum core behind license entitlements; separate repo archived on GitHub. Closes task-b7c6c2f1. See release notes for full surface list.
-- Removed the legacy OpenAPI sidecars `docs/api/openapi/cordum-rest.yaml`
-  and `docs/api/openapi/cordum.swagger.json`. `docs/api/openapi/cordum-api.yaml`
-  is now the single canonical OpenAPI 3 spec, `make openapi` is a pure
-  Redocly validation pass, and the local/public Swagger UI wrappers now load
-  only that canonical spec. Also removed the legacy prefixed MCP transport
-  aliases `/api/v1/mcp/{sse,message,status}`; MCP transport is now exposed
-  only at `/mcp/{sse,message,status}` while MCP governance REST endpoints
-  remain under `/api/v1/mcp/*`. See
-  [`docs/cleanup/openapi-legacy-audit.md`](docs/cleanup/openapi-legacy-audit.md)
-  `Audit re-verification 2026-04-23` for the ground-truth timeline.
-
-### Added
-
 #### Output Policy System
 - Two-phase output safety scanning: fast sync metadata checks on scheduler hot path + deeper async content checks over dereferenced result payloads
 - gRPC `OutputPolicyService.CheckOutput` contract in `core/protocol/proto/v1/output_policy.proto`
@@ -195,16 +138,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - OpenAPI/Swagger UI in `docs/api/openapi/`
 - `cordum-rest.yaml` OpenAPI spec
 
-### Changed
-- Auth: Login endpoint supports both user credentials and API keys
-- Auth: AuthConfig includes `user_auth_enabled` and `saml_enterprise` fields
-- Scheduler: Output policy integration in dispatch pipeline
-- Workflow engine: Support for 6 new step types alongside existing job/fan-out/condition/delay/approval/notify
-- Dashboard: Sidebar navigation consolidated to 9+1 items (removed /context, /pools, /system, /trace, /tools)
-- Dashboard: Routes reorganized under new page structure
-- Safety kernel: Policy fragments from config service merged with file/URL policy on load/reload
-
 ### Fixed
+
+- **safety-kernel (task-681f83cd)** — `shadowTimeout` now actually bounds the per-submission shadow evaluation loop. The `context.WithTimeout` return was previously discarded; captured + plumbed through `evalShadowSafely` with a `ctx.Err()` check at bundle-iteration top.
+
+#### Critical
+- **NATS reconnect** — Safety kernel and scheduler re-subscribe to `sys.config.changed` on NATS reconnect. Previously degraded silently to 30s polling on network partition.
+- **Config scope corruption** — `SetWithRetry` now deep-merges config updates, preserving existing keys. Policy bundles no longer silently wiped by pools config pushes. Startup migration moves stale bundles to correct scope.
+- **E2E TLS job dispatch** (`task-73bc2227`) — fixed `tools/scripts/e2e_test.sh` Phase 4 on TLS compose stacks. The script now auto-detects `./certs/ca/ca.crt`, uses `tls://` / `rediss://`, passes `NATS_TLS_CA` / `NATS_TLS_CERT` / `NATS_TLS_KEY` plus `REDIS_TLS_CA` / `REDIS_TLS_CERT` / `REDIS_TLS_KEY` to `examples/hello-worker-go`, installs `./examples/hello-worker-go/pack/pack.yaml` so `job.hello-pack.echo` is registered before submit, treats missing Phase 4 readiness/completion as hard failures while parsing the canonical `/api/v1/workers` `items` response, and the gateway `unknown_topic` response now includes tenant-filtered `registered_topics` (capped at 20) plus `topics_endpoint`.
+- **cordumctl topic registration** — `pack install` now registers topics in topic registry; `pack uninstall` removes them. Fixes #171.
+- **cordumctl lock release** — `runPackInstall` and `runPackUninstall` return errors instead of `os.Exit(1)`, ensuring deferred lock release fires on all error paths.
+- **Safety Kernel NATS subscription** — subscribes to `sys.config.changed` for immediate policy reload (was poll-only with 30s delay).
+- **cordumctl JSON tags** — `packTests` structs now have `json:"..."` tags matching YAML tags, fixing silent registry data corruption.
+
+#### High
+- **Panic recovery** — all NATS subscription callbacks wrapped with `defer recover()` + stack trace logging
+- **Readiness filter** — unknown workers allowed (absence ≠ not ready), preventing new worker traffic starvation
+- **Credential cache** — async refresh in NATS handler (prevents scheduler throughput collapse), merge-on-failure (prevents stale cache)
+- **Rollback reporting** — cordumctl rollback errors tracked and returned, non-zero exit on partial rollback
+- **Approval stale_request false negative** — single-step approval workflows no longer get auto-invalidated as `stale_request` immediately after `POST /approve`. The gateway approve endpoint now locks the current `HashJobRequest(req)` into `SafetyDecisionRecord.JobHash`, and `scheduler.checkSafetyDecision` preserves a prior `JobHash` from gateway submit instead of clobbering it with a post-effective-config mutation hash; hash-fence store read failures retry without publishing instead of falling through the input fail-open path. This is a bug fix, not an API contract change; clients that only observed the spurious `invalidate_stale_request` path should now see the benign approval succeed again. Follow-up to commit `297937c7` and guard task `task-035cdc8e`.
+- **Dashboard memory leaks** — duplicate WebSocket, IntersectionObserver, CSV blob URL timing
+- **Dashboard error handling** — LoginPage 4xx, RunDetailPage chat error, PackDetailPage null state
+- **Dashboard a11y** — focus traps on modals, aria-labels on stats, localStorage try-catch
+- **Security logging** — `slog.Info`/`slog.Warn` for credential and topic operations
+- **Input validation** — array length limits (max 100 items, 128 chars), URL encoding on dynamic links
+- **lodash** — CVE-2026-4800, CVE-2026-2950 fixed upstream in 4.18.0; bumped to 4.18.1 as the latest safe release.
 
 #### System Audit Bug Fixes (25 tasks)
 - Gateway: Fixed SSRF in marketplace URL validation — added private IP filtering for RFC 1918/loopback/link-local addresses
@@ -226,6 +184,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Policy bundle detail mapping: parse rules from YAML content instead of hardcoding `rules: []`
 - Visual rule builder: use shared `usePolicyBundle()` hook instead of local bypass
 - `resolvePublishTargets()`: fixed `secops/` prefix requirement so pack bundles can publish
+
+### Changed
+
+- **core: unified JobRequest canonicalisation into `core/protocol/reqhash`** — single `Canonical` + `Hash` helper shared by scheduler, gateway, and store; five bare `protojson.Unmarshal` sites in `core/infra/store/job_store.go` now pass `DiscardUnknown: true`. See release notes for the Redis WATCH/MULTI atomic-store decision. Closes task-090ab6af.
+- Auth: Login endpoint supports both user credentials and API keys
+- Auth: AuthConfig includes `user_auth_enabled` and `saml_enterprise` fields
+- Scheduler: Output policy integration in dispatch pipeline
+- Workflow engine: Support for 6 new step types alongside existing job/fan-out/condition/delay/approval/notify
+- Dashboard: Sidebar navigation consolidated to 9+1 items (removed /context, /pools, /system, /trace, /tools)
+- Dashboard: Routes reorganized under new page structure
+- Safety kernel: Policy fragments from config service merged with file/URL policy on load/reload
+
+#### CAP v2.5.2 Protocol Integration
+- Upgraded CAP protocol dependency from v2.0.19 to v2.5.2 (both `go.mod` and `sdk/go.mod`)
+- All NATS-connected services publish `Handshake` on `sys.handshake` at startup for capability discovery (gateway, scheduler, workflow-engine; workers via SDK runtime)
+- `SystemAlert` now includes `severity` enum, `error_code_enum`, `source_component`, `details` map, and `trace_id` (deprecated string fields still populated)
+- `JobResult` error codes use structured `ErrorCode` enum alongside string `error_code` for backward compatibility
+- Bus-layer validation rejects malformed `JobRequest`/`JobResult` messages using CAP SDK helpers (`validation_rejections_total` metric)
+- Scheduler handles `BusPacket{Handshake}` in its message switch, updating the worker registry with component capabilities
+- Dashboard displays structured error code badges on job detail page and enhanced alert severity in audit log
+- Added conformance test fixtures for all 8 CAP packet types with signature verification
+- SDK runtime exposes `ValidateJobRequest`, `ValidateJobResult`, `Handshake`, `ComponentRole`, `ErrorCode`, `AlertSeverity` types
+
+### Removed
+
+- Retired the `cordum-enterprise` repo — all enterprise features (SSO/SAML, SCIM, advanced RBAC, SIEM export, legal hold, velocity rules, agent identity) now ship in cordum core behind license entitlements; separate repo archived on GitHub. Closes task-b7c6c2f1. See release notes for full surface list.
+- Removed the legacy OpenAPI sidecars `docs/api/openapi/cordum-rest.yaml`
+  and `docs/api/openapi/cordum.swagger.json`. `docs/api/openapi/cordum-api.yaml`
+  is now the single canonical OpenAPI 3 spec, `make openapi` is a pure
+  Redocly validation pass, and the local/public Swagger UI wrappers now load
+  only that canonical spec. Also removed the legacy prefixed MCP transport
+  aliases `/api/v1/mcp/{sse,message,status}`; MCP transport is now exposed
+  only at `/mcp/{sse,message,status}` while MCP governance REST endpoints
+  remain under `/api/v1/mcp/*`. See
+  [`docs/cleanup/openapi-legacy-audit.md`](docs/cleanup/openapi-legacy-audit.md)
+  `Audit re-verification 2026-04-23` for the ground-truth timeline.
 
 ### Security
 - Session tokens: Replaced timestamp-based tokens with `crypto/rand` (was only 53 bits entropy)
@@ -268,5 +262,3 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [v0.1.4] - 2026-01-25
 - Security: remove default API keys; deployments must supply `CORDUM_API_KEY`.
 - Security: fail-closed API auth; enforce `X-Tenant-ID`; require policy signatures when enforcement is enabled.
-- Dashboard: disable API key storage in localStorage (opt-in embed via `CORDUM_DASHBOARD_EMBED_API_KEY`).
-- Breaking: clients must send `X-Tenant-ID` on all `/api/*` requests.
