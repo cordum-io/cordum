@@ -53,9 +53,6 @@ The gateway embeds the MCP server and exposes it via HTTP/SSE:
 | `/mcp/sse` | GET | SSE event stream for MCP notifications |
 | `/mcp/message` | POST | JSON-RPC message endpoint |
 | `/mcp/status` | GET | MCP runtime status |
-| `/api/v1/mcp/sse` | GET | Prefixed SSE stream (same handler) |
-| `/api/v1/mcp/message` | POST | Prefixed message endpoint (same handler) |
-| `/api/v1/mcp/status` | GET | Prefixed status endpoint (same handler) |
 
 All MCP endpoints require authentication via the gateway's standard auth
 middleware (`mcpAuth`).

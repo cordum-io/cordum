@@ -266,3 +266,23 @@ Interpretation:
 - `docs-site/docs/api-reference/rest-api.md` was still present.
 - The canonical `cordum-api.yaml` had no remaining `deprecated: true` or `legacy and prefixed MCP` markers, so that prior cleanup claim was real.
 - Remaining references before deletion were limited to historical audit/release-note records, the active docs-site page to delete, out-of-scope `versioned_docs/`, and `tools/scripts/gen_openapi.sh`.
+
+## MCP transport alias removal re-verification 2026-04-23
+
+QA reopened the cleanup because the sidecar/spec deletions landed but MCP
+transport aliases were still dual-registered. The corrected state is:
+
+```bash
+$ grep -n -E '"/mcp/|/api/v1/mcp/' core/controlplane/gateway/handlers_mcp.go
+60:	mux.HandleFunc("GET /mcp/sse", s.instrumented("/mcp/sse", s.mcpAuth(s.handleMCPSSE)))
+61:	mux.HandleFunc("POST /mcp/message", s.instrumented("/mcp/message", s.mcpAuth(s.handleMCPMessage)))
+62:	mux.HandleFunc("GET /mcp/status", s.instrumented("/mcp/status", s.mcpAuth(s.handleMCPStatus)))
+
+$ git grep -n -E '^  /api/v1/mcp/(sse|message|status):|mcp(Message|SSE|Status)V1' -- docs/api/openapi/cordum-api.yaml
+# no matches
+```
+
+The canonical MCP transport endpoints are `/mcp/sse`, `/mcp/message`, and
+`/mcp/status`. MCP governance REST endpoints such as approvals, usage,
+outbound audit, tool catalog, and signature verification remain under
+`/api/v1/mcp/*`; those are distinct API resources, not transport aliases.

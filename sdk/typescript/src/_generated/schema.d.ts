@@ -1261,23 +1261,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/mcp/message": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Send a JSON-RPC 2.0 message to MCP server */
-        post: operations["mcpMessageV1"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/mcp/outbound": {
         parameters: {
             query?: never;
@@ -1290,44 +1273,6 @@ export interface paths {
          * @description Walks the tenant's audit chain stream and returns observed outbound MCP calls, filtered by time range + subject. Admin-only.
          */
         get: operations["listMcpOutbound"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/mcp/sse": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * MCP Server-Sent Events stream
-         * @description Opens an SSE connection to the MCP server. The server sends JSON-RPC
-         *     notifications and responses over this channel.
-         */
-        get: operations["mcpSSEV1"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/mcp/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get MCP server status */
-        get: operations["mcpStatusV1"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6620,37 +6565,6 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
-    mcpMessageV1: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Tenant isolation header (required on all protected routes). */
-                "X-Tenant-ID": components["parameters"]["TenantID"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["JsonRpcRequest"];
-            };
-        };
-        responses: {
-            /** @description JSON-RPC response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["JsonRpcResponse"];
-                };
-            };
-            400: components["responses"]["BadRequest"];
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            503: components["responses"]["ServiceUnavailable"];
-        };
-    };
     listMcpOutbound: {
         parameters: {
             query?: {
@@ -6682,57 +6596,6 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             503: components["responses"]["ServiceUnavailable"];
-        };
-    };
-    mcpSSEV1: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Tenant isolation header (required on all protected routes). */
-                "X-Tenant-ID": components["parameters"]["TenantID"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description SSE stream opened */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/event-stream": string;
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            503: components["responses"]["ServiceUnavailable"];
-        };
-    };
-    mcpStatusV1: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Tenant isolation header (required on all protected routes). */
-                "X-Tenant-ID": components["parameters"]["TenantID"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description MCP status */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["McpStatus"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
         };
     };
     listMcpTools: {
@@ -9605,8 +9468,6 @@ export enum ApiPaths {
     deleteVelocityRule = "/api/v1/policy/velocity-rules/{id}",
     policyAnalytics = "/api/v1/policy/analytics",
     replayPolicyDecisions = "/api/v1/policy/replay",
-    mcpSSEV1 = "/api/v1/mcp/sse",
-    mcpMessageV1 = "/api/v1/mcp/message",
     listAgents = "/api/v1/agents",
     createAgent = "/api/v1/agents",
     getAgent = "/api/v1/agents/{id}",
@@ -9641,6 +9502,5 @@ export enum ApiPaths {
     listEvalRuns = "/api/v1/evals/datasets/{id}/runs",
     getEvalRun = "/api/v1/evals/runs/{run_id}",
     deleteEvalRun = "/api/v1/evals/runs/{run_id}",
-    mcpStatusV1 = "/api/v1/mcp/status",
     getApprovalAnalytics = "/api/v1/governance/approvals/analytics"
 }

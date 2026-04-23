@@ -4183,67 +4183,6 @@ paths:
           $ref: '#/components/responses/InternalServerError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/mcp/sse:
-    get:
-      operationId: mcpSSEV1
-      summary: MCP Server-Sent Events stream
-      description: 'Opens an SSE connection to the MCP server. The server sends JSON-RPC
-
-        notifications and responses over this channel.
-
-        '
-      tags:
-      - MCP
-      security:
-      - apiKey: []
-      - bearerAuth: []
-      responses:
-        '200':
-          description: SSE stream opened
-          content:
-            text/event-stream:
-              schema:
-                type: string
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-      parameters:
-      - $ref: '#/components/parameters/TenantID'
-  /api/v1/mcp/message:
-    post:
-      operationId: mcpMessageV1
-      summary: Send a JSON-RPC 2.0 message to MCP server
-      tags:
-      - MCP
-      security:
-      - apiKey: []
-      - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/JsonRpcRequest'
-      responses:
-        '200':
-          description: JSON-RPC response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/JsonRpcResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '503':
-          $ref: '#/components/responses/ServiceUnavailable'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-      parameters:
-      - $ref: '#/components/parameters/TenantID'
   /api/v1/agents:
     get:
       operationId: listAgents
@@ -5780,28 +5719,6 @@ paths:
           $ref: '#/components/responses/NotFound'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
-  /api/v1/mcp/status:
-    get:
-      operationId: mcpStatusV1
-      summary: Get MCP server status
-      tags:
-      - MCP
-      security:
-      - apiKey: []
-      - bearerAuth: []
-      responses:
-        '200':
-          description: MCP status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/McpStatus'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-      parameters:
-      - $ref: '#/components/parameters/TenantID'
   /api/v1/governance/approvals/analytics:
     get:
       operationId: getApprovalAnalytics
