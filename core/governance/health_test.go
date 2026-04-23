@@ -199,7 +199,10 @@ func TestComputeHealth_NoTopicsReturnsNeutralCoverage(t *testing.T) {
 	t.Parallel()
 	deps := baseDeps()
 	deps.topics = nil
-	got, _ := ComputeHealth(context.Background(), deps, nil)
+	got, err := ComputeHealth(context.Background(), deps, nil)
+	if err != nil {
+		t.Fatalf("ComputeHealth: %v", err)
+	}
 	if got.Factors[FactorPolicyCoverage].Score != NeutralFactorScore {
 		t.Errorf("no-topics coverage = %d want %d", got.Factors[FactorPolicyCoverage].Score, NeutralFactorScore)
 	}
@@ -411,9 +414,13 @@ func TestComputeHealth_CacheHitSkipsDeps(t *testing.T) {
 	t.Parallel()
 	deps := baseDeps()
 	cache := NewCache(1 * time.Minute)
-	_, _ = ComputeHealth(context.Background(), deps, cache)
+	if _, err := ComputeHealth(context.Background(), deps, cache); err != nil {
+		t.Fatalf("first ComputeHealth: %v", err)
+	}
 	before := deps.scanCalls
-	_, _ = ComputeHealth(context.Background(), deps, cache)
+	if _, err := ComputeHealth(context.Background(), deps, cache); err != nil {
+		t.Fatalf("second ComputeHealth: %v", err)
+	}
 	if deps.scanCalls != before {
 		t.Errorf("second call should hit cache; scanCalls went %d → %d", before, deps.scanCalls)
 	}
@@ -472,8 +479,12 @@ func TestComputeHealth_CacheSeparatesPerTenant(t *testing.T) {
 	a.tenant = "tenant-a"
 	b := baseDeps()
 	b.tenant = "tenant-b"
-	_, _ = ComputeHealth(context.Background(), a, cache)
-	_, _ = ComputeHealth(context.Background(), b, cache)
+	if _, err := ComputeHealth(context.Background(), a, cache); err != nil {
+		t.Fatalf("tenant-a ComputeHealth: %v", err)
+	}
+	if _, err := ComputeHealth(context.Background(), b, cache); err != nil {
+		t.Fatalf("tenant-b ComputeHealth: %v", err)
+	}
 	if a.scanCalls != 1 || b.scanCalls != 1 {
 		t.Errorf("each tenant should recompute: a=%d b=%d", a.scanCalls, b.scanCalls)
 	}
