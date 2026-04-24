@@ -325,7 +325,10 @@ func (s *server) SubmitJob(ctx context.Context, req *pb.SubmitJobRequest) (*pb.S
 				}
 			}
 
-			jobHash, _ := scheduler.HashJobRequest(jobReq)
+			jobHash, hashErr := scheduler.HashJobRequest(jobReq)
+			if hashErr != nil {
+				slog.Warn("failed to compute job hash for approval safety record", "job_id", jobID, "error", hashErr)
+			}
 			safetyRecord := model.SafetyDecisionRecord{
 				Decision:         model.SafetyRequireApproval,
 				Reason:           policyResult.Reason,

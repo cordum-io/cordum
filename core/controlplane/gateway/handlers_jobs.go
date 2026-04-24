@@ -1925,7 +1925,10 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 
 			// Persist safety decision record so the approval endpoint can
 			// validate policy snapshot stability and job request integrity.
-			jobHash, _ := scheduler.HashJobRequest(jobReq)
+			jobHash, hashErr := scheduler.HashJobRequest(jobReq)
+			if hashErr != nil {
+				slog.Warn("failed to compute job hash for approval safety record", "job_id", jobID, "error", hashErr)
+			}
 			safetyRecord := model.SafetyDecisionRecord{
 				Decision:         model.SafetyRequireApproval,
 				Reason:           policyResult.Reason,
@@ -2186,10 +2189,14 @@ func (s *server) persistSubmitDeniedJob(
 	}
 
 	ctxKey := store.MakeContextKey(jobID)
-	ctxPtr := store.PointerForKey(ctxKey)
+	var ctxPtr string
 	if s.memStore != nil {
 		if err := s.memStore.PutContext(ctx, ctxKey, payloadBytes); err != nil {
+			// Skip persisting the context pointer on write failure so
+			// downstream readers don't dereference a dangling key.
 			slog.Warn("failed to persist denied job context", "job_id", jobID, "error", err)
+		} else {
+			ctxPtr = store.PointerForKey(ctxKey)
 		}
 	}
 
@@ -2255,7 +2262,10 @@ func (s *server) persistSubmitDeniedJob(
 		}
 	}
 
-	jobHash, _ := scheduler.HashJobRequest(jobReq)
+	jobHash, hashErr := scheduler.HashJobRequest(jobReq)
+	if hashErr != nil {
+		slog.Warn("failed to compute job hash for denied safety record", "job_id", jobID, "error", hashErr)
+	}
 	safetyRecord := model.SafetyDecisionRecord{
 		Decision:       model.SafetyDeny,
 		Reason:         reason,

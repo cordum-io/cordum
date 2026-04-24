@@ -67,11 +67,15 @@ func (m *flushMetricsSpy) IncDispatchFlushOnWorkerOnline(pool string) {
 		v.(*atomic.Int64).Add(1)
 		return
 	}
+	// Create an empty counter for LoadOrStore; only the winner's counter
+	// is incremented. Pre-incrementing would lose the loser's increment
+	// when it discards its local cnt.
 	var cnt atomic.Int64
-	cnt.Add(1)
-	actual, _ := m.flushPools.LoadOrStore(pool, &cnt)
-	if actual != any(&cnt) {
+	actual, loaded := m.flushPools.LoadOrStore(pool, &cnt)
+	if loaded {
 		actual.(*atomic.Int64).Add(1)
+	} else {
+		cnt.Add(1)
 	}
 }
 

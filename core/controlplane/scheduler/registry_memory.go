@@ -67,10 +67,13 @@ func (r *MemoryRegistry) UpdateHeartbeat(hb *pb.Heartbeat) {
 }
 
 // UpdateHeartbeatWithTransition upserts the heartbeat and reports whether
-// this heartbeat marks an OFFLINE→ONLINE transition. True when (a) no
-// prior entry exists, or (b) the prior entry's lastSeen age exceeds the
-// registry TTL (i.e., the worker was effectively offline before this
-// heartbeat). Callers use this signal to flush pending dispatch on
+// this heartbeat marks an OFFLINE→ONLINE transition for the worker's POOL
+// — true iff, prior to this heartbeat, no other worker in the pool was
+// fresh (lastSeen within TTL). A brand-new worker joining a pool that
+// already has live workers does NOT report a transition, because the
+// pool's dispatch pipeline is already draining. A live worker switching
+// pools correctly reports a transition if the new pool had no fresh
+// workers. Callers use this signal to flush pending dispatch on
 // scale-from-zero or fleet-rolling-restart without waiting for the next
 // poll tick.
 //
@@ -86,15 +89,31 @@ func (r *MemoryRegistry) UpdateHeartbeatWithTransition(hb *pb.Heartbeat) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
+	pool := hb.GetPool()
+	poolWasOnline := false
+	for workerID, candidate := range r.workers {
+		if candidate == nil || candidate.hb == nil || candidate.hb.GetPool() != pool {
+			continue
+		}
+		// Skip the heartbeating worker's own prior entry — we want to
+		// know whether any OTHER worker kept the pool alive.
+		if workerID == hb.WorkerId {
+			continue
+		}
+		if now.Sub(candidate.lastSeen) <= r.ttl {
+			poolWasOnline = true
+			break
+		}
+	}
+
 	entry, ok := r.workers[hb.WorkerId]
-	wasOffline := !ok || now.Sub(entry.lastSeen) > r.ttl
 	if ok {
 		entry.hb = hb
 		entry.lastSeen = now
 	} else {
 		r.workers[hb.WorkerId] = &workerEntry{hb: hb, lastSeen: now}
 	}
-	return wasOffline
+	return !poolWasOnline
 }
 
 func (r *MemoryRegistry) UpdateHandshake(hs *pb.Handshake) {
