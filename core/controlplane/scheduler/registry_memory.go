@@ -91,13 +91,13 @@ func (r *MemoryRegistry) UpdateHeartbeatWithTransition(hb *pb.Heartbeat) bool {
 	now := time.Now()
 	pool := hb.GetPool()
 	poolWasOnline := false
-	for workerID, candidate := range r.workers {
+	// Check if the pool had ANY fresh worker (including this one, if it
+	// was refreshing rather than joining/returning). A worker refreshing
+	// its heartbeat within the TTL keeps the pool online — that's NOT a
+	// transition. A worker whose prior entry was stale, or a brand-new
+	// worker in an empty pool, IS a transition.
+	for _, candidate := range r.workers {
 		if candidate == nil || candidate.hb == nil || candidate.hb.GetPool() != pool {
-			continue
-		}
-		// Skip the heartbeating worker's own prior entry — we want to
-		// know whether any OTHER worker kept the pool alive.
-		if workerID == hb.WorkerId {
 			continue
 		}
 		if now.Sub(candidate.lastSeen) <= r.ttl {
