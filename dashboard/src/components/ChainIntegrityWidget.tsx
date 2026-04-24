@@ -394,12 +394,12 @@ export function ChainIntegrityWidget({
       {/* Primary metric row — stacks vertically at 375px, wraps on sm+ */}
       <section
         className={cn(
-          "mb-5 rounded-2xl border p-4",
+          "mb-5 rounded-2xl border p-4 shadow-inner",
           tone.bgTintClass,
           tone.borderTintClass,
         )}
       >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 sm:items-end">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-end">
           <div>
             <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
               Verified events

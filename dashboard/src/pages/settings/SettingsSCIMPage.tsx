@@ -508,11 +508,26 @@ export default function SettingsSCIMPage() {
               <span>Status</span>
               <span>Last sync</span>
             </div>
-            <div className="divide-y divide-border/80">
+            <motion.div
+              initial="hidden"
+              animate="visible"
+              variants={{
+                visible: { transition: { staggerChildren: 0.05 } },
+              }}
+              className="divide-y divide-border/80"
+            >
               {scim.data.users.map((user) => (
-                <UserRow key={user.id} user={user} />
+                <motion.div
+                  key={user.id}
+                  variants={{
+                    hidden: { opacity: 0, y: 10 },
+                    visible: { opacity: 1, y: 0 },
+                  }}
+                >
+                  <UserRow user={user} />
+                </motion.div>
               ))}
-            </div>
+            </motion.div>
           </div>
         )}
       </motion.section>

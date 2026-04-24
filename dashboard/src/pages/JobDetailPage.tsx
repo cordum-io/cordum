@@ -908,6 +908,21 @@ function MetadataBar({ job, navigate }: { job: Job; navigate: (path: string) => 
 const ACTIVE_STATUSES = new Set(["running", "dispatched", "pending", "scheduled"]);
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled", "denied", "timeout", "output_quarantined"]);
 
+const container = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.05,
+    },
+  },
+};
+
+const item = {
+  hidden: { opacity: 0, y: 12 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" } },
+};
+
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -941,11 +956,13 @@ export default function JobDetailPage() {
   // --- Loading state ---
   if (isLoading) {
     return (
-      <div className="space-y-5">
+      <div className="space-y-6">
         <div className="flex items-center gap-3"><Skeleton className="h-8 w-20" /><Skeleton className="h-4 w-32" /></div>
-        <Skeleton className="h-40 rounded-2xl" />
-        <Skeleton className="h-48 rounded-2xl" />
-        <Skeleton className="h-36 rounded-2xl" />
+        <Skeleton className="h-40 rounded-3xl" />
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-8"><Skeleton className="h-64 rounded-3xl" /></div>
+          <div className="lg:col-span-4"><Skeleton className="h-64 rounded-3xl" /></div>
+        </div>
       </div>
     );
   }
@@ -968,7 +985,7 @@ export default function JobDetailPage() {
 
   // --- Main layout ---
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* Top bar */}
       <div className="flex items-center justify-between">
         <Button variant="ghost" size="sm" onClick={() => navigate("/jobs")}>
@@ -984,143 +1001,175 @@ export default function JobDetailPage() {
 
       {/* Safety bypass warning */}
       {job.labels?.safety_bypassed === "true" && (
-        <InfoBanner variant="warning" title="Safety bypassed" icon={<Shield className="h-4 w-4" />}>
-          This job was allowed via fail-open because the Safety Kernel was unavailable.
-          {job.labels.safety_bypass_reason && <> Reason: {job.labels.safety_bypass_reason}</>}
-        </InfoBanner>
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+          <InfoBanner variant="warning" title="Safety bypassed" icon={<Shield className="h-4 w-4" />}>
+            This job was allowed via fail-open because the Safety Kernel was unavailable.
+            {job.labels.safety_bypass_reason && <> Reason: {job.labels.safety_bypass_reason}</>}
+          </InfoBanner>
+        </motion.div>
       )}
 
       {/* 1. HERO BANNER */}
       <HeroBanner job={job} elapsed={elapsedFormatted} isActive={isActive} />
 
-      {/* Metadata strip */}
-      <MetadataBar job={job} navigate={navigate} />
+      <motion.div
+        variants={container}
+        initial="hidden"
+        animate="visible"
+        className="space-y-6"
+      >
+        <motion.div variants={item}>
+          {/* Metadata strip */}
+          <MetadataBar job={job} navigate={navigate} />
+        </motion.div>
 
-      {/* Labels */}
-      {job.labels && Object.keys(job.labels).length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {Object.entries(job.labels).map(([k, v]) => (
-            <StatusBadge key={k} variant="muted" className="font-mono">
-              <span className="text-muted-foreground">{k}:</span> {v}
-            </StatusBadge>
-          ))}
-        </div>
-      )}
-
-      <Tabs
-        tabs={[
-          { id: "overview", label: "Overview" },
-          { id: "payload", label: "Payload" },
-          { id: "activity", label: "Activity" },
-          { id: "governance", label: "Governance" },
-        ]}
-        activeTab={activeTab}
-        onChange={setActiveTab}
-        ariaLabel="Job detail sections"
-      />
-
-      {activeTab === "overview" && (
-        <>
-          {/* 2. SMART CONTEXT */}
-          <SmartContext job={job} />
-
-          {/* 3. SAFETY STORY */}
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: 0.1 }}
-            className="instrument-card"
-          >
-            <div className="flex items-center gap-2 mb-4">
-              <Shield className="w-4 h-4 text-cordum" />
-              <h2 className="font-display font-semibold text-sm text-foreground">Safety Story</h2>
-            </div>
-            <SafetyTimeline job={job} />
+        {job.labels && Object.keys(job.labels).length > 0 && (
+          <motion.div variants={item} className="flex flex-wrap gap-1.5">
+            {Object.entries(job.labels).map(([k, v]) => (
+              <StatusBadge key={k} variant="muted" className="font-mono">
+                <span className="text-muted-foreground">{k}:</span> {v}
+              </StatusBadge>
+            ))}
           </motion.div>
+        )}
 
-          {/* Error block */}
-          {(job.errorMessage || job.status === "failed") && (
+        <motion.div variants={item}>
+          <Tabs
+            tabs={[
+              { id: "overview", label: "Overview" },
+              { id: "payload", label: "Payload" },
+              { id: "activity", label: "Activity" },
+              { id: "governance", label: "Governance" },
+            ]}
+            activeTab={activeTab}
+            onChange={setActiveTab}
+            ariaLabel="Job detail sections"
+          />
+        </motion.div>
+
+        <AnimatePresence mode="wait">
+          {activeTab === "overview" && (
             <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: 0.15 }}
+              key="overview"
+              variants={container}
+              initial="hidden"
+              animate="visible"
+              exit={{ opacity: 0, y: -8 }}
+              className="grid grid-cols-1 gap-6 lg:grid-cols-12"
             >
-              <InfoBanner variant="error" title="Error">
-                <div className="space-y-2 text-destructive">
-                  <p className="text-sm font-mono whitespace-pre-wrap">
-                    {job.errorMessage || `Job failed (no error message). Code: ${job.errorCode || "unknown"}`}
-                  </p>
-                  {job.errorCode && (
-                    <p className="text-xs font-mono text-muted-foreground">
-                      Code: {job.errorCode} {job.errorCodeEnum ? `(${job.errorCodeEnum})` : ""}
-                    </p>
-                  )}
+              {/* 2. SMART CONTEXT */}
+              <motion.div variants={item} className="lg:col-span-8">
+                <SmartContext job={job} />
+              </motion.div>
+
+              {/* 3. SAFETY STORY */}
+              <motion.div variants={item} className="lg:col-span-4">
+                <div className="instrument-card h-full">
+                  <div className="flex items-center gap-2 mb-6">
+                    <Shield className="w-4 h-4 text-cordum" />
+                    <h2 className="font-display font-semibold text-sm text-foreground">Safety Story</h2>
+                  </div>
+                  <SafetyTimeline job={job} />
                 </div>
-              </InfoBanner>
+              </motion.div>
+
+              {/* Error block */}
+              {(job.errorMessage || job.status === "failed") && (
+                <motion.div variants={item} className="lg:col-span-12">
+                  <InfoBanner variant="error" title="Error">
+                    <div className="space-y-2 text-destructive">
+                      <p className="text-sm font-mono whitespace-pre-wrap">
+                        {job.errorMessage || `Job failed (no error message). Code: ${job.errorCode || "unknown"}`}
+                      </p>
+                      {job.errorCode && (
+                        <p className="text-xs font-mono text-muted-foreground">
+                          Code: {job.errorCode} {job.errorCodeEnum ? `(${job.errorCodeEnum})` : ""}
+                        </p>
+                      )}
+                    </div>
+                  </InfoBanner>
+                </motion.div>
+              )}
             </motion.div>
           )}
-        </>
-      )}
 
-      {activeTab === "activity" && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.2 }}
-          className="space-y-4"
-        >
-          <div className="instrument-card">
-            <div className="flex items-center gap-2 mb-4">
-              <Clock className="w-4 h-4 text-cordum" />
-              <h2 className="font-display font-semibold text-sm text-foreground">Activity</h2>
-            </div>
-            <CompactTimeline job={job} />
-          </div>
-          <div className="instrument-card">
-            <div className="surface-inset p-4 font-mono text-xs text-foreground min-h-[200px] max-h-[500px] overflow-auto">
-              <JobTerminal job={job} />
-            </div>
-          </div>
-        </motion.div>
-      )}
+          {activeTab === "activity" && (
+            <motion.div
+              key="activity"
+              variants={container}
+              initial="hidden"
+              animate="visible"
+              exit={{ opacity: 0, y: -8 }}
+              className="grid grid-cols-1 gap-6 lg:grid-cols-12"
+            >
+              <motion.div variants={item} className="lg:col-span-12">
+                <div className="instrument-card">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Clock className="w-4 h-4 text-cordum" />
+                    <h2 className="font-display font-semibold text-sm text-foreground">Activity Timeline</h2>
+                  </div>
+                  <CompactTimeline job={job} />
+                </div>
+              </motion.div>
 
-      {activeTab === "payload" && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.25 }}
-          className="space-y-4"
-        >
-          <CollapsibleSection title="Context payload" defaultOpen={false}>
-            <div className="instrument-card">
-              <BlobViewer label="Context" pointer={job.contextPtr} data={job.context} emptyText="No context data available" />
-            </div>
-          </CollapsibleSection>
+              <motion.div variants={item} className="lg:col-span-12">
+                <div className="instrument-card !p-0 overflow-hidden">
+                  <div className="px-5 py-3 border-b border-border bg-surface-0/30">
+                    <h2 className="font-display font-semibold text-xs text-muted-foreground uppercase tracking-widest">Execution Log</h2>
+                  </div>
+                  <div className="surface-inset p-5 font-mono text-xs text-foreground min-h-[300px] max-h-[600px] overflow-auto">
+                    <JobTerminal job={job} />
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
 
-          <CollapsibleSection title="Raw output" defaultOpen={false}>
-            <div className="space-y-4">
-              <div className="instrument-card">
-                <BlobViewer
-                  label="Result"
-                  pointer={job.resultPtr}
-                  data={job.result}
-                  emptyText={isActive ? "Job is still running\u2026" : "No result data available"}
-                />
-              </div>
-            </div>
-          </CollapsibleSection>
-        </motion.div>
-      )}
+          {activeTab === "payload" && (
+            <motion.div
+              key="payload"
+              variants={container}
+              initial="hidden"
+              animate="visible"
+              exit={{ opacity: 0, y: -8 }}
+              className="space-y-6"
+            >
+              <motion.div variants={item}>
+                <CollapsibleSection title="Context payload" defaultOpen={true}>
+                  <div className="instrument-card">
+                    <BlobViewer label="Context" pointer={job.contextPtr} data={job.context} emptyText="No context data available" />
+                  </div>
+                </CollapsibleSection>
+              </motion.div>
 
-      {activeTab === "governance" && (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.15 }}
-        >
-          <GovernanceTimeline jobId={job.id} />
-        </motion.div>
-      )}
+              <motion.div variants={item}>
+                <CollapsibleSection title="Raw output" defaultOpen={true}>
+                  <div className="instrument-card">
+                    <BlobViewer
+                      label="Result"
+                      pointer={job.resultPtr}
+                      data={job.result}
+                      emptyText={isActive ? "Job is still running\u2026" : "No result data available"}
+                    />
+                  </div>
+                </CollapsibleSection>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {activeTab === "governance" && (
+            <motion.div
+              key="governance"
+              variants={item}
+              initial="hidden"
+              animate="visible"
+              exit={{ opacity: 0, y: -8 }}
+            >
+              <GovernanceTimeline jobId={job.id} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
     </div>
   );
 }

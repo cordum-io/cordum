@@ -54,6 +54,7 @@ import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { safeLocalStorage } from "@/lib/storage";
 import { AuditChainCard } from "@/components/AuditChainCard";
 import { useAuth } from "@/hooks/useAuth";
+import { SafetyDecisionFeed } from "@/components/home/SafetyDecisionFeed";
 
 export default function HomePage() {
   const navigate = useNavigate();
@@ -717,7 +718,7 @@ export default function HomePage() {
           transition={{ duration: 0.3, delay: 0.25 }}
           className="lg:col-span-4"
         >
-          <SafetyDecisionFeed jobs={jobs.slice(0, 10)} />
+          <SafetyDecisionFeed />
         </motion.div>
       </div>
 
