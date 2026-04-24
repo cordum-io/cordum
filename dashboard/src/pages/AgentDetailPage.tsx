@@ -6,6 +6,7 @@
 import { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import { motion, AnimatePresence } from "framer-motion";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
@@ -98,7 +99,7 @@ const container = {
 
 const item = {
   hidden: { opacity: 0, y: 12 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" } },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.3 } },
 };
 
 export default function AgentDetailPage() {
@@ -403,7 +404,7 @@ export default function AgentDetailPage() {
                 </div>
                 {jobsLoading ? (
                   <div className="flex h-[240px] items-center justify-center">
-                    <SkeletonCard className="w-full h-full" />
+                    <SkeletonCard />
                   </div>
                 ) : (
                   <div className="h-[240px] w-full">

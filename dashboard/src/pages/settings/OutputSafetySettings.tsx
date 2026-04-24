@@ -949,4 +949,3 @@ export default function OutputSafetySettings() {
     </motion.div>
   );
 }
-}

@@ -282,4 +282,3 @@ export default function InputSafetySettings() {
     </motion.div>
   );
 }
-}

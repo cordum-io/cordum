@@ -440,7 +440,7 @@ export default function LicensePage() {
             ))}
           </div>
         )}
-      </section>
+      </motion.section>
 
       <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
         <motion.section
