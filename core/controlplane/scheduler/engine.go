@@ -2377,7 +2377,15 @@ func (e *Engine) checkOutputSafety(jobID, topic string, res *pb.JobResult, req *
 	e.observeOutputCheckLatency(topic, "sync", float64(record.CheckDurationMs)/1000.0)
 	e.observeOutputEvalDuration(topic, elapsed.Seconds())
 	if err != nil {
-		slog.Error("output policy check failed", "job_id", jobID, "error", err)
+		// DeadlineExceeded under burst load is tolerated: the record
+		// stays at OutputAllow (fail-open on meta) and the async content
+		// phase still runs. Log at WARN so monitoring doesn't page on
+		// transient safety-kernel latency; downgrade from ERROR.
+		if isDeadlineExceeded(err) {
+			slog.Warn("output policy meta check timed out", "job_id", jobID, "topic", topic, "error", err)
+		} else {
+			slog.Error("output policy check failed", "job_id", jobID, "error", err)
+		}
 		e.incOutputPolicySkipped(topic)
 		return record
 	}
