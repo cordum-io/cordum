@@ -69,7 +69,7 @@ export function Toast({ toast }: { toast: ToastData }) {
       {toast.dismissible && (
         <button type="button"
           onClick={handleDismiss}
-          className="absolute top-2 right-2 p-1 rounded-lg text-muted-foreground hover:text-ink transition-colors"
+          className="absolute top-2 right-2 p-1 rounded-xl text-muted-foreground hover:text-ink transition-colors"
         >
           <X size={14} />
         </button>

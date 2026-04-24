@@ -66,7 +66,7 @@ export function KeyboardShortcutsDialog() {
                 </h3>
                 <button type="button"
                   onClick={() => setOpen(false)}
-                  className="p-1 rounded-md hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors"
+                  className="p-1 rounded-xl hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -106,3 +106,4 @@ export function KeyboardShortcutsDialog() {
     </AnimatePresence>
   );
 }
+

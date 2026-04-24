@@ -53,7 +53,7 @@ export function MCPOutboundLog({ filters, className }: MCPOutboundLogProps) {
         aria-busy="true"
         data-testid="mcp-outbound-loading"
         className={cn(
-          "rounded-md border border-[color:var(--border-color,#27272a)] bg-[color:var(--surface,#0b0b0e)] p-4 text-sm text-[color:var(--text-muted,#a1a1aa)]",
+          "rounded-xl border border-[color:var(--border-color,#27272a)] bg-[color:var(--surface,#0b0b0e)] p-4 text-sm text-[color:var(--text-muted,#a1a1aa)]",
           className,
         )}
       >
@@ -68,7 +68,7 @@ export function MCPOutboundLog({ filters, className }: MCPOutboundLogProps) {
         role="alert"
         data-testid="mcp-outbound-error"
         className={cn(
-          "flex items-center justify-between rounded-md border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300",
+          "flex items-center justify-between rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300",
           className,
         )}
       >
@@ -89,7 +89,7 @@ export function MCPOutboundLog({ filters, className }: MCPOutboundLogProps) {
       <div
         data-testid="mcp-outbound-empty"
         className={cn(
-          "rounded-md border border-dashed border-[color:var(--border-color,#27272a)] bg-[color:var(--surface,#0b0b0e)] p-6 text-center text-sm text-[color:var(--text-muted,#a1a1aa)]",
+          "rounded-xl border border-dashed border-[color:var(--border-color,#27272a)] bg-[color:var(--surface,#0b0b0e)] p-6 text-center text-sm text-[color:var(--text-muted,#a1a1aa)]",
           className,
         )}
       >
@@ -109,7 +109,7 @@ export function MCPOutboundLog({ filters, className }: MCPOutboundLogProps) {
       className={cn("flex flex-col gap-3", className)}
       aria-label="Outbound MCP call log"
     >
-      <div className="overflow-x-auto rounded-md border border-[color:var(--border-color,#27272a)]">
+      <div className="overflow-x-auto rounded-xl border border-[color:var(--border-color,#27272a)]">
         <table className="min-w-full divide-y divide-[color:var(--border-color,#27272a)] text-sm">
           <thead className="bg-[color:var(--surface-elevated,#111114)] text-[10px] uppercase tracking-wider text-[color:var(--text-muted,#a1a1aa)]">
             <tr>
@@ -242,3 +242,4 @@ function ResultBadge({ result }: { result: string }) {
 }
 
 export default MCPOutboundLog;
+

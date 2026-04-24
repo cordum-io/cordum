@@ -291,7 +291,7 @@ function OverallSummary({
           type="button"
           onClick={onRefresh}
           disabled={isRefreshing}
-          className="rounded-lg p-2 text-muted-foreground hover:text-ink hover:bg-surface2 transition-colors disabled:opacity-50"
+          className="rounded-xl p-2 text-muted-foreground hover:text-ink hover:bg-surface2 transition-colors disabled:opacity-50"
           title="Refresh now"
         >
           <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
@@ -494,3 +494,4 @@ export function SystemHealthTab() {
     </div>
   );
 }
+

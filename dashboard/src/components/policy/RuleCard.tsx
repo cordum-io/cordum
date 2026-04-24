@@ -119,7 +119,7 @@ export function RuleCard({
       )}
 
       {/* Priority number */}
-      <span className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-lg bg-accent/10 text-xs font-bold text-accent">
+      <span className="mt-0.5 flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-xl bg-accent/10 text-xs font-bold text-accent">
         {index + 1}
       </span>
 
@@ -226,3 +226,4 @@ export function RuleCard({
     </div>
   );
 }
+

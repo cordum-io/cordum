@@ -51,7 +51,7 @@ export function BundlePublishDialog({
               value={note}
               onChange={(e) => setNote(e.target.value)}
               placeholder="e.g. Added rate limit rules"
-              className="mt-1 w-full h-8 px-3 text-xs bg-surface-0 border border-border rounded-md text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-cordum"
+              className="mt-1 w-full h-8 px-3 text-xs bg-surface-0 border border-border rounded-xl text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-cordum"
             />
           </label>
         </div>
@@ -62,3 +62,4 @@ export function BundlePublishDialog({
     />
   );
 }
+

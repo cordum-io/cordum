@@ -9,7 +9,7 @@ export function InputRulesViewModeToggle({
 }: InputRulesViewModeToggleProps) {
   return (
     <div
-      className="flex items-center gap-1 rounded-md border border-border bg-surface-1 p-1"
+      className="flex items-center gap-1 rounded-xl border border-border bg-surface-1 p-1"
       role="group"
       aria-label="Input rules page view mode"
     >
@@ -31,3 +31,4 @@ export function InputRulesViewModeToggle({
     </div>
   );
 }
+

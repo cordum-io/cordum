@@ -87,7 +87,7 @@ export function WorkflowPolicyOverrideRules({ rules }: WorkflowPolicyOverrideRul
       </p>
       <div className="space-y-2">
         {rules.map((rule) => (
-          <div key={rule.id} className="rounded-lg bg-surface-0 border border-border p-3">
+          <div key={rule.id} className="rounded-xl bg-surface-0 border border-border p-3">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-xs font-mono font-medium text-foreground">{rule.id}</span>
               <StatusBadge variant={decisionVariant(rule.decision)}>{rule.decision}</StatusBadge>
@@ -117,3 +117,4 @@ export function WorkflowPolicyOverrideRules({ rules }: WorkflowPolicyOverrideRul
     </div>
   );
 }
+

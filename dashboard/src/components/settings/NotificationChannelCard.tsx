@@ -70,7 +70,7 @@ export function NotificationChannelCard({
       <Card className="flex flex-col gap-3">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-surface2">
               <Icon className="h-4 w-4 text-muted-foreground" />
             </div>
             <div>

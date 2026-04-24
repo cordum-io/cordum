@@ -142,7 +142,7 @@ export function HAConfigSection({ status }: HAConfigSectionProps) {
         </div>
 
         {/* MCP — cross-reference */}
-        <div className="rounded-lg border border-border/50 bg-surface2/30 px-3 py-2">
+        <div className="rounded-xl border border-border/50 bg-surface2/30 px-3 py-2">
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
               <p className="text-sm text-ink">MCP Transport &amp; Address</p>
@@ -163,3 +163,4 @@ export function HAConfigSection({ status }: HAConfigSectionProps) {
     </Card>
   );
 }
+

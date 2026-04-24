@@ -158,7 +158,7 @@ export function SafetyDecisionFeed() {
         {decisions.length > 0 && (
           <div className="grid grid-cols-4 gap-2">
             {(["allow", "deny", "require_approval", "throttle"] as const).map((key) => (
-              <div key={key} className="rounded-md border border-border/50 bg-surface-2/30 px-2.5 py-1.5 text-center">
+              <div key={key} className="rounded-xl border border-border/50 bg-surface-2/30 px-2.5 py-1.5 text-center">
                 <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
                   {decisionLabel[key]}
                 </p>
@@ -173,7 +173,7 @@ export function SafetyDecisionFeed() {
       {isLoading ? (
         <div className="space-y-2 px-5 py-4 flex-1">
           {Array.from({ length: 5 }, (_, i) => (
-            <div key={i} className="skeleton h-9 rounded-md" />
+            <div key={i} className="skeleton h-9 rounded-xl" />
           ))}
         </div>
       ) : decisions.length === 0 && isError ? (
@@ -232,3 +232,4 @@ function AlertTriangleIcon() {
     </svg>
   );
 }
+

@@ -69,7 +69,7 @@ export function BundleVisualPreview({ yaml, onSwitchToCode }: BundleVisualPrevie
 
   if (rules.length === 0) {
     return (
-      <div className="rounded-lg border border-border bg-surface-1 p-4 text-xs text-muted-foreground">
+      <div className="rounded-xl border border-border bg-surface-1 p-4 text-xs text-muted-foreground">
         No rules found in bundle content.
       </div>
     );
@@ -80,7 +80,7 @@ export function BundleVisualPreview({ yaml, onSwitchToCode }: BundleVisualPrevie
       <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
         {rules.length} rule{rules.length !== 1 ? "s" : ""}
       </p>
-      <div className="divide-y divide-border rounded-lg border border-border">
+      <div className="divide-y divide-border rounded-xl border border-border">
         {rules.map((rule, index) => (
           <div key={rule.id || index} className="flex items-start gap-3 px-4 py-3">
             <span className="shrink-0 text-xs font-mono text-muted-foreground/60 pt-0.5">
@@ -105,3 +105,4 @@ export function BundleVisualPreview({ yaml, onSwitchToCode }: BundleVisualPrevie
     </div>
   );
 }
+

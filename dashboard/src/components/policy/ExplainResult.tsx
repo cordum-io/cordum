@@ -96,7 +96,7 @@ function RuleStepCard({ step, index }: { step: ExplainRuleStep; index: number })
           )}
 
           {step.conditions.length > 0 ? (
-            <div className="overflow-x-auto rounded-lg border border-border">
+            <div className="overflow-x-auto rounded-xl border border-border">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-border bg-surface2/50">
@@ -189,3 +189,4 @@ export function ExplainResultPanel({ result }: { result: ExplainResult }) {
     </div>
   );
 }
+

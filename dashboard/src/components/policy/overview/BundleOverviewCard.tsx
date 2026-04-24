@@ -263,7 +263,7 @@ export function BundleOverviewCard({
                 <button
                   type="button"
                   onClick={handleCopyYaml}
-                  className="flex items-center gap-1 px-2 py-1 rounded-lg bg-surface-3/80 hover:bg-surface-3 border border-border/40 text-xs font-mono text-muted-foreground hover:text-foreground transition-all"
+                  className="flex items-center gap-1 px-2 py-1 rounded-xl bg-surface-3/80 hover:bg-surface-3 border border-border/40 text-xs font-mono text-muted-foreground hover:text-foreground transition-all"
                 >
                   {copied ? (
                     <>
@@ -303,3 +303,4 @@ export function BundleOverviewCard({
     </div>
   );
 }
+

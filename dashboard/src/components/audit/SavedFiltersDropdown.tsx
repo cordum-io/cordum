@@ -130,7 +130,7 @@ export function SavedFiltersDropdown({
     <div className="relative inline-flex items-center gap-2" ref={menuRef}>
       {/* Active filter label */}
       {activeFilter && (
-        <span className="flex items-center gap-1 rounded-lg bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent">
+        <span className="flex items-center gap-1 rounded-xl bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent">
           <Bookmark className="h-3 w-3" />
           {activeFilter.name}
           <button
@@ -239,3 +239,4 @@ export function SavedFiltersDropdown({
     </div>
   );
 }
+

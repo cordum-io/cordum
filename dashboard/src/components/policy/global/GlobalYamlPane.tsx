@@ -73,7 +73,7 @@ export function GlobalYamlPane({
         <textarea
           ref={textareaRef}
           aria-label="Global safety.yaml editor"
-          className="h-[620px] w-full resize-none rounded-lg bg-surface-0 p-4 font-mono text-xs text-foreground outline-none focus:ring-2 focus:ring-cordum/30"
+          className="h-[620px] w-full resize-none rounded-xl bg-surface-0 p-4 font-mono text-xs text-foreground outline-none focus:ring-2 focus:ring-cordum/30"
           value={yaml}
           readOnly={!editable}
           onChange={(event) => onChange(event.target.value)}
@@ -82,7 +82,7 @@ export function GlobalYamlPane({
 
       {parseIssues.length > 0 && (
         <div
-          className={`rounded-lg border px-3 py-2 text-xs ${
+          className={`rounded-xl border px-3 py-2 text-xs ${
             hasErrors
               ? "border-destructive/30 bg-destructive/10 text-destructive"
               : "border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 text-[var(--color-warning)]"
@@ -104,4 +104,5 @@ export function GlobalYamlPane({
     </div>
   );
 }
+
 

@@ -39,7 +39,7 @@ export function SnapshotWriterBadge({ snapshotMeta }: SnapshotWriterBadgeProps) 
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs",
+        "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-xs",
         stale
           ? "border-warning/30 bg-warning/5 text-warning"
           : "border-border bg-surface2/30 text-muted-foreground",
@@ -58,3 +58,4 @@ export function SnapshotWriterBadge({ snapshotMeta }: SnapshotWriterBadgeProps) 
     </div>
   );
 }
+

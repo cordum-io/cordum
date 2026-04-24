@@ -70,7 +70,7 @@ export function BundleDiffView({ bundleId, draftYaml }: BundleDiffViewProps) {
 
   if (!hasChanges) {
     return (
-      <div className="rounded-lg border border-border bg-surface-1 p-4 text-xs text-muted-foreground">
+      <div className="rounded-xl border border-border bg-surface-1 p-4 text-xs text-muted-foreground">
         No differences between draft and published content.
       </div>
     );
@@ -96,3 +96,4 @@ export function BundleDiffView({ bundleId, draftYaml }: BundleDiffViewProps) {
     </div>
   );
 }
+

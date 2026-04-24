@@ -120,7 +120,7 @@ export function CardGridSkeleton({ count = 6 }: { count?: number }) {
         {[...Array(count)].map((_, i) => (
           <div key={i} className="instrument-card space-y-3">
             <div className="flex items-center gap-3">
-              <div className="skeleton w-10 h-10 rounded-lg" />
+              <div className="skeleton w-10 h-10 rounded-xl" />
               <div className="space-y-1.5 flex-1">
                 <div className="skeleton h-4 w-28" />
                 <div className="skeleton h-3 w-20" />

@@ -139,7 +139,7 @@ function SnapshotSelect({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm text-ink"
+        className="w-full rounded-xl border border-border bg-transparent px-3 py-2 text-sm text-ink"
       >
         <option value="">Select snapshot...</option>
         {snapshots.map((s) => (
@@ -304,3 +304,4 @@ export function SnapshotComparison() {
     </div>
   );
 }
+

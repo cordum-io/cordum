@@ -29,7 +29,7 @@ export function RateLimiterModeBadge({ mode }: RateLimiterModeBadgeProps) {
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs",
+        "inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-xs",
         key === "redis"
           ? "border-success/30 bg-success/5 text-success"
           : "border-warning/30 bg-warning/5 text-warning",
@@ -41,3 +41,4 @@ export function RateLimiterModeBadge({ mode }: RateLimiterModeBadgeProps) {
     </div>
   );
 }
+

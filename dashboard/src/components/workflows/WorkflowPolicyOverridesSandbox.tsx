@@ -36,7 +36,7 @@ export function WorkflowPolicyOverridesSandbox({ sandbox, readOnly, onChange }: 
     (current.fs_read_write && current.fs_read_write.length > 0);
 
   return (
-    <div className="rounded-lg border border-border bg-surface-0 p-3">
+    <div className="rounded-xl border border-border bg-surface-0 p-3">
       <div className="flex items-center gap-2 mb-2">
         <Lock className="w-3.5 h-3.5 text-muted-foreground" />
         <span className="text-xs font-semibold text-foreground">Sandbox Constraints</span>
@@ -57,7 +57,7 @@ export function WorkflowPolicyOverridesSandbox({ sandbox, readOnly, onChange }: 
           ) : (
             <select
               id="sandbox-isolated"
-              className="h-7 rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground"
+              className="h-7 rounded-xl border border-border bg-surface-2 px-2 text-xs text-foreground"
               value={current.isolated === true ? "true" : current.isolated === false ? "false" : ""}
               onChange={(e) => {
                 const val = e.target.value;
@@ -87,7 +87,7 @@ export function WorkflowPolicyOverridesSandbox({ sandbox, readOnly, onChange }: 
               <input
                 id={`sandbox-${key}`}
                 type="text"
-                className="h-7 rounded-md border border-border bg-surface-2 px-2 text-xs font-mono text-foreground w-full"
+                className="h-7 rounded-xl border border-border bg-surface-2 px-2 text-xs font-mono text-foreground w-full"
                 value={(current[key] as string[] | undefined)?.join(", ") ?? ""}
                 placeholder="inherit"
                 onChange={(e) => {
@@ -102,3 +102,4 @@ export function WorkflowPolicyOverridesSandbox({ sandbox, readOnly, onChange }: 
     </div>
   );
 }
+

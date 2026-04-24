@@ -108,7 +108,7 @@ export function InputRuleEditorDrawer({
           </h2>
           <button
             type="button"
-            className="rounded-md p-2 text-muted-foreground hover:bg-surface-2"
+            className="rounded-xl p-2 text-muted-foreground hover:bg-surface-2"
             aria-label="Close editor"
             onClick={onClose}
           >
@@ -122,7 +122,7 @@ export function InputRuleEditorDrawer({
           <div className="flex justify-end">
             <button
               type="button"
-              className="inline-flex items-center justify-center rounded-md border border-border px-3 py-2 text-xs text-foreground hover:bg-surface-2"
+              className="inline-flex items-center justify-center rounded-xl border border-border px-3 py-2 text-xs text-foreground hover:bg-surface-2"
               onClick={onClose}
             >
               Close
@@ -133,3 +133,4 @@ export function InputRuleEditorDrawer({
     </div>
   );
 }
+

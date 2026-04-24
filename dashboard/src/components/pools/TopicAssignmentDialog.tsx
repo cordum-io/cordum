@@ -50,7 +50,7 @@ export function TopicAssignmentDialog({ open, onClose, onAddTopic, onRemoveTopic
           ) : (
             <div className="space-y-1 max-h-40 overflow-y-auto">
               {topics.map((topic) => (
-                <div key={topic} className="flex items-center justify-between rounded-lg bg-surface-0 px-3 py-1.5">
+                <div key={topic} className="flex items-center justify-between rounded-xl bg-surface-0 px-3 py-1.5">
                   <span className="text-xs font-mono text-foreground">{topic}</span>
                   <button
                     type="button"
@@ -89,3 +89,4 @@ export function TopicAssignmentDialog({ open, onClose, onAddTopic, onRemoveTopic
     />
   );
 }
+

@@ -21,7 +21,7 @@ export function WorkflowPolicyOverridesBudgets({ budgets, readOnly, onChange }: 
   const hasValues = Object.values(current).some((v) => v !== undefined && v !== null);
 
   return (
-    <div className="rounded-lg border border-border bg-surface-0 p-3">
+    <div className="rounded-xl border border-border bg-surface-0 p-3">
       <div className="flex items-center gap-2 mb-2">
         <DollarSign className="w-3.5 h-3.5 text-muted-foreground" />
         <span className="text-xs font-semibold text-foreground">Budget Constraints</span>
@@ -46,7 +46,7 @@ export function WorkflowPolicyOverridesBudgets({ budgets, readOnly, onChange }: 
                 id={`budget-${key}`}
                 type="number"
                 min={0}
-                className="h-7 rounded-md border border-border bg-surface-2 px-2 text-xs font-mono text-foreground w-full"
+                className="h-7 rounded-xl border border-border bg-surface-2 px-2 text-xs font-mono text-foreground w-full"
                 value={current[key] ?? ""}
                 placeholder="inherit"
                 onChange={(e) => {
@@ -62,3 +62,4 @@ export function WorkflowPolicyOverridesBudgets({ budgets, readOnly, onChange }: 
     </div>
   );
 }
+

@@ -182,7 +182,7 @@ function TimelineEntry({ entry, category }: { entry: PolicyAuditEntry; category:
 
         {/* Expanded details */}
         {expanded && entry.details && (
-          <pre className="mt-2 max-h-48 overflow-auto rounded-lg border border-border bg-surface2/30 p-2.5 text-xs text-muted-foreground">
+          <pre className="mt-2 max-h-48 overflow-auto rounded-xl border border-border bg-surface2/30 p-2.5 text-xs text-muted-foreground">
             {JSON.stringify(entry.details, null, 2)}
           </pre>
         )}
@@ -232,3 +232,4 @@ export function PolicyTimeline({ entries }: PolicyTimelineProps) {
     </div>
   );
 }
+

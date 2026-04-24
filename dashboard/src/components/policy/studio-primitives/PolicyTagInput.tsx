@@ -48,7 +48,7 @@ export function PolicyTagInput({
       error={error}
     >
       <input
-        className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-70"
+        className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-70"
         value={draftValue}
         disabled={disabled}
         onChange={(event) => {
@@ -65,3 +65,4 @@ export const __policyTagInputInternal = {
   parseCsv,
   toCsv,
 };
+

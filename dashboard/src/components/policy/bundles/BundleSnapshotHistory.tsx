@@ -45,7 +45,7 @@ export function BundleSnapshotHistory({ canRollback, onRollback }: BundleSnapsho
       <p className="text-xs font-mono uppercase tracking-wider text-muted-foreground">
         {snapshots.length} snapshot{snapshots.length !== 1 ? "s" : ""}
       </p>
-      <div className="divide-y divide-border rounded-lg border border-border">
+      <div className="divide-y divide-border rounded-xl border border-border">
         {snapshots.map((snapshot) => (
           <div key={snapshot.id} className="flex items-center gap-3 px-4 py-3">
             <Clock className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -75,3 +75,4 @@ export function BundleSnapshotHistory({ canRollback, onRollback }: BundleSnapsho
     </div>
   );
 }
+

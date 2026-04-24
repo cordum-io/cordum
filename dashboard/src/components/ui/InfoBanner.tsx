@@ -43,7 +43,7 @@ export function InfoBanner({
     <div
       id={id}
       className={cn(
-        "rounded-lg border p-4 text-xs relative overflow-hidden after:absolute after:left-0 after:top-0 after:bottom-0 after:w-1 shadow-sm",
+        "rounded-xl border p-4 text-xs relative overflow-hidden after:absolute after:left-0 after:top-0 after:bottom-0 after:w-1 shadow-sm",
         variantStyles[variant],
         className
       )}

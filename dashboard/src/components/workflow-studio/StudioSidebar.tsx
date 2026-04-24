@@ -35,7 +35,7 @@ function PaletteItem({ type, label, iconColor }: { type: string; label: string; 
       onDragStart={(e) => handleDragStart(e, type)}
       className="flex cursor-grab items-center gap-2.5 rounded-xl border border-transparent bg-card/60 px-3 py-2 text-xs font-medium text-ink transition-all duration-150 hover:border-accent/20 hover:shadow-sm hover:-translate-y-px active:cursor-grabbing active:scale-[0.98] active:opacity-80"
     >
-      <div className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-black/[0.04] dark:border-white/[0.06]", meta.accent)}
+      <div className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-xl border border-black/[0.04] dark:border-white/[0.06]", meta.accent)}
         style={{ boxShadow: "inset 0 1px 2px rgba(0,0,0,0.05)" }}
       >
         <Icon className={cn("h-3.5 w-3.5", iconColor)} />
@@ -162,7 +162,7 @@ export function StudioSidebar({
           return FirstIcon ? (
             <div
               key={g.category}
-              className="p-1.5 rounded-lg hover:bg-surface-2 transition-colors"
+              className="p-1.5 rounded-xl hover:bg-surface-2 transition-colors"
               title={g.label}
             >
               <FirstIcon className="w-4 h-4 text-muted-foreground" />
@@ -321,3 +321,4 @@ export function StudioSidebar({
     </aside>
   );
 }
+

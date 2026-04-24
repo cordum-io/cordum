@@ -98,7 +98,7 @@ function MultiSelect({
           {options.map((opt) => (
             <label
               key={opt.value}
-              className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-ink hover:bg-surface2/60"
+              className="flex cursor-pointer items-center gap-2 rounded-xl px-2.5 py-1.5 text-xs text-ink hover:bg-surface2/60"
             >
               <input
                 type="checkbox"
@@ -341,7 +341,7 @@ export function JobFiltersBar({
             type="button"
             onClick={() => handleTimeRange(tr.value)}
             className={cn(
-              "rounded-lg px-2.5 py-1 text-xs font-medium transition",
+              "rounded-xl px-2.5 py-1 text-xs font-medium transition",
               timeRangeFilter === tr.value
                 ? "bg-accent text-primary-foreground"
                 : "text-muted-foreground hover:text-ink hover:bg-surface2/60",
@@ -354,7 +354,7 @@ export function JobFiltersBar({
           type="button"
           onClick={() => handleTimeRange("custom")}
           className={cn(
-            "rounded-lg px-2.5 py-1 text-xs font-medium transition",
+            "rounded-xl px-2.5 py-1 text-xs font-medium transition",
             timeRangeFilter === "custom"
               ? "bg-accent text-primary-foreground"
               : "text-muted-foreground hover:text-ink hover:bg-surface2/60",
@@ -395,3 +395,4 @@ export function JobFiltersBar({
     </div>
   );
 }
+

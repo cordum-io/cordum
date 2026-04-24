@@ -12,7 +12,7 @@ export function OutputPolicyControls({
   onChange,
 }: OutputPolicyControlsProps) {
   return (
-    <section className="rounded-lg border border-border bg-surface-0 p-4 space-y-3">
+    <section className="rounded-xl border border-border bg-surface-0 p-4 space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="font-display text-sm font-semibold text-foreground">output_policy</h3>
         <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
@@ -34,7 +34,7 @@ export function OutputPolicyControls({
       <label className="text-xs text-muted-foreground block">
         fail_mode
         <select
-          className="ml-2 h-8 rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-70"
+          className="ml-2 h-8 rounded-xl border border-border bg-surface-2 px-2 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-70"
           value={outputPolicy.failMode}
           disabled={readOnly}
           onChange={(event) =>
@@ -60,3 +60,4 @@ export function OutputPolicyControls({
     </section>
   );
 }
+

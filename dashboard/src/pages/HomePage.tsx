@@ -464,7 +464,7 @@ export default function HomePage() {
                 type="button"
                 onClick={() => setLiveMode((v) => !v)}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-mono font-medium transition-all",
+                  "flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-mono font-medium transition-all",
                   liveMode
                     ? "bg-[var(--color-success)]/15 text-[var(--color-success)] ring-1 ring-[var(--color-success)]/30"
                     : "bg-surface-2 text-muted-foreground hover:text-foreground",
@@ -917,3 +917,4 @@ export default function HomePage() {
     </div>
   );
 }
+

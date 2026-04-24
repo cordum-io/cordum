@@ -116,7 +116,7 @@ export function ImpactPreview({
           </h4>
           <span className="group relative">
             <Info className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg bg-ink px-2.5 py-1.5 text-xs text-primary-foreground opacity-0 shadow-lg transition group-hover:opacity-100">
+            <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-xl bg-ink px-2.5 py-1.5 text-xs text-primary-foreground opacity-0 shadow-lg transition group-hover:opacity-100">
               Shows how this rule would affect recent jobs
             </span>
           </span>
@@ -202,7 +202,7 @@ function AffectedJobsList({ jobs }: { jobs: Job[] }) {
           {shown.map((j) => (
             <div
               key={j.id}
-              className="flex items-center justify-between rounded-lg border border-border px-2.5 py-1.5 text-xs"
+              className="flex items-center justify-between rounded-xl border border-border px-2.5 py-1.5 text-xs"
             >
               <span className="font-mono text-muted-foreground">
                 {j.id.slice(0, 12)}...
@@ -217,3 +217,4 @@ function AffectedJobsList({ jobs }: { jobs: Job[] }) {
     </div>
   );
 }
+

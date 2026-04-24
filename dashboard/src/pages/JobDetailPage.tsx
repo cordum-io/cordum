@@ -660,7 +660,7 @@ function SafetyTimeline({ job }: { job: Job }) {
               {step.findings && step.findings.length > 0 && (
                 <div className="mt-2 space-y-1.5">
                   {step.findings.map((f) => (
-                    <div key={`${f.type}-${f.scanner ?? ""}-${f.detail.slice(0, 40)}`} className="surface-inset p-2.5 rounded-lg">
+                    <div key={`${f.type}-${f.scanner ?? ""}-${f.detail.slice(0, 40)}`} className="surface-inset p-2.5 rounded-xl">
                       <div className="flex items-center gap-2 mb-0.5">
                         <StatusBadge variant={f.severity === "critical" ? "danger" : f.severity === "high" ? "warning" : "muted"}>{f.severity}</StatusBadge>
                         <span className="text-xs font-mono text-foreground">{f.type}</span>
@@ -1124,3 +1124,4 @@ export default function JobDetailPage() {
     </div>
   );
 }
+

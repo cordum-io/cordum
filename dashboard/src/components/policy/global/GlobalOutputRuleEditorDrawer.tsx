@@ -84,7 +84,7 @@ export function GlobalOutputRuleEditorDrawer({
           <h2 className="font-display text-lg font-semibold text-foreground">
             {rule ? "Edit Output Rule" : "New Output Rule"}
           </h2>
-          <button type="button" className="rounded-md p-2 text-muted-foreground hover:bg-surface-2" onClick={onClose} aria-label="Close output rule editor">
+          <button type="button" className="rounded-xl p-2 text-muted-foreground hover:bg-surface-2" onClick={onClose} aria-label="Close output rule editor">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -92,7 +92,7 @@ export function GlobalOutputRuleEditorDrawer({
         <div className="space-y-4 pb-20">
           <label className="block text-xs text-muted-foreground">
             Rule ID
-            <input className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground" value={draft.id} onChange={(event) => setDraft((previous) => ({ ...previous, id: event.target.value }))} />
+            <input className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground" value={draft.id} onChange={(event) => setDraft((previous) => ({ ...previous, id: event.target.value }))} />
           </label>
           <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
             <input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft((previous) => ({ ...previous, enabled: event.target.checked }))} />
@@ -100,23 +100,23 @@ export function GlobalOutputRuleEditorDrawer({
           </label>
           <label className="block text-xs text-muted-foreground">
             severity
-            <select className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground" value={draft.severity} onChange={(event) => setDraft((previous) => ({ ...previous, severity: event.target.value as GlobalPolicyOutputRule["severity"] }))}>
+            <select className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground" value={draft.severity} onChange={(event) => setDraft((previous) => ({ ...previous, severity: event.target.value as GlobalPolicyOutputRule["severity"] }))}>
               {GLOBAL_OUTPUT_SEVERITIES.map((value) => <option key={value} value={value}>{value}</option>)}
             </select>
           </label>
           <label className="block text-xs text-muted-foreground">
             decision
-            <select className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground" value={draft.decision} onChange={(event) => setDraft((previous) => ({ ...previous, decision: event.target.value as GlobalPolicyOutputRule["decision"] }))}>
+            <select className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground" value={draft.decision} onChange={(event) => setDraft((previous) => ({ ...previous, decision: event.target.value as GlobalPolicyOutputRule["decision"] }))}>
               {GLOBAL_OUTPUT_DECISIONS.map((value) => <option key={value} value={value}>{value}</option>)}
             </select>
           </label>
           <label className="block text-xs text-muted-foreground">
             description
-            <textarea rows={2} className="mt-1 w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-foreground" value={draft.description} onChange={(event) => setDraft((previous) => ({ ...previous, description: event.target.value }))} />
+            <textarea rows={2} className="mt-1 w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs text-foreground" value={draft.description} onChange={(event) => setDraft((previous) => ({ ...previous, description: event.target.value }))} />
           </label>
           <label className="block text-xs text-muted-foreground">
             reason
-            <textarea rows={2} className="mt-1 w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-foreground" value={draft.reason} onChange={(event) => setDraft((previous) => ({ ...previous, reason: event.target.value }))} />
+            <textarea rows={2} className="mt-1 w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs text-foreground" value={draft.reason} onChange={(event) => setDraft((previous) => ({ ...previous, reason: event.target.value }))} />
           </label>
           {([
             { label: "detectors", value: draft.match.detectors, key: "detectors" },
@@ -127,7 +127,7 @@ export function GlobalOutputRuleEditorDrawer({
             <label key={field.key} className="block text-xs text-muted-foreground">
               {field.label} (comma separated)
               <input
-                className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground"
+                className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground"
                 value={listToCsv(field.value)}
                 onChange={(event) =>
                   setDraft((previous) => ({
@@ -145,7 +145,7 @@ export function GlobalOutputRuleEditorDrawer({
             <label className="block text-xs text-muted-foreground">
               output_size_gt
               <input
-                className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground"
+                className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground"
                 value={numberToInput(draft.match.outputSizeGt)}
                 onChange={(event) =>
                   setDraft((previous) => ({
@@ -161,7 +161,7 @@ export function GlobalOutputRuleEditorDrawer({
             <label className="block text-xs text-muted-foreground">
               max_output_bytes
               <input
-                className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground"
+                className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground"
                 value={numberToInput(draft.match.maxOutputBytes)}
                 onChange={(event) =>
                   setDraft((previous) => ({
@@ -200,3 +200,4 @@ export function GlobalOutputRuleEditorDrawer({
     </div>
   );
 }
+

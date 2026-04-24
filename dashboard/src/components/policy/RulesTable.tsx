@@ -104,7 +104,7 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
             type="button"
             onClick={() => setFilter(f)}
             className={cn(
-              "rounded-lg px-3 py-1 text-xs font-medium capitalize transition",
+              "rounded-xl px-3 py-1 text-xs font-medium capitalize transition",
               filter === f
                 ? "bg-accent text-primary-foreground"
                 : "text-muted-foreground hover:text-ink hover:bg-surface2/60",
@@ -185,3 +185,4 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
     </div>
   );
 }
+

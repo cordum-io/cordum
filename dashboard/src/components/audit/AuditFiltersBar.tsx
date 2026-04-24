@@ -602,14 +602,14 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
               type="datetime-local"
               value={from}
               onChange={(e) => setParam("from", e.target.value)}
-              className="rounded-lg border border-border bg-card/70 px-2 py-1 text-xs text-ink"
+              className="rounded-xl border border-border bg-card/70 px-2 py-1 text-xs text-ink"
             />
             <label className="text-xs text-muted-foreground">To:</label>
             <input
               type="datetime-local"
               value={to}
               onChange={(e) => setParam("to", e.target.value)}
-              className="rounded-lg border border-border bg-card/70 px-2 py-1 text-xs text-ink"
+              className="rounded-xl border border-border bg-card/70 px-2 py-1 text-xs text-ink"
             />
             <span className="text-xs text-muted-foreground">({tz})</span>
           </div>
@@ -643,3 +643,4 @@ export function AuditFiltersBar({ onChange }: AuditFiltersBarProps) {
     </div>
   );
 }
+

@@ -191,7 +191,7 @@ export function LockInspector() {
           <button
             type="button"
             onClick={() => queryClient.invalidateQueries({ queryKey: ["admin-locks"] })}
-            className="rounded-lg px-3 py-1.5 text-xs font-medium text-accent hover:bg-surface2 transition-colors"
+            className="rounded-xl px-3 py-1.5 text-xs font-medium text-accent hover:bg-surface2 transition-colors"
           >
             Retry
           </button>
@@ -229,7 +229,7 @@ export function LockInspector() {
         <button
           type="button"
           onClick={() => queryClient.invalidateQueries({ queryKey: ["admin-locks"] })}
-          className="rounded-lg p-1.5 text-muted-foreground hover:text-ink hover:bg-surface2 transition-colors"
+          className="rounded-xl p-1.5 text-muted-foreground hover:text-ink hover:bg-surface2 transition-colors"
           title="Refresh now"
         >
           <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
@@ -242,7 +242,7 @@ export function LockInspector() {
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-border">
+      <div className="overflow-x-auto rounded-xl border border-border">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-surface2/30 text-left text-muted-foreground">
@@ -266,3 +266,4 @@ export function LockInspector() {
     </Card>
   );
 }
+

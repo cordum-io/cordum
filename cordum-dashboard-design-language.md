@@ -16,9 +16,9 @@ Cordum is not a consumer app. It is a **mission-critical control surface** — t
 
 ---
 
-## 1. Design Philosophy — "Control Surface"
+## 1. Design Philosophy — "Soft Control Surface"
 
-The design philosophy is named **Control Surface**, a deliberate reference to both the aviation term (the movable parts that control an aircraft's trajectory) and the idea that this dashboard is the surface through which humans control autonomous agents.
+The design philosophy is named **Soft Control Surface**, an evolution of our original utilitarian approach. It marries the clarity of mission control interfaces with modern "Soft UI" aesthetics.
 
 ### 1.1 Core Principles
 
@@ -27,10 +27,10 @@ Six principles govern every design decision. They are not aspirational — they 
 | Principle | Description | Implication |
 | :--- | :--- | :--- |
 | **Status-First Design** | The most important thing is always what is happening *now*. The UI recedes when healthy and demands attention when not. | Default states are quiet (muted surfaces, low-contrast text). Alerts, errors, and pending states break the visual pattern with semantic color. |
-| **Layered Depth** | Surfaces stack at precise z-levels with subtle luminance shifts. Cards lift on interaction to reveal spatial hierarchy. | No flat layouts. Every container exists on a defined surface level (Surface 0 through Surface 3). Hover and focus states increase elevation. |
-| **Instrument-Grade Clarity** | Information hierarchy is immediately scannable. Every element serves a purpose — no decoration without function. | No ornamental gradients, no decorative illustrations inside the dashboard. If an element exists, it communicates data or affords an action. |
+| **Soft Layered Depth** | Surfaces stack at precise z-levels with subtle luminance shifts and soft, diffuse shadows (`--shadow-soft`). Cards lift on interaction (`-translate-y-px`) to reveal spatial hierarchy. | No flat layouts. Every container exists on a defined surface level. Hover and focus states increase elevation via soft shadows and smooth lifts. |
+| **Instrument-Grade Clarity** | Information hierarchy is immediately scannable. Every element serves a purpose — no decoration without function. | Forms have ample negative space. If an element exists, it communicates data or affords an action. Rounded corners (`rounded-xl` or `2xl`) make dense data feel approachable. |
 | **Quiet Confidence** | Restrained color usage gives semantic meaning. When teal appears, it carries real significance. | The Cordum teal is never used for decoration. It means: healthy, approved, primary action, or active. Every other state uses neutral or semantic status colors. |
-| **Crisp Interactions** | 150ms `ease-out` transitions. Focus states use double-ring patterns. Hover reveals depth, not decoration. | No bouncy animations, no spring physics, no parallax. Motion is functional — it confirms an action or reveals a state change. |
+| **Smooth Interactions** | 250ms `ease-out` transitions. Focus states use double-ring patterns. Hover reveals depth via soft shadow and subtle lift. | No bouncy animations, no spring physics. Motion is smooth and functional — it confirms an action or reveals a state change gracefully. |
 | **Three Typographic Voices** | Plus Jakarta Sans for authority, Inter for clarity, JetBrains Mono for precision. Each serves a distinct role. | Never use a display font for body text. Never use a body font for data values. The typographic voice immediately tells the user what kind of information they are reading. |
 
 ### 1.2 The Governing Metaphor

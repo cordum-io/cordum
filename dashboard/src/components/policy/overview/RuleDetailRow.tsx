@@ -157,7 +157,7 @@ export function RuleDetailRow({ rule, index, className }: RuleDetailRowProps) {
         className="w-full text-left px-4 py-3 flex items-start gap-3"
       >
         {/* Order badge */}
-        <span className="shrink-0 mt-0.5 font-mono text-xs text-muted-foreground bg-surface-2 rounded-lg px-2 py-1 min-w-[28px] text-center">
+        <span className="shrink-0 mt-0.5 font-mono text-xs text-muted-foreground bg-surface-2 rounded-xl px-2 py-1 min-w-[28px] text-center">
           #{index + 1}
         </span>
 
@@ -295,7 +295,7 @@ export function RuleDetailRow({ rule, index, className }: RuleDetailRowProps) {
                   <span className="text-muted-foreground font-mono">{key}:</span>
                   <div className="flex flex-wrap gap-1 mt-1">
                     {values.map((v) => (
-                      <span key={v} className="bg-surface-2 border border-border/40 rounded-md px-1.5 py-0.5 font-mono text-foreground">
+                      <span key={v} className="bg-surface-2 border border-border/40 rounded-xl px-1.5 py-0.5 font-mono text-foreground">
                         {v}
                       </span>
                     ))}
@@ -402,7 +402,7 @@ export function RuleDetailRow({ rule, index, className }: RuleDetailRowProps) {
                   <button
                     type="button"
                     onClick={handleCopy}
-                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-surface-3/80 hover:bg-surface-3 border border-border/40 text-xs font-mono text-muted-foreground hover:text-foreground transition-all"
+                    className="flex items-center gap-1 px-2 py-1 rounded-xl bg-surface-3/80 hover:bg-surface-3 border border-border/40 text-xs font-mono text-muted-foreground hover:text-foreground transition-all"
                   >
                     {copied ? (
                       <>
@@ -428,3 +428,4 @@ export function RuleDetailRow({ rule, index, className }: RuleDetailRowProps) {
     </div>
   );
 }
+

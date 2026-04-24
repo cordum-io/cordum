@@ -91,7 +91,7 @@ export default function AgentIdentityDetailPage() {
       >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center", tier.bg)}>
+            <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center", tier.bg)}>
               <Fingerprint className={cn("w-6 h-6", tier.color)} />
             </div>
             <div>
@@ -107,7 +107,7 @@ export default function AgentIdentityDetailPage() {
               </div>
             </div>
           </div>
-          <div className={cn("px-4 py-2 rounded-lg border font-mono text-sm font-bold uppercase tracking-wider", tier.color, tier.bg, tier.border)}>
+          <div className={cn("px-4 py-2 rounded-xl border font-mono text-sm font-bold uppercase tracking-wider", tier.color, tier.bg, tier.border)}>
             <Shield className="w-4 h-4 inline mr-1.5" />
             {agent.risk_tier} risk
           </div>
@@ -279,3 +279,4 @@ export default function AgentIdentityDetailPage() {
     </div>
   );
 }
+

@@ -88,7 +88,7 @@ export function ConfirmDialog({
             >
               {/* Header */}
               <div className="flex items-start gap-3 px-5 pt-5 pb-3">
-                <div className={`shrink-0 w-10 h-10 rounded-lg flex items-center justify-center ${
+                <div className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${
                   variant === "destructive" ? "bg-destructive/15" : "bg-[var(--color-warning)]/15"
                 }`}>
                   <Icon className={`w-5 h-5 ${
@@ -102,7 +102,7 @@ export function ConfirmDialog({
                 <button type="button"
                   onClick={handleClose}
                   aria-label="Close dialog"
-                  className="shrink-0 p-1 rounded-md hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors"
+                  className="shrink-0 p-1 rounded-xl hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -160,3 +160,4 @@ export function ConfirmDialog({
     </AnimatePresence>
   );
 }
+

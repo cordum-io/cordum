@@ -264,7 +264,7 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
           {(beforeStr || afterStr) && (
             <Section title="Before / After">
               {diffLines ? (
-                <pre className="max-h-96 overflow-auto rounded-lg border border-border p-3 text-xs font-mono">
+                <pre className="max-h-96 overflow-auto rounded-xl border border-border p-3 text-xs font-mono">
                   {diffLines.map((line, i) => (
                     <div key={i} className={cn("px-1", diffLineClass[line.type])}>
                       {diffPrefix[line.type]}{line.text}
@@ -274,14 +274,14 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
               ) : beforeStr ? (
                 <div>
                   <p className="mb-1 text-xs text-muted-foreground">State Before</p>
-                  <pre className="max-h-64 overflow-auto rounded-lg border border-border bg-surface2/50 p-3 text-xs font-mono text-ink">
+                  <pre className="max-h-64 overflow-auto rounded-xl border border-border bg-surface2/50 p-3 text-xs font-mono text-ink">
                     {beforeStr}
                   </pre>
                 </div>
               ) : afterStr ? (
                 <div>
                   <p className="mb-1 text-xs text-muted-foreground">State After</p>
-                  <pre className="max-h-64 overflow-auto rounded-lg border border-border bg-surface2/50 p-3 text-xs font-mono text-ink">
+                  <pre className="max-h-64 overflow-auto rounded-xl border border-border bg-surface2/50 p-3 text-xs font-mono text-ink">
                     {afterStr}
                   </pre>
                 </div>
@@ -345,3 +345,4 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
     </>
   );
 }
+

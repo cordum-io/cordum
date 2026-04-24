@@ -14,7 +14,7 @@ export function OutputPolicyStatusBanner({
   const quarantineRules = outputRules.filter((rule) => rule.decision === "quarantine").length;
 
   return (
-    <div className="rounded-lg border border-cordum/20 bg-cordum/10 p-3 text-xs text-cordum-foreground">
+    <div className="rounded-xl border border-cordum/20 bg-cordum/10 p-3 text-xs text-cordum-foreground">
       <div className="flex flex-wrap items-center gap-2 mb-2">
         <StatusBadge variant={outputPolicy.enabled ? "healthy" : "muted"}>
           policy {outputPolicy.enabled ? "enabled" : "disabled"}
@@ -32,3 +32,4 @@ export function OutputPolicyStatusBanner({
     </div>
   );
 }
+

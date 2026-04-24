@@ -373,7 +373,7 @@ export default function SettingsUsersPage() {
                         value={user.role}
                         onChange={(e) => updateRoleMutation.mutate({ id: user.id, role: e.target.value })}
                         disabled={updateRoleMutation.isPending}
-                        className="h-7 max-w-[180px] rounded-lg bg-surface-0 px-2 py-0 text-xs font-medium"
+                        className="h-7 max-w-[180px] rounded-xl bg-surface-0 px-2 py-0 text-xs font-medium"
                       >
                         {BASIC_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                         {roles.filter(r => !r.built_in).map(r => (
@@ -639,7 +639,7 @@ export default function SettingsUsersPage() {
                     type="button"
                     onClick={() => setRoleInherits(prev => prev.includes(r.name) ? prev.filter(n => n !== r.name) : [...prev, r.name])}
                     className={cn(
-                      "px-2.5 py-1 text-xs rounded-lg border transition-colors capitalize",
+                      "px-2.5 py-1 text-xs rounded-xl border transition-colors capitalize",
                       roleInherits.includes(r.name)
                         ? "border-cordum bg-cordum/10 text-cordum"
                         : "border-border bg-surface-2 text-muted-foreground hover:text-foreground",
@@ -729,3 +729,4 @@ export default function SettingsUsersPage() {
     </motion.div>
   );
 }
+

@@ -165,7 +165,7 @@ export function ToolCallConfig({ node, onSave, onClose, onDelete }: ToolCallConf
     <aside className="flex w-96 shrink-0 flex-col border-l border-border bg-surface1 overflow-y-auto">
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <h3 className="text-sm font-semibold text-ink">Tool Call Config</h3>
-        <button type="button" onClick={onClose} className="rounded-lg p-1 text-muted-foreground hover:bg-surface2 hover:text-ink transition-colors">
+        <button type="button" onClick={onClose} className="rounded-xl p-1 text-muted-foreground hover:bg-surface2 hover:text-ink transition-colors">
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -242,3 +242,4 @@ export function ToolCallConfig({ node, onSave, onClose, onDelete }: ToolCallConf
     </aside>
   );
 }
+

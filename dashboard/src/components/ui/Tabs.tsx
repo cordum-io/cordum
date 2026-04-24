@@ -49,7 +49,7 @@ export function Tabs({
           disabled={tab.disabled}
           onClick={() => !tab.disabled && onChange(tab.id)}
           className={cn(
-            "relative inline-flex min-h-9 items-center justify-center rounded-xl px-3 py-2 font-medium transition-colors",
+            "relative inline-flex min-h-8 items-center justify-center rounded-xl px-2 py-1 text-sm font-medium transition-colors",
             tab.disabled && "cursor-not-allowed opacity-50",
             variant === "segmented"
               ? activeTab === tab.id

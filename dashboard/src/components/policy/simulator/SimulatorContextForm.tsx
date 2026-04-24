@@ -104,7 +104,7 @@ export function SimulatorContextForm({
         <label className="block text-xs text-muted-foreground">
           Topic <span className="text-destructive">*</span>
           <input
-            className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground"
+            className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground"
             placeholder="job.customer.deploy"
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
@@ -114,7 +114,7 @@ export function SimulatorContextForm({
         <label className="block text-xs text-muted-foreground">
           Tenant ID
           <input
-            className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground"
+            className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground"
             placeholder="acme-corp"
             value={tenant}
             onChange={(e) => setTenant(e.target.value)}
@@ -124,7 +124,7 @@ export function SimulatorContextForm({
         <label className="block text-xs text-muted-foreground">
           Workflow ID
           <input
-            className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground"
+            className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground"
             placeholder="wf-deploy-prod (optional)"
             value={workflowId}
             onChange={(e) => setWorkflowId(e.target.value)}
@@ -134,7 +134,7 @@ export function SimulatorContextForm({
         <label className="block text-xs text-muted-foreground">
           Capabilities
           <input
-            className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground"
+            className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground"
             placeholder="code.generate, code.review (comma-separated)"
             value={capabilitiesRaw}
             onChange={(e) => setCapabilitiesRaw(e.target.value)}
@@ -144,7 +144,7 @@ export function SimulatorContextForm({
         <label className="block text-xs text-muted-foreground">
           Risk tags
           <input
-            className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground"
+            className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground"
             placeholder="high, pii, admin (comma-separated)"
             value={riskTagsRaw}
             onChange={(e) => setRiskTagsRaw(e.target.value)}
@@ -154,7 +154,7 @@ export function SimulatorContextForm({
         <label className="block text-xs text-muted-foreground">
           Labels
           <input
-            className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground"
+            className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground"
             placeholder="env=prod, team=platform (key=value, comma-separated)"
             value={labelsRaw}
             onChange={(e) => setLabelsRaw(e.target.value)}
@@ -174,3 +174,4 @@ export function SimulatorContextForm({
     </form>
   );
 }
+

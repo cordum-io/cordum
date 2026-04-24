@@ -39,7 +39,7 @@ export function BundleYamlEditor({ yaml, editable, onChange }: BundleYamlEditorP
         <textarea
           ref={textareaRef}
           aria-label="Bundle YAML editor"
-          className="h-[520px] w-full resize-none rounded-lg bg-surface-0 p-4 font-mono text-xs text-foreground outline-none focus:ring-2 focus:ring-cordum/30"
+          className="h-[520px] w-full resize-none rounded-xl bg-surface-0 p-4 font-mono text-xs text-foreground outline-none focus:ring-2 focus:ring-cordum/30"
           value={yaml}
           readOnly={!editable}
           onChange={(event) => onChange(event.target.value)}
@@ -48,3 +48,4 @@ export function BundleYamlEditor({ yaml, editable, onChange }: BundleYamlEditorP
     </div>
   );
 }
+
