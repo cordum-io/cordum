@@ -345,12 +345,12 @@ export function AppShell({ children }: AppShellProps) {
       {/* Desktop Sidebar */}
       <aside
         className={cn(
-          "hidden md:flex fixed top-0 left-0 h-screen z-50 flex-col border-r border-border bg-surface-0 transition-all duration-300",
+          "hidden md:flex fixed top-0 left-0 h-screen z-50 flex-col glass-sidebar transition-all duration-300",
           collapsed ? "w-16" : "w-56",
         )}
       >
         {/* Logo */}
-        <div className="flex items-center gap-3 px-4 h-14 border-b border-border shrink-0">
+        <div className="flex items-center gap-3 px-4 h-14 border-b border-border/50 shrink-0">
           <div className="w-8 h-8 rounded-xl bg-cordum flex items-center justify-center shrink-0">
             <svg viewBox="0 0 24 24" className="w-5 h-5 text-surface-0" fill="currentColor">
               <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
@@ -517,7 +517,7 @@ export function AppShell({ children }: AppShellProps) {
         )}
       >
         {/* Top bar */}
-        <header className="sticky top-0 z-40 flex items-center justify-between h-12 px-6 border-b border-border bg-background/80 backdrop-blur-xl shrink-0">
+        <header className="sticky top-0 z-40 flex items-center justify-between h-12 px-6 glass-header shrink-0">
           <div className="flex items-center gap-4">
             <button type="button"
               onClick={() => {

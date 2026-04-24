@@ -16,9 +16,9 @@ Cordum is not a consumer app. It is a **mission-critical control surface** — t
 
 ---
 
-## 1. Design Philosophy — "Soft Control Surface"
+## 1. Design Philosophy — "Premium Soft Control Surface"
 
-The design philosophy is named **Soft Control Surface**, an evolution of our original utilitarian approach. It marries the clarity of mission control interfaces with modern "Soft UI" aesthetics.
+The design philosophy is named **Premium Soft Control Surface**, the pinnacle of our dashboard evolution. It moves beyond utilitarian instruments into a multi-dimensional, high-fidelity experience that communicates authority and precision through depth and motion.
 
 ### 1.1 Core Principles
 
@@ -26,12 +26,12 @@ Six principles govern every design decision. They are not aspirational — they 
 
 | Principle | Description | Implication |
 | :--- | :--- | :--- |
-| **Status-First Design** | The most important thing is always what is happening *now*. The UI recedes when healthy and demands attention when not. | Default states are quiet (muted surfaces, low-contrast text). Alerts, errors, and pending states break the visual pattern with semantic color. |
-| **Soft Layered Depth** | Surfaces stack at precise z-levels with subtle luminance shifts and soft, diffuse shadows (`--shadow-soft`). Cards lift on interaction (`-translate-y-px`) to reveal spatial hierarchy. | No flat layouts. Every container exists on a defined surface level. Hover and focus states increase elevation via soft shadows and smooth lifts. |
-| **Instrument-Grade Clarity** | Information hierarchy is immediately scannable. Every element serves a purpose — no decoration without function. | Forms have ample negative space. If an element exists, it communicates data or affords an action. Rounded corners (`rounded-xl` or `2xl`) make dense data feel approachable. |
-| **Quiet Confidence** | Restrained color usage gives semantic meaning. When teal appears, it carries real significance. | The Cordum teal is never used for decoration. It means: healthy, approved, primary action, or active. Every other state uses neutral or semantic status colors. |
-| **Smooth Interactions** | 250ms `ease-out` transitions. Focus states use double-ring patterns. Hover reveals depth via soft shadow and subtle lift. | No bouncy animations, no spring physics. Motion is smooth and functional — it confirms an action or reveals a state change gracefully. |
-| **Three Typographic Voices** | Plus Jakarta Sans for authority, Inter for clarity, JetBrains Mono for precision. Each serves a distinct role. | Never use a display font for body text. Never use a body font for data values. The typographic voice immediately tells the user what kind of information they are reading. |
+| **Status-First Design** | The most important thing is always what is happening *now*. The UI recedes when healthy and demands attention when not. | Default states are quiet. Alerts and pending states use semantic gradients and pulsing indicators to break the visual field. |
+| **Glassmorphic Layering** | Persistent shells (Sidebar, Header) use translucent `glass-sidebar` and `glass-header` primitives. This creates a multi-dimensional feel that separates control from content. | The "Mission Control" shell stays anchored while content flows underneath with a `12px` backdrop blur. |
+| **Bento-Grid Logic** | Layouts are organized into non-uniform CSS Grids where card size communicates data priority. | Information is not just listed; it is prioritized by area. High-velocity data (Safety Feed) gets more vertical "runway." |
+| **Quiet Confidence** | Restrained color usage gives semantic meaning. When teal appears, it carries real significance. | We use OKLCH-based gradients for data visualizations to make complex patterns immediately scannable without adding visual noise. |
+| **Fluid Micro-Interactions** | 250ms `ease-out` transitions. Page entries are staggered. Feeds use `layout` animations for smooth reordering. | The UI feels "alive." Changes in state are seen as transitions, not sudden jumps, reducing cognitive load for operators. |
+| **Three Typographic Voices** | Plus Jakarta Sans for authority, Inter for clarity, JetBrains Mono for precision. Each serves a distinct role. | Font weights and tracking are refined at small sizes (e.g., `text-[10px] tracking-widest`) to maintain premium legibility. |
 
 ### 1.2 The Governing Metaphor
 
