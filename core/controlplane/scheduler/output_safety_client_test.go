@@ -13,6 +13,8 @@ import (
 	"github.com/cordum/cordum/core/infra/redisutil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -469,12 +471,19 @@ func TestIsDeadlineExceeded(t *testing.T) {
 	if !isDeadlineExceeded(wrapped) {
 		t.Fatalf("wrapped context.DeadlineExceeded must match")
 	}
-	grpcStyle := fmt.Errorf("rpc error: code = DeadlineExceeded desc = context deadline exceeded")
-	if !isDeadlineExceeded(grpcStyle) {
-		t.Fatalf("gRPC DeadlineExceeded string must match")
+	grpcStatus := status.Error(codes.DeadlineExceeded, "context deadline exceeded")
+	if !isDeadlineExceeded(grpcStatus) {
+		t.Fatalf("gRPC DeadlineExceeded status must match")
+	}
+	wrappedGRPC := fmt.Errorf("wrap: %w", grpcStatus)
+	if !isDeadlineExceeded(wrappedGRPC) {
+		t.Fatalf("wrapped gRPC DeadlineExceeded status must match (status.Code unwraps)")
+	}
+	if isDeadlineExceeded(status.Error(codes.Unavailable, "kernel down")) {
+		t.Fatalf("gRPC Unavailable must not match")
 	}
 	if isDeadlineExceeded(fmt.Errorf("unavailable")) {
-		t.Fatalf("non-deadline error should not match")
+		t.Fatalf("plain non-deadline error must not match")
 	}
 }
 

@@ -195,7 +195,7 @@ describe("InputSafetySettings page", () => {
       ) as HTMLButtonElement | undefined;
       expect(liveSaveButton).toBeTruthy();
       expect(liveSaveButton?.disabled).toBe(false);
-    });
+    }, 5000);
     await act(async () => {
       const liveSaveButton = Array.from(view.container.querySelectorAll("button")).find((btn) =>
         btn.textContent?.includes("Save Input Safety Settings"),

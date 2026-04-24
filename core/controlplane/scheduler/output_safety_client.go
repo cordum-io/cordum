@@ -17,6 +17,8 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -153,7 +155,9 @@ func (c *OutputSafetyClient) CheckOutputMeta(res *pb.JobResult, req *pb.JobReque
 
 // isDeadlineExceeded reports whether err is (or wraps) a context deadline
 // or a gRPC DeadlineExceeded status. Both surface the same "took too
-// long" signal; retry policy treats them identically.
+// long" signal; retry policy treats them identically. Uses status.Code
+// for the gRPC side so unwrapping is handled by the library (robust to
+// wrapped errors and to message-format changes across grpc-go versions).
 func isDeadlineExceeded(err error) bool {
 	if err == nil {
 		return false
@@ -161,8 +165,7 @@ func isDeadlineExceeded(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-	return strings.Contains(err.Error(), "DeadlineExceeded") ||
-		strings.Contains(err.Error(), "context deadline exceeded")
+	return status.Code(err) == codes.DeadlineExceeded
 }
 
 // CheckOutputContent executes a deeper output content check.
