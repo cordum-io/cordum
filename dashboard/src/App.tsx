@@ -65,6 +65,7 @@ const GovernPolicyOverviewPage = lazy(() => import("./pages/govern/PolicyOvervie
 const GovernTenantDetailPage = lazy(() => import("./pages/govern/TenantDetailPage"));
 const GovernBundleDetailPage = lazy(() => import("./pages/govern/BundleDetailPage"));
 const GovernQuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"));
+const GovernanceVerificationPage = lazy(() => import("./pages/govern/GovernanceVerificationPage"));
 const EvalsPage = lazy(() => import("./pages/EvalsPage"));
 const EvalDatasetDetailPage = lazy(() => import("./pages/EvalDatasetDetailPage"));
 const EvalRunDetailPage = lazy(() => import("./pages/EvalRunDetailPage"));
@@ -146,6 +147,7 @@ function ProtectedRoutes() {
           <Route path="/govern/bundles" element={<PolicyTabRedirect tab="bundles" />} />
           <Route path="/govern/simulator" element={<PolicyTabRedirect tab="evaluation" mode="simulator" />} />
           <Route path="/govern/quarantine" element={<GovernQuarantinePage />} />
+          <Route path="/govern/verification" element={<GovernanceVerificationPage />} />
           <Route path="/govern/replay" element={<PolicyTabRedirect tab="evaluation" mode="replay" />} />
           <Route path="/govern/analytics" element={<PolicyTabRedirect tab="evaluation" mode="analytics" />} />
           {FEATURE_FLAGS.evalsPage && (
