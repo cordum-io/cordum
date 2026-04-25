@@ -137,6 +137,10 @@ jobs:
       working-directory: dashboard
       run: npm ci
 
+    - name: Typecheck dashboard (noUnusedLocals + noUnusedParameters gate, task-dd1a5934)
+      working-directory: dashboard
+      run: node ./node_modules/typescript/bin/tsc --noEmit
+
     - name: Run dashboard tests
       working-directory: dashboard
       run: |
