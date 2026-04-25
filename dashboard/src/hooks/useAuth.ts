@@ -16,15 +16,24 @@ export function useAuth() {
 
 export function useRequireAuth() {
   const isAuthenticated = useConfigStore((s) => s.isAuthenticated);
+  const user = useConfigStore((s) => s.user);
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Strict gate: refuse to render the dashboard unless an explicit login()
+  // has populated `user`. An embedded API key in /config.json sets
+  // isAuthenticated=true via update(), but does NOT identify a principal —
+  // we don't know which role the operator has, so admin gates would silently
+  // 403 every action. Force the operator through /login so the backend's
+  // /auth/login response hydrates the user (and roles) properly.
+  const hasVerifiedPrincipal = isAuthenticated && !!user;
+
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (!hasVerifiedPrincipal) {
       const returnUrl = location.pathname + location.search;
       navigate(`/login?returnUrl=${encodeURIComponent(returnUrl)}`, { replace: true });
     }
-  }, [isAuthenticated, navigate, location.pathname, location.search]);
+  }, [hasVerifiedPrincipal, navigate, location.pathname, location.search]);
 
-  return isAuthenticated;
+  return hasVerifiedPrincipal;
 }

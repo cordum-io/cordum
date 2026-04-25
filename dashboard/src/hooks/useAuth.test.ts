@@ -100,4 +100,26 @@ describe("useAuth", () => {
 
     hook.unmount();
   });
+
+  it("useRequireAuth redirects to /login when isAuthenticated=true but user is null (embedded apiKey, no interactive login yet)", async () => {
+    // Reproduces the scenario where /config.json embeds an apiKey, which
+    // update() promotes to isAuthenticated=true without populating user.
+    // Strict gate must still force /login so the operator's role is known.
+    configState.isAuthenticated = true;
+    configState.user = null as unknown as typeof configState.user;
+    locationState.pathname = "/govern/verification";
+    locationState.search = "";
+
+    const hook = renderWithQueryClient(() => useRequireAuth());
+
+    await hook.waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith(
+        "/login?returnUrl=%2Fgovern%2Fverification",
+        { replace: true },
+      );
+    });
+    expect(hook.result.current).toBe(false);
+
+    hook.unmount();
+  });
 });
