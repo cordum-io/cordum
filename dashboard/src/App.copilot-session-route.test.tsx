@@ -5,6 +5,7 @@ import { renderWithProviders } from "@/test-utils/render";
 import { http, HttpResponse, server } from "@/test-utils/msw";
 import CopilotSessionPage from "./pages/CopilotSessionPage";
 import NotFoundPage from "./pages/NotFoundPage";
+import appSource from "./App.tsx?raw";
 
 const SESSION_ID = "sess-abc123";
 
@@ -24,6 +25,14 @@ describe("App routing — /copilot/sessions/:sessionId resolves to CopilotSessio
     server.use(
       http.get("*/api/v1/jobs", () => HttpResponse.json({ items: [] })),
     );
+  });
+
+  // Source-level guard: catches drift where the in-isolation render below
+  // still passes but the route is not actually registered in production
+  // App.tsx (the original review concern on this test file).
+  it("registers /copilot/sessions/:sessionId route in App.tsx (registration guard)", () => {
+    expect(appSource).toMatch(/path="\/copilot\/sessions\/:sessionId"/);
+    expect(appSource).toMatch(/element=\{<CopilotSessionPage\b/);
   });
 
   it("/copilot/sessions/<id> mounts CopilotSessionPage (NOT NotFoundPage)", async () => {

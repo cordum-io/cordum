@@ -374,7 +374,7 @@ export function AuditEventCard({ entry, onClick, searchQuery }: AuditEventCardPr
 
   function handleRelated(e: React.MouseEvent) {
     e.stopPropagation();
-    navigate(`/audit?resource=${entry.resourceType}:${entry.resourceId}&view=correlation`);
+    navigate(`/audit?resource=${encodeURIComponent(`${entry.resourceType}:${entry.resourceId}`)}&view=correlation`);
   }
 
   return (

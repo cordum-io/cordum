@@ -18,6 +18,7 @@ import mcpPageSource from "./MCPPage.tsx?raw";
 import evalsPageSource from "./EvalsPage.tsx?raw";
 import evalDatasetDetailSource from "./EvalDatasetDetailPage.tsx?raw";
 import evalRunDetailSource from "./EvalRunDetailPage.tsx?raw";
+import runDetailSource from "./RunDetailPage.tsx?raw";
 import packsPageSource from "./PacksPage.tsx?raw";
 import delegationsPageSource from "./DelegationsPage.tsx?raw";
 import buttonSource from "../components/ui/Button.tsx?raw";
@@ -160,5 +161,20 @@ describe("premium overhaul DoD gates", () => {
   it("DoD-2 — Card consumes --duration-soft token (Soft UI 250ms)", () => {
     expect(cardSource).toMatch(/duration-\[var\(--duration-soft\)\]/);
     expect(cardSource).not.toMatch(/duration-300/);
+  });
+});
+
+describe("DoD-5 mobile responsive (task-671f49cd)", () => {
+  it("RunDetailPage declares mobile-first pane layout via flex-col md:flex-row", () => {
+    expect(runDetailSource).toMatch(/flex-col\s+md:flex-row/);
+  });
+  it("RunDetailPage hides non-active panes via hidden md:flex|block at <md", () => {
+    expect(runDetailSource).toMatch(/hidden\s+md:(flex|block)/);
+  });
+  it("RunDetailPage enforces 44px tap target at <md (WCAG 2.5.5)", () => {
+    expect(runDetailSource).toMatch(/min-w-\[44px\]\s+min-h-\[44px\]/);
+  });
+  it("RunDetailPage guards mobile pane transitions with useReducedMotion", () => {
+    expect(runDetailSource).toMatch(/useReducedMotion/);
   });
 });

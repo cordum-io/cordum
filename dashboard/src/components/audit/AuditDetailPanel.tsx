@@ -298,7 +298,7 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
                   <span className="font-mono text-ink">{entry.resourceId.slice(0, 16)}</span>.
                 </p>
                 <Link
-                  to={`/audit?resource=${entry.resourceType}:${entry.resourceId}&view=correlation`}
+                  to={`/audit?resource=${encodeURIComponent(`${entry.resourceType}:${entry.resourceId}`)}&view=correlation`}
                   className="mt-1 inline-block text-accent hover:underline"
                 >
                   View all related events &rarr;
