@@ -1,4 +1,5 @@
 import { useParams } from "react-router-dom";
+import { motion } from "framer-motion";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -37,7 +38,12 @@ export default function EvalRunDetailPage() {
     summary.scorePercent === null ? "—" : `${Math.round(summary.scorePercent)}%`;
 
   return (
-    <div className="p-6 space-y-6">
+    <motion.div
+      className="p-6 space-y-6"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+    >
       <PageHeader
         title={`Run ${r.runId}`}
         subtitle={`Dataset ${r.datasetName} v${r.datasetVersion} · policy ${r.policySnapshot.slice(0, 12)}`}
@@ -50,7 +56,9 @@ export default function EvalRunDetailPage() {
         <StatTile label="Regressions" value={summary.regressions} />
         <StatTile label="Score" value={scoreLabel} />
       </div>
-      <EntryResultList run={r} />
-    </div>
+      <div className="instrument-card p-4">
+        <EntryResultList run={r} />
+      </div>
+    </motion.div>
   );
 }

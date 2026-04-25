@@ -7,6 +7,7 @@
 // surfaces for everyone but the page returns 403 fallback for
 // non-admins.
 import { useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ToolUsageHeatmap } from "@/components/mcp/ToolUsageHeatmap";
 import {
@@ -74,7 +75,13 @@ export function MCPPage() {
   }, [usage.data]);
 
   return (
-    <div className="flex flex-col gap-6" data-testid="mcp-page">
+    <motion.div
+      className="flex flex-col gap-6"
+      data-testid="mcp-page"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+    >
       <PageHeader
         title="MCP governance"
         subtitle="Inbound tool calls + outbound signed requests, scoped to the active tenant."
@@ -82,7 +89,7 @@ export function MCPPage() {
 
       <section
         aria-label="Summary"
-        className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
+        className="instrument-card grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4"
         data-testid="mcp-summary"
       >
         <Stat label="Tool calls" value={usage.data?.total_calls ?? 0} hint={`Last ${rangeKey}`} />
@@ -223,7 +230,7 @@ export function MCPPage() {
       <section aria-label="Prompt catalogue" data-testid="mcp-prompts-section">
         <PromptCatalogMount />
       </section>
-    </div>
+    </motion.div>
   );
 }
 

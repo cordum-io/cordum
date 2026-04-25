@@ -13,6 +13,18 @@ import settingsHubSource from "./SettingsHubPage.tsx?raw";
 import jobsPageSource from "./JobsPage.tsx?raw";
 import auditLogPageSource from "./AuditLogPage.tsx?raw";
 import agentsPageSource from "./AgentsPage.tsx?raw";
+import packDetailSource from "./PackDetailPage.tsx?raw";
+import mcpPageSource from "./MCPPage.tsx?raw";
+import evalsPageSource from "./EvalsPage.tsx?raw";
+import evalDatasetDetailSource from "./EvalDatasetDetailPage.tsx?raw";
+import evalRunDetailSource from "./EvalRunDetailPage.tsx?raw";
+import packsPageSource from "./PacksPage.tsx?raw";
+import delegationsPageSource from "./DelegationsPage.tsx?raw";
+
+const hasInstrumentCard = (src: string) =>
+  /instrument-card/.test(src) || /<InstrumentCard\b/.test(src);
+const hasMotion = (src: string) =>
+  /from "framer-motion"/.test(src) && /<motion\./.test(src);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const indexCss = readFileSync(resolve(here, "../styles/index.css"), "utf8");
@@ -80,5 +92,61 @@ describe("premium overhaul DoD gates", () => {
     expect(hasPerRowMotion(jobsPageSource)).toBe(true);
     expect(hasPerRowMotion(auditLogPageSource)).toBe(true);
     expect(hasPerRowMotion(agentsPageSource)).toBe(true);
+  });
+
+  it("DoD-1 — PackDetailPage renders instrument-card primitive", () => {
+    expect(hasInstrumentCard(packDetailSource)).toBe(true);
+  });
+
+  it("DoD-2 — PackDetailPage adopts framer-motion", () => {
+    expect(hasMotion(packDetailSource)).toBe(true);
+  });
+
+  it("DoD-1 — MCPPage renders instrument-card primitive", () => {
+    expect(hasInstrumentCard(mcpPageSource)).toBe(true);
+  });
+
+  it("DoD-2 — MCPPage adopts framer-motion", () => {
+    expect(hasMotion(mcpPageSource)).toBe(true);
+  });
+
+  it("DoD-1 — EvalsPage renders instrument-card primitive", () => {
+    expect(hasInstrumentCard(evalsPageSource)).toBe(true);
+  });
+
+  it("DoD-2 — EvalsPage adopts framer-motion", () => {
+    expect(hasMotion(evalsPageSource)).toBe(true);
+  });
+
+  it("DoD-1 — EvalDatasetDetailPage renders instrument-card primitive", () => {
+    expect(hasInstrumentCard(evalDatasetDetailSource)).toBe(true);
+  });
+
+  it("DoD-2 — EvalDatasetDetailPage adopts framer-motion", () => {
+    expect(hasMotion(evalDatasetDetailSource)).toBe(true);
+  });
+
+  it("DoD-1 — EvalRunDetailPage renders instrument-card primitive", () => {
+    expect(hasInstrumentCard(evalRunDetailSource)).toBe(true);
+  });
+
+  it("DoD-2 — EvalRunDetailPage adopts framer-motion", () => {
+    expect(hasMotion(evalRunDetailSource)).toBe(true);
+  });
+
+  it("DoD-1 — PacksPage renders instrument-card primitive", () => {
+    expect(hasInstrumentCard(packsPageSource)).toBe(true);
+  });
+
+  it("DoD-2 — PacksPage adopts framer-motion", () => {
+    expect(hasMotion(packsPageSource)).toBe(true);
+  });
+
+  it("DoD-1 — DelegationsPage renders instrument-card primitive", () => {
+    expect(hasInstrumentCard(delegationsPageSource)).toBe(true);
+  });
+
+  it("DoD-2 — DelegationsPage adopts framer-motion", () => {
+    expect(hasMotion(delegationsPageSource)).toBe(true);
   });
 });
