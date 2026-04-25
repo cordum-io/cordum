@@ -424,6 +424,13 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 			slog.Warn("safety-kernel: gRPC graceful stop timed out, forcing")
 			grpcServer.Stop()
 		}
+
+		// Flush buffered OTLP spans. No-op when CORDUM_OTEL_ENDPOINT is
+		// unset. Bounded by the existing shutdown deadline so it can't
+		// block past the 15s drain budget.
+		if err := shutdownTracing(shutdownCtx); err != nil {
+			slog.Warn("safety-kernel: tracer shutdown returned error", "error", err)
+		}
 	}()
 
 	serveErr := grpcServer.Serve(lis)

@@ -126,6 +126,10 @@ func (s *server) EvaluateOutput(ctx context.Context, req *OutputEvaluateRequest)
 	s.mu.RUnlock()
 
 	resp.PolicySnapshot = snapshot
+	// Wrap the evaluation in a tracing span. The helper is no-op when
+	// CORDUM_OTEL_ENDPOINT is unset; see tracing.go.
+	_, finish := evaluationSpan(ctx, "output", req.PrincipalID, req.Topic, req.Tenant)
+	defer func() { finish(resp.Decision, len(rules)) }()
 	if !outputPolicyEnabled(policy, rules) {
 		return resp, nil
 	}
@@ -217,6 +221,11 @@ func (s *server) CheckOutput(ctx context.Context, req *pb.OutputCheckRequest) (*
 	s.mu.RUnlock()
 
 	resp.PolicySnapshot = snapshot
+	// gRPC entry point: trace alongside the in-process EvaluateOutput path
+	// so production callers (which go through CheckOutput, not
+	// EvaluateOutput) also emit spans when CORDUM_OTEL_ENDPOINT is set.
+	_, finish := evaluationSpan(ctx, "output", req.PrincipalId, req.Topic, req.Tenant)
+	defer func() { finish(outputDecisionString(resp.Decision), len(rules)) }()
 	if !outputPolicyEnabled(policy, rules) {
 		return resp, nil
 	}
