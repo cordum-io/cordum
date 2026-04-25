@@ -125,6 +125,18 @@ On NATS connect, each service publishes a `BusPacket{Handshake}` to `sys.handsha
 - **Services that skip**: safety-kernel, context-engine (gRPC-only, no NATS connection).
 - Handshake failure is non-fatal — services log a warning and continue startup.
 
+## CAP v2.9.0 changes
+
+Cordum upgraded its CAP dependency from v2.8.6 to v2.9.0. The wire contract gained the following fields and behaviors; SDKs (Go, Python, Node) all received the implementation simultaneously so the 36+ existing workers picked up the changes with zero code edits.
+
+- **`Agent.Start()` auto-publishes Handshake** in Go, Python, and Node SDKs. Previously only the Go SDK published; Python and Node had to call `publishHandshake()` manually. Now the publish is part of the SDK's connect-then-subscribe lifecycle.
+- **`Handshake.ready_topics` (field 6)** — workers advertise the set of topics they're ready to receive jobs for. The scheduler's readiness filter (gated by `WORKER_READINESS_REQUIRED=true`) only dispatches to workers whose `ready == true` and whose `ready_topics` includes the job's topic.
+- **`Heartbeat.auth_token` (field 18)** — workers carry a credential token on heartbeats for attestation. Combined with `WORKER_ATTESTATION=enforce`, the gateway/scheduler reject heartbeats from workers without a valid credential. Tokens are hashed argon2id at the gateway's worker-credential store.
+- **`SystemAlert` deprecation path** — the deprecated string-based fields (`Level`, `Component`, `Code`) are still populated by Cordum during the transition for backward compatibility, but new code should consume the structured replacements (`Severity` enum, `SourceComponent` string, `ErrorCodeEnum`). The Cordum codebase has migrated all internal call sites; external clients still reading the old fields continue to work.
+- **Source of truth** — protobuf definitions live in the CAP repo at `cap/proto/cordum/agent/v1/`. Generated Go/Python/Node stubs ride along. Cordum imports `github.com/cordum-io/cap/v2/cordum/agent/v1` and does not duplicate the protos.
+
+See `AGENTS.md` § "Control Plane Boundary Hardening (recent)" for the operator-facing surface that consumes these fields (Topic Registry, Worker Credentials, schema enforcement modes).
+
 ## Enhanced SystemAlert (CAP v2.5.2)
 
 `SystemAlert` now carries structured fields alongside the deprecated string-based fields:
