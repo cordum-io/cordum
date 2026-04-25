@@ -118,9 +118,18 @@ func (s *server) EvaluateOutput(ctx context.Context, req *OutputEvaluateRequest)
 		return resp, nil
 	}
 
+	// Open the evaluation span BEFORE the snapshot read so policy.duration_ms
+	// reflects total evaluation time including the lock-protected snapshot
+	// copy. Helper is a no-op when CORDUM_OTEL_ENDPOINT is unset.
+	// We thread the returned ctx through downstream calls so any nested
+	// spans (e.g. from scanners) parent under this one.
+	var rules []compiledOutputRule
+	ctx, finish := evaluationSpan(ctx, "output", req.PrincipalID, req.Topic, req.Tenant)
+	defer func() { finish(resp.Decision, len(rules)) }()
+
 	s.mu.RLock()
 	policy := s.policy
-	rules := append([]compiledOutputRule{}, s.outputRules...)
+	rules = append([]compiledOutputRule{}, s.outputRules...)
 	snapshot := s.snapshot
 	scanners := s.scanners
 	s.mu.RUnlock()
@@ -209,9 +218,19 @@ func (s *server) CheckOutput(ctx context.Context, req *pb.OutputCheckRequest) (*
 		return resp, nil
 	}
 
+	// gRPC entry point: trace alongside the in-process EvaluateOutput path
+	// so production callers (which go through CheckOutput, not
+	// EvaluateOutput) also emit spans when CORDUM_OTEL_ENDPOINT is set.
+	// Span opens BEFORE the snapshot read so policy.duration_ms covers
+	// compute + read. Returned ctx threads through downstream calls so
+	// any nested spans parent under this one.
+	var rules []compiledOutputRule
+	ctx, finish := evaluationSpan(ctx, "output", req.PrincipalId, req.Topic, req.Tenant)
+	defer func() { finish(outputDecisionString(resp.Decision), len(rules)) }()
+
 	s.mu.RLock()
 	policy := s.policy
-	rules := append([]compiledOutputRule{}, s.outputRules...)
+	rules = append([]compiledOutputRule{}, s.outputRules...)
 	snapshot := s.snapshot
 	scanners := s.scanners
 	s.mu.RUnlock()

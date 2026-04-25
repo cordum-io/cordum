@@ -421,7 +421,29 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 		case <-grpcDone:
 			slog.Info("safety-kernel: gRPC server drained")
 		case <-shutdownCtx.Done():
-			slog.Warn("safety-kernel: gRPC graceful stop timed out, forcing")
+			slog.Warn("safety-kernel: gRPC graceful stop timed out")
+		}
+
+		// Flush buffered OTLP spans BEFORE any forced gRPC stop. In the
+		// graceful-drain case all spans are already ended; we just empty
+		// the BatchSpanProcessor queue. In the timeout case we flush
+		// completed spans that are still queued so they aren't lost when
+		// we forcibly tear down request handlers below. No-op when
+		// CORDUM_OTEL_ENDPOINT is unset. Bounded by the existing shutdown
+		// deadline so it can't block past the 15s drain budget.
+		if err := shutdownTracing(shutdownCtx); err != nil {
+			slog.Warn("safety-kernel: tracer shutdown returned error", "error", err)
+		}
+
+		// If graceful drain didn't complete in time, force the server
+		// down now. Spans started by handlers killed here won't be
+		// recorded -- that is the intentional cost of the timeout path,
+		// not an oversight of the flush ordering above.
+		select {
+		case <-grpcDone:
+			// Already drained -- nothing to force.
+		default:
+			slog.Warn("safety-kernel: forcing gRPC stop after tracer flush")
 			grpcServer.Stop()
 		}
 	}()
@@ -725,6 +747,14 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	ruleID := policyDecision.RuleID
 	if len(inputRules) > 0 {
 		if decision == pb.DecisionType_DECISION_TYPE_ALLOW || decision == pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS {
+			// Mirror the output-policy tracing: wrap input rule evaluation
+			// in an opt-in span so production deployments with
+			// CORDUM_OTEL_ENDPOINT set get full input-side telemetry. The
+			// helper is a no-op when the endpoint is unset.
+			_, finishInput := evaluationSpan(ctx, "input", req.GetPrincipalId(), topic, tenant)
+			inputDecision := "allow"
+			matchedCount := 0
+
 			inputContent := req.GetInputContent()
 			// Fall back to _content.prompt label when InputContent is not set.
 			// The gateway injects this label for submit-time policy checks.
@@ -749,19 +779,23 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 				if !matched {
 					continue
 				}
+				matchedCount++
 				switch rule.decision {
 				case "deny":
 					decision = pb.DecisionType_DECISION_TYPE_DENY
 					reason = inputRuleReason(rule, findings)
 					ruleID = rule.id
+					inputDecision = "deny"
 				case "require_approval", "require-approval", "require_human":
 					decision = pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
 					reason = inputRuleReason(rule, findings)
 					ruleID = rule.id
+					inputDecision = "require_human"
 				}
 				slog.Info("input rule matched", "component", "safety", "rule", rule.id, "decision", rule.decision, "findings", len(findings))
 				break // first matching input rule wins
 			}
+			finishInput(inputDecision, matchedCount)
 		}
 	}
 
