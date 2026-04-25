@@ -37,6 +37,35 @@ The audit subsystem defines these event types (from `core/audit/exporter.go`):
 | `EventSafetyViolation` | `safety.violation` | Safety policy violations |
 | `EventSystemAuth` | `system.auth` | Authentication events (login, key creation, user management) |
 
+### Output Policy events (added 2026-04)
+
+Two-phase output safety scanning (`docs/output-policy.md`) emits the
+following events through the same SIEM pipeline:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `EventPolicyDecision` | `policy.decision` | Output policy `ALLOW` / `QUARANTINE` / `REDACT` decision (one per scan) |
+| `EventPolicyScan` | `policy.scan` | Per-scanner scan result with finding type (`secret_leak`, `pii`, `injection`) and confidence |
+| `EventPolicyQuarantine` | `policy.quarantine` | Job entered `OUTPUT_QUARANTINED` state with remediation pointer |
+| `EventPolicyOverride` | `policy.override` | Operator-issued override that releases a quarantined job (admin-only; logged with actor + reason) |
+| `EventPolicyReplay` | `policy.replay` | Historical scan rerun against the current policy (used by Replay tab) |
+
+### Governance Timeline events (added 2026-04)
+
+The Governance Timeline (dashboard surface backed by
+`/api/v1/governance/decisions`) consumes the same audit log via a new
+event type:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `EventGovernanceTimeline` | `governance.timeline.entry` | Composite entry that joins a `safety.decision` (or output `policy.decision`) with its approval, replay, and override history for a single job/run |
+
+Governance Timeline entries are not duplicates of the underlying
+`safety.decision` events — they are derivation views materialized by
+the gateway for narrative inspection in the dashboard. Both are
+exported, but downstream consumers should de-duplicate on `job_id` +
+`event_type` if they want raw decisions only.
+
 Severity levels: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`.
 
 <!-- TODO: document which actions map to which event types and severities -->

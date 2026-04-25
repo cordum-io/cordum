@@ -1114,4 +1114,8 @@ The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for
 - [DOCKER.md](DOCKER.md) — Docker Compose deployment and NATS JetStream durability
 - [mcp-server.md](mcp-server.md) — MCP server configuration
 - [api-reference.md](api-reference.md) — REST API documentation
+- [adr/009-control-plane-boundary-hardening.md](adr/009-control-plane-boundary-hardening.md) — Topic Registry, Worker Credentials, schema enforcement design
+- [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — CAP v2.9.0 handshake, ready_topics, auth_token wire details
+- [audit.md](audit.md) — Output Policy + Governance Timeline audit event types
+- [delegation.md](delegation.md) — A2A delegation tokens; rides on top of worker credentials
 - [horizontal-scaling.md](horizontal-scaling.md) — Multi-replica deployment, Redis lock keys, NATS subject matrix

@@ -104,8 +104,26 @@ jobs and memory IDs.
 
 <!-- TODO: document inspector UI capabilities and usage -->
 
+## 7. Status (2026-04-25)
+
+Context Engine remains an **active service** alongside the newer Evals
+surface. The two coexist:
+
+- **Context Engine** — runtime context-window assembly for in-flight
+  agent jobs (chat history, RAG retrieval, model-message shaping).
+  Consumed by the scheduler and by the dashboard `ContextInspectorPage`.
+- **Evals** (`useEvals`, `EvalsPage`, `EvalDatasetDetailPage`,
+  `EvalRunDetailPage`) — offline evaluation framework for measuring
+  agent quality across datasets. Different scope, different lifecycle.
+  See `docs/api-reference.md` § Evals for the REST surface.
+
+Context Engine is NOT being deprecated in favor of Evals. If a
+follow-up task changes that, this section will be updated with a
+deprecation pointer.
+
 ## See Also
 
 - [grpc-services.md](grpc-services.md) — gRPC service overview
 - [production.md](production.md) — TLS hot-reload and production hardening
 - [configuration-reference.md](configuration-reference.md) — Full env var reference
+- [api-reference.md](api-reference.md) — Evals REST surface (sibling, not replacement)

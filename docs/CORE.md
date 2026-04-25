@@ -120,6 +120,46 @@ If no mapping exists: fail fast to DLQ with `no_pool_mapping`.
 - **Bus-layer validation**: Incoming `JobRequest` and `JobResult` packets are validated using CAP SDK helpers (`ValidateJobRequest`/`ValidateJobResult`). Invalid packets are rejected, logged, and counted via the `validation_rejections_total` metric.
 - **Enhanced SystemAlert**: Alerts emitted by the workflow engine now include `severity` (enum), `source_component`, `details` (map), and `trace_id` alongside the deprecated string fields.
 
+### CAP v2.9.0 Boundary Hardening (Scheduler + Gateway)
+
+The scheduler and gateway gained submit-time and dispatch-time
+boundary enforcement against unknown topics, ad-hoc payload shapes,
+and unattested workers. All four mechanisms are mode-gated
+(`enforce` / `warn` / `off`) so existing deployments degrade
+gracefully:
+
+- **Topic Registry submit-time validation** — `core/topics/registry.go`
+  is the canonical source of truth. Gateway rejects unknown topics
+  with HTTP 400 (`unknown_topic` error code) before publishing to
+  `sys.job.submit`; scheduler does the same check before dispatch as a
+  defense-in-depth boundary. Known topics with zero workers stay
+  valid (degraded `ErrNoWorkers` retry).
+- **Schema enforcement** — `SCHEMA_ENFORCEMENT=enforce|warn|off`
+  (default `warn`). Job payloads validated against the topic's input
+  schema via JSON Schema draft-07. Pack manifest `inputSchema` and
+  `outputSchema` register at install time.
+- **Worker attestation** — `WORKER_ATTESTATION=enforce|warn|off`
+  (default `off`). Scheduler verifies `Heartbeat.auth_token` against
+  the gateway's argon2id-hashed worker credential store. Cache is
+  refresh-on-miss with merge-on-failure (prevents stale-cache
+  starvation).
+- **Worker readiness gating** — `WORKER_READINESS_REQUIRED=true|false`
+  (default `false`). Scheduler dispatch picks only workers whose
+  `ready == true` and whose `Handshake.ready_topics` include the
+  job's topic. Unknown workers (no handshake observed yet) are
+  allowed to avoid starving net-new fleets — absence ≠ not ready.
+- **Dispatch-time delegation re-verify** — `core/auth/delegation.go`
+  re-verifies the `JobRequest`'s delegation token signature, scope,
+  expiry, and revocation status at dispatch time, NOT just at submit
+  time. Closes the TOCTOU window between gateway-side accept and
+  scheduler-side dispatch.
+
+See `docs/AGENT_PROTOCOL.md` § "CAP v2.9.0 changes" for the
+wire-level fields, `docs/configuration-reference.md` § "Gateway +
+Scheduler — Boundary Hardening" for the full env-var matrix, and
+`docs/adr/009-control-plane-boundary-hardening.md` for the design
+rationale.
+
 ---
 
 ## 4) Safety Kernel as the single Policy Decision Point
@@ -157,6 +197,69 @@ Safety kernel config-service source can be tuned via `SAFETY_POLICY_CONFIG_SCOPE
   - impose constraints (max diff size, deny-paths, network restrictions)
 - Kernel gates every job/run/tool call **before execution**.
 - When policy provides remediations, the gateway can apply them to create a new job without hand-editing inputs.
+
+### Output Policy (two-phase scanning)
+
+In addition to the input gate above, the safety kernel runs a
+two-phase output policy on every result:
+
+- **Phase 1 — Sync metadata fast-path** on the scheduler hot path:
+  status, topic, worker identity, declared content-type. Cheap; runs
+  on every result; emits an early `ALLOW` for clearly-safe results
+  so they can be released without waiting for content scan.
+- **Phase 2 — Async content scan** over the dereferenced result
+  payload (`res:<job_id>`). Runs the configured scanner pipeline
+  against the actual content; produces typed findings:
+  - `secret_leak` — credentials, tokens, API keys, private keys
+  - `pii` — names, emails, phone numbers, government IDs
+  - `injection` — prompt injection, code injection, SQL fragments
+
+Decisions returned by `OutputPolicyService.CheckOutput` (gRPC
+contract in `core/protocol/proto/v1/output_policy.proto`):
+
+- `ALLOW` — release the result to the caller
+- `QUARANTINE` — mark the job `OUTPUT_QUARANTINED` (terminal state in
+  the scheduler engine); operator must review before release
+- `REDACT` — release a redacted copy with sensitive segments
+  replaced by typed placeholders
+
+Operator surfaces:
+- `config/output_scanners.yaml` — regex pattern definitions,
+  per-scanner enable/disable, severity thresholds. Loaded by the
+  safety kernel when `OUTPUT_POLICY_ENABLED=true`.
+- `output_rules` section in `config/safety.yaml` — topic /
+  capability / content-pattern matchers that trigger scanners.
+- Dashboard quarantine UX — quarantine badge on JobsPage list,
+  remediation drawer on JobDetailPage, artifact panel for
+  reviewing the redacted vs original payload.
+
+See `docs/output-policy.md` for the full operator guide, the
+finding-type reference, and the gRPC contract.
+
+### Governance Timeline (audit narrative view)
+
+The Governance Timeline is a derivation view that joins safety
+decisions, output-policy scans, approval events, replay history, and
+operator overrides for a single job or workflow run into a single
+ordered narrative. It is materialized by the gateway from the
+underlying audit log and exposed via:
+
+- REST: `GET /api/v1/governance/decisions` (paginated; filterable
+  by tenant, time window, decision class)
+- REST: `GET /api/v1/governance/health` (rollup health indicator
+  for the policy decision pipeline)
+- REST: `GET /api/v1/governance/approvals/analytics`
+  (approval-rate, time-to-approve, bottleneck breakdown)
+- Dashboard: `GovernanceTimeline` component on JobDetailPage's
+  Governance tab, plus the Policy Studio overview / verification
+  / replay tabs.
+
+The timeline does NOT introduce a new event source — it composes
+existing `safety.decision`, `policy.decision`, `policy.scan`,
+`policy.quarantine`, `policy.override`, and `policy.replay` audit
+events (see `docs/audit.md` § Event Types). Downstream SIEM
+consumers should de-duplicate on `job_id` + `event_type` if they
+want raw decisions only.
 
 ---
 

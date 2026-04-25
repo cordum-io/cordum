@@ -687,6 +687,103 @@ cordumctl pool topic remove gpu-batch job.ml.train
 
 ---
 
+## Operator Commands (Diagnostic + Governance)
+
+These subcommands ship as additions to the main `cordumctl` binary and
+the `cordumctl-governance-helper` companion. Run `--help` on each for
+the full flag schema.
+
+### `cordumctl doctor`
+
+Operator health-check tool that probes every dependency (gateway,
+scheduler, safety kernel, context engine, NATS, Redis, MCP) plus the
+local config and credential store. Prints a structured report with
+green / yellow / red status per probe.
+
+```bash
+cordumctl doctor                          # check all probes
+cordumctl doctor --json                   # machine-readable output
+cordumctl doctor --probe gateway,redis    # subset
+cordumctl doctor --output report.txt      # write to file
+```
+
+Used in CI as `tools/scripts/doctor_integration_test.sh`.
+
+### `cordumctl audit`
+
+Audit chain operations — verify, replay, export.
+
+```bash
+cordumctl audit verify --since 24h        # verify chain integrity over a window
+cordumctl audit replay --job <job_id>     # replay a job's audit timeline locally
+cordumctl audit export --backend datadog  # one-shot export to a configured backend
+```
+
+See [audit.md](audit.md) for event types + SIEM exporter
+configuration.
+
+### `cordumctl governance`
+
+Governance helpers (delivered by the `cordumctl-governance-helper`
+binary at `cmd/cordumctl-governance-helper/`). Wraps the
+`/api/v1/governance/*` REST surface for scripted use.
+
+```bash
+cordumctl governance health                   # overall policy decision pipeline health
+cordumctl governance decisions --since 1h     # list decisions over a window
+cordumctl governance approvals analytics      # approval rate + bottleneck analytics
+```
+
+See [api-reference.md](api-reference.md) § Governance for the
+underlying REST endpoints.
+
+### `cordumctl evals`
+
+Evaluations CRUD + run. Drives the offline evaluation framework
+(separate from runtime context-window assembly — see
+[context-engine.md](context-engine.md)).
+
+```bash
+cordumctl evals datasets list
+cordumctl evals datasets create --file dataset.yaml
+cordumctl evals run --dataset <id> --bundle <bundle_id>
+cordumctl evals run show <run_id>
+```
+
+Dashboard surface: `EvalsPage`, `EvalDatasetDetailPage`,
+`EvalRunDetailPage`.
+
+### `cordumctl mcp`
+
+MCP server lifecycle + tool approval flow. Wraps
+`/api/v1/mcp/*` endpoints.
+
+```bash
+cordumctl mcp tools list
+cordumctl mcp approvals list                  # outstanding tool approvals
+cordumctl mcp approvals approve <id>
+cordumctl mcp approvals reject <id> --reason "reason"
+```
+
+See [mcp-server.md](mcp-server.md), [mcp-tools-reference.md](mcp-tools-reference.md),
+and [mcp-resources-reference.md](mcp-resources-reference.md).
+
+### `cordumctl delegation-keygen`
+
+Generates a delegation key pair for A2A delegation token signing.
+
+```bash
+cordumctl delegation-keygen --out ./keys/    # writes ed25519 private + public pair
+cordumctl delegation-keygen --rotate         # rotate; preserves prior public key for verification window
+```
+
+Companion to the delegation system documented in
+[delegation.md](delegation.md). Tokens are re-verified at
+dispatch time per the boundary-hardening described in
+[CORE.md § 3](CORE.md#3-scheduler-that-is-purely-config‑driven-no-hardcoded-core-topics).
+
+---
+
 ## Service Ports (Default Stack)
 
 | Service | Port | Protocol |
