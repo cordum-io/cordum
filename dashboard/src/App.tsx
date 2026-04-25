@@ -68,6 +68,7 @@ const GovernQuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"))
 const EvalsPage = lazy(() => import("./pages/EvalsPage"));
 const EvalDatasetDetailPage = lazy(() => import("./pages/EvalDatasetDetailPage"));
 const EvalRunDetailPage = lazy(() => import("./pages/EvalRunDetailPage"));
+const CopilotSessionPage = lazy(() => import("./pages/CopilotSessionPage"));
 
 // Policy Studio tab redirects — canonical `/govern/<tab>` aliases land on
 // the tabbed overview with the right tab/mode pre-selected. These are not
@@ -154,6 +155,9 @@ function ProtectedRoutes() {
               <Route path="/evals/runs/:runId" element={<EvalRunDetailPage />} />
             </>
           )}
+
+          {/* COPILOT */}
+          <Route path="/copilot/sessions/:sessionId" element={<CopilotSessionPage />} />
 
           {/* EXTEND */}
           <Route path="/packs" element={<PacksPage />} />
