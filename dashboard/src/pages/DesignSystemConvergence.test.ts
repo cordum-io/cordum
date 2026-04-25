@@ -20,6 +20,8 @@ import evalDatasetDetailSource from "./EvalDatasetDetailPage.tsx?raw";
 import evalRunDetailSource from "./EvalRunDetailPage.tsx?raw";
 import packsPageSource from "./PacksPage.tsx?raw";
 import delegationsPageSource from "./DelegationsPage.tsx?raw";
+import buttonSource from "../components/ui/Button.tsx?raw";
+import cardSource from "../components/ui/Card.tsx?raw";
 
 const hasInstrumentCard = (src: string) =>
   /instrument-card/.test(src) || /<InstrumentCard\b/.test(src);
@@ -148,5 +150,15 @@ describe("premium overhaul DoD gates", () => {
 
   it("DoD-2 — DelegationsPage adopts framer-motion", () => {
     expect(hasMotion(delegationsPageSource)).toBe(true);
+  });
+
+  it("DoD-2 — Button consumes --duration-soft token (Soft UI 250ms)", () => {
+    expect(buttonSource).toMatch(/duration-\[var\(--duration-soft\)\]/);
+    expect(buttonSource).not.toMatch(/duration-300/);
+  });
+
+  it("DoD-2 — Card consumes --duration-soft token (Soft UI 250ms)", () => {
+    expect(cardSource).toMatch(/duration-\[var\(--duration-soft\)\]/);
+    expect(cardSource).not.toMatch(/duration-300/);
   });
 });

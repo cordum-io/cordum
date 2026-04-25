@@ -18,6 +18,12 @@ Premium Overhaul DoD-3 says detail pages compose on `lg:grid-cols-12` with heter
 
 Decided 2026-04-24 · task-c154ff08 · epic-2e0ed1ee.
 
+## Motion tokens
+- `--duration-soft: 250ms` is the Soft Control Surface transition speed declared in `dashboard/src/styles/index.css` (light + dark themes) and aliased in the `@theme` block as `--animate-duration-soft`. Consumers: `components/ui/Button.tsx` and `components/ui/Card.tsx` via the Tailwind JIT arbitrary-value form `duration-[var(--duration-soft)]`. Pinned by DoD-1 token-declaration assertion (`design tokens shadow-soft, --radius 0.75rem, duration-soft exist for light and dark`) and DoD-2 consumer assertions (`Button consumes --duration-soft token` + `Card consumes --duration-soft token`) in `src/pages/DesignSystemConvergence.test.ts`. Adoption landed in commit 1b95ac65 (task-bd7eb4af Soft UI Evolution); orphan-token gap closed under task-ed23bcf5.
+
+## Governance surfaces
+- **Chain integrity monitoring** is mounted at `/govern/verification` (admin-only, gated by `<RequireRole roles={["admin"]}>`). The PolicyOverviewPage was simplified on 2026-04-24 (Level 3 sweep, commit 046914d9); the chain-integrity widget is no longer embedded in the Overview tab but remains reachable via the Verification route in the Govern nav section. Non-admin viewers see a friendly EmptyState fallback on the Verification page (not a blank card). Restored under task-14d012e6.
+
 ## Scope
 - Reviewed `cordum/dashboard/src/pages/**/*.tsx` (non-test page components only) and cross-checked against the current route surface in `src/App.tsx`.
 - Focused on whether each page composes central layout/UI primitives or re-introduces page-local panels, tabs, filters, fields, and state blocks.
