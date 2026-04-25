@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- RunDetailPage mobile responsive: 2-pane console (steps + chat) collapses to tab-switched vertical stack at <md with 44px tap targets (WCAG 2.5.5) and a `useReducedMotion`-guarded step-list stagger. Desktop md+ 2-pane layout unchanged. Closes DoD-5 mobile-responsive gap (task-671f49cd).
 - Pinned `--duration-soft: 250ms` consumption in `Button` + `Card` primitives via 2 source-regex assertions in `DesignSystemConvergence.test.ts`. The token was already adopted in commit 1b95ac65 (task-bd7eb4af Soft UI Evolution); this change closes the orphan-token spec drift by making the consumption mechanically guarded against drift back to `duration-300` (task-ed23bcf5).
 - Premium-sweep parity for 7 pages: `PackDetailPage`, `MCPPage`, `EvalsPage`, `EvalDatasetDetailPage`, `EvalRunDetailPage` now render `instrument-card` + framer-motion entry animation; `PacksPage` (already had both) and `DelegationsPage` (added motion entry) brought to parity. 14 source-level DoD assertions added to `DesignSystemConvergence.test.ts` with permissive helpers that accept either the `instrument-card` class literal or `<InstrumentCard>` component form (task-6297b2a4).
 - Added placeholder `/copilot/sessions/:sessionId` route + `CopilotSessionPage` (lazy). Fixes 404 from the Jobs Origin Session pill, the JobDetail ParentContextBanner Session button, and the JobDetail MetadataBar Session row. Page shows the session id, the jobs the session has produced (via `/api/v1/jobs?session_id=`), and a coming-soon banner. Full timeline UX tracked as task-da7eaef7.
