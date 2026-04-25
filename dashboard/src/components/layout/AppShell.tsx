@@ -2,7 +2,6 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { type ReactNode, useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { useConfigStore } from "@/state/config";
 import { useUiStore } from "@/state/ui";
 import { FEATURE_FLAGS } from "@/config/flags";
 import { useApprovals } from "@/hooks/useApprovals";
@@ -16,6 +15,7 @@ import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { useReducedMotion } from "framer-motion";
 import { CommandPalette } from "@/components/CommandPalette";
 import { NotificationPopover } from "@/components/NotificationPopover";
+import { UserMenu } from "@/components/UserMenu";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator";
 import { KeyboardShortcutsDialog } from "@/components/KeyboardShortcuts";
 import { TierBadge } from "@/components/TierBadge";
@@ -33,7 +33,6 @@ import {
   ChevronRight,
   Moon,
   Sun,
-  LogOut,
   Search,
   Command,
   ExternalLink,
@@ -149,8 +148,6 @@ export function AppShell({ children }: AppShellProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const theme = useUiStore((s) => s.resolvedTheme);
   const toggleTheme = useUiStore((s) => s.toggleTheme);
-  const user = useConfigStore((s) => s.user);
-  const logout = useConfigStore((s) => s.logout);
 
   // Invalidate worker queries on WebSocket heartbeat events (global listener)
   useWorkerEvents();
@@ -568,28 +565,7 @@ export function AppShell({ children }: AppShellProps) {
 
             <NotificationPopover />
 
-            {/* User */}
-            {user ? (
-              <div className="flex items-center gap-2 pl-2 border-l border-border">
-                <div className="w-7 h-7 rounded-full bg-cordum/20 border border-cordum/30 flex items-center justify-center">
-                  <span className="text-xs font-semibold text-cordum">
-                    {(user.display_name || user.username || "U").charAt(0).toUpperCase()}
-                  </span>
-                </div>
-                <button type="button"
-                  onClick={logout}
-                  className="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-muted-foreground hover:text-destructive transition-colors"
-                  title="Logout"
-                  aria-label="Sign out"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ) : (
-              <div className="w-7 h-7 rounded-full bg-cordum/20 border border-cordum/30 flex items-center justify-center">
-                <span className="text-xs font-semibold text-cordum">C</span>
-              </div>
-            )}
+            <UserMenu />
           </div>
         </header>
 
