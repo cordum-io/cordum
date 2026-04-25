@@ -37,6 +37,112 @@ func redactUsername(username string) string {
 	return username[:3] + "***"
 }
 
+// emitAPIKeyCreated publishes a SIEM event for a successful API key creation.
+// Internal audit-chain entry is written separately by the caller via
+// appendAuditEntryNamed; this is the SIEM (external) export so monitoring
+// systems can correlate key minting with downstream activity.
+func (s *server) emitAPIKeyCreated(r *http.Request, mk *auth.ManagedKey) {
+	if s.auditExporter == nil || mk == nil {
+		return
+	}
+	extra := map[string]string{
+		"key_id":   mk.ID,
+		"key_name": mk.Name,
+		"tenant":   mk.Tenant,
+	}
+	if len(mk.Scopes) > 0 {
+		extra["scopes"] = strings.Join(mk.Scopes, ",")
+	}
+	if !mk.ExpiresAt.IsZero() {
+		extra["expires_at"] = mk.ExpiresAt.Format(time.RFC3339)
+	}
+	s.auditExporter.Send(audit.SIEMEvent{
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventAuthAPIKeyCreated,
+		Severity:  audit.SeverityMedium,
+		TenantID:  mk.Tenant,
+		Action:    "create",
+		Identity:  policybundles.PolicyActorID(r),
+		Extra:     extra,
+	})
+}
+
+// emitAPIKeyRevoked publishes a SIEM event for an API key revocation.
+func (s *server) emitAPIKeyRevoked(r *http.Request, keyID, tenant string) {
+	if s.auditExporter == nil {
+		return
+	}
+	s.auditExporter.Send(audit.SIEMEvent{
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventAuthAPIKeyRevoked,
+		Severity:  audit.SeverityHigh,
+		TenantID:  tenant,
+		Action:    "revoke",
+		Identity:  policybundles.PolicyActorID(r),
+		Extra: map[string]string{
+			"key_id": keyID,
+			"tenant": tenant,
+		},
+	})
+}
+
+// emitRoleUpserted publishes a SIEM event for an RBAC role definition
+// create-or-update via PUT /api/v1/auth/roles/{name}. Op is "create" or
+// "update" so SIEM rules can distinguish privilege expansion from new-role
+// minting.
+func (s *server) emitRoleUpserted(r *http.Request, role *auth.RoleDefinition, op string) {
+	if s.auditExporter == nil || role == nil {
+		return
+	}
+	extra := map[string]string{
+		"role_name": role.Name,
+		"operation": op,
+	}
+	if len(role.Permissions) > 0 {
+		extra["permissions"] = strings.Join(role.Permissions, ",")
+	}
+	if len(role.Inherits) > 0 {
+		extra["inherits"] = strings.Join(role.Inherits, ",")
+	}
+	tenant := s.tenant
+	if a := auth.FromRequest(r); a != nil && a.Tenant != "" {
+		tenant = a.Tenant
+	}
+	extra["tenant"] = tenant
+	s.auditExporter.Send(audit.SIEMEvent{
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventAuthRoleUpserted,
+		Severity:  audit.SeverityHigh,
+		TenantID:  tenant,
+		Action:    "upsert_role",
+		Identity:  policybundles.PolicyActorID(r),
+		Extra:     extra,
+	})
+}
+
+// emitRoleDeleted publishes a SIEM event for an RBAC role definition removal.
+func (s *server) emitRoleDeleted(r *http.Request, roleName string) {
+	if s.auditExporter == nil {
+		return
+	}
+	tenant := s.tenant
+	if a := auth.FromRequest(r); a != nil && a.Tenant != "" {
+		tenant = a.Tenant
+	}
+	s.auditExporter.Send(audit.SIEMEvent{
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventAuthRoleDeleted,
+		Severity:  audit.SeverityHigh,
+		TenantID:  tenant,
+		Action:    "delete_role",
+		Identity:  policybundles.PolicyActorID(r),
+		Extra: map[string]string{
+			"role_name": roleName,
+			"tenant":    tenant,
+		},
+	})
+}
+
 // emitAuthFailure publishes an audit event for a failed authentication attempt.
 // The event never contains passwords, tokens, or API keys — only redacted identifiers.
 func (s *server) emitAuthFailure(r *http.Request, username, authMethod, reason string) {
@@ -1089,6 +1195,7 @@ func (s *server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.appendAuditEntryNamed(r.Context(), "create", "api_key", mk.ID, mk.Name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "create api key: "+mk.Name)
+	s.emitAPIKeyCreated(r, mk)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -1126,5 +1233,6 @@ func (s *server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.appendAuditEntryNamed(r.Context(), "revoke", "api_key", id, "", policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "revoke api key: "+id)
+	s.emitAPIKeyRevoked(r, id, tenant)
 	w.WriteHeader(http.StatusNoContent)
 }

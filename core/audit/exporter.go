@@ -84,6 +84,29 @@ const (
 	// A/B impact analysis. Extra carries shadow_bundle_id, bundle_id,
 	// active_verdict, shadow_verdict, diff, and latency_ms.
 	EventShadowEval = "shadow_eval"
+	// EventAuthAPIKeyCreated is emitted when an admin creates a new API
+	// key via POST /api/v1/auth/keys. Extra carries key_id, key_name,
+	// scopes, expires_at, and tenant. Identity carries the actor (the
+	// admin who created the key). Pairs with the internal audit-chain
+	// entry for forensic correlation; SIEM rules can flag mass-creation
+	// or out-of-hours key minting.
+	EventAuthAPIKeyCreated = "auth.api_key_created"
+	// EventAuthAPIKeyRevoked is emitted when a key is revoked via
+	// DELETE /api/v1/auth/keys/{id}. Extra carries key_id and tenant.
+	// Identity carries the actor who revoked it. SeverityHigh because
+	// revocation typically follows a compromise or offboarding event.
+	EventAuthAPIKeyRevoked = "auth.api_key_revoked"
+	// EventAuthRoleUpserted is emitted when a custom RBAC role
+	// definition is created or updated via PUT /api/v1/auth/roles/{name}.
+	// Extra carries role_name, permissions, inherits, operation
+	// (create|update), and tenant. Identity carries the actor. SIEM rules
+	// can flag privilege expansion (operator → admin perm grants).
+	EventAuthRoleUpserted = "auth.role_upserted"
+	// EventAuthRoleDeleted is emitted when a custom RBAC role definition
+	// is removed via DELETE /api/v1/auth/roles/{name}. Extra carries
+	// role_name and tenant. Identity carries the actor. SIEM rules can
+	// detect cleanup-after-attack patterns (delete role to remove evidence).
+	EventAuthRoleDeleted = "auth.role_deleted"
 )
 
 // Severity levels for SIEM events.

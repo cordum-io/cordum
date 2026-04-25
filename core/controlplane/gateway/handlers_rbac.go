@@ -162,6 +162,12 @@ func (s *server) handlePutRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	op := "create"
+	if existErr == nil {
+		op = "update"
+	}
+	s.emitRoleUpserted(r, saved, op)
+
 	writeJSON(w, map[string]any{"role": saved})
 }
 
@@ -208,6 +214,8 @@ func (s *server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete role")
 		return
 	}
+
+	s.emitRoleDeleted(r, name)
 
 	writeJSON(w, map[string]any{"deleted": true, "name": name})
 }
