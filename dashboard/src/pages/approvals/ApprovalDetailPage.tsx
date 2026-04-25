@@ -82,12 +82,7 @@ function Section({
   };
 
   return (
-    <div
-      className={cn(
-        "rounded-xl border border-border/60 bg-card/80 backdrop-blur-sm overflow-hidden",
-        className,
-      )}
-    >
+    <div className={cn("instrument-card overflow-hidden", className)}>
       <button
         type="button"
         className="flex w-full items-center gap-3 px-5 py-4 text-left hover:bg-muted/30 transition-colors"
@@ -123,7 +118,7 @@ function Section({
 
 function SectionSkeleton() {
   return (
-    <div className="rounded-xl border border-border/60 bg-card/80 p-5 space-y-3">
+    <div className="instrument-card p-5 space-y-3">
       <Skeleton className="h-4 w-32" />
       <Skeleton className="h-3 w-full" />
       <Skeleton className="h-3 w-3/4" />

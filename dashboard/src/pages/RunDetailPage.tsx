@@ -724,7 +724,7 @@ export default function WorkflowRunDetailPage() {
                     )}
                   </div>
                   {selectedStep.output ? (
-                    <div className="rounded-2xl bg-surface-1 border border-border p-3 font-mono text-xs text-foreground max-h-48 overflow-auto">
+                    <div className="instrument-card p-3 font-mono text-xs text-foreground max-h-48 overflow-auto">
                       <pre>
                         {(() => {
                           try {
