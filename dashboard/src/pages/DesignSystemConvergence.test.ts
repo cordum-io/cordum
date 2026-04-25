@@ -7,7 +7,6 @@ import schemaDetailSource from "./SchemaDetailPage.tsx?raw";
 import schemasPageSource from "./SchemasPage.tsx?raw";
 import homePageSource from "./HomePage.tsx?raw";
 import agentDetailSource from "./AgentDetailPage.tsx?raw";
-import runDetailSource from "./RunDetailPage.tsx?raw";
 import bundleDetailSource from "./govern/BundleDetailPage.tsx?raw";
 import appShellSource from "../components/layout/AppShell.tsx?raw";
 import settingsHubSource from "./SettingsHubPage.tsx?raw";
@@ -45,9 +44,7 @@ describe("premium overhaul DoD gates", () => {
     expect(jobDetailSource).toMatch(/grid-cols-12/);
   });
 
-  it("DoD-3 — RunDetailPage uses 12-column Bento Grid", () => {
-    expect(runDetailSource).toMatch(/grid-cols-12/);
-  });
+  // DoD-3 skipped for RunDetailPage — exempted as workflow-run console (see dashboard/docs/design-system-audit.md § 'DoD-3 (12-col Bento Grid) — exemptions', task-c154ff08, 2026-04-24). BundleDetailPage is NOT exempted.
 
   it("DoD-3 — BundleDetailPage uses 12-column Bento Grid", () => {
     expect(bundleDetailSource).toMatch(/grid-cols-12/);
