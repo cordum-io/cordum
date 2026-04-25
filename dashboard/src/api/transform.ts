@@ -79,6 +79,9 @@ export interface BackendJobRecord {
   safety_rule_id?: string;
   output_decision?: string;
   output_safety?: BackendOutputSafetyRecord;
+  workflow_run_id?: string;
+  labels?: Record<string, string>;
+  metadata?: { [key: string]: string | undefined };
 }
 
 export interface BackendOutputFinding {
@@ -713,10 +716,13 @@ export function mapJobRecord(record: BackendJobRecord): Job {
       ...(record.actor_type ? { actor_type: record.actor_type } : {}),
       ...(record.pack_id ? { pack_id: record.pack_id } : {}),
       ...(record.tenant ? { tenant: record.tenant } : {}),
+      ...(record.metadata?.session_id ? { session_id: record.metadata.session_id } : {}),
+      ...(record.metadata?.run_id ? { run_id: record.metadata.run_id } : {}),
     },
+    labels: record.labels,
     contextPtr: undefined,
     resultPtr: undefined,
-    workflowRunId: undefined,
+    workflowRunId: record.workflow_run_id,
     createdAt: updatedAt || new Date().toISOString(),
     updatedAt: updatedAt || new Date().toISOString(),
     traceId: record.trace_id,
