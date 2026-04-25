@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
 import { Users, ListChecks, Server } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -120,7 +121,12 @@ export default function TenantsPage({
   }
 
   return (
-    <div className="space-y-6">
+    <motion.div
+      className="space-y-6"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: "easeOut" }}
+    >
       {!hideHeader && (
         <PageHeader
           label="Govern"
@@ -219,6 +225,6 @@ export default function TenantsPage({
           navigate(`/govern/tenants/${encodeURIComponent(tenantId)}${params}`);
         }}
       />
-    </div>
+    </motion.div>
   );
 }

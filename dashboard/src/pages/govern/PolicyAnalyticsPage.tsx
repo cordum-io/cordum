@@ -29,6 +29,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
+import { InstrumentCard } from "@/components/ui/InstrumentCard";
 import { ChartTooltipCompact as ChartTooltip } from "@/components/ui/ChartTooltip";
 import { usePolicyAnalytics } from "@/hooks/usePolicies";
 import type {
@@ -422,7 +423,7 @@ export default function PolicyAnalyticsPage({
   const content = (
     <div className={hideHeader ? "space-y-6" : "max-w-6xl mx-auto w-full px-4 py-6 space-y-6"}>
         {/* Controls */}
-        <div className="rounded-xl border border-border/60 bg-card/80 p-5">
+        <InstrumentCard accent="info" className="p-5">
           <div className="flex flex-wrap items-end gap-4">
             <div className="space-y-1">
               <label htmlFor="analytics-from" className="text-[11px] text-muted-foreground">
@@ -462,7 +463,7 @@ export default function PolicyAnalyticsPage({
           {rangeError && (
             <p className="mt-2 text-xs text-destructive">{rangeError}</p>
           )}
-        </div>
+        </InstrumentCard>
 
         {/* Loading */}
         {analyticsMutation.isPending && (

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
 import { Save } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -8,6 +9,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
+import { InstrumentCard } from "@/components/ui/InstrumentCard";
 import { usePolicyStudioGlobal } from "@/hooks/usePolicyStudioGlobal";
 import { usePolicyAccess } from "@/hooks/usePolicyAccess";
 import { OutputPolicyControls } from "@/components/policy/output-rules/OutputPolicyControls";
@@ -102,7 +104,12 @@ export default function OutputRulesPage({ hideHeader }: { hideHeader?: boolean }
   }
 
   return (
-    <div className="space-y-6">
+    <motion.div
+      className="space-y-6"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: "easeOut" }}
+    >
       {!hideHeader && (
         <PageHeader
           label="Govern"
@@ -166,14 +173,16 @@ export default function OutputRulesPage({ hideHeader }: { hideHeader?: boolean }
         </div>
       )}
 
-      <OutputPolicyControls
-        outputPolicy={policy.outputPolicy}
-        readOnly={affordances.drawerReadOnly}
-        onChange={(nextOutputPolicy) => {
-          if (!affordances.canEditRule) return;
-          setOutputPolicy(nextOutputPolicy);
-        }}
-      />
+      <InstrumentCard accent="governance" className="p-5">
+        <OutputPolicyControls
+          outputPolicy={policy.outputPolicy}
+          readOnly={affordances.drawerReadOnly}
+          onChange={(nextOutputPolicy) => {
+            if (!affordances.canEditRule) return;
+            setOutputPolicy(nextOutputPolicy);
+          }}
+        />
+      </InstrumentCard>
 
       <OutputRulesList
         rules={outputRules}
@@ -234,6 +243,6 @@ export default function OutputRulesPage({ hideHeader }: { hideHeader?: boolean }
           setEditingIndex(null);
         }}
       />
-    </div>
+    </motion.div>
   );
 }

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
 import { AlertTriangle } from "lucide-react";
 import { GitBranch, ShieldCheck, FileEdit } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -72,7 +73,12 @@ export default function BundlesPage({ hideHeader }: { hideHeader?: boolean } = {
   );
 
   return (
-    <div className="space-y-6">
+    <motion.div
+      className="space-y-6"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: "easeOut" }}
+    >
       {!hideHeader && (
         <PageHeader
           label="Govern"
@@ -148,6 +154,6 @@ export default function BundlesPage({ hideHeader }: { hideHeader?: boolean } = {
           />
         </>
       )}
-    </div>
+    </motion.div>
   );
 }
