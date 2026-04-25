@@ -460,8 +460,24 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		provider = composite
 	}
 
-	if env.IsProduction() && env.Bool("CORDUM_DASHBOARD_EMBED_API_KEY") {
-		slog.Error("SECURITY WARNING: CORDUM_DASHBOARD_EMBED_API_KEY is enabled in production — API key will be exposed in browser JavaScript")
+	if env.Bool("CORDUM_DASHBOARD_EMBED_API_KEY") {
+		// Refuse to start in production. The flag bakes the system API
+		// key into /config.json, served unauthenticated by nginx — anyone
+		// who can reach the dashboard URL gets the key. Allowed in dev
+		// for local kiosk-style smoke tests; prohibited in prod no
+		// matter what the operator put in their .env.
+		if env.IsProduction() {
+			return fmt.Errorf("refusing to start: CORDUM_DASHBOARD_EMBED_API_KEY=true is forbidden in production — the API key would be served unauthenticated at /config.json (set CORDUM_DASHBOARD_EMBED_API_KEY=false or unset CORDUM_PRODUCTION/CORDUM_ENV to override)")
+		}
+		// Always-on warning in non-prod so dev operators don't run this
+		// silently. Emits both as a structured slog.Error and a coloured
+		// stderr banner so it can't get lost in startup log volume.
+		slog.Error("SECURITY WARNING: CORDUM_DASHBOARD_EMBED_API_KEY is enabled — API key will be exposed in browser JavaScript at /config.json (use only in trusted dev environments)")
+		fmt.Fprintln(os.Stderr, "\x1b[1;31m"+strings.Repeat("=", 78)+"\x1b[0m")
+		fmt.Fprintln(os.Stderr, "\x1b[1;31m  SECURITY WARNING  CORDUM_DASHBOARD_EMBED_API_KEY=true\x1b[0m")
+		fmt.Fprintln(os.Stderr, "\x1b[1;31m  /config.json now contains the API key in plaintext.\x1b[0m")
+		fmt.Fprintln(os.Stderr, "\x1b[1;31m  Use only in trusted dev environments. NEVER in production.\x1b[0m")
+		fmt.Fprintln(os.Stderr, "\x1b[1;31m"+strings.Repeat("=", 78)+"\x1b[0m")
 	}
 
 	memStore, err := store.NewRedisStore(cfg.RedisURL)
