@@ -413,5 +413,76 @@ describe("api client - baseUrl and auth header edge cases", () => {
     expect(headers["X-API-Key"]).toBeUndefined();
     expect(headers["X-Tenant-ID"]).toBeUndefined();
   });
+
+  describe("request() error wrapping", () => {
+    it("wraps a fetch network rejection (TypeError) in ApiError(0) with a friendly message", async () => {
+      fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+
+      const err = await captureApiError(get("/foo"));
+      expect(err.status).toBe(0);
+      expect(err.message).toMatch(/network/i);
+    });
+
+    it("wraps an internal-timeout AbortError in ApiError(408) when AbortSignal.timeout fires", async () => {
+      const timeoutController = new AbortController();
+      const timeoutSpy = vi
+        .spyOn(AbortSignal, "timeout")
+        .mockImplementation(() => timeoutController.signal);
+
+      try {
+        fetchMock.mockImplementation((_url: string, init: RequestInit) => {
+          return new Promise((_resolve, reject) => {
+            const sig = init.signal as AbortSignal;
+            if (sig.aborted) {
+              reject(sig.reason ?? new DOMException("Aborted", "AbortError"));
+              return;
+            }
+            sig.addEventListener("abort", () => {
+              reject(sig.reason ?? new DOMException("Aborted", "AbortError"));
+            });
+          });
+        });
+
+        const pending = get("/slow");
+        // Fire the internal timeout signal as if 30s had elapsed.
+        timeoutController.abort(new DOMException("Timeout", "TimeoutError"));
+
+        const err = await captureApiError(pending);
+        expect(err.status).toBe(408);
+        expect(err.message).toMatch(/timed out/i);
+      } finally {
+        timeoutSpy.mockRestore();
+      }
+    });
+
+    it("preserves a caller-initiated AbortError instead of wrapping it as ApiError", async () => {
+      const controller = new AbortController();
+      controller.abort();
+
+      fetchMock.mockImplementation((_url: string, init: RequestInit) => {
+        return new Promise((_resolve, reject) => {
+          const sig = init.signal as AbortSignal;
+          if (sig.aborted) {
+            reject(sig.reason ?? new DOMException("Aborted", "AbortError"));
+            return;
+          }
+          sig.addEventListener("abort", () => {
+            reject(sig.reason ?? new DOMException("Aborted", "AbortError"));
+          });
+        });
+      });
+
+      let caught: unknown;
+      try {
+        await post("/foo", { hello: "world" }, { signal: controller.signal });
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(caught).toBeDefined();
+      expect(caught).not.toBeInstanceOf(ApiError);
+      expect((caught as Error).name).toBe("AbortError");
+    });
+  });
 });
 

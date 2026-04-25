@@ -144,13 +144,35 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     : timeoutSignal;
 
   const startMs = performance.now();
-  const res = await fetch(`${baseUrl()}${path}`, {
-    ...init,
-    headers,
-    signal,
-    credentials: "include",
-  });
-  return handleResponse<T>(res, { method, path, requestId: reqId, startMs });
+  try {
+    const res = await fetch(`${baseUrl()}${path}`, {
+      ...init,
+      headers,
+      signal,
+      credentials: "include",
+    });
+    return await handleResponse<T>(res, { method, path, requestId: reqId, startMs });
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    // Distinguish our internal timeout from caller cancellation by reading
+    // the local timeoutSignal — runtime-proof across jsdom/Node/browser.
+    if (timeoutSignal.aborted) {
+      logger.warn("api-client", `timeout ${path}`, {
+        requestId: reqId,
+        timeoutMs: REQUEST_TIMEOUT_MS,
+      });
+      throw new ApiError(408, `Request timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds`);
+    }
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    if (err instanceof TypeError) {
+      logger.warn("api-client", `network ${path}`, {
+        requestId: reqId,
+        error: err.message,
+      });
+      throw new ApiError(0, "Network error — please check your connection");
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
