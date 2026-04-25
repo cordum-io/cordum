@@ -41,6 +41,7 @@ vi.mock("framer-motion", () => {
     motion: {
       div: passthrough("div"),
     },
+    AnimatePresence: ({ children }: { children?: React.ReactNode }) => children,
   };
 });
 

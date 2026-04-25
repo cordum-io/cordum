@@ -22,8 +22,6 @@ import { InfoBanner } from "@/components/ui/InfoBanner";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { SkeletonCard } from "@/components/ui/Skeleton";
-import { ChainIntegrityWidget } from "@/components/ChainIntegrityWidget";
-import { GapAlertBanner } from "@/components/GapAlertBanner";
 import {
   PostureSummary,
   PolicyFilterBar,

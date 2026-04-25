@@ -399,7 +399,7 @@ export function ChainIntegrityWidget({
           tone.borderTintClass,
         )}
       >
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-end">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 sm:items-end">
           <div>
             <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
               Verified events
