@@ -39,6 +39,20 @@ function workerStatusVariant(status: string) {
   }
 }
 
+const tableBodyVariants = {
+  hidden: {},
+  visible: {
+    transition: {
+      staggerChildren: 0.04,
+    },
+  },
+};
+
+const tableRowVariants = {
+  hidden: { opacity: 0, y: 8 },
+  visible: { opacity: 1, y: 0 },
+};
+
 export default function AgentsPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -249,10 +263,11 @@ export default function AgentsPage() {
                 <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Seen</th>
               </tr>
             </thead>
-            <tbody>
+            <motion.tbody initial="hidden" animate="visible" variants={tableBodyVariants}>
               {filtered.map((w) => (
-                <tr
+                <motion.tr
                   key={w.id}
+                  variants={tableRowVariants}
                   {...clickableRowProps(() => navigate(`/agents/${w.id}`))}
                   className={cn(
                     "border-b border-border hover:bg-surface-1 transition-colors cursor-pointer",
@@ -287,9 +302,9 @@ export default function AgentsPage() {
                   <td className="px-5 py-3 text-sm text-muted-foreground">
                     {w.lastHeartbeat ? formatRelativeTime(w.lastHeartbeat) : "—"}
                   </td>
-                </tr>
+                </motion.tr>
               ))}
-            </tbody>
+            </motion.tbody>
           </table>
           </div>
         </div>
@@ -390,10 +405,11 @@ function AgentIdentityTab() {
                 <th className="px-5 py-3 text-xs font-mono uppercase tracking-widest text-muted-foreground">Last Active</th>
               </tr>
             </thead>
-            <tbody>
+            <motion.tbody initial="hidden" animate="visible" variants={tableBodyVariants}>
               {identities.map((agent: AgentIdentity) => (
-                <tr
+                <motion.tr
                   key={agent.id}
+                  variants={tableRowVariants}
                   {...clickableRowProps(() => navigate(`/agents/identity/${agent.id}`))}
                   className="border-b border-border/50 hover:bg-surface-2 transition-colors cursor-pointer"
                 >
@@ -419,9 +435,9 @@ function AgentIdentityTab() {
                       ? formatRelativeTime(new Date(agent.last_active / 1000).toISOString())
                       : "Never"}
                   </td>
-                </tr>
+                </motion.tr>
               ))}
-            </tbody>
+            </motion.tbody>
           </table>
         </div>
       </div>
@@ -461,10 +477,11 @@ function AgentRegistryTab() {
               <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Last Active</th>
             </tr>
           </thead>
-          <tbody>
+          <motion.tbody initial="hidden" animate="visible" variants={tableBodyVariants}>
             {workers.map((w) => (
-              <tr
+              <motion.tr
                 key={w.id}
+                variants={tableRowVariants}
                 {...clickableRowProps(() => navigate(`/agents/${w.id}`))}
                 className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer"
               >
@@ -494,9 +511,9 @@ function AgentRegistryTab() {
                   </div>
                 </td>
                 <td className="px-5 py-3 text-sm text-muted-foreground">{w.lastHeartbeat ? formatRelativeTime(w.lastHeartbeat) : "—"}</td>
-              </tr>
+              </motion.tr>
             ))}
-          </tbody>
+          </motion.tbody>
         </table>
         </div>
       </div>

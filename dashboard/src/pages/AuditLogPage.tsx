@@ -54,6 +54,20 @@ interface AuditObserverState {
 
 const PAGE_SIZE = 50;
 
+const tableBodyVariants = {
+  hidden: {},
+  visible: {
+    transition: {
+      staggerChildren: 0.04,
+    },
+  },
+};
+
+const tableRowVariants = {
+  hidden: { opacity: 0, y: 8 },
+  visible: { opacity: 1, y: 0 },
+};
+
 export function parseSeqParam(raw?: string | null): number | undefined {
   if (typeof raw !== "string") return undefined;
   const trimmed = raw.trim();
@@ -466,10 +480,11 @@ export default function AuditLogPage() {
                   </th>
                 </tr>
               </thead>
-              <tbody>
+              <motion.tbody initial="hidden" animate="visible" variants={tableBodyVariants}>
                 {events.map((e) => (
-                  <tr
+                  <motion.tr
                     key={e.id}
+                    variants={tableRowVariants}
                     className="border-b border-border hover:bg-surface-1 transition-colors"
                   >
                     <td className="px-5 py-3 font-mono text-xs text-muted-foreground whitespace-nowrap">
@@ -499,9 +514,9 @@ export default function AuditLogPage() {
                     <td className="px-5 py-3 text-xs text-muted-foreground truncate max-w-[200px]">
                       {e.detail ?? "\u2014"}
                     </td>
-                  </tr>
+                  </motion.tr>
                 ))}
-              </tbody>
+              </motion.tbody>
             </table>
           </div>
 

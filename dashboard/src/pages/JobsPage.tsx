@@ -47,18 +47,18 @@ import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { safeLocalStorage } from "@/lib/storage";
 import { JobFiltersBar, type JobFilterValues } from "@/components/jobs/JobFiltersBar";
 
-function OriginPill({ job }: { job: Job }) {
+export function OriginPill({ job }: { job: Job }) {
   const navigate = useNavigate();
   const runId = job.workflowRunId || (job.metadata?.run_id as string) || (job.labels?.run_id as string);
   const sessionId = (job.metadata?.session_id as string) || (job.labels?.session_id as string);
 
-  if (runId) {
+  if (runId && job.workflowId) {
     return (
       <button
         type="button"
         onClick={(e) => {
           e.stopPropagation();
-          navigate(`/workflows/${job.workflowId || "all"}/runs/${runId}`);
+          navigate(`/workflows/${job.workflowId}/runs/${runId}`);
         }}
         className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20 transition"
       >
@@ -136,6 +136,20 @@ const safetyOrder: Record<string, number> = {
   throttle: 2,
   allow_with_constraints: 3,
   allow: 4,
+};
+
+const tableBodyVariants = {
+  hidden: {},
+  visible: {
+    transition: {
+      staggerChildren: 0.04,
+    },
+  },
+};
+
+const tableRowVariants = {
+  hidden: { opacity: 0, y: 8 },
+  visible: { opacity: 1, y: 0 },
 };
 
 export function readStoredJobsPageSize(): number {
@@ -740,10 +754,11 @@ export default function JobsPage() {
                   <th className="px-5 py-3"></th>
                 </tr>
               </thead>
-              <tbody>
+              <motion.tbody initial="hidden" animate="visible" variants={tableBodyVariants}>
                 {paginatedJobs.map((job) => (
-                  <tr
+                  <motion.tr
                     key={job.id}
+                    variants={tableRowVariants}
                     {...clickableRowProps(() => navigate(`/jobs/${job.id}`))}
                     className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer group"
                   >
@@ -799,9 +814,9 @@ export default function JobsPage() {
                         <Eye className="w-3.5 h-3.5 text-muted-foreground" />
                       </Button>
                     </td>
-                  </tr>
+                  </motion.tr>
                 ))}
-              </tbody>
+              </motion.tbody>
             </table>
           </div>
           <div className="px-5 py-2 border-t border-border bg-surface-0">
