@@ -220,18 +220,22 @@ function OverviewTabContent() {
   ];
 
   return (
-    <div className="space-y-6">
+    <motion.div
+      className="space-y-6"
+      initial="hidden"
+      animate="visible"
+      variants={{ visible: { transition: { staggerChildren: 0.05 } } }}
+    >
       {/* Top Level Posture Summary — Full Width */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.05 }}
-      >
+      <motion.div variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}>
         <PostureSummary bundles={bundles} allRules={allRules} />
       </motion.div>
 
       {/* Explore Section */}
-      <div className="space-y-4 pt-4">
+      <motion.div
+        className="space-y-4 pt-4"
+        variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}
+      >
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-display font-semibold text-foreground">
             Explore Rule Base
@@ -295,8 +299,8 @@ function OverviewTabContent() {
             {activeView === "by-topic" && <ByTopicTable bundles={filteredBundles} filterText={combinedFilter || undefined} />}
           </div>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
