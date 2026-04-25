@@ -1,5 +1,4 @@
 import { lazy } from "react";
-import type { LucideIcon } from "lucide-react";
 
 // Lazy-loaded tab content — each wraps its page with hideHeader=true
 export const LazyInputRulesTab = lazy(() => import("./InputRulesTab"));

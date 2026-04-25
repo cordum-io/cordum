@@ -2,7 +2,6 @@ import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ArrowRight,
   ChevronDown,
   ChevronUp,
   FlaskConical,

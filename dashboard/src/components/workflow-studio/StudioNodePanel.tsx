@@ -5,7 +5,6 @@ import type { Workflow, WorkflowRun, WorkflowStep } from "@/api/types";
 import { StudioConfigPanel } from "./StudioConfigPanel";
 import { NodeDetailPanel } from "@/components/workflows/dag/NodeDetailPanel";
 import type { UnifiedNodeData, StudioMode } from "./types";
-import { getStepMeta } from "./nodeRegistry";
 
 // ---------------------------------------------------------------------------
 // Props

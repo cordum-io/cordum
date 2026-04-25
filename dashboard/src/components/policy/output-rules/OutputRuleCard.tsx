@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Eye, Pencil, Power, Trash2, Search, Target, Shield, AlertTriangle, Fingerprint } from "lucide-react";
+import { ArrowDown, ArrowUp, Eye, Pencil, Power, Trash2, Target, Shield, AlertTriangle, Fingerprint } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { GlobalPolicyOutputRule } from "@/types/policy";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";

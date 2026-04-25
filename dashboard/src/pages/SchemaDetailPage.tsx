@@ -28,7 +28,6 @@ import { SkeletonCard } from "@/components/ui/Skeleton";
 import { Tabs } from "@/components/ui/Tabs";
 import { ArrowLeft, FileJson, Clock, Hash, Edit, Plus, Trash2 } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
-import { toast } from "sonner";
 import { CodeBlock } from "@/components/ui/CodeBlock";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 
@@ -380,7 +379,7 @@ export default function SchemaDetailPage() {
               </tr>
             </thead>
             <tbody>
-              {(currentVersion.fields || []).map((field, i) => (
+              {(currentVersion.fields || []).map((field) => (
                 <tr key={field.name} className="border-b border-border last:border-0 hover:bg-surface-1 transition-colors">
                   <td className="px-5 py-3 font-mono text-xs text-foreground">{field.name}</td>
                   <td className="px-5 py-3"><StatusBadge variant="info">{field.type}</StatusBadge></td>

@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useRef, Suspense, lazy } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import {
   Shield,
   FileInput,
@@ -10,7 +10,6 @@ import {
   History,
   TrendingUp,
   Layers,
-  ArrowRight,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -19,8 +18,6 @@ import { usePageTitle } from "@/hooks/usePageTitle";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Tabs } from "@/components/ui/Tabs";
 import { InfoBanner } from "@/components/ui/InfoBanner";
-import { Button } from "@/components/ui/Button";
-import { StatusBadge } from "@/components/ui/StatusBadge";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import {
   PostureSummary,
@@ -163,8 +160,6 @@ function countScopeRules(bundles: PolicyBundle[], scope: PolicyScope): number {
 // ---------------------------------------------------------------------------
 
 function OverviewTabContent() {
-  const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
   const { data: bundlesRes, isLoading: bundlesLoading } = usePolicyBundles();
   const { data: rulesRes, isLoading: rulesLoading } = usePolicyRules();
 

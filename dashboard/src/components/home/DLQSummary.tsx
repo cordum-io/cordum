@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { AlertTriangle, CheckCircle } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { Card, CardHeader, CardTitle } from "../ui/Card";
 import { CardSkeleton } from "../ui/CardSkeleton";
 import { CardEmpty } from "../ui/CardEmpty";

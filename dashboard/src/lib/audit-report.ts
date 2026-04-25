@@ -1,5 +1,5 @@
 import { jsPDF } from "jspdf";
-import type { AuditEntry, AuditCategory, AuditSeverity } from "../api/types";
+import type { AuditEntry } from "../api/types";
 import type { AuditFilters } from "../hooks/useAudit";
 
 // ---------------------------------------------------------------------------

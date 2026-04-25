@@ -17,7 +17,6 @@ import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { cn, formatDuration } from "../../lib/utils";
 import { useGeneralConfig, useSetGeneralConfig } from "../../hooks/useSettings";
 import type {
-  GeneralConfig,
   MaintenanceWindow,
   MaintenanceSchedule,
 } from "../../api/types";

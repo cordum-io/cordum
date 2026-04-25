@@ -6,7 +6,6 @@ import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
 import { cn } from "../../lib/utils";
-import type { AuditFilters } from "../../hooks/useAudit";
 
 // ---------------------------------------------------------------------------
 // Category-grouped event types

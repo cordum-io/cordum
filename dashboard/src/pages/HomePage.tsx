@@ -735,7 +735,7 @@ export default function HomePage() {
           </Button>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
-          {(workers ?? []).slice(0, 12).map((w, idx) => {
+          {(workers ?? []).slice(0, 12).map((w, _idx) => {
             const isOnline = w.status === "idle" || w.status === "busy";
             return (
               <InstrumentCard

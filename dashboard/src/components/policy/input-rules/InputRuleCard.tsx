@@ -1,5 +1,4 @@
 import { ArrowDown, ArrowUp, Eye, Pencil, Trash2, Shield, Target, Cpu, Tag, User, Box } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { getAdvancedConfiguredSummary } from "@/lib/policy-studio/globalRuleEditorState";
 import type { GlobalPolicyInputRule } from "@/types/policy";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";

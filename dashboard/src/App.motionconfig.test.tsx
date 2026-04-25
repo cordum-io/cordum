@@ -112,7 +112,6 @@ vi.mock("framer-motion", async () => {
 });
 
 vi.mock("./pages/HomePage", async () => {
-  const React = await import("react");
   const { motion } = await import("framer-motion");
 
   return {

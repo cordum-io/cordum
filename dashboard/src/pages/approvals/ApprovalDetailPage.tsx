@@ -45,7 +45,6 @@ import type {
   ApprovalContext,
   BlastRadius,
   PriorApproval,
-  ApprovalPolicySnapshot,
 } from "@/api/types";
 
 // ---------------------------------------------------------------------------
@@ -137,7 +136,7 @@ function SectionEmpty({ message }: { message: string }) {
 // ---------------------------------------------------------------------------
 
 function WhatSection({
-  context,
+  context: _context,
   approval,
 }: {
   context: ApprovalContext;

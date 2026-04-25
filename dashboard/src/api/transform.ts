@@ -21,7 +21,6 @@ import type {
   AuditCategory,
   AuditSeverity,
   AuditActor,
-  AuditResource,
   Workflow,
   WorkflowRun,
   WorkflowStep,

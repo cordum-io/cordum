@@ -1,4 +1,4 @@
-import { act } from "react";
+import React, { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Approval } from "@/api/types";
 import { FOCUSABLE_SELECTOR } from "@/hooks/useDialogA11y";
@@ -142,16 +142,6 @@ function click(element: Element | null) {
   act(() => {
     element.dispatchEvent(
       new MouseEvent("click", { bubbles: true, cancelable: true }),
-    );
-  });
-}
-
-function keydown(element: Element | null, key: string) {
-  if (!element)
-    throw new Error("Expected element to exist before dispatching key");
-  act(() => {
-    element.dispatchEvent(
-      new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
     );
   });
 }

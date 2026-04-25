@@ -6,10 +6,10 @@
 import { useState, useMemo, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { get } from "@/api/client";
 import { mapJobRecord, type BackendJobRecord } from "@/api/transform";
-import type { Job, SafetyDecisionType } from "@/api/types";
+import type { Job } from "@/api/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
@@ -38,7 +38,7 @@ import {
   MessageSquare,
   Zap,
 } from "lucide-react";
-import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
+import { formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { friendlyError } from "@/lib/friendlyError";
 import { getJobParentRefs } from "@/lib/jobParentRefs";
 import { toast } from "sonner";

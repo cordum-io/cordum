@@ -8,7 +8,7 @@ import {
   UserCheck,
   FileWarning,
 } from "lucide-react";
-import type { PolicyBundle, PolicyRule, SafetyDecisionType } from "@/api/types";
+import type { PolicyBundle, PolicyRule } from "@/api/types";
 
 interface PostureSummaryProps {
   bundles: PolicyBundle[];

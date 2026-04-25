@@ -58,7 +58,7 @@ vi.mock("react-router-dom", async (importOriginal) => {
   };
 });
 
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import type { PolicyRule } from "@/api/types";

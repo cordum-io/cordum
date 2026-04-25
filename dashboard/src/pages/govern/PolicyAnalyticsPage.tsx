@@ -34,7 +34,6 @@ import { ChartTooltipCompact as ChartTooltip } from "@/components/ui/ChartToolti
 import { usePolicyAnalytics } from "@/hooks/usePolicies";
 import type {
   PolicyAnalyticsRequest,
-  PolicyAnalyticsResponse,
   RuleAnalytics,
 } from "@/api/types";
 

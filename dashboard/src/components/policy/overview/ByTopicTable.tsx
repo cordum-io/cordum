@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
-import type { PolicyBundle, PolicyRule } from "@/api/types";
+import type { PolicyBundle } from "@/api/types";
 
 interface ByTopicTableProps {
   bundles: PolicyBundle[];
