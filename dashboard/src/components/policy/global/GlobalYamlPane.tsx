@@ -14,8 +14,12 @@ interface GlobalYamlPaneProps {
 function findRuleLine(yaml: string, ruleId: string | null | undefined): number | null {
   if (!ruleId) return null;
   const lines = yaml.split(/\r?\n/);
-  const needle = `- id: ${ruleId}`;
-  const index = lines.findIndex((line) => line.trim() === needle || line.includes(needle));
+  // Exact-match (with optional inline-comment / surrounding whitespace) so
+  // `rule-1` cannot match `rule-10`. Anchored regex prevents prefix
+  // collisions.
+  const escaped = ruleId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const needle = new RegExp(`^\\s*-\\s*id:\\s*['"]?${escaped}['"]?\\s*(?:#.*)?$`);
+  const index = lines.findIndex((line) => needle.test(line));
   return index >= 0 ? index + 1 : null;
 }
 
@@ -32,9 +36,12 @@ export function GlobalYamlPane({
 
   const jumpToActiveRule = () => {
     if (!textareaRef.current || !activeLine) return;
+    // Honor the source's actual line terminator so CRLF YAML doesn't
+    // off-by-one each line. Default to LF when no explicit CRLF is found.
+    const newlineLen = yaml.includes("\r\n") ? 2 : 1;
     const lines = yaml.split(/\r?\n/);
     const lineIndex = Math.max(activeLine - 1, 0);
-    const start = lines.slice(0, lineIndex).reduce((sum, line) => sum + line.length + 1, 0);
+    const start = lines.slice(0, lineIndex).reduce((sum, line) => sum + line.length + newlineLen, 0);
     const end = start + (lines[lineIndex]?.length ?? 0);
     textareaRef.current.focus();
     textareaRef.current.setSelectionRange(start, end);

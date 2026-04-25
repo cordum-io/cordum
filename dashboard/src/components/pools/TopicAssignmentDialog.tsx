@@ -43,7 +43,7 @@ export function TopicAssignmentDialog({ open, onClose, onAddTopic, onRemoveTopic
     <ConfirmDialog
       open={open}
       onClose={() => { setNewTopic(""); setError(""); onClose(); }}
-      onConfirm={onClose}
+      onConfirm={() => { setNewTopic(""); setError(""); onClose(); }}
       title={`Topics: ${poolName}`}
       icon={Link2}
       confirmLabel="Done"

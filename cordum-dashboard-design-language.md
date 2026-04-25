@@ -458,7 +458,7 @@ Tables display structured data with status indicators and row-level actions. The
 | :--- | :--- |
 | Header row | `surface-0` background, `text-xs`, `font-mono`, `muted-foreground`, uppercase, `tracking-wider` |
 | Body row | `surface-1` background, `text-sm`, `foreground` |
-| Row hover | `surface-2` background, `150ms` transition |
+| Row hover | `surface-2` background, `250ms` transition (`--duration-soft`) |
 | Row border | 1px bottom, `border` token |
 | Cell padding | 16px vertical, 24px horizontal |
 | Status column | Status badge (see 5.3) |
@@ -545,7 +545,7 @@ All transitions use a single, consistent timing function. This creates a sense o
 
 | Property | Value |
 | :--- | :--- |
-| Duration | `150ms` (micro-interactions), `300ms` (page transitions), `500ms` (entrance animations) |
+| Duration | `250ms` (micro-interactions, Soft UI; tracked as `--duration-soft`), `300ms` (page transitions), `500ms` (entrance animations) |
 | Easing | `ease-out` (CSS) / `{ duration: 0.35 }` (Framer Motion) |
 | Stagger | `60ms` between children in lists |
 
@@ -809,7 +809,7 @@ All tokens in one place for fast copy-paste into new components.
 --radius-xl: 0.75rem;   /* 12px */
 
 /* === MOTION === */
-/* transition: all 150ms ease-out; (micro) */
+/* transition: all 250ms ease-out; (micro, Soft UI; --duration-soft) */
 /* transition: all 300ms ease-out; (page) */
 /* Framer Motion: { duration: 0.35 } (entrance) */
 /* Stagger: 60ms between children */
@@ -826,7 +826,7 @@ All tokens in one place for fast copy-paste into new components.
 - **Do** use instrument cards with the 2px top accent line for all metric containers.
 - **Do** pair every status color with an icon and a text label (never color alone).
 - **Do** maintain the surface layer hierarchy — never place a `surface-0` element on top of a `surface-2` element.
-- **Do** use `150ms ease-out` for all micro-interactions.
+- **Do** use `250ms ease-out` for all micro-interactions (consume the `--duration-soft` token).
 - **Do** use uppercase `tracking-widest` labels for section categories.
 
 ### Don't

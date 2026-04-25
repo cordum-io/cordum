@@ -51,10 +51,15 @@ function CopyButton({ text }: { text: string }) {
     <button
       type="button"
       className="ml-1 inline-flex items-center rounded p-0.5 text-muted-foreground hover:text-ink transition-colors"
-      onClick={() => {
-        navigator.clipboard.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          // Insecure context or permission denied — leave the copied
+          // indicator off so the UI doesn't lie.
+        }
       }}
       aria-label="Copy to clipboard"
     >
@@ -335,7 +340,7 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
                 </p>
                 <p>
                   <span className="text-muted-foreground">ID hash: </span>
-                  <span className="font-mono text-ink">{entry.id.slice(-6)}</span>
+                  <span className="font-mono text-ink">{entry.id.slice(-12)}</span>
                 </p>
               </div>
             )}

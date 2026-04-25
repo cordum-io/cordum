@@ -158,6 +158,15 @@ export function JobFiltersBar({
   const [sessionIdLocal, setSessionIdLocal] = useState(sessionIdFilter);
   const [runIdLocal, setRunIdLocal] = useState(runIdFilter);
 
+  // Re-sync local inputs when URL changes externally (back/forward
+  // navigation, deep links). Without this, the local debounced state can
+  // drift from the URL state and silently restore stale filters.
+  useEffect(() => { setTopicLocal(topicFilter); }, [topicFilter]);
+  useEffect(() => { setPoolLocal(poolFilter); }, [poolFilter]);
+  useEffect(() => { setTenantLocal(tenantFilter); }, [tenantFilter]);
+  useEffect(() => { setSessionIdLocal(sessionIdFilter); }, [sessionIdFilter]);
+  useEffect(() => { setRunIdLocal(runIdFilter); }, [runIdFilter]);
+
   const [showCustomRange, setShowCustomRange] = useState(timeRangeFilter === "custom");
   const topicTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const poolTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);

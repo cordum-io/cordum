@@ -175,7 +175,7 @@ export function AppShell({ children }: AppShellProps) {
   const systemStatus = deriveSystemStatus(statusData, statusError, statusLoading);
   const statusColor = statusColorMap[systemStatus];
 
-  // Cmd+B / Ctrl+B toggles sidebar collapse
+  // Cmd/Ctrl + B and Cmd/Ctrl + / both toggle sidebar collapse
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === "b" || e.key === "/")) {

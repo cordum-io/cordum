@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
+import { logger } from "@/lib/logger";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import {
@@ -135,9 +136,17 @@ export function RuleDetailRow({ rule, index, className }: RuleDetailRowProps) {
   }, [rule.constraints, hasConstraints]);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(yamlStr);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(yamlStr);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      // navigator.clipboard.writeText rejects in insecure contexts or when
+      // permission is denied — surface a structured warn instead of an
+      // unhandled rejection, and skip the success state so the UI stays
+      // truthful.
+      logger.warn("rule-detail-row", "clipboard copy failed", { error: String(err) });
+    }
   };
 
   return (
