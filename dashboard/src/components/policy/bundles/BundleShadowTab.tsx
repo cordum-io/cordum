@@ -6,6 +6,7 @@ import { SkeletonCard } from "@/components/ui/Skeleton";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { BundleYamlEditor } from "./BundleYamlEditor";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 import {
   useShadowPolicy,
   useActivateShadow,
@@ -47,6 +48,13 @@ export function BundleShadowTab({
   const [draft, setDraft] = useState<string | null>(null);
   const [showDeactivateConfirm, setShowDeactivateConfirm] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const closeDeactivateConfirm = useCallback(
+    () => setShowDeactivateConfirm(false),
+    [],
+  );
+  const deactivateConfirmRef = useDialogA11y(closeDeactivateConfirm, {
+    enabled: showDeactivateConfirm,
+  });
 
   // Prime the editor with the active content when the tab mounts for a
   // bundle without a shadow. Re-runs if the user switches bundles.
@@ -224,6 +232,7 @@ export function BundleShadowTab({
 
       {showDeactivateConfirm && (
         <div
+          ref={deactivateConfirmRef}
           role="dialog"
           aria-modal="true"
           aria-labelledby="shadow-deactivate-title"

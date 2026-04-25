@@ -9,6 +9,7 @@ import { PolicyEmptyConfigCard } from "@/components/policy/studio-primitives/Pol
 import { PolicyField } from "@/components/policy/studio-primitives/PolicyField";
 import { PolicySection } from "@/components/policy/studio-primitives/PolicySection";
 import { PolicyTagInput } from "@/components/policy/studio-primitives/PolicyTagInput";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { usePolicyStudioTelemetry } from "@/hooks/usePolicyStudioTelemetry";
 import { getAdvancedConfiguredSummary } from "@/lib/policy-studio/globalRuleEditorState";
 import type { GlobalPolicyInputRule, GlobalPolicyRemediation } from "@/types/policy";
@@ -248,6 +249,7 @@ export function GlobalRuleEditorDrawer({
     remediations: false,
   });
   const [error, setError] = useState("");
+  const dialogRef = useDialogA11y(onClose, { enabled: open });
   const dialogTitleId = useId();
   const validationSummaryId = "global-rule-validation-summary";
   const { emit: emitTelemetry } = usePolicyStudioTelemetry();
@@ -420,6 +422,7 @@ export function GlobalRuleEditorDrawer({
         onClick={onClose}
       />
       <div
+        ref={dialogRef}
         className="relative h-full w-full max-w-xl overflow-y-auto border-l border-border bg-surface-1 p-5"
         role="dialog"
         aria-modal="true"

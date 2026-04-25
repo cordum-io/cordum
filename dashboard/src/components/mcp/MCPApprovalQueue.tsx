@@ -16,6 +16,7 @@
 //   button on error.
 import { useMemo, useState } from "react";
 import { useConfigStore } from "../../state/config";
+import { useDialogA11y } from "../../hooks/useDialogA11y";
 import {
   shortArgsHash,
   useApproveMcp,
@@ -288,6 +289,7 @@ function ConfirmDecisionModal({ decision, onClose }: ConfirmDecisionModalProps) 
   const approveM = useApproveMcp();
   const rejectM = useRejectMcp();
   const [reason, setReason] = useState("");
+  const dialogRef = useDialogA11y(onClose);
   const isApprove = decision.verb === "approve";
   const mutation = isApprove ? approveM : rejectM;
   const submit = () => {
@@ -298,6 +300,7 @@ function ConfirmDecisionModal({ decision, onClose }: ConfirmDecisionModalProps) 
   };
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="mcp-approval-confirm-heading"
