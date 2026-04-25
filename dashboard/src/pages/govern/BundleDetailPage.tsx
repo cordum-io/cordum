@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
 import YAML from "yaml";
 import { ArrowLeft, AlertTriangle, Save, Upload } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -21,6 +22,21 @@ import { PromoteShadowDialog } from "@/components/policy/PromoteShadowDialog";
 import { usePolicyBundle, useUpdatePolicyBundle, usePublishPolicy, useRollbackPolicy } from "@/hooks/usePolicies";
 import { usePolicyAccess } from "@/hooks/usePolicyAccess";
 import type { GlobalPolicyParseIssue } from "@/types/policy";
+
+const container = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.05,
+    },
+  },
+};
+
+const item = {
+  hidden: { opacity: 0, y: 12 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.3 } },
+};
 
 export const BUNDLE_DETAIL_TABS = ["yaml", "preview", "diff", "history", "shadow"] as const;
 
@@ -253,8 +269,6 @@ export default function BundleDetailPage() {
             }
           />
 
-          <BundleSignatureSection bundle={bundle} />
-
           {policyAccess.isReadOnly && (
             <InfoBanner variant="warning">
               You have read-only access. YAML, diff, and snapshot history are visible but editing, publishing, and rollback are restricted.
@@ -283,58 +297,73 @@ export default function BundleDetailPage() {
             </InfoBanner>
           )}
 
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <div className="instrument-card p-4">
-              <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">rules</p>
-              <p className="text-sm font-mono text-foreground">{bundle.rule_count ?? bundle.rules?.length ?? 0}</p>
-            </div>
-            <div className="instrument-card p-4">
-              <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">source</p>
-              <p className="text-sm font-mono text-foreground truncate">{bundle.source ?? "—"}</p>
-            </div>
-            <div className="instrument-card p-4">
-              <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">author</p>
-              <p className="text-sm font-mono text-foreground truncate">{bundle.author ?? "—"}</p>
-            </div>
-            <div className="instrument-card p-4">
-              <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">sha256</p>
-              <p className="text-sm font-mono text-foreground truncate">
-                {bundle.sha256 ? `${bundle.sha256.slice(0, 16)}...` : "—"}
-              </p>
-            </div>
-          </div>
+          <motion.div
+            variants={container}
+            initial="hidden"
+            animate="visible"
+            className="grid grid-cols-1 gap-6 lg:grid-cols-12"
+          >
+            <motion.div variants={item} className="lg:col-span-4">
+              <BundleSignatureSection bundle={bundle} />
+            </motion.div>
 
-          <BundleDetailTabs active={activeTab} onChange={setActiveTab} snapshotCount={bundle?.snapshots?.length ?? 0} />
+            <motion.div variants={item} className="lg:col-span-8">
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <div className="instrument-card p-4">
+                  <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">rules</p>
+                  <p className="text-sm font-mono text-foreground">{bundle.rule_count ?? bundle.rules?.length ?? 0}</p>
+                </div>
+                <div className="instrument-card p-4">
+                  <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">source</p>
+                  <p className="text-sm font-mono text-foreground truncate">{bundle.source ?? "—"}</p>
+                </div>
+                <div className="instrument-card p-4">
+                  <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">author</p>
+                  <p className="text-sm font-mono text-foreground truncate">{bundle.author ?? "—"}</p>
+                </div>
+                <div className="instrument-card p-4">
+                  <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">sha256</p>
+                  <p className="text-sm font-mono text-foreground truncate">
+                    {bundle.sha256 ? `${bundle.sha256.slice(0, 16)}...` : "—"}
+                  </p>
+                </div>
+              </div>
+            </motion.div>
 
-          <div className="min-h-[200px]">
-            {activeTab === "yaml" && (
-              <BundleYamlEditor
-                yaml={currentYaml}
-                editable={policyAccess.canEdit}
-                onChange={setYamlDraft}
-              />
-            )}
-            {activeTab === "preview" && (
-              <BundleVisualPreview yaml={currentYaml} onSwitchToCode={() => setActiveTab("yaml")} />
-            )}
-            {activeTab === "diff" && (
-              <BundleDiffView bundleId={bundleId} draftYaml={currentYaml} />
-            )}
-            {activeTab === "history" && (
-              <BundleSnapshotHistory
-                canRollback={policyAccess.canPublish}
-                onRollback={(snapshotId) => setRollbackSnapshotId(snapshotId)}
-              />
-            )}
-            {activeTab === "shadow" && (
-              <BundleShadowTab
-                bundleID={bundleId}
-                activeContent={serverContent}
-                canEdit={policyAccess.canEdit}
-                onOpenPromote={() => setPromoteOpen(true)}
-              />
-            )}
-          </div>
+            <motion.div variants={item} className="lg:col-span-12">
+              <BundleDetailTabs active={activeTab} onChange={setActiveTab} snapshotCount={bundle?.snapshots?.length ?? 0} />
+
+              <div className="min-h-[200px] mt-6">
+                {activeTab === "yaml" && (
+                  <BundleYamlEditor
+                    yaml={currentYaml}
+                    editable={policyAccess.canEdit}
+                    onChange={setYamlDraft}
+                  />
+                )}
+                {activeTab === "preview" && (
+                  <BundleVisualPreview yaml={currentYaml} onSwitchToCode={() => setActiveTab("yaml")} />
+                )}
+                {activeTab === "diff" && (
+                  <BundleDiffView bundleId={bundleId} draftYaml={currentYaml} />
+                )}
+                {activeTab === "history" && (
+                  <BundleSnapshotHistory
+                    canRollback={policyAccess.canPublish}
+                    onRollback={(snapshotId) => setRollbackSnapshotId(snapshotId)}
+                  />
+                )}
+                {activeTab === "shadow" && (
+                  <BundleShadowTab
+                    bundleID={bundleId}
+                    activeContent={serverContent}
+                    canEdit={policyAccess.canEdit}
+                    onOpenPromote={() => setPromoteOpen(true)}
+                  />
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
 
           <BundlePublishDialog
             open={publishOpen}

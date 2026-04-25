@@ -79,8 +79,7 @@ export function Pagination({
         {summary}
         {onPageSizeChange && (
           <select
-            className="h-7 rounded-lg border border-border bg-surface-2 px-2 text-xs text-foreground"
-            value={pageSize}
+            className="h-7 rounded-xl border border-border bg-surface-2 px-2 text-xs text-foreground"            value={pageSize}
             onChange={(e) => onPageSizeChange(Number(e.target.value))}
             aria-label="Items per page"
           >

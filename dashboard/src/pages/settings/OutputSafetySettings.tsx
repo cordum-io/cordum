@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
+import { motion } from "framer-motion";
 import { Activity, AlertTriangle, ShieldCheck, ShieldOff } from "lucide-react";
 import { ApiError, get, post, put } from "../../api/client";
 import { MetricCard } from "../../components/MetricCard";
@@ -538,8 +539,12 @@ export default function OutputSafetySettings() {
   }
 
   return (
-    <div className="space-y-6 pb-12">
-      <Card>
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="space-y-6 pb-12"
+    >
+      <Card className="instrument-card">
         <CardHeader className="flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle>Output Safety Scanning</CardTitle>
@@ -686,7 +691,7 @@ export default function OutputSafetySettings() {
         </div>
       </Card>
 
-      <Card>
+      <Card className="instrument-card">
         <CardHeader className="flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle>Per-Topic Overrides</CardTitle>
@@ -803,9 +808,22 @@ export default function OutputSafetySettings() {
                   <th className="pb-2 font-semibold">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
+              <motion.tbody
+                initial="hidden"
+                animate="visible"
+                variants={{
+                  visible: { transition: { staggerChildren: 0.05 } },
+                }}
+                className="divide-y divide-border"
+              >
                 {form.topicOverrides.map((override, index) => (
-                  <tr key={`${override.topicPattern}-${index}`}>
+                  <motion.tr
+                    key={`${override.topicPattern}-${index}`}
+                    variants={{
+                      hidden: { opacity: 0, y: 10 },
+                      visible: { opacity: 1, y: 0 },
+                    }}
+                  >
                     <td className="py-2 font-mono text-xs text-ink">{override.topicPattern}</td>
                     <td className="py-2">
                       <Badge variant={override.enabled ? "success" : "default"}>
@@ -832,9 +850,9 @@ export default function OutputSafetySettings() {
                         </button>
                       </div>
                     </td>
-                  </tr>
+                  </motion.tr>
                 ))}
-              </tbody>
+              </motion.tbody>
             </table>
           </div>
         )}
@@ -861,7 +879,7 @@ export default function OutputSafetySettings() {
         />
       </div>
 
-      <Card>
+      <Card className="instrument-card">
         <CardHeader className="flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle>Output Rules</CardTitle>
@@ -879,7 +897,7 @@ export default function OutputSafetySettings() {
         </div>
       </Card>
 
-      <Card>
+      <Card className="instrument-card">
         <CardHeader>
           <div>
             <CardTitle>Recent Denials</CardTitle>
@@ -899,22 +917,35 @@ export default function OutputSafetySettings() {
                   <th className="pb-2 font-semibold">Bundle</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border">
+              <motion.tbody
+                initial="hidden"
+                animate="visible"
+                variants={{
+                  visible: { transition: { staggerChildren: 0.05 } },
+                }}
+                className="divide-y divide-border"
+              >
                 {recentDenials.map((entry) => (
-                  <tr key={entry.id}>
+                  <motion.tr
+                    key={entry.id}
+                    variants={{
+                      hidden: { opacity: 0, y: 10 },
+                      visible: { opacity: 1, y: 0 },
+                    }}
+                  >
                     <td className="py-2 text-muted-foreground">{formatLastCheck(entry.timestamp)}</td>
                     <td className="py-2">
                       <Badge variant="danger">{entry.action || "deny"}</Badge>
                     </td>
                     <td className="py-2 text-ink">{entry.actor || "system"}</td>
                     <td className="py-2 text-muted-foreground">{entry.bundleId || "n/a"}</td>
-                  </tr>
+                  </motion.tr>
                 ))}
-              </tbody>
+              </motion.tbody>
             </table>
           </div>
         )}
       </Card>
-    </div>
+    </motion.div>
   );
 }

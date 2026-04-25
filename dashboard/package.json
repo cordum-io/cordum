@@ -66,6 +66,7 @@
     "@typescript-eslint/parser": "^8.57.2",
     "@vitejs/plugin-react": "^6.0.1",
     "autoprefixer": "^10.4.20",
+    "axe-core": "^4.11.3",
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "jsdom": "^28.1.0",
     "msw": "^2.13.5",

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { FlaskConical } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Tabs } from "@/components/ui/Tabs";
@@ -80,7 +81,12 @@ export default function EvalsPage() {
   );
 
   return (
-    <div className="space-y-6 p-6">
+    <motion.div
+      className="space-y-6 p-6"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+    >
       <PageHeader
         title="Evaluations"
         subtitle="Policy regression suites from denied actions"
@@ -92,11 +98,13 @@ export default function EvalsPage() {
         onChange={(id) => setActiveTab(id as TabId)}
         ariaLabel="Eval views"
       />
-      <div>{activeTab === "datasets" ? renderDatasetsTab() : renderRunsTab()}</div>
+      <div className="instrument-card p-4">
+        {activeTab === "datasets" ? renderDatasetsTab() : renderRunsTab()}
+      </div>
       <IncidentExtractionDialog
         open={extractionOpen}
         onOpenChange={setExtractionOpen}
       />
-    </div>
+    </motion.div>
   );
 }

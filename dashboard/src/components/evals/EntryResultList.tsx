@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { EntryResultRow } from "./EntryResultRow";
-import type { EvalEntryResult, EvalRun, EvalRunStatus } from "@/api/types";
+import type { EvalRun, EvalRunStatus } from "@/api/types";
 
 const ALL_STATUSES: EvalRunStatus[] = ["pass", "fail", "regression", "error"];
 

@@ -230,13 +230,13 @@ export function ApprovalHistory() {
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
         {/* Action filter */}
-        <div className="flex gap-0.5 rounded-lg border border-border p-0.5">
+        <div className="flex gap-0.5 rounded-xl border border-border p-0.5">
           {(["all", "approved", "rejected"] as const).map((action) => (
             <button
               key={action}
               type="button"
               className={cn(
-                "rounded-md px-3 py-1.5 text-xs font-medium capitalize transition-colors",
+                "rounded-xl px-3 py-1.5 text-xs font-medium capitalize transition-colors",
                 actionFilter === action
                   ? "bg-accent/10 text-accent"
                   : "text-muted-foreground hover:text-ink",
@@ -249,13 +249,13 @@ export function ApprovalHistory() {
         </div>
 
         {/* Time range */}
-        <div className="flex gap-0.5 rounded-lg border border-border p-0.5">
+        <div className="flex gap-0.5 rounded-xl border border-border p-0.5">
           {(["1h", "24h", "7d", "30d"] as const).map((range) => (
             <button
               key={range}
               type="button"
               className={cn(
-                "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                "rounded-xl px-3 py-1.5 text-xs font-medium transition-colors",
                 timeRange === range
                   ? "bg-accent/10 text-accent"
                   : "text-muted-foreground hover:text-ink",
@@ -429,3 +429,4 @@ export function ApprovalHistory() {
     </div>
   );
 }
+

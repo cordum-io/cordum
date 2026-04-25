@@ -151,86 +151,11 @@ function parseDurationSeconds(value: unknown): number | undefined {
   return Math.round(seconds);
 }
 
-function toPositiveInt(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return Math.floor(value);
-  }
-  if (typeof value === "string") {
-    const parsed = Number.parseInt(value.trim(), 10);
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed;
-    }
-  }
-  return undefined;
-}
-
-function parseSwitchCaseEntry(value: unknown): Record<string, unknown> | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Record<string, unknown>;
-  const matchValue = record.match ?? record.when ?? record.value ?? record.matchValue;
-  const stepRaw = record.next ?? record.step ?? record.target ?? record.step_id ?? record.goto ?? record.stepId;
-  const stepId = typeof stepRaw === "string" ? stepRaw.trim() : "";
-  if (!stepId) return null;
-  return {
-    match: matchValue == null ? "" : matchValue,
-    next: stepId,
-  };
-}
-
-function parseSwitchCasesInput(value: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(value)) {
-    return value
-      .map((entry) => parseSwitchCaseEntry(entry))
-      .filter((entry): entry is Record<string, unknown> => entry !== null);
-  }
-  if (value && typeof value === "object") {
-    return Object.entries(value as Record<string, unknown>)
-      .map(([match, stepRaw]) => {
-        const stepId = typeof stepRaw === "string" ? stepRaw.trim() : "";
-        if (!stepId) return null;
-        return { match, next: stepId } as Record<string, unknown>;
-      })
-      .filter((entry): entry is Record<string, unknown> => entry !== null);
-  }
-  if (typeof value === "string" && value.trim()) {
-    try {
-      const parsed = JSON.parse(value);
-      return parseSwitchCasesInput(parsed);
-    } catch {
-      logger.debug("workflows", "JSON parse failed for switch cases input");
-      return [];
-    }
-  }
-  return [];
-}
-
 function parseDateToISO(value: string): string | undefined {
   const ms = Date.parse(value);
   if (Number.isNaN(ms)) return undefined;
   const iso = new Date(ms).toISOString();
   return iso;
-}
-
-function parseMappingValue(value: unknown): Record<string, unknown> | string | undefined {
-  if (value == null) return undefined;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return undefined;
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      logger.debug("workflows", "JSON parse failed in parseMappingValue, treating as string");
-      return trimmed;
-    }
-    return trimmed;
-  }
-  if (typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  return undefined;
 }
 
 function buildStepPayload(step: Workflow["steps"][number]): Record<string, unknown> {

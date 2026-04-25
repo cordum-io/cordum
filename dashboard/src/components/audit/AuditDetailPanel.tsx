@@ -51,10 +51,15 @@ function CopyButton({ text }: { text: string }) {
     <button
       type="button"
       className="ml-1 inline-flex items-center rounded p-0.5 text-muted-foreground hover:text-ink transition-colors"
-      onClick={() => {
-        navigator.clipboard.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          // Insecure context or permission denied — leave the copied
+          // indicator off so the UI doesn't lie.
+        }
       }}
       aria-label="Copy to clipboard"
     >
@@ -264,7 +269,7 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
           {(beforeStr || afterStr) && (
             <Section title="Before / After">
               {diffLines ? (
-                <pre className="max-h-96 overflow-auto rounded-lg border border-border p-3 text-xs font-mono">
+                <pre className="max-h-96 overflow-auto rounded-xl border border-border p-3 text-xs font-mono">
                   {diffLines.map((line, i) => (
                     <div key={i} className={cn("px-1", diffLineClass[line.type])}>
                       {diffPrefix[line.type]}{line.text}
@@ -274,14 +279,14 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
               ) : beforeStr ? (
                 <div>
                   <p className="mb-1 text-xs text-muted-foreground">State Before</p>
-                  <pre className="max-h-64 overflow-auto rounded-lg border border-border bg-surface2/50 p-3 text-xs font-mono text-ink">
+                  <pre className="max-h-64 overflow-auto rounded-xl border border-border bg-surface2/50 p-3 text-xs font-mono text-ink">
                     {beforeStr}
                   </pre>
                 </div>
               ) : afterStr ? (
                 <div>
                   <p className="mb-1 text-xs text-muted-foreground">State After</p>
-                  <pre className="max-h-64 overflow-auto rounded-lg border border-border bg-surface2/50 p-3 text-xs font-mono text-ink">
+                  <pre className="max-h-64 overflow-auto rounded-xl border border-border bg-surface2/50 p-3 text-xs font-mono text-ink">
                     {afterStr}
                   </pre>
                 </div>
@@ -298,7 +303,7 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
                   <span className="font-mono text-ink">{entry.resourceId.slice(0, 16)}</span>.
                 </p>
                 <Link
-                  to={`/audit?resource=${entry.resourceType}:${entry.resourceId}&view=correlation`}
+                  to={`/audit?resource=${encodeURIComponent(`${entry.resourceType}:${entry.resourceId}`)}&view=correlation`}
                   className="mt-1 inline-block text-accent hover:underline"
                 >
                   View all related events &rarr;
@@ -335,7 +340,7 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
                 </p>
                 <p>
                   <span className="text-muted-foreground">ID hash: </span>
-                  <span className="font-mono text-ink">{entry.id.slice(-6)}</span>
+                  <span className="font-mono text-ink">{entry.id.slice(-12)}</span>
                 </p>
               </div>
             )}
@@ -345,3 +350,4 @@ export function AuditDetailPanel({ entry, onClose }: AuditDetailPanelProps) {
     </>
   );
 }
+

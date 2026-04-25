@@ -47,16 +47,6 @@ interface DeleteKeyMutationDeps {
   setDeleteTarget: (key: ApiKey | null) => void;
 }
 
-function errorDescription(err: unknown): string {
-  if (err instanceof Error && err.message.trim()) {
-    return err.message;
-  }
-  if (typeof err === "string" && err.trim()) {
-    return err;
-  }
-  return "Unknown error";
-}
-
 export function handleCreateKeySuccess(data: { data?: { key?: string } } | undefined, deps: CreateKeyMutationDeps) {
   deps.queryClient.invalidateQueries({ queryKey: ["api-keys"] });
   const key = data?.data?.key;

@@ -542,7 +542,7 @@ function ConditionDetail({
 
       {expression && (
         <Section label="Expression">
-          <pre className="rounded-lg bg-surface2/40 px-3 py-2 text-xs font-mono text-ink">
+          <pre className="rounded-xl bg-surface2/40 px-3 py-2 text-xs font-mono text-ink">
             {truncate(expression, 500)}
           </pre>
         </Section>
@@ -646,7 +646,7 @@ function FanOutDetail({
 
       {forEachExpr && (
         <Section label="ForEach Expression">
-          <pre className="rounded-lg bg-surface2/40 px-3 py-2 text-xs font-mono text-ink">
+          <pre className="rounded-xl bg-surface2/40 px-3 py-2 text-xs font-mono text-ink">
             {truncate(forEachExpr, 200)}
           </pre>
         </Section>
@@ -658,7 +658,7 @@ function FanOutDetail({
             {childSteps.map((cs) => (
               <div
                 key={cs.id}
-                className="flex items-center justify-between rounded-lg border border-border px-3 py-1.5"
+                className="flex items-center justify-between rounded-xl border border-border px-3 py-1.5"
               >
                 <span className="text-xs text-ink">{cs.name || cs.id}</span>
                 <RunStatusBadge status={cs.status} />
@@ -710,7 +710,7 @@ function SwitchDetail({
 
       {expression && (
         <Section label="Expression">
-          <pre className="rounded-lg bg-surface2/40 px-3 py-2 text-xs font-mono text-ink">
+          <pre className="rounded-xl bg-surface2/40 px-3 py-2 text-xs font-mono text-ink">
             {truncate(expression, 500)}
           </pre>
         </Section>
@@ -728,7 +728,7 @@ function SwitchDetail({
                 <div
                   key={`${entry.stepId}-${idx}`}
                   className={cn(
-                    "rounded-lg border px-3 py-2",
+                    "rounded-xl border px-3 py-2",
                     taken ? "border-success/40 bg-success/5" : "border-border",
                   )}
                 >
@@ -749,7 +749,7 @@ function SwitchDetail({
 
       {defaultStep && (
         <Section label="Default Branch">
-          <div className={cn("rounded-lg border px-3 py-2", targetStep === defaultStep ? "border-success/40 bg-success/5" : "border-border")}>
+          <div className={cn("rounded-xl border px-3 py-2", targetStep === defaultStep ? "border-success/40 bg-success/5" : "border-border")}>
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs text-ink">{truncate(defaultStep, 120)}</span>
               <div className="flex items-center gap-2">
@@ -835,7 +835,7 @@ function ParallelDetail({
               return (
                 <div
                   key={childID}
-                  className="flex items-center justify-between rounded-lg border border-border px-3 py-1.5"
+                  className="flex items-center justify-between rounded-xl border border-border px-3 py-1.5"
                 >
                   <span className="text-xs text-ink">{child?.name || childID}</span>
                   <RunStatusBadge status={child?.status ?? "pending"} />
@@ -943,7 +943,7 @@ function LoopDetail({
 
       {conditionExpr && (
         <Section label="Condition (while)">
-          <pre className="rounded-lg bg-surface2/40 px-3 py-2 text-xs font-mono text-ink">
+          <pre className="rounded-xl bg-surface2/40 px-3 py-2 text-xs font-mono text-ink">
             {truncate(conditionExpr, 500)}
           </pre>
         </Section>
@@ -951,7 +951,7 @@ function LoopDetail({
 
       {untilExpr && (
         <Section label="Until (stop when true)">
-          <pre className="rounded-lg bg-surface2/40 px-3 py-2 text-xs font-mono text-ink">
+          <pre className="rounded-xl bg-surface2/40 px-3 py-2 text-xs font-mono text-ink">
             {truncate(untilExpr, 500)}
           </pre>
         </Section>
@@ -981,7 +981,7 @@ function LoopDetail({
               const child = entry.step;
               const isOpen = !!openChildren[child.id];
               return (
-                <div key={child.id} className="rounded-lg border border-border">
+                <div key={child.id} className="rounded-xl border border-border">
                   <button
                     type="button"
                     onClick={() => toggleChild(child.id)}
@@ -1166,7 +1166,7 @@ function TransformDetail({
         ) : (
           <div className="space-y-2">
             {entries.map(([key, expr]) => (
-              <div key={key} className="rounded-lg border border-border px-3 py-2">
+              <div key={key} className="rounded-xl border border-border px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold text-ink">{key}</span>
                   {runStep?.status === "succeeded" && outputMap[key] !== undefined && (
@@ -1262,7 +1262,7 @@ function StorageDetail({
 
       {key && (
         <Section label="Key Path">
-          <pre className="rounded-lg bg-surface2/40 px-3 py-2 text-xs font-mono text-ink">
+          <pre className="rounded-xl bg-surface2/40 px-3 py-2 text-xs font-mono text-ink">
             {truncate(key, 200)}
           </pre>
         </Section>
@@ -1276,7 +1276,7 @@ function StorageDetail({
 
       {runStep?.status === "succeeded" && outputMap.value !== undefined && (
         <Section label="Value">
-          <pre className="rounded-lg border border-success/20 bg-success/5 px-3 py-2 text-xs font-mono text-ink">
+          <pre className="rounded-xl border border-success/20 bg-success/5 px-3 py-2 text-xs font-mono text-ink">
             {typeof outputMap.value === "string"
               ? outputMap.value
               : JSON.stringify(outputMap.value, null, 2)}
@@ -1346,7 +1346,7 @@ function HttpDetail({
           {method && <Badge variant={methodVariant[method] ?? "default"}>{method}</Badge>}
         </div>
         {url && (
-          <pre className="mt-1.5 rounded-lg bg-surface2/40 px-3 py-2 text-xs font-mono text-ink break-all whitespace-pre-wrap">
+          <pre className="mt-1.5 rounded-xl bg-surface2/40 px-3 py-2 text-xs font-mono text-ink break-all whitespace-pre-wrap">
             {truncate(url, 300)}
           </pre>
         )}
@@ -1551,3 +1551,4 @@ export function NodeDetailPanel({
     </Drawer>
   );
 }
+

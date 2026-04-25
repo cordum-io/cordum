@@ -308,9 +308,22 @@ export default function SettingsAuditExportPage() {
                       <th className="text-right px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">Actions</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <motion.tbody
+                    initial="hidden"
+                    animate="visible"
+                    variants={{
+                      visible: { transition: { staggerChildren: 0.05 } },
+                    }}
+                  >
                     {activeHolds.map((hold) => (
-                      <tr key={hold.id} className="border-b border-border last:border-0 hover:bg-surface-1 transition-colors">
+                      <motion.tr
+                        key={hold.id}
+                        variants={{
+                          hidden: { opacity: 0, y: 10 },
+                          visible: { opacity: 1, y: 0 },
+                        }}
+                        className="border-b border-border last:border-0 hover:bg-surface-1 transition-colors"
+                      >
                         <td className="px-5 py-3 font-mono text-xs text-foreground">{hold.tenant_id}</td>
                         <td className="px-5 py-3 text-sm text-foreground">{hold.reason}</td>
                         <td className="px-5 py-3 text-xs text-muted-foreground">{hold.created_by}</td>
@@ -328,9 +341,9 @@ export default function SettingsAuditExportPage() {
                             <Trash2 className="w-3.5 h-3.5 text-destructive" />
                           </Button>
                         </td>
-                      </tr>
+                      </motion.tr>
                     ))}
-                  </tbody>
+                  </motion.tbody>
                 </table>
               </div>
             )

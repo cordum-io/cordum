@@ -33,7 +33,7 @@ export function WorkflowPolicyOverridesToolchain({ toolchain, readOnly, onChange
     (current.allowed_commands && current.allowed_commands.length > 0);
 
   return (
-    <div className="rounded-lg border border-border bg-surface-0 p-3">
+    <div className="rounded-xl border border-border bg-surface-0 p-3">
       <div className="flex items-center gap-2 mb-2">
         <Wrench className="w-3.5 h-3.5 text-muted-foreground" />
         <span className="text-xs font-semibold text-foreground">Toolchain Constraints</span>
@@ -55,7 +55,7 @@ export function WorkflowPolicyOverridesToolchain({ toolchain, readOnly, onChange
               <input
                 id={`toolchain-${key}`}
                 type="text"
-                className="h-7 rounded-md border border-border bg-surface-2 px-2 text-xs font-mono text-foreground w-full"
+                className="h-7 rounded-xl border border-border bg-surface-2 px-2 text-xs font-mono text-foreground w-full"
                 value={current[key]?.join(", ") ?? ""}
                 placeholder="inherit"
                 onChange={(e) => {
@@ -70,3 +70,4 @@ export function WorkflowPolicyOverridesToolchain({ toolchain, readOnly, onChange
     </div>
   );
 }
+

@@ -390,7 +390,12 @@ export default function LicensePage() {
         </motion.section>
       </div>
 
-      <section className="space-y-4">
+      <motion.section
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.14 }}
+        className="instrument-card space-y-4"
+      >
         <div className="flex items-center gap-2">
           <Gauge className="h-4 w-4 text-cordum" />
           <h2 className="text-sm font-display font-semibold text-foreground">
@@ -398,13 +403,21 @@ export default function LicensePage() {
           </h2>
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-2">
-          {usageBars.map((entry, index) => (
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={{
+            visible: { transition: { staggerChildren: 0.05 } },
+          }}
+          className="grid gap-4 xl:grid-cols-2"
+        >
+          {usageBars.map((entry) => (
             <motion.div
               key={entry.label}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.16 + index * 0.04 }}
+              variants={{
+                hidden: { opacity: 0, y: 10 },
+                visible: { opacity: 1, y: 0 },
+              }}
             >
               <TierLimitBar
                 label={entry.label}
@@ -413,7 +426,7 @@ export default function LicensePage() {
               />
             </motion.div>
           ))}
-        </div>
+        </motion.div>
 
         {pressuredMetrics.length > 0 && (
           <div className="space-y-3">
@@ -427,7 +440,7 @@ export default function LicensePage() {
             ))}
           </div>
         )}
-      </section>
+      </motion.section>
 
       <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
         <motion.section

@@ -190,7 +190,7 @@ function findTabButton(
 ): HTMLButtonElement | null {
   return (Array.from(container.querySelectorAll("button")).find(
     (button) =>
-      button.getAttribute("aria-pressed") !== null &&
+      button.getAttribute("aria-selected") !== null &&
       button.textContent?.includes(label),
   ) ?? null) as HTMLButtonElement | null;
 }

@@ -98,7 +98,7 @@ function MultiSelect({
           {options.map((opt) => (
             <label
               key={opt.value}
-              className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-ink hover:bg-surface2/60"
+              className="flex cursor-pointer items-center gap-2 rounded-xl px-2.5 py-1.5 text-xs text-ink hover:bg-surface2/60"
             >
               <input
                 type="checkbox"
@@ -128,6 +128,8 @@ export interface JobFilterValues {
   updatedAfter?: string;
   updatedBefore?: string;
   tenant?: string;
+  sessionId?: string;
+  runId?: string;
 }
 
 export function JobFiltersBar({
@@ -146,15 +148,31 @@ export function JobFiltersBar({
   const updatedAfterFilter = searchParams.get("updatedAfter") ?? "";
   const updatedBeforeFilter = searchParams.get("updatedBefore") ?? "";
   const tenantFilter = searchParams.get("tenant") ?? "";
+  const sessionIdFilter = searchParams.get("sessionId") ?? "";
+  const runIdFilter = searchParams.get("runId") ?? "";
 
-  // Local topic/tenant/pool for debounce
+  // Local inputs for debounce
   const [topicLocal, setTopicLocal] = useState(topicFilter);
   const [poolLocal, setPoolLocal] = useState(poolFilter);
   const [tenantLocal, setTenantLocal] = useState(tenantFilter);
+  const [sessionIdLocal, setSessionIdLocal] = useState(sessionIdFilter);
+  const [runIdLocal, setRunIdLocal] = useState(runIdFilter);
+
+  // Re-sync local inputs when URL changes externally (back/forward
+  // navigation, deep links). Without this, the local debounced state can
+  // drift from the URL state and silently restore stale filters.
+  useEffect(() => { setTopicLocal(topicFilter); }, [topicFilter]);
+  useEffect(() => { setPoolLocal(poolFilter); }, [poolFilter]);
+  useEffect(() => { setTenantLocal(tenantFilter); }, [tenantFilter]);
+  useEffect(() => { setSessionIdLocal(sessionIdFilter); }, [sessionIdFilter]);
+  useEffect(() => { setRunIdLocal(runIdFilter); }, [runIdFilter]);
+
   const [showCustomRange, setShowCustomRange] = useState(timeRangeFilter === "custom");
   const topicTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const poolTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const tenantTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const sessionIdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const runIdTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Clear pending debounce timers on unmount
   useEffect(() => {
@@ -162,6 +180,8 @@ export function JobFiltersBar({
       clearTimeout(topicTimer.current);
       clearTimeout(poolTimer.current);
       clearTimeout(tenantTimer.current);
+      clearTimeout(sessionIdTimer.current);
+      clearTimeout(runIdTimer.current);
     };
   }, []);
 
@@ -174,7 +194,9 @@ export function JobFiltersBar({
     (timeRangeFilter ? 1 : 0) +
     (updatedAfterFilter ? 1 : 0) +
     (updatedBeforeFilter ? 1 : 0) +
-    (tenantFilter ? 1 : 0);
+    (tenantFilter ? 1 : 0) +
+    (sessionIdFilter ? 1 : 0) +
+    (runIdFilter ? 1 : 0);
 
   // Setter: update URL params and notify parent
   const setFilters = useCallback(
@@ -205,8 +227,10 @@ export function JobFiltersBar({
       updatedAfter: updatedAfterFilter || undefined,
       updatedBefore: updatedBeforeFilter || undefined,
       tenant: tenantFilter || undefined,
+      sessionId: sessionIdFilter || undefined,
+      runId: runIdFilter || undefined,
     });
-  }, [stateFilter.join(","), decisionFilter.join(","), topicFilter, poolFilter, timeRangeFilter, updatedAfterFilter, updatedBeforeFilter, tenantFilter]);
+  }, [stateFilter.join(","), decisionFilter.join(","), topicFilter, poolFilter, timeRangeFilter, updatedAfterFilter, updatedBeforeFilter, tenantFilter, sessionIdFilter, runIdFilter]);
 
   // Handlers
   const handleStateChange = useCallback(
@@ -249,6 +273,26 @@ export function JobFiltersBar({
     [setFilters],
   );
 
+  const handleSessionIdChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const val = e.target.value;
+      setSessionIdLocal(val);
+      clearTimeout(sessionIdTimer.current);
+      sessionIdTimer.current = setTimeout(() => setFilters({ sessionId: val }), 400);
+    },
+    [setFilters],
+  );
+
+  const handleRunIdChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const val = e.target.value;
+      setRunIdLocal(val);
+      clearTimeout(runIdTimer.current);
+      runIdTimer.current = setTimeout(() => setFilters({ runId: val }), 400);
+    },
+    [setFilters],
+  );
+
   const handleTimeRange = useCallback(
     (value: string) => {
       if (value === "custom") {
@@ -267,9 +311,19 @@ export function JobFiltersBar({
   );
 
   const clearAll = useCallback(() => {
+    // Cancel any pending debounce callbacks before resetting; otherwise a
+    // user who was mid-typing can have a stale `setFilters({ topic: "..." })`
+    // fire after Clear-all and silently re-populate the URL.
+    clearTimeout(topicTimer.current);
+    clearTimeout(poolTimer.current);
+    clearTimeout(tenantTimer.current);
+    clearTimeout(sessionIdTimer.current);
+    clearTimeout(runIdTimer.current);
     setTopicLocal("");
     setPoolLocal("");
     setTenantLocal("");
+    setSessionIdLocal("");
+    setRunIdLocal("");
     setShowCustomRange(false);
     setFilters({
       state: "",
@@ -280,6 +334,8 @@ export function JobFiltersBar({
       updatedAfter: "",
       updatedBefore: "",
       tenant: "",
+      sessionId: "",
+      runId: "",
     });
   }, [setFilters]);
 
@@ -333,6 +389,24 @@ export function JobFiltersBar({
         className="w-24 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
       />
 
+      {/* Session ID text input (debounced) */}
+      <input
+        type="text"
+        placeholder="Session ID"
+        value={sessionIdLocal}
+        onChange={handleSessionIdChange}
+        className="w-28 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
+      />
+
+      {/* Run ID text input (debounced) */}
+      <input
+        type="text"
+        placeholder="Run ID"
+        value={runIdLocal}
+        onChange={handleRunIdChange}
+        className="w-28 rounded-xl border border-border bg-card/70 px-3 py-1.5 text-xs text-ink placeholder:text-muted/60 transition hover:border-accent/40 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30"
+      />
+
       {/* Time range preset buttons */}
       <div className="flex items-center gap-0.5 rounded-xl border border-border p-0.5">
         {TIME_RANGES.map((tr) => (
@@ -341,7 +415,7 @@ export function JobFiltersBar({
             type="button"
             onClick={() => handleTimeRange(tr.value)}
             className={cn(
-              "rounded-lg px-2.5 py-1 text-xs font-medium transition",
+              "rounded-xl px-2.5 py-1 text-xs font-medium transition",
               timeRangeFilter === tr.value
                 ? "bg-accent text-primary-foreground"
                 : "text-muted-foreground hover:text-ink hover:bg-surface2/60",
@@ -354,7 +428,7 @@ export function JobFiltersBar({
           type="button"
           onClick={() => handleTimeRange("custom")}
           className={cn(
-            "rounded-lg px-2.5 py-1 text-xs font-medium transition",
+            "rounded-xl px-2.5 py-1 text-xs font-medium transition",
             timeRangeFilter === "custom"
               ? "bg-accent text-primary-foreground"
               : "text-muted-foreground hover:text-ink hover:bg-surface2/60",
@@ -395,3 +469,4 @@ export function JobFiltersBar({
     </div>
   );
 }
+

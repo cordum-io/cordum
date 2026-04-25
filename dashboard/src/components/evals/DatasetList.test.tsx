@@ -1,4 +1,4 @@
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, afterEach } from "vitest";

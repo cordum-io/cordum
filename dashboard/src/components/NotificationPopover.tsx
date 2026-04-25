@@ -121,7 +121,7 @@ export function NotificationPopover() {
     <div ref={ref} className="relative">
       <button type="button"
         onClick={() => setOpen(!open)}
-        className="relative p-2 rounded-md hover:bg-surface-2 transition-colors"
+        className="relative p-2 rounded-xl hover:bg-surface-2 transition-colors"
         aria-label="Notifications"
       >
         <Bell className="w-4 h-4 text-muted-foreground" />
@@ -184,7 +184,7 @@ export function NotificationPopover() {
                         !notif.read ? "bg-surface-2/30" : ""
                       }`}
                     >
-                      <div className={`shrink-0 w-7 h-7 rounded-lg ${bgMap[notif.type]} flex items-center justify-center mt-0.5`}>
+                      <div className={`shrink-0 w-7 h-7 rounded-xl ${bgMap[notif.type]} flex items-center justify-center mt-0.5`}>
                         <Icon className={`w-3.5 h-3.5 ${colorMap[notif.type]}`} />
                       </div>
                       <div className="flex-1 min-w-0">
@@ -226,3 +226,4 @@ export function NotificationPopover() {
     </div>
   );
 }
+

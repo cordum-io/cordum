@@ -169,7 +169,7 @@ function TimelineTooltip({ active, payload }: { active?: boolean; payload?: Arra
 
   if (point.isCluster) {
     return (
-      <div className="rounded-lg border border-border bg-surface px-3 py-2 shadow-lg text-xs space-y-1">
+      <div className="rounded-xl border border-border bg-surface px-3 py-2 shadow-lg text-xs space-y-1">
         <p className="font-semibold text-ink">{point.clusterCount} events</p>
         <p className="text-muted-foreground">Click to zoom into this cluster</p>
       </div>
@@ -178,7 +178,7 @@ function TimelineTooltip({ active, payload }: { active?: boolean; payload?: Arra
 
   const e = point.entry;
   return (
-    <div className="rounded-lg border border-border bg-surface px-3 py-2 shadow-lg text-xs space-y-1 max-w-xs">
+    <div className="rounded-xl border border-border bg-surface px-3 py-2 shadow-lg text-xs space-y-1 max-w-xs">
       <div className="flex items-center gap-2">
         <Badge variant="info">{e.eventType || e.action}</Badge>
         {e.severity && e.severity !== "low" && (
@@ -191,7 +191,7 @@ function TimelineTooltip({ active, payload }: { active?: boolean; payload?: Arra
         {e.message || `${e.action} on ${e.resourceType}`}
       </p>
       <p className="text-muted-foreground font-mono">
-        {new Date(e.timestamp).toISOString().replace("T", " ").replace("Z", "")}
+        {new Date(e.timestamp).toISOString().replace("T", " ").replace("Z", " UTC")}
       </p>
       <p className="text-muted-foreground">Actor: {e.actor}</p>
     </div>
@@ -428,3 +428,4 @@ export function AuditTimeline({ events, onEventClick }: AuditTimelineProps) {
     </div>
   );
 }
+

@@ -54,12 +54,16 @@ function MatchCriteria({ criteria }: { criteria: Record<string, unknown> }) {
 // Skeleton
 // ---------------------------------------------------------------------------
 
+// Header has 4 columns (ID, Match Criteria, Decision, Source); skeleton +
+// colSpan must match or rows misalign on loading/error/empty states.
+const RULES_TABLE_COLUMN_COUNT = 4;
+
 function SkeletonRows({ count = 6 }: { count?: number }) {
   return (
     <>
       {Array.from({ length: count }, (_, i) => (
         <tr key={i} className="animate-pulse">
-          {Array.from({ length: 6 }, (_, j) => (
+          {Array.from({ length: RULES_TABLE_COLUMN_COUNT }, (_, j) => (
             <td key={j} className="px-4 py-3">
               <div className="h-4 rounded bg-surface2 w-3/4" />
             </td>
@@ -104,7 +108,7 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
             type="button"
             onClick={() => setFilter(f)}
             className={cn(
-              "rounded-lg px-3 py-1 text-xs font-medium capitalize transition",
+              "rounded-xl px-3 py-1 text-xs font-medium capitalize transition",
               filter === f
                 ? "bg-accent text-primary-foreground"
                 : "text-muted-foreground hover:text-ink hover:bg-surface2/60",
@@ -139,7 +143,7 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
 
               {!isLoading && isError && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
+                  <td colSpan={RULES_TABLE_COLUMN_COUNT} className="px-4 py-12 text-center text-muted-foreground">
                     Failed to load policy rules.
                   </td>
                 </tr>
@@ -147,18 +151,27 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
 
               {!isLoading && !isError && sorted.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-muted-foreground">
+                  <td colSpan={RULES_TABLE_COLUMN_COUNT} className="px-4 py-12 text-center text-muted-foreground">
                     No rules match the selected filter.
                   </td>
                 </tr>
               )}
 
-              {!isLoading &&
+              {!isLoading && !isError &&
                 sorted.map((rule: PolicyRule) => (
                   <tr
                     key={rule.id}
-                    className="cursor-pointer transition-colors hover:bg-surface2/60"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open rule ${rule.id.slice(0, 8)}`}
+                    className="cursor-pointer transition-colors hover:bg-surface2/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cordum/40"
                     onClick={() => handleRowClick(rule)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        handleRowClick(rule);
+                      }
+                    }}
                   >
                     <td className="px-4 py-3 font-mono text-xs text-ink">
                       {rule.id.slice(0, 8)}
@@ -185,3 +198,4 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
     </div>
   );
 }
+

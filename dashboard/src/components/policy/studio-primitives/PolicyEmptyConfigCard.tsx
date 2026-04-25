@@ -18,7 +18,7 @@ export function PolicyEmptyConfigCard({
   onCtaClick,
 }: PolicyEmptyConfigCardProps) {
   return (
-    <div className="rounded-md border border-border bg-surface-0 p-4 text-center">
+    <div className="rounded-xl border border-border bg-surface-0 p-4 text-center">
       <h4 className="text-xs font-semibold text-foreground">{title}</h4>
       <p className="mt-1 text-xs text-muted-foreground">{description}</p>
       {ctaLabel && onCtaClick && (
@@ -38,3 +38,4 @@ export function PolicyEmptyConfigCard({
 export const __policyEmptyConfigCardInternal = {
   invokeEmptyConfigCta,
 };
+

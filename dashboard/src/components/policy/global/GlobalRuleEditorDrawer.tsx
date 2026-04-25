@@ -9,6 +9,7 @@ import { PolicyEmptyConfigCard } from "@/components/policy/studio-primitives/Pol
 import { PolicyField } from "@/components/policy/studio-primitives/PolicyField";
 import { PolicySection } from "@/components/policy/studio-primitives/PolicySection";
 import { PolicyTagInput } from "@/components/policy/studio-primitives/PolicyTagInput";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { usePolicyStudioTelemetry } from "@/hooks/usePolicyStudioTelemetry";
 import { getAdvancedConfiguredSummary } from "@/lib/policy-studio/globalRuleEditorState";
 import type { GlobalPolicyInputRule, GlobalPolicyRemediation } from "@/types/policy";
@@ -248,6 +249,7 @@ export function GlobalRuleEditorDrawer({
     remediations: false,
   });
   const [error, setError] = useState("");
+  const dialogRef = useDialogA11y(onClose, { enabled: open });
   const dialogTitleId = useId();
   const validationSummaryId = "global-rule-validation-summary";
   const { emit: emitTelemetry } = usePolicyStudioTelemetry();
@@ -420,6 +422,7 @@ export function GlobalRuleEditorDrawer({
         onClick={onClose}
       />
       <div
+        ref={dialogRef}
         className="relative h-full w-full max-w-xl overflow-y-auto border-l border-border bg-surface-1 p-5"
         role="dialog"
         aria-modal="true"
@@ -431,7 +434,7 @@ export function GlobalRuleEditorDrawer({
           </h2>
           <button
             type="button"
-            className="rounded-md p-2 text-muted-foreground hover:bg-surface-2"
+            className="rounded-xl p-2 text-muted-foreground hover:bg-surface-2"
             onClick={onClose}
             aria-label="Close editor"
           >
@@ -450,7 +453,7 @@ export function GlobalRuleEditorDrawer({
           >
             <input
               autoFocus
-              className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground"
+              className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground"
               value={draft.id}
               onChange={(e) => setDraft((p) => ({ ...p, id: e.target.value }))}
             />
@@ -464,22 +467,22 @@ export function GlobalRuleEditorDrawer({
           />
 
           {showPrimaryConstraints && (
-            <p className="rounded-md border border-cordum/30 bg-cordum/10 px-3 py-2 text-xs text-cordum-foreground">
+            <p className="rounded-xl border border-cordum/30 bg-cordum/10 px-3 py-2 text-xs text-cordum-foreground">
               <strong>allow_with_constraints:</strong> configure constraints below to enforce runtime/tooling boundaries.
             </p>
           )}
           {showPrimaryRemediations && (
-            <p className="rounded-md border border-cordum/30 bg-cordum/10 px-3 py-2 text-xs text-cordum-foreground">
+            <p className="rounded-xl border border-cordum/30 bg-cordum/10 px-3 py-2 text-xs text-cordum-foreground">
               <strong>deny:</strong> add remediations below so operators have safe alternatives.
             </p>
           )}
           {showThrottleHint && (
-            <p className="rounded-md border border-cordum/30 bg-cordum/10 px-3 py-2 text-xs text-cordum-foreground">
+            <p className="rounded-xl border border-cordum/30 bg-cordum/10 px-3 py-2 text-xs text-cordum-foreground">
               <strong>throttle:</strong> optional constraints are available in Advanced.
             </p>
           )}
           {draft.decision === "require_approval" && !advancedOpen && (
-            <p className="rounded-md border border-cordum/30 bg-cordum/10 px-3 py-2 text-xs text-cordum-foreground">
+            <p className="rounded-xl border border-cordum/30 bg-cordum/10 px-3 py-2 text-xs text-cordum-foreground">
               Remediations for require_approval are available in Advanced.
             </p>
           )}
@@ -494,7 +497,7 @@ export function GlobalRuleEditorDrawer({
           >
             <textarea
               rows={2}
-              className="mt-1 w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-foreground"
+              className="mt-1 w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs text-foreground"
               value={draft.reason}
               onChange={(e) => setDraft((p) => ({ ...p, reason: e.target.value }))}
             />
@@ -572,7 +575,7 @@ export function GlobalRuleEditorDrawer({
               >
                 <textarea
                   rows={2}
-                  className="mt-1 w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-foreground"
+                  className="mt-1 w-full rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs text-foreground"
                   value={labelsText}
                   onChange={(e) => {
                     const nextText = e.target.value;
@@ -584,7 +587,7 @@ export function GlobalRuleEditorDrawer({
                 />
               </PolicyField>
               {labelLineErrors.length > 0 && (
-                <ul className="space-y-1 rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
+                <ul className="space-y-1 rounded-xl border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
                   {labelLineErrors.map((lineError) => (
                     <li key={lineError}>{lineError}</li>
                   ))}
@@ -601,7 +604,7 @@ export function GlobalRuleEditorDrawer({
             >
               <div
                 className={cn(
-                  "space-y-3 rounded-md border border-border bg-surface-0 p-3",
+                  "space-y-3 rounded-xl border border-border bg-surface-0 p-3",
                   !constraintsEnabled && "opacity-70",
                 )}
               >
@@ -640,7 +643,7 @@ export function GlobalRuleEditorDrawer({
                       inputMode="numeric"
                       min={0}
                       disabled={!constraintsEnabled}
-                      className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-70"
+                      className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-70"
                       value={maxRuntimeMsInput}
                       onChange={(e) => {
                         const nextValue = e.target.value;
@@ -669,7 +672,7 @@ export function GlobalRuleEditorDrawer({
                       inputMode="numeric"
                       min={0}
                       disabled={!constraintsEnabled}
-                      className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-70"
+                      className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-70"
                       value={maxConcurrentJobsInput}
                       onChange={(e) => {
                         const nextValue = e.target.value;
@@ -734,12 +737,12 @@ export function GlobalRuleEditorDrawer({
               )}
               <div className="space-y-2">
                 {draft.remediations.map((remediation, index) => (
-                  <div key={`${remediation.id}-${index}`} className="rounded-md border border-border bg-surface-0 p-2">
+                  <div key={`${remediation.id}-${index}`} className="rounded-xl border border-border bg-surface-0 p-2">
                     <div className="mb-2 flex justify-end">
                       <button
                         type="button"
                         aria-label={`Delete remediation ${index + 1}`}
-                        className="rounded-md p-1 text-destructive hover:bg-destructive/10"
+                        className="rounded-xl p-1 text-destructive hover:bg-destructive/10"
                         onClick={() => setDraft((p) => ({ ...p, remediations: p.remediations.filter((_, i) => i !== index) }))}
                       >
                         <Trash2 className="h-3 w-3" />
@@ -752,7 +755,7 @@ export function GlobalRuleEditorDrawer({
                       helpText="Unique remediation identifier for this rule."
                       className="mb-1"
                     >
-                      <input className="h-7 w-full rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground" placeholder="id" value={remediation.id} onChange={(e) => setDraft((p) => ({ ...p, remediations: p.remediations.map((r, i) => i === index ? { ...r, id: e.target.value } : r) }))} />
+                      <input className="h-7 w-full rounded-xl border border-border bg-surface-2 px-2 text-xs text-foreground" placeholder="id" value={remediation.id} onChange={(e) => setDraft((p) => ({ ...p, remediations: p.remediations.map((r, i) => i === index ? { ...r, id: e.target.value } : r) }))} />
                     </PolicyField>
                     <PolicyField
                       inputId={`global-rule-remediation-title-${index}`}
@@ -761,14 +764,14 @@ export function GlobalRuleEditorDrawer({
                       helpText="Short action title for operators."
                       className="mb-1"
                     >
-                      <input className="h-7 w-full rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground" placeholder="title" value={remediation.title} onChange={(e) => setDraft((p) => ({ ...p, remediations: p.remediations.map((r, i) => i === index ? { ...r, title: e.target.value } : r) }))} />
+                      <input className="h-7 w-full rounded-xl border border-border bg-surface-2 px-2 text-xs text-foreground" placeholder="title" value={remediation.title} onChange={(e) => setDraft((p) => ({ ...p, remediations: p.remediations.map((r, i) => i === index ? { ...r, title: e.target.value } : r) }))} />
                     </PolicyField>
                     <PolicyField
                       inputId={`global-rule-remediation-topic-${index}`}
                       label={`Remediation ${index + 1} replacement_topic`}
                       helpText="Optional safer topic route to recommend for this remediation."
                     >
-                      <input className="h-7 w-full rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground" placeholder="replacement_topic" value={remediation.replacementTopic} onChange={(e) => setDraft((p) => ({ ...p, remediations: p.remediations.map((r, i) => i === index ? { ...r, replacementTopic: e.target.value } : r) }))} />
+                      <input className="h-7 w-full rounded-xl border border-border bg-surface-2 px-2 text-xs text-foreground" placeholder="replacement_topic" value={remediation.replacementTopic} onChange={(e) => setDraft((p) => ({ ...p, remediations: p.remediations.map((r, i) => i === index ? { ...r, replacementTopic: e.target.value } : r) }))} />
                     </PolicyField>
                   </div>
                 ))}
@@ -779,7 +782,7 @@ export function GlobalRuleEditorDrawer({
 
         <div className="fixed bottom-0 right-0 z-[131] flex w-full max-w-xl flex-col gap-2 border-t border-border bg-surface-1 px-5 py-3">
           {showRemediationMismatchConfirm && (
-            <div className="rounded-md border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 p-2 text-xs text-[var(--color-warning)]">
+            <div className="rounded-xl border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 p-2 text-xs text-[var(--color-warning)]">
               <p>
                 This rule has remediations configured but decision is{" "}
                 <span className="font-mono text-[var(--color-warning)]">{draft.decision}</span>. Remediations apply to deny decisions.
@@ -842,3 +845,4 @@ export const __globalRuleEditorDrawerInternal = {
   hasRemediationDecisionMismatch,
   validateGlobalRuleDraft,
 };
+

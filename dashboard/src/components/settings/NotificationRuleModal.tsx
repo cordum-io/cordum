@@ -123,7 +123,7 @@ export function NotificationRuleModal({
                     channels.map((ch) => (
                       <label
                         key={ch.id}
-                        className="flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs hover:bg-surface2/30"
+                        className="flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-xs hover:bg-surface2/30"
                       >
                         <input
                           type="checkbox"
@@ -227,3 +227,4 @@ export function NotificationRuleModal({
     </div>
   );
 }
+

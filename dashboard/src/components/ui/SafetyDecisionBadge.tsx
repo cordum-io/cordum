@@ -55,7 +55,7 @@ export function SafetyDecisionBadge({
       {c.label}
       {matchedRules && matchedRules.length > 0 && (
         <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 min-w-[180px]">
-          <span className="block bg-surface-3 border border-border rounded-lg p-2 shadow-xl text-xs text-muted-foreground font-normal tracking-normal">
+          <span className="block bg-surface-3 border border-border rounded-xl p-2 shadow-xl text-xs text-muted-foreground font-normal tracking-normal">
             <span className="block text-foreground font-semibold mb-1">
               {matchedRules.length} matched rule{matchedRules.length > 1 ? "s" : ""}
             </span>

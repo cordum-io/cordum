@@ -6,6 +6,7 @@
 import { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import { motion, AnimatePresence } from "framer-motion";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
@@ -86,6 +87,21 @@ function jobStatusVariant(status: string): "healthy" | "danger" | "warning" | "m
   }
 }
 
+const container = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.05,
+    },
+  },
+};
+
+const item = {
+  hidden: { opacity: 0, y: 12 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.3 } },
+};
+
 export default function AgentDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -159,13 +175,12 @@ export default function AgentDetailPage() {
             </Button>
           }
         />
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <SkeletonCard />
-          <SkeletonCard />
-          <SkeletonCard />
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-4"><SkeletonCard /></div>
+          <div className="lg:col-span-4"><SkeletonCard /></div>
+          <div className="lg:col-span-4"><SkeletonCard /></div>
+          <div className="lg:col-span-12"><SkeletonCard /></div>
         </div>
-        <SkeletonCard />
-        <SkeletonTable rows={5} />
       </div>
     );
   }
@@ -201,241 +216,288 @@ export default function AgentDetailPage() {
         ariaLabel="Agent detail sections"
       />
 
-      {activeTab === "overview" && (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-          {/* Agent Info Card */}
-          <div className="instrument-card">
-            <div className="mb-4 flex items-center gap-3">
-              <div className={cn(
-                "flex h-10 w-10 items-center justify-center rounded-2xl",
-                isOnline ? "bg-[var(--color-success)]/10" : "bg-destructive/10",
-              )}>
-                <Cpu className={cn("h-5 w-5", isOnline ? "text-[var(--color-success)]" : "text-destructive")} />
-              </div>
-              <div>
-                <p className="font-mono text-sm font-medium text-foreground">{agent?.id}</p>
-                <StatusBadge variant={isOnline ? "healthy" : "danger"}>
-                  {agent?.status ?? "unknown"}
-                </StatusBadge>
-              </div>
-            </div>
+      <AnimatePresence mode="wait">
+        {activeTab === "overview" && (
+          <motion.div
+            key="overview"
+            variants={container}
+            initial="hidden"
+            animate="visible"
+            exit={{ opacity: 0, y: -8 }}
+            className="grid grid-cols-1 gap-6 lg:grid-cols-12"
+          >
+            {/* Agent Info Card */}
+            <motion.div variants={item} className="lg:col-span-4">
+              <div className="instrument-card h-full">
+                <div className="mb-4 flex items-center gap-3">
+                  <div className={cn(
+                    "flex h-10 w-10 items-center justify-center rounded-2xl",
+                    isOnline ? "bg-[var(--color-success)]/10" : "bg-destructive/10",
+                  )}>
+                    <Cpu className={cn("h-5 w-5", isOnline ? "text-[var(--color-success)]" : "text-destructive")} />
+                  </div>
+                  <div>
+                    <p className="font-mono text-sm font-medium text-foreground">{agent?.id}</p>
+                    <StatusBadge variant={isOnline ? "healthy" : "danger"}>
+                      {agent?.status ?? "unknown"}
+                    </StatusBadge>
+                  </div>
+                </div>
 
-            <div className="space-y-3">
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">CPU</span>
-                <span className="font-mono text-foreground">{agent?.cpuLoad ?? 0}%</span>
-              </div>
-              <Progress value={agent?.cpuLoad ?? 0} className="h-1.5" />
+                <div className="space-y-3">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted-foreground">CPU</span>
+                    <span className="font-mono text-foreground">{agent?.cpuLoad ?? 0}%</span>
+                  </div>
+                  <Progress value={agent?.cpuLoad ?? 0} className="h-1.5" />
 
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">Memory</span>
-                <span className="font-mono text-foreground">{agent?.memoryLoad ?? 0}%</span>
-              </div>
-              <Progress value={agent?.memoryLoad ?? 0} className="h-1.5" />
+                  <div className="flex justify-between text-xs">
+                    <span className="text-muted-foreground">Memory</span>
+                    <span className="font-mono text-foreground">{agent?.memoryLoad ?? 0}%</span>
+                  </div>
+                  <Progress value={agent?.memoryLoad ?? 0} className="h-1.5" />
 
-              <div className="grid grid-cols-2 gap-3 border-t border-border pt-2">
-                <div>
-                  <p className="text-xs text-muted-foreground">Version</p>
-                  <p className="font-mono text-xs text-foreground">{agent?.version ?? "N/A"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Last Heartbeat</p>
-                  <p className="font-mono text-xs text-foreground">
-                    {agent?.lastHeartbeat ? formatRelativeTime(agent.lastHeartbeat) : "N/A"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-1 border-t border-border pt-2">
-                <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">Info</p>
-                <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">Pool</span>
-                  <span className="font-mono text-foreground">{agent?.pool ?? "N/A"}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">Region</span>
-                  <span className="font-mono text-foreground">{agent?.region ?? "N/A"}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">Type</span>
-                  <span className="font-mono text-foreground">{agent?.type ?? "N/A"}</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">Active Jobs</span>
-                  <span className="font-mono text-foreground">{agent?.activeJobs ?? 0} / {agent?.capacity ?? 0}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Safety Breakdown */}
-          <div className="instrument-card">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="font-display text-sm font-semibold text-foreground">Safety Decisions</h2>
-              <span className="font-mono text-xs text-muted-foreground">{totalDecisions.toLocaleString()} total</span>
-            </div>
-            <div className="mb-4 text-center">
-              <span className="font-mono text-3xl font-bold text-foreground">{allowRate}%</span>
-              <span className="ml-2 text-xs text-muted-foreground">allow rate</span>
-            </div>
-            {totalDecisions === 0 ? (
-              <p className="py-4 text-center text-xs text-muted-foreground">
-                {jobsLoading ? "Loading safety data..." : "No safety decision data available"}
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {Object.entries(safetyBreakdown).map(([key, value]) => {
-                  const pct = totalDecisions > 0 ? (value / totalDecisions) * 100 : 0;
-                  const colors: Record<string, string> = {
-                    allow: "bg-[var(--color-success)]",
-                    deny: "bg-[var(--color-governance)]",
-                    require_approval: "bg-[var(--color-warning)]",
-                    allow_with_constraints: "bg-[var(--color-info)]",
-                    throttle: "bg-[var(--color-warning)]",
-                  };
-                  return (
-                    <div key={key}>
-                      <div className="mb-1 flex justify-between text-xs">
-                        <span className="capitalize text-muted-foreground">{key.replace(/_/g, " ")}</span>
-                        <span className="font-mono text-foreground">{value.toLocaleString()} ({pct.toFixed(1)}%)</span>
-                      </div>
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
-                        <div className={cn("h-full rounded-full transition-all", colors[key] ?? "bg-muted-foreground")} style={{ width: `${pct}%` }} />
-                      </div>
+                  <div className="grid grid-cols-2 gap-3 border-t border-border pt-3 mt-3">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Version</p>
+                      <p className="font-mono text-xs text-foreground">{agent?.version ?? "N/A"}</p>
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Policy Bindings */}
-          <div className="instrument-card">
-            <h2 className="mb-4 font-display text-sm font-semibold text-foreground">Active Policy Bindings</h2>
-            {bundles.length === 0 ? (
-              <div className="py-6 text-center">
-                <p className="text-xs text-muted-foreground">No policy bundles bound to this agent's pool</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {bundles.map((b) => (
-                  <div key={b.id} className="flex items-center justify-between rounded-2xl border border-border bg-surface-0 p-3">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="h-3.5 w-3.5 text-cordum" />
-                      <span className="text-sm font-medium text-foreground">{b.name || b.id}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono text-muted-foreground">{b.rule_count ?? b.rules?.length ?? 0} rules</span>
-                      <StatusBadge variant={b.status === "published" ? "healthy" : "muted"}>{b.status ?? "published"}</StatusBadge>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Last Heartbeat</p>
+                      <p className="font-mono text-xs text-foreground">
+                        {agent?.lastHeartbeat ? formatRelativeTime(agent.lastHeartbeat) : "N/A"}
+                      </p>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
 
-            <div className="mt-4 border-t border-border pt-3">
-              <p className="mb-2 text-xs font-mono uppercase tracking-widest text-muted-foreground">Capabilities</p>
-              <div className="flex flex-wrap gap-1.5">
-                {agent?.capabilities && agent.capabilities.length > 0 ? (
-                  agent.capabilities.map((cap) => (
-                    <span key={cap} className="rounded bg-surface-2 px-2 py-0.5 text-xs font-mono text-muted-foreground">
-                      {cap}
-                    </span>
-                  ))
+                  <div className="space-y-1 border-t border-border pt-3">
+                    <p className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-1">Infrastructure</p>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">Pool</span>
+                      <span className="font-mono text-foreground">{agent?.pool ?? "N/A"}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">Region</span>
+                      <span className="font-mono text-foreground">{agent?.region ?? "N/A"}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">Type</span>
+                      <span className="font-mono text-foreground">{agent?.type ?? "N/A"}</span>
+                    </div>
+                    <div className="flex justify-between text-xs">
+                      <span className="text-muted-foreground">Active Jobs</span>
+                      <span className="font-mono text-foreground">{agent?.activeJobs ?? 0} / {agent?.capacity ?? 0}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+
+            {/* Safety Breakdown */}
+            <motion.div variants={item} className="lg:col-span-4">
+              <div className="instrument-card h-full">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="font-display text-sm font-semibold text-foreground">Safety Decisions</h2>
+                  <span className="font-mono text-xs text-muted-foreground">{totalDecisions.toLocaleString()} total</span>
+                </div>
+                <div className="mb-6 text-center">
+                  <p className="text-3xl font-display font-bold text-foreground tracking-tight">{allowRate}%</p>
+                  <p className="text-xs text-muted-foreground mt-1">aggregate allow rate</p>
+                </div>
+                {totalDecisions === 0 ? (
+                  <p className="py-12 text-center text-xs text-muted-foreground italic">
+                    {jobsLoading ? "Loading safety data..." : "No safety decision data available"}
+                  </p>
                 ) : (
-                  <span className="text-xs text-muted-foreground">None</span>
+                  <div className="space-y-4">
+                    {Object.entries(safetyBreakdown).map(([key, value]) => {
+                      const pct = totalDecisions > 0 ? (value / totalDecisions) * 100 : 0;
+                      const colors: Record<string, string> = {
+                        allow: "bg-[var(--color-success)]",
+                        deny: "bg-[var(--color-governance)]",
+                        require_approval: "bg-[var(--color-warning)]",
+                        allow_with_constraints: "bg-[var(--color-info)]",
+                        throttle: "bg-[var(--color-warning)]",
+                      };
+                      return (
+                        <div key={key}>
+                          <div className="mb-1.5 flex justify-between text-xs">
+                            <span className="capitalize text-muted-foreground">{key.replace(/_/g, " ")}</span>
+                            <span className="font-mono text-foreground font-medium">{value.toLocaleString()} ({pct.toFixed(1)}%)</span>
+                          </div>
+                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
+                            <motion.div
+                              initial={{ width: 0 }}
+                              animate={{ width: `${pct}%` }}
+                              transition={{ duration: 1, ease: "easeOut", delay: 0.2 }}
+                              className={cn("h-full rounded-full", colors[key] ?? "bg-muted-foreground")}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
-            </div>
-          </div>
-        </div>
-      )}
+            </motion.div>
 
-      {activeTab === "activity" && (
-        <>
-          <div className="instrument-card">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="font-display text-sm font-semibold text-foreground">Hourly Activity</h2>
-                <p className="mt-0.5 text-xs text-muted-foreground">Jobs processed per hour (last 24h)</p>
-              </div>
-            </div>
-            {jobsLoading ? (
-              <div className="flex h-[200px] items-center justify-center">
-                <SkeletonCard />
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={hourlyActivity}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                  <XAxis dataKey="hour" tick={{ fontSize: 9, fill: "#5a6a70" }} axisLine={false} tickLine={false} interval={3} />
-                  <YAxis tick={{ fontSize: 9, fill: "#5a6a70" }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<ChartTooltip />} cursor={{ fill: "var(--surface-2)" }} />
-                  <Bar dataKey="jobs" fill="#0f7f7a" radius={[2, 2, 0, 0]} name="Jobs" />
-                  <Bar dataKey="denied" fill="#7c3aed" radius={[2, 2, 0, 0]} name="Denied" />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
+            {/* Policy Bindings */}
+            <motion.div variants={item} className="lg:col-span-4">
+              <div className="instrument-card h-full">
+                <h2 className="mb-4 font-display text-sm font-semibold text-foreground">Active Policy Bindings</h2>
+                {bundles.length === 0 ? (
+                  <div className="py-12 text-center border-2 border-dashed border-border/40 rounded-3xl">
+                    <p className="text-xs text-muted-foreground">No policy bundles bound to this agent's pool</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {bundles.map((b) => (
+                      <div key={b.id} className="flex items-center justify-between rounded-2xl border border-border bg-surface-0/50 p-3 hover:bg-surface-0 transition-colors">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="h-3.5 w-3.5 text-cordum" />
+                          <span className="text-sm font-medium text-foreground">{b.name || b.id}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{b.rule_count ?? b.rules?.length ?? 0} rules</span>
+                          <StatusBadge variant={b.status === "published" ? "healthy" : "muted"}>{b.status ?? "published"}</StatusBadge>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
-          <div className="instrument-card overflow-hidden">
-            <div className="flex items-center justify-between border-b border-border px-5 py-3">
-              <h2 className="font-display text-sm font-semibold text-foreground">Recent Jobs</h2>
-              <Button variant="ghost" size="sm" onClick={() => navigate("/jobs")}>
-                View all <ArrowLeft className="ml-1 h-3 w-3 rotate-180" />
-              </Button>
-            </div>
-            {jobsLoading ? (
-              <div className="p-5">
-                <SkeletonTable rows={5} />
+                <div className="mt-6 border-t border-border pt-4">
+                  <p className="mb-2 text-[10px] font-mono uppercase tracking-widest text-muted-foreground">Capabilities</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {agent?.capabilities && agent.capabilities.length > 0 ? (
+                      agent.capabilities.map((cap) => (
+                        <span key={cap} className="rounded-lg bg-surface-2 px-2 py-1 text-[10px] font-mono text-foreground border border-border/40">
+                          {cap}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-muted-foreground">None</span>
+                    )}
+                  </div>
+                </div>
               </div>
-            ) : !jobs || jobs.length === 0 ? (
-              <div className="py-8 text-center">
-                <p className="text-xs text-muted-foreground">No recent jobs for this agent</p>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {activeTab === "activity" && (
+          <motion.div
+            key="activity"
+            variants={container}
+            initial="hidden"
+            animate="visible"
+            exit={{ opacity: 0, y: -8 }}
+            className="grid grid-cols-1 gap-6 lg:grid-cols-12"
+          >
+            <motion.div variants={item} className="lg:col-span-12">
+              <div className="instrument-card">
+                <div className="mb-6 flex items-center justify-between">
+                  <div>
+                    <h2 className="font-display text-sm font-semibold text-foreground">Hourly Activity</h2>
+                    <p className="mt-0.5 text-xs text-muted-foreground">Jobs processed per hour (last 24h)</p>
+                  </div>
+                </div>
+                {jobsLoading ? (
+                  <div className="flex h-[240px] items-center justify-center">
+                    <SkeletonCard />
+                  </div>
+                ) : (
+                  <div className="h-[240px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={hourlyActivity}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                        <XAxis
+                          dataKey="hour"
+                          tick={{ fontSize: 10, fill: "var(--text-muted)", fontFamily: "var(--font-mono)" }}
+                          axisLine={false}
+                          tickLine={false}
+                          interval={3}
+                        />
+                        <YAxis
+                          tick={{ fontSize: 10, fill: "var(--text-muted)", fontFamily: "var(--font-mono)" }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <Tooltip content={<ChartTooltip />} cursor={{ fill: "var(--surface-2)", radius: 4 }} />
+                        <Bar dataKey="jobs" fill="var(--color-cordum)" radius={[4, 4, 0, 0]} name="Jobs" />
+                        <Bar dataKey="denied" fill="var(--color-governance)" radius={[4, 4, 0, 0]} name="Denied" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
               </div>
-            ) : (
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-border bg-surface-0">
-                    <th className="px-5 py-3 text-left text-xs font-mono font-medium uppercase tracking-widest text-muted-foreground">Job ID</th>
-                    <th className="px-5 py-3 text-left text-xs font-mono font-medium uppercase tracking-widest text-muted-foreground">Topic</th>
-                    <th className="px-5 py-3 text-left text-xs font-mono font-medium uppercase tracking-widest text-muted-foreground">Status</th>
-                    <th className="px-5 py-3 text-left text-xs font-mono font-medium uppercase tracking-widest text-muted-foreground">Safety</th>
-                    <th className="px-5 py-3 text-left text-xs font-mono font-medium uppercase tracking-widest text-muted-foreground">Duration</th>
-                    <th className="px-5 py-3 text-left text-xs font-mono font-medium uppercase tracking-widest text-muted-foreground">Time</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {jobs.map((job) => (
-                    <tr
-                      key={job.id}
-                      onClick={() => navigate(`/jobs/${job.id}`)}
-                      className="cursor-pointer border-b border-border transition-colors hover:bg-surface-1"
-                    >
-                      <td className="px-5 py-3 font-mono text-sm text-cordum">{job.id}</td>
-                      <td className="px-5 py-3 text-sm text-foreground">{job.topic}</td>
-                      <td className="px-5 py-3">
-                        <StatusBadge variant={jobStatusVariant(job.status)}>
-                          {job.status}
-                        </StatusBadge>
-                      </td>
-                      <td className="px-5 py-3">
-                        <SafetyBadge decision={job.safetyDecision?.type ?? "unknown"} />
-                      </td>
-                      <td className="px-5 py-3 font-mono text-sm text-muted-foreground">
-                        {job.duration != null ? formatDuration(job.duration) : "—"}
-                      </td>
-                      <td className="px-5 py-3 text-sm text-muted-foreground">
-                        {job.createdAt ? formatRelativeTime(job.createdAt) : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </>
-      )}
+            </motion.div>
+
+            <motion.div variants={item} className="lg:col-span-12">
+              <div className="instrument-card overflow-hidden !p-0">
+                <div className="flex items-center justify-between border-b border-border px-6 py-4 bg-surface-0/30">
+                  <h2 className="font-display text-sm font-semibold text-foreground">Recent Jobs</h2>
+                  <Button variant="ghost" size="sm" onClick={() => navigate("/jobs")}>
+                    View all <ArrowLeft className="ml-1 h-3 w-3 rotate-180" />
+                  </Button>
+                </div>
+                {jobsLoading ? (
+                  <div className="p-6">
+                    <SkeletonTable rows={5} />
+                  </div>
+                ) : !jobs || jobs.length === 0 ? (
+                  <div className="py-12 text-center">
+                    <p className="text-sm text-muted-foreground">No recent jobs for this agent</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b border-border bg-surface-0/50">
+                          <th className="px-6 py-3 text-left text-[10px] font-mono font-semibold uppercase tracking-widest text-muted-foreground">Job ID</th>
+                          <th className="px-6 py-3 text-left text-[10px] font-mono font-semibold uppercase tracking-widest text-muted-foreground">Topic</th>
+                          <th className="px-6 py-3 text-left text-[10px] font-mono font-semibold uppercase tracking-widest text-muted-foreground">Status</th>
+                          <th className="px-6 py-3 text-left text-[10px] font-mono font-semibold uppercase tracking-widest text-muted-foreground">Safety</th>
+                          <th className="px-6 py-3 text-left text-[10px] font-mono font-semibold uppercase tracking-widest text-muted-foreground">Duration</th>
+                          <th className="px-6 py-3 text-left text-[10px] font-mono font-semibold uppercase tracking-widest text-muted-foreground">Time</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {jobs.slice(0, 10).map((job) => (
+                          <tr
+                            key={job.id}
+                            onClick={() => navigate(`/jobs/${job.id}`)}
+                            className="group cursor-pointer transition-colors hover:bg-surface-1"
+                          >
+                            <td className="px-6 py-4 font-mono text-xs text-cordum group-hover:underline">
+                              {job.id.slice(0, 8)}
+                            </td>
+                            <td className="px-6 py-4 text-xs font-medium text-foreground">{job.topic}</td>
+                            <td className="px-6 py-4">
+                              <StatusBadge variant={jobStatusVariant(job.status)}>
+                                {job.status}
+                              </StatusBadge>
+                            </td>
+                            <td className="px-6 py-4">
+                              <SafetyBadge decision={job.safetyDecision?.type ?? "unknown"} />
+                            </td>
+                            <td className="px-6 py-4 font-mono text-xs text-muted-foreground">
+                              {job.duration != null ? formatDuration(job.duration) : "—"}
+                            </td>
+                            <td className="px-6 py-4 text-xs text-muted-foreground">
+                              {job.createdAt ? formatRelativeTime(job.createdAt) : "—"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {FEATURE_FLAGS.delegationDashboard && activeTab === "delegations" && id && (
         <AgentDelegationsPanel agentId={id} />

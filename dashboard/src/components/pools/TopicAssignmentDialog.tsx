@@ -20,6 +20,10 @@ export function TopicAssignmentDialog({ open, onClose, onAddTopic, onRemoveTopic
   const [error, setError] = useState("");
 
   const handleAdd = () => {
+    // Guard against double-fire: the Enter-key path can call this even
+    // while the Add button is disabled mid-add (`isAdding`), which can
+    // submit the same topic twice.
+    if (isAdding) return;
     const trimmed = newTopic.trim();
     if (!trimmed) return;
     if (!TOPIC_RE.test(trimmed)) {
@@ -39,7 +43,7 @@ export function TopicAssignmentDialog({ open, onClose, onAddTopic, onRemoveTopic
     <ConfirmDialog
       open={open}
       onClose={() => { setNewTopic(""); setError(""); onClose(); }}
-      onConfirm={onClose}
+      onConfirm={() => { setNewTopic(""); setError(""); onClose(); }}
       title={`Topics: ${poolName}`}
       icon={Link2}
       confirmLabel="Done"
@@ -50,7 +54,7 @@ export function TopicAssignmentDialog({ open, onClose, onAddTopic, onRemoveTopic
           ) : (
             <div className="space-y-1 max-h-40 overflow-y-auto">
               {topics.map((topic) => (
-                <div key={topic} className="flex items-center justify-between rounded-lg bg-surface-0 px-3 py-1.5">
+                <div key={topic} className="flex items-center justify-between rounded-xl bg-surface-0 px-3 py-1.5">
                   <span className="text-xs font-mono text-foreground">{topic}</span>
                   <button
                     type="button"
@@ -89,3 +93,4 @@ export function TopicAssignmentDialog({ open, onClose, onAddTopic, onRemoveTopic
     />
   );
 }
+

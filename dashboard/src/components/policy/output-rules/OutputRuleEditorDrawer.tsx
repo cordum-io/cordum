@@ -1,9 +1,10 @@
 import { X } from "lucide-react";
-import type { GlobalPolicyOutputRule } from "@/types/policy";
 import {
   createEmptyGlobalOutputRule,
   GlobalOutputRuleEditorDrawer,
 } from "@/components/policy/global/GlobalOutputRuleEditorDrawer";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
+import type { GlobalPolicyOutputRule } from "@/types/policy";
 
 interface OutputRuleEditorDrawerProps {
   open: boolean;
@@ -66,6 +67,7 @@ export function OutputRuleEditorDrawer({
   onClose,
   onSave,
 }: OutputRuleEditorDrawerProps) {
+  const dialogRef = useDialogA11y(onClose, { enabled: readOnly && open });
   if (!readOnly) {
     return (
       <GlobalOutputRuleEditorDrawer
@@ -84,7 +86,8 @@ export function OutputRuleEditorDrawer({
   return (
     <div className="fixed inset-0 z-[125] flex justify-end">
       <button type="button" className="absolute inset-0 bg-black/50" aria-label="Close output rule drawer" onClick={onClose} />
-      <aside
+      <div
+        ref={dialogRef}
         className="relative h-full w-full max-w-lg overflow-y-auto border-l border-border bg-surface-1 p-5"
         role="dialog"
         aria-modal="true"
@@ -94,13 +97,14 @@ export function OutputRuleEditorDrawer({
           <h2 id="output-rule-readonly-title" className="font-display text-lg font-semibold text-foreground">
             View Output Rule
           </h2>
-          <button type="button" className="rounded-md p-2 text-muted-foreground hover:bg-surface-2" onClick={onClose} aria-label="Close output rule drawer">
+          <button type="button" className="rounded-xl p-2 text-muted-foreground hover:bg-surface-2" onClick={onClose} aria-label="Close output rule drawer">
             <X className="h-4 w-4" />
           </button>
         </div>
 
         <ReadOnlyOutputRuleSummary rule={resolvedRule} />
-      </aside>
+      </div>
     </div>
   );
 }
+

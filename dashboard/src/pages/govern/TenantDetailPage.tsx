@@ -1,5 +1,6 @@
 import { ArrowLeft, Save } from "lucide-react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -7,6 +8,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
+import { InstrumentCard } from "@/components/ui/InstrumentCard";
 import { TenantTagListEditor } from "@/components/policy/tenants/TenantTagListEditor";
 import { TenantMcpMatrixEditor } from "@/components/policy/tenants/TenantMcpMatrixEditor";
 import { TenantTopicAccessSection } from "@/components/policy/tenants/TenantTopicAccessSection";
@@ -128,7 +130,12 @@ export default function TenantDetailPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <motion.div
+      className="space-y-6"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: "easeOut" }}
+    >
       <PageHeader
         label="Govern / Tenants"
         title={tenant.label ?? tenant.id}
@@ -222,7 +229,7 @@ export default function TenantDetailPage() {
       )}
 
       {affordances.canEdit && (
-        <section className="rounded-2xl border border-border bg-surface-0 p-4 space-y-3">
+        <InstrumentCard accent="muted" className="p-4 space-y-3">
           <h3 className="font-display text-sm font-semibold text-foreground">
             Edit tenant policy fields
           </h3>
@@ -322,7 +329,7 @@ export default function TenantDetailPage() {
               );
             }}
           />
-        </section>
+        </InstrumentCard>
       )}
 
       <TenantTopicAccessSection
@@ -339,6 +346,6 @@ export default function TenantDetailPage() {
       />
 
       <TenantScopedRulesSection tenantId={tenant.id} rules={scopedRules} />
-    </div>
+    </motion.div>
   );
 }

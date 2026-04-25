@@ -5,7 +5,6 @@ import { z } from "zod";
 import { Trash2, KeyRound, X } from "lucide-react";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
-import { Card } from "../ui/Card";
 import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
 import {

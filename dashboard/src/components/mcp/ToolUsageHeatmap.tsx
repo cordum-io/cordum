@@ -119,7 +119,7 @@ export function ToolUsageHeatmap(props: ToolUsageHeatmapProps) {
       <div
         data-testid="tool-usage-heatmap-empty"
         className={cn(
-          "rounded-md border border-dashed border-[color:var(--border-color,#27272a)] bg-[color:var(--surface,#0b0b0e)] p-8 text-center text-sm text-[color:var(--text-muted,#a1a1aa)]",
+          "rounded-xl border border-dashed border-[color:var(--border-color,#27272a)] bg-[color:var(--surface,#0b0b0e)] p-8 text-center text-sm text-[color:var(--text-muted,#a1a1aa)]",
           className,
         )}
       >
@@ -364,7 +364,7 @@ function CellDetail({ cell, onClose }: CellDetailProps) {
       role="region"
       aria-label="Cell details"
       data-testid="heatmap-cell-detail"
-      className="rounded-md border border-[color:var(--border-color,#27272a)] bg-[color:var(--surface-elevated,#111114)] p-3 text-xs text-[color:var(--text,#e4e4e7)]"
+      className="rounded-xl border border-[color:var(--border-color,#27272a)] bg-[color:var(--surface-elevated,#111114)] p-3 text-xs text-[color:var(--text,#e4e4e7)]"
     >
       <header className="mb-2 flex items-center justify-between">
         <span className="font-mono">
@@ -412,3 +412,4 @@ function pct(n: number, total: number): string {
 }
 
 export default ToolUsageHeatmap;
+

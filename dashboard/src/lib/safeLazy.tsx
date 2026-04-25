@@ -34,7 +34,7 @@ function ChunkLoadError() {
         <button
           type="button"
           onClick={() => window.location.reload()}
-          className="mt-4 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90 transition-colors"
+          className="mt-4 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent/90 transition-colors"
         >
           Refresh Page
         </button>
@@ -42,3 +42,4 @@ function ChunkLoadError() {
     </div>
   );
 }
+

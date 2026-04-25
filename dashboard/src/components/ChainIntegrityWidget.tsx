@@ -394,7 +394,7 @@ export function ChainIntegrityWidget({
       {/* Primary metric row — stacks vertically at 375px, wraps on sm+ */}
       <section
         className={cn(
-          "mb-5 rounded-2xl border p-4",
+          "mb-5 rounded-2xl border p-4 shadow-inner",
           tone.bgTintClass,
           tone.borderTintClass,
         )}

@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { Search, ShieldAlert, X } from "lucide-react";
 import type { DelegationStatus, DelegationView } from "@/api/types";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -167,7 +168,12 @@ export default function DelegationsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <motion.div
+      className="space-y-6"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+    >
       <PageHeader
         label="Govern"
         title="Delegations"
@@ -459,7 +465,7 @@ export default function DelegationsPage() {
             .then(() => setPendingRowRevokeJti(null));
         }}
       />
-    </div>
+    </motion.div>
   );
 }
 

@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type {
   PolicyAnalyticsResponse,
   RuleAnalytics,
-  PolicyAnalyticsSummary,
 } from "@/api/types";
 import {
   validateAnalyticsRange,

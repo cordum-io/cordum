@@ -38,7 +38,7 @@ export function McpApprovalCard({ approval }: Props) {
 
   return (
     <div
-      className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm hover:shadow transition-shadow dark:border-gray-800 dark:bg-gray-900"
+      className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:shadow transition-shadow dark:border-gray-800 dark:bg-gray-900"
       data-testid={`mcp-approval-${approval.id}`}
     >
       <div className="flex items-start justify-between gap-4">
@@ -149,7 +149,7 @@ function ArgsReviewModal({
     >
       <div
         ref={dialogRef}
-        className="max-w-2xl w-full max-h-[80vh] overflow-auto rounded-lg bg-white p-6 shadow-xl dark:bg-gray-900"
+        className="max-w-2xl w-full max-h-[80vh] overflow-auto rounded-xl bg-white p-6 shadow-xl dark:bg-gray-900"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 mb-4">
@@ -232,3 +232,4 @@ function formatExpiry(microSec: number): string {
   const hours = Math.floor(minutes / 60);
   return `${hours}h`;
 }
+

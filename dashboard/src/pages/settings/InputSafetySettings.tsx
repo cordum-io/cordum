@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { motion } from "framer-motion";
 import { AlertTriangle, Shield, ShieldCheck, ShieldOff } from "lucide-react";
 import { ApiError, post, put } from "../../api/client";
 import { Badge } from "../../components/ui/Badge";
@@ -154,8 +155,12 @@ export default function InputSafetySettings() {
   }
 
   return (
-    <div className="space-y-6 pb-12">
-      <Card>
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="space-y-6 pb-12"
+    >
+      <Card className="instrument-card">
         <CardHeader className="flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle>Input Safety — Fail Mode</CardTitle>
@@ -243,7 +248,7 @@ export default function InputSafetySettings() {
         </div>
       </Card>
 
-      <Card>
+      <Card className="instrument-card">
         <CardHeader>
           <div>
             <CardTitle>How It Works</CardTitle>
@@ -274,6 +279,6 @@ export default function InputSafetySettings() {
           </p>
         </div>
       </Card>
-    </div>
+    </motion.div>
   );
 }

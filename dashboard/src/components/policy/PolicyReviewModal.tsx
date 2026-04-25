@@ -32,15 +32,23 @@ function diffRules(rulesA: PolicyRule[], rulesB: PolicyRule[]): RuleDiff[] {
     const b = mapB.get(id);
 
     if (a && !b) {
-      diffs.push({ kind: "added", ruleB: undefined, ruleA: a });
+      diffs.push({ kind: "removed", ruleA: a, ruleB: undefined });
     } else if (!a && b) {
       diffs.push({ kind: "added", ruleA: undefined, ruleB: b });
     } else if (a && b) {
+      // Compare both legacy (decisionType / matchCriteria) and canonical
+      // (decision / match) shapes — a rule may carry either, and falsely
+      // marking a canonical-only change as "unchanged" silently hides
+      // policy review diffs.
+      const decisionA = a.decisionType ?? a.decision;
+      const decisionB = b.decisionType ?? b.decision;
+      const matchA = a.matchCriteria ?? a.match;
+      const matchB = b.matchCriteria ?? b.match;
       const changed =
-        a.decisionType !== b.decisionType ||
+        decisionA !== decisionB ||
         a.reason !== b.reason ||
         a.priority !== b.priority ||
-        JSON.stringify(a.matchCriteria) !== JSON.stringify(b.matchCriteria);
+        JSON.stringify(matchA) !== JSON.stringify(matchB);
       diffs.push({
         kind: changed ? "changed" : "unchanged",
         ruleA: a,
@@ -76,7 +84,7 @@ function RuleCard({ rule, highlight }: { rule: PolicyRule; highlight?: string })
   return (
     <div
       className={cn(
-        "rounded-lg border px-3 py-2 text-xs",
+        "rounded-xl border px-3 py-2 text-xs",
         highlight === "green" && "border-success/40 bg-success/5",
         highlight === "red" && "border-danger/40 bg-danger/5",
         highlight === "yellow" && "border-warning/40 bg-warning/5",
@@ -167,7 +175,7 @@ export function PolicyReviewModal({ bundle, onClose, onApproved }: PolicyReviewM
               {changedCount > 0 && <> &middot; {changedCount} change{changedCount !== 1 ? "s" : ""}</>}
             </p>
           </div>
-          <button type="button" onClick={onClose} className="rounded-lg p-1 text-muted-foreground hover:bg-surface2 hover:text-ink transition-colors">
+          <button type="button" onClick={onClose} className="rounded-xl p-1 text-muted-foreground hover:bg-surface2 hover:text-ink transition-colors">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -206,7 +214,7 @@ export function PolicyReviewModal({ bundle, onClose, onApproved }: PolicyReviewM
           )}
 
           {!snapLoading && !latestSnapshotId && (
-            <div className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
+            <div className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
               No previous snapshot to compare against. This will be the first publish.
             </div>
           )}
@@ -248,7 +256,7 @@ export function PolicyReviewModal({ bundle, onClose, onApproved }: PolicyReviewM
 
           {/* Reject form */}
           {showRejectForm && (
-            <div className="space-y-2 rounded-lg border border-danger/30 bg-danger/5 p-3">
+            <div className="space-y-2 rounded-xl border border-danger/30 bg-danger/5 p-3">
               <label className="text-xs font-medium text-danger">Rejection reason</label>
               <Textarea
                 value={rejectReason}
@@ -268,7 +276,7 @@ export function PolicyReviewModal({ bundle, onClose, onApproved }: PolicyReviewM
           )}
 
           {rejected && (
-            <div className="rounded-lg bg-danger/10 px-4 py-3 text-sm font-semibold text-danger">
+            <div className="rounded-xl bg-danger/10 px-4 py-3 text-sm font-semibold text-danger">
               Policy change rejected.
             </div>
           )}
@@ -299,3 +307,4 @@ export function PolicyReviewModal({ bundle, onClose, onApproved }: PolicyReviewM
     </div>
   );
 }
+

@@ -11,6 +11,7 @@ import {
   TrendingUp,
   Layers,
 } from "lucide-react";
+import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { logger } from "@/lib/logger";
 import { usePageTitle } from "@/hooks/usePageTitle";
@@ -18,8 +19,6 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Tabs } from "@/components/ui/Tabs";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { SkeletonCard } from "@/components/ui/Skeleton";
-import { ChainIntegrityWidget } from "@/components/ChainIntegrityWidget";
-import { GapAlertBanner } from "@/components/GapAlertBanner";
 import {
   PostureSummary,
   PolicyFilterBar,
@@ -37,6 +36,11 @@ import {
   type PolicyEvaluationMode,
 } from "@/components/policy/tabs";
 import type { PolicyBundle } from "@/api/types";
+
+// --- Extracted types for local clarity ---
+interface PolicyBundleActive extends PolicyBundle {
+  active?: boolean;
+}
 
 // Lazy-loaded tab content — each page accepts { hideHeader?: boolean }
 const LazyInputRulesTab = lazy(() => import("@/pages/govern/InputRulesPage")) as React.LazyExoticComponent<React.ComponentType<{ hideHeader?: boolean }>>;
@@ -166,7 +170,7 @@ function OverviewTabContent() {
   const [scope, setScope] = useState<PolicyScope>("all");
   const [activeView, setActiveView] = useState<"bundles" | "all-rules" | "by-topic">("bundles");
 
-  const bundles = bundlesRes?.items ?? [];
+  const bundles = (bundlesRes?.items ?? []) as PolicyBundleActive[];
   const allRules = rulesRes?.items ?? [];
   const hasActiveFilter = searchText !== "" || tenantFilter !== "" || topicFilter !== "" || capabilityFilter !== "" || scope !== "all";
   const clearFilters = useCallback(() => {
@@ -211,71 +215,87 @@ function OverviewTabContent() {
   ];
 
   return (
-    <div className="space-y-6">
-      <GapAlertBanner tenant="default" />
-      <ChainIntegrityWidget tenant="default" />
-      <PostureSummary bundles={bundles} allRules={allRules} />
-      <PolicyFilterBar
-        searchText={searchText}
-        onSearchChange={setSearchText}
-        tenantFilter={tenantFilter}
-        onTenantFilterChange={setTenantFilter}
-        topicFilter={topicFilter}
-        onTopicFilterChange={setTopicFilter}
-        capabilityFilter={capabilityFilter}
-        onCapabilityFilterChange={setCapabilityFilter}
-        scope={scope}
-        onScopeChange={setScope}
-        scopeCounts={scopeCounts}
-        onClear={clearFilters}
-        hasActiveFilter={hasActiveFilter}
-      />
+    <motion.div
+      className="space-y-6"
+      initial="hidden"
+      animate="visible"
+      variants={{ visible: { transition: { staggerChildren: 0.05 } } }}
+    >
+      {/* Top Level Posture Summary — Full Width */}
+      <motion.div variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}>
+        <PostureSummary bundles={bundles} allRules={allRules} />
+      </motion.div>
 
-      {/* Sub-view tabs */}
-      <div className="flex items-center gap-1 border-b border-border pb-px">
-        {viewTabs.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setActiveView(t.id)}
-            className={cn(
-              "px-3 py-1.5 text-xs font-medium rounded-t-lg transition-colors",
-              activeView === t.id
-                ? "bg-surface-1 text-foreground border-b-2 border-[var(--primary)]"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {t.label}
-            {typeof t.count === "number" && (
-              <span className="ml-1.5 text-[10px] text-muted-foreground">({t.count})</span>
-            )}
-          </button>
-        ))}
-      </div>
-
-      {activeView === "bundles" && (
-        <div className="space-y-4">
-          {filteredBundles.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <p className="text-sm">
-                {hasActiveFilter ? "No bundles match the current filters." : "No policy bundles installed."}
-              </p>
-            </div>
-          ) : (
-            <>
-              <span className="text-xs font-mono text-muted-foreground uppercase tracking-widest block">
-                Installed Bundles ({filteredBundles.length})
-              </span>
-              {filteredBundles.map((bundle) => (
-                <BundleOverviewCard key={bundle.id} bundle={bundle} filterText={combinedFilter || undefined} />
-              ))}
-            </>
-          )}
+      {/* Explore Section */}
+      <motion.div
+        className="space-y-4 pt-4"
+        variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}
+      >
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-display font-semibold text-foreground">
+            Explore Rule Base
+          </h3>
         </div>
-      )}
-      {activeView === "all-rules" && <AllRulesTable bundles={filteredBundles} filterText={combinedFilter || undefined} />}
-      {activeView === "by-topic" && <ByTopicTable bundles={filteredBundles} filterText={combinedFilter || undefined} />}
-    </div>
+        <PolicyFilterBar
+          searchText={searchText}
+          onSearchChange={setSearchText}
+          tenantFilter={tenantFilter}
+          onTenantFilterChange={setTenantFilter}
+          topicFilter={topicFilter}
+          onTopicFilterChange={setTopicFilter}
+          capabilityFilter={capabilityFilter}
+          onCapabilityFilterChange={setCapabilityFilter}
+          scope={scope}
+          onScopeChange={setScope}
+          scopeCounts={scopeCounts}
+          onClear={clearFilters}
+          hasActiveFilter={hasActiveFilter}
+        />
+
+        <div className="instrument-card p-0 overflow-hidden bg-background/40 backdrop-blur-sm">
+          <div className="flex items-center gap-1 border-b border-border/50 p-1">
+            {viewTabs.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setActiveView(t.id)}
+                className={cn(
+                  "px-4 py-1.5 text-xs font-medium rounded-xl transition-all",
+                  activeView === t.id
+                    ? "bg-surface-2 text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground hover:bg-surface-1/50",
+                )}
+              >
+                {t.label}
+                {typeof t.count === "number" && (
+                  <span className="ml-1.5 opacity-50 font-mono text-[10px]">({t.count})</span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          <div className="p-5">
+            {activeView === "bundles" && (
+              <div className="space-y-4">
+                {filteredBundles.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <p className="text-sm">
+                      {hasActiveFilter ? "No bundles match the current filters." : "No policy bundles installed."}
+                    </p>
+                  </div>
+                ) : (
+                  filteredBundles.map((bundle) => (
+                    <BundleOverviewCard key={bundle.id} bundle={bundle} filterText={combinedFilter || undefined} />
+                  ))
+                )}
+              </div>
+            )}
+            {activeView === "all-rules" && <AllRulesTable bundles={filteredBundles} filterText={combinedFilter || undefined} />}
+            {activeView === "by-topic" && <ByTopicTable bundles={filteredBundles} filterText={combinedFilter || undefined} />}
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 

@@ -131,7 +131,7 @@ function GenericConfigForm({
         <button
           type="button"
           onClick={onClose}
-          className="rounded-lg p-1 text-muted-foreground hover:bg-surface2 hover:text-ink transition-colors"
+          className="rounded-xl p-1 text-muted-foreground hover:bg-surface2 hover:text-ink transition-colors"
         >
           <X className="h-4 w-4" />
         </button>
@@ -194,7 +194,7 @@ function GenericConfigForm({
                 {...register("parallelSteps")}
                 multiple
                 size={Math.min(Math.max(4, availableSteps.length), 8)}
-                className="w-full rounded-lg border border-border bg-surface1 px-2 py-1.5 text-xs text-ink outline-none focus:ring-2 focus:ring-accent"
+                className="w-full rounded-xl border border-border bg-surface1 px-2 py-1.5 text-xs text-ink outline-none focus:ring-2 focus:ring-accent"
               >
                 {availableSteps.map((c) => (
                   <option key={c.id} value={c.id}>{c.label} ({c.id})</option>
@@ -433,3 +433,4 @@ function Field({
     </div>
   );
 }
+

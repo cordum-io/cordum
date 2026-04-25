@@ -221,7 +221,7 @@ function DenySuggestionCard({
           </div>
         </div>
 
-        <div className="rounded-lg border border-border bg-surface2/30 px-3 py-2">
+        <div className="rounded-xl border border-border bg-surface2/30 px-3 py-2">
           <p className="text-xs text-muted-foreground">
             <span className="font-semibold text-ink">Suggestion: </span>
             {capsList && (
@@ -678,3 +678,4 @@ export function PolicySimulator({ bundleId, mode = "simulate", initialCapabiliti
     </div>
   );
 }
+

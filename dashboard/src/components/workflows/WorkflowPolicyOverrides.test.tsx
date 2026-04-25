@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { extractConstraints, hasAnyConstraints } from "./WorkflowPolicyOverrides";
 import { extractWorkflowRules } from "./WorkflowPolicyOverrideRules";
-import type { PolicyConstraints } from "@/api/types";
 
 describe("extractConstraints", () => {
   it("returns null when config and metadata are both null", () => {

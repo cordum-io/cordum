@@ -42,11 +42,18 @@ function diffRules(rulesA: PolicyRule[], rulesB: PolicyRule[]): RuleDiff[] {
     } else if (!a && b) {
       diffs.push({ kind: "added", ruleB: b });
     } else if (a && b) {
+      // Compare both legacy (decisionType / matchCriteria) and canonical
+      // (decision / match) shapes; a canonical-only change must not be
+      // reported as unchanged.
+      const decisionA = a.decisionType ?? a.decision;
+      const decisionB = b.decisionType ?? b.decision;
+      const matchA = a.matchCriteria ?? a.match;
+      const matchB = b.matchCriteria ?? b.match;
       const changed =
-        a.decisionType !== b.decisionType ||
+        decisionA !== decisionB ||
         a.reason !== b.reason ||
         a.priority !== b.priority ||
-        JSON.stringify(a.matchCriteria) !== JSON.stringify(b.matchCriteria);
+        JSON.stringify(matchA) !== JSON.stringify(matchB);
       diffs.push({
         kind: changed ? "changed" : "unchanged",
         ruleA: a,
@@ -139,7 +146,7 @@ function SnapshotSelect({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm text-ink"
+        className="w-full rounded-xl border border-border bg-transparent px-3 py-2 text-sm text-ink"
       >
         <option value="">Select snapshot...</option>
         {snapshots.map((s) => (
@@ -304,3 +311,4 @@ export function SnapshotComparison() {
     </div>
   );
 }
+

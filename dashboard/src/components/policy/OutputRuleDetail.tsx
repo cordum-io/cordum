@@ -155,7 +155,7 @@ export function OutputRuleDetail({
               {(rule.patterns ?? []).map((pattern, idx) => (
                 <p
                   key={`${pattern}-${idx}`}
-                  className="rounded-md bg-surface2 px-2 py-1 font-mono text-xs text-ink"
+                  className="rounded-xl bg-surface2 px-2 py-1 font-mono text-xs text-ink"
                 >
                   {pattern}
                 </p>
@@ -177,7 +177,7 @@ export function OutputRuleDetail({
           {isLoading && (
             <div className="space-y-2">
               {Array.from({ length: 3 }, (_, idx) => (
-                <div key={idx} className="h-12 animate-pulse rounded-lg bg-surface2" />
+                <div key={idx} className="h-12 animate-pulse rounded-xl bg-surface2" />
               ))}
             </div>
           )}
@@ -192,7 +192,7 @@ export function OutputRuleDetail({
 
           {!isLoading &&
             data.map((entry) => (
-              <div key={entry.id} className="space-y-2 rounded-lg border border-border bg-surface2/20 p-3">
+              <div key={entry.id} className="space-y-2 rounded-xl border border-border bg-surface2/20 p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <Link
                     to={`/jobs/${encodeURIComponent(entry.jobId)}`}
@@ -235,3 +235,4 @@ export function OutputRuleDetail({
     </Drawer>
   );
 }
+

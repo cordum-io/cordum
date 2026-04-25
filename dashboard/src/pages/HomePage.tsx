@@ -54,6 +54,7 @@ import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { safeLocalStorage } from "@/lib/storage";
 import { AuditChainCard } from "@/components/AuditChainCard";
 import { useAuth } from "@/hooks/useAuth";
+import { SafetyDecisionFeed } from "@/components/home/SafetyDecisionFeed";
 
 export default function HomePage() {
   const navigate = useNavigate();
@@ -314,9 +315,11 @@ export default function HomePage() {
       />
 
       <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3 }}
+        initial="hidden"
+        animate="visible"
+        variants={{
+          visible: { transition: { staggerChildren: 0.05 } },
+        }}
         className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
       >
         {isLoading ? (
@@ -324,101 +327,109 @@ export default function HomePage() {
         ) : (
           <>
             {/* KPI 1: Recent Jobs */}
-            <InstrumentCard>
-              <MetricValue
-                label="Recent Jobs"
-                value={totalJobs.toLocaleString()}
-                icon={<Activity className="w-4 h-4" />}
-              >
-                <div className="flex gap-3 mt-3 text-xs font-mono text-muted-foreground">
-                  <span>{runningJobs} running</span>
-                  <span className="text-[var(--color-success)]">
-                    {completedJobs} done
-                  </span>
-                  <span className="text-destructive">{failedJobs} failed</span>
-                </div>
-              </MetricValue>
-            </InstrumentCard>
+            <motion.div variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}>
+              <InstrumentCard>
+                <MetricValue
+                  label="Recent Jobs"
+                  value={totalJobs.toLocaleString()}
+                  icon={<Activity className="w-4 h-4" />}
+                >
+                  <div className="flex gap-3 mt-3 text-xs font-mono text-muted-foreground">
+                    <span>{runningJobs} running</span>
+                    <span className="text-[var(--color-success)]">
+                      {completedJobs} done
+                    </span>
+                    <span className="text-destructive">{failedJobs} failed</span>
+                  </div>
+                </MetricValue>
+              </InstrumentCard>
+            </motion.div>
 
             {/* KPI 2: Active Agents */}
-            <InstrumentCard>
-              <MetricValue
-                label="Active Agents"
-                value={activeWorkers.length}
-                unit={`/ ${workers?.length ?? 0}`}
-                icon={<Cpu className="w-4 h-4" />}
-              >
-                <div className="flex gap-1 mt-3.5">
-                  {(workers ?? []).slice(0, 20).map((w) => (
-                    <div
-                      key={w.id}
-                      className={cn(
-                        "w-2 h-2 rounded-sm",
-                        w.status === "idle"
-                          ? "bg-[var(--color-success)]"
-                          : w.status === "busy"
-                            ? "bg-cordum"
-                            : "bg-muted-foreground",
-                      )}
-                    />
-                  ))}
-                </div>
-              </MetricValue>
-            </InstrumentCard>
+            <motion.div variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}>
+              <InstrumentCard>
+                <MetricValue
+                  label="Active Agents"
+                  value={activeWorkers.length}
+                  unit={`/ ${workers?.length ?? 0}`}
+                  icon={<Cpu className="w-4 h-4" />}
+                >
+                  <div className="flex gap-1 mt-3.5">
+                    {(workers ?? []).slice(0, 20).map((w) => (
+                      <div
+                        key={w.id}
+                        className={cn(
+                          "w-2 h-2 rounded-sm",
+                          w.status === "idle"
+                            ? "bg-[var(--color-success)]"
+                            : w.status === "busy"
+                              ? "bg-cordum"
+                              : "bg-muted-foreground",
+                        )}
+                      />
+                    ))}
+                  </div>
+                </MetricValue>
+              </InstrumentCard>
+            </motion.div>
 
             {/* KPI 3: Safety Decisions */}
-            <InstrumentCard>
-              <MetricValue
-                label="Safety Decisions"
-                value={`${safetyAllowRate}%`}
-                unit="allowed"
-                icon={<ShieldCheck className="w-4 h-4" />}
-              >
-                <div className="flex gap-3 mt-3 text-xs font-mono">
-                  <span className="text-[var(--color-success)]">
-                    {safetyAllowed} allow
-                  </span>
-                  <span className="text-[var(--color-governance)]">
-                    {safetyDenied} deny
-                  </span>
-                  <span className="text-[var(--color-warning)]">
-                    {safetyApproval} review
-                  </span>
-                </div>
-              </MetricValue>
-            </InstrumentCard>
+            <motion.div variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}>
+              <InstrumentCard>
+                <MetricValue
+                  label="Safety Decisions"
+                  value={`${safetyAllowRate}%`}
+                  unit="allowed"
+                  icon={<ShieldCheck className="w-4 h-4" />}
+                >
+                  <div className="flex gap-3 mt-3 text-xs font-mono">
+                    <span className="text-[var(--color-success)]">
+                      {safetyAllowed} allow
+                    </span>
+                    <span className="text-[var(--color-governance)]">
+                      {safetyDenied} deny
+                    </span>
+                    <span className="text-[var(--color-warning)]">
+                      {safetyApproval} review
+                    </span>
+                  </div>
+                </MetricValue>
+              </InstrumentCard>
+            </motion.div>
 
             {/* KPI 4: Pending Approvals */}
-            <InstrumentCard
-              accent={pendingApprovals.length > 0 ? "warning" : "cordum"}
-            >
-              <MetricValue
-                label="Pending Approvals"
-                value={pendingApprovals.length}
-                unit="awaiting"
-                icon={
-                  <UserCheck
-                    className={cn(
-                      "w-4 h-4",
-                      pendingApprovals.length > 0
-                        ? "text-[var(--color-warning)]"
-                        : "text-cordum",
-                    )}
-                  />
-                }
+            <motion.div variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}>
+              <InstrumentCard
+                accent={pendingApprovals.length > 0 ? "warning" : "cordum"}
               >
-                {pendingApprovals.length > 0 && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="mt-2.5 text-[var(--color-warning)] hover:text-[var(--color-warning)] p-0 h-auto font-mono text-xs uppercase tracking-widest"
-                    onClick={() => navigate("/approvals")}
-                  >
-                    Review now <ArrowRight className="w-3 h-3 ml-1" />
-                  </Button>
-                )}
-              </MetricValue>
-            </InstrumentCard>
+                <MetricValue
+                  label="Pending Approvals"
+                  value={pendingApprovals.length}
+                  unit="awaiting"
+                  icon={
+                    <UserCheck
+                      className={cn(
+                        "w-4 h-4",
+                        pendingApprovals.length > 0
+                          ? "text-[var(--color-warning)]"
+                          : "text-cordum",
+                      )}
+                    />
+                  }
+                >
+                  {pendingApprovals.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="mt-2.5 text-[var(--color-warning)] hover:text-[var(--color-warning)] p-0 h-auto font-mono text-xs uppercase tracking-widest"
+                      onClick={() => navigate("/approvals")}
+                    >
+                      Review now <ArrowRight className="w-3 h-3 ml-1" />
+                    </Button>
+                  )}
+                </MetricValue>
+              </InstrumentCard>
+            </motion.div>
           </>
         )}
       </motion.div>
@@ -440,13 +451,13 @@ export default function HomePage() {
         )}
 
       {/* Charts Row — Job Activity with Safety Overlay + Decision Distribution */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Job Activity with Safety Overlay — 2 cols */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Job Activity with Safety Overlay — 8 cols */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.1 }}
-          className="instrument-card lg:col-span-2"
+          className="instrument-card lg:col-span-8 h-full"
         >
           <div className="flex items-start justify-between mb-5">
             <div className="min-w-0">
@@ -462,9 +473,11 @@ export default function HomePage() {
             <div className="flex items-center gap-3 shrink-0">
               <button
                 type="button"
+                aria-pressed={liveMode}
+                aria-label={liveMode ? "Live mode on" : "Live mode off"}
                 onClick={() => setLiveMode((v) => !v)}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-mono font-medium transition-all",
+                  "flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-mono font-medium transition-all",
                   liveMode
                     ? "bg-[var(--color-success)]/15 text-[var(--color-success)] ring-1 ring-[var(--color-success)]/30"
                     : "bg-surface-2 text-muted-foreground hover:text-foreground",
@@ -473,58 +486,41 @@ export default function HomePage() {
                 <Radio className={cn("w-3 h-3", liveMode && "animate-pulse")} />
                 Live
               </button>
-              <div className="flex items-center gap-3 text-xs font-mono">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-[var(--color-success)]" />
-                  Allowed
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-[var(--color-governance)]" />
-                  Denied
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-[var(--color-warning)]" />
-                  Approval
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-destructive" />
-                  Failed
-                </span>
-              </div>
             </div>
           </div>
-          <ResponsiveContainer width="100%" height={260}>
+          <ResponsiveContainer width="100%" height={320}>
             <AreaChart data={activityData}>
               <defs>
                 <linearGradient id="gradAllowed" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#1f7a57" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#1f7a57" stopOpacity={0} />
+                  <stop offset="5%" stopColor="var(--color-success)" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="var(--color-success)" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gradDenied" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#7c3aed" stopOpacity={0} />
+                  <stop offset="5%" stopColor="var(--color-governance)" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="var(--color-governance)" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gradApproval" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#c58a1c" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#c58a1c" stopOpacity={0} />
+                  <stop offset="5%" stopColor="var(--color-warning)" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="var(--color-warning)" stopOpacity={0} />
                 </linearGradient>
                 <linearGradient id="gradFailed" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#b83a3a" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="#b83a3a" stopOpacity={0} />
+                  <stop offset="5%" stopColor="var(--color-danger)" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="var(--color-danger)" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid
                 strokeDasharray="3 3"
                 stroke="rgba(255,255,255,0.04)"
+                vertical={false}
               />
               <XAxis
                 dataKey="time"
-                tick={{ fontSize: 10, fill: "#5a6a70" }}
+                tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
                 axisLine={false}
                 tickLine={false}
               />
               <YAxis
-                tick={{ fontSize: 10, fill: "#5a6a70" }}
+                tick={{ fontSize: 10, fill: "var(--muted-foreground)" }}
                 axisLine={false}
                 tickLine={false}
               />
@@ -533,7 +529,7 @@ export default function HomePage() {
                 type="monotone"
                 dataKey="allowed"
                 stackId="1"
-                stroke="#1f7a57"
+                stroke="var(--color-success)"
                 fill="url(#gradAllowed)"
                 strokeWidth={2}
                 name="Allowed"
@@ -542,7 +538,7 @@ export default function HomePage() {
                 type="monotone"
                 dataKey="denied"
                 stackId="1"
-                stroke="#7c3aed"
+                stroke="var(--color-governance)"
                 fill="url(#gradDenied)"
                 strokeWidth={2}
                 strokeDasharray="8 4"
@@ -552,7 +548,7 @@ export default function HomePage() {
                 type="monotone"
                 dataKey="approval"
                 stackId="1"
-                stroke="#c58a1c"
+                stroke="var(--color-warning)"
                 fill="url(#gradApproval)"
                 strokeWidth={2}
                 strokeDasharray="4 2"
@@ -562,7 +558,7 @@ export default function HomePage() {
                 type="monotone"
                 dataKey="failed"
                 stackId="1"
-                stroke="#b83a3a"
+                stroke="var(--color-danger)"
                 fill="url(#gradFailed)"
                 strokeWidth={2}
                 strokeDasharray="8 4 2 4"
@@ -572,12 +568,12 @@ export default function HomePage() {
           </ResponsiveContainer>
         </motion.div>
 
-        {/* Decision Distribution Donut — 1 col */}
+        {/* Decision Distribution Donut — 4 cols */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.15 }}
-          className="instrument-card"
+          className="instrument-card lg:col-span-4 h-full"
         >
           <h2 className="font-display font-semibold text-sm text-foreground mb-0.5">
             Decision Distribution
@@ -585,16 +581,17 @@ export default function HomePage() {
           <p className="text-xs text-muted-foreground mb-4">
             5 safety decision types
           </p>
-          <ResponsiveContainer width="100%" height={180}>
+          <ResponsiveContainer width="100%" height={240}>
             <PieChart>
               <Pie
                 data={decisionData}
                 cx="50%"
                 cy="50%"
-                innerRadius={48}
-                outerRadius={72}
-                paddingAngle={3}
+                innerRadius={60}
+                outerRadius={90}
+                paddingAngle={4}
                 dataKey="value"
+                stroke="none"
               >
                 {decisionData.map((entry) => (
                   <Cell key={entry.name} fill={entry.color} />
@@ -603,11 +600,11 @@ export default function HomePage() {
               <Tooltip content={<ChartTooltip />} />
             </PieChart>
           </ResponsiveContainer>
-          <div className="space-y-1.5 mt-2">
+          <div className="space-y-2 mt-4">
             {decisionData.map((d) => (
               <div
                 key={d.name}
-                className="flex items-center justify-between text-xs"
+                className="flex items-center justify-between text-xs p-2 rounded-xl bg-surface-0/40 border border-border/5"
               >
                 <span className="flex items-center gap-2">
                   <span
@@ -616,140 +613,116 @@ export default function HomePage() {
                   />
                   <span className="text-muted-foreground">{d.name}</span>
                 </span>
-                <span className="font-mono text-foreground">{d.value}</span>
+                <span className="font-mono text-foreground font-bold">{d.value}</span>
               </div>
             ))}
           </div>
         </motion.div>
       </div>
 
-      {/* Recent Activity Table — with Safety Decision column */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, delay: 0.2 }}
-        className="instrument-card overflow-hidden"
-      >
-        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-          <h2 className="font-display font-semibold text-sm text-foreground">
-            Recent Activity
-          </h2>
-          <Button variant="ghost" size="sm" onClick={() => navigate("/jobs")}>
-            View all <ArrowRight className="w-3 h-3 ml-1" />
-          </Button>
-        </div>
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-border bg-surface-0">
-              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
-                Job ID
-              </th>
-              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
-                Topic
-              </th>
-              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
-                Status
-              </th>
-              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
-                Safety
-              </th>
-              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
-                Duration
-              </th>
-              <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
-                Time
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.slice(0, 5).map((job) => {
-              const safetyDecision = job.safetyDecision?.type;
-              return (
-                <tr
-                  key={job.id}
-                  onClick={() => navigate(`/jobs/${job.id}`)}
-                  className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer group"
-                >
-                  <td className="px-5 py-3 font-mono text-sm text-cordum group-hover:underline">
-                    {job.id.slice(0, 12)}
-                  </td>
-                  <td className="px-5 py-3 text-sm text-foreground">
-                    {job.topic || "—"}
-                  </td>
-                  <td className="px-5 py-3">
-                    <StatusBadge
-                      variant={
-                        job.status === "running"
-                          ? "healthy"
-                          : job.status === "succeeded"
-                            ? "healthy"
-                            : job.status === "failed" ||
-                                job.status === "timeout"
-                              ? "danger"
-                              : job.status === "denied" ||
-                                  job.status === "output_quarantined"
-                                ? "governance"
-                                : job.status === "pending" ||
-                                    job.status === "scheduled" ||
-                                    job.status === "approval_required"
-                                  ? "warning"
-                                  : "muted"
-                      }
-                    >
-                      {job.status === "output_quarantined"
-                        ? "quarantined"
-                        : job.status}
-                    </StatusBadge>
-                  </td>
-                  <td className="px-5 py-3">
-                    <SafetyDecisionBadge decision={safetyDecision} />
-                  </td>
-                  <td className="px-5 py-3 text-sm text-muted-foreground font-mono">
-                    {job.duration
-                      ? `${Math.round(job.duration / 1000)}s`
-                      : job.status === "running"
-                        ? "running..."
-                        : "—"}
-                  </td>
-                  <td className="px-5 py-3 text-sm text-muted-foreground">
-                    {job.updatedAt
-                      ? formatRelativeTime(
-                          new Date(job.updatedAt).toISOString(),
-                        )
-                      : "—"}
-                  </td>
-                </tr>
-              );
-            })}
-            {jobs.length === 0 && !jobsLoading && (
-              <tr>
-                <td colSpan={6} className="text-center py-12">
-                  <div className="flex flex-col items-center gap-2">
-                    <p className="text-sm text-muted-foreground">
-                      No jobs yet — submit your first job to get started
-                    </p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => navigate("/jobs")}
-                    >
-                      Go to Jobs
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-        {jobs.length > 5 && (
-          <div className="flex justify-center py-3 border-t border-border">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mt-6">
+        {/* Recent Activity Table — 8 cols */}
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+          className="instrument-card lg:col-span-8 overflow-hidden"
+        >
+          <div className="flex items-center justify-between px-5 py-3 border-b border-border/50">
+            <h2 className="font-display font-semibold text-sm text-foreground">
+              Recent Activity
+            </h2>
             <Button variant="ghost" size="sm" onClick={() => navigate("/jobs")}>
-              View all {jobs.length} jobs{" "}
-              <ArrowRight className="w-3 h-3 ml-1" />
+              View all <ArrowRight className="w-3 h-3 ml-1" />
             </Button>
           </div>
-        )}
-      </motion.div>
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-border/50 bg-surface-0/50">
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
+                  Job ID
+                </th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
+                  Topic
+                </th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
+                  Status
+                </th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
+                  Safety
+                </th>
+                <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
+                  Time
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {jobs.slice(0, 5).map((job) => {
+                const safetyDecision = job.safetyDecision?.type;
+                return (
+                  <tr
+                    key={job.id}
+                    onClick={() => navigate(`/jobs/${job.id}`)}
+                    className="border-b border-border/40 hover:bg-surface-1/50 transition-all cursor-pointer group"
+                  >
+                    <td className="px-5 py-3 font-mono text-sm text-cordum group-hover:underline">
+                      {job.id.slice(0, 12)}
+                    </td>
+                    <td className="px-5 py-3 text-sm text-foreground">
+                      {job.topic || "—"}
+                    </td>
+                    <td className="px-5 py-3">
+                      <StatusBadge
+                        variant={
+                          job.status === "running"
+                            ? "healthy"
+                            : job.status === "succeeded"
+                              ? "healthy"
+                              : job.status === "failed" ||
+                                  job.status === "timeout"
+                                ? "danger"
+                                : job.status === "denied" ||
+                                    job.status === "output_quarantined"
+                                  ? "governance"
+                                  : job.status === "pending" ||
+                                      job.status === "scheduled" ||
+                                      job.status === "approval_required"
+                                    ? "warning"
+                                    : "muted"
+                        }
+                      >
+                        {job.status === "output_quarantined"
+                          ? "quarantined"
+                          : job.status}
+                      </StatusBadge>
+                    </td>
+                    <td className="px-5 py-3">
+                      <SafetyDecisionBadge decision={safetyDecision} />
+                    </td>
+                    <td className="px-5 py-3 text-sm text-muted-foreground">
+                      {job.updatedAt
+                        ? formatRelativeTime(
+                            new Date(job.updatedAt).toISOString(),
+                          )
+                        : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </motion.div>
+
+        {/* Safety Decision Feed — 4 cols */}
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.25 }}
+          className="lg:col-span-4"
+        >
+          <SafetyDecisionFeed />
+        </motion.div>
+      </div>
 
       {/* Worker Pool Health — collapsed by default to reduce above-fold density */}
       <CollapsibleSection title="Worker Pool Health" defaultOpen={false}>
@@ -762,7 +735,7 @@ export default function HomePage() {
           </Button>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
-          {(workers ?? []).slice(0, 12).map((w, idx) => {
+          {(workers ?? []).slice(0, 12).map((w, _idx) => {
             const isOnline = w.status === "idle" || w.status === "busy";
             return (
               <InstrumentCard
@@ -917,3 +890,4 @@ export default function HomePage() {
     </div>
   );
 }
+

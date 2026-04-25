@@ -1,9 +1,10 @@
 import { X } from "lucide-react";
-import type { GlobalPolicyInputRule } from "@/types/policy";
 import {
   createEmptyGlobalInputRule,
   GlobalRuleEditorDrawer,
 } from "@/components/policy/global/GlobalRuleEditorDrawer";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
+import type { GlobalPolicyInputRule } from "@/types/policy";
 
 interface InputRuleEditorDrawerProps {
   open: boolean;
@@ -72,6 +73,7 @@ export function InputRuleEditorDrawer({
   onClose,
   onSave,
 }: InputRuleEditorDrawerProps) {
+  const dialogRef = useDialogA11y(onClose, { enabled: readOnly && open });
   if (!readOnly) {
     return (
       <GlobalRuleEditorDrawer
@@ -96,7 +98,8 @@ export function InputRuleEditorDrawer({
         aria-label="Close editor"
         onClick={onClose}
       />
-      <aside
+      <div
+        ref={dialogRef}
         className="relative h-full w-full max-w-xl overflow-y-auto border-l border-border bg-surface-1 p-5"
         role="dialog"
         aria-modal="true"
@@ -108,7 +111,7 @@ export function InputRuleEditorDrawer({
           </h2>
           <button
             type="button"
-            className="rounded-md p-2 text-muted-foreground hover:bg-surface-2"
+            className="rounded-xl p-2 text-muted-foreground hover:bg-surface-2"
             aria-label="Close editor"
             onClick={onClose}
           >
@@ -122,14 +125,15 @@ export function InputRuleEditorDrawer({
           <div className="flex justify-end">
             <button
               type="button"
-              className="inline-flex items-center justify-center rounded-md border border-border px-3 py-2 text-xs text-foreground hover:bg-surface-2"
+              className="inline-flex items-center justify-center rounded-xl border border-border px-3 py-2 text-xs text-foreground hover:bg-surface-2"
               onClick={onClose}
             >
               Close
             </button>
           </div>
         </div>
-      </aside>
+      </div>
     </div>
   );
 }
+

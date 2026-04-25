@@ -399,7 +399,7 @@ export default function SettingsSSOPage() {
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.16 }}
-        className="space-y-4"
+        className="instrument-card space-y-4"
       >
         <div className="flex items-center gap-2">
           <Clock3 className="h-4 w-4 text-cordum" />

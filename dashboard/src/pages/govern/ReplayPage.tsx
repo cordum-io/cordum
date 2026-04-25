@@ -237,7 +237,7 @@ function SummaryCards({
         return (
           <div
             key={card.label}
-            className="rounded-lg border border-border/60 bg-card/80 p-4 space-y-1"
+            className="rounded-xl border border-border/60 bg-card/80 p-4 space-y-1"
           >
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               {card.icon && <card.icon className="h-3 w-3" />}
@@ -321,14 +321,14 @@ function ChangesTable({ changes }: { changes: PolicyReplayChange[] }) {
           <input
             type="text"
             placeholder="Search job ID, topic, tenant..."
-            className="w-full rounded-md border border-border bg-background pl-8 pr-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+            className="w-full rounded-xl border border-border bg-background pl-8 pr-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             aria-label="Search changes"
           />
         </div>
         <select
-          className="rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+          className="rounded-xl border border-border bg-background px-2 py-1.5 text-sm"
           value={dirFilter}
           onChange={(e) => setDirFilter(e.target.value)}
           aria-label="Filter by direction"
@@ -338,7 +338,7 @@ function ChangesTable({ changes }: { changes: PolicyReplayChange[] }) {
           <option value="relaxed">Relaxed</option>
         </select>
       </div>
-      <div className="overflow-x-auto rounded-lg border border-border/60">
+      <div className="overflow-x-auto rounded-xl border border-border/60">
         <table className="w-full text-sm" role="table">
           <thead>
             <tr className="border-b border-border/40 bg-muted/20">
@@ -566,7 +566,7 @@ export default function ReplayPage({
   const content = (
     <div className={hideHeader ? "space-y-6" : "max-w-6xl mx-auto w-full px-4 py-6 space-y-6"}>
         {/* Form section */}
-        <div className="rounded-lg border border-border/60 bg-card/80 p-5 space-y-5">
+        <div className="rounded-xl border border-border/60 bg-card/80 p-5 space-y-5">
           {/* Time range */}
           <div>
             <label className="block text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
@@ -583,7 +583,7 @@ export default function ReplayPage({
                 <input
                   id="replay-from"
                   type="datetime-local"
-                  className="rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   value={from}
                   onChange={(e) => setFrom(e.target.value)}
                 />
@@ -598,7 +598,7 @@ export default function ReplayPage({
                 <input
                   id="replay-to"
                   type="datetime-local"
-                  className="rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   value={to}
                   onChange={(e) => setTo(e.target.value)}
                 />
@@ -615,7 +615,7 @@ export default function ReplayPage({
                   type="number"
                   min={1}
                   max={MAX_JOBS_LIMIT}
-                  className="w-24 rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-24 rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   value={maxJobs}
                   onChange={(e) =>
                     setMaxJobs(
@@ -643,7 +643,7 @@ export default function ReplayPage({
               <input
                 type="text"
                 placeholder="Tenant"
-                className="w-40 rounded-md border border-border bg-background px-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-40 rounded-xl border border-border bg-background px-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 value={tenant}
                 onChange={(e) => setTenant(e.target.value)}
                 aria-label="Tenant filter"
@@ -651,13 +651,13 @@ export default function ReplayPage({
               <input
                 type="text"
                 placeholder="Topic pattern (glob)"
-                className="w-52 rounded-md border border-border bg-background px-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-52 rounded-xl border border-border bg-background px-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 value={topicPattern}
                 onChange={(e) => setTopicPattern(e.target.value)}
                 aria-label="Topic pattern filter"
               />
               <select
-                className="rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+                className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm"
                 value={originalDecision}
                 onChange={(e) => setOriginalDecision(e.target.value)}
                 aria-label="Original decision filter"
@@ -696,7 +696,7 @@ export default function ReplayPage({
                   <div className="instrument-card p-0">
                     <textarea
                       aria-label="Candidate policy YAML"
-                      className="h-[280px] w-full resize-none rounded-lg bg-surface-0 p-4 font-mono text-xs text-foreground outline-none focus:ring-2 focus:ring-cordum/30"
+                      className="h-[280px] w-full resize-none rounded-xl bg-surface-0 p-4 font-mono text-xs text-foreground outline-none focus:ring-2 focus:ring-cordum/30"
                       placeholder="# Paste candidate policy YAML here..."
                       value={candidateYaml}
                       onChange={(e) => setCandidateYaml(e.target.value)}
@@ -779,7 +779,7 @@ export default function ReplayPage({
             {/* Errors */}
             {(result.errors ?? []).length > 0 && (
               <section aria-label="Replay errors">
-                <details className="rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+                <details className="rounded-xl border border-destructive/30 bg-destructive/5 p-3">
                   <summary className="text-xs font-medium text-destructive cursor-pointer">
                     {(result.errors ?? []).length} job(s) failed to replay
                   </summary>
@@ -810,7 +810,7 @@ export default function ReplayPage({
                 <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
                   Rule hits
                 </h2>
-                <div className="rounded-lg border border-border/60 bg-card/80 p-4">
+                <div className="rounded-xl border border-border/60 bg-card/80 p-4">
                   <RuleHitsChart ruleHits={result.rule_hits} />
                 </div>
               </section>
@@ -852,3 +852,4 @@ export default function ReplayPage({
     </div>
   );
 }
+

@@ -25,7 +25,7 @@ export function TenantScopedRulesSection({
   rules,
 }: TenantScopedRulesSectionProps) {
   return (
-    <section className="rounded-lg border border-border bg-surface-0 p-4 space-y-3">
+    <section className="rounded-xl border border-border bg-surface-0 p-4 space-y-3">
       <div>
         <h3 className="font-display text-sm font-semibold text-foreground">
           Tenant-Scoped Rules
@@ -62,3 +62,4 @@ export function TenantScopedRulesSection({
     </section>
   );
 }
+

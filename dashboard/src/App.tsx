@@ -2,6 +2,7 @@ import { Suspense, useEffect, type ReactNode } from "react";
 import { safeLazy as lazy } from "./lib/safeLazy";
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MotionConfig } from "framer-motion";
 import { Toaster } from "sonner";
 import { registerQueryClient } from "./state/config";
 import { useUiStore } from "./state/ui";
@@ -13,13 +14,12 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastBridge } from "./components/ToastBridge";
 import { FEATURE_FLAGS } from "./config/flags";
 
-const queryClient = new QueryClient({
+export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 10_000,
       retry: 2,
       refetchOnWindowFocus: true,
-      refetchIntervalInBackground: true,
     },
   },
 });
@@ -68,6 +68,7 @@ const GovernQuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"))
 const EvalsPage = lazy(() => import("./pages/EvalsPage"));
 const EvalDatasetDetailPage = lazy(() => import("./pages/EvalDatasetDetailPage"));
 const EvalRunDetailPage = lazy(() => import("./pages/EvalRunDetailPage"));
+const CopilotSessionPage = lazy(() => import("./pages/CopilotSessionPage"));
 
 // Policy Studio tab redirects — canonical `/govern/<tab>` aliases land on
 // the tabbed overview with the right tab/mode pre-selected. These are not
@@ -155,6 +156,9 @@ function ProtectedRoutes() {
             </>
           )}
 
+          {/* COPILOT */}
+          <Route path="/copilot/sessions/:sessionId" element={<CopilotSessionPage />} />
+
           {/* EXTEND */}
           <Route path="/packs" element={<PacksPage />} />
           <Route path="/packs/:id" element={<PackDetailPage />} />
@@ -192,26 +196,28 @@ function ProtectedRoutes() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <ThemeSync />
-        <Toaster
-          position="top-right"
-          toastOptions={{
-            style: {
-              background: "var(--surface)",
-              color: "var(--text)",
-              border: "1px solid var(--border-color)",
-              fontFamily: "var(--font-sans)",
-            },
-          }}
-        />
-        <Suspense fallback={<LoadingScreen />}>
-          <Routes>
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/*" element={<ProtectedRoutes />} />
-          </Routes>
-        </Suspense>
-      </BrowserRouter>
+      <MotionConfig reducedMotion="user">
+        <BrowserRouter>
+          <ThemeSync />
+          <Toaster
+            position="top-right"
+            toastOptions={{
+              style: {
+                background: "var(--surface)",
+                color: "var(--text)",
+                border: "1px solid var(--border-color)",
+                fontFamily: "var(--font-sans)",
+              },
+            }}
+          />
+          <Suspense fallback={<LoadingScreen />}>
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/*" element={<ProtectedRoutes />} />
+            </Routes>
+          </Suspense>
+        </BrowserRouter>
+      </MotionConfig>
     </QueryClientProvider>
   );
 }

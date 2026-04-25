@@ -39,7 +39,7 @@ export function PolicySection({
   };
 
   return (
-    <section className={cn("rounded-md border border-border bg-surface-0", className)}>
+    <section className={cn("rounded-xl border border-border bg-surface-0", className)}>
       <div className="flex items-start justify-between gap-2 border-b border-border px-3 py-2">
         <button
           type="button"
@@ -72,3 +72,4 @@ export function PolicySection({
 export const __policySectionInternal = {
   toggleSectionOpen,
 };
+

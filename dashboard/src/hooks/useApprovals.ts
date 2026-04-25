@@ -49,23 +49,52 @@ export function useApprovals(status?: string) {
   });
 }
 
+// Max pages walked when looking up a single approval by id (task-f9ea8fe2).
+// Backend has no GET /approvals/{id}; we walk the paginated list until found
+// or until the cap. With page size 100 (server default), 10 pages = 1000
+// approvals — generous in practice while bounding worst-case fetch cost.
+export const APPROVAL_LOOKUP_MAX_PAGES = 10;
+
+type ApprovalListPage = { items: BackendApprovalItem[]; next_cursor?: number | null };
+
+/**
+ * Walk the paginated /approvals list until an approval with the given id is
+ * found, the list ends, or maxPages pages have been fetched. Throws
+ * `approval not found` if exhausted without a hit. Pure function — fetcher is
+ * injected so the queryFn can pass `get` and tests can pass a mock.
+ */
+async function lookupApprovalById(
+  id: string,
+  fetcher: (url: string) => Promise<ApprovalListPage>,
+  maxPages: number = APPROVAL_LOOKUP_MAX_PAGES,
+): Promise<Approval> {
+  let cursor: number | null = null;
+  for (let page = 0; page < maxPages; page++) {
+    const url = cursor === null ? "/approvals" : `/approvals?cursor=${cursor}`;
+    const res = await fetcher(url);
+    const items = (res.items ?? [])
+      .map(mapApprovalItem)
+      .filter((v): v is Approval => !!v);
+    const found = items.find((i) => i.id === id);
+    if (found) return found;
+    if (res.next_cursor === undefined || res.next_cursor === null) {
+      throw new Error("approval not found");
+    }
+    cursor = res.next_cursor;
+  }
+  throw new Error(
+    `approval lookup exceeded ${maxPages} pages without finding id`,
+  );
+}
+
 export function useApproval(id: string) {
   const queryClient = useQueryClient();
   return useQuery<Approval>({
     queryKey: queryKeys.approvals.detail(id),
-    queryFn: async () => {
-      // Backend has no single-approval endpoint (GET /approvals/{id} returns 404).
-      // Fetch the full list and filter by id instead.
-      const res = await get<{ items: BackendApprovalItem[] }>(`/approvals`);
-      const items = (res.items ?? [])
-        .map(mapApprovalItem)
-        .filter((v): v is Approval => !!v);
-      const found = items.find((i) => i.id === id);
-      if (!found) {
-        throw new Error("approval not found");
-      }
-      return found;
-    },
+    queryFn: () =>
+      lookupApprovalById(id, (url) =>
+        get<ApprovalListPage>(url),
+      ),
     enabled: !!id,
     staleTime: 5_000,
     placeholderData: () => {
@@ -339,4 +368,5 @@ export const __approvalsInternal = {
   findApprovalInSnapshot,
   getApprovalConflictCode,
   shouldKeepOptimisticRemoval,
+  lookupApprovalById,
 };

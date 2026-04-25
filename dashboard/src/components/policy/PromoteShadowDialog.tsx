@@ -1,8 +1,9 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { AlertTriangle, Rocket } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { InfoBanner } from "@/components/ui/InfoBanner";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { useShadowPolicy, useDeactivateShadow } from "@/hooks/useShadowPolicy";
 import { useUpdatePolicyBundle } from "@/hooks/usePolicies";
 
@@ -41,29 +42,18 @@ export function PromoteShadowDialog({
   const [confirmText, setConfirmText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [orphanedShadow, setOrphanedShadow] = useState(false);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-  const firstFieldRef = useRef<HTMLInputElement | null>(null);
 
-  // Save focus on open so we can restore it on close; focus the
-  // confirm input on open so the keyboard user lands on the primary
-  // interaction without hunting. Escape closes when not pending.
-  useEffect(() => {
-    if (!open) return;
-    previousFocusRef.current = document.activeElement as HTMLElement | null;
-    const t = setTimeout(() => firstFieldRef.current?.focus(), 0);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !updateBundle.isPending && !deactivate.isPending) {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      clearTimeout(t);
-      window.removeEventListener("keydown", onKey);
-      previousFocusRef.current?.focus?.();
-    };
-  }, [open, onClose, updateBundle.isPending, deactivate.isPending]);
+  // Escape must NOT close while a mutation is in flight — operators
+  // could lose mid-promote state or trigger orphan recovery. Guard the
+  // close callback so the hook's Escape handler honors that rule.
+  const guardedClose = useCallback(() => {
+    if (updateBundle.isPending || deactivate.isPending) return;
+    onClose();
+  }, [updateBundle.isPending, deactivate.isPending, onClose]);
+  const dialogRef = useDialogA11y(guardedClose, {
+    enabled: open,
+    initialFocusSelector: "#promote-confirm",
+  });
 
   const canConfirm = confirmText === bundleName && !updateBundle.isPending && !deactivate.isPending;
 
@@ -105,6 +95,7 @@ export function PromoteShadowDialog({
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="promote-shadow-title"
@@ -175,7 +166,6 @@ export function PromoteShadowDialog({
               </label>
               <input
                 id="promote-confirm"
-                ref={firstFieldRef}
                 type="text"
                 autoComplete="off"
                 value={confirmText}

@@ -58,9 +58,21 @@ const ERROR_CODE_MAP: Record<string, FriendlyError> = {
 
 /** HTTP status code to friendly message mapping. */
 const STATUS_MAP: Record<number, FriendlyError> = {
+  // 0 is the synthetic status set by `request()` in api/client.ts when the
+  // fetch transport itself fails (no internet, DNS fail, CORS reject) —
+  // the server never received the request, so retrying is safe.
+  0: {
+    title: "Unable to connect",
+    description: "Check your network connection and try again.",
+  },
   400: {
     title: "Invalid request",
     description: "Check your input for missing or invalid fields and try again.",
+  },
+  408: {
+    title: "Request timed out",
+    description: "The server took too long to respond. Try again or check system health.",
+    action: { label: "Check system health", href: "/settings/health" },
   },
   401: {
     title: "Session expired",

@@ -726,6 +726,49 @@ describe("transform contract hardening", () => {
     });
   });
 
+  describe("mapJobRecord forwards origin refs (task-aed4eef5)", () => {
+    it("forwards workflow_run_id to job.workflowRunId", () => {
+      const job = mapJobRecord({ id: "j1", workflow_run_id: "wfr-X" });
+      expect(job.workflowRunId).toBe("wfr-X");
+    });
+
+    it("forwards metadata.session_id onto job.metadata", () => {
+      const job = mapJobRecord({ id: "j1", metadata: { session_id: "sess-X" } });
+      expect(job.metadata?.session_id).toBe("sess-X");
+    });
+
+    it("forwards metadata.run_id onto job.metadata", () => {
+      const job = mapJobRecord({ id: "j1", metadata: { run_id: "wfr-Y" } });
+      expect(job.metadata?.run_id).toBe("wfr-Y");
+    });
+
+    it("forwards labels onto job.labels", () => {
+      const job = mapJobRecord({ id: "j1", labels: { session_id: "sess-Z" } });
+      expect(job.labels?.session_id).toBe("sess-Z");
+    });
+
+    it("merges actor metadata with origin metadata (no overwrite)", () => {
+      const job = mapJobRecord({
+        id: "j1",
+        actor_id: "a1",
+        actor_type: "agent",
+        metadata: { session_id: "sess-X" },
+      });
+      expect(job.metadata?.actor_id).toBe("a1");
+      expect(job.metadata?.actor_type).toBe("agent");
+      expect(job.metadata?.session_id).toBe("sess-X");
+    });
+
+    it("preserves backwards compat when origin fields are absent", () => {
+      const job = mapJobRecord({ id: "j1", actor_id: "a1" });
+      expect(job.workflowRunId).toBeUndefined();
+      expect(job.labels).toBeUndefined();
+      expect(job.metadata?.session_id).toBeUndefined();
+      expect(job.metadata?.run_id).toBeUndefined();
+      expect(job.metadata?.actor_id).toBe("a1");
+    });
+  });
+
   describe("mapWorkflowRun status normalization", () => {
     it("normalizes run-level status", () => {
       const run = mapWorkflowRun({

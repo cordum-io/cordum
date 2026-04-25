@@ -14,8 +14,8 @@ export interface ChartTooltipProps {
 export function ChartTooltip({ active, payload, label }: ChartTooltipProps) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-2xl border border-border bg-[color:var(--surface-glass)] p-3 shadow-soft backdrop-blur-md">
-      <p className="font-mono text-xs text-muted-foreground mb-1">{label}</p>
+    <div className="rounded-2xl glass-panel p-3 shadow-soft">
+      <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-2">{label}</p>
       {payload.map((entry, index) => (
         <div key={entry.name ?? index} className="flex items-center gap-2 text-xs">
           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
@@ -30,8 +30,8 @@ export function ChartTooltip({ active, payload, label }: ChartTooltipProps) {
 export function ChartTooltipCompact({ active, payload, label }: ChartTooltipProps) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-2xl border border-border bg-[color:var(--surface-glass)] p-2 shadow-soft backdrop-blur-md">
-      <p className="font-mono text-xs text-muted-foreground mb-1">{label}</p>
+    <div className="rounded-2xl glass-panel p-2 shadow-soft">
+      <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/60 mb-1.5">{label}</p>
       {payload.map((entry, index) => (
         <div key={entry.name ?? index} className="flex items-center gap-2 text-xs">
           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />

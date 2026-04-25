@@ -5,7 +5,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -188,6 +188,10 @@ export default function WorkflowRunDetailPage() {
   const [cancelOpen, setCancelOpen] = useState(false);
   const [copiedRunId, setCopiedRunId] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
+  // Mobile pane selector (DoD-5; task-671f49cd). Visible only at <md.
+  const [mobilePane, setMobilePane] = useState<"steps" | "chat">("steps");
+  // Honor user's prefers-reduced-motion when animating step list (mobile only).
+  const prefersReducedMotion = useReducedMotion();
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Real data hooks
@@ -579,9 +583,50 @@ export default function WorkflowRunDetailPage() {
       </div>
 
       {activeTab === "overview" && (
-        <div className="flex flex-1 overflow-hidden">
+        <>
+          {/* Mobile pane selector — visible only at <md (DoD-5; task-671f49cd) */}
+          <div
+            role="tablist"
+            aria-label="Run console panes"
+            className="md:hidden flex border-b border-border bg-surface-0"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mobilePane === "steps"}
+              onClick={() => setMobilePane("steps")}
+              className={cn(
+                "flex-1 min-w-[44px] min-h-[44px] text-xs font-mono uppercase tracking-wider transition-colors",
+                mobilePane === "steps"
+                  ? "text-cordum border-b-2 border-cordum"
+                  : "text-muted-foreground border-b-2 border-transparent",
+              )}
+            >
+              Steps
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mobilePane === "chat"}
+              onClick={() => setMobilePane("chat")}
+              className={cn(
+                "flex-1 min-w-[44px] min-h-[44px] text-xs font-mono uppercase tracking-wider transition-colors",
+                mobilePane === "chat"
+                  ? "text-cordum border-b-2 border-cordum"
+                  : "text-muted-foreground border-b-2 border-transparent",
+              )}
+            >
+              Chat
+            </button>
+          </div>
+        <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
         {/* Steps Panel — Animated Graph */}
-          <div className="w-80 border-r border-border bg-surface-0 overflow-y-auto shrink-0">
+          <div
+            className={cn(
+              mobilePane === "steps" ? "flex-1" : "hidden md:block",
+              "w-full md:w-80 border-b md:border-b-0 md:border-r border-border bg-surface-0 overflow-y-auto md:shrink-0",
+            )}
+          >
           <div className="p-4">
             <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-3">
               Execution Graph ({completedCount}/{totalSteps})
@@ -600,7 +645,7 @@ export default function WorkflowRunDetailPage() {
                 {/* Vertical connector line */}
                 <div className="absolute left-[17px] top-0 bottom-0 w-px bg-border" />
 
-                <div className="space-y-0.5">
+                <div className="space-y-0.5" role="listbox" aria-label="Run steps">
                   {steps.map((step, i) => {
                     const Icon = stepIcon(step.type);
                     const isRunning = step.status === "running";
@@ -611,10 +656,20 @@ export default function WorkflowRunDetailPage() {
                         key={step.id}
                         initial={{ opacity: 0, x: -12 }}
                         animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: i * 0.08 }}
+                        transition={{ delay: prefersReducedMotion ? 0 : i * 0.08 }}
+                        role="option"
+                        tabIndex={0}
+                        aria-selected={selectedStep?.id === step.id}
+                        aria-label={`Step ${i + 1}: ${step.label || step.type}, ${step.status}`}
                         onClick={() => setSelectedStep(step)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setSelectedStep(step);
+                          }
+                        }}
                         className={cn(
-                          "relative flex items-center gap-3 px-3 py-3 rounded-2xl transition-colors cursor-pointer",
+                          "relative flex items-center gap-3 px-3 py-3 rounded-2xl transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cordum focus-visible:ring-offset-2",
                           isRunning
                             ? "bg-cordum/5 border border-cordum/20"
                             : isWaiting
@@ -714,7 +769,7 @@ export default function WorkflowRunDetailPage() {
                     )}
                   </div>
                   {selectedStep.output ? (
-                    <div className="rounded-2xl bg-surface-1 border border-border p-3 font-mono text-xs text-foreground max-h-48 overflow-auto">
+                    <div className="instrument-card p-3 font-mono text-xs text-foreground max-h-48 overflow-auto">
                       <pre>
                         {(() => {
                           try {
@@ -751,7 +806,12 @@ export default function WorkflowRunDetailPage() {
         </div>
 
         {/* Chat Panel */}
-          <div className="flex-1 flex flex-col">
+          <div
+            className={cn(
+              mobilePane === "chat" ? "flex-1" : "hidden md:flex md:flex-1",
+              "flex-col",
+            )}
+          >
           <div className="flex items-center gap-2 px-5 py-3 border-b border-border bg-surface-0">
             <MessageSquare className="w-4 h-4 text-cordum" />
             <span className="text-sm font-display font-semibold text-foreground">
@@ -855,6 +915,7 @@ export default function WorkflowRunDetailPage() {
           </div>
         </div>
         </div>
+        </>
       )}
 
       {activeTab === "governance" && (

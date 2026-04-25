@@ -14,7 +14,7 @@ const toneStyles: Record<string, string> = {
 
 const shapeStyles: Record<string, string> = {
   circle: "rounded-full",
-  diamond: "rounded-md rotate-45",
+  diamond: "rounded-xl rotate-45",
   square: "rounded-xl",
   shield: "rounded-[18px]",
   triangle: "clip-triangle",
@@ -62,3 +62,4 @@ export function JobStatusBadge({ state }: { state?: string }) {
 export function ApprovalStatusBadge({ required }: { required?: boolean }) {
   return <StatusBadge meta={approvalStatusMeta(required)} />;
 }
+

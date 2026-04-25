@@ -282,3 +282,63 @@ describe("useApprovals internals", () => {
     });
   });
 });
+
+describe("useApproval pagination lookup (task-f9ea8fe2)", () => {
+  // Minimal BackendApprovalItem fixture: approval_ref drives Approval.id;
+  // job.id satisfies mapApprovalItem's `if (!item.job) return null` guard.
+  const backendItem = (id: string) => ({
+    approval_ref: id,
+    job: { id: `job-${id}`, state: "approval", tenant: "default", topic: "topic.test" },
+  });
+
+  it("returns the approval when found on the first page (no second fetch)", async () => {
+    const calls: string[] = [];
+    const fetcher = async (url: string) => {
+      calls.push(url);
+      return { items: [backendItem("a-1"), backendItem("a-2")], next_cursor: 100 };
+    };
+    const result = await __approvalsInternal.lookupApprovalById("a-2", fetcher);
+    expect(result.id).toBe("a-2");
+    expect(calls).toEqual(["/approvals"]);
+  });
+
+  it("walks the paginated list and returns an approval found past page 1 (closes 'approval not found' ghost)", async () => {
+    const calls: string[] = [];
+    const fetcher = async (url: string) => {
+      calls.push(url);
+      if (url === "/approvals") {
+        return { items: [backendItem("a-1")], next_cursor: 100 };
+      }
+      if (url === "/approvals?cursor=100") {
+        return { items: [backendItem("a-101")], next_cursor: null };
+      }
+      throw new Error(`unexpected url: ${url}`);
+    };
+    const result = await __approvalsInternal.lookupApprovalById("a-101", fetcher);
+    expect(result.id).toBe("a-101");
+    expect(calls).toEqual(["/approvals", "/approvals?cursor=100"]);
+  });
+
+  it("throws 'approval not found' when the entire list has been walked without a hit", async () => {
+    const fetcher = async (url: string) => {
+      if (url === "/approvals") {
+        return { items: [backendItem("a-1")], next_cursor: null };
+      }
+      throw new Error(`unexpected url: ${url}`);
+    };
+    await expect(__approvalsInternal.lookupApprovalById("nope", fetcher)).rejects.toThrow(
+      "approval not found",
+    );
+  });
+
+  it("throws a max-pages error rather than spinning forever on a misbehaving server", async () => {
+    // Simulated server that ALWAYS returns next_cursor (no terminator).
+    const fetcher = async () => ({
+      items: [backendItem("ignore")],
+      next_cursor: 999,
+    });
+    await expect(
+      __approvalsInternal.lookupApprovalById("never-found", fetcher, 3),
+    ).rejects.toThrow(/exceeded 3 pages/);
+  });
+});

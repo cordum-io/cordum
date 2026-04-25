@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/InstrumentCard";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { Tabs } from "@/components/ui/Tabs";
-import { Search, Package, Download, Trash2, RefreshCw, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Search, Package, Download, Trash2, CheckCircle2, AlertTriangle } from "lucide-react";
 import type { Pack, MarketplacePack } from "@/api/types";
 import { usePacks, useMarketplacePacks, useInstallPack, useUninstallPack } from "@/hooks/usePacks";
 

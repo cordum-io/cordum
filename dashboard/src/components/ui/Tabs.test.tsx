@@ -1,4 +1,4 @@
-import React, { act } from "react";
+import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { Plug2 } from "lucide-react";
@@ -73,7 +73,7 @@ describe("Tabs", () => {
       );
     });
 
-    const activeTab = container.querySelector('[role="tab"][aria-pressed="true"]');
+    const activeTab = container.querySelector('[role="tab"][aria-selected="true"]');
     expect(activeTab?.textContent).toContain("Users");
     expect(container.textContent).toContain("12");
     expect(container.textContent).toContain("4");

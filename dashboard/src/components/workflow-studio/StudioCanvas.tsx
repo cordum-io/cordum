@@ -384,7 +384,7 @@ function StudioCanvasInner({
             opacity: 0.4,
           }}
         />
-        <Controls showInteractive={isEdit} className="!rounded-2xl !border-border !bg-surface-1 !shadow-soft [&>button]:!border-border [&>button]:!bg-surface-1 [&>button:hover]:!bg-surface-2 [&>button]:!rounded-lg" />
+        <Controls showInteractive={isEdit} className="!rounded-2xl !border-border !bg-surface-1 !shadow-soft [&>button]:!border-border [&>button]:!bg-surface-1 [&>button:hover]:!bg-surface-2 [&>button]:!rounded-xl" />
         <MiniMap
           nodeStrokeWidth={3}
           className="!bg-surface-1/90 !backdrop-blur-sm !border-border !rounded-2xl !shadow-soft"
@@ -454,3 +454,4 @@ export function StudioCanvas(props: StudioCanvasProps) {
     </ReactFlowProvider>
   );
 }
+

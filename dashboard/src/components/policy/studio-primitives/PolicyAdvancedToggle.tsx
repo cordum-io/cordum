@@ -23,7 +23,7 @@ export function PolicyAdvancedToggle({
       aria-pressed={open}
       onClick={() => onToggle(nextAdvancedOpenState(open))}
       className={cn(
-        "inline-flex items-center gap-2 rounded-md border px-2 py-1 text-xs transition-colors",
+        "inline-flex items-center gap-2 rounded-xl border px-2 py-1 text-xs transition-colors",
         open
           ? "border-cordum/40 bg-cordum/10 text-cordum-foreground"
           : "border-border bg-surface-1 text-muted-foreground hover:text-foreground",
@@ -40,3 +40,4 @@ export function PolicyAdvancedToggle({
 export const __policyAdvancedToggleInternal = {
   nextAdvancedOpenState,
 };
+

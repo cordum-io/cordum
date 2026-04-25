@@ -229,7 +229,7 @@ function UnifiedNodeInner({ data, selected }: NodeProps<UnifiedNodeData>) {
         <div className="flex items-center gap-2.5">
           <div
             className={cn(
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-black/[0.04] dark:border-white/[0.06]",
+              "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-black/[0.04] dark:border-white/[0.06]",
               meta.accent,
             )}
             style={{ boxShadow: "inset 0 1px 2px rgba(0,0,0,0.05)" }}
@@ -358,3 +358,4 @@ function UnifiedNodeInner({ data, selected }: NodeProps<UnifiedNodeData>) {
 }
 
 export const UnifiedNode = memo(UnifiedNodeInner);
+

@@ -1,5 +1,6 @@
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronDown,
   ChevronUp,
@@ -642,35 +643,52 @@ export default function InputRulesPage({ hideHeader }: { hideHeader?: boolean } 
         />
       )}
 
-      <div className="space-y-3">
-        {enrichedRules.map((e) => (
-          <RuleCard
-            key={e.rule.id}
-            enriched={e}
-            canEdit={affordances.canEditRule}
-            onEdit={() => {
-              const bundleId = e.rule.bundle_id;
-              if (bundleId && getInputRuleEditTarget(e.rule) === "bundle") {
-                navigate(`/govern/bundles/${encodeURIComponent(bundleId)}`);
-                return;
-              }
-              const nextEditingIndex = allRules.findIndex(
-                (rule) => rule.id === e.rule.id,
-              );
-              if (nextEditingIndex < 0) return;
-              setEditingIndex(nextEditingIndex);
-              setEditorOpen(true);
-            }}
-            onSimulate={() =>
-              navigate(
-                buildSimulatorUrl({
-                  bundleId: e.rule.bundle_id ?? "",
-                }),
-              )
-            }
-          />
-        ))}
-      </div>
+      <motion.div 
+        initial="hidden"
+        animate="visible"
+        variants={{
+          visible: { transition: { staggerChildren: 0.03 } },
+        }}
+        className="space-y-3"
+      >
+        <AnimatePresence>
+          {enrichedRules.map((e) => (
+            <motion.div
+              key={e.rule.id}
+              variants={{
+                hidden: { opacity: 0, y: 10 },
+                visible: { opacity: 1, y: 0 },
+              }}
+              layout
+            >
+              <RuleCard
+                enriched={e}
+                canEdit={affordances.canEditRule}
+                onEdit={() => {
+                  const bundleId = e.rule.bundle_id;
+                  if (bundleId && getInputRuleEditTarget(e.rule) === "bundle") {
+                    navigate(`/govern/bundles/${encodeURIComponent(bundleId)}`);
+                    return;
+                  }
+                  const nextEditingIndex = allRules.findIndex(
+                    (rule) => rule.id === e.rule.id,
+                  );
+                  if (nextEditingIndex < 0) return;
+                  setEditingIndex(nextEditingIndex);
+                  setEditorOpen(true);
+                }}
+                onSimulate={() =>
+                  navigate(
+                    buildSimulatorUrl({
+                      bundleId: e.rule.bundle_id ?? "",
+                    }),
+                  )
+                }
+              />
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </motion.div>
 
       <InputRuleEditorDrawer
         open={editorOpen}

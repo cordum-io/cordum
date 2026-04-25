@@ -105,7 +105,7 @@ function VisibleToolsCard({
 
       {!isLoading && !isError && tools.length === 0 && (
         <div
-          className="flex flex-col items-center justify-center py-10 text-center border border-dashed border-border rounded-lg"
+          className="flex flex-col items-center justify-center py-10 text-center border border-dashed border-border rounded-xl"
           data-testid="agent-tool-visibility-empty"
         >
           <Shield className="w-8 h-8 text-muted-foreground/40 mb-2" />
@@ -132,7 +132,7 @@ function VisibleToolsCard({
 function ToolRow({ tool }: { tool: MCPTool }) {
   const tier = tool.riskTier ? riskTierColor[tool.riskTier] : undefined;
   return (
-    <div className="flex items-start gap-3 p-3 rounded-lg border border-border bg-surface-1">
+    <div className="flex items-start gap-3 p-3 rounded-xl border border-border bg-surface-1">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-mono text-sm text-foreground truncate">{tool.name}</span>
@@ -219,7 +219,7 @@ function RecentDenialsCard({
 
       {!isLoading && !isError && events.length === 0 && (
         <div
-          className="flex flex-col items-center justify-center py-8 text-center border border-dashed border-border rounded-lg"
+          className="flex flex-col items-center justify-center py-8 text-center border border-dashed border-border rounded-xl"
           data-testid="agent-tool-denials-empty"
         >
           <AlertTriangle className="w-7 h-7 text-muted-foreground/40 mb-2" />
@@ -253,3 +253,4 @@ function RecentDenialsCard({
     </motion.div>
   );
 }
+

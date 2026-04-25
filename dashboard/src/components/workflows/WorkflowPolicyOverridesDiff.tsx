@@ -34,7 +34,7 @@ export function WorkflowPolicyOverridesDiff({ diff, readOnly, onChange }: Workfl
     (current.deny_path_globs && current.deny_path_globs.length > 0);
 
   return (
-    <div className="rounded-lg border border-border bg-surface-0 p-3">
+    <div className="rounded-xl border border-border bg-surface-0 p-3">
       <div className="flex items-center gap-2 mb-2">
         <FileDiff className="w-3.5 h-3.5 text-muted-foreground" />
         <span className="text-xs font-semibold text-foreground">Diff Constraints</span>
@@ -60,7 +60,7 @@ export function WorkflowPolicyOverridesDiff({ diff, readOnly, onChange }: Workfl
                   id={`diff-${key}`}
                   type="number"
                   min={0}
-                  className="h-7 rounded-md border border-border bg-surface-2 px-2 text-xs font-mono text-foreground w-full"
+                  className="h-7 rounded-xl border border-border bg-surface-2 px-2 text-xs font-mono text-foreground w-full"
                   value={current[key] ?? ""}
                   placeholder="inherit"
                   onChange={(e) => {
@@ -86,7 +86,7 @@ export function WorkflowPolicyOverridesDiff({ diff, readOnly, onChange }: Workfl
             <input
               id="diff-deny-paths"
               type="text"
-              className="h-7 rounded-md border border-border bg-surface-2 px-2 text-xs font-mono text-foreground w-full"
+              className="h-7 rounded-xl border border-border bg-surface-2 px-2 text-xs font-mono text-foreground w-full"
               value={current.deny_path_globs?.join(", ") ?? ""}
               placeholder="inherit"
               onChange={(e) => {
@@ -100,3 +100,4 @@ export function WorkflowPolicyOverridesDiff({ diff, readOnly, onChange }: Workfl
     </div>
   );
 }
+

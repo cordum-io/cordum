@@ -30,7 +30,7 @@ export function TenantLimitsSection({
   deniedRepoHosts,
 }: TenantLimitsSectionProps) {
   return (
-    <section className="rounded-lg border border-border bg-surface-0 p-4 space-y-3">
+    <section className="rounded-xl border border-border bg-surface-0 p-4 space-y-3">
       <div>
         <h3 className="font-display text-sm font-semibold text-foreground">Limits</h3>
         <p className="mt-1 text-xs text-muted-foreground">
@@ -81,3 +81,4 @@ export function TenantLimitsSection({
     </section>
   );
 }
+

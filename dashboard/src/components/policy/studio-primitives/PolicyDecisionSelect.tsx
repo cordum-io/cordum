@@ -38,7 +38,7 @@ export function PolicyDecisionSelect({
         helpText="Decision returned when this rule matches."
       >
         <select
-          className="mt-1 h-8 w-full rounded-md border border-border bg-surface-2 px-3 text-xs text-foreground"
+          className="mt-1 h-8 w-full rounded-xl border border-border bg-surface-2 px-3 text-xs text-foreground"
           value={value}
           onChange={(event) => onChange(event.target.value as GlobalPolicyInputDecision)}
         >
@@ -50,10 +50,11 @@ export function PolicyDecisionSelect({
         </select>
       </PolicyField>
       {helperText && (
-        <p className="rounded-md border border-cordum/30 bg-cordum/10 px-2 py-1 text-xs text-cordum-foreground">
+        <p className="rounded-xl border border-cordum/30 bg-cordum/10 px-2 py-1 text-xs text-cordum-foreground">
           {helperText}
         </p>
       )}
     </div>
   );
 }
+

@@ -16,9 +16,9 @@ Cordum is not a consumer app. It is a **mission-critical control surface** — t
 
 ---
 
-## 1. Design Philosophy — "Control Surface"
+## 1. Design Philosophy — "Premium Soft Control Surface"
 
-The design philosophy is named **Control Surface**, a deliberate reference to both the aviation term (the movable parts that control an aircraft's trajectory) and the idea that this dashboard is the surface through which humans control autonomous agents.
+The design philosophy is named **Premium Soft Control Surface**, the pinnacle of our dashboard evolution. It moves beyond utilitarian instruments into a multi-dimensional, high-fidelity experience that communicates authority and precision through depth and motion.
 
 ### 1.1 Core Principles
 
@@ -26,12 +26,12 @@ Six principles govern every design decision. They are not aspirational — they 
 
 | Principle | Description | Implication |
 | :--- | :--- | :--- |
-| **Status-First Design** | The most important thing is always what is happening *now*. The UI recedes when healthy and demands attention when not. | Default states are quiet (muted surfaces, low-contrast text). Alerts, errors, and pending states break the visual pattern with semantic color. |
-| **Layered Depth** | Surfaces stack at precise z-levels with subtle luminance shifts. Cards lift on interaction to reveal spatial hierarchy. | No flat layouts. Every container exists on a defined surface level (Surface 0 through Surface 3). Hover and focus states increase elevation. |
-| **Instrument-Grade Clarity** | Information hierarchy is immediately scannable. Every element serves a purpose — no decoration without function. | No ornamental gradients, no decorative illustrations inside the dashboard. If an element exists, it communicates data or affords an action. |
-| **Quiet Confidence** | Restrained color usage gives semantic meaning. When teal appears, it carries real significance. | The Cordum teal is never used for decoration. It means: healthy, approved, primary action, or active. Every other state uses neutral or semantic status colors. |
-| **Crisp Interactions** | 150ms `ease-out` transitions. Focus states use double-ring patterns. Hover reveals depth, not decoration. | No bouncy animations, no spring physics, no parallax. Motion is functional — it confirms an action or reveals a state change. |
-| **Three Typographic Voices** | Plus Jakarta Sans for authority, Inter for clarity, JetBrains Mono for precision. Each serves a distinct role. | Never use a display font for body text. Never use a body font for data values. The typographic voice immediately tells the user what kind of information they are reading. |
+| **Status-First Design** | The most important thing is always what is happening *now*. The UI recedes when healthy and demands attention when not. | Default states are quiet. Alerts and pending states use semantic gradients and pulsing indicators to break the visual field. |
+| **Glassmorphic Layering** | Persistent shells (Sidebar, Header) use translucent `glass-sidebar` and `glass-header` primitives. This creates a multi-dimensional feel that separates control from content. | The "Mission Control" shell stays anchored while content flows underneath with a `12px` backdrop blur. |
+| **Bento-Grid Logic** | Layouts are organized into non-uniform CSS Grids where card size communicates data priority. | Information is not just listed; it is prioritized by area. High-velocity data (Safety Feed) gets more vertical "runway." |
+| **Quiet Confidence** | Restrained color usage gives semantic meaning. When teal appears, it carries real significance. | We use OKLCH-based gradients for data visualizations to make complex patterns immediately scannable without adding visual noise. |
+| **Fluid Micro-Interactions** | 250ms `ease-out` transitions. Page entries are staggered. Feeds use `layout` animations for smooth reordering. | The UI feels "alive." Changes in state are seen as transitions, not sudden jumps, reducing cognitive load for operators. |
+| **Three Typographic Voices** | Plus Jakarta Sans for authority, Inter for clarity, JetBrains Mono for precision. Each serves a distinct role. | Font weights and tracking are refined at small sizes (e.g., `text-[10px] tracking-widest`) to maintain premium legibility. |
 
 ### 1.2 The Governing Metaphor
 
@@ -458,7 +458,7 @@ Tables display structured data with status indicators and row-level actions. The
 | :--- | :--- |
 | Header row | `surface-0` background, `text-xs`, `font-mono`, `muted-foreground`, uppercase, `tracking-wider` |
 | Body row | `surface-1` background, `text-sm`, `foreground` |
-| Row hover | `surface-2` background, `150ms` transition |
+| Row hover | `surface-2` background, `250ms` transition (`--duration-soft`) |
 | Row border | 1px bottom, `border` token |
 | Cell padding | 16px vertical, 24px horizontal |
 | Status column | Status badge (see 5.3) |
@@ -545,7 +545,7 @@ All transitions use a single, consistent timing function. This creates a sense o
 
 | Property | Value |
 | :--- | :--- |
-| Duration | `150ms` (micro-interactions), `300ms` (page transitions), `500ms` (entrance animations) |
+| Duration | `250ms` (micro-interactions, Soft UI; tracked as `--duration-soft`), `300ms` (page transitions), `500ms` (entrance animations) |
 | Easing | `ease-out` (CSS) / `{ duration: 0.35 }` (Framer Motion) |
 | Stagger | `60ms` between children in lists |
 
@@ -809,7 +809,7 @@ All tokens in one place for fast copy-paste into new components.
 --radius-xl: 0.75rem;   /* 12px */
 
 /* === MOTION === */
-/* transition: all 150ms ease-out; (micro) */
+/* transition: all 250ms ease-out; (micro, Soft UI; --duration-soft) */
 /* transition: all 300ms ease-out; (page) */
 /* Framer Motion: { duration: 0.35 } (entrance) */
 /* Stagger: 60ms between children */
@@ -826,7 +826,7 @@ All tokens in one place for fast copy-paste into new components.
 - **Do** use instrument cards with the 2px top accent line for all metric containers.
 - **Do** pair every status color with an icon and a text label (never color alone).
 - **Do** maintain the surface layer hierarchy — never place a `surface-0` element on top of a `surface-2` element.
-- **Do** use `150ms ease-out` for all micro-interactions.
+- **Do** use `250ms ease-out` for all micro-interactions (consume the `--duration-soft` token).
 - **Do** use uppercase `tracking-widest` labels for section categories.
 
 ### Don't

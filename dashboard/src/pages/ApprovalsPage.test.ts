@@ -146,16 +146,6 @@ function click(element: Element | null) {
   });
 }
 
-function keydown(element: Element | null, key: string) {
-  if (!element)
-    throw new Error("Expected element to exist before dispatching key");
-  act(() => {
-    element.dispatchEvent(
-      new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
-    );
-  });
-}
-
 function findButtonByAriaLabelPrefix(
   container: ParentNode,
   prefix: string,
@@ -171,7 +161,7 @@ function findTabButton(
 ): HTMLButtonElement | null {
   return (Array.from(container.querySelectorAll("button")).find(
     (button) =>
-      button.getAttribute("aria-pressed") !== null &&
+      button.getAttribute("aria-selected") !== null &&
       button.textContent?.includes(label),
   ) ?? null) as HTMLButtonElement | null;
 }

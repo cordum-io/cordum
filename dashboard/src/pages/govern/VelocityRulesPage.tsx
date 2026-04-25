@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import {
   Activity,
   Clock3,
@@ -425,49 +426,64 @@ export default function VelocityRulesPage({
             />
           )}
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <InstrumentCard accent="governance">
-              <InstrumentCardHeader title="Configured rules" icon={<Zap className="h-4 w-4" />} />
-              <InstrumentCardBody>
-                <p className="text-3xl font-display font-semibold text-foreground">{rules.length}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Limit: {limit === UNLIMITED_LIMIT ? "Unlimited" : `${rules.length}/${limit}`}
-                </p>
-              </InstrumentCardBody>
-            </InstrumentCard>
+          <motion.div 
+            initial="hidden"
+            animate="visible"
+            variants={{
+              visible: { transition: { staggerChildren: 0.05 } },
+            }}
+            className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"
+          >
+            <motion.div variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}>
+              <InstrumentCard accent="governance">
+                <InstrumentCardHeader title="Configured rules" icon={<Zap className="h-4 w-4" />} />
+                <InstrumentCardBody>
+                  <p className="text-3xl font-display font-semibold text-foreground">{rules.length}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Limit: {limit === UNLIMITED_LIMIT ? "Unlimited" : `${rules.length}/${limit}`}
+                  </p>
+                </InstrumentCardBody>
+              </InstrumentCard>
+            </motion.div>
 
-            <InstrumentCard accent="healthy">
-              <InstrumentCardHeader title="Enabled fragments" icon={<Gauge className="h-4 w-4" />} />
-              <InstrumentCardBody>
-                <p className="text-3xl font-display font-semibold text-foreground">{enabledRules}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Disabled fragments stay editable but do not feed active bundle evaluation.
-                </p>
-              </InstrumentCardBody>
-            </InstrumentCard>
+            <motion.div variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}>
+              <InstrumentCard accent="healthy">
+                <InstrumentCardHeader title="Enabled fragments" icon={<Gauge className="h-4 w-4" />} />
+                <InstrumentCardBody>
+                  <p className="text-3xl font-display font-semibold text-foreground">{enabledRules}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Disabled fragments stay editable but do not feed active bundle evaluation.
+                  </p>
+                </InstrumentCardBody>
+              </InstrumentCard>
+            </motion.div>
 
-            <InstrumentCard accent={totalHits24h > 0 ? "cordum" : "muted"}>
-              <InstrumentCardHeader title="Retained hits (24h)" icon={<Activity className="h-4 w-4" />} />
-              <InstrumentCardBody>
-                <p className="text-3xl font-display font-semibold text-foreground">
-                  {totalHits24h.toLocaleString()}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Aggregated from the existing velocity Redis buckets.
-                </p>
-              </InstrumentCardBody>
-            </InstrumentCard>
+            <motion.div variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}>
+              <InstrumentCard accent={totalHits24h > 0 ? "cordum" : "muted"}>
+                <InstrumentCardHeader title="Retained hits (24h)" icon={<Activity className="h-4 w-4" />} />
+                <InstrumentCardBody>
+                  <p className="text-3xl font-display font-semibold text-foreground">
+                    {totalHits24h.toLocaleString()}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Aggregated from the existing velocity Redis buckets.
+                  </p>
+                </InstrumentCardBody>
+              </InstrumentCard>
+            </motion.div>
 
-            <InstrumentCard accent={exceededBuckets > 0 ? "warning" : "muted"}>
-              <InstrumentCardHeader title="Buckets over threshold" icon={<ShieldAlert className="h-4 w-4" />} />
-              <InstrumentCardBody>
-                <p className="text-3xl font-display font-semibold text-foreground">{exceededBuckets}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Active bucket windows currently above their configured rule threshold.
-                </p>
-              </InstrumentCardBody>
-            </InstrumentCard>
-          </div>
+            <motion.div variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}>
+              <InstrumentCard accent={exceededBuckets > 0 ? "warning" : "muted"}>
+                <InstrumentCardHeader title="Buckets over threshold" icon={<ShieldAlert className="h-4 w-4" />} />
+                <InstrumentCardBody>
+                  <p className="text-3xl font-display font-semibold text-foreground">{exceededBuckets}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Active bucket windows currently above their configured rule threshold.
+                  </p>
+                </InstrumentCardBody>
+              </InstrumentCard>
+            </motion.div>
+          </motion.div>
 
           <section className="instrument-card">
             <div className="flex flex-col gap-3 border-b border-border/50 pb-4 md:flex-row md:items-center md:justify-between">
@@ -527,9 +543,22 @@ export default function VelocityRulesPage({
                       <th className="px-2 pb-1 text-right">Actions</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <motion.tbody
+                    initial="hidden"
+                    animate="visible"
+                    variants={{
+                      visible: { transition: { staggerChildren: 0.03 } },
+                    }}
+                  >
                     {filteredRules.map(({ rule, stats }) => (
-                      <tr key={rule.id} className="rounded-3xl bg-surface-1/70 align-top shadow-soft">
+                      <motion.tr 
+                        key={rule.id} 
+                        variants={{
+                          hidden: { opacity: 0, x: -4 },
+                          visible: { opacity: 1, x: 0 },
+                        }}
+                        className="rounded-3xl bg-surface-1/70 align-top shadow-soft"
+                      >
                         <td className="rounded-l-3xl px-2 py-4">
                           <div className="space-y-2 rounded-3xl border border-border/60 bg-surface-1 px-4 py-3">
                             <div className="flex items-start gap-3">
@@ -634,9 +663,9 @@ export default function VelocityRulesPage({
                             </Button>
                           </div>
                         </td>
-                      </tr>
+                      </motion.tr>
                     ))}
-                  </tbody>
+                  </motion.tbody>
                 </table>
               </div>
             )}

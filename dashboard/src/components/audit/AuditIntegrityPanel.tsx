@@ -113,7 +113,14 @@ export function AuditIntegrityPanel({ events }: { events: AuditEntry[] }) {
     setVerifying(false);
   }, [events, oldestEvent, newestEvent]);
 
-  const passed = result && result.hashMismatches === 0 && result.orderViolations === 0;
+  // A "passed" verdict requires at least one event to have actually been
+  // hash-verified. If every event was skipped (no parseable hash), report
+  // inconclusive rather than a false-positive pass.
+  const passed =
+    result &&
+    result.hashMatches > 0 &&
+    result.hashMismatches === 0 &&
+    result.orderViolations === 0;
 
   return (
     <div className="mt-2">
@@ -162,7 +169,7 @@ export function AuditIntegrityPanel({ events }: { events: AuditEntry[] }) {
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
               Immutability
             </h3>
-            <div className="flex items-start gap-2 rounded-lg border border-border bg-surface2/30 px-3 py-2.5">
+            <div className="flex items-start gap-2 rounded-xl border border-border bg-surface2/30 px-3 py-2.5">
               <Shield className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
               <p className="text-sm text-ink">
                 Audit events are append-only. Events cannot be modified or deleted, including
@@ -207,7 +214,7 @@ export function AuditIntegrityPanel({ events }: { events: AuditEntry[] }) {
               {result && !verifying && (
                 <div
                   className={cn(
-                    "mt-2 flex items-start gap-2 rounded-lg border px-3 py-2.5",
+                    "mt-2 flex items-start gap-2 rounded-xl border px-3 py-2.5",
                     passed
                       ? "border-[var(--color-success)]/20 bg-[var(--color-success)]/5"
                       : "border-destructive/20 bg-destructive/5",
@@ -273,3 +280,4 @@ export function AuditIntegrityPanel({ events }: { events: AuditEntry[] }) {
     </div>
   );
 }
+

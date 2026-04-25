@@ -7,6 +7,23 @@ _Updated: 2026-04-20 — broader convergence sweep across MCP, P1, the priority 
 - **Priority P2 cluster — `pages/JobsPage.tsx`, `pages/PacksPage.tsx`, `pages/SettingsKeysPage.tsx`, `pages/SettingsConfigPage.tsx`, `pages/settings/SettingsAuditExportPage.tsx`, `pages/AgentsPage.tsx`, `pages/TopicsPage.tsx`** — DONE for primitive convergence. This sweep removed the raw search fields, tab strips, dialog field markup, warning blocks, and token-only KPI tiles on the targeted pages. The cluster now composes shared `Tabs`, `Input`, `Select`, `Textarea`, `LabeledField`, `Checkbox`, `StatTile`, `DialogOverlay`, `InfoBanner`, `Button`, and `StatusBadge`, and the seven route files no longer contain raw `<input>/<select>/<textarea>` markup or page-local `var(--...)` color treatment.
 - **Detail/admin P2 cluster — `pages/JobDetailPage.tsx`, `pages/settings/SettingsSSOPage.tsx`, `pages/settings/SettingsSCIMPage.tsx`, `pages/settings/LicensePage.tsx`, `pages/SchemaDetailPage.tsx`, `pages/SchemasPage.tsx`** — DONE after the reopen fix. `SchemaDetailPage` now keeps its create/editor surface on shared `Input`, `Select`, `Checkbox`, `LabeledField`, `Button`, and `Tabs` primitives; `SchemasPage` search is back on the shared `Input` search-field treatment; and `JobDetailPage` status/timeline chrome no longer carries page-local `var(--color-*)` classes, instead reusing shared status-tone tokens exported from the `StatusBadge` primitive. Remaining route drift is now concentrated in deeper govern/detail surfaces (`ApprovalDetail`, `BundleDetail`, `TenantDetail`, `RunDetail`, `SettingsNotifications`, etc.) rather than the main operator/settings/admin cluster.
 - **Verification snapshot** — run after the broader sweep and reopen fix: `npm run typecheck`, targeted Vitest for shared primitives and touched route logic, and a convergence regression test that mechanically guards the scoped schema/job-detail files against raw controls and page-local `var(--color-*)` styling.
+## DoD-3 (12-col Bento Grid) — exemptions
+Premium Overhaul DoD-3 says detail pages compose on `lg:grid-cols-12` with heterogeneous col-span tiles. This register carves out pages whose UX is structurally incompatible with a bento dashboard.
+
+**Exempted pages:**
+- `src/pages/RunDetailPage.tsx` — real-time workflow-run inspection console. Full-viewport fixed-height shell (`h-[calc(100vh-64px)] -m-6` at line 462) breaks out of AppShell padding. Three-pane interaction model: step-graph sidebar + step-output accordion + chat panel + governance tab. Not a scrollable bento dashboard — stapling `lg:grid-cols-12` onto the flex root would be cosmetic-only and would not fit the console UX.
+
+**Not exempted (still on the hook):**
+- `src/pages/govern/BundleDetailPage.tsx` — tracked by its own DoD-3 + DoD-2 refactor task. Do not extend this carve-out to it.
+
+Decided 2026-04-24 · task-c154ff08 · epic-2e0ed1ee.
+
+## Motion tokens
+- `--duration-soft: 250ms` is the Soft Control Surface transition speed declared in `dashboard/src/styles/index.css` (light + dark themes) and aliased in the `@theme` block as `--animate-duration-soft`. Consumers: `components/ui/Button.tsx` and `components/ui/Card.tsx` via the Tailwind JIT arbitrary-value form `duration-[var(--duration-soft)]`. Pinned by DoD-1 token-declaration assertion (`design tokens shadow-soft, --radius 0.75rem, duration-soft exist for light and dark`) and DoD-2 consumer assertions (`Button consumes --duration-soft token` + `Card consumes --duration-soft token`) in `src/pages/DesignSystemConvergence.test.ts`. Adoption landed in commit 1b95ac65 (task-bd7eb4af Soft UI Evolution); orphan-token gap closed under task-ed23bcf5.
+
+## Governance surfaces
+- **Chain integrity monitoring** is mounted at `/govern/verification` (admin-only, gated by `<RequireRole roles={["admin"]}>`). The PolicyOverviewPage was simplified on 2026-04-24 (Level 3 sweep, commit 046914d9); the chain-integrity widget is no longer embedded in the Overview tab but remains reachable via the Verification route in the Govern nav section. Non-admin viewers see a friendly EmptyState fallback on the Verification page (not a blank card). Restored under task-14d012e6.
+
 ## Scope
 - Reviewed `cordum/dashboard/src/pages/**/*.tsx` (non-test page components only) and cross-checked against the current route surface in `src/App.tsx`.
 - Focused on whether each page composes central layout/UI primitives or re-introduces page-local panels, tabs, filters, fields, and state blocks.

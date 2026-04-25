@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { Plus, Loader, Upload, FileCode } from "lucide-react";
 import { put, post, del } from "../../api/client";
-import type { PolicyBundle, PolicyRule } from "../../api/types";
+import type { PolicyRule } from "../../api/types";
 import { usePolicyBundle, useToggleRule, encodePolicyBundleId } from "../../hooks/usePolicies";
 import { Button } from "../ui/Button";
 import { RuleCard } from "./RuleCard";

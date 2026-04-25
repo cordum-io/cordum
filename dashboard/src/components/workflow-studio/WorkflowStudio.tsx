@@ -4,7 +4,7 @@ import type { Node, Edge } from "reactflow";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
-import type { Workflow, WorkflowRun } from "@/api/types";
+import type { Workflow } from "@/api/types";
 import {
   useWorkflow,
   useRuns,

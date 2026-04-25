@@ -17,7 +17,7 @@ vi.hoisted(() => {
   });
 });
 
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { NotificationChannelCard } from "./NotificationChannelCard";
 import type { NotificationChannel } from "../../api/types";

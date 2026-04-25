@@ -60,7 +60,7 @@ export function EventTimeline() {
             {displayed.map((event) => (
               <div
                 key={event.id}
-                className="flex items-start gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-surface2/40 transition-colors"
+                className="flex items-start gap-2 rounded-xl px-2 py-1.5 text-xs hover:bg-surface2/40 transition-colors"
               >
                 <span className="shrink-0 font-mono text-muted-foreground w-16">
                   {formatTime(event.timestamp)}
@@ -77,3 +77,4 @@ export function EventTimeline() {
     </Card>
   );
 }
+

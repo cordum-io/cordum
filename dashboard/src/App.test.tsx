@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { COMMAND_PALETTE_COMMANDS } from "./components/CommandPalette";
+import { queryClient } from "./App";
 import { useConfigStore, registerQueryClient } from "./state/config";
 import { useEventStore } from "./state/events";
 
@@ -25,6 +26,10 @@ describe("Command palette navigation integrity", () => {
 });
 
 describe("Auth/tenant cache isolation", () => {
+  it("does not enable background refetching by default", () => {
+    expect(queryClient.getDefaultOptions().queries?.refetchIntervalInBackground).toBeUndefined();
+  });
+
   it("logout clears React Query cache via registered queryClient", () => {
     let cleared = false;
     registerQueryClient({ clear: () => { cleared = true; }, cancelQueries: () => {} });

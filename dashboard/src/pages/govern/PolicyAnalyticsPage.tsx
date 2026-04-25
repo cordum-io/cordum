@@ -29,11 +29,11 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
+import { InstrumentCard } from "@/components/ui/InstrumentCard";
 import { ChartTooltipCompact as ChartTooltip } from "@/components/ui/ChartTooltip";
 import { usePolicyAnalytics } from "@/hooks/usePolicies";
 import type {
   PolicyAnalyticsRequest,
-  PolicyAnalyticsResponse,
   RuleAnalytics,
 } from "@/api/types";
 
@@ -191,13 +191,13 @@ function RuleTable({ rules }: { rules: RuleAnalytics[] }) {
         <input
           type="text"
           placeholder="Search rule ID..."
-          className="w-full rounded-md border border-border bg-background pl-8 pr-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          className="w-full rounded-xl border border-border bg-background pl-8 pr-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           aria-label="Search rules"
         />
       </div>
-      <div className="overflow-x-auto rounded-lg border border-border/60">
+      <div className="overflow-x-auto rounded-xl border border-border/60">
         <table className="w-full text-sm" role="table">
           <thead>
             <tr className="border-b border-border/40 bg-muted/20">
@@ -363,7 +363,7 @@ function FalsePositiveHighlights({ rules }: { rules: RuleAnalytics[] }) {
       {fpRules.map((rule) => (
         <div
           key={rule.rule_id}
-          className="rounded-lg border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 p-4 space-y-2"
+          className="rounded-xl border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 p-4 space-y-2"
         >
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-2">
@@ -422,7 +422,7 @@ export default function PolicyAnalyticsPage({
   const content = (
     <div className={hideHeader ? "space-y-6" : "max-w-6xl mx-auto w-full px-4 py-6 space-y-6"}>
         {/* Controls */}
-        <div className="rounded-lg border border-border/60 bg-card/80 p-5">
+        <InstrumentCard accent="info" className="p-5">
           <div className="flex flex-wrap items-end gap-4">
             <div className="space-y-1">
               <label htmlFor="analytics-from" className="text-[11px] text-muted-foreground">
@@ -431,7 +431,7 @@ export default function PolicyAnalyticsPage({
               <input
                 id="analytics-from"
                 type="datetime-local"
-                className="rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
               />
@@ -443,7 +443,7 @@ export default function PolicyAnalyticsPage({
               <input
                 id="analytics-to"
                 type="datetime-local"
-                className="rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
               />
@@ -462,7 +462,7 @@ export default function PolicyAnalyticsPage({
           {rangeError && (
             <p className="mt-2 text-xs text-destructive">{rangeError}</p>
           )}
-        </div>
+        </InstrumentCard>
 
         {/* Loading */}
         {analyticsMutation.isPending && (
@@ -500,7 +500,7 @@ export default function PolicyAnalyticsPage({
               ].map((card) => (
                 <div
                   key={card.label}
-                  className="rounded-lg border border-border/60 bg-card/80 p-3 space-y-0.5"
+                  className="rounded-xl border border-border/60 bg-card/80 p-3 space-y-0.5"
                 >
                   <div className="text-xs text-muted-foreground">{card.label}</div>
                   <div
@@ -530,7 +530,7 @@ export default function PolicyAnalyticsPage({
                 <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">
                   Approval volume by rule (daily)
                 </h2>
-                <div className="rounded-lg border border-border/60 bg-card/80 p-4">
+                <div className="rounded-xl border border-border/60 bg-card/80 p-4">
                   <ApprovalFatigueChart rules={result.rules} />
                 </div>
               </section>
@@ -563,3 +563,4 @@ export default function PolicyAnalyticsPage({
     </div>
   );
 }
+

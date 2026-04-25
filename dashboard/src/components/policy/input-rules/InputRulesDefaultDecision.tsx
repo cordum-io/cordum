@@ -25,7 +25,7 @@ export function InputRulesDefaultDecision({
     <label className="text-xs text-muted-foreground">
       default_decision
       <select
-        className="ml-2 h-8 rounded-md border border-border bg-surface-2 px-2 text-xs text-foreground"
+        className="ml-2 h-8 rounded-xl border border-border bg-surface-2 px-2 text-xs text-foreground"
         value={value}
         onChange={(event) => onChange?.(event.target.value as GlobalPolicyDefaultDecision)}
       >
@@ -35,3 +35,4 @@ export function InputRulesDefaultDecision({
     </label>
   );
 }
+

@@ -5,7 +5,7 @@ import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Select } from "../ui/Select";
 import { useMarketplacePacks, useInstallPack, usePacks } from "../../hooks/usePacks";
-import type { MarketplacePack, Pack } from "../../api/types";
+import type { MarketplacePack } from "../../api/types";
 
 // ---------------------------------------------------------------------------
 // Helpers

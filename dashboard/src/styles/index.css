@@ -13,6 +13,12 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+
+  --shadow-soft: var(--shadow-soft);
+  --shadow-soft-hover: var(--shadow-soft-hover);
+  --animate-duration-soft: var(--duration-soft);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -69,7 +75,11 @@
 
 /* Light mode — warm beige/cream */
 :root {
-  --radius: 0.5rem;
+  --radius: 0.75rem;
+  --shadow-soft: 0 4px 14px 0 rgba(0, 0, 0, 0.05);
+  --shadow-soft-hover: 0 6px 20px 0 rgba(0, 0, 0, 0.08);
+  --duration-soft: 250ms;
+
   --primary: #0f7f7a;
   --primary-foreground: #ffffff;
   --background: #f5efe6;
@@ -124,10 +134,17 @@
   --bg-linear-1: #f6f1e8;
   --bg-linear-2: #eef3f1;
   --bg-linear-3: #f5efe5;
+
+  --glass-bg: rgba(255, 252, 245, 0.6);
+  --glass-border: rgba(25, 36, 40, 0.08);
 }
 
 /* Dark mode — warm dark */
 .dark {
+  --shadow-soft: 0 4px 14px 0 rgba(0, 0, 0, 0.25);
+  --shadow-soft-hover: 0 6px 20px 0 rgba(0, 0, 0, 0.35);
+  --duration-soft: 250ms;
+
   --primary: #27b3a8;
   --primary-foreground: #0f1416;
   --background: #0f1416;
@@ -181,6 +198,59 @@
   --bg-linear-1: #0b1012;
   --bg-linear-2: #0f171a;
   --bg-linear-3: #111a1d;
+
+  --glass-bg: rgba(20, 27, 30, 0.65);
+  --glass-border: rgba(229, 239, 236, 0.08);
+}
+
+@utility glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+}
+
+@utility glass-sidebar {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  border-right: 1px solid var(--glass-border);
+}
+
+@utility glass-header {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--glass-border);
+}
+
+/* ============================================================
+   BACKDROP-FILTER FALLBACK (Safari <14, iOS Safari <14)
+   Browsers without backdrop-filter render rgba glass panels as
+   transparent pass-through, destroying visual hierarchy. Force
+   opaque --card surface so panel structure remains legible.
+   ============================================================ */
+@supports not (backdrop-filter: blur(12px)) {
+  .glass-panel,
+  .glass-sidebar,
+  .glass-header {
+    background: var(--card);
+    backdrop-filter: none;
+  }
+}
+
+/* ============================================================
+   FORCED-COLORS (Windows High Contrast) OVERRIDE
+   In high-contrast mode the browser forces rgba() backgrounds
+   to transparent, so glass-* panels visually dissolve into the
+   page. Restore visible boundaries via CSS system colors so
+   panel structure remains legible. WCAG 1.4.11.
+   ============================================================ */
+@media (forced-colors: active) {
+  .glass-panel,
+  .glass-sidebar,
+  .glass-header {
+    background: Canvas;
+    backdrop-filter: none;
+    border-color: CanvasText;
+  }
 }
 
 /* ============================================================
@@ -262,8 +332,7 @@
 
   /* Cordum instrument panel card — warm Mac style */
   .instrument-card {
-    @apply bg-card rounded-2xl border border-border relative overflow-hidden transition-all duration-200 p-4;
-    box-shadow: 0 6px 16px rgba(18, 25, 28, 0.06);
+    @apply bg-card rounded-2xl relative overflow-hidden transition-all duration-200 p-4 shadow-soft border border-border/30;
   }
   .instrument-card::before {
     content: '';
@@ -303,7 +372,7 @@
   .surface-card {
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: 12px;
     box-shadow: 0 6px 16px rgba(18, 25, 28, 0.06);
     transition:
       box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1),
@@ -315,7 +384,7 @@
 
   /* List row — Mac rounded row with hover lift */
   .list-row {
-    border-radius: 10px;
+    border-radius: 12px;
     border: 1px solid var(--border);
     background: var(--surface-glass);
     padding: 10px 12px;
@@ -396,7 +465,7 @@
   }
 
   .field-help-group .field-help-tooltip {
-    @apply pointer-events-none absolute left-0 top-full z-50 mt-1 w-64 rounded-lg border border-border bg-card p-2 text-xs leading-relaxed text-foreground opacity-0 shadow-lg transition-opacity;
+    @apply pointer-events-none absolute left-0 top-full z-50 mt-1 w-64 rounded-xl border border-border bg-card p-2 text-xs leading-relaxed text-foreground opacity-0 shadow-lg transition-opacity;
   }
   .field-help-group:hover .field-help-tooltip,
   .field-help-group:focus-within .field-help-tooltip {

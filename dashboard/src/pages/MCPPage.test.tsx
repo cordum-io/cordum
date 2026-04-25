@@ -1,4 +1,4 @@
-import React, { act } from "react";
+import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders } from "@/test-utils/render";
 import MCPPage from "./MCPPage";

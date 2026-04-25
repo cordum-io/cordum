@@ -1,7 +1,8 @@
 import React, { act } from "react";
-import { createRoot } from "react-dom/client";
+import { screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkflowRun } from "@/api/types";
+import { renderWithProviders } from "@/test-utils/render";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -49,16 +50,24 @@ const { routerState, workflowState, chatState, governanceState } = vi.hoisted(
   }),
 );
 
-vi.mock("react-router-dom", () => ({
-  useParams: () => routerState.params,
-  useNavigate: () => routerState.navigate,
-}));
+vi.mock("react-router-dom", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-router-dom")>();
+  return {
+    ...actual,
+    useParams: () => routerState.params,
+    useNavigate: () => routerState.navigate,
+  };
+});
 
-vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => chatState.query,
-  useMutation: () => chatState.mutation,
-  useQueryClient: () => chatState.queryClient,
-}));
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tanstack/react-query")>();
+  return {
+    ...actual,
+    useQuery: () => chatState.query,
+    useMutation: () => chatState.mutation,
+    useQueryClient: () => chatState.queryClient,
+  };
+});
 
 vi.mock("@/hooks/useWorkflows", () => ({
   useRun: () => workflowState.run,
@@ -117,21 +126,25 @@ function makeRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
 }
 
 function renderPage() {
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  const root = createRoot(container);
-
-  act(() => {
-    root.render(<WorkflowRunDetailPage />);
+  const result = renderWithProviders(<WorkflowRunDetailPage />, {
+    initialEntries: ["/workflows/wf-1/runs/run-1"],
   });
-
   return {
-    container,
+    container: result.container,
     cleanup: () => {
-      act(() => root.unmount());
-      container.remove();
+      result.unmount();
     },
   };
+}
+
+function keydown(element: Element | null, key: string) {
+  if (!element)
+    throw new Error("Expected element to exist before dispatching key");
+  act(() => {
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+    );
+  });
 }
 
 beforeEach(() => {
@@ -191,6 +204,105 @@ describe("WorkflowRunDetailPage governance tab integration", () => {
       expect(governanceState.render).toHaveBeenCalledTimes(1);
       expect(container.querySelector('[data-testid="governance-timeline"]')?.textContent).toContain('"runId":"run-1"');
       expect(container.querySelector('[data-testid="governance-timeline"]')?.textContent).toContain("This workflow run has not evaluated any policy rules yet.");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe("WorkflowRunDetailPage step list accessibility", () => {
+  beforeEach(() => {
+    workflowState.run = {
+      data: makeRun({
+        steps: [
+          { id: "step-1", name: "Compile", type: "worker", status: "running" },
+          { id: "step-2", name: "Approval", type: "approval", status: "waiting" },
+          { id: "step-3", name: "Delay", type: "delay", status: "pending" },
+        ],
+      }),
+      isLoading: false,
+      error: null,
+    };
+  });
+
+  it("renders the step list as a labeled listbox with three focusable options", () => {
+    const { cleanup } = renderPage();
+
+    try {
+      const listbox = screen.getByRole("listbox", { name: "Run steps" });
+      const options = screen.getAllByRole("option");
+
+      expect(listbox).not.toBeNull();
+      expect(options).toHaveLength(3);
+      expect(options[0]?.getAttribute("aria-label")).toBe("Step 1: Compile, running");
+      expect(options[1]?.getAttribute("aria-label")).toBe("Step 2: Approval, waiting");
+      expect(options[2]?.getAttribute("aria-label")).toBe("Step 3: Delay, pending");
+      expect(options.every((option) => (option as HTMLElement).tabIndex === 0)).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("marks only the selected step option with aria-selected", () => {
+    const { cleanup } = renderPage();
+
+    try {
+      const options = screen.getAllByRole("option");
+      expect(options[0]?.getAttribute("aria-selected")).toBe("false");
+      expect(options[1]?.getAttribute("aria-selected")).toBe("true");
+      expect(options[2]?.getAttribute("aria-selected")).toBe("false");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("selects a focused step when Enter is pressed", () => {
+    const { cleanup } = renderPage();
+
+    try {
+      const options = screen.getAllByRole("option");
+      const approvalStep = options[1] as HTMLElement;
+
+      approvalStep.focus();
+      expect(document.activeElement).toBe(approvalStep);
+
+      keydown(approvalStep, "Enter");
+
+      expect(options[0]?.getAttribute("aria-selected")).toBe("false");
+      expect(options[1]?.getAttribute("aria-selected")).toBe("true");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("selects a focused step when Space is pressed", () => {
+    const { cleanup } = renderPage();
+
+    try {
+      const options = screen.getAllByRole("option");
+      const pendingStep = options[2] as HTMLElement;
+
+      pendingStep.focus();
+      expect(document.activeElement).toBe(pendingStep);
+
+      keydown(pendingStep, " ");
+
+      expect(options[0]?.getAttribute("aria-selected")).toBe("false");
+      expect(options[2]?.getAttribute("aria-selected")).toBe("true");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("keeps the keyboard focus ring classes on each step option", () => {
+    const { cleanup } = renderPage();
+
+    try {
+      const options = screen.getAllByRole("option");
+      expect(options[0]?.className).toContain("focus-visible:ring-2");
+      expect(options[0]?.className).toContain("focus-visible:ring-cordum");
+      expect(options[0]?.className).toContain("focus-visible:ring-offset-2");
+      expect(options[0]?.className).toContain("focus-visible:outline-none");
     } finally {
       cleanup();
     }

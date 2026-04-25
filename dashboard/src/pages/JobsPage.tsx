@@ -6,10 +6,10 @@
 import { useState, useMemo, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { get } from "@/api/client";
 import { mapJobRecord, type BackendJobRecord } from "@/api/transform";
-import type { Job, SafetyDecisionType } from "@/api/types";
+import type { Job } from "@/api/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
@@ -34,14 +34,63 @@ import {
   ArrowDown,
   Shield,
   X,
+  Workflow,
+  MessageSquare,
+  Zap,
 } from "lucide-react";
-import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
+import { formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { friendlyError } from "@/lib/friendlyError";
+import { getJobParentRefs } from "@/lib/jobParentRefs";
 import { toast } from "sonner";
 import { useSubmitJob } from "@/hooks/useJobs";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { safeLocalStorage } from "@/lib/storage";
+import { JobFiltersBar, type JobFilterValues } from "@/components/jobs/JobFiltersBar";
+
+export function OriginPill({ job }: { job: Job }) {
+  const navigate = useNavigate();
+  const { runId, sessionId, workflowId } = getJobParentRefs(job);
+
+  if (runId && workflowId) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          navigate(`/workflows/${workflowId}/runs/${runId}`);
+        }}
+        className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20 transition"
+      >
+        <Workflow className="h-2.5 w-2.5" />
+        Run: {runId.slice(0, 8)}
+      </button>
+    );
+  }
+
+  if (sessionId) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          navigate(`/copilot/sessions/${sessionId}`);
+        }}
+        className="inline-flex items-center gap-1 rounded-full bg-cordum/10 px-2 py-0.5 text-[10px] font-medium text-cordum hover:bg-cordum/20 transition"
+      >
+        <MessageSquare className="h-2.5 w-2.5" />
+        Session: {sessionId.slice(0, 8)}
+      </button>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-muted/30 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+      <Zap className="h-2.5 w-2.5" />
+      Direct
+    </span>
+  );
+}
 
 function jobStatusVariant(status: string) {
   switch (status) {
@@ -87,6 +136,20 @@ const safetyOrder: Record<string, number> = {
   throttle: 2,
   allow_with_constraints: 3,
   allow: 4,
+};
+
+const tableBodyVariants = {
+  hidden: {},
+  visible: {
+    transition: {
+      staggerChildren: 0.04,
+    },
+  },
+};
+
+const tableRowVariants = {
+  hidden: { opacity: 0, y: 8 },
+  visible: { opacity: 1, y: 0 },
 };
 
 export function readStoredJobsPageSize(): number {
@@ -234,6 +297,7 @@ export default function JobsPage() {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const [safetyFilter, setSafetyFilter] = useState("all");
+  const [jobFilters, setJobFilters] = useState<JobFilterValues>({});
   const [showSubmit, setShowSubmit] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("updatedAt");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -242,10 +306,19 @@ export default function JobsPage() {
   const [pageSize, setPageSize] = useState(readStoredJobsPageSize);
 
   const { data, isLoading, isError, error, refetch, dataUpdatedAt } = useQuery({
-    queryKey: ["jobs"],
+    queryKey: ["jobs", jobFilters],
     queryFn: async () => {
+      // Build query string from filters
+      const q = new URLSearchParams();
+      q.set("limit", "500");
+      if (jobFilters.topic) q.set("topic", jobFilters.topic);
+      if (jobFilters.pool) q.set("pool", jobFilters.pool);
+      if (jobFilters.tenant) q.set("tenant", jobFilters.tenant);
+      if (jobFilters.runId) q.set("run_id", jobFilters.runId);
+      if (jobFilters.sessionId) q.set("session_id", jobFilters.sessionId);
+
       const res = await get<{ items: BackendJobRecord[]; total?: number }>(
-        "/jobs?limit=500",
+        `/jobs?${q.toString()}`,
       );
       const items = (res.items ?? [])
         .map(mapJobRecord)
@@ -352,13 +425,23 @@ export default function JobsPage() {
       // Safety decision filter
       if (safetyFilter !== "all" && j._safetyDecision !== safetyFilter)
         return false;
+
+      // JobFiltersBar filters
+      if (jobFilters.state && jobFilters.state.length > 0) {
+        if (!jobFilters.state.includes(j.status)) return false;
+      }
+      if (jobFilters.decision && jobFilters.decision.length > 0) {
+        if (!j._safetyDecision || !jobFilters.decision.includes(j._safetyDecision)) return false;
+      }
+
       // Search
       if (search) {
         const q = search.toLowerCase();
         return (
           j.id.toLowerCase().includes(q) ||
           (j.topic ?? "").toLowerCase().includes(q) ||
-          (j.traceId ?? "").toLowerCase().includes(q)
+          (j.traceId ?? "").toLowerCase().includes(q) ||
+          (j.workflowRunId ?? "").toLowerCase().includes(q)
         );
       }
       return true;
@@ -525,40 +608,44 @@ export default function JobsPage() {
         }
       />
 
-      {/* Status Filters */}
-      <div className="flex flex-wrap items-center gap-3">
-        <Input
-          type="text"
-          placeholder="Search by ID, topic, or trace..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          icon={<Search className="h-3.5 w-3.5" />}
-          className="h-9 max-w-sm flex-1 text-sm"
-        />
-        <Tabs
-          tabs={tabs}
-          activeTab={activeTab}
-          onChange={setActiveTabAndResetPage}
-          variant="segmented"
-          ariaLabel="Job status filters"
-          className="w-full sm:w-auto"
-        />
-      </div>
+      {/* Advanced Filters */}
+      <div className="space-y-4">
+        <JobFiltersBar onChange={setJobFilters} />
 
-      {/* Safety Decision Filter */}
-      <div className="space-y-2">
-        <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-widest text-muted-foreground">
-          <Shield className="h-3.5 w-3.5" />
-          <span>Safety decision</span>
+        <div className="flex flex-wrap items-center gap-3">
+          <Input
+            type="text"
+            placeholder="Search by ID, topic, or trace..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            icon={<Search className="h-3.5 w-3.5" />}
+            className="h-9 max-w-sm flex-1 text-sm"
+          />
+          <Tabs
+            tabs={tabs}
+            activeTab={activeTab}
+            onChange={setActiveTabAndResetPage}
+            variant="segmented"
+            ariaLabel="Job status filters"
+            className="w-full sm:w-auto"
+          />
         </div>
-        <Tabs
-          tabs={safetyTabs}
-          activeTab={safetyFilter}
-          onChange={setSafetyFilter}
-          variant="segmented"
-          ariaLabel="Safety decision filters"
-          className="w-full"
-        />
+
+        {/* Safety Decision Filter */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-widest text-muted-foreground">
+            <Shield className="h-3.5 w-3.5" />
+            <span>Safety decision</span>
+          </div>
+          <Tabs
+            tabs={safetyTabs}
+            activeTab={safetyFilter}
+            onChange={setSafetyFilter}
+            variant="segmented"
+            ariaLabel="Safety decision filters"
+            className="w-full"
+          />
+        </div>
       </div>
 
       {/* Jobs Table */}
@@ -571,12 +658,12 @@ export default function JobsPage() {
           icon={<ListChecks className="w-5 h-5" />}
           title="No jobs found"
           description={
-            search || activeTab !== "all" || safetyFilter !== "all"
+            search || activeTab !== "all" || safetyFilter !== "all" || Object.keys(jobFilters).length > 0
               ? "Try adjusting your search or filters"
               : "No jobs have been submitted yet"
           }
           action={
-            search || activeTab !== "all" || safetyFilter !== "all" ? (
+            search || activeTab !== "all" || safetyFilter !== "all" || Object.keys(jobFilters).length > 0 ? (
               <Button
                 variant="ghost"
                 size="sm"
@@ -584,6 +671,7 @@ export default function JobsPage() {
                   setSearch("");
                   setActiveTabAndResetPage("all");
                   setSafetyFilter("all");
+                  setJobFilters({});
                 }}
               >
                 <X className="w-3 h-3 mr-1" />
@@ -636,6 +724,9 @@ export default function JobsPage() {
                       Topic <SortIcon col="topic" />
                     </span>
                   </th>
+                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
+                    Origin
+                  </th>
                   <th
                     className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
                     {...sortableThProps("safety")}
@@ -663,10 +754,11 @@ export default function JobsPage() {
                   <th className="px-5 py-3"></th>
                 </tr>
               </thead>
-              <tbody>
+              <motion.tbody initial="hidden" animate="visible" variants={tableBodyVariants}>
                 {paginatedJobs.map((job) => (
-                  <tr
+                  <motion.tr
                     key={job.id}
+                    variants={tableRowVariants}
                     {...clickableRowProps(() => navigate(`/jobs/${job.id}`))}
                     className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer group"
                   >
@@ -694,6 +786,9 @@ export default function JobsPage() {
                       {job.topic || "—"}
                     </td>
                     <td className="px-5 py-3">
+                      <OriginPill job={job} />
+                    </td>
+                    <td className="px-5 py-3">
                       <SafetyDecisionBadge
                         decision={job._safetyDecision}
                         matchedRules={job._matchedRules}
@@ -719,9 +814,9 @@ export default function JobsPage() {
                         <Eye className="w-3.5 h-3.5 text-muted-foreground" />
                       </Button>
                     </td>
-                  </tr>
+                  </motion.tr>
                 ))}
-              </tbody>
+              </motion.tbody>
             </table>
           </div>
           <div className="px-5 py-2 border-t border-border bg-surface-0">

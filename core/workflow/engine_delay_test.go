@@ -586,12 +586,21 @@ func TestDelayTimerRecoveryAfterTransientFailure(t *testing.T) {
 		t.Fatalf("reconciler StartRun should succeed: %v", err)
 	}
 
-	// Verify the delay step was completed by scheduleReady.
-	updatedRun, err := store.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatalf("get run: %v", err)
+	// Verify the delay step was completed by scheduleReady. Poll briefly
+	// so a slow CI Redis (the prior flake mode) doesn't fail the test
+	// before the engine has finished its transition.
+	var waitStep *StepRun
+	for i := 0; i < 50; i++ {
+		updatedRun, err := store.GetRun(ctx, runID)
+		if err != nil {
+			t.Fatalf("get run: %v", err)
+		}
+		waitStep = updatedRun.Steps["wait"]
+		if waitStep != nil && waitStep.Status == StepStatusSucceeded {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	waitStep := updatedRun.Steps["wait"]
 	if waitStep == nil {
 		t.Fatal("wait step missing from run")
 	}

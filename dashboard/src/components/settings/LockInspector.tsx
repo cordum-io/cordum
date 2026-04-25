@@ -3,6 +3,7 @@ import { Lock, Info, RefreshCw } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardHeader, CardTitle } from "../ui/Card";
 import { Badge } from "../ui/Badge";
+import { EmptyState } from "../ui/EmptyState";
 import { cn } from "../../lib/utils";
 import { useAdminLocks } from "../../hooks/useAdminLocks";
 import type { AdminLock } from "../../api/types";
@@ -150,12 +151,31 @@ function LockRow({ lock }: { lock: AdminLock }) {
 
 export function LockInspector() {
   const queryClient = useQueryClient();
-  const { data, isLoading, isError, isFetching } = useAdminLocks();
+  const { data, isLoading, isError, isFetching, isAdmin } = useAdminLocks();
   const [typeFilter, setTypeFilter] = useState("all");
 
   const locks = data?.locks ?? [];
   const types = [...new Set(locks.map((l) => l.type))].sort();
   const filtered = typeFilter === "all" ? locks : locks.filter((l) => l.type === typeFilter);
+
+  if (!isAdmin) {
+    return (
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Lock className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm">Distributed Locks</CardTitle>
+          </div>
+        </CardHeader>
+        <EmptyState
+          icon={<Lock className="h-5 w-5" />}
+          title="Admin role required"
+          description="Lock inspection is restricted to admin users."
+          className="py-8"
+        />
+      </Card>
+    );
+  }
 
   // Loading skeleton
   if (isLoading) {
@@ -191,7 +211,7 @@ export function LockInspector() {
           <button
             type="button"
             onClick={() => queryClient.invalidateQueries({ queryKey: ["admin-locks"] })}
-            className="rounded-lg px-3 py-1.5 text-xs font-medium text-accent hover:bg-surface2 transition-colors"
+            className="rounded-xl px-3 py-1.5 text-xs font-medium text-accent hover:bg-surface2 transition-colors"
           >
             Retry
           </button>
@@ -229,7 +249,7 @@ export function LockInspector() {
         <button
           type="button"
           onClick={() => queryClient.invalidateQueries({ queryKey: ["admin-locks"] })}
-          className="rounded-lg p-1.5 text-muted-foreground hover:text-ink hover:bg-surface2 transition-colors"
+          className="rounded-xl p-1.5 text-muted-foreground hover:text-ink hover:bg-surface2 transition-colors"
           title="Refresh now"
         >
           <RefreshCw className={cn("h-3.5 w-3.5", isFetching && "animate-spin")} />
@@ -242,7 +262,7 @@ export function LockInspector() {
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-lg border border-border">
+      <div className="overflow-x-auto rounded-xl border border-border">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-surface2/30 text-left text-muted-foreground">
@@ -266,3 +286,4 @@ export function LockInspector() {
     </Card>
   );
 }
+

@@ -17,7 +17,6 @@ import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { cn, formatDuration } from "../../lib/utils";
 import { useGeneralConfig, useSetGeneralConfig } from "../../hooks/useSettings";
 import type {
-  GeneralConfig,
   MaintenanceWindow,
   MaintenanceSchedule,
 } from "../../api/types";
@@ -231,7 +230,7 @@ export function MaintenanceModeSection() {
         <button
           type="button"
           onClick={() => setShowSchedule((v) => !v)}
-          className="flex w-full items-center justify-between rounded-lg px-1 py-2 text-xs font-semibold text-muted-foreground hover:text-ink"
+          className="flex w-full items-center justify-between rounded-xl px-1 py-2 text-xs font-semibold text-muted-foreground hover:text-ink"
         >
           <span className="flex items-center gap-2">
             <Calendar className="h-3.5 w-3.5" />
@@ -244,7 +243,7 @@ export function MaintenanceModeSection() {
           <div className="mt-2 space-y-3">
             {/* Existing schedules */}
             {schedule.map((s) => (
-              <div key={s.id} className="flex items-center justify-between rounded-lg border border-border bg-surface2/50 px-3 py-2 text-xs">
+              <div key={s.id} className="flex items-center justify-between rounded-xl border border-border bg-surface2/50 px-3 py-2 text-xs">
                 <div>
                   <span className="font-medium text-ink">
                     {formatDateTime(s.startAt)} — {formatDateTime(s.endAt)}
@@ -372,7 +371,7 @@ export function MaintenanceModeSection() {
         <button
           type="button"
           onClick={() => setShowHistory((v) => !v)}
-          className="flex w-full items-center justify-between rounded-lg px-1 py-2 text-xs font-semibold text-muted-foreground hover:text-ink"
+          className="flex w-full items-center justify-between rounded-xl px-1 py-2 text-xs font-semibold text-muted-foreground hover:text-ink"
         >
           <span className="flex items-center gap-2">
             <Clock className="h-3.5 w-3.5" />
@@ -387,7 +386,7 @@ export function MaintenanceModeSection() {
               <p className="text-xs text-muted-foreground italic">No maintenance history</p>
             )}
             {history.map((w, i) => (
-              <div key={i} className="flex items-center justify-between rounded-lg border border-border bg-surface2/50 px-3 py-2 text-xs">
+              <div key={i} className="flex items-center justify-between rounded-xl border border-border bg-surface2/50 px-3 py-2 text-xs">
                 <div className="space-y-0.5">
                   <div className="font-medium text-ink">
                     {formatDateTime(w.startedAt)} — {formatDateTime(w.endedAt)}
@@ -426,3 +425,4 @@ export function MaintenanceModeSection() {
     </Card>
   );
 }
+

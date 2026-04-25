@@ -51,9 +51,13 @@ describe("AppShell GOVERN navigation", () => {
     expect(govern).toBeDefined();
 
     const labels = govern?.items.map((item) => item.label);
+    // Verification nav entry was added under task-14d012e6 (chain-integrity
+    // monitoring) — admin-gated at the route level via RequireRole, but
+    // visible in nav. Delegations stays gated by FEATURE_FLAGS.delegationDashboard.
     expect(labels).toEqual([
       "Policy Studio",
       "Quarantine",
+      "Verification",
     ]);
   });
 
@@ -64,6 +68,7 @@ describe("AppShell GOVERN navigation", () => {
     expect(govern?.items.map((item) => item.path)).toEqual([
       "/govern/overview",
       "/govern/quarantine",
+      "/govern/verification",
     ]);
 
     const quarantine = govern?.items.find((item) => item.label === "Quarantine");

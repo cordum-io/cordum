@@ -45,7 +45,6 @@ import type {
   ApprovalContext,
   BlastRadius,
   PriorApproval,
-  ApprovalPolicySnapshot,
 } from "@/api/types";
 
 // ---------------------------------------------------------------------------
@@ -82,12 +81,7 @@ function Section({
   };
 
   return (
-    <div
-      className={cn(
-        "rounded-lg border border-border/60 bg-card/80 backdrop-blur-sm overflow-hidden",
-        className,
-      )}
-    >
+    <div className={cn("instrument-card overflow-hidden", className)}>
       <button
         type="button"
         className="flex w-full items-center gap-3 px-5 py-4 text-left hover:bg-muted/30 transition-colors"
@@ -123,7 +117,7 @@ function Section({
 
 function SectionSkeleton() {
   return (
-    <div className="rounded-lg border border-border/60 bg-card/80 p-5 space-y-3">
+    <div className="instrument-card p-5 space-y-3">
       <Skeleton className="h-4 w-32" />
       <Skeleton className="h-3 w-full" />
       <Skeleton className="h-3 w-3/4" />
@@ -142,7 +136,7 @@ function SectionEmpty({ message }: { message: string }) {
 // ---------------------------------------------------------------------------
 
 function WhatSection({
-  context,
+  context: _context,
   approval,
 }: {
   context: ApprovalContext;
@@ -380,7 +374,7 @@ function RiskSection({ context }: { context: ApprovalContext }) {
         {isTimeLimited && (
           <div
             className={cn(
-              "flex items-center gap-2 text-sm px-3 py-2 rounded-md",
+              "flex items-center gap-2 text-sm px-3 py-2 rounded-xl",
               isCritical || isExpired
                 ? "bg-red-500/10 text-red-600 dark:text-red-400"
                 : "bg-amber-500/10 text-amber-600 dark:text-amber-400",
@@ -521,7 +515,7 @@ function RollbackSection({ rollbackHint }: { rollbackHint: string }) {
   return (
     <Section icon={RotateCcw} title="Rollback">
       {rollbackHint ? (
-        <div className="text-sm text-foreground/90 whitespace-pre-wrap font-mono bg-muted/40 rounded-md px-3 py-2.5">
+        <div className="text-sm text-foreground/90 whitespace-pre-wrap font-mono bg-muted/40 rounded-xl px-3 py-2.5">
           {rollbackHint}
         </div>
       ) : (
@@ -906,7 +900,7 @@ export default function ApprovalDetailPage() {
               This will deny the governed change. Please provide a reason.
             </p>
             <textarea
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+              className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none"
               rows={3}
               placeholder="Reason for rejection..."
               value={rejectReason}
@@ -929,3 +923,4 @@ export default function ApprovalDetailPage() {
     </div>
   );
 }
+

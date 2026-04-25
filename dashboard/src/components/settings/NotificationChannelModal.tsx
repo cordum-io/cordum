@@ -149,7 +149,7 @@ function PagerDutyConfigFields({
               key={s}
               type="button"
               className={cn(
-                "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+                "rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors",
                 severity === s
                   ? "border-accent bg-accent/10 text-accent"
                   : "border-border text-muted-foreground hover:text-ink",
@@ -204,7 +204,7 @@ function WebhookConfigFields({
               key={a}
               type="button"
               className={cn(
-                "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+                "rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors",
                 authType === a
                   ? "border-accent bg-accent/10 text-accent"
                   : "border-border text-muted-foreground hover:text-ink",
@@ -436,3 +436,4 @@ export function NotificationChannelModal({
     </div>
   );
 }
+

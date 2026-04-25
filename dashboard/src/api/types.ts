@@ -1854,3 +1854,27 @@ export interface ExtractIncidentsPreview {
   datasetId?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Copilot Sessions
+// ---------------------------------------------------------------------------
+
+export type CopilotMessageRole = "user" | "assistant" | "system";
+
+export interface CopilotMessage {
+  id: string;
+  role: CopilotMessageRole;
+  content: string;
+  timestamp: string;
+  jobIds?: string[]; // IDs of jobs spawned by this message/turn
+}
+
+export interface CopilotSession {
+  id: string;
+  title?: string;
+  userId: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: CopilotMessage[];
+  metadata?: Record<string, string>;
+}
+

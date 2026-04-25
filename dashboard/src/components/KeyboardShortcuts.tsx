@@ -56,17 +56,24 @@ export function KeyboardShortcutsDialog() {
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.96 }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="keyboard-shortcuts-title"
             className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[101] w-full max-w-lg"
           >
             <div className="bg-surface-1 border border-border rounded-xl shadow-2xl overflow-hidden">
               <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-                <h3 className="text-sm font-display font-semibold text-foreground flex items-center gap-2">
+                <h3
+                  id="keyboard-shortcuts-title"
+                  className="text-sm font-display font-semibold text-foreground flex items-center gap-2"
+                >
                   <Command className="w-4 h-4 text-cordum" />
                   Keyboard Shortcuts
                 </h3>
                 <button type="button"
+                  aria-label="Close keyboard shortcuts dialog"
                   onClick={() => setOpen(false)}
-                  className="p-1 rounded-md hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors"
+                  className="p-1 rounded-xl hover:bg-surface-2 text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -106,3 +113,4 @@ export function KeyboardShortcutsDialog() {
     </AnimatePresence>
   );
 }
+

@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { FlaskConical } from "lucide-react";
+import { motion } from "framer-motion";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -174,9 +175,17 @@ export default function SimulatorPage({ hideHeader }: { hideHeader?: boolean } =
           }
         />
       ) : (
-        <>
+        <motion.div
+          className="space-y-6"
+          initial="hidden"
+          animate="visible"
+          variants={{ visible: { transition: { staggerChildren: 0.05 } } }}
+        >
           {/* Bundle selector + summary */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <motion.div
+            className="flex flex-wrap items-center justify-between gap-3"
+            variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}
+          >
             <label className="text-xs text-muted-foreground">
               Bundle
               <select
@@ -199,10 +208,13 @@ export default function SimulatorPage({ hideHeader }: { hideHeader?: boolean } =
                 {ruleCount > 0 ? "ready" : "no rules"}
               </StatusBadge>
             </div>
-          </div>
+          </motion.div>
 
           {/* Simulation workspace */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <motion.div
+            className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+            variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}
+          >
             {/* Left: context form */}
             <div className="space-y-4">
               <SimulatorContextForm
@@ -251,8 +263,8 @@ export default function SimulatorPage({ hideHeader }: { hideHeader?: boolean } =
                 </div>
               )}
             </div>
-          </div>
-        </>
+          </motion.div>
+        </motion.div>
       )}
     </div>
   );

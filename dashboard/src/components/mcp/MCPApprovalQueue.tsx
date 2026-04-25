@@ -16,6 +16,7 @@
 //   button on error.
 import { useMemo, useState } from "react";
 import { useConfigStore } from "../../state/config";
+import { useDialogA11y } from "../../hooks/useDialogA11y";
 import {
   shortArgsHash,
   useApproveMcp,
@@ -90,7 +91,7 @@ export function MCPApprovalQueue(props: MCPApprovalQueueProps) {
         <div
           role="status"
           aria-busy="true"
-          className="rounded-md border border-[color:var(--border-color,#27272a)] bg-[color:var(--surface,#0b0b0e)] p-4 text-sm text-[color:var(--text-muted,#a1a1aa)]"
+          className="rounded-xl border border-[color:var(--border-color,#27272a)] bg-[color:var(--surface,#0b0b0e)] p-4 text-sm text-[color:var(--text-muted,#a1a1aa)]"
           data-testid="mcp-approval-queue-loading"
         >
           Loading {status} approvals…
@@ -100,7 +101,7 @@ export function MCPApprovalQueue(props: MCPApprovalQueueProps) {
       {isError && (
         <div
           role="alert"
-          className="flex items-center justify-between rounded-md border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300"
+          className="flex items-center justify-between rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300"
           data-testid="mcp-approval-queue-error"
         >
           <span>Failed to load MCP approvals.</span>
@@ -116,7 +117,7 @@ export function MCPApprovalQueue(props: MCPApprovalQueueProps) {
 
       {!isLoading && !isError && sorted.length === 0 && (
         <p
-          className="rounded-md border border-dashed border-[color:var(--border-color,#27272a)] bg-[color:var(--surface,#0b0b0e)] p-6 text-center text-sm text-[color:var(--text-muted,#a1a1aa)]"
+          className="rounded-xl border border-dashed border-[color:var(--border-color,#27272a)] bg-[color:var(--surface,#0b0b0e)] p-6 text-center text-sm text-[color:var(--text-muted,#a1a1aa)]"
           data-testid="mcp-approval-queue-empty"
         >
           No MCP approvals match the current filter.
@@ -124,7 +125,7 @@ export function MCPApprovalQueue(props: MCPApprovalQueueProps) {
       )}
 
       {!isLoading && !isError && sorted.length > 0 && (
-        <div className="overflow-x-auto rounded-md border border-[color:var(--border-color,#27272a)]">
+        <div className="overflow-x-auto rounded-xl border border-[color:var(--border-color,#27272a)]">
           <table
             className="min-w-full divide-y divide-[color:var(--border-color,#27272a)] text-sm"
             data-testid="mcp-approval-queue-table"
@@ -288,6 +289,7 @@ function ConfirmDecisionModal({ decision, onClose }: ConfirmDecisionModalProps) 
   const approveM = useApproveMcp();
   const rejectM = useRejectMcp();
   const [reason, setReason] = useState("");
+  const dialogRef = useDialogA11y(onClose);
   const isApprove = decision.verb === "approve";
   const mutation = isApprove ? approveM : rejectM;
   const submit = () => {
@@ -298,13 +300,14 @@ function ConfirmDecisionModal({ decision, onClose }: ConfirmDecisionModalProps) 
   };
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="mcp-approval-confirm-heading"
       data-testid="mcp-approval-confirm-modal"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
     >
-      <div className="w-full max-w-md rounded-lg border border-[color:var(--border-color,#27272a)] bg-[color:var(--surface-elevated,#111114)] p-5 shadow-xl">
+      <div className="w-full max-w-md rounded-xl border border-[color:var(--border-color,#27272a)] bg-[color:var(--surface-elevated,#111114)] p-5 shadow-xl">
         <h4
           id="mcp-approval-confirm-heading"
           className="text-base font-semibold text-[color:var(--text,#e4e4e7)]"
@@ -370,3 +373,4 @@ function formatRelative(unixSeconds: number): string {
 }
 
 export default MCPApprovalQueue;
+

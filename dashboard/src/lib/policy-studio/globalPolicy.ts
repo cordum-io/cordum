@@ -1,14 +1,11 @@
 import { parsePolicyYaml, stringifyPolicyYaml } from "@/lib/policy-yaml";
 import type {
-  GlobalPolicyBudgetConstraints,
   GlobalPolicyConstraints,
   GlobalPolicyDefaultDecision,
-  GlobalPolicyDiffConstraints,
   GlobalPolicyDocument,
   GlobalPolicyInputDecision,
   GlobalPolicyInputMatch,
   GlobalPolicyInputRule,
-  GlobalPolicyMcpMatch,
   GlobalPolicyOutputFailMode,
   GlobalPolicyOutputMatch,
   GlobalPolicyOutputPolicy,
@@ -17,8 +14,6 @@ import type {
   GlobalPolicyOutputSeverity,
   GlobalPolicyParseIssue,
   GlobalPolicyRemediation,
-  GlobalPolicySandboxConstraints,
-  GlobalPolicyToolchainConstraints,
 } from "@/types/policy";
 
 export interface ParseGlobalPolicyResult {

@@ -1,4 +1,5 @@
 import { useParams } from "react-router-dom";
+import { motion } from "framer-motion";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -47,7 +48,12 @@ export default function EvalDatasetDetailPage() {
   const ds = dataset.data;
 
   return (
-    <div className="p-6 space-y-6">
+    <motion.div
+      className="p-6 space-y-6"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+    >
       <PageHeader
         title={ds.name}
         subtitle={ds.description || `Version ${ds.version} · ${ds.entryCount} entries`}
@@ -76,7 +82,9 @@ export default function EvalDatasetDetailPage() {
 
       {latest && <RegressionBanner run={latest} />}
 
-      <ScoreTrendChart runs={flatRuns} />
+      <div className="instrument-card p-4">
+        <ScoreTrendChart runs={flatRuns} />
+      </div>
 
       <RunHistoryTable
         runs={flatRuns}
@@ -84,6 +92,6 @@ export default function EvalDatasetDetailPage() {
         isFetchingNextPage={runs.isFetchingNextPage}
         onLoadMore={() => runs.fetchNextPage()}
       />
-    </div>
+    </motion.div>
   );
 }
