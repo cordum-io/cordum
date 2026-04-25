@@ -222,6 +222,38 @@
 }
 
 /* ============================================================
+   BACKDROP-FILTER FALLBACK (Safari <14, iOS Safari <14)
+   Browsers without backdrop-filter render rgba glass panels as
+   transparent pass-through, destroying visual hierarchy. Force
+   opaque --card surface so panel structure remains legible.
+   ============================================================ */
+@supports not (backdrop-filter: blur(12px)) {
+  .glass-panel,
+  .glass-sidebar,
+  .glass-header {
+    background: var(--card);
+    backdrop-filter: none;
+  }
+}
+
+/* ============================================================
+   FORCED-COLORS (Windows High Contrast) OVERRIDE
+   In high-contrast mode the browser forces rgba() backgrounds
+   to transparent, so glass-* panels visually dissolve into the
+   page. Restore visible boundaries via CSS system colors so
+   panel structure remains legible. WCAG 1.4.11.
+   ============================================================ */
+@media (forced-colors: active) {
+  .glass-panel,
+  .glass-sidebar,
+  .glass-header {
+    background: Canvas;
+    backdrop-filter: none;
+    border-color: CanvasText;
+  }
+}
+
+/* ============================================================
    BASE STYLES — Mac warm aesthetic
    ============================================================ */
 @layer base {
