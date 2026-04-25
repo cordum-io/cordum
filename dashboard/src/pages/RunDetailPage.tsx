@@ -600,7 +600,7 @@ export default function WorkflowRunDetailPage() {
                 {/* Vertical connector line */}
                 <div className="absolute left-[17px] top-0 bottom-0 w-px bg-border" />
 
-                <div className="space-y-0.5">
+                <div className="space-y-0.5" role="listbox" aria-label="Run steps">
                   {steps.map((step, i) => {
                     const Icon = stepIcon(step.type);
                     const isRunning = step.status === "running";
@@ -612,9 +612,19 @@ export default function WorkflowRunDetailPage() {
                         initial={{ opacity: 0, x: -12 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: i * 0.08 }}
+                        role="option"
+                        tabIndex={0}
+                        aria-selected={selectedStep?.id === step.id}
+                        aria-label={`Step ${i + 1}: ${step.label || step.type}, ${step.status}`}
                         onClick={() => setSelectedStep(step)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setSelectedStep(step);
+                          }
+                        }}
                         className={cn(
-                          "relative flex items-center gap-3 px-3 py-3 rounded-2xl transition-colors cursor-pointer",
+                          "relative flex items-center gap-3 px-3 py-3 rounded-2xl transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cordum focus-visible:ring-offset-2",
                           isRunning
                             ? "bg-cordum/5 border border-cordum/20"
                             : isWaiting
