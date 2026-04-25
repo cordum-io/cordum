@@ -710,14 +710,24 @@ export function mapJobRecord(record: BackendJobRecord): Job {
     pool: record.topic || "",
     capabilities,
     riskTags: record.risk_tags ?? [],
-    metadata: {
-      ...(record.actor_id ? { actor_id: record.actor_id } : {}),
-      ...(record.actor_type ? { actor_type: record.actor_type } : {}),
-      ...(record.pack_id ? { pack_id: record.pack_id } : {}),
-      ...(record.tenant ? { tenant: record.tenant } : {}),
-      ...(record.metadata?.session_id ? { session_id: record.metadata.session_id } : {}),
-      ...(record.metadata?.run_id ? { run_id: record.metadata.run_id } : {}),
-    },
+    metadata: (() => {
+      // Session/run id fallback chain: prefer metadata, fall back to labels.
+      // Backends that surface session_id/run_id only via labels would otherwise
+      // leave job.metadata.session_id undefined, breaking downstream consumers
+      // (OriginPill, ParentContextBanner, JobDetail MetadataBar) that read
+      // job.metadata.* via the shared `getJobParentRefs` helper.
+      const sessionId =
+        record.metadata?.session_id ?? record.labels?.session_id;
+      const runId = record.metadata?.run_id ?? record.labels?.run_id;
+      return {
+        ...(record.actor_id ? { actor_id: record.actor_id } : {}),
+        ...(record.actor_type ? { actor_type: record.actor_type } : {}),
+        ...(record.pack_id ? { pack_id: record.pack_id } : {}),
+        ...(record.tenant ? { tenant: record.tenant } : {}),
+        ...(sessionId ? { session_id: sessionId } : {}),
+        ...(runId ? { run_id: runId } : {}),
+      };
+    })(),
     labels: record.labels,
     contextPtr: undefined,
     resultPtr: undefined,
