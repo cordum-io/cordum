@@ -8,6 +8,7 @@ describe("GOVERN navigation shape", () => {
     expect(governSection?.items.map((item) => item.label)).toEqual([
       "Policy Studio",
       "Quarantine",
+      "Verification",
     ]);
   });
 });
