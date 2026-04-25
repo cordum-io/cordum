@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 const envOTELEndpoint = "CORDUM_OTEL_ENDPOINT"
@@ -23,13 +23,14 @@ const tracerName = "github.com/cordum/cordum/core/controlplane/safetykernel"
 var (
 	tracerInitOnce sync.Once
 	tracerShutdown = func(context.Context) error { return nil }
-	// tracerEnabled records whether initTracing actually wired up an
-	// exporter. The helper consults this rather than the global
-	// TracerProvider so that deployments which enable a different OTEL
-	// surface (e.g. OTEL_ENABLED=true) do NOT silently start emitting
-	// safety-kernel evaluation spans -- the new feature stays opt-in via
-	// CORDUM_OTEL_ENDPOINT only.
-	tracerEnabled bool
+	// evalTracerProvider holds the local TracerProvider used by
+	// evaluationSpan. We keep it package-local instead of calling
+	// otel.SetTracerProvider so we don't clobber any global TracerProvider
+	// that another component (e.g. cordumotel.InitTracer in kernel.Run)
+	// has already installed. tracerEnabled still gates whether spans are
+	// emitted -- the new feature is opt-in via CORDUM_OTEL_ENDPOINT only.
+	evalTracerProvider trace.TracerProvider = noop.NewTracerProvider()
+	tracerEnabled      bool
 )
 
 func initTracing(ctx context.Context) error {
@@ -53,7 +54,7 @@ func initTracing(ctx context.Context) error {
 		tp := sdktrace.NewTracerProvider(
 			sdktrace.WithBatcher(exp),
 		)
-		otel.SetTracerProvider(tp)
+		evalTracerProvider = tp
 		tracerShutdown = tp.Shutdown
 		tracerEnabled = true
 		slog.Info("safetykernel: OTLP tracer enabled", "endpoint", endpoint)
@@ -65,6 +66,20 @@ func shutdownTracing(ctx context.Context) error {
 	return tracerShutdown(ctx)
 }
 
+// spanNameFor returns the Evaluate-prefixed span name for a known policy kind.
+// Avoids strings.Title (deprecated since Go 1.18) and avoids pulling in
+// golang.org/x/text/cases for what is a closed set of values.
+func spanNameFor(kind string) string {
+	switch kind {
+	case "input":
+		return "safetykernel.EvaluateInput"
+	case "output":
+		return "safetykernel.EvaluateOutput"
+	default:
+		return "safetykernel.Evaluate"
+	}
+}
+
 func evaluationSpan(
 	ctx context.Context,
 	kind string,
@@ -72,7 +87,7 @@ func evaluationSpan(
 	jobTopic string,
 	tenant string,
 ) (context.Context, func(decision string, ruleCount int)) {
-	// Gate on the local tracerEnabled flag rather than the global
+	// Gate on the local tracerEnabled flag rather than the local
 	// TracerProvider so deployments that enable a different OTEL surface
 	// (e.g. OTEL_ENABLED=true) don't accidentally start emitting
 	// safety-kernel evaluation spans. The new feature is opt-in via
@@ -81,10 +96,10 @@ func evaluationSpan(
 	if !tracerEnabled {
 		return ctx, func(string, int) {}
 	}
-	tr := otel.Tracer(tracerName)
+	tr := evalTracerProvider.Tracer(tracerName)
 	start := time.Now()
 
-	ctx, span := tr.Start(ctx, "safetykernel.Evaluate"+strings.Title(kind),
+	ctx, span := tr.Start(ctx, spanNameFor(kind),
 		trace.WithAttributes(
 			attribute.String("agent.id", agentID),
 			attribute.String("job.topic", jobTopic),
