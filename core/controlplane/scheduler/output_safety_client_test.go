@@ -13,6 +13,8 @@ import (
 	"github.com/cordum/cordum/core/infra/redisutil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -436,5 +438,128 @@ func TestEvaluateOutputRedactionFallsBackToQuarantineWhenStoreUnavailable(t *tes
 	}
 	if !strings.Contains(strings.ToLower(record.Reason), "sanitized output unavailable") {
 		t.Fatalf("expected fallback reason to explain missing sanitized output, got %q", record.Reason)
+	}
+}
+
+func TestOutputMetaTimeout_EnvOverride(t *testing.T) {
+	t.Setenv(outputMetaTimeoutEnv, "")
+	if got := outputMetaTimeout(); got != defaultOutputMetaTimeout {
+		t.Fatalf("empty env: got %s, want default %s", got, defaultOutputMetaTimeout)
+	}
+	t.Setenv(outputMetaTimeoutEnv, "250")
+	if got := outputMetaTimeout(); got != 250*time.Millisecond {
+		t.Fatalf("env 250: got %s, want 250ms", got)
+	}
+	t.Setenv(outputMetaTimeoutEnv, "not-a-number")
+	if got := outputMetaTimeout(); got != defaultOutputMetaTimeout {
+		t.Fatalf("invalid env: got %s, want default fallback", got)
+	}
+	t.Setenv(outputMetaTimeoutEnv, "-5")
+	if got := outputMetaTimeout(); got != defaultOutputMetaTimeout {
+		t.Fatalf("negative env: got %s, want default fallback", got)
+	}
+}
+
+func TestIsDeadlineExceeded(t *testing.T) {
+	if isDeadlineExceeded(nil) {
+		t.Fatalf("nil should not count as deadline")
+	}
+	if !isDeadlineExceeded(context.DeadlineExceeded) {
+		t.Fatalf("context.DeadlineExceeded must match")
+	}
+	wrapped := fmt.Errorf("wrap: %w", context.DeadlineExceeded)
+	if !isDeadlineExceeded(wrapped) {
+		t.Fatalf("wrapped context.DeadlineExceeded must match")
+	}
+	grpcStatus := status.Error(codes.DeadlineExceeded, "context deadline exceeded")
+	if !isDeadlineExceeded(grpcStatus) {
+		t.Fatalf("gRPC DeadlineExceeded status must match")
+	}
+	wrappedGRPC := fmt.Errorf("wrap: %w", grpcStatus)
+	if !isDeadlineExceeded(wrappedGRPC) {
+		t.Fatalf("wrapped gRPC DeadlineExceeded status must match (status.Code unwraps)")
+	}
+	if isDeadlineExceeded(status.Error(codes.Unavailable, "kernel down")) {
+		t.Fatalf("gRPC Unavailable must not match")
+	}
+	if isDeadlineExceeded(fmt.Errorf("unavailable")) {
+		t.Fatalf("plain non-deadline error must not match")
+	}
+}
+
+func TestCheckOutputMeta_RetriesOnceOnDeadlineExceeded(t *testing.T) {
+	var calls int
+	fake := &fakeOutputPolicyClient{
+		decide: func(req *pb.OutputCheckRequest) (*pb.OutputCheckResponse, error) {
+			calls++
+			if calls == 1 {
+				return nil, context.DeadlineExceeded
+			}
+			return &pb.OutputCheckResponse{Decision: pb.OutputDecision_OUTPUT_DECISION_ALLOW}, nil
+		},
+	}
+	mr := miniredis.RunT(t)
+	client, err := redisutil.NewClient("redis://" + mr.Addr())
+	if err != nil {
+		t.Fatalf("redisutil.NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	c := &OutputSafetyClient{
+		client:       fake,
+		resultClient: client,
+		cb: NewRedisCircuitBreaker(client, "cordum:cb:safety:output:test", CircuitBreakerOpts{
+			FailThreshold: outputCircuitFailBudget,
+			OpenDuration:  outputCircuitOpenFor,
+			HalfOpenMax:   outputCircuitHalfOpenMax,
+			CloseAfter:    outputCircuitCloseAfter,
+		}),
+	}
+	t.Setenv(outputMetaTimeoutEnv, "500")
+	res := &pb.JobResult{JobId: "job-retry"}
+	req := &pb.JobRequest{JobId: "job-retry", Topic: "job.test"}
+	record, err := c.CheckOutputMeta(res, req)
+	if err != nil {
+		t.Fatalf("expected retry to succeed on second attempt, got err=%v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected exactly 2 CheckOutput calls (retry), got %d", calls)
+	}
+	if record.Decision != OutputAllow {
+		t.Fatalf("expected OutputAllow after retry, got %s", record.Decision)
+	}
+}
+
+func TestCheckOutputMeta_DoesNotRetryNonDeadlineErrors(t *testing.T) {
+	var calls int
+	fake := &fakeOutputPolicyClient{
+		decide: func(req *pb.OutputCheckRequest) (*pb.OutputCheckResponse, error) {
+			calls++
+			return nil, fmt.Errorf("unavailable: kernel is down")
+		},
+	}
+	mr := miniredis.RunT(t)
+	client, err := redisutil.NewClient("redis://" + mr.Addr())
+	if err != nil {
+		t.Fatalf("redisutil.NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	c := &OutputSafetyClient{
+		client:       fake,
+		resultClient: client,
+		cb: NewRedisCircuitBreaker(client, "cordum:cb:safety:output:test2", CircuitBreakerOpts{
+			FailThreshold: outputCircuitFailBudget,
+			OpenDuration:  outputCircuitOpenFor,
+			HalfOpenMax:   outputCircuitHalfOpenMax,
+			CloseAfter:    outputCircuitCloseAfter,
+		}),
+	}
+	res := &pb.JobResult{JobId: "job-nonretry"}
+	req := &pb.JobRequest{JobId: "job-nonretry", Topic: "job.test"}
+	_, err = c.CheckOutputMeta(res, req)
+	if err == nil {
+		t.Fatalf("expected non-deadline error to propagate")
+	}
+	if calls != 1 {
+		t.Fatalf("expected exactly 1 CheckOutput call (no retry), got %d", calls)
 	}
 }

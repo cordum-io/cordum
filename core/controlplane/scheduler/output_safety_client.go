@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,10 +17,18 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
-	outputMetaTimeout         = 100 * time.Millisecond
+	// defaultOutputMetaTimeout is the baseline deadline for the sync meta
+	// output-policy check. 500ms is the empirical ceiling observed under
+	// 20-concurrent load on a dev host; production with a real
+	// safety-kernel pool should finish well under this. Operators can tune
+	// via CORDUM_OUTPUT_META_TIMEOUT_MS.
+	defaultOutputMetaTimeout  = 500 * time.Millisecond
+	outputMetaTimeoutEnv      = "CORDUM_OUTPUT_META_TIMEOUT_MS"
 	outputContentTimeout      = 30 * time.Second
 	outputContentMaxBytes     = 2 * 1024 * 1024
 	outputContentFetchRetries = 6
@@ -32,6 +41,21 @@ const (
 	outputRedactedTTL         = 24 * time.Hour
 	outputRedactionMarker     = "[REDACTED]"
 )
+
+// outputMetaTimeout resolves the effective meta-check deadline. The env
+// var is parsed lazily (per call, cheap) so tests can override without a
+// package-init reset.
+func outputMetaTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(outputMetaTimeoutEnv))
+	if raw == "" {
+		return defaultOutputMetaTimeout
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil || ms <= 0 {
+		return defaultOutputMetaTimeout
+	}
+	return time.Duration(ms) * time.Millisecond
+}
 
 // OutputSafetyClient implements OutputSafetyChecker over OutputPolicyService gRPC.
 type OutputSafetyClient struct {
@@ -107,15 +131,41 @@ func (c *OutputSafetyClient) Close() error {
 	return closeErr
 }
 
-// CheckOutputMeta executes a fast metadata-focused output check.
+// CheckOutputMeta executes a fast metadata-focused output check. Retries
+// exactly once on DeadlineExceeded — load-induced safety-kernel latency
+// is transient; giving the second attempt a fresh deadline avoids a
+// false fail-open on bursty submit traffic. Other errors (circuit open,
+// unavailable, etc.) are not retried.
 func (c *OutputSafetyClient) CheckOutputMeta(res *pb.JobResult, req *pb.JobRequest) (OutputSafetyRecord, error) {
 	evalReq, err := outputEvaluateRequestFromJob(res, req, false)
 	if err != nil {
 		return OutputSafetyRecord{}, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), outputMetaTimeout)
-	defer cancel()
-	return c.EvaluateOutput(ctx, evalReq)
+	timeout := outputMetaTimeout()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	record, err := c.EvaluateOutput(ctx, evalReq)
+	cancel()
+	if err == nil || !isDeadlineExceeded(err) {
+		return record, err
+	}
+	ctx2, cancel2 := context.WithTimeout(context.Background(), timeout)
+	defer cancel2()
+	return c.EvaluateOutput(ctx2, evalReq)
+}
+
+// isDeadlineExceeded reports whether err is (or wraps) a context deadline
+// or a gRPC DeadlineExceeded status. Both surface the same "took too
+// long" signal; retry policy treats them identically. Uses status.Code
+// for the gRPC side so unwrapping is handled by the library (robust to
+// wrapped errors and to message-format changes across grpc-go versions).
+func isDeadlineExceeded(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return status.Code(err) == codes.DeadlineExceeded
 }
 
 // CheckOutputContent executes a deeper output content check.
