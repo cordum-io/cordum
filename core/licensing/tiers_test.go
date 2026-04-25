@@ -6,49 +6,52 @@ func TestDefaultEntitlementsByTier(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		plan         Plan
-		maxWorkers   int64
-		rps          int64
-		auditDays    int64
-		approvalMode string
-		velocity     bool
-		agentID      bool
+		name            string
+		plan            Plan
+		maxWorkers      int64
+		rps             int64
+		auditDays       int64
+		approvalMode    string
+		velocity        bool
+		agentID         bool
+		llmChatAssistant bool
 	}{
 		{
-			name:         "community",
-			plan:         PlanCommunity,
-			maxWorkers:   3,
-			rps:          500,
-			auditDays:    7,
-			approvalMode: string(ApprovalModeSingle),
-			velocity:     false,
-			agentID:      false,
+			name:             "community",
+			plan:             PlanCommunity,
+			maxWorkers:       3,
+			rps:              500,
+			auditDays:        7,
+			approvalMode:     string(ApprovalModeSingle),
+			velocity:         false,
+			agentID:          false,
+			llmChatAssistant: false,
 		},
 		{
-			name:         "team",
-			plan:         PlanTeam,
-			maxWorkers:   25,
-			rps:          2000,
-			auditDays:    90,
-			approvalMode: string(ApprovalModeMulti),
-			velocity:     false,
-			agentID:      false,
+			name:             "team",
+			plan:             PlanTeam,
+			maxWorkers:       25,
+			rps:              2000,
+			auditDays:        90,
+			approvalMode:     string(ApprovalModeMulti),
+			velocity:         false,
+			agentID:          false,
+			llmChatAssistant: false,
 		},
 		{
-			name:         "enterprise",
-			plan:         PlanEnterprise,
-			maxWorkers:   Unlimited,
-			rps:          10000,
-			auditDays:    Unlimited,
-			approvalMode: string(ApprovalModeCustom),
-			velocity:     true,
-			agentID:      true,
+			name:             "enterprise",
+			plan:             PlanEnterprise,
+			maxWorkers:       Unlimited,
+			rps:              10000,
+			auditDays:        Unlimited,
+			approvalMode:     string(ApprovalModeCustom),
+			velocity:         true,
+			agentID:          true,
+			llmChatAssistant: true,
 		},
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -70,6 +73,12 @@ func TestDefaultEntitlementsByTier(t *testing.T) {
 			}
 			if got := readNamedBoolField(entitlements, "AgentIdentity"); got != tc.agentID {
 				t.Fatalf("AgentIdentity = %v, want %v", got, tc.agentID)
+			}
+			if got := readNamedBoolField(entitlements, "LLMChatAssistant"); got != tc.llmChatAssistant {
+				t.Fatalf("LLMChatAssistant = %v, want %v", got, tc.llmChatAssistant)
+			}
+			if got := entitlements.FeatureEnabled("llm_chat_assistant"); got != tc.llmChatAssistant {
+				t.Fatalf("FeatureEnabled(llm_chat_assistant) = %v, want %v", got, tc.llmChatAssistant)
 			}
 		})
 	}

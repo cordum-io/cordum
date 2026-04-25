@@ -161,19 +161,11 @@ describe("PolicyOverviewPage tab rendering", () => {
     expect(getActiveLabels()).toContain("Overview");
   });
 
-  it("mounts the ChainIntegrityWidget inside the Overview tab content", async () => {
+  it("does NOT mount the ChainIntegrityWidget inside the simplified Overview tab content (moved to /govern/verification per task-14d012e6)", async () => {
     await renderPage("overview");
-    const widget = container.querySelector(
-      "[data-testid=chain-integrity-widget]",
-    );
-    expect(widget).not.toBeNull();
-    // With the default (data: undefined, not loading, not error) mock
-    // the widget lands in its not_checked state.
-    expect(widget?.getAttribute("data-state")).toBe("not_checked");
-  });
-
-  it("does NOT mount the GapAlertBanner when verify data is absent or ok", async () => {
-    await renderPage("overview");
+    expect(
+      container.querySelector("[data-testid=chain-integrity-widget]"),
+    ).toBeNull();
     expect(container.querySelector("[data-testid=gap-alert-banner]")).toBeNull();
   });
 });

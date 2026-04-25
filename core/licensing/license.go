@@ -84,6 +84,7 @@ type Entitlements struct {
 	VelocityRules      bool             `json:"velocity_rules,omitempty"`
 	BreakGlassAdmin    bool             `json:"break_glass_admin,omitempty"`
 	AgentIdentity      bool             `json:"agent_identity,omitempty"`
+	LLMChatAssistant   bool             `json:"llm_chat_assistant,omitempty"`
 	Features           map[string]bool  `json:"features,omitempty"`
 	Limits             map[string]int64 `json:"limits,omitempty"`
 }
@@ -135,6 +136,8 @@ func (e *Entitlements) FeatureEnabled(name string) bool {
 		return e.BreakGlassAdmin
 	case "agent_identity":
 		return e.AgentIdentity
+	case "llm_chat_assistant":
+		return e.LLMChatAssistant
 	default:
 		if e.Features == nil {
 			return false

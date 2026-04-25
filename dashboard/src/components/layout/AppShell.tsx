@@ -39,6 +39,7 @@ import {
   ExternalLink,
   Shield,
   ShieldAlert,
+  ShieldCheck,
   KeyRound,
   Package,
   Database,
@@ -92,6 +93,7 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
         ? [{ path: "/delegations", label: "Delegations", icon: KeyRound }]
         : []),
       { path: "/govern/quarantine", label: "Quarantine", icon: ShieldAlert, badge: "quarantine" },
+      { path: "/govern/verification", label: "Verification", icon: ShieldCheck },
     ],
   },
   {

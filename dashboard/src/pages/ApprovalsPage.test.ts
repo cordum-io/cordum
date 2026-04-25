@@ -1,4 +1,4 @@
-import React, { act } from "react";
+import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Approval } from "@/api/types";
 import { FOCUSABLE_SELECTOR } from "@/hooks/useDialogA11y";
