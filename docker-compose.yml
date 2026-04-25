@@ -259,6 +259,11 @@ services:
       - "CORDUM_API_KEY=${CORDUM_API_KEY:?error: CORDUM_API_KEY is not set}"
       - CORDUM_API_KEY_SOURCE=${CORDUM_API_KEY_SOURCE:-compose}
       - CORDUM_API_KEY_SOURCE_FILE=${CORDUM_API_KEY_SOURCE_FILE:-.env}
+      # Wired so the gateway's startup-side guard can refuse to boot in
+      # production when this flag is on (the dashboard would otherwise
+      # serve the API key in plaintext at /config.json). Default `false`
+      # — set to `true` only in trusted dev environments.
+      - CORDUM_DASHBOARD_EMBED_API_KEY=${CORDUM_DASHBOARD_EMBED_API_KEY:-false}
       - TENANT_ID=default
       - CORDUM_LICENSE_TOKEN=${CORDUM_LICENSE_TOKEN:-}
       - CORDUM_LICENSE_PUBLIC_KEY=${CORDUM_LICENSE_PUBLIC_KEY:-}
