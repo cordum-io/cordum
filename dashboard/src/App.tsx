@@ -14,13 +14,12 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastBridge } from "./components/ToastBridge";
 import { FEATURE_FLAGS } from "./config/flags";
 
-const queryClient = new QueryClient({
+export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 10_000,
       retry: 2,
       refetchOnWindowFocus: true,
-      refetchIntervalInBackground: true,
     },
   },
 });
