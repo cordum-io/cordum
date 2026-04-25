@@ -534,7 +534,7 @@ function B2BContext({ ctx }: { ctx: Record<string, unknown> }) {
 }
 
 function GenericContext({ ctx }: { ctx: Record<string, unknown> }) {
-  const skip = new Set(["type", "session_id", "consumer_token", "untrusted_prompt_text"]);
+  const skip = new Set(["type", "session_id", "run_id", "consumer_token", "untrusted_prompt_text"]);
   const priority = ["instruction", "prompt", "query", "command", "trigger", "message"];
   const entries = Object.entries(ctx).filter(([k]) => !skip.has(k));
   if (entries.length === 0) return null;

@@ -355,6 +355,27 @@ describe("JobDetailPage 4-surface agreement (task-dc086833)", () => {
     }
   });
 
+  it("does not double-print ctx.run_id in GenericContext (task-125694ec)", () => {
+    queryState.current.data = makeJob({
+      workflowRunId: "wfr-banner",
+      workflowId: "wf-1",
+      context: { run_id: "wfr-banner", foo: "bar-visible" },
+    });
+
+    const { container, cleanup } = renderPage();
+    try {
+      // GenericContext title-cases keys: "foo" → "Foo". A mounted entry shows
+      // both the formatted key and its value. run_id should be filtered out
+      // (task-125694ec); the foo→bar-visible entry should still mount.
+      const lowered = (container.textContent ?? "").toLowerCase();
+      expect(lowered).not.toContain("run_id");
+      expect(container.textContent).toContain("Foo");
+      expect(container.textContent).toContain("bar-visible");
+    } finally {
+      cleanup();
+    }
+  });
+
   it("renders Run banner + MetadataBar Run row + suppresses empty-context card for a labels.run_id-only job", () => {
     queryState.current.data = makeJob({
       workflowRunId: undefined,
