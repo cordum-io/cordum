@@ -321,3 +321,64 @@ describe("JobDetailPage governance tab integration", () => {
     }
   });
 });
+
+describe("JobDetailPage 4-surface agreement (task-dc086833)", () => {
+  it("renders Run banner + MetadataBar Run row + suppresses empty-context card for a metadata.run_id-only job", () => {
+    queryState.current.data = makeJob({
+      workflowRunId: undefined,
+      workflowId: undefined,
+      metadata: { run_id: "wfr-meta-only" },
+      labels: {},
+      context: {},
+    });
+
+    const { container, cleanup } = renderPage();
+    try {
+      // ParentContextBanner: "Part of Workflow Run" header (Run card, not Session fallback)
+      expect(container.textContent).toContain("Part of Workflow Run");
+      expect(container.textContent).not.toContain("Part of Copilot Session");
+      // ParentContextBanner Run line: "Run: wfr-meta-onl..." (slice(0,12) of "wfr-meta-only" is "wfr-meta-onl")
+      expect(container.textContent).toContain("Run: wfr-meta-onl");
+
+      // MetadataBar Run row PRESENT (the bug-fix surface): label "Run" with the runId value displayed
+      const metaLabels = Array.from(
+        container.querySelectorAll("span.text-\\[10px\\]"),
+      ).map((el) => el.textContent?.trim());
+      expect(metaLabels).toContain("Run");
+      // The Run value is rendered as plain text (workflowId absent, so the row is non-clickable)
+      expect(container.textContent).toContain("wfr-meta-only");
+
+      // Empty-context card SUPPRESSED (the inverse-surface bug-fix)
+      expect(container.textContent).not.toContain("No extended context available for this job");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders Run banner + MetadataBar Run row + suppresses empty-context card for a labels.run_id-only job", () => {
+    queryState.current.data = makeJob({
+      workflowRunId: undefined,
+      workflowId: undefined,
+      metadata: {},
+      labels: { run_id: "wfr-label-only" },
+      context: {},
+    });
+
+    const { container, cleanup } = renderPage();
+    try {
+      expect(container.textContent).toContain("Part of Workflow Run");
+      expect(container.textContent).not.toContain("Part of Copilot Session");
+      expect(container.textContent).toContain("Run: wfr-label-on");
+
+      const metaLabels = Array.from(
+        container.querySelectorAll("span.text-\\[10px\\]"),
+      ).map((el) => el.textContent?.trim());
+      expect(metaLabels).toContain("Run");
+      expect(container.textContent).toContain("wfr-label-only");
+
+      expect(container.textContent).not.toContain("No extended context available for this job");
+    } finally {
+      cleanup();
+    }
+  });
+});

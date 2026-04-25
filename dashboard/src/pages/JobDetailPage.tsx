@@ -27,6 +27,7 @@ import {
   Store, Package, Users, Building2, CreditCard, ChevronRight, Workflow, MessageSquare, ArrowRight,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatDuration } from "@/lib/utils";
+import { getJobParentRefs } from "@/lib/jobParentRefs";
 import { useElapsedTimer } from "@/hooks/useElapsedTimer";
 import { useState, useMemo, useCallback } from "react";
 import { toast } from "sonner";
@@ -282,10 +283,9 @@ function HeroBanner({ job, elapsed, isActive }: { job: Job; elapsed: string; isA
   );
 }
 
-function ParentContextBanner({ job }: { job: Job }) {
+export function ParentContextBanner({ job }: { job: Job }) {
   const navigate = useNavigate();
-  const runId = job.workflowRunId || (job.metadata?.run_id as string) || (job.labels?.run_id as string);
-  const sessionId = (job.metadata?.session_id as string) || (job.labels?.session_id as string);
+  const { runId, sessionId, workflowId } = getJobParentRefs(job);
   const untrustedPrompt = (job.metadata?.untrusted_prompt_text as string) || (job.labels?.untrusted_prompt_text as string);
 
   if (!runId && !sessionId) return null;
@@ -307,7 +307,7 @@ function ParentContextBanner({ job }: { job: Job }) {
             </p>
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-foreground truncate">
-                {runId ? `Run: ${runId.slice(0, 12)}...` : `Session: ${sessionId.slice(0, 12)}...`}
+                {runId ? `Run: ${runId.slice(0, 12)}...` : `Session: ${sessionId?.slice(0, 12) ?? ""}...`}
               </span>
               {untrustedPrompt && (
                 <span className="text-xs text-muted-foreground border-l border-border pl-2 italic truncate max-w-md hidden sm:inline">
@@ -320,7 +320,14 @@ function ParentContextBanner({ job }: { job: Job }) {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => navigate(runId ? `/workflows/${job.workflowId || "all"}/runs/${runId}` : `/copilot/sessions/${sessionId}`)}
+          disabled={!(runId && workflowId) && !sessionId}
+          onClick={() => {
+            if (runId && workflowId) {
+              navigate(`/workflows/${workflowId}/runs/${runId}`);
+            } else if (sessionId) {
+              navigate(`/copilot/sessions/${sessionId}`);
+            }
+          }}
           className="shrink-0"
         >
           View Parent <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
@@ -336,7 +343,8 @@ function ParentContextBanner({ job }: { job: Job }) {
 
 function SmartContext({ job }: { job: Job }) {
   const ctx = (job.context ?? {}) as Record<string, unknown>;
-  
+  const { runId, sessionId } = getJobParentRefs(job);
+
   const merchant = ctx.merchant as Record<string, unknown> | undefined;
   const total = ctx.total as number | undefined;
   const isPayment = !!(merchant && total != null);
@@ -347,12 +355,12 @@ function SmartContext({ job }: { job: Job }) {
   return (
     <div className="space-y-6">
       <ParentContextBanner job={job} />
-      
+
       {isPayment && <PaymentContext ctx={ctx} />}
       {isB2B && <B2BContext ctx={ctx} />}
       {Object.keys(ctx).length > 0 && !isPayment && !isB2B && <GenericContext ctx={ctx} />}
-      
-      {Object.keys(ctx).length === 0 && !job.workflowRunId && !(job.metadata?.session_id || job.labels?.session_id) && (
+
+      {Object.keys(ctx).length === 0 && !runId && !sessionId && (
         <div className="instrument-card p-8 flex flex-col items-center justify-center text-center opacity-50">
           <Zap className="w-8 h-8 mb-2 text-muted-foreground" />
           <p className="text-sm text-muted-foreground italic">No extended context available for this job.</p>
@@ -925,12 +933,12 @@ function JobTerminal({ job }: { job: Job }) {
 // ---------------------------------------------------------------------------
 
 function MetadataBar({ job, navigate }: { job: Job; navigate: (path: string) => void }) {
-  const sessionId = (job.metadata?.session_id as string) || (job.labels?.session_id as string);
+  const { runId, sessionId, workflowId } = getJobParentRefs(job);
   const fields: [string, string | undefined, (() => void) | undefined][] = [
     ["Topic", job.topic, undefined],
     ["Tenant", job.tenant, undefined],
-    ["Workflow", job.workflowId, job.workflowId ? () => navigate(`/workflows/${job.workflowId}/studio`) : undefined],
-    ["Run", job.workflowRunId, job.workflowId && job.workflowRunId ? () => navigate(`/workflows/${job.workflowId}/runs/${job.workflowRunId}`) : undefined],
+    ["Workflow", workflowId, workflowId ? () => navigate(`/workflows/${workflowId}/studio`) : undefined],
+    ["Run", runId, workflowId && runId ? () => navigate(`/workflows/${workflowId}/runs/${runId}`) : undefined],
     ["Session", sessionId, sessionId ? () => navigate(`/copilot/sessions/${sessionId}`) : undefined],
     ["Trace", job.traceId, undefined],
     ["Attempts", job.attempts ? String(job.attempts) : undefined, undefined],

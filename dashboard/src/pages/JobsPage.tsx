@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { cn, formatRelativeTime, clickableRowProps } from "@/lib/utils";
 import { friendlyError } from "@/lib/friendlyError";
+import { getJobParentRefs } from "@/lib/jobParentRefs";
 import { toast } from "sonner";
 import { useSubmitJob } from "@/hooks/useJobs";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
@@ -49,16 +50,15 @@ import { JobFiltersBar, type JobFilterValues } from "@/components/jobs/JobFilter
 
 export function OriginPill({ job }: { job: Job }) {
   const navigate = useNavigate();
-  const runId = job.workflowRunId || (job.metadata?.run_id as string) || (job.labels?.run_id as string);
-  const sessionId = (job.metadata?.session_id as string) || (job.labels?.session_id as string);
+  const { runId, sessionId, workflowId } = getJobParentRefs(job);
 
-  if (runId && job.workflowId) {
+  if (runId && workflowId) {
     return (
       <button
         type="button"
         onClick={(e) => {
           e.stopPropagation();
-          navigate(`/workflows/${job.workflowId}/runs/${runId}`);
+          navigate(`/workflows/${workflowId}/runs/${runId}`);
         }}
         className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20 transition"
       >
