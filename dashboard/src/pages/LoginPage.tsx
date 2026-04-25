@@ -61,7 +61,6 @@ export function parseLoginUser(value: unknown): User | null {
     typeof candidate.id !== "string" ||
     typeof candidate.username !== "string" ||
     typeof candidate.email !== "string" ||
-    typeof candidate.display_name !== "string" ||
     typeof candidate.tenant !== "string" ||
     !Array.isArray(candidate.roles) ||
     !candidate.roles.every((role) => typeof role === "string")
@@ -69,19 +68,39 @@ export function parseLoginUser(value: unknown): User | null {
     return null;
   }
 
+  // display_name is a UI affordance, not a security field — fall back to
+  // username when the backend omits it (the gateway's /api/v1/auth/login
+  // response does not currently include display_name).
+  const displayName =
+    typeof candidate.display_name === "string" && candidate.display_name
+      ? candidate.display_name
+      : candidate.username;
+
+  // Accept both camelCase (legacy/synthetic) and snake_case (gateway wire
+  // format) for the optional timestamp fields. Same tolerance pattern
+  // buildSamlFragmentUser uses to cope with cross-IdP variations.
+  const createdAt =
+    typeof candidate.createdAt === "string"
+      ? candidate.createdAt
+      : typeof candidate.created_at === "string"
+        ? candidate.created_at
+        : undefined;
+  const lastLogin =
+    typeof candidate.lastLogin === "string"
+      ? candidate.lastLogin
+      : typeof candidate.last_login_at === "string"
+        ? candidate.last_login_at
+        : undefined;
+
   return {
     id: candidate.id,
     username: candidate.username,
     email: candidate.email,
-    display_name: candidate.display_name,
+    display_name: displayName,
     roles: candidate.roles,
     tenant: candidate.tenant,
-    ...(typeof candidate.createdAt === "string"
-      ? { createdAt: candidate.createdAt }
-      : {}),
-    ...(typeof candidate.lastLogin === "string"
-      ? { lastLogin: candidate.lastLogin }
-      : {}),
+    ...(createdAt !== undefined ? { createdAt } : {}),
+    ...(lastLogin !== undefined ? { lastLogin } : {}),
   };
 }
 

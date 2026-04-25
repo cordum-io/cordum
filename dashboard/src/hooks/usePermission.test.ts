@@ -43,7 +43,25 @@ describe("usePermission", () => {
     authConfigState.data = undefined;
   });
 
-  it("allows all when auth is not configured", () => {
+  it("denies while authConfig is still loading (fail closed, defense in depth)", () => {
+    // authConfigState.data is undefined → loading or fetch error.
+    // Hide admin affordances rather than briefly painting them and retracting.
+    const hook = renderWithQueryClient(() => usePermission(["admin"]));
+
+    expect(hook.result.current).toEqual({
+      allowed: false,
+      userRoles: ["viewer"],
+    });
+    hook.unmount();
+  });
+
+  it("allows all when authConfig is loaded with every mode disabled (no-auth deployment)", () => {
+    authConfigState.data = {
+      password_enabled: false,
+      saml_enabled: false,
+      default_tenant: "default",
+    };
+
     const hook = renderWithQueryClient(() => usePermission(["admin"]));
 
     expect(hook.result.current).toEqual({ allowed: true, userRoles: [] });

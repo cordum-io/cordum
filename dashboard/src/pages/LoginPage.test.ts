@@ -175,6 +175,61 @@ describe("parseLoginUser", () => {
       }),
     ).toBeNull();
   });
+
+  // Regression: gateway POST /api/v1/auth/login returns snake_case timestamps
+  // and omits display_name. Before this fixture pinned the real shape, the
+  // parser rejected every admin login because display_name was strictly
+  // required, and the LoginPage flow fell back to buildPasswordFallbackUser
+  // which hard-codes ["viewer"] — every admin gate then 403'd the admin.
+  const realGatewayResponse = {
+    id: "c62f33f1-ab02-40bd-97cb-b6fa00051f69",
+    username: "admin",
+    email: "admin@cordum.local",
+    tenant: "default",
+    roles: ["admin"],
+    source: "user",
+    created_at: "2026-04-24T07:38:29Z",
+    updated_at: "2026-04-24T07:38:29Z",
+    last_login_at: "2026-04-25T17:00:26Z",
+  };
+
+  it("parses the real gateway login response (no display_name, snake_case timestamps)", () => {
+    const parsed = parseLoginUser(realGatewayResponse);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.roles).toEqual(["admin"]);
+    expect(parsed?.id).toBe("c62f33f1-ab02-40bd-97cb-b6fa00051f69");
+    expect(parsed?.tenant).toBe("default");
+  });
+
+  it("falls back display_name to username when the backend omits it", () => {
+    const parsed = parseLoginUser(realGatewayResponse);
+    expect(parsed?.display_name).toBe("admin");
+  });
+
+  it("accepts snake_case created_at / last_login_at as createdAt / lastLogin", () => {
+    const parsed = parseLoginUser(realGatewayResponse);
+    expect(parsed?.createdAt).toBe("2026-04-24T07:38:29Z");
+    expect(parsed?.lastLogin).toBe("2026-04-25T17:00:26Z");
+  });
+
+  it("still prefers camelCase createdAt / lastLogin when both are present", () => {
+    const parsed = parseLoginUser({
+      ...realGatewayResponse,
+      createdAt: "2026-01-01T00:00:00Z",
+      lastLogin: "2026-01-02T00:00:00Z",
+    });
+    expect(parsed?.createdAt).toBe("2026-01-01T00:00:00Z");
+    expect(parsed?.lastLogin).toBe("2026-01-02T00:00:00Z");
+  });
+
+  it("still rejects payloads with non-string roles", () => {
+    expect(
+      parseLoginUser({
+        ...realGatewayResponse,
+        roles: ["admin", 42],
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("SAML redirect helpers", () => {
