@@ -43,7 +43,6 @@ export function Tabs({
           key={tab.id}
           role="tab"
           aria-selected={activeTab === tab.id}
-          aria-pressed={activeTab === tab.id}
           aria-label={tab.label}
           tabIndex={activeTab === tab.id ? 0 : -1}
           disabled={tab.disabled}

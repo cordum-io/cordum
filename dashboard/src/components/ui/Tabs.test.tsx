@@ -73,7 +73,7 @@ describe("Tabs", () => {
       );
     });
 
-    const activeTab = container.querySelector('[role="tab"][aria-pressed="true"]');
+    const activeTab = container.querySelector('[role="tab"][aria-selected="true"]');
     expect(activeTab?.textContent).toContain("Users");
     expect(container.textContent).toContain("12");
     expect(container.textContent).toContain("4");
