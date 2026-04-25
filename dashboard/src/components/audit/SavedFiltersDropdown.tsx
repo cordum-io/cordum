@@ -106,8 +106,15 @@ export function SavedFiltersDropdown({
     if (!name.trim()) return;
     const serialized = filtersToSerialized(currentFilters);
 
-    if (activeFilterId && !filters.find((f) => f.id === activeFilterId)?.builtIn) {
-      updateSavedFilter(activeFilterId, { name: name.trim(), filters: serialized });
+    // Update only when the active filter is a real, user-owned saved filter.
+    // If the lookup is undefined (filter list still loading, or active id is
+    // a built-in we couldn't resolve), fall through to a save instead of
+    // silently no-op'ing via updateSavedFilter on a missing id.
+    const activeUserFilter = activeFilterId
+      ? filters.find((f) => f.id === activeFilterId)
+      : null;
+    if (activeUserFilter && !activeUserFilter.builtIn) {
+      updateSavedFilter(activeFilterId!, { name: name.trim(), filters: serialized });
     } else {
       saveSavedFilter({
         id: generateFilterId(),
@@ -135,6 +142,7 @@ export function SavedFiltersDropdown({
           {activeFilter.name}
           <button
             type="button"
+            aria-label={`Clear active filter ${activeFilter.name}`}
             className="ml-1 rounded p-0.5 hover:bg-accent/20 transition"
             onClick={onClearActive}
           >
@@ -210,24 +218,29 @@ export function SavedFiltersDropdown({
                 Your filters
               </div>
               {userFilters.map((f) => (
-                <button
+                <div
                   key={f.id}
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-surface2/60"
-                  onClick={() => handleLoad(f)}
+                  className="flex w-full items-center gap-2 px-3 py-2 transition hover:bg-surface2/60"
                 >
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium text-ink">{f.name}</p>
-                    <p className="truncate text-xs text-muted-foreground">{summarizeFilters(f.filters)}</p>
-                  </div>
                   <button
                     type="button"
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    onClick={() => handleLoad(f)}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium text-ink">{f.name}</p>
+                      <p className="truncate text-xs text-muted-foreground">{summarizeFilters(f.filters)}</p>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Delete saved filter ${f.name}`}
                     className="shrink-0 rounded p-1 text-muted-foreground hover:text-danger transition"
                     onClick={(e) => handleDelete(f.id, e)}
                   >
                     <X className="h-3 w-3" />
                   </button>
-                </button>
+                </div>
               ))}
             </>
           )}

@@ -63,13 +63,18 @@ export function SimulatorContextForm({
     prefill?.labels ? labelsToString(prefill.labels) : "",
   );
 
-  // Apply prefill changes (e.g. from deep-link navigation)
+  // Apply prefill changes (e.g. from deep-link navigation). Always replace
+  // (not just on truthy) so a prefill that explicitly clears a field — and
+  // labelsRaw, which the previous implementation skipped entirely — both
+  // sync to the form state.
   useEffect(() => {
-    if (prefill?.topic) setTopic(prefill.topic);
-    if (prefill?.tenant) setTenant(prefill.tenant);
-    if (prefill?.workflowId) setWorkflowId(prefill.workflowId);
-    if (prefill?.capabilities) setCapabilitiesRaw(prefill.capabilities.join(", "));
-    if (prefill?.riskTags) setRiskTagsRaw(prefill.riskTags.join(", "));
+    if (!prefill) return;
+    setTopic(prefill.topic ?? "");
+    setTenant(prefill.tenant ?? "");
+    setWorkflowId(prefill.workflowId ?? "");
+    setCapabilitiesRaw(prefill.capabilities?.join(", ") ?? "");
+    setRiskTagsRaw(prefill.riskTags?.join(", ") ?? "");
+    setLabelsRaw(prefill.labels ? labelsToString(prefill.labels) : "");
   }, [prefill]);
 
   const handleSubmit = useCallback(

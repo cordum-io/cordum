@@ -153,12 +153,21 @@ export function RulesTable({ onSelectRule }: { onSelectRule?: (rule: PolicyRule)
                 </tr>
               )}
 
-              {!isLoading &&
+              {!isLoading && !isError &&
                 sorted.map((rule: PolicyRule) => (
                   <tr
                     key={rule.id}
-                    className="cursor-pointer transition-colors hover:bg-surface2/60"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open rule ${rule.id.slice(0, 8)}`}
+                    className="cursor-pointer transition-colors hover:bg-surface2/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cordum/40"
                     onClick={() => handleRowClick(rule)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        handleRowClick(rule);
+                      }
+                    }}
                   >
                     <td className="px-4 py-3 font-mono text-xs text-ink">
                       {rule.id.slice(0, 8)}

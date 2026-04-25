@@ -191,7 +191,7 @@ function TimelineTooltip({ active, payload }: { active?: boolean; payload?: Arra
         {e.message || `${e.action} on ${e.resourceType}`}
       </p>
       <p className="text-muted-foreground font-mono">
-        {new Date(e.timestamp).toISOString().replace("T", " ").replace("Z", "")}
+        {new Date(e.timestamp).toISOString().replace("T", " ").replace("Z", " UTC")}
       </p>
       <p className="text-muted-foreground">Actor: {e.actor}</p>
     </div>

@@ -394,6 +394,8 @@ export function AppShell({ children }: AppShellProps) {
                       key={item.path}
                       to={item.path}
                       end={item.end}
+                      aria-label={collapsed ? item.label : undefined}
+                      title={collapsed ? item.label : undefined}
                       className={({ isActive }) =>
                         cn(
                           "flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-150 group relative",
@@ -445,6 +447,8 @@ export function AppShell({ children }: AppShellProps) {
           {/* System status */}
           <NavLink
             to="/settings"
+            aria-label={collapsed ? "Settings" : undefined}
+            title={collapsed ? "Settings" : undefined}
             className={cn(
               "flex items-center gap-3 px-3 py-2 rounded-xl text-sm text-muted-foreground hover:text-foreground hover:bg-surface-2 transition-colors",
               collapsed && "justify-center px-0",
@@ -457,6 +461,8 @@ export function AppShell({ children }: AppShellProps) {
             href="https://cordum.io/docs"
             target="_blank"
             rel="noopener noreferrer"
+            aria-label={collapsed ? "Docs (opens in new tab)" : undefined}
+            title={collapsed ? "Docs" : undefined}
             className={cn(
               "flex items-center gap-3 px-3 py-2 rounded-xl text-sm text-muted-foreground hover:text-foreground hover:bg-surface-2 transition-colors",
               collapsed && "justify-center px-0",

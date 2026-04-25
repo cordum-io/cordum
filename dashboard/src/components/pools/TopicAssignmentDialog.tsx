@@ -20,6 +20,10 @@ export function TopicAssignmentDialog({ open, onClose, onAddTopic, onRemoveTopic
   const [error, setError] = useState("");
 
   const handleAdd = () => {
+    // Guard against double-fire: the Enter-key path can call this even
+    // while the Add button is disabled mid-add (`isAdding`), which can
+    // submit the same topic twice.
+    if (isAdding) return;
     const trimmed = newTopic.trim();
     if (!trimmed) return;
     if (!TOPIC_RE.test(trimmed)) {

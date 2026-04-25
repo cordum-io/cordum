@@ -76,7 +76,7 @@ export function OutputRulesList({
             <AnimatePresence mode="popLayout">
               {rules.map((rule, index) => (
                 <motion.div
-                  key={`${rule.id}-${index}`}
+                  key={rule.id}
                   variants={{
                     hidden: { opacity: 0, y: 10 },
                     visible: { opacity: 1, y: 0 },

@@ -4,6 +4,7 @@
 import { useMemo } from "react";
 import { usePolicyBundle } from "@/hooks/usePolicies";
 import { SkeletonCard } from "@/components/ui/Skeleton";
+import { cn } from "@/lib/utils";
 
 interface BundleDiffViewProps {
   bundleId: string;
@@ -82,14 +83,17 @@ export function BundleDiffView({ bundleId, draftYaml }: BundleDiffViewProps) {
         draft vs published
       </p>
       <div className="instrument-card overflow-auto max-h-[520px] p-0">
+        {/* `<pre>` only allows phrasing-content children, so each diff row is
+            a `<span style="display:block">` instead of a `<div>` to keep the
+            HTML valid. */}
         <pre className="p-3 text-xs font-mono leading-relaxed">
           {diffLines.map((line, i) => (
-            <div key={i} className={LINE_STYLES[line.type]}>
+            <span key={i} className={cn("block", LINE_STYLES[line.type])}>
               <span className="inline-block w-5 text-right mr-2 text-muted-foreground/40 select-none">
                 {LINE_PREFIX[line.type]}
               </span>
               {line.content}
-            </div>
+            </span>
           ))}
         </pre>
       </div>

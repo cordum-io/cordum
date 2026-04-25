@@ -302,6 +302,14 @@ export function JobFiltersBar({
   );
 
   const clearAll = useCallback(() => {
+    // Cancel any pending debounce callbacks before resetting; otherwise a
+    // user who was mid-typing can have a stale `setFilters({ topic: "..." })`
+    // fire after Clear-all and silently re-populate the URL.
+    clearTimeout(topicTimer.current);
+    clearTimeout(poolTimer.current);
+    clearTimeout(tenantTimer.current);
+    clearTimeout(sessionIdTimer.current);
+    clearTimeout(runIdTimer.current);
     setTopicLocal("");
     setPoolLocal("");
     setTenantLocal("");

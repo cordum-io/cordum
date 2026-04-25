@@ -113,7 +113,14 @@ export function AuditIntegrityPanel({ events }: { events: AuditEntry[] }) {
     setVerifying(false);
   }, [events, oldestEvent, newestEvent]);
 
-  const passed = result && result.hashMismatches === 0 && result.orderViolations === 0;
+  // A "passed" verdict requires at least one event to have actually been
+  // hash-verified. If every event was skipped (no parseable hash), report
+  // inconclusive rather than a false-positive pass.
+  const passed =
+    result &&
+    result.hashMatches > 0 &&
+    result.hashMismatches === 0 &&
+    result.orderViolations === 0;
 
   return (
     <div className="mt-2">
