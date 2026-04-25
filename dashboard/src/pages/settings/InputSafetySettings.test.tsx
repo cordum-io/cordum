@@ -217,5 +217,5 @@ describe("InputSafetySettings page", () => {
     });
 
     view.unmount();
-  });
+  }, 15000); // CI flake guard: outer 5s test default was racing the inner 5000ms waitFor on slow runners.
 });
