@@ -168,6 +168,9 @@ describe("useDelegations", () => {
     queryClient.setQueryData(allKey, seeded);
     queryClient.setQueryData(agentKey, seeded);
 
+    const setQueryDataSpy = vi.spyOn(queryClient, "setQueryData");
+    setQueryDataSpy.mockClear();
+
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
       await new Promise((resolve) => setTimeout(resolve, 25));
       throw new Error("network down");
@@ -182,6 +185,10 @@ describe("useDelegations", () => {
       jti: "dlg-1",
       reason: "manual",
     });
+    // No-op handler so the in-flight rejection doesn't fire as an
+    // unhandled-rejection during the waitFor below; the cached rejection
+    // state is still observable via `await expect(mutation).rejects` later.
+    mutation.catch(() => {});
 
     await hook.waitFor(() => {
       const data = queryClient.getQueryData<InfiniteData<DelegationListResponse, string | undefined>>(allKey);
@@ -190,6 +197,9 @@ describe("useDelegations", () => {
     });
 
     await expect(mutation).rejects.toThrow("network down");
+
+    expect(setQueryDataSpy).toHaveBeenCalledWith(allKey, seeded);
+    expect(setQueryDataSpy).toHaveBeenCalledWith(agentKey, seeded);
 
     await hook.waitFor(() => {
       const data = queryClient.getQueryData<InfiniteData<DelegationListResponse, string | undefined>>(allKey);
