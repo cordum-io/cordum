@@ -428,6 +428,73 @@ export function formatTimeRemaining(ms: number): string {
 // Section: History (Prior Approvals)
 // ---------------------------------------------------------------------------
 
+// Renders the outcome of a prior approval. Older versions of this page used a
+// binary `wasApproved ? "Approved" : "Rejected"` ternary that mislabeled
+// expired/invalidated/repaired approvals as "Rejected" — confusing because
+// those are *not* human rejections; they are reconciler-driven lifecycle
+// transitions (e.g. workflow timeout, repair, replay invalidation).
+function PriorOutcomeBadge({
+  decision,
+  wasApproved,
+}: {
+  decision: string;
+  wasApproved: boolean;
+}) {
+  const d = (decision || "").toLowerCase();
+  if (d === "approve" || d === "approved" || (wasApproved && !d)) {
+    return (
+      <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+        <CheckCircle2 className="h-3 w-3" />
+        Approved
+      </span>
+    );
+  }
+  if (d === "reject" || d === "rejected" || d === "deny") {
+    return (
+      <span className="inline-flex items-center gap-1 text-red-500">
+        <XCircle className="h-3 w-3" />
+        Rejected
+      </span>
+    );
+  }
+  if (d === "expire" || d === "expired") {
+    return (
+      <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+        <Clock className="h-3 w-3" />
+        Expired
+      </span>
+    );
+  }
+  if (d === "invalidate" || d === "invalidated") {
+    return (
+      <span className="inline-flex items-center gap-1 text-muted-foreground">
+        <AlertTriangle className="h-3 w-3" />
+        Invalidated
+      </span>
+    );
+  }
+  if (d === "repair" || d === "repaired") {
+    return (
+      <span className="inline-flex items-center gap-1 text-blue-500">
+        <AlertTriangle className="h-3 w-3" />
+        Repaired
+      </span>
+    );
+  }
+  // Fallback: respect the legacy boolean if no decision string is present.
+  return wasApproved ? (
+    <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+      <CheckCircle2 className="h-3 w-3" />
+      Approved
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 text-muted-foreground">
+      <AlertTriangle className="h-3 w-3" />
+      {decision || "Unknown"}
+    </span>
+  );
+}
+
 function HistorySection({
   priorApprovals,
 }: {
@@ -478,17 +545,7 @@ function HistorySection({
                     {pa.resolvedBy || "—"}
                   </td>
                   <td className="py-2 pr-4">
-                    {pa.wasApproved ? (
-                      <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-                        <CheckCircle2 className="h-3 w-3" />
-                        Approved
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-red-500">
-                        <XCircle className="h-3 w-3" />
-                        Rejected
-                      </span>
-                    )}
+                    <PriorOutcomeBadge decision={pa.decision} wasApproved={pa.wasApproved} />
                   </td>
                   <td className="py-2 text-muted-foreground text-xs">
                     {pa.resolvedAt
