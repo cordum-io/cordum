@@ -107,7 +107,11 @@ function toSAMLConfigView(raw?: AuthConfig): SAMLConfigView | undefined {
       redirectUri: raw.oidc_redirect_uri?.trim() || new URL("/api/v1/auth/sso/oidc/callback", origin).toString(),
       clientSecretMasked: raw.oidc_client_secret_masked?.trim() || "",
       scopes: Array.isArray(raw.oidc_scopes) ? raw.oidc_scopes.filter((scope) => typeof scope === "string").map((scope) => scope.trim()).filter(Boolean) : [],
-      groupsClaim: raw.oidc_groups_claim?.trim() || "groups",
+      // Preserve an intentionally-empty backend claim instead of forcing
+      // "groups". An empty claim signals that the legacy `cordum_role` fallback
+      // is in effect; rewriting it here would silently switch users to
+      // groups-claim precedence the next time the form is saved.
+      groupsClaim: raw.oidc_groups_claim?.trim() ?? "",
       groupRoleMapping: normalizeGroupRoleMapping(raw.oidc_group_role_mapping),
     },
     raw,

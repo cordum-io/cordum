@@ -1457,7 +1457,8 @@ var publicRoutePaths = map[string]bool{
 }
 
 var adminRoutePaths = map[string]bool{
-	"/api/v1/governance/health": true,
+	"/api/v1/governance/health":            true,
+	"/api/v1/auth/oidc/group-role-mapping": true,
 }
 
 var adminRoutePrefixes = []string{

@@ -88,11 +88,14 @@ async function waitFor(assertion: () => void, timeoutMs = 2000) {
 }
 
 function click(element: Element | null) {
-  if (!element) throw new Error("Expected element to exist before clicking");
+  if (!(element instanceof HTMLElement)) {
+    throw new Error("Expected clickable HTMLElement");
+  }
+  // Use the native HTMLElement.click() so disabled-button semantics are
+  // preserved; dispatching a synthetic MouseEvent fires handlers even when
+  // the real click would have been suppressed by the browser.
   act(() => {
-    element.dispatchEvent(
-      new MouseEvent("click", { bubbles: true, cancelable: true }),
-    );
+    element.click();
   });
 }
 
@@ -281,6 +284,20 @@ describe("SettingsSSOPage", () => {
       expect(container.textContent).toContain("OIDC RBAC mapping");
       expect(container.textContent).toContain("supe********alue");
       expect(container.textContent).not.toContain("super-secret-value");
+      // textContent only inspects *visible* text. A leak through input
+      // `value`, hidden form controls, `data-*`, or `aria-*` attributes
+      // would slip past the visible-text check while still being
+      // recoverable from the DOM. Assert against markup and live form
+      // values so non-visible surfaces are also covered.
+      expect(container.innerHTML).not.toContain("super-secret-value");
+      const leakedControl = Array.from(
+        container.querySelectorAll("input, textarea"),
+      ).find(
+        (el) =>
+          (el as HTMLInputElement | HTMLTextAreaElement).value ===
+          "super-secret-value",
+      );
+      expect(leakedControl).toBeUndefined();
     } finally {
       cleanup();
     }

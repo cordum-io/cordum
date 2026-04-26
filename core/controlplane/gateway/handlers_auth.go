@@ -285,6 +285,18 @@ func (s *server) handleUpdateOIDCGroupRoleMapping(w http.ResponseWriter, r *http
 		return
 	}
 
+	// Capture the live provider's pre-update state so we can roll the live
+	// provider back if persistence subsequently fails. Without this rollback
+	// the running provider would silently diverge from the persisted config:
+	// new mapping in memory, old mapping on disk.
+	var priorClaim string
+	var priorMapping map[string]string
+	if cfgProvider, ok := s.auth.(auth.AuthConfigProvider); ok {
+		priorAuthCfg := cfgProvider.AuthConfig()
+		priorClaim = priorAuthCfg.OIDCGroupsClaim
+		priorMapping = priorAuthCfg.OIDCGroupRoleMapping
+	}
+
 	cfg, err := updater.UpdateOIDCGroupRoleMapping(req.OIDCGroupsClaim, req.OIDCGroupRoleMapping)
 	if err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, "invalid oidc group role mapping")
@@ -300,7 +312,14 @@ func (s *server) handleUpdateOIDCGroupRoleMapping(w http.ResponseWriter, r *http
 	}
 	mappingJSON, err := json.Marshal(mapping)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid oidc group role mapping")
+		// The mapping was already validated by UpdateOIDCGroupRoleMapping,
+		// so a marshal failure here points at an internal serialization bug.
+		// Roll the live provider back before reporting.
+		if _, rbErr := updater.UpdateOIDCGroupRoleMapping(priorClaim, priorMapping); rbErr != nil {
+			slog.Error("oidc group role mapping rollback after marshal failure failed", "error", rbErr)
+		}
+		slog.Error("oidc group role mapping marshal failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "config update failed")
 		return
 	}
 
@@ -313,8 +332,15 @@ func (s *server) handleUpdateOIDCGroupRoleMapping(w http.ResponseWriter, r *http
 		return nil
 	})
 	if err != nil {
+		// Persistence failed: revert the live provider so it matches the
+		// still-on-disk prior config. Without this the operator sees an error
+		// response while auth continues to evaluate the new (unpersisted)
+		// mapping until the next process restart.
+		if _, rbErr := updater.UpdateOIDCGroupRoleMapping(priorClaim, priorMapping); rbErr != nil {
+			slog.Error("oidc group role mapping rollback after persist failure failed", "error", rbErr)
+		}
 		slog.Error("oidc group role mapping config update failed", "error", err)
-		writeErrorJSON(w, http.StatusBadRequest, "config update failed")
+		writeErrorJSON(w, http.StatusInternalServerError, "config update failed")
 		return
 	}
 
