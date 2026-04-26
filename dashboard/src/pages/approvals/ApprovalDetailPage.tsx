@@ -433,7 +433,12 @@ export function formatTimeRemaining(ms: number): string {
 // expired/invalidated/repaired approvals as "Rejected" — confusing because
 // those are *not* human rejections; they are reconciler-driven lifecycle
 // transitions (e.g. workflow timeout, repair, replay invalidation).
-function PriorOutcomeBadge({
+//
+// Precedence: a non-empty `decision` string is authoritative. The legacy
+// `wasApproved` boolean is only consulted when `decision` is absent (older
+// fixtures without the field). Unknown non-empty decisions render verbatim
+// rather than being overridden by the boolean.
+export function PriorOutcomeBadge({
   decision,
   wasApproved,
 }: {
@@ -441,7 +446,20 @@ function PriorOutcomeBadge({
   wasApproved: boolean;
 }) {
   const d = (decision || "").toLowerCase();
-  if (d === "approve" || d === "approved" || (wasApproved && !d)) {
+  if (!d) {
+    return wasApproved ? (
+      <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+        <CheckCircle2 className="h-3 w-3" />
+        Approved
+      </span>
+    ) : (
+      <span className="inline-flex items-center gap-1 text-red-500">
+        <XCircle className="h-3 w-3" />
+        Rejected
+      </span>
+    );
+  }
+  if (d === "approve" || d === "approved") {
     return (
       <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
         <CheckCircle2 className="h-3 w-3" />
@@ -481,16 +499,10 @@ function PriorOutcomeBadge({
       </span>
     );
   }
-  // Fallback: respect the legacy boolean if no decision string is present.
-  return wasApproved ? (
-    <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-      <CheckCircle2 className="h-3 w-3" />
-      Approved
-    </span>
-  ) : (
+  return (
     <span className="inline-flex items-center gap-1 text-muted-foreground">
       <AlertTriangle className="h-3 w-3" />
-      {decision || "Unknown"}
+      {decision}
     </span>
   );
 }

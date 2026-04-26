@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { render } from "@testing-library/react";
 import type { BlastRadius, ApprovalContext, PriorApproval, ApprovalPolicySnapshot } from "@/api/types";
 import {
   formatTimeRemaining,
@@ -6,6 +7,7 @@ import {
   blastRadiusCount,
   isShortcutSuppressed,
   APPROVAL_SHORTCUTS,
+  PriorOutcomeBadge,
 } from "./ApprovalDetailPage";
 
 // ---------------------------------------------------------------------------
@@ -246,5 +248,46 @@ describe("ApprovalContext shape", () => {
     const rejected = makePriorApproval({ wasApproved: false, decision: "reject" });
     expect(approved.wasApproved).toBe(true);
     expect(rejected.wasApproved).toBe(false);
+  });
+});
+
+describe("PriorOutcomeBadge", () => {
+  function renderBadge(decision: string, wasApproved: boolean) {
+    return render(<PriorOutcomeBadge decision={decision} wasApproved={wasApproved} />)
+      .container.textContent?.trim() ?? "";
+  }
+
+  it.each([
+    ["approve", true, "Approved"],
+    ["approved", false, "Approved"],
+    ["reject", true, "Rejected"],
+    ["rejected", true, "Rejected"],
+    ["deny", true, "Rejected"],
+    ["expire", true, "Expired"],
+    ["expired", false, "Expired"],
+    ["invalidate", true, "Invalidated"],
+    ["invalidated", false, "Invalidated"],
+    ["repair", true, "Repaired"],
+    ["repaired", false, "Repaired"],
+  ])("decision %s is authoritative regardless of wasApproved=%s", (decision, wasApproved, expected) => {
+    expect(renderBadge(decision, wasApproved)).toBe(expected);
+  });
+
+  it("falls back to legacy boolean when decision is empty: approved", () => {
+    expect(renderBadge("", true)).toBe("Approved");
+  });
+
+  it("falls back to legacy boolean when decision is empty: rejected (not Unknown)", () => {
+    // Regression: previously the empty-decision + wasApproved=false branch
+    // showed "Unknown", losing the legacy "Rejected" outcome.
+    expect(renderBadge("", false)).toBe("Rejected");
+  });
+
+  it("renders unknown decision verbatim without overriding via wasApproved", () => {
+    // Regression: previously a non-empty unrecognized decision combined with
+    // wasApproved=true rendered as "Approved", letting the boolean override
+    // the authoritative decision string.
+    expect(renderBadge("frobnicate", true)).toBe("frobnicate");
+    expect(renderBadge("frobnicate", false)).toBe("frobnicate");
   });
 });
