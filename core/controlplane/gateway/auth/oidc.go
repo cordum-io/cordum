@@ -42,6 +42,8 @@ type OIDCConfig struct {
 	Audience            string
 	ClaimTenant         string // JWT claim -> tenant (default "org_id")
 	ClaimRole           string // JWT claim -> role (default "cordum_role")
+	GroupsClaim         string // JWT claim -> IdP groups (default "groups")
+	GroupRoleMapping    map[string]string
 	ClientID            string
 	ClientSecret        string
 	RedirectURI         string
@@ -80,7 +82,41 @@ type OIDCProvider struct {
 
 // Config returns the OIDC configuration.
 func (p *OIDCProvider) Config() OIDCConfig {
-	return p.cfg
+	if p == nil {
+		return OIDCConfig{}
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	cfg := p.cfg
+	cfg.Scopes = append([]string(nil), p.cfg.Scopes...)
+	cfg.AllowedSigningAlgs = append([]string(nil), p.cfg.AllowedSigningAlgs...)
+	cfg.GroupRoleMapping = cloneStringMap(p.cfg.GroupRoleMapping)
+	return cfg
+}
+
+// UpdateGroupRoleMapping validates and updates the live OIDC groups-claim
+// mapping. It does not change issuer/client/JWKS state.
+func (p *OIDCProvider) UpdateGroupRoleMapping(groupsClaim string, mapping map[string]string) (OIDCConfig, error) {
+	if p == nil {
+		return OIDCConfig{}, errors.New("oidc: provider unavailable")
+	}
+	groupsClaim = strings.TrimSpace(groupsClaim)
+	if groupsClaim == "" {
+		groupsClaim = "groups"
+	}
+	normalizedMapping, err := normalizeOIDCGroupRoleMapping(mapping)
+	if err != nil {
+		return OIDCConfig{}, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.cfg.GroupsClaim = groupsClaim
+	p.cfg.GroupRoleMapping = normalizedMapping
+	cfg := p.cfg
+	cfg.Scopes = append([]string(nil), p.cfg.Scopes...)
+	cfg.AllowedSigningAlgs = append([]string(nil), p.cfg.AllowedSigningAlgs...)
+	cfg.GroupRoleMapping = cloneStringMap(p.cfg.GroupRoleMapping)
+	return cfg, nil
 }
 
 // WithRedis attaches an optional Redis client for cross-replica JWKS caching.
@@ -130,6 +166,14 @@ func NewOIDCProvider(cfg OIDCConfig) (*OIDCProvider, error) {
 	if cfg.ClaimRole == "" {
 		cfg.ClaimRole = "cordum_role"
 	}
+	if cfg.GroupsClaim == "" {
+		cfg.GroupsClaim = "groups"
+	}
+	groupRoleMapping, err := normalizeOIDCGroupRoleMapping(cfg.GroupRoleMapping)
+	if err != nil {
+		return nil, err
+	}
+	cfg.GroupRoleMapping = groupRoleMapping
 	if cfg.EmailClaim == "" {
 		cfg.EmailClaim = "email"
 	}
@@ -142,7 +186,7 @@ func NewOIDCProvider(cfg OIDCConfig) (*OIDCProvider, error) {
 	if cfg.DefaultRole == "" {
 		cfg.DefaultRole = "viewer"
 	}
-	cfg.DefaultRole = NormalizeRole(cfg.DefaultRole)
+	cfg.DefaultRole = normalizeOIDCDefaultRole(cfg.DefaultRole)
 	if cfg.DefaultRole == "" {
 		cfg.DefaultRole = "viewer"
 	}
@@ -239,6 +283,7 @@ func NewOIDCProviderFromEnv() (*OIDCProvider, error) {
 		ClientID:      clientID,
 		ClientSecret:  strings.TrimSpace(os.Getenv("CORDUM_OIDC_CLIENT_SECRET")),
 		RedirectURI:   strings.TrimSpace(os.Getenv("CORDUM_OIDC_REDIRECT_URI")),
+		GroupsClaim:   strings.TrimSpace(os.Getenv("CORDUM_OIDC_GROUPS_CLAIM")),
 		EmailClaim:    strings.TrimSpace(os.Getenv("CORDUM_OIDC_EMAIL_CLAIM")),
 		NameClaim:     strings.TrimSpace(os.Getenv("CORDUM_OIDC_NAME_CLAIM")),
 		UsernameClaim: strings.TrimSpace(os.Getenv("CORDUM_OIDC_USERNAME_CLAIM")),
@@ -248,6 +293,13 @@ func NewOIDCProviderFromEnv() (*OIDCProvider, error) {
 	}
 	if rawScopes := strings.TrimSpace(os.Getenv("CORDUM_OIDC_SCOPES")); rawScopes != "" {
 		cfg.Scopes = normalizeOIDCScopes(splitCSV(rawScopes))
+	}
+	if rawMapping := strings.TrimSpace(os.Getenv("CORDUM_OIDC_GROUP_ROLE_MAPPING")); rawMapping != "" {
+		mapping, err := parseOIDCGroupRoleMapping(rawMapping)
+		if err != nil {
+			return nil, err
+		}
+		cfg.GroupRoleMapping = mapping
 	}
 	if rawAlgs := strings.TrimSpace(os.Getenv("CORDUM_OIDC_ALLOWED_ALGS")); rawAlgs != "" {
 		algs := normalizeAllowedAlgs(splitCSV(rawAlgs))
@@ -735,8 +787,10 @@ func (p *OIDCProvider) isAlgAllowed(alg string) bool {
 }
 
 func (p *OIDCProvider) authFromClaims(claims map[string]any) *AuthContext {
+	cfg := p.Config()
+
 	// Extract tenant from configurable claim
-	tenant := claimString(claims, p.cfg.ClaimTenant)
+	tenant := claimString(claims, cfg.ClaimTenant)
 	if tenant == "" {
 		tenant = claimString(claims, "tenant")
 		if tenant == "" {
@@ -744,8 +798,31 @@ func (p *OIDCProvider) authFromClaims(claims map[string]any) *AuthContext {
 		}
 	}
 
+	// Extract role from IdP groups when a group mapping is configured. Empty
+	// mappings keep existing OIDC deployments on the legacy ClaimRole path even
+	// when their IdP already emits an unrelated "groups" claim.
+	role := ""
+	roleFromGroupPath := false
+	if len(cfg.GroupRoleMapping) > 0 {
+		groups, present, malformed := claimStringSlice(claims, cfg.GroupsClaim)
+		if present {
+			if len(groups) > 0 {
+				role = roleFromGroups(groups, cfg.GroupRoleMapping)
+				if role == "" {
+					role = cfg.DefaultRole
+				}
+				roleFromGroupPath = true
+			} else if malformed {
+				role = cfg.DefaultRole
+				roleFromGroupPath = true
+			}
+		}
+	}
+
 	// Extract role from configurable claim
-	role := claimString(claims, p.cfg.ClaimRole)
+	if role == "" {
+		role = claimString(claims, cfg.ClaimRole)
+	}
 	if role == "" {
 		role = claimString(claims, "role")
 	}
@@ -755,6 +832,9 @@ func (p *OIDCProvider) authFromClaims(claims map[string]any) *AuthContext {
 				role = s
 			}
 		}
+	}
+	if role == "" {
+		role = cfg.DefaultRole
 	}
 	if role == "" {
 		role = "viewer"
@@ -769,9 +849,37 @@ func (p *OIDCProvider) authFromClaims(claims map[string]any) *AuthContext {
 	return &AuthContext{
 		Tenant:      strings.TrimSpace(tenant),
 		PrincipalID: strings.TrimSpace(principal),
-		Role:        NormalizeRole(role),
+		Role:        normalizeOIDCResolvedRole(role, roleFromGroupPath),
 		AuthSource:  AuthSourceOIDC,
 	}
+}
+
+func roleFromGroups(groups []string, mapping map[string]string) string {
+	bestRole := ""
+	bestRank := 0
+	for _, group := range groups {
+		role := mapping[canonicalOIDCGroup(group)]
+		if role == "" {
+			continue
+		}
+		if rank := oidcRoleRank(role); rank > bestRank {
+			bestRole = role
+			bestRank = rank
+		}
+	}
+	return bestRole
+}
+
+func normalizeOIDCResolvedRole(role string, preserveOperator bool) string {
+	if preserveOperator {
+		if normalized, ok := normalizeOIDCStrictRole(role); ok {
+			return normalized
+		}
+	}
+	if normalized, ok := normalizeOIDCStrictRole(role); ok && normalized != "operator" {
+		return normalized
+	}
+	return NormalizeRole(role)
 }
 
 // ---------- JWK parsing helpers ----------
@@ -859,6 +967,137 @@ func normalizeOIDCScopes(scopes []string) []string {
 		appendScope(scope)
 	}
 	return normalized
+}
+
+func parseOIDCGroupRoleMapping(raw string) (map[string]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return nil, fmt.Errorf("oidc: parse CORDUM_OIDC_GROUP_ROLE_MAPPING: %w", err)
+	}
+	mapping, err := normalizeOIDCGroupRoleMapping(parsed)
+	if err != nil {
+		return nil, fmt.Errorf("oidc: CORDUM_OIDC_GROUP_ROLE_MAPPING %w", err)
+	}
+	return mapping, nil
+}
+
+func normalizeOIDCGroupRoleMapping(raw map[string]string) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(raw))
+	for group, role := range raw {
+		key := canonicalOIDCGroup(group)
+		if key == "" {
+			return nil, errors.New("contains an empty group name")
+		}
+		normalizedRole, ok := normalizeOIDCStrictRole(role)
+		if !ok {
+			return nil, fmt.Errorf("contains invalid role %q for group %q", role, group)
+		}
+		if _, exists := out[key]; exists {
+			return nil, fmt.Errorf("contains duplicate group %q after case-insensitive normalization", key)
+		}
+		out[key] = normalizedRole
+	}
+	return out, nil
+}
+
+func normalizeOIDCDefaultRole(role string) string {
+	if normalized, ok := normalizeOIDCStrictRole(role); ok {
+		return normalized
+	}
+	return NormalizeRole(role)
+}
+
+func normalizeOIDCStrictRole(role string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "admin":
+		return "admin", true
+	case "operator":
+		return "operator", true
+	case "viewer":
+		return "viewer", true
+	default:
+		return "", false
+	}
+}
+
+func oidcRoleRank(role string) int {
+	switch role {
+	case "admin":
+		return 3
+	case "operator":
+		return 2
+	case "viewer":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func canonicalOIDCGroup(group string) string {
+	return strings.ToLower(strings.TrimSpace(group))
+}
+
+func claimStringSlice(claims map[string]any, key string) (groups []string, present bool, malformed bool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, false, false
+	}
+	raw, ok := claims[key]
+	if !ok {
+		return nil, false, false
+	}
+	switch v := raw.(type) {
+	case []string:
+		return cleanOIDCGroups(v), true, false
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			s, ok := item.(string)
+			if !ok {
+				malformed = true
+				continue
+			}
+			s = strings.TrimSpace(s)
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) > 0 {
+			malformed = false
+		}
+		return out, true, malformed
+	default:
+		return nil, true, true
+	}
+}
+
+func cleanOIDCGroups(groups []string) []string {
+	out := make([]string, 0, len(groups))
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group != "" {
+			out = append(out, group)
+		}
+	}
+	return out
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func maskOIDCSecret(secret string) string {
@@ -1023,8 +1262,20 @@ func (a *OIDCAuthAdapter) AuthConfig() AuthConfig {
 	cfg.OIDCClientID = providerCfg.ClientID
 	cfg.OIDCRedirectURI = providerCfg.RedirectURI
 	cfg.OIDCScopes = append([]string(nil), providerCfg.Scopes...)
+	cfg.OIDCGroupsClaim = providerCfg.GroupsClaim
+	cfg.OIDCGroupRoleMapping = cloneStringMap(providerCfg.GroupRoleMapping)
 	cfg.OIDCClientSecretMasked = maskOIDCSecret(providerCfg.ClientSecret)
 	return cfg
+}
+
+func (a *OIDCAuthAdapter) UpdateOIDCGroupRoleMapping(groupsClaim string, mapping map[string]string) (AuthConfig, error) {
+	if a == nil || a.provider == nil {
+		return AuthConfig{}, errors.New("oidc: provider unavailable")
+	}
+	if _, err := a.provider.UpdateGroupRoleMapping(groupsClaim, mapping); err != nil {
+		return AuthConfig{}, err
+	}
+	return a.AuthConfig(), nil
 }
 
 func (a *OIDCAuthAdapter) AuthenticateHTTP(r *http.Request) (*AuthContext, error) {

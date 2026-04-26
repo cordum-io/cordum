@@ -96,6 +96,38 @@ paths:
                 $ref: '#/components/schemas/AuthConfig'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/auth/oidc/group-role-mapping:
+    put:
+      operationId: updateOIDCGroupRoleMapping
+      summary: Update OIDC groups-to-roles mapping
+      description: Admin-only endpoint for updating the active Okta/OIDC groups claim and Cordum role mapping. Values are validated, applied to the live provider, and persisted into system/default config.
+      tags:
+      - Auth
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OIDCGroupRoleMappingUpdateRequest'
+      responses:
+        '200':
+          description: Sanitized authentication configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthConfig'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/auth/login:
     post:
       operationId: login
@@ -6609,6 +6641,15 @@ components:
           type: array
           items:
             type: string
+        oidc_groups_claim:
+          type: string
+          description: OIDC claim containing IdP group names, defaulting to groups.
+        oidc_group_role_mapping:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [admin, operator, viewer]
+          description: Case-insensitive group name to Cordum role mapping.
         oidc_client_secret_masked:
           type: string
         session_ttl:
@@ -6619,6 +6660,20 @@ components:
           type: boolean
         default_tenant:
           type: string
+    OIDCGroupRoleMappingUpdateRequest:
+      type: object
+      required: [oidc_group_role_mapping]
+      properties:
+        oidc_groups_claim:
+          type: string
+          default: groups
+          description: OIDC claim containing IdP group names.
+        oidc_group_role_mapping:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [admin, operator, viewer]
+          description: JSON object mapping Okta/OIDC group names to Cordum roles.
     LoginRequest:
       type: object
       properties:

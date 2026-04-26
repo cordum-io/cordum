@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowUpRight,
@@ -6,6 +7,8 @@ import {
   Clock3,
   ShieldAlert,
 } from "lucide-react";
+import { put } from "@/api/client";
+import type { AuthConfig } from "@/api/types";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { TierBadge, normalizeLicensePlan } from "@/components/TierBadge";
 import { UpgradePrompt } from "@/components/UpgradePrompt";
@@ -30,9 +33,106 @@ function openExternal(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+type OIDCGroupRoleMapping = Record<string, "admin" | "operator" | "viewer">;
+
+const OIDC_ROLE_VALUES = new Set(["admin", "operator", "viewer"]);
+
+function formatOIDCGroupRoleMapping(mapping?: Record<string, string>): string {
+  const entries = Object.entries(mapping ?? {}).sort(([left], [right]) => left.localeCompare(right));
+  if (entries.length === 0) {
+    return "{\n  \"cordum-admins\": \"admin\",\n  \"cordum-operators\": \"operator\",\n  \"cordum-viewers\": \"viewer\"\n}";
+  }
+  return JSON.stringify(Object.fromEntries(entries), null, 2);
+}
+
+function normalizeOIDCGroupRoleMapping(raw: unknown): { mapping?: OIDCGroupRoleMapping; error?: string } {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { error: "Mapping must be a JSON object of group names to admin, operator, or viewer." };
+  }
+
+  const mapping: OIDCGroupRoleMapping = {};
+  for (const [group, role] of Object.entries(raw)) {
+    const groupKey = group.trim().toLowerCase();
+    if (!groupKey) {
+      return { error: "Group names cannot be empty." };
+    }
+    if (typeof role !== "string") {
+      return { error: `Role for ${group} must be a string.` };
+    }
+    const roleValue = role.trim().toLowerCase();
+    if (!OIDC_ROLE_VALUES.has(roleValue)) {
+      return { error: `Role for ${group} must be admin, operator, or viewer.` };
+    }
+    if (mapping[groupKey]) {
+      return { error: `Duplicate group after case-insensitive normalization: ${groupKey}.` };
+    }
+    mapping[groupKey] = roleValue as OIDCGroupRoleMapping[string];
+  }
+  return { mapping };
+}
+
+function parseOIDCGroupRoleMapping(text: string): { mapping?: OIDCGroupRoleMapping; error?: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { error: "Mapping must be valid JSON." };
+  }
+  return normalizeOIDCGroupRoleMapping(parsed);
+}
+
+function mappingFromAuthConfig(raw: AuthConfig): Record<string, string> {
+  return normalizeOIDCGroupRoleMapping(raw.oidc_group_role_mapping).mapping ?? {};
+}
+
 export default function SettingsSSOPage() {
   const license = useLicense();
   const saml = useSAMLConfig();
+  const [oidcGroupsClaim, setOIDCGroupsClaim] = useState("groups");
+  const [oidcGroupRoleMapping, setOIDCGroupRoleMapping] = useState(formatOIDCGroupRoleMapping());
+  const [oidcSaveError, setOIDCSaveError] = useState<string | null>(null);
+  const [oidcSaveMessage, setOIDCSaveMessage] = useState<string | null>(null);
+  const [oidcSaving, setOIDCSaving] = useState(false);
+
+  const oidcGroupsClaimFromServer = saml.data?.oidc.groupsClaim ?? "groups";
+  const oidcMappingFromServer = JSON.stringify(saml.data?.oidc.groupRoleMapping ?? {});
+
+  useEffect(() => {
+    if (!saml.data?.oidc) return;
+    setOIDCGroupsClaim(saml.data.oidc.groupsClaim || "groups");
+    setOIDCGroupRoleMapping(formatOIDCGroupRoleMapping(saml.data.oidc.groupRoleMapping));
+    setOIDCSaveError(null);
+    setOIDCSaveMessage(null);
+  }, [saml.data?.oidc, oidcGroupsClaimFromServer, oidcMappingFromServer]);
+
+  async function saveOIDCGroupRoleMapping() {
+    setOIDCSaveError(null);
+    setOIDCSaveMessage(null);
+    const groupsClaim = oidcGroupsClaim.trim() || "groups";
+    const parsed = parseOIDCGroupRoleMapping(oidcGroupRoleMapping);
+    if (parsed.error || !parsed.mapping) {
+      setOIDCSaveError(parsed.error ?? "Mapping must be a JSON object.");
+      return;
+    }
+
+    setOIDCSaving(true);
+    try {
+      const updated = await put<AuthConfig>("/auth/oidc/group-role-mapping", {
+        oidc_groups_claim: groupsClaim,
+        oidc_group_role_mapping: parsed.mapping,
+      });
+      const updatedClaim = updated.oidc_groups_claim?.trim() || groupsClaim;
+      const updatedMapping = mappingFromAuthConfig(updated);
+      setOIDCGroupsClaim(updatedClaim);
+      setOIDCGroupRoleMapping(formatOIDCGroupRoleMapping(updatedMapping));
+      setOIDCSaveMessage("OIDC RBAC mapping saved");
+      await saml.refetch();
+    } catch (error) {
+      setOIDCSaveError(error instanceof Error ? error.message : "OIDC RBAC mapping save failed");
+    } finally {
+      setOIDCSaving(false);
+    }
+  }
 
   if (license.isLoading && !license.data) {
     return (
@@ -328,6 +428,90 @@ export default function SettingsSSOPage() {
               { label: "Client secret", value: oidcData.clientSecretMasked || "Not configured", mono: true },
             ]}
           />
+
+          <div className="space-y-4 rounded-3xl border border-border bg-surface-1/70 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+                  OIDC RBAC
+                </p>
+                <h3 className="mt-1 text-sm font-display font-semibold text-foreground">
+                  OIDC RBAC mapping
+                </h3>
+              </div>
+              <StatusBadge variant={oidcRuntimeEnabled ? "healthy" : "warning"}>
+                {oidcRuntimeEnabled ? "Admin save" : "Server config required"}
+              </StatusBadge>
+            </div>
+
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              Map Okta group names to Cordum roles. Group names are normalized case-insensitively;
+              when a non-empty groups claim is present, it wins over the legacy cordum_role claim.
+            </p>
+
+            <div className="grid gap-3">
+              <label className="space-y-1.5 text-xs font-medium text-foreground">
+                <span>Groups claim name</span>
+                <input
+                  name="oidcGroupsClaim"
+                  value={oidcGroupsClaim}
+                  onChange={(event) => setOIDCGroupsClaim(event.target.value)}
+                  disabled={!oidcRuntimeEnabled || oidcSaving}
+                  className="h-9 w-full rounded-xl border border-border bg-background px-3 font-mono text-sm text-foreground outline-none transition focus:border-cordum/60 focus:ring-2 focus:ring-cordum/20 disabled:opacity-60"
+                  placeholder="groups"
+                />
+              </label>
+
+              <label className="space-y-1.5 text-xs font-medium text-foreground">
+                <span>Groups → roles mapping</span>
+                <textarea
+                  name="oidcGroupRoleMapping"
+                  value={oidcGroupRoleMapping}
+                  onChange={(event) => setOIDCGroupRoleMapping(event.target.value)}
+                  disabled={!oidcRuntimeEnabled || oidcSaving}
+                  rows={7}
+                  spellCheck={false}
+                  className="w-full rounded-2xl border border-border bg-background px-3 py-2 font-mono text-xs leading-relaxed text-foreground outline-none transition focus:border-cordum/60 focus:ring-2 focus:ring-cordum/20 disabled:opacity-60"
+                  placeholder='{"cordum-admins":"admin"}'
+                />
+              </label>
+            </div>
+
+            <div className="rounded-2xl border border-border/80 bg-background/70 p-3 text-xs text-muted-foreground">
+              Example: <span className="font-mono text-foreground">{"{\"cordum-admins\":\"admin\",\"cordum-operators\":\"operator\",\"cordum-viewers\":\"viewer\"}"}</span>
+            </div>
+
+            {!oidcRuntimeEnabled && (
+              <InfoBanner variant="warning" title="OIDC runtime required">
+                Enable the OIDC provider on the gateway before editing RBAC mappings. Saves also require
+                an admin session with config.write permission.
+              </InfoBanner>
+            )}
+            {oidcSaveError && (
+              <InfoBanner variant="error" title="OIDC RBAC mapping not saved">
+                {oidcSaveError}
+              </InfoBanner>
+            )}
+            {oidcSaveMessage && (
+              <InfoBanner variant="success" title="OIDC RBAC mapping saved">
+                The active provider was updated and the sanitized auth configuration has been refreshed.
+              </InfoBanner>
+            )}
+
+            <div className="flex justify-end">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  void saveOIDCGroupRoleMapping();
+                }}
+                disabled={!oidcRuntimeEnabled}
+                loading={oidcSaving}
+              >
+                Save OIDC RBAC
+              </Button>
+            </div>
+          </div>
         </motion.section>
       </div>
 

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	crand "crypto/rand"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -515,6 +516,25 @@ func apiKeyMiddleware(provider auth.AuthProvider, next http.Handler, auditSender
 		}
 		authCtx, err := provider.AuthenticateHTTP(r)
 		if err != nil {
+			var scopeErr *auth.ScopeError
+			if errors.As(err, &scopeErr) {
+				if aSender != nil {
+					aSender.Send(audit.SIEMEvent{
+						Timestamp: time.Now().UTC(),
+						EventType: audit.EventSystemAuth,
+						Severity:  audit.SeverityMedium,
+						Action:    "auth.failure",
+						Reason:    "key_scope_insufficient",
+						Extra: map[string]string{
+							"source_ip":   clientIP(r),
+							"auth_method": "middleware",
+							"path":        r.URL.Path,
+						},
+					})
+				}
+				writeKeyScopeInsufficient(w, scopeErr)
+				return
+			}
 			if aSender != nil {
 				aSender.Send(audit.SIEMEvent{
 					Timestamp: time.Now().UTC(),
@@ -539,6 +559,26 @@ func apiKeyMiddleware(provider auth.AuthProvider, next http.Handler, auditSender
 		)
 		ctx := context.WithValue(r.Context(), auth.ContextKey{}, authCtx)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func writeKeyScopeInsufficient(w http.ResponseWriter, scopeErr *auth.ScopeError) {
+	granted := []string{}
+	required := ""
+	if scopeErr != nil {
+		granted = append(granted, scopeErr.Granted...)
+		required = scopeErr.Required
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	writeJSON(w, map[string]any{
+		"error":  "forbidden",
+		"status": http.StatusForbidden,
+		"reason": "key_scope_insufficient",
+		"details": map[string]any{
+			"required": required,
+			"granted":  granted,
+		},
 	})
 }
 

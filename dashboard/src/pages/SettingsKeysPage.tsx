@@ -32,6 +32,89 @@ interface ApiKey {
   scopes: string[];
 }
 
+interface ApiKeyScopeOption {
+  value: string;
+  label: string;
+  description: string;
+}
+
+export const API_KEY_SCOPE_RESOURCES = [
+  "jobs",
+  "audit",
+  "workflows",
+  "approvals",
+  "delegations",
+  "packs",
+  "policy",
+  "topics",
+  "schemas",
+] as const;
+
+export const API_KEY_SCOPE_HELP = [
+  "Use <resource>:<verb> such as jobs:read or audit:write.",
+  "Use <resource>:* to grant all verbs on a resource.",
+  "Empty Scopes = unrestricted; role gates still apply.",
+  `Resources: ${API_KEY_SCOPE_RESOURCES.join(", ")}.`,
+];
+
+export const API_KEY_SCOPE_OPTIONS: ApiKeyScopeOption[] = [
+  {
+    value: "jobs:read",
+    label: "Jobs read",
+    description: "Read job state, history, and decisions.",
+  },
+  {
+    value: "jobs:*",
+    label: "Jobs all verbs",
+    description: "Submit, cancel, remediate, and read jobs.",
+  },
+  {
+    value: "audit:read",
+    label: "Audit read",
+    description: "Read audit events and chain evidence.",
+  },
+  {
+    value: "workflows:*",
+    label: "Workflows all verbs",
+    description: "Create, update, run, and inspect workflows.",
+  },
+  {
+    value: "approvals:*",
+    label: "Approvals all verbs",
+    description: "Review and act on approval requests.",
+  },
+  {
+    value: "delegations:*",
+    label: "Delegations all verbs",
+    description: "Issue, inspect, and revoke delegations.",
+  },
+  {
+    value: "packs:read",
+    label: "Packs read",
+    description: "Inspect installed packs and pack metadata.",
+  },
+  {
+    value: "policy:read",
+    label: "Policy read",
+    description: "Inspect policy bundles and governance state.",
+  },
+  {
+    value: "topics:read",
+    label: "Topics read",
+    description: "List job topics and routing metadata.",
+  },
+  {
+    value: "schemas:read",
+    label: "Schemas read",
+    description: "Read schema catalog entries.",
+  },
+  {
+    value: "admin",
+    label: "Admin legacy",
+    description: "Full legacy administrative access; prefer resource scopes.",
+  },
+];
+
 interface InvalidateQueriesClient {
   invalidateQueries: (options: { queryKey: string[] }) => unknown;
 }
@@ -78,7 +161,7 @@ export default function SettingsKeysPage() {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
-  const [newKeyScopes, setNewKeyScopes] = useState<string[]>(["read"]);
+  const [newKeyScopes, setNewKeyScopes] = useState<string[]>(["jobs:read"]);
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ApiKey | null>(null);
 
@@ -101,8 +184,6 @@ export default function SettingsKeysPage() {
     onSuccess: () => handleDeleteKeySuccess({ queryClient, setDeleteTarget }),
     onError: handleDeleteKeyError,
   });
-
-  const SCOPES = ["read", "write", "admin"];
 
   if (isError) {
     return <ErrorBanner message={error instanceof Error ? error.message : "Failed to load API keys"} onRetry={() => void refetch()} />;
@@ -232,20 +313,32 @@ export default function SettingsKeysPage() {
             </LabeledField>
             <LabeledField
               label="Scopes"
-              description="Grant only the permissions the integration actually needs."
+              description="Grant only the request-path scopes the integration actually needs."
             >
-              <div className="grid gap-2 sm:grid-cols-3">
-                {SCOPES.map(s => (
+              <InfoBanner
+                id="api-key-scope-help"
+                variant="info"
+                title="Scopes are enforced at request time"
+                className="mb-3"
+              >
+                <div className="space-y-1">
+                  {API_KEY_SCOPE_HELP.map((line) => (
+                    <p key={line}>{line}</p>
+                  ))}
+                </div>
+              </InfoBanner>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {API_KEY_SCOPE_OPTIONS.map((scope) => (
                   <Checkbox
-                    key={s}
-                    checked={newKeyScopes.includes(s)}
+                    key={scope.value}
+                    checked={newKeyScopes.includes(scope.value)}
                     onChange={() =>
                       setNewKeyScopes(prev =>
-                        prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s],
+                        prev.includes(scope.value) ? prev.filter(x => x !== scope.value) : [...prev, scope.value],
                       )
                     }
-                    label={<span className="capitalize">{s}</span>}
-                    description={s === "admin" ? "Full administrative access" : s === "write" ? "Create and mutate resources" : "Read-only access"}
+                    label={<span>{scope.label}</span>}
+                    description={scope.description}
                   />
                 ))}
               </div>
@@ -257,7 +350,7 @@ export default function SettingsKeysPage() {
                 size="sm"
                 onClick={() => createMutation.mutate()}
                 loading={createMutation.isPending}
-                disabled={!newKeyName.trim() || newKeyScopes.length === 0}
+                disabled={!newKeyName.trim()}
               >
                 <Key className="w-3 h-3 mr-1" />Create
               </Button>

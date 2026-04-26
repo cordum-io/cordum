@@ -146,10 +146,32 @@ func mergeAuthConfig(current, next AuthConfig) AuthConfig {
 	if len(next.OIDCScopes) > 0 {
 		current.OIDCScopes = append([]string(nil), next.OIDCScopes...)
 	}
+	if strings.TrimSpace(next.OIDCGroupsClaim) != "" {
+		current.OIDCGroupsClaim = next.OIDCGroupsClaim
+	}
+	if len(next.OIDCGroupRoleMapping) > 0 {
+		current.OIDCGroupRoleMapping = cloneStringMap(next.OIDCGroupRoleMapping)
+	}
 	if strings.TrimSpace(next.OIDCClientSecretMasked) != "" {
 		current.OIDCClientSecretMasked = next.OIDCClientSecretMasked
 	}
 	return current
+}
+
+// UpdateOIDCGroupRoleMapping delegates to the first OIDC-capable provider and
+// then returns the merged sanitized config for the whole auth chain.
+func (c *CompositeAuthProvider) UpdateOIDCGroupRoleMapping(groupsClaim string, mapping map[string]string) (AuthConfig, error) {
+	for _, p := range c.providers {
+		updater, ok := p.(OIDCGroupRoleMappingUpdater)
+		if !ok {
+			continue
+		}
+		if _, err := updater.UpdateOIDCGroupRoleMapping(groupsClaim, mapping); err != nil {
+			return AuthConfig{}, err
+		}
+		return c.AuthConfig(), nil
+	}
+	return AuthConfig{}, errors.New("oidc group-role mapping updater unavailable")
 }
 
 // BasicProvider returns the first BasicAuthProvider in the composite, or nil.

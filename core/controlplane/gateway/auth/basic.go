@@ -225,7 +225,7 @@ func (b *BasicAuthProvider) AuthenticateHTTP(r *http.Request) (*AuthContext, err
 	if key == "" && (websocket.IsWebSocketUpgrade(r) || strings.TrimSpace(r.Header.Get("Sec-WebSocket-Protocol")) != "") {
 		key = NormalizeAPIKey(APIKeyFromWebSocket(r))
 	}
-	return b.authenticate(r.Context(), key, HeaderValue(r, "X-Principal-Id"))
+	return b.authenticateHTTP(r.Context(), key, HeaderValue(r, "X-Principal-Id"), r.Method, r.URL.Path)
 }
 
 func (b *BasicAuthProvider) AuthenticateGRPC(ctx context.Context) (*AuthContext, error) {
@@ -287,12 +287,25 @@ func roleFromScopes(scopes []string) string {
 			role = "operator"
 		case "read", "viewer":
 			// only upgrade from default viewer
+		default:
+			_, verb, ok := splitScope(strings.ToLower(strings.TrimSpace(scope)))
+			if ok && (verb == "write" || verb == "*") {
+				role = "operator"
+			}
 		}
 	}
 	return role
 }
 
 func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID string) (*AuthContext, error) {
+	return b.authenticateWithScope(ctx, key, principalID, "", "", false)
+}
+
+func (b *BasicAuthProvider) authenticateHTTP(ctx context.Context, key, principalID, method, path string) (*AuthContext, error) {
+	return b.authenticateWithScope(ctx, key, principalID, method, path, true)
+}
+
+func (b *BasicAuthProvider) authenticateWithScope(ctx context.Context, key, principalID, method, path string, enforceScopes bool) (*AuthContext, error) {
 	if b == nil {
 		return &AuthContext{}, nil
 	}
@@ -331,6 +344,21 @@ func (b *BasicAuthProvider) authenticate(ctx context.Context, key, principalID s
 				tenant := strings.TrimSpace(mk.Tenant)
 				if tenant == "" {
 					tenant = b.defaultTenant
+				}
+				if enforceScopes && len(mk.Scopes) > 0 {
+					required, ok := PathToScope(method, path)
+					matched := ""
+					if ok {
+						matched, ok = MatchedScope(mk.Scopes, required)
+					}
+					if !ok {
+						slog.Warn("api key scope check denied", "required", required, "reason", "key_scope_insufficient")
+						return nil, &ScopeError{
+							Required: required,
+							Granted:  append([]string(nil), mk.Scopes...),
+						}
+					}
+					slog.Info("api key scope check passed", "required", required, "matched_scope", matched)
 				}
 				b.usageWG.Add(1)
 				go func(keyID string) {

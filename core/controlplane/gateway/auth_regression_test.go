@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,6 +16,163 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+type regressionScopedKeyStore struct {
+	key *auth.ManagedKey
+}
+
+func (s *regressionScopedKeyStore) List(context.Context, string) ([]*auth.ManagedKey, error) {
+	return nil, nil
+}
+
+func (s *regressionScopedKeyStore) Create(context.Context, *auth.ManagedKey, string) error {
+	return nil
+}
+
+func (s *regressionScopedKeyStore) Revoke(context.Context, string, string) error {
+	return nil
+}
+
+func (s *regressionScopedKeyStore) ValidateKey(_ context.Context, rawKey string) (*auth.ManagedKey, error) {
+	if rawKey != "scoped-test-secret" || s.key == nil {
+		return nil, errors.New("invalid api key")
+	}
+	copyKey := *s.key
+	copyKey.Scopes = append([]string(nil), s.key.Scopes...)
+	return &copyKey, nil
+}
+
+func (s *regressionScopedKeyStore) RecordUsage(context.Context, string) error {
+	return nil
+}
+
+func newScopedAPIKeyAuthProvider(t *testing.T, scopes []string) *auth.BasicAuthProvider {
+	t.Helper()
+
+	t.Setenv("CORDUM_API_KEY", "")
+	t.Setenv("CORDUM_API_KEYS", "")
+	t.Setenv("CORDUM_API_KEYS_PATH", "")
+	t.Setenv("CORDUM_JWT_HMAC_SECRET", "")
+	t.Setenv("CORDUM_ALLOW_INSECURE_NO_AUTH", "true")
+	t.Setenv("CORDUM_ENV", "test")
+	t.Setenv("CORDUM_PRODUCTION", "")
+
+	provider, err := auth.NewBasicAuthProvider("default")
+	if err != nil {
+		t.Fatalf("NewBasicAuthProvider: %v", err)
+	}
+	provider.SetKeyStore(&regressionScopedKeyStore{
+		key: &auth.ManagedKey{
+			ID:     "scoped-key-id",
+			Tenant: "default",
+			Scopes: append([]string(nil), scopes...),
+		},
+	})
+	return provider
+}
+
+func exerciseScopedAPIKeyMiddleware(t *testing.T, scopes []string, method, path string) (*httptest.ResponseRecorder, bool) {
+	t.Helper()
+
+	provider := newScopedAPIKeyAuthProvider(t, scopes)
+	nextCalled := false
+	handler := apiKeyMiddleware(provider, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nextCalled = true
+		if got := auth.FromRequest(r); got == nil {
+			t.Fatalf("auth context missing after middleware")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(method, path, nil)
+	req.Header.Set("X-API-Key", "scoped-test-secret")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	provider.DrainUsage()
+	return rec, nextCalled
+}
+
+func assertKeyScopeInsufficient(t *testing.T, rec *httptest.ResponseRecorder, required string, granted []string) {
+	t.Helper()
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	var payload struct {
+		Error   string `json:"error"`
+		Reason  string `json:"reason"`
+		Details struct {
+			Required string   `json:"required"`
+			Granted  []string `json:"granted"`
+		} `json:"details"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v body=%s", err, rec.Body.String())
+	}
+	if payload.Error != "forbidden" {
+		t.Fatalf("error = %q, want forbidden", payload.Error)
+	}
+	if payload.Reason != "key_scope_insufficient" {
+		t.Fatalf("reason = %q, want key_scope_insufficient", payload.Reason)
+	}
+	if payload.Details.Required != required {
+		t.Fatalf("required = %q, want %q", payload.Details.Required, required)
+	}
+	if len(payload.Details.Granted) != len(granted) {
+		t.Fatalf("granted len = %d, want %d (%v)", len(payload.Details.Granted), len(granted), payload.Details.Granted)
+	}
+	for i := range granted {
+		if payload.Details.Granted[i] != granted[i] {
+			t.Fatalf("granted[%d] = %q, want %q", i, payload.Details.Granted[i], granted[i])
+		}
+	}
+}
+
+func TestManagedAPIKeyScope_BlocksOutOfScopeRequest(t *testing.T) {
+	rec, nextCalled := exerciseScopedAPIKeyMiddleware(t, []string{"jobs:read"}, http.MethodPost, "/api/v1/jobs")
+	if nextCalled {
+		t.Fatalf("out-of-scope request reached handler")
+	}
+	assertKeyScopeInsufficient(t, rec, "jobs:write", []string{"jobs:read"})
+}
+
+func TestManagedAPIKeyScope_AllowsResourceWildcard(t *testing.T) {
+	rec, nextCalled := exerciseScopedAPIKeyMiddleware(t, []string{"jobs:*"}, http.MethodPost, "/api/v1/jobs")
+	if !nextCalled {
+		t.Fatalf("in-scope wildcard request did not reach handler: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+}
+
+func TestManagedAPIKeyScope_EmptyScopesBackCompat(t *testing.T) {
+	rec, nextCalled := exerciseScopedAPIKeyMiddleware(t, nil, http.MethodPost, "/api/v1/jobs")
+	if !nextCalled {
+		t.Fatalf("empty-scopes request did not reach handler: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+}
+
+func TestManagedAPIKeyScope_AllowsAuditRead(t *testing.T) {
+	rec, nextCalled := exerciseScopedAPIKeyMiddleware(t, []string{"audit:read"}, http.MethodGet, "/api/v1/audit/events")
+	if !nextCalled {
+		t.Fatalf("audit:read request did not reach handler: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+}
+
+func TestManagedAPIKeyScope_UnknownPathDeniedForScopedKey(t *testing.T) {
+	rec, nextCalled := exerciseScopedAPIKeyMiddleware(t, []string{"jobs:read"}, http.MethodGet, "/api/v1/not-a-known-resource")
+	if nextCalled {
+		t.Fatalf("unknown-path scoped request reached handler")
+	}
+	assertKeyScopeInsufficient(t, rec, "", []string{"jobs:read"})
+}
 
 // ---------------------------------------------------------------------------
 // Bug #3 — Chat message injection: any tenant user can post with role=agent/system

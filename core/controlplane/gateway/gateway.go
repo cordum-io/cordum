@@ -1105,6 +1105,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 
 	// 1.5 Auth config (public)
 	s.registerRoute(mux, "GET /api/v1/auth/config", s.instrumented("/api/v1/auth/config", s.handleAuthConfig))
+	s.registerRoute(mux, "PUT /api/v1/auth/oidc/group-role-mapping", s.instrumented("/api/v1/auth/oidc/group-role-mapping", s.handleUpdateOIDCGroupRoleMapping))
 
 	// 1.6 Auth endpoints
 	s.registerRoute(mux, "POST /api/v1/auth/login", s.instrumented("/api/v1/auth/login", s.handleLogin))
@@ -1460,7 +1461,8 @@ var publicRoutePaths = map[string]bool{
 }
 
 var adminRoutePaths = map[string]bool{
-	"/api/v1/governance/health": true,
+	"/api/v1/governance/health":            true,
+	"/api/v1/auth/oidc/group-role-mapping": true,
 }
 
 var adminRoutePrefixes = []string{

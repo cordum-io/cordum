@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/licensing"
@@ -260,6 +262,90 @@ func (s *server) handleAuthConfig(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, resp)
+}
+
+type updateOIDCGroupRoleMappingRequest struct {
+	OIDCGroupsClaim      string            `json:"oidc_groups_claim"`
+	OIDCGroupRoleMapping map[string]string `json:"oidc_group_role_mapping"`
+}
+
+func (s *server) handleUpdateOIDCGroupRoleMapping(w http.ResponseWriter, r *http.Request) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermConfigWrite, []string{"admin"}, s.configSvc) {
+		return
+	}
+	updater, ok := s.auth.(auth.OIDCGroupRoleMappingUpdater)
+	if !ok {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "oidc provider unavailable")
+		return
+	}
+
+	var req updateOIDCGroupRoleMappingRequest
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid json")
+		return
+	}
+
+	// Capture the live provider's pre-update state so we can roll the live
+	// provider back if persistence subsequently fails. Without this rollback
+	// the running provider would silently diverge from the persisted config:
+	// new mapping in memory, old mapping on disk.
+	var priorClaim string
+	var priorMapping map[string]string
+	if cfgProvider, ok := s.auth.(auth.AuthConfigProvider); ok {
+		priorAuthCfg := cfgProvider.AuthConfig()
+		priorClaim = priorAuthCfg.OIDCGroupsClaim
+		priorMapping = priorAuthCfg.OIDCGroupRoleMapping
+	}
+
+	cfg, err := updater.UpdateOIDCGroupRoleMapping(req.OIDCGroupsClaim, req.OIDCGroupRoleMapping)
+	if err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid oidc group role mapping")
+		return
+	}
+	groupsClaim := strings.TrimSpace(cfg.OIDCGroupsClaim)
+	if groupsClaim == "" {
+		groupsClaim = "groups"
+	}
+	mapping := cfg.OIDCGroupRoleMapping
+	if mapping == nil {
+		mapping = map[string]string{}
+	}
+	mappingJSON, err := json.Marshal(mapping)
+	if err != nil {
+		// The mapping was already validated by UpdateOIDCGroupRoleMapping,
+		// so a marshal failure here points at an internal serialization bug.
+		// Roll the live provider back before reporting.
+		if _, rbErr := updater.UpdateOIDCGroupRoleMapping(priorClaim, priorMapping); rbErr != nil {
+			slog.Error("oidc group role mapping rollback after marshal failure failed", "error", rbErr)
+		}
+		slog.Error("oidc group role mapping marshal failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "config update failed")
+		return
+	}
+
+	err = s.configSvc.SetWithRetry(r.Context(), configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
+		if doc.Data == nil {
+			doc.Data = map[string]any{}
+		}
+		doc.Data["CORDUM_OIDC_GROUPS_CLAIM"] = groupsClaim
+		doc.Data["CORDUM_OIDC_GROUP_ROLE_MAPPING"] = string(mappingJSON)
+		return nil
+	})
+	if err != nil {
+		// Persistence failed: revert the live provider so it matches the
+		// still-on-disk prior config. Without this the operator sees an error
+		// response while auth continues to evaluate the new (unpersisted)
+		// mapping until the next process restart.
+		if _, rbErr := updater.UpdateOIDCGroupRoleMapping(priorClaim, priorMapping); rbErr != nil {
+			slog.Error("oidc group role mapping rollback after persist failure failed", "error", rbErr)
+		}
+		slog.Error("oidc group role mapping config update failed", "error", err)
+		writeErrorJSON(w, http.StatusInternalServerError, "config update failed")
+		return
+	}
+
+	s.publishConfigChanged(string(configsvc.ScopeSystem), "default")
+	writeJSON(w, cfg)
 }
 
 // ---------------------------------------------------------------------------
@@ -1048,13 +1134,38 @@ func (s *server) handleChangeUserPassword(w http.ResponseWriter, r *http.Request
 
 // Allowed scopes for managed API keys.
 var allowedKeyScopes = map[string]struct{}{
-	"admin":           {},
-	"jobs:read":       {},
-	"jobs:write":      {},
-	"workflows:read":  {},
-	"workflows:write": {},
-	"policy:read":     {},
-	"policy:write":    {},
+	"read":              {},
+	"write":             {},
+	"viewer":            {},
+	"operator":          {},
+	"admin":             {},
+	"jobs:read":         {},
+	"jobs:write":        {},
+	"jobs:*":            {},
+	"audit:read":        {},
+	"audit:write":       {},
+	"audit:*":           {},
+	"workflows:read":    {},
+	"workflows:write":   {},
+	"workflows:*":       {},
+	"approvals:read":    {},
+	"approvals:write":   {},
+	"approvals:*":       {},
+	"delegations:read":  {},
+	"delegations:write": {},
+	"delegations:*":     {},
+	"packs:read":        {},
+	"packs:write":       {},
+	"packs:*":           {},
+	"policy:read":       {},
+	"policy:write":      {},
+	"policy:*":          {},
+	"topics:read":       {},
+	"topics:write":      {},
+	"topics:*":          {},
+	"schemas:read":      {},
+	"schemas:write":     {},
+	"schemas:*":         {},
 }
 
 // apiKeyResponse is the JSON shape returned to the frontend, matching the ApiKey type.

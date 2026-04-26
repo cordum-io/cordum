@@ -839,6 +839,8 @@ Invalid values (non-numeric, zero, negative) are silently replaced with defaults
 | `CORDUM_OIDC_AUDIENCE` | — | Expected OIDC audience |
 | `CORDUM_OIDC_CLAIM_TENANT` | — | JWT claim for tenant ID |
 | `CORDUM_OIDC_CLAIM_ROLE` | — | JWT claim for user role |
+| `CORDUM_OIDC_GROUPS_CLAIM` | `groups` | JWT/OIDC claim containing IdP group names for group-to-role mapping |
+| `CORDUM_OIDC_GROUP_ROLE_MAPPING` | `{}` | JSON object mapping IdP group names to Cordum roles (`admin`, `operator`, `viewer`) |
 | `CORDUM_OIDC_ALLOWED_ALGS` | — | Comma-separated allowed algorithms |
 | `CORDUM_OIDC_JWKS_REFRESH_INTERVAL` | — | JWKS refresh interval (e.g., `1h`) |
 | `CORDUM_OIDC_ISSUER_ALLOWLIST` | — | Comma-separated allowed issuers |
@@ -861,6 +863,8 @@ If Redis is unavailable, replicas fall back to direct IdP fetches (same behavior
 | `CORDUM_OIDC_AUDIENCE` | — | Expected audience for bearer-token validation; browser callback validation uses `CORDUM_OIDC_CLIENT_ID` |
 | `CORDUM_OIDC_CLAIM_TENANT` | `org_id` | Claim name used to resolve the Cordum tenant |
 | `CORDUM_OIDC_CLAIM_ROLE` | `cordum_role` | Claim name used to resolve the Cordum role |
+| `CORDUM_OIDC_GROUPS_CLAIM` | `groups` | Claim containing Okta/OIDC group names; when non-empty, mapped groups win over `cordum_role` |
+| `CORDUM_OIDC_GROUP_ROLE_MAPPING` | `{}` | JSON object mapping IdP group names to Cordum roles, for example `{"cordum-admins":"admin"}` |
 | `CORDUM_OIDC_CLIENT_ID` | — | Enable browser OIDC SSO with this client ID |
 | `CORDUM_OIDC_CLIENT_SECRET` | — | Client secret used during the authorization-code exchange |
 | `CORDUM_OIDC_REDIRECT_URI` | — | Absolute callback URL registered with the IdP (typically `https://<gateway>/api/v1/auth/sso/oidc/callback`) |
