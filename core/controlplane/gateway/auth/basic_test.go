@@ -164,6 +164,10 @@ func TestRoleFromScopes(t *testing.T) {
 		{"multiple write+admin", []string{"write", "admin"}, "admin"},
 		{"all scopes", []string{"read", "write", "admin"}, "admin"},
 		{"case insensitive", []string{"ADMIN"}, "admin"},
+		{"resource read scope", []string{"jobs:read"}, "viewer"},
+		{"resource write scope", []string{"jobs:write"}, "operator"},
+		{"resource wildcard scope", []string{"jobs:*"}, "operator"},
+		{"resource read plus write", []string{"jobs:read", "audit:write"}, "operator"},
 		{"unknown scope", []string{"custom"}, "viewer"},
 	}
 	for _, tt := range tests {

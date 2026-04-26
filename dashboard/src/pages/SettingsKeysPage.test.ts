@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  API_KEY_SCOPE_HELP,
+  API_KEY_SCOPE_OPTIONS,
   handleCreateKeyError,
   handleCreateKeySuccess,
   handleDeleteKeyError,
@@ -72,3 +74,27 @@ describe("SettingsKeysPage mutation handlers", () => {
   });
 });
 
+describe("SettingsKeysPage scope guidance", () => {
+  it("documents enforced resource scope syntax and empty-scope behavior", () => {
+    const helpText = API_KEY_SCOPE_HELP.join(" ");
+
+    expect(helpText).toContain("<resource>:<verb>");
+    expect(helpText).toContain("jobs:read");
+    expect(helpText).toContain("audit:write");
+    expect(helpText).toContain("<resource>:*");
+    expect(helpText).toContain("Empty Scopes = unrestricted");
+    expect(helpText).toContain("jobs, audit, workflows, approvals, delegations, packs, policy, topics, schemas");
+  });
+
+  it("offers resource-scoped options instead of legacy read/write checkboxes", () => {
+    const values = API_KEY_SCOPE_OPTIONS.map((scope) => scope.value);
+
+    expect(values).toContain("jobs:read");
+    expect(values).toContain("jobs:*");
+    expect(values).toContain("audit:read");
+    expect(values).toContain("workflows:*");
+    expect(values).toContain("policy:read");
+    expect(values).not.toContain("read");
+    expect(values).not.toContain("write");
+  });
+});
