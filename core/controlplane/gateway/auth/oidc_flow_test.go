@@ -256,6 +256,51 @@ func TestOIDCFlowLoginRedirectsWithExpectedParams(t *testing.T) {
 	}
 }
 
+func TestOIDCFlowAuthConfigIncludesGroupRoleMapping(t *testing.T) {
+	resolver := licensedResolver(t, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
+		entitlements.SSO = true
+	})
+	adapter := &OIDCFlowAdapter{
+		enabled:  true,
+		loginURL: "http://localhost:8081/api/v1/auth/sso/oidc/login",
+		resolver: resolver,
+		provider: &OIDCProvider{cfg: OIDCConfig{
+			Enabled:      true,
+			IssuerURL:    "https://idp.example.com",
+			ClientID:     "cordum-dashboard",
+			ClientSecret: "super-secret-value",
+			GroupsClaim:  "okta_groups",
+			GroupRoleMapping: map[string]string{
+				"cordum-admins":    "admin",
+				"cordum-operators": "operator",
+			},
+		}},
+	}
+
+	cfg := adapter.AuthConfig()
+	if !cfg.OIDCEnabled {
+		t.Fatal("OIDCEnabled = false, want true")
+	}
+	if cfg.OIDCGroupsClaim != "okta_groups" {
+		t.Fatalf("OIDCGroupsClaim = %q, want okta_groups", cfg.OIDCGroupsClaim)
+	}
+	want := map[string]string{
+		"cordum-admins":    "admin",
+		"cordum-operators": "operator",
+	}
+	if len(cfg.OIDCGroupRoleMapping) != len(want) {
+		t.Fatalf("OIDCGroupRoleMapping len = %d, want %d: %#v", len(cfg.OIDCGroupRoleMapping), len(want), cfg.OIDCGroupRoleMapping)
+	}
+	for group, role := range want {
+		if got := cfg.OIDCGroupRoleMapping[group]; got != role {
+			t.Fatalf("OIDCGroupRoleMapping[%q] = %q, want %q", group, got, role)
+		}
+	}
+	if cfg.OIDCClientSecretMasked == "super-secret-value" {
+		t.Fatal("AuthConfig leaked raw OIDC client secret")
+	}
+}
+
 func TestOIDCFlowCallbackRejectsInvalidState(t *testing.T) {
 	resolver := licensedResolver(t, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
 		entitlements.SSO = true
@@ -341,6 +386,121 @@ func TestOIDCFlowCallbackCreatesSessionFromMappedClaims(t *testing.T) {
 	if redirectURI != "http://localhost:8081/api/v1/auth/sso/oidc/callback" {
 		t.Fatalf("redirect_uri exchange = %q", redirectURI)
 	}
+}
+
+func TestOIDCFlowCallbackCreatesAdminFromGroupsClaim(t *testing.T) {
+	cfgMutate := func(cfg *OIDCConfig) {
+		cfg.GroupsClaim = "groups"
+		cfg.GroupRoleMapping = map[string]string{
+			"cordum-admins": "admin",
+		}
+	}
+	claimMutate := func(claims map[string]any) {
+		delete(claims, "cordum_role")
+		claims["groups"] = []any{"cordum-admins"}
+	}
+
+	authCtx, user, fragment := exerciseOIDCFlowCallback(t, cfgMutate, claimMutate)
+	if authCtx.Role != "admin" {
+		t.Fatalf("session role = %q, want admin", authCtx.Role)
+	}
+	if user.Role != "admin" {
+		t.Fatalf("user role = %q, want admin", user.Role)
+	}
+	if got := fragment.Get("role"); got != "admin" {
+		t.Fatalf("redirect role fragment = %q, want admin", got)
+	}
+}
+
+func TestOIDCFlowCallbackGroupsWinOverConflictingRoleClaim(t *testing.T) {
+	cfgMutate := func(cfg *OIDCConfig) {
+		cfg.GroupsClaim = "groups"
+		cfg.GroupRoleMapping = map[string]string{
+			"cordum-viewers": "viewer",
+		}
+	}
+	claimMutate := func(claims map[string]any) {
+		claims["cordum_role"] = "admin"
+		claims["groups"] = []any{"cordum-viewers"}
+	}
+
+	authCtx, user, fragment := exerciseOIDCFlowCallback(t, cfgMutate, claimMutate)
+	if authCtx.Role != "viewer" {
+		t.Fatalf("session role = %q, want viewer", authCtx.Role)
+	}
+	if user.Role != "viewer" {
+		t.Fatalf("user role = %q, want viewer", user.Role)
+	}
+	if got := fragment.Get("role"); got != "viewer" {
+		t.Fatalf("redirect role fragment = %q, want viewer", got)
+	}
+}
+
+func TestOIDCFlowCallbackPreservesOperatorGroupRole(t *testing.T) {
+	cfgMutate := func(cfg *OIDCConfig) {
+		cfg.GroupsClaim = "groups"
+		cfg.GroupRoleMapping = map[string]string{
+			"cordum-operators": "operator",
+		}
+	}
+	claimMutate := func(claims map[string]any) {
+		delete(claims, "cordum_role")
+		claims["groups"] = []any{"cordum-operators"}
+	}
+
+	authCtx, user, fragment := exerciseOIDCFlowCallback(t, cfgMutate, claimMutate)
+	if authCtx.Role != "operator" {
+		t.Fatalf("session role = %q, want operator", authCtx.Role)
+	}
+	if user.Role != "operator" {
+		t.Fatalf("user role = %q, want operator", user.Role)
+	}
+	if got := fragment.Get("role"); got != "operator" {
+		t.Fatalf("redirect role fragment = %q, want operator", got)
+	}
+}
+
+func exerciseOIDCFlowCallback(t *testing.T, cfgMutate func(*OIDCConfig), claimMutate func(map[string]any)) (*AuthContext, *User, url.Values) {
+	t.Helper()
+
+	resolver := licensedResolver(t, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
+		entitlements.SSO = true
+	})
+	adapter, store, _, cleanup := newTestOIDCFlowAdapter(t, resolver, cfgMutate, claimMutate)
+	defer cleanup()
+
+	if err := adapter.stateStore.Put(context.Background(), "state-1", "nonce-1", "http://localhost:8081/login?returnUrl=%2Fjobs", time.Minute); err != nil {
+		t.Fatalf("stateStore.Put: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, OIDCCallbackPath+"?state=state-1&code=good-code", nil)
+	rr := httptest.NewRecorder()
+	adapter.handleCallback(rr, req)
+
+	if rr.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d body=%s", rr.Code, http.StatusFound, rr.Body.String())
+	}
+	location, err := rr.Result().Location()
+	if err != nil {
+		t.Fatalf("Location: %v", err)
+	}
+	fragment, err := url.ParseQuery(location.Fragment)
+	if err != nil {
+		t.Fatalf("ParseQuery fragment: %v", err)
+	}
+	sessionToken := fragment.Get("token")
+	if !strings.HasPrefix(sessionToken, "session-") {
+		t.Fatalf("token = %q", sessionToken)
+	}
+	authCtx, err := store.ValidateSession(context.Background(), sessionToken)
+	if err != nil {
+		t.Fatalf("ValidateSession: %v", err)
+	}
+	user, err := store.GetByUsername(context.Background(), "operator@example.com", "acme")
+	if err != nil {
+		t.Fatalf("GetByUsername: %v", err)
+	}
+	return authCtx, user, fragment
 }
 
 func TestOIDCFlowCallbackRedirectsIdPErrors(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/licensing"
@@ -260,6 +262,64 @@ func (s *server) handleAuthConfig(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, resp)
+}
+
+type updateOIDCGroupRoleMappingRequest struct {
+	OIDCGroupsClaim      string            `json:"oidc_groups_claim"`
+	OIDCGroupRoleMapping map[string]string `json:"oidc_group_role_mapping"`
+}
+
+func (s *server) handleUpdateOIDCGroupRoleMapping(w http.ResponseWriter, r *http.Request) {
+	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermConfigWrite, []string{"admin"}, s.configSvc) {
+		return
+	}
+	updater, ok := s.auth.(auth.OIDCGroupRoleMappingUpdater)
+	if !ok {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "oidc provider unavailable")
+		return
+	}
+
+	var req updateOIDCGroupRoleMappingRequest
+	if err := decodeJSONBody(w, r, &req); err != nil {
+		writeJSONDecodeError(w, err, "invalid json")
+		return
+	}
+
+	cfg, err := updater.UpdateOIDCGroupRoleMapping(req.OIDCGroupsClaim, req.OIDCGroupRoleMapping)
+	if err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid oidc group role mapping")
+		return
+	}
+	groupsClaim := strings.TrimSpace(cfg.OIDCGroupsClaim)
+	if groupsClaim == "" {
+		groupsClaim = "groups"
+	}
+	mapping := cfg.OIDCGroupRoleMapping
+	if mapping == nil {
+		mapping = map[string]string{}
+	}
+	mappingJSON, err := json.Marshal(mapping)
+	if err != nil {
+		writeErrorJSON(w, http.StatusBadRequest, "invalid oidc group role mapping")
+		return
+	}
+
+	err = s.configSvc.SetWithRetry(r.Context(), configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
+		if doc.Data == nil {
+			doc.Data = map[string]any{}
+		}
+		doc.Data["CORDUM_OIDC_GROUPS_CLAIM"] = groupsClaim
+		doc.Data["CORDUM_OIDC_GROUP_ROLE_MAPPING"] = string(mappingJSON)
+		return nil
+	})
+	if err != nil {
+		slog.Error("oidc group role mapping config update failed", "error", err)
+		writeErrorJSON(w, http.StatusBadRequest, "config update failed")
+		return
+	}
+
+	s.publishConfigChanged(string(configsvc.ScopeSystem), "default")
+	writeJSON(w, cfg)
 }
 
 // ---------------------------------------------------------------------------

@@ -310,6 +310,210 @@ func TestOIDC_CustomClaimMapping(t *testing.T) {
 	}
 }
 
+func TestOIDC_GroupRoleMapping(t *testing.T) {
+	m := newMockOIDCServer(t)
+	defer m.Close()
+
+	provider, err := NewOIDCProvider(OIDCConfig{
+		IssuerURL:   m.issuer,
+		Audience:    "cordum-api",
+		DefaultRole: "viewer",
+		GroupsClaim: "groups",
+		GroupRoleMapping: map[string]string{
+			"cordum-admins":    "admin",
+			"cordum-operators": "operator",
+			"cordum-viewers":   "viewer",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewOIDCProvider: %v", err)
+	}
+	defer provider.Close()
+
+	tests := []struct {
+		name       string
+		mutate     func(map[string]any)
+		wantRole   string
+		wantTenant string
+	}{
+		{
+			name: "groups only resolves admin",
+			mutate: func(claims map[string]any) {
+				delete(claims, "cordum_role")
+				claims["groups"] = []any{"cordum-admins"}
+			},
+			wantRole:   "admin",
+			wantTenant: "acme-corp",
+		},
+		{
+			name: "claim only preserves legacy role path when groups absent",
+			mutate: func(claims map[string]any) {
+				claims["cordum_role"] = "viewer"
+			},
+			wantRole:   "viewer",
+			wantTenant: "acme-corp",
+		},
+		{
+			name: "groups win over conflicting role claim",
+			mutate: func(claims map[string]any) {
+				claims["groups"] = []any{"cordum-viewers"}
+				claims["cordum_role"] = "admin"
+			},
+			wantRole:   "viewer",
+			wantTenant: "acme-corp",
+		},
+		{
+			name: "unknown non empty groups use default role without claim fallback",
+			mutate: func(claims map[string]any) {
+				claims["groups"] = []any{"unknown-admins"}
+				claims["cordum_role"] = "admin"
+			},
+			wantRole:   "viewer",
+			wantTenant: "acme-corp",
+		},
+		{
+			name: "empty groups fall through to claim role",
+			mutate: func(claims map[string]any) {
+				claims["groups"] = []any{}
+				claims["cordum_role"] = "admin"
+			},
+			wantRole:   "admin",
+			wantTenant: "acme-corp",
+		},
+		{
+			name: "group names match case insensitively",
+			mutate: func(claims map[string]any) {
+				delete(claims, "cordum_role")
+				claims["groups"] = []any{"Cordum-Admins"}
+			},
+			wantRole:   "admin",
+			wantTenant: "acme-corp",
+		},
+		{
+			name: "multiple groups pick highest privilege",
+			mutate: func(claims map[string]any) {
+				delete(claims, "cordum_role")
+				claims["groups"] = []any{"cordum-viewers", "cordum-operators", "cordum-admins"}
+			},
+			wantRole:   "admin",
+			wantTenant: "acme-corp",
+		},
+		{
+			name: "operator group mapping preserves operator role",
+			mutate: func(claims map[string]any) {
+				delete(claims, "cordum_role")
+				claims["groups"] = []any{"cordum-operators"}
+			},
+			wantRole:   "operator",
+			wantTenant: "acme-corp",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			claims := m.validClaims()
+			tt.mutate(claims)
+			token := m.signJWT(claims)
+
+			authCtx, err := provider.ValidateJWT(token)
+			if err != nil {
+				t.Fatalf("ValidateJWT: %v", err)
+			}
+			if authCtx.Role != tt.wantRole {
+				t.Fatalf("Role = %q, want %q", authCtx.Role, tt.wantRole)
+			}
+			if authCtx.Tenant != tt.wantTenant {
+				t.Fatalf("Tenant = %q, want %q", authCtx.Tenant, tt.wantTenant)
+			}
+		})
+	}
+}
+
+func TestOIDC_GroupRoleMappingEnv(t *testing.T) {
+	m := newMockOIDCServer(t)
+	defer m.Close()
+
+	t.Setenv("CORDUM_OIDC_ENABLED", "true")
+	t.Setenv("CORDUM_OIDC_ISSUER", m.issuer)
+	t.Setenv("CORDUM_OIDC_AUDIENCE", "cordum-api")
+	t.Setenv("CORDUM_OIDC_GROUPS_CLAIM", "okta_groups")
+	t.Setenv("CORDUM_OIDC_GROUP_ROLE_MAPPING", `{"Cordum-Admins":"admin","cordum-operators":"operator","cordum-viewers":"viewer"}`)
+
+	provider, err := NewOIDCProviderFromEnv()
+	if err != nil {
+		t.Fatalf("NewOIDCProviderFromEnv: %v", err)
+	}
+	if provider == nil {
+		t.Fatal("NewOIDCProviderFromEnv returned nil provider")
+	}
+	defer provider.Close()
+
+	cfg := provider.Config()
+	if cfg.GroupsClaim != "okta_groups" {
+		t.Fatalf("GroupsClaim = %q, want okta_groups", cfg.GroupsClaim)
+	}
+	want := map[string]string{
+		"cordum-admins":    "admin",
+		"cordum-operators": "operator",
+		"cordum-viewers":   "viewer",
+	}
+	if len(cfg.GroupRoleMapping) != len(want) {
+		t.Fatalf("GroupRoleMapping len = %d, want %d: %#v", len(cfg.GroupRoleMapping), len(want), cfg.GroupRoleMapping)
+	}
+	for group, role := range want {
+		if got := cfg.GroupRoleMapping[group]; got != role {
+			t.Fatalf("GroupRoleMapping[%q] = %q, want %q", group, got, role)
+		}
+	}
+}
+
+func TestOIDC_GroupRoleMappingEnvValidation(t *testing.T) {
+	m := newMockOIDCServer(t)
+	defer m.Close()
+
+	tests := []struct {
+		name    string
+		raw     string
+		wantErr string
+	}{
+		{
+			name:    "invalid json",
+			raw:     `{"cordum-admins":`,
+			wantErr: "CORDUM_OIDC_GROUP_ROLE_MAPPING",
+		},
+		{
+			name:    "invalid role",
+			raw:     `{"cordum-admins":"superadmin"}`,
+			wantErr: "invalid role",
+		},
+		{
+			name:    "duplicate case insensitive group",
+			raw:     `{"Cordum-Admins":"admin"," cordum-admins ":"viewer"}`,
+			wantErr: "duplicate group",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("CORDUM_OIDC_ENABLED", "true")
+			t.Setenv("CORDUM_OIDC_ISSUER", m.issuer)
+			t.Setenv("CORDUM_OIDC_AUDIENCE", "cordum-api")
+			t.Setenv("CORDUM_OIDC_GROUP_ROLE_MAPPING", tt.raw)
+
+			provider, err := NewOIDCProviderFromEnv()
+			if provider != nil {
+				provider.Close()
+			}
+			if err == nil {
+				t.Fatalf("NewOIDCProviderFromEnv error = nil, want %q", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("NewOIDCProviderFromEnv error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestOIDC_NoAudienceConfig(t *testing.T) {
 	// Skip in production mode (audience is required)
 	t.Setenv("CORDUM_PRODUCTION", "false")
@@ -551,6 +755,48 @@ func TestComposite_RequiresAtLeastOneProvider(t *testing.T) {
 	}
 }
 
+func TestComposite_AuthConfigMergesOIDCGroupRoleMapping(t *testing.T) {
+	oidcProvider := &OIDCProvider{cfg: OIDCConfig{
+		Enabled:     true,
+		IssuerURL:   "https://idp.example.com",
+		GroupsClaim: "okta_groups",
+		GroupRoleMapping: map[string]string{
+			"cordum-admins":    "admin",
+			"cordum-operators": "operator",
+		},
+	}}
+
+	testKeys := map[string]apiKeyMeta{"test-key": {Role: "admin"}}
+	basic := &BasicAuthProvider{
+		defaultTenant: "default",
+		keys:          testKeys,
+		keyHashes:     buildKeyHashes(testKeys),
+		requireAPIKey: true,
+	}
+	oidcAdapter := NewOIDCAuthAdapter(oidcProvider, "default")
+	composite, err := NewCompositeAuthProvider(basic, oidcAdapter)
+	if err != nil {
+		t.Fatalf("NewCompositeAuthProvider: %v", err)
+	}
+
+	cfg := composite.AuthConfig()
+	if cfg.OIDCGroupsClaim != "okta_groups" {
+		t.Fatalf("OIDCGroupsClaim = %q, want okta_groups", cfg.OIDCGroupsClaim)
+	}
+	want := map[string]string{
+		"cordum-admins":    "admin",
+		"cordum-operators": "operator",
+	}
+	if len(cfg.OIDCGroupRoleMapping) != len(want) {
+		t.Fatalf("OIDCGroupRoleMapping len = %d, want %d: %#v", len(cfg.OIDCGroupRoleMapping), len(want), cfg.OIDCGroupRoleMapping)
+	}
+	for group, role := range want {
+		if got := cfg.OIDCGroupRoleMapping[group]; got != role {
+			t.Fatalf("OIDCGroupRoleMapping[%q] = %q, want %q", group, got, role)
+		}
+	}
+}
+
 // ---------- OIDCAuthAdapter tests ----------
 
 func TestOIDCAdapter_SkipsSessionTokens(t *testing.T) {
@@ -572,6 +818,40 @@ func TestOIDCAdapter_SkipsSessionTokens(t *testing.T) {
 	_, err = adapter.AuthenticateHTTP(req)
 	if err == nil {
 		t.Fatal("expected error — session tokens should be skipped by OIDC adapter")
+	}
+}
+
+func TestOIDCAdapter_AuthConfigIncludesGroupRoleMappingWithoutSecret(t *testing.T) {
+	oidcProvider := &OIDCProvider{cfg: OIDCConfig{
+		Enabled:      true,
+		IssuerURL:    "https://idp.example.com",
+		ClientID:     "cordum-dashboard",
+		ClientSecret: "super-secret-value",
+		GroupsClaim:  "okta_groups",
+		GroupRoleMapping: map[string]string{
+			"cordum-admins":  "admin",
+			"cordum-viewers": "viewer",
+		},
+	}}
+
+	cfg := NewOIDCAuthAdapter(oidcProvider, "default").AuthConfig()
+	if cfg.OIDCGroupsClaim != "okta_groups" {
+		t.Fatalf("OIDCGroupsClaim = %q, want okta_groups", cfg.OIDCGroupsClaim)
+	}
+	want := map[string]string{
+		"cordum-admins":  "admin",
+		"cordum-viewers": "viewer",
+	}
+	if len(cfg.OIDCGroupRoleMapping) != len(want) {
+		t.Fatalf("OIDCGroupRoleMapping len = %d, want %d: %#v", len(cfg.OIDCGroupRoleMapping), len(want), cfg.OIDCGroupRoleMapping)
+	}
+	for group, role := range want {
+		if got := cfg.OIDCGroupRoleMapping[group]; got != role {
+			t.Fatalf("OIDCGroupRoleMapping[%q] = %q, want %q", group, got, role)
+		}
+	}
+	if cfg.OIDCClientSecretMasked == "super-secret-value" {
+		t.Fatal("AuthConfig leaked raw OIDC client secret")
 	}
 }
 

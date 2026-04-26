@@ -1243,6 +1243,8 @@ export interface AuthConfig {
   oidc_client_id?: string;
   oidc_redirect_uri?: string;
   oidc_scopes?: string[];
+  oidc_groups_claim?: string;
+  oidc_group_role_mapping?: Record<string, string>;
   oidc_client_secret_masked?: string;
 }
 
@@ -1877,4 +1879,3 @@ export interface CopilotSession {
   messages: CopilotMessage[];
   metadata?: Record<string, string>;
 }
-

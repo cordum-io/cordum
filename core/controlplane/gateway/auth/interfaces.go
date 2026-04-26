@@ -30,6 +30,12 @@ type AuthConfigProvider interface {
 	AuthConfig() AuthConfig
 }
 
+// OIDCGroupRoleMappingUpdater updates the live OIDC groups-claim mapping and
+// returns the sanitized dashboard-facing auth config.
+type OIDCGroupRoleMappingUpdater interface {
+	UpdateOIDCGroupRoleMapping(groupsClaim string, mapping map[string]string) (AuthConfig, error)
+}
+
 // PublicPathProvider allows auth providers to skip auth for specific paths.
 type PublicPathProvider interface {
 	IsPublicPath(path string) bool

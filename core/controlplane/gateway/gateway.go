@@ -190,9 +190,9 @@ type server struct {
 	instanceRegistry *registry.InstanceRegistry
 	instanceID       string
 
-	marketplaceMu      sync.Mutex
-	marketplaceCache   packs.MarketplaceCache
-	stopBusTapsOnce    sync.Once
+	marketplaceMu    sync.Mutex
+	marketplaceCache packs.MarketplaceCache
+	stopBusTapsOnce  sync.Once
 	eventsStopped    atomic.Bool
 	shutdownCh       chan struct{}
 
@@ -1102,6 +1102,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 
 	// 1.5 Auth config (public)
 	s.registerRoute(mux, "GET /api/v1/auth/config", s.instrumented("/api/v1/auth/config", s.handleAuthConfig))
+	s.registerRoute(mux, "PUT /api/v1/auth/oidc/group-role-mapping", s.instrumented("/api/v1/auth/oidc/group-role-mapping", s.handleUpdateOIDCGroupRoleMapping))
 
 	// 1.6 Auth endpoints
 	s.registerRoute(mux, "POST /api/v1/auth/login", s.instrumented("/api/v1/auth/login", s.handleLogin))

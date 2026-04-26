@@ -284,11 +284,23 @@ func (a *OIDCFlowAdapter) AuthConfig() AuthConfig {
 	cfg.OIDCClientID = providerCfg.ClientID
 	cfg.OIDCRedirectURI = providerCfg.RedirectURI
 	cfg.OIDCScopes = append([]string(nil), providerCfg.Scopes...)
+	cfg.OIDCGroupsClaim = providerCfg.GroupsClaim
+	cfg.OIDCGroupRoleMapping = cloneStringMap(providerCfg.GroupRoleMapping)
 	cfg.OIDCClientSecretMasked = maskOIDCSecret(providerCfg.ClientSecret)
 	if allowed, _ := a.entitlementEnabled(); allowed {
 		cfg.OIDCEnabled = true
 	}
 	return cfg
+}
+
+func (a *OIDCFlowAdapter) UpdateOIDCGroupRoleMapping(groupsClaim string, mapping map[string]string) (AuthConfig, error) {
+	if a == nil || a.provider == nil {
+		return AuthConfig{}, errors.New("oidc flow: provider unavailable")
+	}
+	if _, err := a.provider.UpdateGroupRoleMapping(groupsClaim, mapping); err != nil {
+		return AuthConfig{}, err
+	}
+	return a.AuthConfig(), nil
 }
 
 func (a *OIDCFlowAdapter) RegisterRoutes(mux *http.ServeMux, wrap func(string, http.HandlerFunc) http.HandlerFunc) {
@@ -537,7 +549,7 @@ func (a *OIDCFlowAdapter) resolveOIDCUser(ctx context.Context, authCtx *AuthCont
 
 	selectedRole := a.defaultRole
 	if authCtx != nil && strings.TrimSpace(authCtx.Role) != "" {
-		selectedRole = NormalizeRole(authCtx.Role)
+		selectedRole = normalizeOIDCResolvedRole(authCtx.Role, true)
 	}
 	if selectedRole == "" {
 		selectedRole = "viewer"

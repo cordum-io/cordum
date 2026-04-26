@@ -24,6 +24,8 @@ export interface SAMLConfigView {
     redirectUri: string;
     clientSecretMasked: string;
     scopes: string[];
+    groupsClaim: string;
+    groupRoleMapping: Record<string, string>;
   };
   raw: AuthConfig;
 }
@@ -59,6 +61,20 @@ function resolveUrl(candidate: string | undefined, path: string, origin: string)
   return new URL(path, origin).toString();
 }
 
+function normalizeGroupRoleMapping(raw: AuthConfig["oidc_group_role_mapping"]): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+
+  return Object.entries(raw).reduce<Record<string, string>>((acc, [group, role]) => {
+    const groupKey = group.trim().toLowerCase();
+    const roleValue = typeof role === "string" ? role.trim().toLowerCase() : "";
+    if (!groupKey || !["admin", "operator", "viewer"].includes(roleValue)) {
+      return acc;
+    }
+    acc[groupKey] = roleValue;
+    return acc;
+  }, {});
+}
+
 function toSAMLConfigView(raw?: AuthConfig): SAMLConfigView | undefined {
   if (!raw) return undefined;
 
@@ -91,6 +107,8 @@ function toSAMLConfigView(raw?: AuthConfig): SAMLConfigView | undefined {
       redirectUri: raw.oidc_redirect_uri?.trim() || new URL("/api/v1/auth/sso/oidc/callback", origin).toString(),
       clientSecretMasked: raw.oidc_client_secret_masked?.trim() || "",
       scopes: Array.isArray(raw.oidc_scopes) ? raw.oidc_scopes.filter((scope) => typeof scope === "string").map((scope) => scope.trim()).filter(Boolean) : [],
+      groupsClaim: raw.oidc_groups_claim?.trim() || "groups",
+      groupRoleMapping: normalizeGroupRoleMapping(raw.oidc_group_role_mapping),
     },
     raw,
   };
