@@ -136,22 +136,6 @@ func (c *secretCache) set(key, value string) {
 	}
 }
 
-// Purge removes all expired entries.  Called periodically to prevent
-// unbounded growth when secrets are resolved once and never again.
-func (c *secretCache) purge() {
-	if c.ttl <= 0 {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	now := time.Now()
-	for k, v := range c.entries {
-		if now.After(v.expiresAt) {
-			delete(c.entries, k)
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Resolver
 // ---------------------------------------------------------------------------

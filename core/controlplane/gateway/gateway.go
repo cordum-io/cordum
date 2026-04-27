@@ -602,7 +602,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		return fmt.Errorf("init secret resolver: %w", err)
 	}
 	if secretResolver != nil {
-		defer secretResolver.Close()
+		defer func() { _ = secretResolver.Close() }()
 	}
 
 	s := &server{

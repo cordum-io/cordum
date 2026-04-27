@@ -290,9 +290,8 @@ func TestResolver_Close(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected close error")
 	}
-	if !r.HasProvider("vault") {
-		// After close, providers should be cleared.
-		// Actually, Close clears providers — so HasProvider should be false.
+	if r.HasProvider("vault") {
+		t.Fatal("expected providers to be cleared after Close")
 	}
 }
 
