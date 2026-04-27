@@ -42,6 +42,7 @@ import (
 	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/cordum/cordum/core/infra/registry"
 	"github.com/cordum/cordum/core/infra/schema"
+	"github.com/cordum/cordum/core/infra/secrets"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/licensing"
@@ -186,6 +187,7 @@ type server struct {
 	sessionIssuer     *scheduler.SessionTokenIssuer
 	trustResolver     *scheduler.TrustResolver
 	heartbeatMode     scheduler.HeartbeatMode
+	secretResolver   *secrets.Resolver
 
 	apiRL    rateLimiter
 	publicRL rateLimiter
@@ -593,6 +595,16 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		return fmt.Errorf("init audit exporter: %w", err)
 	}
 
+	// Initialize secret resolver (Vault, AWS Secrets Manager).  A nil
+	// resolver is fine — handlers fall back to redaction-only mode.
+	secretResolver, err := secrets.NewResolverFromEnv(context.Background())
+	if err != nil {
+		return fmt.Errorf("init secret resolver: %w", err)
+	}
+	if secretResolver != nil {
+		defer secretResolver.Close()
+	}
+
 	s := &server{
 		memStore:               memStore,
 		jobStore:               jobStore,
@@ -634,6 +646,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		permChecker:            permChecker,
 		auditExporter:          auditSender,
 		auditChainer:           auditChainer,
+		secretResolver:         secretResolver,
 		legalHoldStore:         initLegalHoldStore(cfg.RedisURL),
 		statusCacheObj:         newStatusCache(2 * time.Second),
 		policyShadowStore:      policyshadow.NewStore(configSvc),

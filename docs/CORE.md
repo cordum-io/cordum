@@ -376,7 +376,7 @@ Support:
 
 ## 9) Secrets reference model (never pass secrets as plaintext)
 
-**Status:** Partially implemented: `secret://` detection + redaction helpers, policy enforcement via risk tags/labels.
+**Status:** Implemented: `secret://` detection + redaction, resolver interface with Vault (KV v2) and AWS Secrets Manager providers, in-memory cache with configurable TTL, Prometheus metrics, and gateway-side resolution. See `docs/secrets-manager.md`.
 
 Core must support:
 - “secret refs”  
