@@ -1,19 +1,20 @@
-import { useNavigate, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
-import { get } from "@/api/client";
-import { mapJobRecord, type BackendJobRecord } from "@/api/transform";
-import type { Job } from "@/api/types";
+import { ApiError } from "@/api/client";
+import type {
+  CopilotSessionDecision,
+  CopilotSessionDetailResponse,
+  CopilotSessionJob,
+} from "@/api/types";
 import { Button } from "@/components/ui/Button";
-import { StatusBadge } from "@/components/ui/StatusBadge";
+import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { SkeletonTable } from "@/components/ui/Skeleton";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { useCopilotSession } from "@/hooks/useCopilotSession";
 import { clickableRowProps, formatRelativeTime } from "@/lib/utils";
-
-const PAGE_LIMIT = 50;
 
 function jobStatusVariant(status: string) {
   switch (status) {
@@ -36,10 +37,47 @@ function jobStatusVariant(status: string) {
   }
 }
 
+function roleVariant(role: string): BadgeVariant {
+  switch (role) {
+    case "user":
+      return "cordum";
+    case "assistant":
+      return "info";
+    case "system":
+      return "governance";
+    default:
+      return "muted";
+  }
+}
+
+function verdictVariant(verdict: string): BadgeVariant {
+  switch (verdict) {
+    case "allow":
+    case "allow_with_constraints":
+      return "healthy";
+    case "deny":
+      return "danger";
+    case "require_approval":
+      return "governance";
+    case "throttle":
+      return "warning";
+    default:
+      return "muted";
+  }
+}
+
+function safeRelativeTime(value?: string) {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return formatRelativeTime(parsed.toISOString());
+}
+
 export default function CopilotSessionPage() {
   const navigate = useNavigate();
   const { sessionId } = useParams<{ sessionId: string }>();
   const trimmed = (sessionId ?? "").trim();
+  const { data, isLoading, isError, error, refetch } = useCopilotSession(trimmed);
 
   if (!trimmed) {
     return (
@@ -62,21 +100,11 @@ export default function CopilotSessionPage() {
     );
   }
 
-  const { data, isLoading, isError, error, refetch } = useQuery<Job[], Error>({
-    queryKey: ["copilot-session-jobs", trimmed],
-    queryFn: async () => {
-      const res = await get<{ items?: BackendJobRecord[] }>(
-        `/jobs?session_id=${encodeURIComponent(trimmed)}&limit=${PAGE_LIMIT}`,
-      );
-      return (res.items ?? [])
-        .map(mapJobRecord)
-        .filter((j): j is Job => !!j);
-    },
-    enabled: !!trimmed,
-    staleTime: 10_000,
-  });
-
-  const jobs = data ?? [];
+  const backendPending = isError && error instanceof ApiError && error.status === 501;
+  const messages = data?.session.messages ?? [];
+  const decisions = data?.decisions ?? [];
+  const jobs = data?.jobs ?? [];
+  const knownJobIds = new Set(jobs.map((job) => job.id));
 
   return (
     <motion.div
@@ -87,7 +115,7 @@ export default function CopilotSessionPage() {
       <PageHeader
         label="Copilot Session"
         title={trimmed}
-        subtitle="Linked jobs for this Copilot session."
+        subtitle="Messages, governance decisions, and linked jobs for this Copilot session."
         actions={
           <Button variant="outline" size="sm" onClick={() => navigate("/jobs")}>
             <ArrowLeft className="w-3 h-3 mr-1" />
@@ -96,32 +124,192 @@ export default function CopilotSessionPage() {
         }
       />
 
-      <div
-        data-testid="copilot-session-roadmap-banner"
-        className="instrument-card border-dashed border-cordum/30 bg-cordum/5"
-      >
-        <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-1">
-          Roadmap
-        </p>
-        <p className="text-sm text-foreground">
-          The full Copilot Session timeline (messages, governance decisions,
-          per-turn job chips) is coming soon. For now, this page shows the
-          session id and the jobs the session has produced. Tracked in
-          task-da7eaef7.
-        </p>
-      </div>
-
-      {isError ? (
+      {isLoading ? (
+        <SkeletonTable rows={5} />
+      ) : backendPending ? (
+        <>
+          <div className="instrument-card border-dashed border-cordum/30 bg-cordum/5">
+            <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-1">
+              Backend pending
+            </p>
+            <p className="text-sm text-foreground">
+              Copilot session details are not available yet. Linked jobs and
+              governance decisions will appear once the backend store is
+              wired up.
+            </p>
+          </div>
+          <LinkedJobsTable jobs={jobs} navigate={navigate} />
+        </>
+      ) : isError ? (
         <ErrorBanner
-          message={error instanceof Error ? error.message : "Failed to load linked jobs"}
+          message={error instanceof Error ? error.message : "Failed to load Copilot session"}
           onRetry={() => void refetch()}
         />
-      ) : isLoading ? (
-        <SkeletonTable rows={5} />
-      ) : jobs.length === 0 ? (
+      ) : (
+        <>
+          {data?.truncated && (
+            <div className="instrument-card border-dashed border-warning/30 bg-warning/5">
+              <p className="text-sm text-foreground">
+                Showing first 500 entries; older items truncated.
+              </p>
+            </div>
+          )}
+
+          <div data-testid="copilot-session-timeline" className="space-y-6">
+            <MessageTimeline messages={messages} knownJobIds={knownJobIds} />
+            <GovernanceDecisionsPanel decisions={decisions} />
+            <LinkedJobsTable jobs={jobs} navigate={navigate} />
+          </div>
+        </>
+      )}
+    </motion.div>
+  );
+}
+
+function MessageTimeline({
+  messages,
+  knownJobIds,
+}: {
+  messages: CopilotSessionDetailResponse["session"]["messages"];
+  knownJobIds: Set<string>;
+}) {
+  return (
+    <section className="instrument-card space-y-4">
+      <div>
+        <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
+          Timeline
+        </p>
+        <h2 className="text-base font-display font-semibold text-foreground">
+          Messages
+        </h2>
+      </div>
+      {messages.length === 0 ? (
+        <EmptyState
+          title="No messages yet"
+          description="This Copilot session has not recorded any chat messages yet."
+          className="py-10"
+        />
+      ) : (
+        <ol className="space-y-3">
+          {messages.map((message) => (
+            <li
+              key={message.id}
+              className="border-l border-border pl-4 py-1"
+            >
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <StatusBadge variant={roleVariant(message.role)}>
+                  {message.role}
+                </StatusBadge>
+                <span className="font-mono text-xs text-muted-foreground">
+                  {safeRelativeTime(message.timestamp)}
+                </span>
+              </div>
+              <p className="text-sm text-foreground whitespace-pre-wrap">
+                {message.content}
+              </p>
+              {message.jobIds && message.jobIds.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {/*
+                   * Render every job id the message references. The API
+                   * exposes message.jobIds independently of the enriched
+                   * jobs array (which can be capped by
+                   * copilotSessionAggregateLimit) and `/jobs/:jobId` only
+                   * needs the id, so a chip remains useful even when the
+                   * enriched view was truncated. Use knownJobIds purely
+                   * for styling so users can distinguish jobs whose
+                   * metadata loaded from those that did not.
+                   */}
+                  {message.jobIds.map((jobId) => (
+                    <Link key={jobId} to={`/jobs/${jobId}`} className="inline-flex">
+                      <StatusBadge variant={knownJobIds.has(jobId) ? "info" : "muted"}>
+                        {jobId}
+                      </StatusBadge>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
+function GovernanceDecisionsPanel({ decisions }: { decisions: CopilotSessionDecision[] }) {
+  return (
+    <section className="instrument-card space-y-4">
+      <div>
+        <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
+          Governance
+        </p>
+        <h2 className="text-base font-display font-semibold text-foreground">
+          Governance decisions
+        </h2>
+      </div>
+      {decisions.length === 0 ? (
+        <EmptyState
+          title="No governance decisions for this session"
+          description="No policy decisions have been linked to this Copilot session yet."
+          className="py-10"
+        />
+      ) : (
+        <div className="divide-y divide-border">
+          {decisions.map((decision) => (
+            <div key={`${decision.jobId}-${decision.timestamp}-${decision.matchedRule}`} className="py-3 first:pt-0 last:pb-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusBadge variant={verdictVariant(decision.verdict)} dot>
+                  {decision.verdict}
+                </StatusBadge>
+                <span className="font-mono text-xs text-muted-foreground">
+                  {safeRelativeTime(decision.timestamp)}
+                </span>
+              </div>
+              <div className="mt-2 grid gap-2 text-sm md:grid-cols-3">
+                <DecisionField label="Rule" value={decision.matchedRule || decision.ruleName || "—"} />
+                <DecisionField label="Agent" value={decision.agentId || "—"} />
+                <DecisionField label="Job" value={decision.jobId} />
+              </div>
+              {decision.reason && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {decision.reason}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DecisionField({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
+        {label}
+      </p>
+      <p className="font-mono text-xs text-foreground break-all">{value}</p>
+    </div>
+  );
+}
+
+function LinkedJobsTable({ jobs, navigate }: { jobs: CopilotSessionJob[]; navigate: ReturnType<typeof useNavigate> }) {
+  return (
+    <section className="space-y-3">
+      <div>
+        <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest">
+          Jobs
+        </p>
+        <h2 className="text-base font-display font-semibold text-foreground">
+          Linked jobs
+        </h2>
+      </div>
+      {jobs.length === 0 ? (
         <EmptyState
           title="No jobs yet"
           description="No jobs linked to this session yet."
+          className="instrument-card py-10"
         />
       ) : (
         <div className="instrument-card overflow-hidden p-0">
@@ -159,21 +347,14 @@ export default function CopilotSessionPage() {
                     </StatusBadge>
                   </td>
                   <td className="px-5 py-3 text-right text-xs text-muted-foreground font-mono">
-                    {job.updatedAt
-                      ? formatRelativeTime(new Date(job.updatedAt).toISOString())
-                      : "—"}
+                    {safeRelativeTime(job.updatedAt)}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {jobs.length === PAGE_LIMIT && (
-            <p className="px-5 py-2 text-xs text-muted-foreground font-mono border-t border-border">
-              Showing first {PAGE_LIMIT} jobs.
-            </p>
-          )}
         </div>
       )}
-    </motion.div>
+    </section>
   );
 }

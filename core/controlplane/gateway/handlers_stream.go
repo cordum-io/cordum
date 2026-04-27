@@ -141,7 +141,14 @@ func (s *server) stopBusTaps() {
 var (
 	wsRevalidateInterval   = 120 * time.Second
 	wsRevalidateRetryDelay = 500 * time.Millisecond
+	wsTimingMu             sync.RWMutex
 )
+
+func currentWSTimings() (pingInterval, pongTimeout, revalidateInterval, revalidateRetryDelay time.Duration) {
+	wsTimingMu.RLock()
+	defer wsTimingMu.RUnlock()
+	return wsPingInterval, wsPongTimeout, wsRevalidateInterval, wsRevalidateRetryDelay
+}
 
 type wsClient struct {
 	ch               chan wsEvent
@@ -883,10 +890,7 @@ func (s *server) handleStream(w http.ResponseWriter, r *http.Request) {
 	connStart := time.Now()
 	// Capture timing values once to avoid data races if globals are
 	// overwritten by tests after the handler goroutines have started.
-	pingInterval := wsPingInterval
-	pongTimeout := wsPongTimeout
-	revalidateInterval := wsRevalidateInterval
-	revalidateRetryDelay := wsRevalidateRetryDelay
+	pingInterval, pongTimeout, revalidateInterval, revalidateRetryDelay := currentWSTimings()
 	connID := newWSConnectionID()
 	remoteIP := clientIP(r)
 	disconnectState := &wsDisconnectState{}
@@ -1097,10 +1101,7 @@ func (s *server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 	wsClientsActive.Inc()
 	s.statusCacheObj.Invalidate()
 	s.startWSConnectionSummaryLogger()
-	pingInterval := wsPingInterval
-	pongTimeout := wsPongTimeout
-	revalidateInterval := wsRevalidateInterval
-	revalidateRetryDelay := wsRevalidateRetryDelay
+	pingInterval, pongTimeout, revalidateInterval, revalidateRetryDelay := currentWSTimings()
 	if err := setReadDeadlineOrError(ws, pingInterval+pongTimeout); err != nil {
 		// Compromised socket — close instead of running a deadline-less
 		// read loop. See task-1d4e6b4c bug #2.

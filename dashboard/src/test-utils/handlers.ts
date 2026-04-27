@@ -19,4 +19,20 @@ export const baseHandlers = [
       expires_at: 0,
     }),
   ),
+  http.get("*/api/v1/copilot/sessions/:sessionId", ({ params }) =>
+    HttpResponse.json({
+      session: {
+        id: String(params.sessionId),
+        title: "Test Copilot Session",
+        userId: "test-user",
+        createdAt: "2026-04-26T07:00:00Z",
+        updatedAt: "2026-04-26T07:00:00Z",
+        messages: [],
+        metadata: {},
+      },
+      jobs: [],
+      decisions: [],
+      truncated: false,
+    }),
+  ),
 ];

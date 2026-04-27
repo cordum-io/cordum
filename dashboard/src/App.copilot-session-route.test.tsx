@@ -38,9 +38,9 @@ describe("App routing — /copilot/sessions/:sessionId resolves to CopilotSessio
   it("/copilot/sessions/<id> mounts CopilotSessionPage (NOT NotFoundPage)", async () => {
     renderApp(`/copilot/sessions/${SESSION_ID}`);
 
-    // POSITIVE: roadmap-banner testid is the stable marker that CopilotSessionPage mounted
+    // POSITIVE: timeline testid is the stable marker that CopilotSessionPage mounted
     await waitFor(() => {
-      expect(screen.queryByTestId("copilot-session-roadmap-banner")).not.toBeNull();
+      expect(screen.queryByTestId("copilot-session-timeline")).not.toBeNull();
     });
 
     // NEGATIVE: NotFoundPage's distinctive copy must NOT be present
@@ -54,7 +54,7 @@ describe("App routing — /copilot/sessions/:sessionId resolves to CopilotSessio
     renderApp(`/copilot/sessions/sess-xyz999`);
 
     await waitFor(() => {
-      expect(screen.queryByTestId("copilot-session-roadmap-banner")).not.toBeNull();
+    expect(screen.queryByTestId("copilot-session-timeline")).not.toBeNull();
     });
 
     expect(screen.queryByText(/page not found/i)).toBeNull();
@@ -68,6 +68,6 @@ describe("App routing — /copilot/sessions/:sessionId resolves to CopilotSessio
       expect(screen.queryByText(/page not found/i)).not.toBeNull();
     });
 
-    expect(screen.queryByTestId("copilot-session-roadmap-banner")).toBeNull();
+    expect(screen.queryByTestId("copilot-session-timeline")).toBeNull();
   });
 });

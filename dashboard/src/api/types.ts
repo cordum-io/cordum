@@ -1879,3 +1879,46 @@ export interface CopilotSession {
   messages: CopilotMessage[];
   metadata?: Record<string, string>;
 }
+
+// The `/api/v1/copilot/sessions/:sessionId` endpoint returns a sanitized,
+// session-scoped projection of jobs and decisions. Several fields the full
+// `Job` and `GovernanceDecision` types treat as required (e.g. `topic`,
+// `matchedRule`, `agentId`) are intentionally omitted server-side when meta
+// has expired, when the caller lacks `governance.read`, or when the source
+// records were partial. Modelling that wire shape with the full types above
+// would force consumers into unsafe non-null assertions; use these
+// Copilot-specific views with optional fields instead.
+export interface CopilotSessionJob {
+  id: string;
+  status: JobStatus | string;
+  type?: string;
+  topic?: string;
+  pool?: string;
+  capabilities?: string[];
+  riskTags?: string[];
+  metadata?: Record<string, string>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CopilotSessionDecision {
+  jobId: string;
+  verdict: GovernanceVerdict | string;
+  timestamp: string;
+  topic?: string;
+  matchedRule?: string;
+  ruleName?: string;
+  reason?: string;
+  constraints?: PolicyConstraints;
+  approvalStatus?: ApprovalStatus;
+  approvalDecision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
+  agentId?: string;
+  policyVersion?: string;
+}
+
+export interface CopilotSessionDetailResponse {
+  session: CopilotSession;
+  jobs: CopilotSessionJob[];
+  decisions: CopilotSessionDecision[];
+  truncated: boolean;
+}

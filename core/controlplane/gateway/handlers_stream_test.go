@@ -28,6 +28,40 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
+type wsTimingSnapshot struct {
+	pingInterval         time.Duration
+	pongTimeout          time.Duration
+	revalidateInterval   time.Duration
+	revalidateRetryDelay time.Duration
+}
+
+func overrideWSTimingsForTest(t *testing.T, mutate func(*wsTimingSnapshot)) wsTimingSnapshot {
+	t.Helper()
+	wsTimingMu.Lock()
+	previous := wsTimingSnapshot{
+		pingInterval:         wsPingInterval,
+		pongTimeout:          wsPongTimeout,
+		revalidateInterval:   wsRevalidateInterval,
+		revalidateRetryDelay: wsRevalidateRetryDelay,
+	}
+	next := previous
+	mutate(&next)
+	wsPingInterval = next.pingInterval
+	wsPongTimeout = next.pongTimeout
+	wsRevalidateInterval = next.revalidateInterval
+	wsRevalidateRetryDelay = next.revalidateRetryDelay
+	wsTimingMu.Unlock()
+	t.Cleanup(func() {
+		wsTimingMu.Lock()
+		wsPingInterval = previous.pingInterval
+		wsPongTimeout = previous.pongTimeout
+		wsRevalidateInterval = previous.revalidateInterval
+		wsRevalidateRetryDelay = previous.revalidateRetryDelay
+		wsTimingMu.Unlock()
+	})
+	return next
+}
+
 func TestHandleStreamUpgradesWebsocketWithInstrumentation(t *testing.T) {
 	s := &server{
 		clients:  make(map[*websocket.Conn]*wsClient),
@@ -1007,13 +1041,9 @@ func TestClosedClientRemovedPromptlyWithReadPump(t *testing.T) {
 }
 
 func TestWSPingKeepsConnectionAlive(t *testing.T) {
-	prevPingInterval := wsPingInterval
-	prevPongTimeout := wsPongTimeout
-	wsPingInterval = 20 * time.Millisecond
-	wsPongTimeout = 20 * time.Millisecond
-	t.Cleanup(func() {
-		wsPingInterval = prevPingInterval
-		wsPongTimeout = prevPongTimeout
+	timings := overrideWSTimingsForTest(t, func(v *wsTimingSnapshot) {
+		v.pingInterval = 20 * time.Millisecond
+		v.pongTimeout = 20 * time.Millisecond
 	})
 
 	s := &server{
@@ -1063,7 +1093,7 @@ func TestWSPingKeepsConnectionAlive(t *testing.T) {
 		t.Fatal("expected server ping within timeout")
 	}
 
-	time.Sleep((2 * wsPingInterval) + wsPongTimeout)
+	time.Sleep((2 * timings.pingInterval) + timings.pongTimeout)
 
 	select {
 	case err := <-readErr:
@@ -1085,14 +1115,12 @@ func TestWSPingKeepsConnectionAlive(t *testing.T) {
 // auth state. Prior to the fix this test asserted the opposite
 // ("KeepsConnection") — that was documenting the bug.
 func TestWSRevalidation_TransientError_ClosesAfterExhaustedRetries(t *testing.T) {
-	prevPingInterval := wsPingInterval
-	prevPongTimeout := wsPongTimeout
-	prevRevalidateInterval := wsRevalidateInterval
-	prevRetryDelay := wsRevalidateRetryDelay
-	wsPingInterval = 20 * time.Millisecond
-	wsPongTimeout = 20 * time.Millisecond
-	wsRevalidateInterval = 30 * time.Millisecond
-	wsRevalidateRetryDelay = 5 * time.Millisecond
+	timings := overrideWSTimingsForTest(t, func(v *wsTimingSnapshot) {
+		v.pingInterval = 20 * time.Millisecond
+		v.pongTimeout = 20 * time.Millisecond
+		v.revalidateInterval = 30 * time.Millisecond
+		v.revalidateRetryDelay = 5 * time.Millisecond
+	})
 
 	var authCalls atomic.Int32
 	provider := &mockAuthProvider{
@@ -1132,10 +1160,6 @@ func TestWSRevalidation_TransientError_ClosesAfterExhaustedRetries(t *testing.T)
 		srv.Close()
 		close(shutdownCh)
 		time.Sleep(200 * time.Millisecond)
-		wsPingInterval = prevPingInterval
-		wsPongTimeout = prevPongTimeout
-		wsRevalidateInterval = prevRevalidateInterval
-		wsRevalidateRetryDelay = prevRetryDelay
 	})
 
 	readErr := startTestWSReadPump(conn)
@@ -1150,7 +1174,7 @@ func TestWSRevalidation_TransientError_ClosesAfterExhaustedRetries(t *testing.T)
 		if err == nil {
 			t.Fatal("expected non-nil read error after exhausted transient revalidation retries")
 		}
-	case <-time.After(8 * wsRevalidateInterval):
+	case <-time.After(8 * timings.revalidateInterval):
 		t.Fatal("expected connection to close after exhausted transient revalidation retries")
 	}
 	if got := authCalls.Load(); got < 4 {
@@ -1171,19 +1195,11 @@ func TestWSRevalidation_TransientError_ClosesAfterExhaustedRetries(t *testing.T)
 }
 
 func TestWSRevalidation_Revocation_ClosesConnection(t *testing.T) {
-	prevPingInterval := wsPingInterval
-	prevPongTimeout := wsPongTimeout
-	prevRevalidateInterval := wsRevalidateInterval
-	prevRetryDelay := wsRevalidateRetryDelay
-	wsPingInterval = 100 * time.Millisecond
-	wsPongTimeout = 20 * time.Millisecond
-	wsRevalidateInterval = 25 * time.Millisecond
-	wsRevalidateRetryDelay = 5 * time.Millisecond
-	t.Cleanup(func() {
-		wsPingInterval = prevPingInterval
-		wsPongTimeout = prevPongTimeout
-		wsRevalidateInterval = prevRevalidateInterval
-		wsRevalidateRetryDelay = prevRetryDelay
+	overrideWSTimingsForTest(t, func(v *wsTimingSnapshot) {
+		v.pingInterval = 100 * time.Millisecond
+		v.pongTimeout = 20 * time.Millisecond
+		v.revalidateInterval = 25 * time.Millisecond
+		v.revalidateRetryDelay = 5 * time.Millisecond
 	})
 
 	var authCalls atomic.Int32
@@ -1239,9 +1255,9 @@ func TestWSRevalidation_Revocation_ClosesConnection(t *testing.T) {
 }
 
 func TestWSRevalidation_RetrySucceeds(t *testing.T) {
-	prevRetryDelay := wsRevalidateRetryDelay
-	wsRevalidateRetryDelay = 5 * time.Millisecond
-	t.Cleanup(func() { wsRevalidateRetryDelay = prevRetryDelay })
+	timings := overrideWSTimingsForTest(t, func(v *wsTimingSnapshot) {
+		v.revalidateRetryDelay = 5 * time.Millisecond
+	})
 
 	var authCalls atomic.Int32
 	provider := &mockAuthProvider{
@@ -1254,7 +1270,7 @@ func TestWSRevalidation_RetrySucceeds(t *testing.T) {
 	}
 
 	s := &server{auth: provider}
-	if err := s.revalidateWSAuthWithRetry(context.Background(), "live-key", "conn-test", wsRevalidateRetryDelay); err != nil {
+	if err := s.revalidateWSAuthWithRetry(context.Background(), "live-key", "conn-test", timings.revalidateRetryDelay); err != nil {
 		t.Fatalf("expected retry to succeed, got %v", err)
 	}
 	if authCalls.Load() != 2 {
@@ -1334,13 +1350,9 @@ func TestWSMetrics_ConnectionDuration(t *testing.T) {
 }
 
 func TestWSMetrics_PingSentCounter(t *testing.T) {
-	prevPingInterval := wsPingInterval
-	prevPongTimeout := wsPongTimeout
-	wsPingInterval = 20 * time.Millisecond
-	wsPongTimeout = 40 * time.Millisecond
-	t.Cleanup(func() {
-		wsPingInterval = prevPingInterval
-		wsPongTimeout = prevPongTimeout
+	overrideWSTimingsForTest(t, func(v *wsTimingSnapshot) {
+		v.pingInterval = 20 * time.Millisecond
+		v.pongTimeout = 40 * time.Millisecond
 	})
 
 	initial := testutil.ToFloat64(wsPingsSent)
@@ -1381,6 +1393,7 @@ func TestWSMetrics_PingSentCounter(t *testing.T) {
 
 func TestWSMetrics_RevalidationOutcome(t *testing.T) {
 	initial := testutil.ToFloat64(wsRevalidation.WithLabelValues("ok"))
+	_, _, _, retryDelay := currentWSTimings()
 
 	provider := &mockAuthProvider{
 		authHTTP: func(*http.Request) (*auth.AuthContext, error) {
@@ -1389,7 +1402,7 @@ func TestWSMetrics_RevalidationOutcome(t *testing.T) {
 	}
 
 	s := &server{auth: provider}
-	if err := s.revalidateWSAuthWithRetry(context.Background(), "live-key", "conn-metrics", wsRevalidateRetryDelay); err != nil {
+	if err := s.revalidateWSAuthWithRetry(context.Background(), "live-key", "conn-metrics", retryDelay); err != nil {
 		t.Fatalf("expected successful revalidation, got %v", err)
 	}
 
@@ -1955,9 +1968,9 @@ func TestEnqueueBusPacket_DropsPacketWhenFilterReturnsNil(t *testing.T) {
 // attempts rather than returning nil (which would keep a potentially-revoked
 // session alive for the full 2-minute revalidation window).
 func TestRevalidateWSAuthWithRetry_PropagatesErrorAfterExhaustedTransient(t *testing.T) {
-	prev := wsRevalidateRetryDelay
-	wsRevalidateRetryDelay = 1 * time.Millisecond
-	t.Cleanup(func() { wsRevalidateRetryDelay = prev })
+	timings := overrideWSTimingsForTest(t, func(v *wsTimingSnapshot) {
+		v.revalidateRetryDelay = 1 * time.Millisecond
+	})
 
 	var authCalls atomic.Int32
 	provider := &mockAuthProvider{
@@ -1967,7 +1980,7 @@ func TestRevalidateWSAuthWithRetry_PropagatesErrorAfterExhaustedTransient(t *tes
 		},
 	}
 	s := &server{auth: provider}
-	err := s.revalidateWSAuthWithRetry(context.Background(), "live-key", "conn-exhaust", wsRevalidateRetryDelay)
+	err := s.revalidateWSAuthWithRetry(context.Background(), "live-key", "conn-exhaust", timings.revalidateRetryDelay)
 	if err == nil {
 		t.Fatal("expected wrapped transient error after 3 exhausted retries; got nil (fail-silent)")
 	}

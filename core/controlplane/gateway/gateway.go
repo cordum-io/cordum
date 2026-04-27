@@ -22,6 +22,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/copilot"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
@@ -121,6 +122,7 @@ type server struct {
 	memStore              store.Store
 	jobStore              *store.RedisJobStore // Typed for ListRecentJobs
 	decisionLogStore      model.DecisionLogStore
+	copilotStore          copilot.Store
 	governanceHealthCache *governance.Cache
 	routeTable            []routeInfo
 	// approvalAnalyticsCache memoises approval-analytics responses
@@ -594,6 +596,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		memStore:               memStore,
 		jobStore:               jobStore,
 		decisionLogStore:       decisionLogStore,
+		copilotStore:           copilot.NotImplementedStore{},
 		governanceHealthCache:  governance.NewCache(60 * time.Second),
 		approvalAnalyticsCache: newApprovalAnalyticsCache(),
 		bus:                    natsBus,
@@ -1199,6 +1202,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 
 	// 3. Jobs (Redis ZSet)
 	s.registerRoute(mux, "GET /api/v1/jobs", s.instrumented("/api/v1/jobs", s.handleListJobs))
+	s.registerRoute(mux, "GET /api/v1/copilot/sessions/{sessionId}", s.instrumented("/api/v1/copilot/sessions/:sessionId", s.handleGetCopilotSession))
 
 	// 4. Job Details
 	s.registerRoute(mux, "GET /api/v1/jobs/{id}", s.instrumented("/api/v1/jobs/{id}", s.handleGetJob))

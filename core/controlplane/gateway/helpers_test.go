@@ -17,6 +17,7 @@ import (
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/copilot"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
@@ -373,6 +374,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 		memStore:              memStore,
 		jobStore:              jobStore,
 		decisionLogStore:      decisionLogStore,
+		copilotStore:          copilot.NotImplementedStore{},
 		governanceHealthCache: governance.NewCache(60 * time.Second),
 		bus:                   bus,
 		workers:               make(map[string]*pb.Heartbeat),

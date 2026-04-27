@@ -21,6 +21,8 @@ tags:
   description: API key lifecycle (admin only)
 - name: Jobs
   description: Job submission, listing, and lifecycle
+- name: Copilot
+  description: Copilot session transcripts and linked operational context
 - name: DLQ
   description: Dead-letter queue management (admin only)
 - name: Workflows
@@ -433,6 +435,44 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/copilot/sessions/{sessionId}:
+    get:
+      operationId: getCopilotSession
+      summary: Get Copilot session detail
+      description: Returns a Copilot chat transcript plus linked jobs and governance decisions.
+      tags:
+      - Copilot
+      parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9_-]{1,128}$
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Copilot session detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CopilotSessionDetailResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '501':
+          description: Copilot session store is not wired yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/jobs:
@@ -6893,6 +6933,149 @@ components:
           type: string
         trace_id:
           type: string
+    CopilotSessionDetailResponse:
+      type: object
+      required:
+      - session
+      - jobs
+      - decisions
+      - truncated
+      properties:
+        session:
+          $ref: '#/components/schemas/CopilotSession'
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/CopilotSessionJob'
+        decisions:
+          type: array
+          items:
+            $ref: '#/components/schemas/CopilotSessionDecision'
+        truncated:
+          type: boolean
+          description: True when the backend capped jobs or decisions at 500 entries.
+    CopilotSession:
+      type: object
+      required:
+      - id
+      - userId
+      - createdAt
+      - updatedAt
+      - messages
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        userId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/CopilotMessage'
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+    CopilotMessage:
+      type: object
+      required:
+      - id
+      - role
+      - content
+      - timestamp
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          enum: [user, assistant, tool, system]
+        content:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        jobIds:
+          type: array
+          items:
+            type: string
+    CopilotSessionJob:
+      type: object
+      required:
+      - id
+      - status
+      - capabilities
+      - riskTags
+      - metadata
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        topic:
+          type: string
+        status:
+          type: string
+        pool:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        riskTags:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CopilotSessionDecision:
+      type: object
+      required:
+      - jobId
+      - verdict
+      - timestamp
+      properties:
+        jobId:
+          type: string
+        topic:
+          type: string
+        matchedRule:
+          type: string
+        ruleName:
+          type: string
+        verdict:
+          type: string
+        reason:
+          type: string
+        constraints:
+          type: object
+          nullable: true
+          additionalProperties: true
+        approvalStatus:
+          type: string
+        approvalDecision:
+          type: string
+        agentId:
+          type: string
+        policyVersion:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
     JobSummary:
       type: object
       properties:
