@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/logo.png" alt="Cordum" width="200"/>
+  <img src="dashboard/public/logo.png" alt="Cordum" width="200"/>
 </p>
 
 <h1 align="center">Cordum</h1>
