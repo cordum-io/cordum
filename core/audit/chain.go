@@ -91,9 +91,10 @@ type ChainerOption func(*Chainer)
 // construction time rather than silently weakening the chain. A nil or
 // empty key disables HMAC (the default).
 //
-// Key rotation: deploy the new key, then verify old events with the old
-// key and new events with the new key. The verify endpoint accepts an
-// explicit key parameter for this purpose.
+// Key rotation: deploy the new key via CORDUM_AUDIT_HMAC_KEY on all
+// replicas. Events signed with the old key will show hmac_mismatch
+// during verification — operators note the seq boundary where the
+// key changed. Pre-HMAC events (no tag) are hmac_skipped, not failed.
 func WithHMACKey(key []byte) ChainerOption {
 	return func(c *Chainer) {
 		if len(key) == 0 {

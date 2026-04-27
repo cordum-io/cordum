@@ -9,7 +9,7 @@
 
 The audit chain starts automatically with the gateway. Check the boot log:
 
-```
+```text
 INFO audit NATS consumer started subject=sys.audit.export queue=audit-exporters chain_enabled=true chain_fail_mode=strict
 ```
 
@@ -54,7 +54,7 @@ Expected response for a healthy chain:
 | `CORDUM_AUDIT_HMAC_KEY` | _(empty)_ | Base64-encoded HMAC-SHA256 signing key (min 32 bytes) |
 | `CORDUM_AUDIT_CHAIN_FAIL` | `strict` | `strict`: drop unchained events; `permissive`: export anyway |
 | `CORDUM_AUDIT_EXPORT_TYPE` | `none` | SIEM backend: `webhook`, `syslog`, `datadog`, `cloudwatch`, `chain-only` |
-| `CORDUM_AUDIT_RETENTION_HOURS` | _(plan-based)_ | Override audit retention window |
+| `CORDUM_AUDIT_RETENTION_HOURS` | `168` (7 days) | Audit retention window in hours |
 
 ## HMAC Key Management
 

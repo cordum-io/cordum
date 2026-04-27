@@ -334,3 +334,23 @@ func xRevBefore(id string) string {
 	}
 	return "+"
 }
+
+// StreamContainsHMACEvents checks whether the most recent event in the
+// stream carries an HMAC tag. This is a lightweight O(1) probe (single
+// XREVRANGE COUNT 1) used by the verify handler to detect chains that
+// require HMAC verification even when the current process has no key.
+func StreamContainsHMACEvents(ctx context.Context, client redis.UniversalClient, streamKey string) (bool, error) {
+	entries, err := client.XRevRangeN(ctx, streamKey, "+", "-", 1).Result()
+	if err != nil || len(entries) == 0 {
+		return false, err
+	}
+	payload, ok := entries[0].Values[chainStreamFieldEvent].(string)
+	if !ok {
+		return false, nil
+	}
+	var ev SIEMEvent
+	if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+		return false, nil
+	}
+	return ev.HMAC != "", nil
+}
