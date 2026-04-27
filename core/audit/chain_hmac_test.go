@@ -86,13 +86,8 @@ func TestWithHMACKey_EmptyKeyDisabled(t *testing.T) {
 	}
 }
 
-func TestWithHMACKey_ShortKeyPanics(t *testing.T) {
+func TestWithHMACKey_ShortKeyDisablesHMAC(t *testing.T) {
 	t.Parallel()
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for short HMAC key")
-		}
-	}()
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
@@ -101,7 +96,12 @@ func TestWithHMACKey_ShortKeyPanics(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 
-	_ = NewChainer(client, "", WithHMACKey([]byte("too-short")))
+	// A short key should log an error and leave HMAC disabled,
+	// NOT panic or crash the process.
+	c := NewChainer(client, "", WithHMACKey([]byte("too-short")))
+	if c.HMACEnabled() {
+		t.Fatal("HMACEnabled() should be false for short key (graceful disable)")
+	}
 }
 
 // ---------------------------------------------------------------------------

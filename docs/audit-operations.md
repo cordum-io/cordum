@@ -16,8 +16,8 @@ INFO audit NATS consumer started subject=sys.audit.export queue=audit-exporters 
 ### 2. Enable HMAC (Recommended for Production)
 
 ```bash
-# Generate a 256-bit key
-HMAC_KEY=$(openssl rand -base64 32)
+# Generate a 256-bit key (64 hex chars = 32 bytes)
+HMAC_KEY=$(openssl rand -hex 32)
 
 # Add to your gateway environment
 export CORDUM_AUDIT_HMAC_KEY="$HMAC_KEY"
@@ -51,7 +51,7 @@ Expected response for a healthy chain:
 
 | Variable | Default | Description |
 |---|---|---|
-| `CORDUM_AUDIT_HMAC_KEY` | _(empty)_ | Base64-encoded HMAC-SHA256 signing key (min 32 bytes) |
+| `CORDUM_AUDIT_HMAC_KEY` | _(empty)_ | Hex-encoded HMAC-SHA256 signing key (min 32 bytes decoded) |
 | `CORDUM_AUDIT_CHAIN_FAIL` | `strict` | `strict`: drop unchained events; `permissive`: export anyway |
 | `CORDUM_AUDIT_EXPORT_TYPE` | `none` | SIEM backend: `webhook`, `syslog`, `datadog`, `cloudwatch`, `chain-only` |
 | `CORDUM_AUDIT_RETENTION_HOURS` | `168` (7 days) | Audit retention window in hours |
@@ -61,18 +61,18 @@ Expected response for a healthy chain:
 ### Generating Keys
 
 ```bash
-# Generate using OpenSSL (recommended)
-openssl rand -base64 32
+# Generate using OpenSSL (recommended — hex-encoded, consistent with event_hash)
+openssl rand -hex 32
 
 # Generate using Python (alternative)
-python3 -c "import secrets, base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
+python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 ### Key Rotation Procedure
 
 1. **Generate new key**:
    ```bash
-   NEW_KEY=$(openssl rand -base64 32)
+   NEW_KEY=$(openssl rand -hex 32)
    ```
 
 2. **Deploy to all replicas**:

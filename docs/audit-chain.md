@@ -103,15 +103,16 @@ Redis but doesn't have the key cannot forge valid HMAC tags.
 
 ### Configuration
 
-Set the `CORDUM_AUDIT_HMAC_KEY` environment variable to a base64-encoded
-key of at least 32 bytes (256 bits):
+Set the `CORDUM_AUDIT_HMAC_KEY` environment variable to a **hex-encoded**
+key of at least 32 bytes (256 bits). Hex is consistent with `event_hash`
+encoding elsewhere in the audit chain:
 
 ```bash
-# Generate a key
-openssl rand -base64 32
+# Generate a 256-bit key (64 hex chars = 32 bytes)
+openssl rand -hex 32
 
 # Set it
-export CORDUM_AUDIT_HMAC_KEY="<base64-encoded-key>"
+export CORDUM_AUDIT_HMAC_KEY="<hex-encoded-key>"
 ```
 
 When not set, HMAC is disabled and the chain operates with SHA-256 only.

@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -877,11 +878,24 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 	// operator who explicitly opts out of external SIEM export cannot
 	// silently disable the chain — exporters are consumers of the chain, not
 	// a prerequisite for it.
-	auditChainer := audit.NewChainer(client, "")
+	var chainerOpts []audit.ChainerOption
+	if raw := strings.TrimSpace(os.Getenv(audit.EnvHMACKey)); raw != "" {
+		key, err := hex.DecodeString(raw)
+		if err != nil {
+			return nil, nil, fmt.Errorf("audit chain: %s is not valid hex: %w", audit.EnvHMACKey, err)
+		}
+		if len(key) < 32 {
+			return nil, nil, fmt.Errorf("audit chain: %s must decode to at least 32 bytes (got %d) — generate with: openssl rand -hex 32",
+				audit.EnvHMACKey, len(key))
+		}
+		chainerOpts = append(chainerOpts, audit.WithHMACKey(key))
+	}
+	auditChainer := audit.NewChainer(client, "", chainerOpts...)
 	chainFailMode := audit.ParseChainFailMode(os.Getenv(audit.EnvChainFailMode))
 	slog.Info("audit chain enabled",
 		"stream_prefix", audit.ChainKeyPrefix,
 		"fail_mode", chainFailMode,
+		"hmac_enabled", auditChainer.HMACEnabled(),
 		"tenant_isolation", "per-tenant stream audit:chain:<tenant>",
 	)
 
