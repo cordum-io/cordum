@@ -42,6 +42,11 @@ const (
 	// GapTypeRetentionTrimmed is a seq absent because the retention
 	// window has expired it — expected, not tampering.
 	GapTypeRetentionTrimmed VerifyGapType = "retention_trimmed"
+	// GapTypeHMACMismatch is a seq whose HMAC-SHA256 tag does not match
+	// the recomputed value. Indicates the event was modified or forged
+	// by a process without the signing key. Only flagged when an HMAC
+	// key is supplied via VerifyOptions.
+	GapTypeHMACMismatch VerifyGapType = "hmac_mismatch"
 )
 
 // VerifyGap is a single gap in the chain walk. AtSeq is the position the
@@ -75,6 +80,12 @@ type VerifyResult struct {
 	RetentionWindowHours float64      `json:"retention_window_hours,omitempty"`
 	FirstSeq             int64        `json:"first_seq,omitempty"`
 	LastSeq              int64        `json:"last_seq,omitempty"`
+	// HMACVerified counts events whose HMAC-SHA256 tag was recomputed
+	// and matched. Zero when no HMACKey was supplied in VerifyOptions.
+	HMACVerified int `json:"hmac_verified,omitempty"`
+	// HMACSkipped counts events that carry no HMAC tag (pre-HMAC
+	// events). These are not treated as failures — backward compat.
+	HMACSkipped int `json:"hmac_skipped,omitempty"`
 }
 
 // maxRetentionTrimmedGaps caps how many retention_trimmed gap entries
@@ -99,6 +110,12 @@ type VerifyOptions struct {
 	// classified as retention_trimmed rather than tampering. Zero means
 	// no boundary known — every gap is potential tampering.
 	RetentionBoundarySeq int64
+	// HMACKey (optional) enables HMAC-SHA256 verification. When non-nil,
+	// every event that carries an HMAC tag is verified against this key.
+	// Events without an HMAC (pre-HMAC era) are counted as HMACSkipped
+	// rather than failed, so mixed chains are gracefully handled during
+	// key rotation or initial HMAC rollout.
+	HMACKey []byte
 }
 
 // DefaultVerifyLimit / MaxVerifyLimit bound how much of the chain a single
@@ -258,6 +275,21 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 			result.Gaps = append(result.Gaps, VerifyGap{AtSeq: ev.Seq, Type: GapTypeHashMismatch})
 		} else {
 			result.VerifiedEvents++
+		}
+
+		// HMAC verification (when key supplied and event carries a tag).
+		if len(opts.HMACKey) > 0 {
+			if ev.HMAC == "" {
+				result.HMACSkipped++
+			} else {
+				ok, err := VerifyEventHMAC(&ev, opts.HMACKey)
+				if err != nil || !ok {
+					result.Status = VerifyStatusCompromised
+					result.Gaps = append(result.Gaps, VerifyGap{AtSeq: ev.Seq, Type: GapTypeHMACMismatch})
+				} else {
+					result.HMACVerified++
+				}
+			}
 		}
 
 		prevHash = ev.EventHash

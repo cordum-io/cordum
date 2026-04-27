@@ -2,7 +2,9 @@ package audit
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -69,19 +71,60 @@ var (
 // audit events in Redis. One Chainer is safe to share across goroutines; the
 // CAS-based Lua append below serialises writers on a given tenant's head
 // pointer, while different tenants proceed independently.
+//
+// When an HMAC key is configured (via WithHMACKey), every appended event also
+// receives an HMAC-SHA256 tag computed over the canonical event payload. The
+// HMAC proves the event was produced by a process holding the signing key,
+// closing the threat model gap where an attacker with Redis write access could
+// forge a valid SHA-256 chain by recomputing hashes from an arbitrary point.
 type Chainer struct {
 	client    redis.UniversalClient
 	keyPrefix string
+	hmacKey   []byte // nil = HMAC disabled
+}
+
+// ChainerOption configures optional Chainer behaviour.
+type ChainerOption func(*Chainer)
+
+// WithHMACKey enables HMAC-SHA256 event authentication. The key must be at
+// least 32 bytes (256 bits); shorter keys are rejected with a panic at
+// construction time rather than silently weakening the chain. A nil or
+// empty key disables HMAC (the default).
+//
+// Key rotation: deploy the new key, then verify old events with the old
+// key and new events with the new key. The verify endpoint accepts an
+// explicit key parameter for this purpose.
+func WithHMACKey(key []byte) ChainerOption {
+	return func(c *Chainer) {
+		if len(key) == 0 {
+			return
+		}
+		if len(key) < 32 {
+			panic("audit chain: HMAC key must be at least 32 bytes")
+		}
+		c.hmacKey = make([]byte, len(key))
+		copy(c.hmacKey, key)
+	}
 }
 
 // NewChainer wires a Chainer around the given client. An empty keyPrefix
 // falls back to the default "audit:chain:" namespace; tests and multi-env
 // deployments can override so their chains do not collide.
-func NewChainer(client redis.UniversalClient, keyPrefix string) *Chainer {
+func NewChainer(client redis.UniversalClient, keyPrefix string, opts ...ChainerOption) *Chainer {
 	if keyPrefix == "" {
 		keyPrefix = ChainKeyPrefix
 	}
-	return &Chainer{client: client, keyPrefix: keyPrefix}
+	c := &Chainer{client: client, keyPrefix: keyPrefix}
+	for _, o := range opts {
+		o(c)
+	}
+	return c
+}
+
+// HMACEnabled reports whether this Chainer signs events with HMAC-SHA256.
+// Exposed so the gateway boot log and the consumer can include the state.
+func (c *Chainer) HMACEnabled() bool {
+	return len(c.hmacKey) > 0
 }
 
 // StreamKey returns the Redis Stream key that holds this tenant's chain.
@@ -177,6 +220,16 @@ func (c *Chainer) Append(ctx context.Context, event *SIEMEvent) error {
 		}
 		event.EventHash = eventHash
 
+		// Compute HMAC after the event hash so the HMAC covers the full
+		// canonical payload including PrevHash (forward tamper propagation).
+		if len(c.hmacKey) > 0 {
+			macTag, macErr := computeEventHMAC(event, c.hmacKey)
+			if macErr != nil {
+				return fmt.Errorf("audit chain: compute hmac: %w", macErr)
+			}
+			event.HMAC = macTag
+		}
+
 		payload, err := json.Marshal(event)
 		if err != nil {
 			return fmt.Errorf("audit chain: marshal event: %w", err)
@@ -202,6 +255,7 @@ func (c *Chainer) Append(ctx context.Context, event *SIEMEvent) error {
 		event.Seq = 0
 		event.PrevHash = ""
 		event.EventHash = ""
+		event.HMAC = ""
 		if err := sleepCASBackoff(ctx, attempt); err != nil {
 			return err
 		}
@@ -270,12 +324,32 @@ func computeEventHash(event *SIEMEvent) (string, error) {
 	clone := *event
 	clone.Seq = 0
 	clone.EventHash = ""
+	clone.HMAC = ""
 	b, err := json.Marshal(&clone)
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// computeEventHMAC returns the HMAC-SHA256 (hex) of the canonical event
+// payload. The same fields are cleared as for computeEventHash (Seq,
+// EventHash, HMAC) so the HMAC is deterministic across re-computation.
+// PrevHash is included so the HMAC inherits the forward tamper propagation
+// property of the hash chain.
+func computeEventHMAC(event *SIEMEvent, key []byte) (string, error) {
+	clone := *event
+	clone.Seq = 0
+	clone.EventHash = ""
+	clone.HMAC = ""
+	b, err := json.Marshal(&clone)
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, key)
+	mac.Write(b)
+	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 
 // VerifyEventHash recomputes the canonical event hash and returns true when
@@ -288,4 +362,20 @@ func VerifyEventHash(event *SIEMEvent) (bool, error) {
 		return false, err
 	}
 	return want == got, nil
+}
+
+// VerifyEventHMAC recomputes the HMAC-SHA256 of the canonical event payload
+// using the provided key, and returns true when it matches the stored HMAC.
+// Returns (true, nil) when the event carries no HMAC (backward compat with
+// events appended before HMAC was enabled) or when the key is nil/empty.
+// Uses constant-time comparison to prevent timing side-channels.
+func VerifyEventHMAC(event *SIEMEvent, key []byte) (bool, error) {
+	if event.HMAC == "" || len(key) == 0 {
+		return true, nil // HMAC not applicable
+	}
+	got, err := computeEventHMAC(event, key)
+	if err != nil {
+		return false, err
+	}
+	return subtle.ConstantTimeCompare([]byte(event.HMAC), []byte(got)) == 1, nil
 }

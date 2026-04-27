@@ -156,6 +156,13 @@ type SIEMEvent struct {
 	Seq           int64             `json:"seq,omitempty"`
 	EventHash     string            `json:"event_hash,omitempty"`
 	PrevHash      string            `json:"prev_hash,omitempty"`
+	// HMAC is an optional HMAC-SHA256 of the canonical event payload, keyed
+	// with CORDUM_AUDIT_HMAC_KEY. When present it proves the event was
+	// produced by a process holding the signing key — SHA-256 hash chaining
+	// alone proves ordering and detects external tampering, but cannot
+	// distinguish legitimate appends from an attacker who has Redis write
+	// access. HMAC closes that gap. Hex-encoded, 64 chars when present.
+	HMAC string `json:"hmac,omitempty"`
 }
 
 // Exporter sends batches of SIEM events to an external system.
