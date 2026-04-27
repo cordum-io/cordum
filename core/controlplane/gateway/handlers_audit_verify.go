@@ -92,6 +92,15 @@ func (s *server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	opts.RetentionBoundarySeq = boundary
 
+	// Wire the HMAC key from the server's chainer (sourced from
+	// CORDUM_AUDIT_HMAC_KEY at boot) so the verify endpoint checks
+	// HMAC tags when HMAC is enabled. The key is NOT accepted as a
+	// query parameter — URLs are routinely logged and cached, making
+	// them unsafe for secret material.
+	if s.auditChainer != nil && s.auditChainer.HMACEnabled() {
+		opts.HMACKey = s.auditChainer.HMACKeyForVerify()
+	}
+
 	result, err := audit.VerifyChain(r.Context(), client, streamKey, opts)
 	if err != nil {
 		writeInternalError(w, r, "audit verify: walk chain", err)

@@ -48,7 +48,7 @@ The event hash is SHA-256 of the JSON encoding with these fields **zeroed
 before hashing**: `seq`, `event_hash`, `hmac`. Critically, `prev_hash` is
 **included** in the hashed bytes:
 
-```
+```text
 event_hash = SHA-256(canonical_json(event with seq=0, event_hash="", hmac=""))
 ```
 
@@ -71,7 +71,7 @@ Appending is protected by a Compare-and-Set Lua script that atomically:
 This prevents two concurrent producers from both seeing the same head and
 both committing at the same sequence number.
 
-```
+```text
 ┌─────────┐    ┌──────────┐    ┌───────────┐
 │ Go CAS  │───▶│ Lua      │───▶│ Redis     │
 │ Retry   │    │ Script   │    │ Stream    │
@@ -120,17 +120,21 @@ When not set, HMAC is disabled and the chain operates with SHA-256 only.
 
 HMAC key rotation is a two-phase process:
 
-1. **Deploy new key**: Update `CORDUM_AUDIT_HMAC_KEY` on all gateway replicas.
-   New events are signed with the new key.
+1. **Deploy new key**: Update `CORDUM_AUDIT_HMAC_KEY` on all gateway replicas
+   and restart them. New events are signed with the new key.
 
-2. **Verify mixed chains**: The `/api/v1/audit/verify` endpoint accepts an
-   explicit `hmac_key` query parameter. During rotation, verify:
-   - Old events with the old key (they'll show `hmac_verified`)
-   - New events with the new key (they'll show `hmac_verified`)
-   - Old events with the new key will show `hmac_skipped` (no failure)
+2. **Understand verification semantics during rotation**:
+   - **Events with no `hmac` tag** (pre-HMAC era): reported as `hmac_skipped`
+     — these are not treated as failures.
+   - **Events signed with the old key**: when verified with the new key, they
+     will show `hmac_mismatch` — this is expected during rotation. Operators
+     should note the `first_seq` / `last_seq` boundary where the key changed.
+   - **Events signed with the new key**: will verify as `hmac_verified`.
 
-Events appended before HMAC was enabled carry no `hmac` field and are
-reported as `hmac_skipped` (not `hmac_mismatch`) — backward compatible.
+> **Security note**: The HMAC key is sourced from the `CORDUM_AUDIT_HMAC_KEY`
+> environment variable at gateway boot and is NOT accepted as a query parameter.
+> URLs are routinely logged, cached by proxies, and stored in browser history,
+> making them unsafe for secret material.
 
 ## Verification
 
@@ -139,8 +143,8 @@ reported as `hmac_skipped` (not `hmac_mismatch`) — backward compatible.
 `GET /api/v1/audit/verify?tenant=<tenant_id>`
 
 Optional parameters:
-- `since` — ISO 8601 start time (maps to Redis Stream ID range)
-- `until` — ISO 8601 end time
+- `since` — unix millisecond timestamp (inclusive lower bound on stream IDs)
+- `until` — unix millisecond timestamp (inclusive upper bound on stream IDs)
 - `limit` — max events to scan (default: 10,000; max: 100,000)
 
 ### Verify Result
@@ -179,7 +183,7 @@ Optional parameters:
 
 ## Pipeline Architecture
 
-```
+```text
 ┌──────────────┐      ┌──────────┐      ┌──────────────┐      ┌──────────┐
 │ Gateway      │─────▶│ NATS Bus │─────▶│ Consumer     │─────▶│ SIEM     │
 │ Handler      │      │          │      │ (chain then  │      │ Exporter │

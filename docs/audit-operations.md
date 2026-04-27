@@ -61,11 +61,11 @@ Expected response for a healthy chain:
 ### Generating Keys
 
 ```bash
-# Option 1: OpenSSL (recommended)
+# Generate using OpenSSL (recommended)
 openssl rand -base64 32
 
-# Option 2: Go
-go run -mod=mod -e 'import ("crypto/rand"; "encoding/base64"; "fmt"); b := make([]byte, 32); rand.Read(b); fmt.Println(base64.StdEncoding.EncodeToString(b))'
+# Generate using Python (alternative)
+python3 -c "import secrets, base64; print(base64.b64encode(secrets.token_bytes(32)).decode())"
 ```
 
 ### Key Rotation Procedure
@@ -79,17 +79,18 @@ go run -mod=mod -e 'import ("crypto/rand"; "encoding/base64"; "fmt"); b := make(
    Update `CORDUM_AUDIT_HMAC_KEY` in your deployment config and restart
    gateway pods. All replicas must use the same key.
 
-3. **Verify integrity**:
-   ```bash
-   # Old events (pre-rotation) — verify with old key
-   # The verify endpoint will show hmac_skipped for these
+3. **Understand verification behavior during rotation**:
+   - Events with **no HMAC tag** (pre-HMAC era): `hmac_skipped` (not failure)
+   - Events signed with **old key**: `hmac_mismatch` under new key (expected)
+   - Events signed with **new key**: `hmac_verified`
 
-   # New events (post-rotation) — verify with new key
-   curl "https://your-cordum/api/v1/audit/verify?tenant=default"
-   ```
+   > **Note**: The verify endpoint uses the HMAC key from the gateway's
+   > environment (`CORDUM_AUDIT_HMAC_KEY`), not from query parameters.
+   > Operators should note the `first_seq`/`last_seq` boundary where the
+   > key changed.
 
 4. **Archive old key**: Store the old key securely for forensic verification
-   of historical events.
+   of historical events if needed.
 
 ### Key Storage Best Practices
 

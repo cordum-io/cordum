@@ -127,6 +127,18 @@ func (c *Chainer) HMACEnabled() bool {
 	return len(c.hmacKey) > 0
 }
 
+// HMACKeyForVerify returns a copy of the HMAC key for use by the verify
+// handler. Returns nil when HMAC is disabled. The returned slice is a
+// defensive copy so the caller cannot mutate the Chainer's internal key.
+func (c *Chainer) HMACKeyForVerify() []byte {
+	if len(c.hmacKey) == 0 {
+		return nil
+	}
+	out := make([]byte, len(c.hmacKey))
+	copy(out, c.hmacKey)
+	return out
+}
+
 // StreamKey returns the Redis Stream key that holds this tenant's chain.
 // Exported so the verify handler and tests can reach the same key without
 // duplicating the prefix math.
