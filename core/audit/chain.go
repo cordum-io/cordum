@@ -104,6 +104,7 @@ type ChainerOption func(*Chainer)
 func WithHMACKey(key []byte) ChainerOption {
 	return func(c *Chainer) {
 		if len(key) == 0 {
+			c.hmacKey = nil
 			return
 		}
 		if len(key) < 32 {
@@ -111,6 +112,7 @@ func WithHMACKey(key []byte) ChainerOption {
 				"got_bytes", len(key),
 				"hint", "generate a valid key with: openssl rand -hex 32",
 			)
+			c.hmacKey = nil
 			return
 		}
 		c.hmacKey = make([]byte, len(key))
