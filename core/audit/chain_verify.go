@@ -86,6 +86,11 @@ type VerifyResult struct {
 	// HMACSkipped counts events that carry no HMAC tag (pre-HMAC
 	// events). These are not treated as failures — backward compat.
 	HMACSkipped int `json:"hmac_skipped,omitempty"`
+	// HMACSeen is true when at least one event in the scanned range
+	// carried an HMAC tag. Used by the verify handler to detect chains
+	// that need HMAC verification even when the current process has no
+	// key configured (fail-closed safety net).
+	HMACSeen bool `json:"hmac_seen,omitempty"`
 }
 
 // maxRetentionTrimmedGaps caps how many retention_trimmed gap entries
@@ -278,6 +283,9 @@ func VerifyChain(ctx context.Context, client redis.UniversalClient, streamKey st
 		}
 
 		// HMAC verification (when key supplied and event carries a tag).
+		if ev.HMAC != "" {
+			result.HMACSeen = true
+		}
 		if len(opts.HMACKey) > 0 {
 			if ev.HMAC == "" {
 				result.HMACSkipped++
@@ -333,24 +341,4 @@ func xRevBefore(id string) string {
 		return strconv.FormatInt(ms-1, 10) + "-18446744073709551615"
 	}
 	return "+"
-}
-
-// StreamContainsHMACEvents checks whether the most recent event in the
-// stream carries an HMAC tag. This is a lightweight O(1) probe (single
-// XREVRANGE COUNT 1) used by the verify handler to detect chains that
-// require HMAC verification even when the current process has no key.
-func StreamContainsHMACEvents(ctx context.Context, client redis.UniversalClient, streamKey string) (bool, error) {
-	entries, err := client.XRevRangeN(ctx, streamKey, "+", "-", 1).Result()
-	if err != nil || len(entries) == 0 {
-		return false, err
-	}
-	payload, ok := entries[0].Values[chainStreamFieldEvent].(string)
-	if !ok {
-		return false, nil
-	}
-	var ev SIEMEvent
-	if err := json.Unmarshal([]byte(payload), &ev); err != nil {
-		return false, nil
-	}
-	return ev.HMAC != "", nil
 }

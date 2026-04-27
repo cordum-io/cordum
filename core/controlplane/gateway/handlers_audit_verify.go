@@ -110,19 +110,18 @@ func (s *server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 	// Fail-closed safety net: if the scanned range contains HMAC-tagged
 	// events but this process has no HMAC key configured, the HMAC
 	// verification branch was skipped entirely. Surface this as a
-	// degraded result so operators don't see a false-green.
-	if len(opts.HMACKey) == 0 && result.TotalEvents > 0 {
-		hasHMACEvents, checkErr := audit.StreamContainsHMACEvents(r.Context(), client, streamKey)
-		if checkErr == nil && hasHMACEvents {
-			slog.Warn("audit verify: chain contains HMAC-tagged events but CORDUM_AUDIT_HMAC_KEY is not configured — HMAC verification skipped",
-				"tenant", tenant,
-				"total_events", result.TotalEvents,
-			)
-			// Don't override a compromised status, but downgrade ok → partial
-			// so the caller knows verification was incomplete.
-			if result.Status == audit.VerifyStatusOK {
-				result.Status = audit.VerifyStatusPartial
-			}
+	// degraded result so operators don't see a false-green. Uses
+	// result.HMACSeen (set by the verification loop) instead of a
+	// separate Redis probe, so it catches all mixed-rollout scenarios.
+	if len(opts.HMACKey) == 0 && result.HMACSeen {
+		slog.Warn("audit verify: chain contains HMAC-tagged events but CORDUM_AUDIT_HMAC_KEY is not configured — HMAC verification skipped",
+			"tenant", tenant,
+			"total_events", result.TotalEvents,
+		)
+		// Don't override a compromised status, but downgrade ok → partial
+		// so the caller knows verification was incomplete.
+		if result.Status == audit.VerifyStatusOK {
+			result.Status = audit.VerifyStatusPartial
 		}
 	}
 
