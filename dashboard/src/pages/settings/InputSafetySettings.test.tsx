@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent } from "@testing-library/react";
 import InputSafetySettings from "./InputSafetySettings";
 import { mockFetch } from "../../hooks/__tests__/test-utils";
 
@@ -178,13 +179,7 @@ describe("InputSafetySettings page", () => {
     expect(select).toBeTruthy();
     await act(async () => {
       if (select) {
-        const setValue = Object.getOwnPropertyDescriptor(
-          HTMLSelectElement.prototype,
-          "value",
-        )?.set;
-        setValue?.call(select, "open");
-        select.dispatchEvent(new Event("input", { bubbles: true }));
-        select.dispatchEvent(new Event("change", { bubbles: true }));
+        fireEvent.change(select, { target: { value: "open" } });
       }
     });
 

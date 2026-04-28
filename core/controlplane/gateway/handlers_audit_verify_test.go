@@ -207,6 +207,36 @@ func TestHandleAuditVerify_ImplicitAndExplicitDefaultLimitCoalesce(t *testing.T)
 	}
 }
 
+func TestAuditVerifySingleflightKeyIncludesHMACFingerprint(t *testing.T) {
+	base := audit.VerifyOptions{
+		SinceMs:              100,
+		UntilMs:              200,
+		Limit:                audit.DefaultVerifyLimit,
+		RetentionBoundarySeq: 7,
+	}
+	noHMACKey := auditVerifySingleflightKey("default", base)
+
+	base.HMACKey = []byte("hmac-secret-a")
+	hmacKeyA := auditVerifySingleflightKey("default", base)
+	if hmacKeyA == noHMACKey {
+		t.Fatal("singleflight key did not change when HMAC verification was enabled")
+	}
+	if strings.Contains(hmacKeyA, "hmac-secret-a") {
+		t.Fatal("singleflight key exposes raw HMAC key material")
+	}
+
+	copied := base
+	copied.HMACKey = []byte("hmac-secret-a")
+	if got := auditVerifySingleflightKey("default", copied); got != hmacKeyA {
+		t.Fatalf("singleflight key for identical HMAC key = %q, want %q", got, hmacKeyA)
+	}
+
+	base.HMACKey = []byte("hmac-secret-b")
+	if got := auditVerifySingleflightKey("default", base); got == hmacKeyA {
+		t.Fatal("singleflight key coalesced different HMAC keys")
+	}
+}
+
 func TestHandleAuditVerify_DifferentSinceDoesNotCoalesce(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	seedChain(t, s, "default", 5)

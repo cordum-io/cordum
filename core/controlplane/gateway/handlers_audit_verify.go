@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -223,11 +225,17 @@ func auditVerifySingleflightKey(tenant string, opts audit.VerifyOptions) string 
 	if limit > audit.MaxVerifyLimit {
 		limit = audit.MaxVerifyLimit
 	}
+	hmacFingerprint := "none"
+	if len(opts.HMACKey) > 0 {
+		sum := sha256.Sum256(opts.HMACKey)
+		hmacFingerprint = hex.EncodeToString(sum[:])
+	}
 	return tenant +
 		"|" + strconv.FormatInt(opts.SinceMs, 10) +
 		"|" + strconv.FormatInt(opts.UntilMs, 10) +
 		"|" + strconv.FormatInt(limit, 10) +
-		"|" + strconv.FormatInt(opts.RetentionBoundarySeq, 10)
+		"|" + strconv.FormatInt(opts.RetentionBoundarySeq, 10) +
+		"|" + hmacFingerprint
 }
 
 // verifyHTTPError pairs a status code with a message so parseVerifyQuery

@@ -98,7 +98,8 @@ llm-chat governance probe 4 measured a 10,000-event chain at roughly
 stack) and 2.3s p99 when 20 identical callers each forced their own walk.
 Current builds coalesce concurrent identical requests with `singleflight`,
 so the 20 callers share one leader walk when their tenant, `since`,
-`until`, `limit`, and retention boundary match exactly.
+`until`, effective `limit`, retention boundary, and effective HMAC
+verification configuration match exactly.
 
 Operators should watch:
 
