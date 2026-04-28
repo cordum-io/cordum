@@ -143,11 +143,12 @@ func TestLoginThrottleFallbackOnRedisUnavailable(t *testing.T) {
 
 	max := maxLoginAttempts()
 
-	// First N attempts should pass (fallback allows up to threshold).
+	// First N failed attempts should pass (fallback allows up to threshold).
 	for i := 0; i < max; i++ {
 		if err := store.CheckLoginThrottle(ctx, "attacker", "10.0.0.1"); err != nil {
 			t.Fatalf("attempt %d: expected pass during fallback, got: %v", i+1, err)
 		}
+		store.RecordFailedLogin(ctx, "attacker", "10.0.0.1")
 	}
 
 	// Next attempt should be throttled by fallback.
@@ -182,6 +183,7 @@ func TestLoginThrottleRecoveryFromRedisOutage(t *testing.T) {
 		if err := store.CheckLoginThrottle(ctx, "recovery-user", "10.0.0.1"); err != nil {
 			t.Fatalf("fallback attempt %d: %v", i+1, err)
 		}
+		store.RecordFailedLogin(ctx, "recovery-user", "10.0.0.1")
 	}
 
 	// Phase 2: Redis comes back — should use Redis (fresh counters).
@@ -200,6 +202,34 @@ func TestLoginThrottleRecoveryFromRedisOutage(t *testing.T) {
 	// Now should be throttled via Redis.
 	if err := store.CheckLoginThrottle(ctx, "recovery-user", "10.0.0.1"); err == nil {
 		t.Fatal("expected Redis throttle after max attempts post-recovery")
+	}
+}
+
+func TestLoginThrottleFallbackClearedAfterSuccessfulLogin(t *testing.T) {
+	store, srv := newTestUserStore(t)
+	ctx := context.Background()
+
+	// Suppress log noise from the fallback path.
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelError}))
+	previous := slog.Default()
+	slog.SetDefault(logger)
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	srv.Close()
+
+	for i := 0; i < maxLoginAttempts(); i++ {
+		if err := store.CheckLoginThrottle(ctx, "valid-user", "10.0.0.1"); err != nil {
+			t.Fatalf("attempt %d: expected pass during fallback, got: %v", i+1, err)
+		}
+		store.RecordFailedLogin(ctx, "valid-user", "10.0.0.1")
+	}
+	if err := store.CheckLoginThrottle(ctx, "valid-user", "10.0.0.1"); err == nil {
+		t.Fatal("expected fallback throttle before clearing, got nil")
+	}
+
+	store.ClearFailedLogins(ctx, "valid-user", "10.0.0.1")
+	if err := store.CheckLoginThrottle(ctx, "valid-user", "10.0.0.1"); err != nil {
+		t.Fatalf("expected fallback counter to clear after successful login, got: %v", err)
 	}
 }
 
