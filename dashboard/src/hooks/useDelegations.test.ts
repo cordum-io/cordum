@@ -171,10 +171,13 @@ describe("useDelegations", () => {
     const setQueryDataSpy = vi.spyOn(queryClient, "setQueryData");
     setQueryDataSpy.mockClear();
 
-    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-      throw new Error("network down");
-    });
+    let rejectFetch!: (error: Error) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () =>
+        new Promise<Response>((_resolve, reject) => {
+          rejectFetch = reject;
+        }),
+    );
 
     const hook = renderWithQueryClient(() => useRevokeDelegation(), queryClient);
     await hook.waitFor(() => {
@@ -196,6 +199,7 @@ describe("useDelegations", () => {
       expect(data?.pages[0]?.items[0]?.revokedReason).toBe("manual");
     });
 
+    rejectFetch(new Error("network down"));
     await expect(mutation).rejects.toThrow("network down");
 
     expect(setQueryDataSpy).toHaveBeenCalledWith(allKey, seeded);

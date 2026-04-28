@@ -119,6 +119,7 @@ export function DelegationChainViz({
               key={`${node.agentId}-${index}`}
               role="treeitem"
               aria-level={index + 1}
+              aria-selected={isLeaf}
               className={cn(
                 "list-none",
                 mobileDepthClass(index),

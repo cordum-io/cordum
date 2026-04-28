@@ -68,15 +68,12 @@ function createLogger(minLevel: LogLevel) {
       const tag = `[${component}]`;
       const lvl = level.toUpperCase().padEnd(5);
       if (fields && Object.keys(fields).length > 0) {
-        // eslint-disable-next-line no-console
         console[fn](`${lvl} ${tag} ${msg}`, fields);
       } else {
-        // eslint-disable-next-line no-console
         console[fn](`${lvl} ${tag} ${msg}`);
       }
     } else {
       // JSON output in production
-      // eslint-disable-next-line no-console
       console[fn](JSON.stringify(entry));
     }
   }

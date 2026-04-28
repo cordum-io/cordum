@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { generateUUID } from "./uuid";
+import { safeLocalStorage } from "./storage";
 
 const STORAGE_KEY = "cordum:audit:savedFilters";
 
@@ -67,7 +68,7 @@ const BUILT_IN_PRESETS: SavedAuditFilter[] = [
 
 function readUserFilters(): SavedAuditFilter[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = safeLocalStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -78,7 +79,7 @@ function readUserFilters(): SavedAuditFilter[] {
 }
 
 function writeUserFilters(filters: SavedAuditFilter[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
+  safeLocalStorage.setItem(STORAGE_KEY, JSON.stringify(filters));
 }
 
 // ---------------------------------------------------------------------------

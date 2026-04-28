@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { broadcastSyncMock } = vi.hoisted(() => ({
   broadcastSyncMock: vi.fn(),
@@ -36,6 +36,10 @@ describe("useUiStore", () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("defaults to system theme and table view when nothing is stored", async () => {
     const { useUiStore } = await loadUiModule();
     const state = useUiStore.getState();
@@ -57,6 +61,23 @@ describe("useUiStore", () => {
     expect(state.theme).toBe("dark");
     expect(state.resolvedTheme).toBe("dark");
     expect(state.agentsView).toBe("cards");
+  });
+
+  it("does not crash when localStorage is unavailable", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("storage unavailable");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("storage unavailable");
+    });
+
+    const { useUiStore } = await loadUiModule();
+
+    expect(useUiStore.getState().theme).toBe("system");
+    expect(() => useUiStore.getState().setTheme("dark")).not.toThrow();
+    expect(() => useUiStore.getState().setAgentsView("cards")).not.toThrow();
+    expect(useUiStore.getState().theme).toBe("dark");
+    expect(useUiStore.getState().agentsView).toBe("cards");
   });
 
   it("toggleTheme cycles light -> dark -> system -> light and broadcasts", async () => {

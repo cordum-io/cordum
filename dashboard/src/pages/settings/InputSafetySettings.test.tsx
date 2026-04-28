@@ -177,10 +177,12 @@ describe("InputSafetySettings page", () => {
     // Change the select to "open"
     const select = view.container.querySelector("select") as HTMLSelectElement | null;
     expect(select).toBeTruthy();
-    await act(async () => {
-      if (select) {
-        fireEvent.change(select, { target: { value: "open" } });
-      }
+    if (select) {
+      fireEvent.change(select, { target: { value: "open" } });
+    }
+
+    await view.waitFor(() => {
+      expect(select?.value).toBe("open");
     });
 
     await view.waitFor(() => {

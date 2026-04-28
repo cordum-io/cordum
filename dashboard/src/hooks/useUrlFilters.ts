@@ -114,7 +114,6 @@ export function useUrlFilters<S extends FilterSchema>(
     }
     return result as FilterValues<S>;
     // searchParams.toString() used as dep instead of object ref to prevent re-render loops
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams.toString()]);
 
   // Count active (non-empty) filters
@@ -132,7 +131,6 @@ export function useUrlFilters<S extends FilterSchema>(
     }
     return count;
     // searchParams.toString() used as dep instead of object ref to prevent re-render loops
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams.toString()]);
 
   // Set a single filter value immediately

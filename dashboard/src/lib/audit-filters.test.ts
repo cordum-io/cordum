@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
 import {
   loadSavedFilters,
   saveSavedFilter,
@@ -11,6 +11,10 @@ import type { SavedAuditFilter, SerializedFilterState } from "./audit-filters";
 
 beforeEach(() => {
   localStorage.clear();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("loadSavedFilters", () => {
@@ -38,6 +42,16 @@ describe("loadSavedFilters", () => {
     // Should still return built-in presets
     expect(filters.length).toBeGreaterThanOrEqual(3);
   });
+
+  it("handles unavailable localStorage gracefully", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("storage unavailable");
+    });
+
+    const filters = loadSavedFilters();
+
+    expect(filters.length).toBeGreaterThanOrEqual(3);
+  });
 });
 
 describe("saveSavedFilter", () => {
@@ -50,6 +64,21 @@ describe("saveSavedFilter", () => {
     });
     const all = loadSavedFilters();
     expect(all.some((f) => f.id === "new-1")).toBe(true);
+  });
+
+  it("does not throw when localStorage persistence fails", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("storage unavailable");
+    });
+
+    expect(() =>
+      saveSavedFilter({
+        id: "new-2",
+        name: "New",
+        filters: {},
+        createdAt: new Date().toISOString(),
+      }),
+    ).not.toThrow();
   });
 });
 

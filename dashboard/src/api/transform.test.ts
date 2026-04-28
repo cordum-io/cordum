@@ -3,6 +3,7 @@ import {
   computeUrgencyLevel,
   deriveApprovalActionability,
   deriveApprovalStatus,
+  mapApprovalContext,
   mapApprovalItem,
   mapDelegationListResponse,
   mapDelegationView,
@@ -200,6 +201,71 @@ describe("api/transform mappings", () => {
     expect(approval?.actionability).toBe("actionable");
     expect(approval?.humanSummary).toContain('Job on "job.review"');
     expect(approval?.urgencyLevel).toBeDefined();
+  });
+
+  it("maps approval context defensively without leaking malformed backend fields", () => {
+    const context = mapApprovalContext({
+      approval: { id: "approval-1" },
+      blast_radius: {
+        systems: ["payments", 42],
+        namespaces: ["prod"],
+        resources: "not-an-array",
+        scope_description: "production payments",
+      },
+      prior_approvals: [
+        {
+          job_id: "job-1",
+          topic: "job.payments",
+          tenant: "default",
+          decision: "approve",
+          resolved_by: "admin",
+          resolved_at: "123",
+          was_approved: true,
+        },
+        "malformed",
+      ],
+      rollback_hint: "rollback available",
+      policy_snapshot_summary: {
+        rule_count: "3",
+        matched_rule: {
+          id: "rule-1",
+          description: "manual review",
+          decision: "require_human",
+          constraints_summary: "amount > threshold",
+        },
+        policy_version: "v7",
+      },
+      constraints: { max_runtime_ms: 1000 },
+      time_remaining_ms: "5000",
+    });
+
+    expect(context.approval).toEqual({ id: "approval-1" });
+    expect(context.blastRadius.systems).toEqual(["payments"]);
+    expect(context.blastRadius.resources).toEqual([]);
+    expect(context.priorApprovals).toHaveLength(2);
+    expect(context.priorApprovals[0]).toMatchObject({
+      jobId: "job-1",
+      wasApproved: true,
+    });
+    expect(context.priorApprovals[1]).toMatchObject({
+      jobId: "",
+      wasApproved: false,
+    });
+    expect(context.policySnapshotSummary.ruleCount).toBe(3);
+    expect(context.policySnapshotSummary.matchedRule.id).toBe("rule-1");
+    expect(context.constraints).toEqual({ max_runtime_ms: 1000 });
+    expect(context.timeRemainingMs).toBe(5000);
+  });
+
+  it("maps malformed approval context to safe defaults", () => {
+    expect(mapApprovalContext("not-an-object")).toMatchObject({
+      approval: {},
+      blastRadius: { systems: [], namespaces: [], resources: [], scopeDescription: "" },
+      priorApprovals: [],
+      rollbackHint: "",
+      timeRemainingMs: null,
+      constraints: null,
+    });
   });
 
   it("maps decision-first approval summaries into stable frontend fields", () => {

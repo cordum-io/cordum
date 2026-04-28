@@ -549,8 +549,6 @@ export function PolicySimulator({ bundleId, mode = "simulate", initialCapabiliti
     return () => {
       if (whatIfDebounceRef.current) clearTimeout(whatIfDebounceRef.current);
     };
-    // Intentionally omit disabledRuleIds from deps — ref pattern avoids re-triggering simulation
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabledRuleIds]);
 
   // Scroll to matched rule + flash highlight

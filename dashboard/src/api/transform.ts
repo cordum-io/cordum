@@ -1196,50 +1196,88 @@ function mapApprovalDecisionSummary(
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mapPolicySnapshotSummaryFromRaw(raw?: any): ApprovalPolicySnapshot | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
+function recordFromUnknown(raw: unknown): Record<string, unknown> | undefined {
+  return raw && typeof raw === "object" && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : undefined;
+}
+
+function stringArrayFromUnknown(raw: unknown): string[] {
+  return Array.isArray(raw)
+    ? raw.filter((value): value is string => typeof value === "string")
+    : [];
+}
+
+function stringFromUnknown(raw: unknown): string {
+  return typeof raw === "string" ? raw : "";
+}
+
+function boolFromUnknown(raw: unknown): boolean {
+  return typeof raw === "boolean" ? raw : false;
+}
+
+function numberFromUnknown(raw: unknown, fallback = 0): number {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && raw.trim()) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function mapPolicySnapshotSummaryFromRaw(raw?: unknown): ApprovalPolicySnapshot | undefined {
+  const summary = recordFromUnknown(raw);
+  if (!summary) return undefined;
+  const matchedRule = recordFromUnknown(summary.matched_rule) ?? {};
   return {
-    ruleCount: raw.rule_count ?? 0,
+    ruleCount: numberFromUnknown(summary.rule_count),
     matchedRule: {
-      id: raw.matched_rule?.id ?? "",
-      description: raw.matched_rule?.description ?? "",
-      decision: raw.matched_rule?.decision ?? "",
-      constraintsSummary: raw.matched_rule?.constraints_summary ?? "",
+      id: stringFromUnknown(matchedRule.id),
+      description: stringFromUnknown(matchedRule.description),
+      decision: stringFromUnknown(matchedRule.decision),
+      constraintsSummary: stringFromUnknown(matchedRule.constraints_summary),
     },
-    policyVersion: raw.policy_version ?? "",
+    policyVersion: stringFromUnknown(summary.policy_version),
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function mapApprovalContext(raw: any): ApprovalContext {
+export function mapApprovalContext(raw: unknown): ApprovalContext {
+  const context = recordFromUnknown(raw) ?? {};
+  const blastRadius = recordFromUnknown(context.blast_radius);
+  const priorApprovals = Array.isArray(context.prior_approvals)
+    ? context.prior_approvals
+    : [];
   return {
-    approval: raw.approval ?? {},
-    blastRadius: raw.blast_radius
+    approval: recordFromUnknown(context.approval) ?? {},
+    blastRadius: blastRadius
       ? {
-          systems: raw.blast_radius.systems ?? [],
-          namespaces: raw.blast_radius.namespaces ?? [],
-          resources: raw.blast_radius.resources ?? [],
-          scopeDescription: raw.blast_radius.scope_description ?? "",
+          systems: stringArrayFromUnknown(blastRadius.systems),
+          namespaces: stringArrayFromUnknown(blastRadius.namespaces),
+          resources: stringArrayFromUnknown(blastRadius.resources),
+          scopeDescription: stringFromUnknown(blastRadius.scope_description),
         }
       : { systems: [], namespaces: [], resources: [], scopeDescription: "" },
-    priorApprovals: (raw.prior_approvals ?? []).map((pa: any) => ({
-      jobId: pa.job_id ?? "",
-      topic: pa.topic ?? "",
-      tenant: pa.tenant ?? "",
-      decision: pa.decision ?? "",
-      resolvedBy: pa.resolved_by ?? "",
-      resolvedAt: pa.resolved_at ?? 0,
-      wasApproved: pa.was_approved ?? false,
-    })),
-    rollbackHint: raw.rollback_hint ?? "",
-    policySnapshotSummary: mapPolicySnapshotSummaryFromRaw(raw.policy_snapshot_summary) ?? {
+    priorApprovals: priorApprovals.map((pa) => {
+      const approval = recordFromUnknown(pa) ?? {};
+      return {
+        jobId: stringFromUnknown(approval.job_id),
+        topic: stringFromUnknown(approval.topic),
+        tenant: stringFromUnknown(approval.tenant),
+        decision: stringFromUnknown(approval.decision),
+        resolvedBy: stringFromUnknown(approval.resolved_by),
+        resolvedAt: numberFromUnknown(approval.resolved_at),
+        wasApproved: boolFromUnknown(approval.was_approved),
+      };
+    }),
+    rollbackHint: stringFromUnknown(context.rollback_hint),
+    policySnapshotSummary: mapPolicySnapshotSummaryFromRaw(context.policy_snapshot_summary) ?? {
       ruleCount: 0,
       matchedRule: { id: "", description: "", decision: "", constraintsSummary: "" },
       policyVersion: "",
     },
-    timeRemainingMs: raw.time_remaining_ms ?? null,
-    constraints: raw.constraints ?? null,
+    timeRemainingMs:
+      context.time_remaining_ms == null ? null : numberFromUnknown(context.time_remaining_ms),
+    constraints: recordFromUnknown(context.constraints) ?? null,
   };
 }
 
@@ -1950,4 +1988,3 @@ export function mapDelegationListResponse(
     nextCursor: raw.next_cursor ?? raw.nextCursor ?? undefined,
   };
 }
-

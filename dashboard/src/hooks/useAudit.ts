@@ -135,7 +135,6 @@ export function useAuditLog(filters: AuditFilters = {}) {
   // stable scalar keys; deep-nested object filters are not used here.
   const stableFilters = useMemo<AuditFilters>(
     () => filters,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       filters.eventType?.join("|") ?? "",
       filters.actor ?? "",

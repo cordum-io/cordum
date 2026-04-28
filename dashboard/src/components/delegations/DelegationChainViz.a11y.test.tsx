@@ -106,7 +106,10 @@ describe("DelegationChainViz accessibility", () => {
 
     const tree = container.querySelector('[role="tree"]');
     expect(tree).toBeTruthy();
-    expect(container.querySelectorAll('[role="treeitem"]').length).toBe(3);
+    const treeItems = container.querySelectorAll('[role="treeitem"]');
+    expect(treeItems.length).toBe(3);
+    expect(treeItems[0]?.getAttribute("aria-selected")).toBe("false");
+    expect(treeItems[2]?.getAttribute("aria-selected")).toBe("true");
     expect(container.querySelector('[aria-label="Delegation status: active"]')).toBeTruthy();
 
     const revokeButton = container.querySelector(
