@@ -201,10 +201,17 @@ func (s *server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 }
 
 func auditVerifySingleflightKey(tenant string, opts audit.VerifyOptions) string {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = audit.DefaultVerifyLimit
+	}
+	if limit > audit.MaxVerifyLimit {
+		limit = audit.MaxVerifyLimit
+	}
 	return tenant +
 		"|" + strconv.FormatInt(opts.SinceMs, 10) +
 		"|" + strconv.FormatInt(opts.UntilMs, 10) +
-		"|" + strconv.FormatInt(opts.Limit, 10) +
+		"|" + strconv.FormatInt(limit, 10) +
 		"|" + strconv.FormatInt(opts.RetentionBoundarySeq, 10)
 }
 

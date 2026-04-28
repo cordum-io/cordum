@@ -133,6 +133,32 @@ func TestHandleAuditVerify_DifferentTenantsDoNotCoalesce(t *testing.T) {
 	}
 }
 
+func TestHandleAuditVerify_ImplicitAndExplicitDefaultLimitCoalesce(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	seedChain(t, s, "default", 5)
+
+	var calls int64
+	withAuditVerifySeam(t, func(ctx context.Context, client redis.UniversalClient, streamKey string, opts audit.VerifyOptions) (*audit.VerifyResult, error) {
+		atomic.AddInt64(&calls, 1)
+		time.Sleep(50 * time.Millisecond)
+		return audit.VerifyChain(ctx, client, streamKey, opts)
+	})
+
+	explicitDefaultLimit := strconv.FormatInt(audit.DefaultVerifyLimit, 10)
+	paths := make([]string, 20)
+	for i := range paths {
+		paths[i] = "/api/v1/audit/verify?tenant=default&since=1000"
+		if i%2 == 1 {
+			paths[i] += "&limit=" + explicitDefaultLimit
+		}
+	}
+
+	concurrentAuditVerifyBodies(t, s, paths)
+	if got := atomic.LoadInt64(&calls); got != 1 {
+		t.Fatalf("underlying VerifyChain calls = %d, want 1 for implicit and explicit default limit", got)
+	}
+}
+
 func TestHandleAuditVerify_DifferentSinceDoesNotCoalesce(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	seedChain(t, s, "default", 5)
