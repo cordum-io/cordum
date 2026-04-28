@@ -335,6 +335,44 @@ func TestHandleAuditVerify_CancelledFollowerStopsWaiting(t *testing.T) {
 	}
 }
 
+func TestHandleAuditVerify_ShutdownCancelsLeaderWalk(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.shutdownCh = make(chan struct{})
+	seedChain(t, s, "default", 5)
+
+	enteredVerify := make(chan struct{})
+	var enteredOnce sync.Once
+	withAuditVerifySeam(t, func(ctx context.Context, _ redis.UniversalClient, _ string, _ audit.VerifyOptions) (*audit.VerifyResult, error) {
+		enteredOnce.Do(func() { close(enteredVerify) })
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	done := make(chan int, 1)
+	go func() {
+		req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/verify?tenant=default", nil))
+		rec := httptest.NewRecorder()
+		s.handleAuditVerify(rec, req)
+		done <- rec.Code
+	}()
+
+	select {
+	case <-enteredVerify:
+	case <-time.After(time.Second):
+		t.Fatal("leader did not enter verify seam")
+	}
+	close(s.shutdownCh)
+
+	select {
+	case code := <-done:
+		if code != http.StatusInternalServerError {
+			t.Fatalf("status=%d want 500 after shutdown cancels verify walk", code)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("verify walk did not stop promptly after shutdown")
+	}
+}
+
 func TestHandleAuditVerify_LeaderContextCancelDoesNotPoisonWaiters(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	seedChain(t, s, "default", 5)

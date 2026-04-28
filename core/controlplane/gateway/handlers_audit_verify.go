@@ -149,6 +149,15 @@ func (s *server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		verifyCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		if s.shutdownCh != nil {
+			go func() {
+				select {
+				case <-s.shutdownCh:
+					cancel()
+				case <-verifyCtx.Done():
+				}
+			}()
+		}
 		defer cancel()
 
 		result, err := auditVerifyChainFn(verifyCtx, client, streamKey, opts)
