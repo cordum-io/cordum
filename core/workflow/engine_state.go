@@ -11,12 +11,12 @@ import (
 
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/licensing"
-	"github.com/redis/go-redis/v9"
-	"go.opentelemetry.io/otel/attribute"
-	oteltrace "go.opentelemetry.io/otel/trace"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -39,6 +39,7 @@ func (e *Engine) StartRun(ctx context.Context, workflowID, runID string) error {
 	defer unlock()
 	slog.Debug("run starting", "component", "workflow", "workflowId", workflowID, "runId", runID, "traceId", runID)
 	wfDef, err := e.store.GetWorkflow(ctx, workflowID)
+	var preloadedRun *WorkflowRun
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			// Workflow doesn't exist. Check if the run exists — if it does,
@@ -46,24 +47,41 @@ func (e *Engine) StartRun(ctx context.Context, workflowID, runID string) error {
 			// Mark it as failed instead of retrying forever.
 			run, rerr := e.store.GetRun(ctx, runID)
 			if rerr == nil && run != nil {
-				slog.Warn("workflow deleted, failing orphaned run",
-					"workflow_id", workflowID, "run_id", runID)
-				now := time.Now().UTC()
-				run.Status = RunStatusFailed
-				run.CompletedAt = &now
-				run.Error = map[string]any{"message": "workflow deleted"}
-				_ = e.store.UpdateRun(ctx, run)
-				e.markRunTerminal(run.ID)
-				return nil // terminal — don't retry
+				// A delay timer or poller can race with workflow creation after a
+				// transient miss. Re-read before declaring the run orphaned so a
+				// just-restored workflow is allowed to continue.
+				reloaded, reloadErr := e.store.GetWorkflow(ctx, workflowID)
+				if reloadErr == nil && reloaded != nil {
+					wfDef = reloaded
+					preloadedRun = run
+				} else {
+					if reloadErr != nil && !errors.Is(reloadErr, redis.Nil) {
+						return fmt.Errorf("get workflow retry: %w", reloadErr)
+					}
+					slog.Warn("workflow deleted, failing orphaned run",
+						"workflow_id", workflowID, "run_id", runID)
+					now := time.Now().UTC()
+					run.Status = RunStatusFailed
+					run.CompletedAt = &now
+					run.Error = map[string]any{"message": "workflow deleted"}
+					_ = e.store.UpdateRun(ctx, run)
+					e.markRunTerminal(run.ID)
+					return nil // terminal — don't retry
+				}
 			}
 			// Neither workflow nor run exists — transient or cleanup scenario.
 			// Return error so delay poller preserves the timer for retry.
 		}
-		return fmt.Errorf("get workflow: %w", err)
+		if wfDef == nil {
+			return fmt.Errorf("get workflow: %w", err)
+		}
 	}
-	run, err := e.store.GetRun(ctx, runID)
-	if err != nil {
-		return fmt.Errorf("get run: %w", err)
+	run := preloadedRun
+	if run == nil {
+		run, err = e.store.GetRun(ctx, runID)
+		if err != nil {
+			return fmt.Errorf("get run: %w", err)
+		}
 	}
 	if run.Status == RunStatusCancelled || run.Status == RunStatusFailed || run.Status == RunStatusDenied || run.Status == RunStatusSucceeded || run.Status == RunStatusTimedOut {
 		e.markRunTerminal(run.ID)
