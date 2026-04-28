@@ -51,6 +51,7 @@ import (
 	"github.com/cordum/cordum/core/telemetry"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/sync/singleflight"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -177,15 +178,16 @@ type server struct {
 	rbacStore         *auth.RBACStore
 	permChecker       *auth.PermissionChecker
 
-	auditExporter     audit.AuditSender
-	auditChainer      *audit.Chainer
-	legalHoldStore    *audit.LegalHoldStore
-	statusCacheObj    *statusCache
-	policyShadowStore *policyshadow.Store
-	mcpDenyRing       *denyEventRing
-	sessionIssuer     *scheduler.SessionTokenIssuer
-	trustResolver     *scheduler.TrustResolver
-	heartbeatMode     scheduler.HeartbeatMode
+	auditExporter       audit.AuditSender
+	auditChainer        *audit.Chainer
+	auditVerifyCoalesce singleflight.Group
+	legalHoldStore      *audit.LegalHoldStore
+	statusCacheObj      *statusCache
+	policyShadowStore   *policyshadow.Store
+	mcpDenyRing         *denyEventRing
+	sessionIssuer       *scheduler.SessionTokenIssuer
+	trustResolver       *scheduler.TrustResolver
+	heartbeatMode       scheduler.HeartbeatMode
 
 	apiRL    rateLimiter
 	publicRL rateLimiter

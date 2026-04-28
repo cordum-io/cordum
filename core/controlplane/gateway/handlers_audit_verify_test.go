@@ -133,6 +133,54 @@ func TestHandleAuditVerify_DifferentTenantsDoNotCoalesce(t *testing.T) {
 	}
 }
 
+func TestHandleAuditVerify_CoalescerScopedPerServer(t *testing.T) {
+	s1, _, _ := newTestGateway(t)
+	s2, _, _ := newTestGateway(t)
+	seedChain(t, s1, "default", 3)
+	seedChain(t, s2, "default", 7)
+
+	var calls int64
+	withAuditVerifySeam(t, func(ctx context.Context, client redis.UniversalClient, streamKey string, opts audit.VerifyOptions) (*audit.VerifyResult, error) {
+		atomic.AddInt64(&calls, 1)
+		time.Sleep(50 * time.Millisecond)
+		return audit.VerifyChain(ctx, client, streamKey, opts)
+	})
+
+	startCh := make(chan struct{})
+	var wg sync.WaitGroup
+	bodies := make([]string, 2)
+	for i, srv := range []*server{s1, s2} {
+		wg.Add(1)
+		go func(i int, srv *server) {
+			defer wg.Done()
+			<-startCh
+			req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/verify?tenant=default", nil))
+			rec := httptest.NewRecorder()
+			srv.handleAuditVerify(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Errorf("server %d status=%d want 200 body=%s", i, rec.Code, rec.Body.String())
+				return
+			}
+			bodies[i] = rec.Body.String()
+		}(i, srv)
+	}
+	close(startCh)
+	wg.Wait()
+
+	if got := atomic.LoadInt64(&calls); got != 2 {
+		t.Fatalf("underlying VerifyChain calls = %d, want 2 for identical keys on distinct server backends", got)
+	}
+	for i, want := range []int{3, 7} {
+		var res audit.VerifyResult
+		if err := json.Unmarshal([]byte(bodies[i]), &res); err != nil {
+			t.Fatalf("decode server %d body: %v body=%s", i, err, bodies[i])
+		}
+		if res.TotalEvents != want {
+			t.Fatalf("server %d TotalEvents=%d, want %d", i, res.TotalEvents, want)
+		}
+	}
+}
+
 func TestHandleAuditVerify_ImplicitAndExplicitDefaultLimitCoalesce(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	seedChain(t, s, "default", 5)
@@ -223,6 +271,67 @@ func TestHandleAuditVerify_LeaderErrorPropagatesToWaiters(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(auditVerifyCoalescedTotal) - beforeCoalesced; got != float64(len(codes)-1) {
 		t.Fatalf("coalesced counter delta = %v, want %d for waiters on shared error", got, len(codes)-1)
+	}
+}
+
+func TestHandleAuditVerify_CancelledFollowerStopsWaiting(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	seedChain(t, s, "default", 5)
+
+	enteredVerify := make(chan struct{})
+	releaseVerify := make(chan struct{})
+	var enteredOnce sync.Once
+	withAuditVerifySeam(t, func(ctx context.Context, client redis.UniversalClient, streamKey string, opts audit.VerifyOptions) (*audit.VerifyResult, error) {
+		enteredOnce.Do(func() { close(enteredVerify) })
+		select {
+		case <-releaseVerify:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return audit.VerifyChain(ctx, client, streamKey, opts)
+	})
+
+	leaderDone := make(chan int, 1)
+	go func() {
+		req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/verify?tenant=default", nil))
+		rec := httptest.NewRecorder()
+		s.handleAuditVerify(rec, req)
+		leaderDone <- rec.Code
+	}()
+
+	select {
+	case <-enteredVerify:
+	case <-time.After(time.Second):
+		t.Fatal("leader did not enter verify seam")
+	}
+
+	followerCtx, cancelFollower := context.WithCancel(context.Background())
+	followerReq := httptest.NewRequest(http.MethodGet, "/api/v1/audit/verify?tenant=default", nil).WithContext(followerCtx)
+	followerReq = adminCtx(followerReq)
+	followerDone := make(chan struct{})
+	go func() {
+		rec := httptest.NewRecorder()
+		s.handleAuditVerify(rec, followerReq)
+		close(followerDone)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancelFollower()
+	select {
+	case <-followerDone:
+	case <-time.After(200 * time.Millisecond):
+		close(releaseVerify)
+		t.Fatal("cancelled follower remained blocked on shared verify result")
+	}
+
+	close(releaseVerify)
+	select {
+	case code := <-leaderDone:
+		if code != http.StatusOK {
+			t.Fatalf("leader status=%d want 200", code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("leader did not finish after releasing verify seam")
 	}
 }
 

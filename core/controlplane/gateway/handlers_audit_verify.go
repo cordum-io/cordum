@@ -34,8 +34,6 @@ const (
 	maxVerifySinceUntilSpread = 30 * 24 * time.Hour
 )
 
-var auditVerifyCoalesce singleflight.Group
-
 var auditVerifyChainFn = audit.VerifyChain
 
 var auditVerifyDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
@@ -140,7 +138,7 @@ func (s *server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 
 	key := auditVerifySingleflightKey(tenant, opts)
 	leader := false
-	value, err, shared := auditVerifyCoalesce.Do(key, func() (any, error) {
+	resultCh := s.auditVerifyCoalesce.DoChan(key, func() (any, error) {
 		leader = true
 		auditVerifyInflight.Inc()
 		start := time.Now()
@@ -184,6 +182,14 @@ func (s *server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 		auditVerifyEventsTotal.WithLabelValues(status).Add(float64(result.TotalEvents))
 		return result, nil
 	})
+
+	var sfResult singleflight.Result
+	select {
+	case sfResult = <-resultCh:
+	case <-r.Context().Done():
+		return
+	}
+	value, err, shared := sfResult.Val, sfResult.Err, sfResult.Shared
 	if shared && !leader {
 		auditVerifyCoalescedTotal.Inc()
 	}
