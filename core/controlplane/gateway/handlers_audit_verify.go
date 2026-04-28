@@ -184,12 +184,12 @@ func (s *server) handleAuditVerify(w http.ResponseWriter, r *http.Request) {
 		auditVerifyEventsTotal.WithLabelValues(status).Add(float64(result.TotalEvents))
 		return result, nil
 	})
+	if shared && !leader {
+		auditVerifyCoalescedTotal.Inc()
+	}
 	if err != nil {
 		writeInternalError(w, r, "audit verify: walk chain", err)
 		return
-	}
-	if shared && !leader {
-		auditVerifyCoalescedTotal.Inc()
 	}
 
 	result, ok := value.(*audit.VerifyResult)

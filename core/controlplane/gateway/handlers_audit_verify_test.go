@@ -187,6 +187,7 @@ func TestHandleAuditVerify_LeaderErrorPropagatesToWaiters(t *testing.T) {
 
 	sentinel := errors.New("sentinel verify failure")
 	var calls int64
+	beforeCoalesced := testutil.ToFloat64(auditVerifyCoalescedTotal)
 	withAuditVerifySeam(t, func(context.Context, redis.UniversalClient, string, audit.VerifyOptions) (*audit.VerifyResult, error) {
 		atomic.AddInt64(&calls, 1)
 		time.Sleep(50 * time.Millisecond)
@@ -219,6 +220,9 @@ func TestHandleAuditVerify_LeaderErrorPropagatesToWaiters(t *testing.T) {
 		if code != http.StatusInternalServerError {
 			t.Fatalf("request %d status=%d want 500 body=%s", i, code, bodies[i])
 		}
+	}
+	if got := testutil.ToFloat64(auditVerifyCoalescedTotal) - beforeCoalesced; got != float64(len(codes)-1) {
+		t.Fatalf("coalesced counter delta = %v, want %d for waiters on shared error", got, len(codes)-1)
 	}
 }
 
