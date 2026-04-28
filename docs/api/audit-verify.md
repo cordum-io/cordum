@@ -63,7 +63,6 @@ Representative response:
   "verified_events": 1284,
   "first_seq": 1,
   "last_seq": 1284,
-  "chain_root": "4fbab6f0...",
   "retention_boundary_seq": 1,
   "retention_window_hours": 168,
   "gaps": []
@@ -78,13 +77,64 @@ Important fields:
 | `total_events` | Events scanned in the requested window |
 | `verified_events` | Events that verified cleanly |
 | `first_seq` / `last_seq` | Sequence range actually observed |
-| `chain_root` | Hash of the last verified event in the walked window |
 | `retention_boundary_seq` | Lowest sequence still present in the stream |
 | `retention_window_hours` | Effective retention policy window |
 | `gaps` | Missing / hash-mismatch / out-of-order findings |
 
 The endpoint never returns raw event bodies. It is an integrity-report
 surface, not an audit-event export surface.
+
+## Performance characteristics
+
+`GET /api/v1/audit/verify` deliberately re-walks the requested audit
+chain window on every call. That full re-hash is the tamper-evidence
+guarantee: a caller gets a fresh verification of the bytes currently in
+Redis instead of trusting a cached attestation that could be stale or
+mutated between checks.
+
+Latency therefore scales roughly linearly with events scanned. The
+llm-chat governance probe 4 measured a 10,000-event chain at roughly
+199-241 ms for serial full-window calls (about 25 μs/event on that dev
+stack) and 2.3s p99 when 20 identical callers each forced their own walk.
+Current builds coalesce concurrent identical requests with `singleflight`,
+so the 20 callers share one leader walk when their tenant, `since`,
+`until`, `limit`, and retention boundary match exactly.
+
+Operators should watch:
+
+- `cordum_audit_verify_duration_seconds{status=...}` — leader-walk
+  latency histogram.
+- `cordum_audit_verify_events_total{status=...}` — events scanned by
+  leader walks.
+- `cordum_audit_verify_inflight` — active chain walks.
+- `cordum_audit_verify_coalesced_total` — callers served by another
+  in-flight identical verify.
+
+## Recommended hot-path pattern (since cursor)
+
+Use a narrow `since` cursor for dashboards, chat governance probes, and
+other recurring health checks. A five-minute cursor keeps the tamper check
+fresh without re-hashing the full default 10,000-event window every time:
+
+```bash
+SINCE_MS=$((($(date +%s) - 300) * 1000))
+
+curl -sS "$BASE/api/v1/audit/verify?tenant=$TENANT&since=$SINCE_MS" \
+  --cacert ./certs/ca/ca.crt \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-Tenant-ID: $TENANT"
+```
+
+Mid-chain slices still verify linkage. `VerifyChain` (see
+`core/audit/chain_verify.go` near the predecessor lookup for `SinceMs`)
+reads one predecessor before the requested `since` boundary, so a window
+that starts in the middle of a tenant chain still checks the first
+in-window event against the previous hash.
+
+Reserve full-window verify for operator attestations, incident response,
+and low-frequency compliance checks. As a rule of thumb, run at most one
+full-window verify per tenant per minute; the dashboard's five-minute
+refresh interval is the canonical recurring check cadence.
 
 ## Error codes
 

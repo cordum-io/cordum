@@ -3,14 +3,21 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -35,6 +42,282 @@ func seedChain(t *testing.T, s *server, tenant string, n int) []audit.SIEMEvent 
 		events = append(events, ev)
 	}
 	return events
+}
+
+func withAuditVerifySeam(t *testing.T, fn func(context.Context, redis.UniversalClient, string, audit.VerifyOptions) (*audit.VerifyResult, error)) {
+	t.Helper()
+	orig := auditVerifyChainFn
+	auditVerifyChainFn = fn
+	t.Cleanup(func() { auditVerifyChainFn = orig })
+}
+
+func concurrentAuditVerifyBodies(t *testing.T, s *server, paths []string) []string {
+	t.Helper()
+	reqs := make([]*http.Request, len(paths))
+	for i, path := range paths {
+		reqs[i] = adminCtx(httptest.NewRequest(http.MethodGet, path, nil))
+	}
+	return concurrentAuditVerifyRequests(t, s, reqs)
+}
+
+func concurrentAuditVerifyRequests(t *testing.T, s *server, reqs []*http.Request) []string {
+	t.Helper()
+	startCh := make(chan struct{})
+	var wg sync.WaitGroup
+	bodies := make([]string, len(reqs))
+	for i, req := range reqs {
+		wg.Add(1)
+		go func(i int, req *http.Request) {
+			defer wg.Done()
+			<-startCh
+			rec := httptest.NewRecorder()
+			s.handleAuditVerify(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Errorf("request %d status=%d want 200 body=%s", i, rec.Code, rec.Body.String())
+				return
+			}
+			bodies[i] = rec.Body.String()
+		}(i, req)
+	}
+	close(startCh)
+	wg.Wait()
+	return bodies
+}
+
+func TestHandleAuditVerify_CoalescesConcurrentRequests(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	seedChain(t, s, "default", 200)
+
+	var calls int64
+	withAuditVerifySeam(t, func(ctx context.Context, client redis.UniversalClient, streamKey string, opts audit.VerifyOptions) (*audit.VerifyResult, error) {
+		atomic.AddInt64(&calls, 1)
+		time.Sleep(50 * time.Millisecond)
+		return audit.VerifyChain(ctx, client, streamKey, opts)
+	})
+
+	paths := make([]string, 20)
+	for i := range paths {
+		paths[i] = "/api/v1/audit/verify?tenant=default"
+	}
+	bodies := concurrentAuditVerifyBodies(t, s, paths)
+	if got := atomic.LoadInt64(&calls); got != 1 {
+		t.Fatalf("underlying VerifyChain calls = %d, want 1 for 20 identical concurrent requests", got)
+	}
+	for i := 1; i < len(bodies); i++ {
+		if bodies[i] != bodies[0] {
+			t.Fatalf("body[%d] differs from body[0]\nbody[0]=%s\nbody[%d]=%s", i, bodies[0], i, bodies[i])
+		}
+	}
+}
+
+func TestHandleAuditVerify_DifferentTenantsDoNotCoalesce(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	seedChain(t, s, "default", 5)
+	seedChain(t, s, "other", 5)
+
+	var calls int64
+	withAuditVerifySeam(t, func(ctx context.Context, client redis.UniversalClient, streamKey string, opts audit.VerifyOptions) (*audit.VerifyResult, error) {
+		atomic.AddInt64(&calls, 1)
+		time.Sleep(50 * time.Millisecond)
+		return audit.VerifyChain(ctx, client, streamKey, opts)
+	})
+
+	concurrentAuditVerifyRequests(t, s, []*http.Request{
+		adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/verify?tenant=default", nil)),
+		adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/verify?tenant=default", nil)),
+		auditVerifyTenantReq("other", "/api/v1/audit/verify?tenant=other"),
+		auditVerifyTenantReq("other", "/api/v1/audit/verify?tenant=other"),
+	})
+	if got := atomic.LoadInt64(&calls); got != 2 {
+		t.Fatalf("underlying VerifyChain calls = %d, want 2 for two distinct tenants", got)
+	}
+}
+
+func TestHandleAuditVerify_DifferentSinceDoesNotCoalesce(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	seedChain(t, s, "default", 5)
+
+	var calls int64
+	withAuditVerifySeam(t, func(ctx context.Context, client redis.UniversalClient, streamKey string, opts audit.VerifyOptions) (*audit.VerifyResult, error) {
+		atomic.AddInt64(&calls, 1)
+		time.Sleep(50 * time.Millisecond)
+		return audit.VerifyChain(ctx, client, streamKey, opts)
+	})
+
+	concurrentAuditVerifyBodies(t, s, []string{
+		"/api/v1/audit/verify?tenant=default&since=1000",
+		"/api/v1/audit/verify?tenant=default&since=1000",
+		"/api/v1/audit/verify?tenant=default&since=2000",
+		"/api/v1/audit/verify?tenant=default&since=2000",
+	})
+	if got := atomic.LoadInt64(&calls); got != 2 {
+		t.Fatalf("underlying VerifyChain calls = %d, want 2 for two distinct since cursors", got)
+	}
+}
+
+func TestHandleAuditVerify_LeaderErrorPropagatesToWaiters(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	seedChain(t, s, "default", 5)
+
+	sentinel := errors.New("sentinel verify failure")
+	var calls int64
+	withAuditVerifySeam(t, func(context.Context, redis.UniversalClient, string, audit.VerifyOptions) (*audit.VerifyResult, error) {
+		atomic.AddInt64(&calls, 1)
+		time.Sleep(50 * time.Millisecond)
+		return nil, sentinel
+	})
+
+	startCh := make(chan struct{})
+	var wg sync.WaitGroup
+	codes := make([]int, 5)
+	bodies := make([]string, 5)
+	for i := range codes {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-startCh
+			req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/verify?tenant=default", nil))
+			rec := httptest.NewRecorder()
+			s.handleAuditVerify(rec, req)
+			codes[i] = rec.Code
+			bodies[i] = rec.Body.String()
+		}(i)
+	}
+	close(startCh)
+	wg.Wait()
+
+	if got := atomic.LoadInt64(&calls); got != 1 {
+		t.Fatalf("underlying VerifyChain calls = %d, want 1 shared failed walk", got)
+	}
+	for i, code := range codes {
+		if code != http.StatusInternalServerError {
+			t.Fatalf("request %d status=%d want 500 body=%s", i, code, bodies[i])
+		}
+	}
+}
+
+func TestHandleAuditVerify_LeaderContextCancelDoesNotPoisonWaiters(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	seedChain(t, s, "default", 5)
+
+	var calls int64
+	enteredVerify := make(chan struct{})
+	var enteredOnce sync.Once
+	withAuditVerifySeam(t, func(ctx context.Context, client redis.UniversalClient, streamKey string, opts audit.VerifyOptions) (*audit.VerifyResult, error) {
+		atomic.AddInt64(&calls, 1)
+		enteredOnce.Do(func() { close(enteredVerify) })
+		time.Sleep(100 * time.Millisecond)
+		return audit.VerifyChain(ctx, client, streamKey, opts)
+	})
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leaderReq := httptest.NewRequest(http.MethodGet, "/api/v1/audit/verify?tenant=default", nil).WithContext(leaderCtx)
+	leaderReq = adminCtx(leaderReq)
+
+	var wg sync.WaitGroup
+	codes := make([]int, 3)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		rec := httptest.NewRecorder()
+		s.handleAuditVerify(rec, leaderReq)
+		codes[0] = rec.Code
+	}()
+
+	select {
+	case <-enteredVerify:
+	case <-time.After(time.Second):
+		t.Fatal("leader did not enter verify seam")
+	}
+	cancelLeader()
+
+	for i := 1; i < len(codes); i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/verify?tenant=default", nil))
+			rec := httptest.NewRecorder()
+			s.handleAuditVerify(rec, req)
+			codes[i] = rec.Code
+		}(i)
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt64(&calls); got != 1 {
+		t.Fatalf("underlying VerifyChain calls = %d, want 1 detached shared walk", got)
+	}
+	for i, code := range codes {
+		if code != http.StatusOK {
+			t.Fatalf("request %d status=%d want 200", i, code)
+		}
+	}
+}
+
+func TestHandleAuditVerify_MetricsExposed(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	seedChain(t, s, "default", 5)
+
+	beforeDurationCount := auditVerifyDurationSampleCount(t, string(audit.VerifyStatusOK))
+	beforeEvents := testutil.ToFloat64(auditVerifyEventsTotal.WithLabelValues(string(audit.VerifyStatusOK)))
+	beforeCoalesced := testutil.ToFloat64(auditVerifyCoalescedTotal)
+
+	req := adminCtx(httptest.NewRequest(http.MethodGet, "/api/v1/audit/verify?tenant=default", nil))
+	rec := httptest.NewRecorder()
+	s.handleAuditVerify(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	if got := auditVerifyDurationSampleCount(t, string(audit.VerifyStatusOK)); got < beforeDurationCount+1 {
+		t.Fatalf("duration histogram sample count = %d, want at least %d", got, beforeDurationCount+1)
+	}
+	if got := testutil.ToFloat64(auditVerifyEventsTotal.WithLabelValues(string(audit.VerifyStatusOK))); got-beforeEvents != 5 {
+		t.Fatalf("events_total delta = %v, want 5", got-beforeEvents)
+	}
+	if got := testutil.ToFloat64(auditVerifyInflight); got != 0 {
+		t.Fatalf("inflight gauge = %v, want 0 after request", got)
+	}
+	if got := testutil.CollectAndCount(auditVerifyCoalescedTotal); got == 0 {
+		t.Fatalf("coalesced counter metric is not registered")
+	}
+	if got := testutil.ToFloat64(auditVerifyCoalescedTotal); got < beforeCoalesced {
+		t.Fatalf("coalesced counter regressed from %v to %v", beforeCoalesced, got)
+	}
+}
+
+func auditVerifyTenantReq(tenant, path string) *http.Request {
+	return withAuth(httptest.NewRequest(http.MethodGet, path, nil), &auth.AuthContext{
+		Role:        "admin",
+		Tenant:      tenant,
+		PrincipalID: "admin@example.com",
+	})
+}
+
+func auditVerifyDurationSampleCount(t *testing.T, status string) uint64 {
+	t.Helper()
+	ch := make(chan prometheus.Metric, 16)
+	auditVerifyDuration.Collect(ch)
+	close(ch)
+
+	var count uint64
+	for metric := range ch {
+		var dtoMetric dto.Metric
+		if err := metric.Write(&dtoMetric); err != nil {
+			t.Fatalf("write metric: %v", err)
+		}
+		hasStatus := false
+		for _, label := range dtoMetric.GetLabel() {
+			if label.GetName() == "status" && label.GetValue() == status {
+				hasStatus = true
+				break
+			}
+		}
+		if hasStatus && dtoMetric.GetHistogram() != nil {
+			count += dtoMetric.GetHistogram().GetSampleCount()
+		}
+	}
+	return count
 }
 
 func TestHandleAuditVerify_IntactChain(t *testing.T) {

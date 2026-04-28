@@ -191,6 +191,27 @@ The retention_trimmed row is informational — it describes the expected
 shape of a chain that has aged past its retention window. The
 `hash_mismatch` row under it is the real signal.
 
+### When NOT to use verify
+
+Do **not** use full-window verify as a readiness probe, hot-path liveness
+check, per-request guard, or high-frequency load-test budget. It is an
+operator attestation: the handler re-walks and re-hashes the requested
+chain window so Redis tampering is detected at read time.
+
+For recurring monitoring, pass `--since` / `--until` cursors and keep each
+window small. Tenants above the default 10,000-event window (or the hard
+100,000-event maximum) should paginate by time cursor instead of raising
+`--limit` until the call becomes a fleet-wide CPU spike. `VerifyChain`
+reads the predecessor before a mid-chain `--since` window, so cursor slices
+still check cross-window linkage.
+
+Use `cordum_audit_verify_inflight` to detect operator-induced pressure. A
+non-zero value that stays elevated means active verify walks are consuming
+work; reduce cadence, narrow the time window, or wait for the current
+attestation to finish. `cordum_audit_verify_coalesced_total` increasing is
+healthy under bursts of identical checks because it means duplicate callers
+shared the same leader walk.
+
 ---
 
 ## 5. Interpreting the verify response
