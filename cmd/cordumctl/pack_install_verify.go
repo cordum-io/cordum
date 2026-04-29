@@ -215,7 +215,7 @@ func locatePackSignature(bundleDir string) (string, bool) {
 // decodePackSignatureFile reads a YAML- or JSON-formatted envelope
 // from disk. Reuses the signing library's format-auto-detect.
 func decodePackSignatureFile(path string) (signing.SignedManifest, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) // #nosec G304 -- signature path is selected from fixed filenames in the caller-verified bundle directory.
 	if err != nil {
 		return signing.SignedManifest{}, fmt.Errorf("read signature file %s: %w", path, err)
 	}

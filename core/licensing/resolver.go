@@ -12,6 +12,8 @@ import (
 	"unicode"
 )
 
+const maxInt64AsUint64 = uint64(1<<63 - 1)
+
 type EntitlementResolver struct {
 	loadFromEnv      func() (*License, error)
 	publicKeyFromEnv func() (ed25519.PublicKey, error)
@@ -471,7 +473,11 @@ func collectLimitValues(value reflect.Value, limits map[string]int64) {
 			}
 		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 			if value := current.Uint(); value != 0 {
-				limits[toSnakeCase(field.Name)] = int64(value)
+				if value > maxInt64AsUint64 {
+					limits[toSnakeCase(field.Name)] = int64(maxInt64AsUint64) // #nosec G115 -- conversion is MaxInt64.
+				} else {
+					limits[toSnakeCase(field.Name)] = int64(value) // #nosec G115 -- value is bounded by MaxInt64 above.
+				}
 			}
 		case reflect.Struct:
 			collectLimitValues(current, limits)

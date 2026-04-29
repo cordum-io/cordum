@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/packs/signing"
 	"github.com/redis/go-redis/v9"
-	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 )
 
 // Gateway-side mirror verification for pack installs (task-9c63baa0
@@ -336,7 +336,7 @@ func verifyPackInstallBundle(ctx context.Context, client redis.UniversalClient, 
 		}
 	}
 
-	raw, readErr := os.ReadFile(sigPath)
+	raw, readErr := os.ReadFile(sigPath) // #nosec G304 -- sigPath is a fixed signature filename under the verified bundle directory.
 	if readErr != nil {
 		return nil, &PackVerificationError{
 			Code:    PackVerificationCodeMalformed,
@@ -375,7 +375,7 @@ func verifyPackInstallBundle(ctx context.Context, client redis.UniversalClient, 
 	// counter-signing key just like any other publisher).
 	cordumSigPath := filepath.Join(bundleDir, cordumCounterSigFilenameServer)
 	if info, statErr := os.Stat(cordumSigPath); statErr == nil && !info.IsDir() {
-		cordumRaw, readErr := os.ReadFile(cordumSigPath)
+		cordumRaw, readErr := os.ReadFile(cordumSigPath) // #nosec G304 -- fixed optional counter-signature filename under the verified bundle directory.
 		if readErr == nil {
 			if cordumEnvelope, err := signing.DecodeEnvelope(cordumRaw); err == nil {
 				if err := signing.VerifyPack(bundleDir, cordumEnvelope, keyring.Keys); err == nil {

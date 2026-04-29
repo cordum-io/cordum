@@ -170,8 +170,9 @@ func (c *Chainer) HeadKey(tenant string) string {
 //
 // KEYS[1] = head key      ARGV[1] = expected_head ("seq:hash" or empty)
 // KEYS[2] = stream key    ARGV[2] = new_seq (string int)
-//                         ARGV[3] = new_hash (64-char hex)
-//                         ARGV[4] = event JSON payload
+//
+//	ARGV[3] = new_hash (64-char hex)
+//	ARGV[4] = event JSON payload
 //
 // Returns 1 on commit, 0 on CAS miss (caller re-reads head and retries).
 // Using a Lua script for the critical section keeps the check-XADD-update
@@ -299,7 +300,7 @@ func sleepCASBackoff(ctx context.Context, attempt int) error {
 	if base <= 0 || base > chainCASBackoffMax {
 		base = chainCASBackoffMax
 	}
-	jitter := time.Duration(rand.Int64N(int64(base)))
+	jitter := time.Duration(rand.Int64N(int64(base))) // #nosec G404 -- CAS retry jitter is not security-sensitive.
 	d := jitter + chainCASBackoffMin
 	if d > chainCASBackoffMax {
 		d = chainCASBackoffMax

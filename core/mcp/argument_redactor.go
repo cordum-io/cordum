@@ -123,8 +123,8 @@ func MergeRedactionRules(base, overrides []RedactionRule) []RedactionRule {
 	if len(overrides) == 0 {
 		return append([]RedactionRule(nil), base...)
 	}
-	seen := make(map[string]int, len(base)+len(overrides))
-	merged := make([]RedactionRule, 0, len(base)+len(overrides))
+	seen := make(map[string]int)
+	merged := make([]RedactionRule, 0)
 	for _, r := range base {
 		if r.FieldName != "" {
 			key := strings.ToLower(strings.TrimSpace(r.FieldName))

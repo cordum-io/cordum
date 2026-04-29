@@ -72,7 +72,7 @@ func runLicenseInstallE(args []string) error {
 	if err != nil {
 		return fmt.Errorf("read license file: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
 		return fmt.Errorf("create license directory: %w", err)
 	}
 	if err := os.WriteFile(destination, data, 0o600); err != nil {

@@ -16,9 +16,9 @@ import (
 
 const (
 	envLicenseFile      = "CORDUM_LICENSE_FILE"
-	envLicenseToken     = "CORDUM_LICENSE_TOKEN"
-	envLicensePublicKey = "CORDUM_LICENSE_PUBLIC_KEY"
-	envLicenseKeyPath   = "CORDUM_LICENSE_PUBLIC_KEY_PATH"
+	envLicenseToken     = "CORDUM_LICENSE_TOKEN"           // #nosec G101 -- environment variable name, not a secret value.
+	envLicensePublicKey = "CORDUM_LICENSE_PUBLIC_KEY"      // #nosec G101 -- environment variable name, not a secret value.
+	envLicenseKeyPath   = "CORDUM_LICENSE_PUBLIC_KEY_PATH" // #nosec G101 -- environment variable name, not a secret value.
 )
 
 // License wraps signed claims with a detached signature.
@@ -145,7 +145,7 @@ func (e *Entitlements) FeatureEnabled(name string) bool {
 
 // LoadFile reads and parses a license JSON file from disk.
 func LoadFile(path string) (*License, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- license file path is explicit operator input.
 	if err != nil {
 		return nil, fmt.Errorf("read license file: %w", err)
 	}
@@ -213,7 +213,7 @@ func LoadFromEnv() (*License, error) {
 		return parseLicense(data)
 	}
 	for _, path := range StandardLicensePaths() {
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) // #nosec G304 -- path comes from documented license search paths.
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				continue
@@ -230,7 +230,7 @@ func PublicKeyFromEnv() (ed25519.PublicKey, error) {
 		return decodePublicKey(raw)
 	}
 	if path := strings.TrimSpace(os.Getenv(envLicenseKeyPath)); path != "" {
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) // #nosec G304 -- public key path is explicit operator configuration.
 		if err != nil {
 			return nil, fmt.Errorf("read license public key: %w", err)
 		}

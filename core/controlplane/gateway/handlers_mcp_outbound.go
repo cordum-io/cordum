@@ -155,7 +155,7 @@ func scanOutbound(
 		minID = "(" + cursor
 	}
 	maxID := strconv.FormatInt(to.UnixMilli(), 10) + "-18446744073709551615"
-	out := make([]MCPOutboundEntry, 0, pageSize)
+	out := make([]MCPOutboundEntry, 0, mcpOutboundMaxPageSize)
 	const chunk = int64(500)
 	const walkBudget = int64(50_000)
 	scanned := int64(0)

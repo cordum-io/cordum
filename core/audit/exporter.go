@@ -90,12 +90,12 @@ const (
 	// admin who created the key). Pairs with the internal audit-chain
 	// entry for forensic correlation; SIEM rules can flag mass-creation
 	// or out-of-hours key minting.
-	EventAuthAPIKeyCreated = "auth.api_key_created"
+	EventAuthAPIKeyCreated = "auth.api_key_created" // #nosec G101 -- audit event name, not a credential.
 	// EventAuthAPIKeyRevoked is emitted when a key is revoked via
 	// DELETE /api/v1/auth/keys/{id}. Extra carries key_id and tenant.
 	// Identity carries the actor who revoked it. SeverityHigh because
 	// revocation typically follows a compromise or offboarding event.
-	EventAuthAPIKeyRevoked = "auth.api_key_revoked"
+	EventAuthAPIKeyRevoked = "auth.api_key_revoked" // #nosec G101 -- audit event name, not a credential.
 	// EventAuthRoleUpserted is emitted when a custom RBAC role
 	// definition is created or updated via PUT /api/v1/auth/roles/{name}.
 	// Extra carries role_name, permissions, inherits, operation

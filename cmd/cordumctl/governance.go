@@ -32,11 +32,11 @@ func governanceHelperCommand(args []string) (*exec.Cmd, error) {
 	helpers := governanceHelperCandidates()
 	for _, helper := range helpers {
 		if _, err := os.Stat(helper); err == nil {
-			return exec.Command(helper, args...), nil
+			return exec.Command(helper, args...), nil // #nosec G204 -- helper is resolved from cordumctl's install directory.
 		}
 	}
 	if _, err := exec.LookPath("go"); err == nil {
-		return exec.Command("go", append([]string{"run", "./cmd/cordumctl-governance-helper"}, args...)...), nil
+		return exec.Command("go", append([]string{"run", "./cmd/cordumctl-governance-helper"}, args...)...), nil // #nosec G204 -- fixed go subcommand runs the checked-in helper.
 	}
 	return nil, fmt.Errorf("governance helper not found; build cordumctl-governance-helper alongside cordumctl or run from the repo with Go installed")
 }

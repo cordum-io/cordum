@@ -71,13 +71,14 @@ func runPackSignKeygen(args []string) error {
 	if destination == "" {
 		return fmt.Errorf("output path required")
 	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
 	}
 	flag := os.O_CREATE | os.O_EXCL | os.O_WRONLY
 	if *force {
 		flag = os.O_CREATE | os.O_TRUNC | os.O_WRONLY
 	}
+	// #nosec G304 -- output key path is an explicit CLI/operator destination.
 	f, err := os.OpenFile(destination, flag, 0o600)
 	if err != nil {
 		if os.IsExist(err) {
@@ -157,7 +158,7 @@ func runPackSign(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(sigPath, data, 0o644); err != nil {
+	if err := os.WriteFile(sigPath, data, 0o600); err != nil {
 		return fmt.Errorf("write signature file: %w", err)
 	}
 
@@ -247,7 +248,7 @@ func encodeSignedManifest(signed signing.SignedManifest, asJSON bool) ([]byte, e
 }
 
 func loadSignedManifest(path string) (signing.SignedManifest, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) // #nosec G304 -- signature path is an explicit CLI/operator input.
 	if err != nil {
 		return signing.SignedManifest{}, fmt.Errorf("read signature file %s: %w", path, err)
 	}
@@ -297,7 +298,7 @@ func loadPackPrivateKeyFromFlags(flagPath string) (packPrivateKeyRecord, error) 
 }
 
 func loadPackPrivateKeyFromFile(path string) (packPrivateKeyRecord, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) // #nosec G304 -- private key path is an explicit CLI/operator input or cordumctl default.
 	if err != nil {
 		return packPrivateKeyRecord{}, fmt.Errorf("read private key %s: %w", path, err)
 	}
@@ -391,7 +392,7 @@ type packPublicKeyRecord struct {
 }
 
 func loadPackPublicKeyFile(path string) (string, ed25519.PublicKey, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) // #nosec G304 -- public key path is an explicit CLI/operator input.
 	if err != nil {
 		return "", nil, err
 	}

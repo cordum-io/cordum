@@ -30,13 +30,13 @@ import (
 // same explicit-confirm-required pattern as dataset delete so operators
 // can't rm -rf history by accident.
 const (
-	evalRunPrefix           = "eval:run:"
-	evalRunRecField         = "json"
-	defaultEvalRunLimit     = 50
-	maxEvalRunLimit         = 200
-	evalRunFetchBatchMax    = 512
-	defaultEvalRunTTL       = 180 * 24 * time.Hour
-	evalRunTTLSecondsEnv    = "CORDUM_EVAL_RUN_TTL_SECONDS"
+	evalRunPrefix        = "eval:run:"
+	evalRunRecField      = "json"
+	defaultEvalRunLimit  = 50
+	maxEvalRunLimit      = 200
+	evalRunFetchBatchMax = 512
+	defaultEvalRunTTL    = 180 * 24 * time.Hour
+	evalRunTTLSecondsEnv = "CORDUM_EVAL_RUN_TTL_SECONDS"
 )
 
 // ErrEvalRunAlreadyExists is returned by CreateRun when a run with the
@@ -116,14 +116,14 @@ func (s *EvalRunStore) Close() error {
 // but cheap defense-in-depth).
 //
 // KEYS:
-//   1. rec:<runID>
-//   2. idx:t
-//   3. idx:ds:<datasetID>
+//  1. rec:<runID>
+//  2. idx:t
+//  3. idx:ds:<datasetID>
 //
 // ARGV:
-//   1. runID (member for both ZADDs)
-//   2. marshaled JSON payload
-//   3. started_at_ms (score for both ZSETs)
+//  1. runID (member for both ZADDs)
+//  2. marshaled JSON payload
+//  3. started_at_ms (score for both ZSETs)
 //
 // Returns 1 on success, 0 on id collision.
 var evalRunCreateScript = redis.NewScript(`
@@ -284,7 +284,7 @@ func (s *EvalRunStore) ListRuns(ctx context.Context, tenant string, filter RunFi
 
 	batchSize := min(max(int64(limit*3), 32), int64(evalRunFetchBatchMax))
 
-	out := make([]runner.RunResult, 0, limit)
+	out := make([]runner.RunResult, 0, maxEvalRunLimit)
 	var nextCursor string
 	var offset int64
 

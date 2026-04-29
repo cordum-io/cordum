@@ -646,7 +646,9 @@ func (s *server) configSvcGetRaw(ctx context.Context) ([]byte, error) {
 // for change detection; not a security primitive.
 func fnvHash(b []byte) string {
 	h := fnv.New64a()
-	h.Write(b)
+	if _, err := h.Write(b); err != nil {
+		return ""
+	}
 	return strconv.FormatUint(h.Sum64(), 16)
 }
 

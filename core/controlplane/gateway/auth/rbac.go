@@ -19,22 +19,22 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	PermAdminAll               = "admin.*"
-	PermJobsRead               = "jobs.read"
-	PermJobsWrite              = "jobs.write"
-	PermJobsApprove            = "jobs.approve"
-	PermAgentsRead             = "agents.read"
-	PermAgentsWrite            = "agents.write"
-	PermAgentsDelegate         = "agents.delegate"
-	PermDelegationRead         = "delegation.read"
+	PermAdminAll       = "admin.*"
+	PermJobsRead       = "jobs.read"
+	PermJobsWrite      = "jobs.write"
+	PermJobsApprove    = "jobs.approve"
+	PermAgentsRead     = "agents.read"
+	PermAgentsWrite    = "agents.write"
+	PermAgentsDelegate = "agents.delegate"
+	PermDelegationRead = "delegation.read"
 	// PermDelegationImpersonate authorises a caller to submit a job
 	// asserting a delegation_audience_agent_id that differs from the
 	// caller's authenticated agent_id. Without this permission, any
 	// audience widening on submit is rejected 403 to prevent quiet
 	// impersonation through the delegation wire path. See #198
 	// Blocker 1 follow-up on split/delegation-security.
-	PermDelegationImpersonate = "delegation.impersonate"
-	PermWorkflowsRead         = "workflows.read"
+	PermDelegationImpersonate  = "delegation.impersonate"
+	PermWorkflowsRead          = "workflows.read"
 	PermWorkflowsWrite         = "workflows.write"
 	PermWorkersRead            = "workers.read"
 	PermWorkersWrite           = "workers.write"
@@ -66,8 +66,8 @@ const (
 	PermTelemetryExport        = "telemetry.export"
 	PermTopicsRead             = "topics.read"
 	PermTopicsWrite            = "topics.write"
-	PermWorkerCredentialsRead  = "workerCredentials.read"
-	PermWorkerCredentialsWrite = "workerCredentials.write"
+	PermWorkerCredentialsRead  = "workerCredentials.read"  // #nosec G101 -- permission identifier, not a credential.
+	PermWorkerCredentialsWrite = "workerCredentials.write" // #nosec G101 -- permission identifier, not a credential.
 	PermGovernanceRead         = "governance.read"
 	PermSchemasRead            = "schemas.read"
 	PermSchemasWrite           = "schemas.write"

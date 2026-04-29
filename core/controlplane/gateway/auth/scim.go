@@ -29,9 +29,9 @@ const (
 	SCIMResourceTypesPath         = SCIMBasePath + "/ResourceTypes"
 
 	scimSettingsPath      = "/api/v1/scim/settings"
-	scimRotateTokenPath   = "/api/v1/scim/settings/token"
-	scimBearerTokenEnv    = "CORDUM_SCIM_BEARER_TOKEN"
-	scimTokenRedisKey     = "auth:scim:bearer_token"
+	scimRotateTokenPath   = "/api/v1/scim/settings/token" // #nosec G101 -- API route, not a secret value.
+	scimBearerTokenEnv    = "CORDUM_SCIM_BEARER_TOKEN"    // #nosec G101 -- environment variable name, not a secret value.
+	scimTokenRedisKey     = "auth:scim:bearer_token"      // #nosec G101 -- Redis key name, not a secret value.
 	scimUserMetaPrefix    = "scim:user:meta:"
 	scimUserTenantPrefix  = "scim:user:tenant:"
 	scimGroupKeyPrefix    = "scim:group:id:"

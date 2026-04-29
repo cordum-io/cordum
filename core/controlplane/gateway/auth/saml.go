@@ -771,7 +771,7 @@ func readMaybeFile(raw string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 -- path is explicit operator SAML configuration; Abs normalizes it before read.
 	if err != nil {
 		return nil, err
 	}

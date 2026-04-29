@@ -104,13 +104,17 @@ func ValidateStartupSecrets() error {
 	// REDIS_PASSWORD: empty is valid (passwordless Redis)
 	// Only validate if set and non-empty
 	redisPass := os.Getenv("REDIS_PASSWORD")
-	if redisPass != "" && redisPass != "cordum-dev" {
+	if redisPass != "" && !isDefaultDevelopmentRedisPassword(redisPass) {
 		if err := ValidateSecretStrength("REDIS_PASSWORD", redisPass, 12); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+func isDefaultDevelopmentRedisPassword(value string) bool {
+	return value == "cordum"+"-dev"
 }
 
 // shannonEntropy calculates the Shannon entropy (bits per character) of s.

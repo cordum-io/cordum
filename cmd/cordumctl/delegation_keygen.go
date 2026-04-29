@@ -62,7 +62,7 @@ func runDelegationKeygenE(args []string) error {
 	if destination == "" {
 		return fmt.Errorf("output path required")
 	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destination), 0o750); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
 	}
 	file, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)

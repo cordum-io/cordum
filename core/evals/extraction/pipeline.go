@@ -104,10 +104,11 @@ func (s *Service) scanAndProject(ctx context.Context, req ExtractionRequest, mat
 	cache := newJobRequestCache(jobRequestCacheSize)
 	warnings := make([]string, 0)
 	countsByVerdict := make(map[model.SafetyDecision]int, len(req.Verdicts))
-	projected := make([]projectedDecision, 0, req.MaxEntries)
-	candidateCap := req.MaxEntries * 3
-	if candidateCap < req.MaxEntries {
-		candidateCap = req.MaxEntries
+	maxEntries := boundedExtractionMaxEntries(req.MaxEntries)
+	projected := make([]projectedDecision, 0, model.MaxEvalDatasetEntries)
+	candidateCap := maxEntries * 3
+	if candidateCap < maxEntries {
+		candidateCap = maxEntries
 	}
 
 	scanned := 0
@@ -185,6 +186,16 @@ func (s *Service) scanAndProject(ctx context.Context, req ExtractionRequest, mat
 	}
 
 	return scanned, projected, dedupeWarnings(warnings), countsByVerdict, nil
+}
+
+func boundedExtractionMaxEntries(maxEntries int) int {
+	if maxEntries <= 0 {
+		return DefaultMaxEntries
+	}
+	if maxEntries > model.MaxEvalDatasetEntries {
+		return model.MaxEvalDatasetEntries
+	}
+	return maxEntries
 }
 
 func (s *Service) projectDecision(ctx context.Context, cache *jobRequestCache, record model.DecisionLogRecord) (projectedDecision, string, bool, error) {

@@ -31,6 +31,11 @@ const (
 	argonMemoryKiB  = 64 * 1024
 	argonIterations = 3
 	argonParallel   = 1
+
+	maxPHCMemoryKiB    = uint64(^uint32(0))
+	maxPHCIterations   = uint64(^uint32(0))
+	maxPHCParallelism  = uint64(^uint8(0))
+	maxPHCEncodedBytes = 1024
 )
 
 var ErrCredentialNotFound = errors.New("worker credential not found")
@@ -403,7 +408,11 @@ func verifyToken(phc, token string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	candidate := argon2.IDKey([]byte(strings.TrimSpace(token)), salt, params.iterations, params.memory, params.parallelism, uint32(len(expected)))
+	if len(expected) > maxPHCEncodedBytes {
+		return false, fmt.Errorf("argon2 hash too large")
+	}
+	keyLen := uint32(len(expected)) // #nosec G115 -- len(expected) is bounded by maxPHCEncodedBytes above.
+	candidate := argon2.IDKey([]byte(strings.TrimSpace(token)), salt, params.iterations, params.memory, params.parallelism, keyLen)
 	return subtle.ConstantTimeCompare(candidate, expected) == 1, nil
 }
 
@@ -461,14 +470,20 @@ func parsePHC(phc string) (argonParams, []byte, []byte, error) {
 	if memory == 0 || iterations == 0 || parallelism == 0 {
 		return argonParams{}, nil, nil, fmt.Errorf("argon2 params incomplete")
 	}
+	if memory > maxPHCMemoryKiB || iterations > maxPHCIterations || parallelism > maxPHCParallelism {
+		return argonParams{}, nil, nil, fmt.Errorf("argon2 params out of range")
+	}
 	if len(salt) == 0 || len(hash) == 0 {
 		return argonParams{}, nil, nil, fmt.Errorf("argon2 salt/hash required")
+	}
+	if len(hash) > maxPHCEncodedBytes {
+		return argonParams{}, nil, nil, fmt.Errorf("argon2 hash too large")
 	}
 
 	return argonParams{
 		version:     version,
-		memory:      uint32(memory),
-		iterations:  uint32(iterations),
-		parallelism: uint8(parallelism),
+		memory:      uint32(memory),     // #nosec G115 -- bounded by maxPHCMemoryKiB above.
+		iterations:  uint32(iterations), // #nosec G115 -- bounded by maxPHCIterations above.
+		parallelism: uint8(parallelism), // #nosec G115 -- bounded by maxPHCParallelism above.
 	}, salt, hash, nil
 }

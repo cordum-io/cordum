@@ -273,7 +273,7 @@ func (s *server) recentJobsByPool(ctx context.Context, pool string, limit int64)
 	if limit > 100 {
 		limit = 100
 	}
-	filtered := make([]model.JobRecord, 0, limit)
+	filtered := make([]model.JobRecord, 0, 100)
 	for _, j := range all {
 		if poolTopics[j.Topic] {
 			filtered = append(filtered, j)

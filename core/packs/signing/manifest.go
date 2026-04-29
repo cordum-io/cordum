@@ -232,7 +232,7 @@ func readRegularFile(p string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w: not a regular file: %s", ErrMissingFile, p)
 	}
-	f, err := os.Open(p)
+	f, err := os.Open(p) // #nosec G304 -- caller resolves p under the pack root and this helper rejects symlinks/non-regular files.
 	if err != nil {
 		return nil, err
 	}

@@ -282,7 +282,7 @@ func resolveEvalCandidateContent(raw string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("--candidate-content @file requires a path")
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- @file is an explicit CLI input contract.
 	if err != nil {
 		return "", fmt.Errorf("read candidate content file %q: %w", path, err)
 	}
