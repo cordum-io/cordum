@@ -160,7 +160,9 @@ func waitForReady(url string, timeout time.Duration) error {
 				return nil
 			}
 		}
-		lastErr = err
+		if err != nil {
+			lastErr = err
+		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	if lastErr == nil {

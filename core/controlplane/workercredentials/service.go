@@ -32,9 +32,11 @@ const (
 	argonIterations = 3
 	argonParallel   = 1
 
-	maxPHCMemoryKiB    = uint64(^uint32(0))
-	maxPHCIterations   = uint64(^uint32(0))
-	maxPHCParallelism  = uint64(^uint8(0))
+	// Verification-time safety caps prevent hostile PHC inputs from forcing
+	// excessive Argon2 CPU or memory use during authentication.
+	maxPHCMemoryKiB    = uint64(1_048_576) // 1 GiB
+	maxPHCIterations   = uint64(10_000)
+	maxPHCParallelism  = uint64(16)
 	maxPHCEncodedBytes = 1024
 )
 
@@ -470,8 +472,14 @@ func parsePHC(phc string) (argonParams, []byte, []byte, error) {
 	if memory == 0 || iterations == 0 || parallelism == 0 {
 		return argonParams{}, nil, nil, fmt.Errorf("argon2 params incomplete")
 	}
-	if memory > maxPHCMemoryKiB || iterations > maxPHCIterations || parallelism > maxPHCParallelism {
-		return argonParams{}, nil, nil, fmt.Errorf("argon2 params out of range")
+	if memory > maxPHCMemoryKiB {
+		return argonParams{}, nil, nil, fmt.Errorf("argon2 memory cost exceeds cap %d KiB", maxPHCMemoryKiB)
+	}
+	if iterations > maxPHCIterations {
+		return argonParams{}, nil, nil, fmt.Errorf("argon2 iterations exceed cap %d", maxPHCIterations)
+	}
+	if parallelism > maxPHCParallelism {
+		return argonParams{}, nil, nil, fmt.Errorf("argon2 parallelism exceeds cap %d", maxPHCParallelism)
 	}
 	if len(salt) == 0 || len(hash) == 0 {
 		return argonParams{}, nil, nil, fmt.Errorf("argon2 salt/hash required")
@@ -482,8 +490,8 @@ func parsePHC(phc string) (argonParams, []byte, []byte, error) {
 
 	return argonParams{
 		version:     version,
-		memory:      uint32(memory),     // #nosec G115 -- bounded by maxPHCMemoryKiB above.
-		iterations:  uint32(iterations), // #nosec G115 -- bounded by maxPHCIterations above.
-		parallelism: uint8(parallelism), // #nosec G115 -- bounded by maxPHCParallelism above.
+		memory:      uint32(memory),
+		iterations:  uint32(iterations),
+		parallelism: uint8(parallelism),
 	}, salt, hash, nil
 }
