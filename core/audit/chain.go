@@ -75,9 +75,9 @@ var (
 )
 
 // Chainer builds and persists a per-tenant append-only SHA-256 hash chain of
-// audit events in Redis. One Chainer is safe to share across goroutines; the
-// CAS-based Lua append below serialises writers on a given tenant's head
-// pointer, while different tenants proceed independently.
+// audit events in Redis. One Chainer is safe to share across goroutines; local
+// per-tenant locks avoid self-contention while the CAS-based Lua append still
+// protects the head pointer across processes.
 //
 // When an HMAC key is configured (via WithHMACKey), every appended event also
 // receives an HMAC-SHA256 tag computed over the canonical event payload. The
@@ -92,6 +92,8 @@ type Chainer struct {
 	headCacheValid  bool
 	headCacheTenant string
 	headCacheRaw    string
+	tenantLocksMu   sync.Mutex
+	tenantLocks     map[string]*sync.Mutex
 }
 
 // ChainerOption configures optional Chainer behaviour.
@@ -196,6 +198,22 @@ func (c *Chainer) invalidateCachedHead(tenant, rawHead string) {
 	}
 }
 
+func (c *Chainer) lockTenant(tenant string) func() {
+	c.tenantLocksMu.Lock()
+	if c.tenantLocks == nil {
+		c.tenantLocks = make(map[string]*sync.Mutex)
+	}
+	mu := c.tenantLocks[tenant]
+	if mu == nil {
+		mu = &sync.Mutex{}
+		c.tenantLocks[tenant] = mu
+	}
+	c.tenantLocksMu.Unlock()
+
+	mu.Lock()
+	return mu.Unlock
+}
+
 // chainAppendScript is a CAS (check-and-set) Lua append. Go precomputes the
 // event_hash using the just-read head as PrevHash input; the script only
 // commits if the head has not shifted between read and write.
@@ -248,6 +266,8 @@ func (c *Chainer) Append(ctx context.Context, event *SIEMEvent) error {
 	if event.TenantID == "" {
 		return ErrTenantRequired
 	}
+	unlockTenant := c.lockTenant(event.TenantID)
+	defer unlockTenant()
 
 	headKey := c.HeadKey(event.TenantID)
 	streamKey := c.StreamKey(event.TenantID)
