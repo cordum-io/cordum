@@ -2234,7 +2234,7 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 				e.wg.Add(1)
 				go func(wfID string) {
 					defer e.wg.Done()
-					ctx, cancel := context.WithTimeout(e.ctx, 30*time.Second)
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer cancel()
 					start := time.Now()
 					if err := e.saga.Rollback(ctx, wfID); err != nil {
@@ -2478,7 +2478,7 @@ func (e *Engine) startAsyncOutputCheck(jobID, topic string, res *pb.JobResult, r
 				}
 			}
 		}()
-		ctx, cancel := context.WithTimeout(e.ctx, 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		start := time.Now()
@@ -3169,10 +3169,7 @@ func (e *Engine) scheduleFlushOnWorkerOnline(pool, workerID, traceID string) {
 		defer e.wg.Done()
 		defer e.flushLatch.release(pool)
 
-		ctx := e.ctx
-		if ctx == nil {
-			ctx = context.Background()
-		}
+		ctx := context.Background()
 
 		flushFn := e.flushDispatchFn
 		if flushFn == nil {
