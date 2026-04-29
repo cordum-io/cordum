@@ -352,12 +352,12 @@ For performance tasks, run the same targeted benchmark before and after the
 change on the same branch/base context. Prefer `-count=3` for changed
 benchmarks and compare all three Go benchmark columns:
 
-- `ns/op` for latency/throughput.
-- `B/op` for bytes allocated per operation.
-- `allocs/op` for allocation count per operation.
+- `ns/op`: latency/throughput.
+- `B/op`: bytes allocated per operation.
+- `allocs/op`: allocation count per operation.
 
 Record the command, branch or commit context, and the exact before/after rows in
-the Moe `complete_step` and task handoff summaries. Treat noisy results
+the PR description (or benchmark notes) and handoff summary. Treat noisy results
 honestly: if latency does not move but `B/op` or `allocs/op` improves, say so;
 if a profile points at benchmark-only overhead, document that instead of
 over-claiming a production win.

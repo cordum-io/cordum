@@ -300,6 +300,7 @@ func (s *EvalDatasetStore) ListEvalDatasets(ctx context.Context, tenant string, 
 	}
 
 	var offset int64
+	staleToPrune := make([]string, 0)
 	for len(out) < scanTarget {
 		members, err := s.client.ZRevRangeByScoreWithScores(ctx, indexKey, &redis.ZRangeBy{
 			Max:    scanMax,
@@ -341,7 +342,7 @@ func (s *EvalDatasetStore) ListEvalDatasets(ctx context.Context, tenant string, 
 			return model.EvalDatasetPage{}, err
 		}
 		if len(stale) > 0 {
-			s.pruneStaleIndexEntries(ctx, tenant, stale)
+			staleToPrune = append(staleToPrune, stale...)
 		}
 
 		for _, ds := range datasets {
@@ -357,6 +358,9 @@ func (s *EvalDatasetStore) ListEvalDatasets(ctx context.Context, tenant string, 
 		if int64(len(members)) < batchSize {
 			break
 		}
+	}
+	if len(staleToPrune) > 0 {
+		s.pruneStaleIndexEntries(ctx, tenant, staleToPrune)
 	}
 
 	if len(out) > limit {

@@ -263,6 +263,61 @@ func TestEvalDatasetListUnfilteredDoesNotScanBeyondLimitPlusOne(t *testing.T) {
 	}
 }
 
+func TestEvalDatasetListUnfilteredStalePruneDoesNotSkipLookahead(t *testing.T) {
+	s, srv := newTestEvalDatasetStore(t)
+	ctx := context.Background()
+
+	const (
+		tenant = "acme"
+		limit  = 5
+		total  = 7
+	)
+	for i := 0; i < total; i++ {
+		ds := sampleDataset(fmt.Sprintf("stale-lookahead-%03d", i), 1, tenant)
+		if _, err := s.CreateEvalDataset(ctx, ds); err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+		srv.FastForward(2 * time.Millisecond)
+	}
+
+	indexKey := evalDatasetIndexKey(tenant)
+	ids, err := s.client.ZRevRange(ctx, indexKey, 0, -1).Result()
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	if len(ids) != total {
+		t.Fatalf("index len=%d want %d", len(ids), total)
+	}
+	staleID := ids[2]            // Inside the first limit+1 scan batch.
+	oldestLiveID := ids[limit+1] // The lookahead item that offset-based paging must not skip.
+	srv.Del(evalDatasetRecordKey(tenant, staleID))
+
+	page, err := s.ListEvalDatasets(ctx, tenant, model.EvalDatasetFilter{}, "", limit)
+	if err != nil {
+		t.Fatalf("ListEvalDatasets first page: %v", err)
+	}
+	if len(page.Items) != limit {
+		t.Fatalf("len(page.Items)=%d want %d", len(page.Items), limit)
+	}
+	if page.NextCursor == "" {
+		t.Fatal("NextCursor empty; stale pruning skipped the live lookahead item")
+	}
+	if _, err := s.client.ZScore(ctx, indexKey, staleID).Result(); !errors.Is(err, redis.Nil) {
+		t.Fatalf("stale member was not pruned after scan, err=%v", err)
+	}
+
+	second, err := s.ListEvalDatasets(ctx, tenant, model.EvalDatasetFilter{}, page.NextCursor, limit)
+	if err != nil {
+		t.Fatalf("ListEvalDatasets second page: %v", err)
+	}
+	if len(second.Items) != 1 {
+		t.Fatalf("len(second.Items)=%d want 1 (%q)", len(second.Items), oldestLiveID)
+	}
+	if second.Items[0].ID != oldestLiveID {
+		t.Fatalf("second page ID=%q want oldest live ID %q", second.Items[0].ID, oldestLiveID)
+	}
+}
+
 func TestEvalDatasetListUnfilteredSameScorePaginationNoDuplicates(t *testing.T) {
 	s, _ := newTestEvalDatasetStore(t)
 	ctx := context.Background()
