@@ -159,14 +159,22 @@ func (r *Reconciler) currentTimeouts() (time.Duration, time.Duration, time.Durat
 	return r.dispatchTimeout, r.runningTimeout, r.scheduledTimeout
 }
 
+func timeoutFailureReason(state JobState, timeout ...time.Duration) string {
+	if len(timeout) > 0 {
+		return fmt.Sprintf("timeout: %s >%s", state, timeout[0])
+	}
+	return fmt.Sprintf("timeout: %s exceeded", state)
+}
+
 func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff time.Time, timeout ...time.Duration) {
 	const maxIterations = 100
 	const maxRetriesPerJob = 3
 
-	failed := make(map[string]int)
+	cutoffMicros := cutoff.UnixNano() / int64(time.Microsecond)
+	reason := timeoutFailureReason(state, timeout...)
+	var failed map[string]int
 
 	for i := 0; i < maxIterations; i++ {
-		cutoffMicros := cutoff.UnixNano() / int64(time.Microsecond)
 		records, err := r.store.ListJobsByState(ctx, state, cutoffMicros, 200)
 		if err != nil {
 			slog.Error("list jobs", "state", state, "error", err)
@@ -180,27 +188,42 @@ func (r *Reconciler) handleTimeouts(ctx context.Context, state JobState, cutoff 
 		}
 
 		progress := 0
+		firstJobID := ""
+		lastJobID := ""
 		for _, rec := range records {
-			if failed[rec.ID] >= maxRetriesPerJob {
+			if failed != nil && failed[rec.ID] >= maxRetriesPerJob {
 				continue
 			}
 			if err := r.store.SetState(ctx, rec.ID, JobStateTimeout); err != nil {
+				if failed == nil {
+					failed = make(map[string]int)
+				}
 				failed[rec.ID]++
 				slog.Error("mark timeout", "job_id", rec.ID, "error", err, "retry", failed[rec.ID])
 				continue
 			}
-			reason := fmt.Sprintf("timeout: %s exceeded", state)
-			if len(timeout) > 0 {
-				reason = fmt.Sprintf("timeout: %s >%s", state, timeout[0])
-			}
 			if frErr := r.store.SetFailureReason(ctx, rec.ID, reason); frErr != nil {
 				slog.Warn("failed to set failure reason", "job_id", rec.ID, "reason", reason, "error", frErr)
 			}
-			slog.Warn("job timed out", "job_id", rec.ID, "from_state", state)
+			if progress == 0 {
+				firstJobID = rec.ID
+			}
+			lastJobID = rec.ID
 			if state == JobStateApproval {
 				r.recordApprovalExpiry(ctx)
 			}
 			progress++
+		}
+
+		if progress > 0 {
+			slog.Warn(
+				"jobs timed out",
+				"from_state", state,
+				"count", progress,
+				"reason", reason,
+				"first_job_id", firstJobID,
+				"last_job_id", lastJobID,
+			)
 		}
 
 		if progress == 0 {

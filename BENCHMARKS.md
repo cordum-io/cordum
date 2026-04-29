@@ -328,14 +328,69 @@ Airflow       | 180      | 2.1s        | 1.8GB
 git clone https://github.com/cordum-io/cordum.git
 cd cordum
 
-# Run unit benchmarks
-go test -bench=. -benchmem ./...
+# Full Go benchmark sweep used for the 2026-04-29 profiling pass.
+# This is intentionally broad and can take many minutes.
+go test ./... -run '^$' -bench . -benchmem -count=1 -timeout 20m
+
+# Target specific hot benchmarks before and after a performance change.
+# Use -benchmem and -count=3 so ns/op, B/op, and allocs/op are comparable.
+go test ./core/infra/store -run '^$' -bench '^BenchmarkQueryDecisions7Day$' -benchmem -count=3
+go test ./core/infra/store -run '^$' -bench '^BenchmarkListEvalDatasets1k$' -benchmem -count=3
+go test ./core/controlplane/scheduler -run '^$' -bench '^BenchmarkReconcilerTick$' -benchmem -count=3
+go test ./core/audit -run '^$' -bench '^BenchmarkChainer_Append$' -benchmem -count=3
 
 # Run integration benchmarks
 ./tools/scripts/run_benchmarks.sh
 
 # Run full load test
 ./tools/scripts/load_test.sh --duration=60m --workers=1000
+```
+
+### Before/After Comparisons
+
+For performance tasks, run the same targeted benchmark before and after the
+change on the same branch/base context. Prefer `-count=3` for changed
+benchmarks and compare all three Go benchmark columns:
+
+- `ns/op` for latency/throughput.
+- `B/op` for bytes allocated per operation.
+- `allocs/op` for allocation count per operation.
+
+Record the command, branch or commit context, and the exact before/after rows in
+the Moe `complete_step` and task handoff summaries. Treat noisy results
+honestly: if latency does not move but `B/op` or `allocs/op` improves, say so;
+if a profile points at benchmark-only overhead, document that instead of
+over-claiming a production win.
+
+### CPU and Memory Profiles
+
+Write generated profiles under a repo-local temporary directory so they are easy
+to clean up and do not look like source artifacts:
+
+```bash
+mkdir -p tmp/pprof
+
+# CPU profile for a targeted benchmark.
+go test ./core/infra/store -run '^$' -bench '^BenchmarkQueryDecisions7Day$' -benchmem -count=1 -cpuprofile tmp/pprof/query-decisions.cpu.pprof
+go tool pprof -top tmp/pprof/query-decisions.cpu.pprof
+
+# Memory profile for a targeted benchmark.
+go test ./core/audit -run '^$' -bench '^BenchmarkChainer_Append$' -benchmem -count=1 -memprofile tmp/pprof/chainer-append.mem.pprof
+go tool pprof -top tmp/pprof/chainer-append.mem.pprof
+```
+
+Generated `*.pprof`, `*.prof`, and benchmark log files are temporary evidence,
+not source. Clean them up before handoff:
+
+```bash
+# MSYS / Git Bash
+rm -rf tmp/pprof
+
+# PowerShell
+Remove-Item -Recurse -Force tmp/pprof
+
+# Confirm no generated artifacts are left staged or untracked.
+git status --short
 ```
 
 ### Generating Reports

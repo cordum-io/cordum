@@ -273,8 +273,11 @@ func (s *RedisDecisionLogStore) querySourceKey(ctx context.Context, query model.
 		filterKeys = append(filterKeys, decisionVerdictIndexKey(query.Tenant, verdict))
 	}
 
-	if len(filterKeys) < 2 {
+	if len(filterKeys) == 0 {
 		return decisionPrimaryIndexKey(query.Tenant), nil, nil
+	}
+	if len(filterKeys) == 1 {
+		return filterKeys[0], nil, nil
 	}
 
 	tempKey := decisionTempIndexKey(query)

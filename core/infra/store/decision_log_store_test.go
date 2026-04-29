@@ -116,6 +116,157 @@ func TestRedisDecisionLogStoreQueryFilters(t *testing.T) {
 	}
 }
 
+func TestRedisDecisionLogStoreSingleFilterQueriesUseSecondaryIndexes(t *testing.T) {
+	store, srv := newTestDecisionLogStore(t)
+	defer srv.Close()
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	base := time.Date(2026, time.April, 20, 10, 30, 0, 0, time.UTC).UnixMilli()
+	records := []model.DecisionLogRecord{
+		decisionFixture("tenant-a", "job-rule", base-4_000),
+		decisionFixture("tenant-a", "job-agent", base-3_000),
+		decisionFixture("tenant-a", "job-topic", base-2_000),
+		decisionFixture("tenant-a", "job-verdict", base-1_000),
+		decisionFixture("tenant-b", "job-other-tenant", base-500),
+	}
+	records[0].RuleID = "rule-only"
+	records[0].AgentID = "agent-rule"
+	records[0].Topic = "topic-rule"
+	records[1].RuleID = "rule-agent"
+	records[1].AgentID = "agent-only"
+	records[1].Topic = "topic-agent"
+	records[2].RuleID = "rule-topic"
+	records[2].AgentID = "agent-topic"
+	records[2].Topic = "topic-only"
+	records[3].RuleID = "rule-verdict"
+	records[3].AgentID = "agent-verdict"
+	records[3].Topic = "topic-verdict"
+	records[3].Verdict = model.SafetyDeny
+	records[4].RuleID = "rule-verdict"
+	records[4].AgentID = "agent-verdict"
+	records[4].Topic = "topic-verdict"
+	records[4].Verdict = model.SafetyDeny
+	for _, record := range records {
+		if err := store.AppendDecision(ctx, record); err != nil {
+			t.Fatalf("AppendDecision(%s) error = %v", record.JobID, err)
+		}
+	}
+	if err := store.client.Del(ctx, decisionPrimaryIndexKey("tenant-a")).Err(); err != nil {
+		t.Fatalf("delete primary index: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		query   model.DecisionQuery
+		wantJob string
+	}{
+		{
+			name:    "rule-only",
+			query:   model.DecisionQuery{Tenant: "tenant-a", RuleID: "rule-only", Since: base - 10_000, Until: base, Limit: 10},
+			wantJob: "job-rule",
+		},
+		{
+			name:    "agent-only",
+			query:   model.DecisionQuery{Tenant: "tenant-a", AgentID: "agent-only", Since: base - 10_000, Until: base, Limit: 10},
+			wantJob: "job-agent",
+		},
+		{
+			name:    "topic-only",
+			query:   model.DecisionQuery{Tenant: "tenant-a", Topic: "topic-only", Since: base - 10_000, Until: base, Limit: 10},
+			wantJob: "job-topic",
+		},
+		{
+			name:    "verdict-only",
+			query:   model.DecisionQuery{Tenant: "tenant-a", Verdict: model.SafetyDeny, Since: base - 10_000, Until: base, Limit: 10},
+			wantJob: "job-verdict",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			page, err := store.QueryDecisions(ctx, tt.query)
+			if err != nil {
+				t.Fatalf("QueryDecisions() error = %v", err)
+			}
+			if got := decisionJobIDs(page.Items); len(got) != 1 || got[0] != tt.wantJob {
+				t.Fatalf("jobs=%v want [%s]", got, tt.wantJob)
+			}
+			if page.NextCursor != "" {
+				t.Fatalf("NextCursor=%q want empty", page.NextCursor)
+			}
+		})
+	}
+}
+
+func TestRedisDecisionLogStoreSingleFilterCursorUsesSecondaryIndex(t *testing.T) {
+	store, srv := newTestDecisionLogStore(t)
+	defer srv.Close()
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	base := time.Date(2026, time.April, 20, 10, 45, 0, 0, time.UTC).UnixMilli()
+	records := []model.DecisionLogRecord{
+		decisionFixture("tenant-a", "job-1", base),
+		decisionFixture("tenant-a", "job-2", base),
+		decisionFixture("tenant-a", "job-3", base),
+		decisionFixture("tenant-a", "job-4", base-1000),
+	}
+	for _, record := range records {
+		record.Verdict = model.SafetyDeny
+		if err := store.AppendDecision(ctx, record); err != nil {
+			t.Fatalf("AppendDecision(%s) error = %v", record.JobID, err)
+		}
+	}
+	if err := store.client.Del(ctx, decisionPrimaryIndexKey("tenant-a")).Err(); err != nil {
+		t.Fatalf("delete primary index: %v", err)
+	}
+
+	query := model.DecisionQuery{
+		Tenant:  "tenant-a",
+		Verdict: model.SafetyDeny,
+		Since:   base - 10_000,
+		Until:   base + 1_000,
+		Limit:   2,
+	}
+	first, err := store.QueryDecisions(ctx, query)
+	if err != nil {
+		t.Fatalf("first QueryDecisions() error = %v", err)
+	}
+	if len(first.Items) != 2 {
+		t.Fatalf("len(first.Items)=%d want 2", len(first.Items))
+	}
+	if first.NextCursor == "" {
+		t.Fatal("first.NextCursor unexpectedly empty")
+	}
+
+	second, err := store.QueryDecisions(ctx, model.DecisionQuery{
+		Tenant:  query.Tenant,
+		Verdict: query.Verdict,
+		Since:   query.Since,
+		Until:   query.Until,
+		Limit:   query.Limit,
+		Cursor:  first.NextCursor,
+	})
+	if err != nil {
+		t.Fatalf("second QueryDecisions() error = %v", err)
+	}
+	if len(second.Items) != 2 {
+		t.Fatalf("len(second.Items)=%d want 2", len(second.Items))
+	}
+	if second.NextCursor != "" {
+		t.Fatalf("second.NextCursor=%q want empty", second.NextCursor)
+	}
+
+	seen := make(map[string]struct{}, 4)
+	for _, record := range append(first.Items, second.Items...) {
+		seen[record.JobID] = struct{}{}
+	}
+	if len(seen) != 4 {
+		t.Fatalf("saw %d unique jobs across pages, want 4", len(seen))
+	}
+}
+
 func TestRedisDecisionLogStorePagination(t *testing.T) {
 	store, srv := newTestDecisionLogStore(t)
 	defer srv.Close()

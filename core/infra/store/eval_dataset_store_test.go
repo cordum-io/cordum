@@ -198,6 +198,134 @@ func TestEvalDatasetListPaginationCoversAllItems(t *testing.T) {
 	}
 }
 
+func TestEvalDatasetListUnfilteredExactLimitHasNoNextCursor(t *testing.T) {
+	s, srv := newTestEvalDatasetStore(t)
+	ctx := context.Background()
+
+	const limit = 5
+	for i := 0; i < limit; i++ {
+		ds := sampleDataset(fmt.Sprintf("exact-%03d", i), 1, "acme")
+		if _, err := s.CreateEvalDataset(ctx, ds); err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+		srv.FastForward(2 * time.Millisecond)
+	}
+
+	page, err := s.ListEvalDatasets(ctx, "acme", model.EvalDatasetFilter{}, "", limit)
+	if err != nil {
+		t.Fatalf("ListEvalDatasets: %v", err)
+	}
+	if len(page.Items) != limit {
+		t.Fatalf("len(page.Items)=%d want %d", len(page.Items), limit)
+	}
+	if page.NextCursor != "" {
+		t.Fatalf("NextCursor=%q want empty for exact-limit unfiltered page", page.NextCursor)
+	}
+}
+
+func TestEvalDatasetListUnfilteredDoesNotScanBeyondLimitPlusOne(t *testing.T) {
+	s, srv := newTestEvalDatasetStore(t)
+	ctx := context.Background()
+
+	const (
+		tenant = "acme"
+		limit  = 5
+		total  = 40
+	)
+	for i := 0; i < total; i++ {
+		ds := sampleDataset(fmt.Sprintf("overscan-%03d", i), 1, tenant)
+		if _, err := s.CreateEvalDataset(ctx, ds); err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+		srv.FastForward(2 * time.Millisecond)
+	}
+
+	indexKey := evalDatasetIndexKey(tenant)
+	ids, err := s.client.ZRevRange(ctx, indexKey, 0, -1).Result()
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	if len(ids) != total {
+		t.Fatalf("index len=%d want %d", len(ids), total)
+	}
+	staleID := ids[limit+2] // older than the unfiltered page + one lookahead.
+	srv.Del(evalDatasetRecordKey(tenant, staleID))
+
+	page, err := s.ListEvalDatasets(ctx, tenant, model.EvalDatasetFilter{}, "", limit)
+	if err != nil {
+		t.Fatalf("ListEvalDatasets: %v", err)
+	}
+	if len(page.Items) != limit {
+		t.Fatalf("len(page.Items)=%d want %d", len(page.Items), limit)
+	}
+	if _, err := s.client.ZScore(ctx, indexKey, staleID).Result(); err != nil {
+		t.Fatalf("stale member outside limit+1 was pruned or unreadable; want it untouched, err=%v", err)
+	}
+}
+
+func TestEvalDatasetListUnfilteredSameScorePaginationNoDuplicates(t *testing.T) {
+	s, _ := newTestEvalDatasetStore(t)
+	ctx := context.Background()
+
+	const total = 6
+	ids := make([]string, 0, total)
+	for i := 0; i < total; i++ {
+		ds := sampleDataset(fmt.Sprintf("same-score-%03d", i), 1, "acme")
+		created, err := s.CreateEvalDataset(ctx, ds)
+		if err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+		ids = append(ids, created.ID)
+	}
+
+	sameTime := time.Date(2026, time.April, 20, 15, 0, 0, 123_000_000, time.UTC)
+	sameTimeText := sameTime.Format(time.RFC3339Nano)
+	indexKey := evalDatasetIndexKey("acme")
+	for _, id := range ids {
+		ds, err := s.GetEvalDataset(ctx, "acme", id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		ds.CreatedAt = sameTimeText
+		ds.UpdatedAt = sameTimeText
+		payload, err := json.Marshal(ds)
+		if err != nil {
+			t.Fatalf("marshal %s: %v", id, err)
+		}
+		if err := s.client.HSet(ctx, evalDatasetRecordKey("acme", id), evalDatasetRecField, payload).Err(); err != nil {
+			t.Fatalf("hset %s: %v", id, err)
+		}
+		if err := s.client.ZAdd(ctx, indexKey, redis.Z{Score: float64(sameTime.UnixMilli()), Member: id}).Err(); err != nil {
+			t.Fatalf("zadd %s: %v", id, err)
+		}
+	}
+
+	seen := make(map[string]struct{}, total)
+	cursor := ""
+	for pages := 0; ; pages++ {
+		page, err := s.ListEvalDatasets(ctx, "acme", model.EvalDatasetFilter{}, cursor, 2)
+		if err != nil {
+			t.Fatalf("List page %d: %v", pages+1, err)
+		}
+		for _, ds := range page.Items {
+			if _, exists := seen[ds.ID]; exists {
+				t.Fatalf("duplicate dataset id %q across same-score pages", ds.ID)
+			}
+			seen[ds.ID] = struct{}{}
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+		if pages > total {
+			t.Fatal("same-score pagination did not terminate")
+		}
+	}
+	if len(seen) != total {
+		t.Fatalf("saw %d unique datasets, want %d", len(seen), total)
+	}
+}
+
 func TestEvalDatasetListFiltersByNamePrefix(t *testing.T) {
 	s, _ := newTestEvalDatasetStore(t)
 	ctx := context.Background()

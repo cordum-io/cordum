@@ -278,6 +278,10 @@ func TestBusPacket_CAP_Compliance(t *testing.T) {
 
 Ensure performance requirements are met.
 
+For repeatable performance sweeps, targeted before/after comparisons, and
+pprof artifact cleanup, use [BENCHMARKS.md](BENCHMARKS.md#9-benchmark-reproducibility)
+as the canonical workflow.
+
 ```go
 // core/safety/kernel_bench_test.go
 func BenchmarkKernel_Evaluate(b *testing.B) {

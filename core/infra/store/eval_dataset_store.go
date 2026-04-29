@@ -94,16 +94,16 @@ func (s *EvalDatasetStore) Close() error {
 // block that (name, version) slot.
 //
 // KEYS:
-//   1. rec:<id>
-//   2. byname:<name>:<version>
-//   3. name:<name>
-//   4. index
+//  1. rec:<id>
+//  2. byname:<name>:<version>
+//  3. name:<name>
+//  4. index
 //
 // ARGV:
-//   1. dataset id (member for both ZADDs)
-//   2. marshaled JSON payload
-//   3. version (score for name ZSET)
-//   4. created_at_ms (score for index ZSET)
+//  1. dataset id (member for both ZADDs)
+//  2. marshaled JSON payload
+//  3. version (score for name ZSET)
+//  4. created_at_ms (score for index ZSET)
 //
 // Returns 1 on success, 0 on (name, version) collision.
 var evalDatasetCreateScript = redis.NewScript(`
@@ -122,13 +122,13 @@ return 1
 // atomic operation.
 //
 // KEYS:
-//   1. rec:<id>
-//   2. byname:<name>:<version>
-//   3. name:<name>
-//   4. index
+//  1. rec:<id>
+//  2. byname:<name>:<version>
+//  3. name:<name>
+//  4. index
 //
 // ARGV:
-//   1. dataset id
+//  1. dataset id
 var evalDatasetDeleteScript = redis.NewScript(`
 redis.call('DEL', KEYS[1])
 redis.call('DEL', KEYS[2])
@@ -279,11 +279,18 @@ func (s *EvalDatasetStore) ListEvalDatasets(ctx context.Context, tenant string, 
 	nameLower := strings.ToLower(strings.TrimSpace(filter.NamePrefix))
 	createdAfter := filter.CreatedAfterMS
 	createdBefore := filter.CreatedBeforeMS
+	unfiltered := nameLower == "" && createdAfter == 0 && createdBefore == 0
 
 	// Iterate the sorted set newest-first. We fetch in bounded batches and
-	// re-drive the loop until we either fill `limit` items or exhaust the
-	// index. Per-batch size grows with the filter's expected selectivity.
+	// re-drive the loop until we fill the page target or exhaust the index.
+	// Filtered queries intentionally over-sample because filtering happens
+	// after fetch; unfiltered queries need only one live lookahead item.
+	scanTarget := limit
 	batchSize := min(max(int64(limit*3), 32), int64(evalDatasetFetchBatchMax))
+	if unfiltered {
+		scanTarget = limit + 1
+		batchSize = min(int64(scanTarget), int64(evalDatasetFetchBatchMax))
+	}
 
 	// scanMax is always inclusive — when a cursor is present we filter out
 	// the cursor item itself below via the id tie-break.
@@ -293,7 +300,7 @@ func (s *EvalDatasetStore) ListEvalDatasets(ctx context.Context, tenant string, 
 	}
 
 	var offset int64
-	for len(out) < limit {
+	for len(out) < scanTarget {
 		members, err := s.client.ZRevRangeByScoreWithScores(ctx, indexKey, &redis.ZRangeBy{
 			Max:    scanMax,
 			Min:    "-inf",
@@ -310,7 +317,6 @@ func (s *EvalDatasetStore) ListEvalDatasets(ctx context.Context, tenant string, 
 
 		// Build the candidate id list respecting the cursor tie-break.
 		ids := make([]string, 0, len(members))
-		scores := make(map[string]int64, len(members))
 		for _, z := range members {
 			id, _ := z.Member.(string)
 			if id == "" {
@@ -322,7 +328,6 @@ func (s *EvalDatasetStore) ListEvalDatasets(ctx context.Context, tenant string, 
 				continue
 			}
 			ids = append(ids, id)
-			scores[id] = int64(z.Score)
 		}
 		if len(ids) == 0 {
 			if int64(len(members)) < batchSize {
@@ -344,7 +349,7 @@ func (s *EvalDatasetStore) ListEvalDatasets(ctx context.Context, tenant string, 
 				continue
 			}
 			out = append(out, ds)
-			if len(out) >= limit {
+			if len(out) >= scanTarget {
 				break
 			}
 		}
@@ -354,7 +359,13 @@ func (s *EvalDatasetStore) ListEvalDatasets(ctx context.Context, tenant string, 
 		}
 	}
 
-	if len(out) >= limit {
+	if len(out) > limit {
+		last := out[limit-1]
+		if ms, err := last.CreatedAtMilli(); err == nil {
+			nextCursor = encodeEvalDatasetCursor(ms, last.ID)
+		}
+		out = out[:limit]
+	} else if !unfiltered && len(out) >= limit {
 		last := out[len(out)-1]
 		if ms, err := last.CreatedAtMilli(); err == nil {
 			nextCursor = encodeEvalDatasetCursor(ms, last.ID)

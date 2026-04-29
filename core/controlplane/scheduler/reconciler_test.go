@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -127,19 +128,137 @@ func (s *fakeReconcileStore) ListExpiredDeadlines(_ context.Context, nowUnix int
 	return out, nil
 }
 
-func (s *fakeReconcileStore) ListJobsByState(_ context.Context, state JobState, updatedBeforeUnix int64, _ int64) ([]JobRecord, error) {
+func (s *fakeReconcileStore) ListJobsByState(_ context.Context, state JobState, updatedBeforeUnix int64, limit int64) ([]JobRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if limit <= 0 {
+		limit = 100
+	}
 	var out []JobRecord
 	for id, st := range s.states {
 		if st != state {
 			continue
 		}
 		if ts := s.updated[id]; ts <= updatedBeforeUnix {
-			out = append(out, JobRecord{ID: id, UpdatedAt: ts})
+			out = append(out, JobRecord{ID: id, UpdatedAt: ts, State: state})
+			if int64(len(out)) >= limit {
+				break
+			}
 		}
 	}
 	return out, nil
+}
+
+func TestFakeReconcileStoreListJobsByStateRespectsLimit(t *testing.T) {
+	store := newFakeReconcileStore()
+	oldTs := toUnixMicros(time.Now().Add(-10 * time.Minute))
+	newTs := toUnixMicros(time.Now())
+	for i := 0; i < 105; i++ {
+		id := fmt.Sprintf("eligible-%d", i)
+		store.states[id] = JobStateDispatched
+		store.updated[id] = oldTs
+	}
+	store.states["wrong-state"] = JobStateRunning
+	store.updated["wrong-state"] = oldTs
+	store.states["too-new"] = JobStateDispatched
+	store.updated["too-new"] = newTs
+
+	limited, err := store.ListJobsByState(context.Background(), JobStateDispatched, oldTs, 2)
+	if err != nil {
+		t.Fatalf("list jobs by state with explicit limit: %v", err)
+	}
+	if len(limited) != 2 {
+		t.Fatalf("expected explicit limit to return 2 records, got %d", len(limited))
+	}
+	for _, rec := range limited {
+		if rec.State != JobStateDispatched {
+			t.Fatalf("expected DISPATCHED record, got %s", rec.State)
+		}
+		if rec.UpdatedAt > oldTs {
+			t.Fatalf("expected record updated at or before cutoff, got %d > %d", rec.UpdatedAt, oldTs)
+		}
+	}
+
+	defaultLimited, err := store.ListJobsByState(context.Background(), JobStateDispatched, oldTs, 0)
+	if err != nil {
+		t.Fatalf("list jobs by state with default limit: %v", err)
+	}
+	if len(defaultLimited) != 100 {
+		t.Fatalf("expected non-positive limit to default to 100 records, got %d", len(defaultLimited))
+	}
+}
+
+func TestTimeoutFailureReasonPreservesExistingStrings(t *testing.T) {
+	tests := []struct {
+		name    string
+		state   JobState
+		timeout []time.Duration
+		want    string
+	}{
+		{
+			name:  "dispatched without configured timeout",
+			state: JobStateDispatched,
+			want:  "timeout: DISPATCHED exceeded",
+		},
+		{
+			name:    "dispatched with configured timeout",
+			state:   JobStateDispatched,
+			timeout: []time.Duration{5 * time.Minute},
+			want:    "timeout: DISPATCHED >5m0s",
+		},
+		{
+			name:    "running with configured timeout",
+			state:   JobStateRunning,
+			timeout: []time.Duration{30 * time.Second},
+			want:    "timeout: RUNNING >30s",
+		},
+		{
+			name:    "scheduled with configured timeout",
+			state:   JobStateScheduled,
+			timeout: []time.Duration{2 * time.Minute},
+			want:    "timeout: SCHEDULED >2m0s",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := timeoutFailureReason(tt.state, tt.timeout...); got != tt.want {
+				t.Fatalf("timeoutFailureReason() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReconcilerTimeoutsEmitBatchDiagnostic(t *testing.T) {
+	store := newFakeReconcileStore()
+	oldTs := toUnixMicros(time.Now().Add(-10 * time.Minute))
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("timeout-job-%d", i)
+		store.states[id] = JobStateDispatched
+		store.updated[id] = oldTs
+	}
+
+	var logBuf strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	rec := NewReconciler(store, time.Minute, time.Minute, 10*time.Millisecond)
+	rec.handleTimeouts(context.Background(), JobStateDispatched, time.Now().Add(-time.Minute), 5*time.Minute)
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, `msg="jobs timed out"`) {
+		t.Fatalf("expected batch timeout diagnostic log, got:\n%s", logOutput)
+	}
+	for _, want := range []string{
+		"from_state=DISPATCHED",
+		"count=3",
+		`reason="timeout: DISPATCHED >5m0s"`,
+	} {
+		if !strings.Contains(logOutput, want) {
+			t.Fatalf("expected timeout diagnostic to contain %q, got:\n%s", want, logOutput)
+		}
+	}
 }
 
 func (s *fakeReconcileStore) CountJobsByState(_ context.Context, state JobState) (int64, error) {

@@ -25,6 +25,34 @@ func newTestChainer(t *testing.T) (*Chainer, *miniredis.Miniredis, *redis.Client
 	return NewChainer(client, "test:chain:"), mr, client
 }
 
+type redisGetCounterHook struct {
+	gets atomic.Int64
+}
+
+func (h *redisGetCounterHook) DialHook(next redis.DialHook) redis.DialHook {
+	return next
+}
+
+func (h *redisGetCounterHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if cmd.FullName() == "get" {
+			h.gets.Add(1)
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (h *redisGetCounterHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, cmd := range cmds {
+			if cmd.FullName() == "get" {
+				h.gets.Add(1)
+			}
+		}
+		return next(ctx, cmds)
+	}
+}
+
 func baseEvent(tenant, action string) *SIEMEvent {
 	return &SIEMEvent{
 		Timestamp: time.Unix(1700000000, 0).UTC(),
@@ -32,6 +60,99 @@ func baseEvent(tenant, action string) *SIEMEvent {
 		Severity:  SeverityInfo,
 		TenantID:  tenant,
 		Action:    action,
+	}
+}
+
+func TestChainer_AppendWarmCacheAvoidsHeadGET(t *testing.T) {
+	t.Parallel()
+	c, _, client := newTestChainer(t)
+	hook := &redisGetCounterHook{}
+	client.AddHook(hook)
+	ctx := context.Background()
+
+	first := baseEvent("tenant-warm-cache", "first")
+	if err := c.Append(ctx, first); err != nil {
+		t.Fatalf("append first: %v", err)
+	}
+	getsAfterFirst := hook.gets.Load()
+	if getsAfterFirst == 0 {
+		t.Fatal("expected first append to read the Redis head at least once")
+	}
+
+	second := baseEvent("tenant-warm-cache", "second")
+	if err := c.Append(ctx, second); err != nil {
+		t.Fatalf("append second: %v", err)
+	}
+	if second.Seq != 2 {
+		t.Fatalf("second Seq = %d, want 2", second.Seq)
+	}
+	if second.PrevHash != first.EventHash {
+		t.Fatalf("second PrevHash = %q, want first EventHash %q", second.PrevHash, first.EventHash)
+	}
+	if got := hook.gets.Load(); got != getsAfterFirst {
+		t.Fatalf("warm append performed an extra Redis GET: got %d GETs, want %d", got, getsAfterFirst)
+	}
+}
+
+func TestChainer_AppendWarmCacheSurvivesExternalWriter(t *testing.T) {
+	t.Parallel()
+	chainerA, _, client := newTestChainer(t)
+	chainerB := NewChainer(client, "test:chain:")
+	ctx := context.Background()
+	const tenant = "tenant-cache-external"
+
+	aFirst := baseEvent(tenant, "a-first")
+	if err := chainerA.Append(ctx, aFirst); err != nil {
+		t.Fatalf("append a first: %v", err)
+	}
+
+	bSecond := baseEvent(tenant, "b-second")
+	if err := chainerB.Append(ctx, bSecond); err != nil {
+		t.Fatalf("append b second: %v", err)
+	}
+
+	aThird := baseEvent(tenant, "a-third")
+	if err := chainerA.Append(ctx, aThird); err != nil {
+		t.Fatalf("append a third: %v", err)
+	}
+	if aThird.Seq != 3 {
+		t.Fatalf("a third Seq = %d, want 3", aThird.Seq)
+	}
+	if aThird.PrevHash != bSecond.EventHash {
+		t.Fatalf("a third PrevHash = %q, want b second EventHash %q", aThird.PrevHash, bSecond.EventHash)
+	}
+
+	entries, err := client.XRange(ctx, chainerA.StreamKey(tenant), "-", "+").Result()
+	if err != nil {
+		t.Fatalf("xrange: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("stream length = %d, want 3", len(entries))
+	}
+	prevHash := ""
+	for i, entry := range entries {
+		payload, ok := entry.Values[chainStreamFieldEvent].(string)
+		if !ok {
+			t.Fatalf("entry[%d] missing event field", i)
+		}
+		var got SIEMEvent
+		if err := json.Unmarshal([]byte(payload), &got); err != nil {
+			t.Fatalf("unmarshal[%d]: %v", i, err)
+		}
+		if got.Seq != int64(i+1) {
+			t.Fatalf("Seq[%d] = %d, want %d", i, got.Seq, i+1)
+		}
+		if got.PrevHash != prevHash {
+			t.Fatalf("PrevHash[%d] = %q, want %q", i, got.PrevHash, prevHash)
+		}
+		ok, err := VerifyEventHash(&got)
+		if err != nil {
+			t.Fatalf("verify[%d]: %v", i, err)
+		}
+		if !ok {
+			t.Fatalf("event[%d] hash did not verify", i)
+		}
+		prevHash = got.EventHash
 	}
 }
 
@@ -131,9 +252,9 @@ func TestChainer_AppendConcurrentMonotonic(t *testing.T) {
 	ctx := context.Background()
 
 	const (
-		producers        = 16
-		perProducer      = 25
-		totalExpected    = producers * perProducer
+		producers     = 16
+		perProducer   = 25
+		totalExpected = producers * perProducer
 	)
 
 	var (

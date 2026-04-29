@@ -13,6 +13,7 @@ import (
 	"math/rand/v2"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -84,9 +85,13 @@ var (
 // closing the threat model gap where an attacker with Redis write access could
 // forge a valid SHA-256 chain by recomputing hashes from an arbitrary point.
 type Chainer struct {
-	client    redis.UniversalClient
-	keyPrefix string
-	hmacKey   []byte // nil = HMAC disabled
+	client          redis.UniversalClient
+	keyPrefix       string
+	hmacKey         []byte // nil = HMAC disabled
+	headCacheMu     sync.Mutex
+	headCacheValid  bool
+	headCacheTenant string
+	headCacheRaw    string
 }
 
 // ChainerOption configures optional Chainer behaviour.
@@ -164,6 +169,33 @@ func (c *Chainer) HeadKey(tenant string) string {
 	return c.keyPrefix + chainHeadInfix + tenant
 }
 
+func (c *Chainer) cachedHead(tenant string) (string, bool) {
+	c.headCacheMu.Lock()
+	defer c.headCacheMu.Unlock()
+	if !c.headCacheValid || c.headCacheTenant != tenant {
+		return "", false
+	}
+	return c.headCacheRaw, true
+}
+
+func (c *Chainer) storeCachedHead(tenant, rawHead string) {
+	c.headCacheMu.Lock()
+	defer c.headCacheMu.Unlock()
+	c.headCacheValid = true
+	c.headCacheTenant = tenant
+	c.headCacheRaw = rawHead
+}
+
+func (c *Chainer) invalidateCachedHead(tenant, rawHead string) {
+	c.headCacheMu.Lock()
+	defer c.headCacheMu.Unlock()
+	if c.headCacheValid && c.headCacheTenant == tenant && c.headCacheRaw == rawHead {
+		c.headCacheValid = false
+		c.headCacheTenant = ""
+		c.headCacheRaw = ""
+	}
+}
+
 // chainAppendScript is a CAS (check-and-set) Lua append. Go precomputes the
 // event_hash using the just-read head as PrevHash input; the script only
 // commits if the head has not shifted between read and write.
@@ -225,12 +257,16 @@ func (c *Chainer) Append(ctx context.Context, event *SIEMEvent) error {
 			return err
 		}
 
-		rawHead, err := c.client.Get(ctx, headKey).Result()
-		if err != nil && !errors.Is(err, redis.Nil) {
-			return fmt.Errorf("audit chain: read head: %w", err)
-		}
-		if errors.Is(err, redis.Nil) {
-			rawHead = ""
+		rawHead, ok := c.cachedHead(event.TenantID)
+		if !ok {
+			var err error
+			rawHead, err = c.client.Get(ctx, headKey).Result()
+			if err != nil && !errors.Is(err, redis.Nil) {
+				return fmt.Errorf("audit chain: read head: %w", err)
+			}
+			if errors.Is(err, redis.Nil) {
+				rawHead = ""
+			}
 		}
 
 		headSeq, headHash, err := parseChainHead(rawHead)
@@ -272,12 +308,14 @@ func (c *Chainer) Append(ctx context.Context, event *SIEMEvent) error {
 			return fmt.Errorf("audit chain: script run: %w", err)
 		}
 		if res == 1 {
+			c.storeCachedHead(event.TenantID, strconv.FormatInt(event.Seq, 10)+":"+eventHash)
 			return nil
 		}
 		// CAS miss: another writer beat us. Clear the in-place
 		// mutations so a retry does not carry stale state if the
 		// subsequent read errors, then back off with jitter so
 		// contending producers stop retrying in lockstep.
+		c.invalidateCachedHead(event.TenantID, rawHead)
 		event.Seq = 0
 		event.PrevHash = ""
 		event.EventHash = ""
