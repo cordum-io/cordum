@@ -1247,6 +1247,13 @@ export function mapApprovalContext(raw: unknown): ApprovalContext {
   const priorApprovals = Array.isArray(context.prior_approvals)
     ? context.prior_approvals
     : [];
+  const rawTimeRemainingMs = context.time_remaining_ms;
+  const parsedTimeRemainingMs =
+    rawTimeRemainingMs == null ? null : numberFromUnknown(rawTimeRemainingMs, Number.NaN);
+  const timeRemainingMs =
+    parsedTimeRemainingMs == null || Number.isFinite(parsedTimeRemainingMs)
+      ? parsedTimeRemainingMs
+      : null;
   return {
     approval: recordFromUnknown(context.approval) ?? {},
     blastRadius: blastRadius
@@ -1257,17 +1264,20 @@ export function mapApprovalContext(raw: unknown): ApprovalContext {
           scopeDescription: stringFromUnknown(blastRadius.scope_description),
         }
       : { systems: [], namespaces: [], resources: [], scopeDescription: "" },
-    priorApprovals: priorApprovals.map((pa) => {
-      const approval = recordFromUnknown(pa) ?? {};
-      return {
-        jobId: stringFromUnknown(approval.job_id),
-        topic: stringFromUnknown(approval.topic),
-        tenant: stringFromUnknown(approval.tenant),
-        decision: stringFromUnknown(approval.decision),
-        resolvedBy: stringFromUnknown(approval.resolved_by),
-        resolvedAt: numberFromUnknown(approval.resolved_at),
-        wasApproved: boolFromUnknown(approval.was_approved),
-      };
+    priorApprovals: priorApprovals.flatMap((pa) => {
+      const approval = recordFromUnknown(pa);
+      if (!approval) return [];
+      return [
+        {
+          jobId: stringFromUnknown(approval.job_id),
+          topic: stringFromUnknown(approval.topic),
+          tenant: stringFromUnknown(approval.tenant),
+          decision: stringFromUnknown(approval.decision),
+          resolvedBy: stringFromUnknown(approval.resolved_by),
+          resolvedAt: numberFromUnknown(approval.resolved_at),
+          wasApproved: boolFromUnknown(approval.was_approved),
+        },
+      ];
     }),
     rollbackHint: stringFromUnknown(context.rollback_hint),
     policySnapshotSummary: mapPolicySnapshotSummaryFromRaw(context.policy_snapshot_summary) ?? {
@@ -1275,8 +1285,7 @@ export function mapApprovalContext(raw: unknown): ApprovalContext {
       matchedRule: { id: "", description: "", decision: "", constraintsSummary: "" },
       policyVersion: "",
     },
-    timeRemainingMs:
-      context.time_remaining_ms == null ? null : numberFromUnknown(context.time_remaining_ms),
+    timeRemainingMs,
     constraints: recordFromUnknown(context.constraints) ?? null,
   };
 }

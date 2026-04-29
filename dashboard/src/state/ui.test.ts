@@ -63,6 +63,16 @@ describe("useUiStore", () => {
     expect(state.agentsView).toBe("cards");
   });
 
+  it("ignores invalid stored theme values", async () => {
+    window.localStorage.setItem("cordum-theme", "solarized");
+
+    const { useUiStore } = await loadUiModule();
+    const state = useUiStore.getState();
+
+    expect(state.theme).toBe("system");
+    expect(state.resolvedTheme).toBe("light");
+  });
+
   it("does not crash when localStorage is unavailable", async () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("storage unavailable");

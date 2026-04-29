@@ -242,19 +242,27 @@ describe("api/transform mappings", () => {
     expect(context.approval).toEqual({ id: "approval-1" });
     expect(context.blastRadius.systems).toEqual(["payments"]);
     expect(context.blastRadius.resources).toEqual([]);
-    expect(context.priorApprovals).toHaveLength(2);
+    expect(context.priorApprovals).toHaveLength(1);
     expect(context.priorApprovals[0]).toMatchObject({
       jobId: "job-1",
       wasApproved: true,
-    });
-    expect(context.priorApprovals[1]).toMatchObject({
-      jobId: "",
-      wasApproved: false,
     });
     expect(context.policySnapshotSummary.ruleCount).toBe(3);
     expect(context.policySnapshotSummary.matchedRule.id).toBe("rule-1");
     expect(context.constraints).toEqual({ max_runtime_ms: 1000 });
     expect(context.timeRemainingMs).toBe(5000);
+  });
+
+  it("drops malformed prior approvals and preserves unknown time remaining", () => {
+    const context = mapApprovalContext({
+      prior_approvals: ["malformed", null, { job_id: "job-valid", was_approved: false }],
+      time_remaining_ms: "not-a-number",
+    });
+
+    expect(context.priorApprovals).toEqual([
+      expect.objectContaining({ jobId: "job-valid", wasApproved: false }),
+    ]);
+    expect(context.timeRemainingMs).toBeNull();
   });
 
   it("maps malformed approval context to safe defaults", () => {

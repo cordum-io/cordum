@@ -64,7 +64,9 @@ func (e *Engine) StartRun(ctx context.Context, workflowID, runID string) error {
 					run.Status = RunStatusFailed
 					run.CompletedAt = &now
 					run.Error = map[string]any{"message": "workflow deleted"}
-					_ = e.store.UpdateRun(ctx, run)
+					if err := e.store.UpdateRun(ctx, run); err != nil {
+						return fmt.Errorf("update orphaned run %s: %w", run.ID, err)
+					}
 					e.markRunTerminal(run.ID)
 					return nil // terminal — don't retry
 				}

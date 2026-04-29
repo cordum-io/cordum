@@ -16,6 +16,10 @@ function resolveTheme(pref: Theme): ResolvedTheme {
   return pref;
 }
 
+function isTheme(value: string | null): value is Theme {
+  return value === "light" || value === "dark" || value === "system";
+}
+
 interface UiState {
   theme: Theme;
   resolvedTheme: ResolvedTheme;
@@ -32,7 +36,8 @@ interface UiState {
   setShortcutsHelpOpen: (open: boolean) => void;
 }
 
-const stored = safeLocalStorage.getItem("cordum-theme") as Theme | null;
+const rawStoredTheme = safeLocalStorage.getItem("cordum-theme");
+const stored = isTheme(rawStoredTheme) ? rawStoredTheme : null;
 
 const storedAgentsView = safeLocalStorage.getItem("cordum-agents-view") as AgentsView | null;
 
