@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Resolve script/repository paths once. Several gates are intentionally
+# runnable from any working directory; keep paths anchored to this script
+# instead of relying on the caller's environment.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "missing dependency: $1" >&2
@@ -83,11 +89,11 @@ generate_hs256_jwt() {
 
 ensure_compose_cmd() {
   if docker compose version >/dev/null 2>&1; then
-    COMPOSE_CMD=(docker compose)
+    COMPOSE_CMD=(docker compose --project-directory "${ROOT_DIR}")
     return
   fi
   if command -v docker-compose >/dev/null 2>&1; then
-    COMPOSE_CMD=(docker-compose)
+    COMPOSE_CMD=(docker-compose --project-directory "${ROOT_DIR}")
     return
   fi
   die "docker compose plugin required"
@@ -101,8 +107,8 @@ build_auth_headers() {
 build_curl_tls_opts() {
   CURL_TLS_OPTS=()
   local ca="${CORDUM_TLS_CA:-}"
-  if [[ -z "${ca}" && -f "./certs/ca/ca.crt" ]]; then
-    ca="./certs/ca/ca.crt"
+  if [[ -z "${ca}" && -f "${ROOT_DIR}/certs/ca/ca.crt" ]]; then
+    ca="${ROOT_DIR}/certs/ca/ca.crt"
   fi
   if [[ -n "${ca}" ]]; then
     CURL_TLS_OPTS=(--cacert "${ca}")
@@ -112,6 +118,30 @@ build_curl_tls_opts() {
       CURL_TLS_OPTS+=(--ssl-no-revoke)
     fi
   fi
+}
+
+write_repeated_byte() {
+  local byte="$1"
+  local count="$2"
+  if command -v python >/dev/null 2>&1; then
+    python - "${byte}" "${count}" <<'PY'
+import sys
+
+byte = sys.argv[1].encode("utf-8")
+count = int(sys.argv[2])
+sys.stdout.buffer.write(byte * count)
+PY
+    return
+  fi
+  if command -v dd >/dev/null 2>&1 && command -v tr >/dev/null 2>&1; then
+    dd if=/dev/zero bs="${count}" count=1 2>/dev/null | tr '\000' "${byte}"
+    return
+  fi
+  local i=0
+  while (( i < count )); do
+    printf '%s' "${byte}"
+    i=$((i + 1))
+  done
 }
 
 api_url() {
@@ -295,46 +325,36 @@ ensure_mock_bank_pack() {
   if command -v cordumctl >/dev/null 2>&1; then
     CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
       CORDUM_GATEWAY="${API_BASE}" \
-      cordumctl pack install --upgrade ./demo/mock-bank/pack >/dev/null
+      cordumctl pack install --upgrade "${ROOT_DIR}/demo/mock-bank/pack" >/dev/null
     return
   fi
-  CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
+  (cd "${ROOT_DIR}" && CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
     CORDUM_GATEWAY="${API_BASE}" \
-    go run ./cmd/cordumctl pack install --upgrade ./demo/mock-bank/pack >/dev/null
+    go run ./cmd/cordumctl pack install --upgrade ./demo/mock-bank/pack >/dev/null)
 }
 
 ensure_demo_guardrails_pack() {
   if command -v cordumctl >/dev/null 2>&1; then
     CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
       CORDUM_GATEWAY="${API_BASE}" \
-      cordumctl pack install --upgrade ./examples/demo-guardrails >/dev/null
+      cordumctl pack install --upgrade "${ROOT_DIR}/examples/demo-guardrails" >/dev/null
     return
   fi
-  CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
+  (cd "${ROOT_DIR}" && CORDUM_API_KEY="${API_KEY}" CORDUM_ORG_ID="${ORG_ID}" CORDUM_TENANT_ID="${TENANT_ID}" \
     CORDUM_GATEWAY="${API_BASE}" \
-    go run ./cmd/cordumctl pack install --upgrade ./examples/demo-guardrails >/dev/null
+    go run ./cmd/cordumctl pack install --upgrade ./examples/demo-guardrails >/dev/null)
 }
 
 ensure_mcp_gate_agent() {
-  local agents existing payload resp agent_id
+  local payload resp agent_id name
 
-  agents="$(api_body GET /agents 2>/dev/null || true)"
-  existing="$(echo "${agents}" | jq -r '
-    (.items // [])
-    | map(select(.name == "production-gate-mcp" and (.status // "active") == "active"))
-    | .[0].id // empty
-  ' 2>/dev/null || true)"
-  if [[ -n "${existing}" ]]; then
-    printf '%s' "${existing}"
-    return 0
-  fi
-
-  payload="$(jq -cn '{
-    name: "production-gate-mcp",
+  name="production-gate-mcp-$(date +%s)-$$"
+  payload="$(jq -cn --arg name "${name}" '{
+    name: $name,
     owner: "production-gate",
-    risk_tier: "critical",
-    allowed_tools: ["*"],
-    data_classifications: ["public", "internal", "confidential", "restricted", "pii", "phi", "secrets"]
+    risk_tier: "high",
+    allowed_tools: ["cordum_status"],
+    data_classifications: ["public"]
   }')"
   resp="$(api_call POST /agents "${payload}")"
   agent_id="$(echo "${resp}" | jq -r '.id // empty' 2>/dev/null || true)"
@@ -343,6 +363,12 @@ ensure_mcp_gate_agent() {
     return 1
   fi
   printf '%s' "${agent_id}"
+}
+
+delete_mcp_gate_agent() {
+  local agent_id="${1:-}"
+  [[ -n "${agent_id}" ]] || return 0
+  api_code DELETE "/agents/${agent_id}" >/dev/null 2>&1 || true
 }
 
 has_mock_bank_worker() {
@@ -384,11 +410,10 @@ ensure_mock_bank_worker() {
 
   if [[ -z "${MOCK_BANK_WORKER_PID:-}" ]]; then
     # Use nohup so the worker survives when the $() subshell (from run_gate) exits.
-    nohup env NATS_URL="${NATS_URL}" NATS_TOKEN="${NATS_TOKEN:-}" REDIS_URL="${REDIS_URL}" \
+    MOCK_BANK_WORKER_PID="$(cd "${ROOT_DIR}" && nohup env NATS_URL="${NATS_URL}" NATS_TOKEN="${NATS_TOKEN:-}" REDIS_URL="${REDIS_URL}" \
       NATS_TLS_CA="${NATS_TLS_CA:-}" NATS_TLS_CERT="${NATS_TLS_CERT:-}" NATS_TLS_KEY="${NATS_TLS_KEY:-}" NATS_TLS_SERVER_NAME="${NATS_TLS_SERVER_NAME:-}" \
       REDIS_TLS_CA="${REDIS_TLS_CA:-}" REDIS_TLS_CERT="${REDIS_TLS_CERT:-}" REDIS_TLS_KEY="${REDIS_TLS_KEY:-}" REDIS_TLS_SERVER_NAME="${REDIS_TLS_SERVER_NAME:-}" \
-      go run ./demo/mock-bank/worker >/tmp/production-gate-mock-bank-worker.log 2>&1 &
-    MOCK_BANK_WORKER_PID=$!
+      go run ./demo/mock-bank/worker >/tmp/production-gate-mock-bank-worker.log 2>&1 & echo $!)"
     MOCK_BANK_WORKER_STARTED=1
     echo "${MOCK_BANK_WORKER_PID}" >"${MOCK_BANK_PID_FILE}"
   fi
@@ -431,21 +456,21 @@ gate_1_deploy() {
     "${COMPOSE_CMD[@]}" down -v --remove-orphans >/dev/null
 
     log "gate 1: running quickstart"
-    CORDUM_API_KEY="${API_KEY}" \
+    (cd "${ROOT_DIR}" && CORDUM_API_KEY="${API_KEY}" \
       CORDUM_ORG_ID="${ORG_ID}" \
       CORDUM_TENANT_ID="${TENANT_ID}" \
-      ./tools/scripts/quickstart.sh >/dev/null
+      "${SCRIPT_DIR}/quickstart.sh" >/dev/null)
   fi
 
   log "gate 1: waiting for status readiness"
   wait_for_status_ready 120
 
   log "gate 1: running platform smoke"
-  CORDUM_API_KEY="${API_KEY}" \
+  (cd "${ROOT_DIR}" && CORDUM_API_KEY="${API_KEY}" \
     CORDUM_ORG_ID="${ORG_ID}" \
     CORDUM_TENANT_ID="${TENANT_ID}" \
     CORDUM_API_BASE="${API_BASE}" \
-    ./tools/scripts/platform_smoke.sh >/dev/null
+    "${SCRIPT_DIR}/platform_smoke.sh" >/dev/null)
 
   code="$(api_code GET /status)"
   [[ "${code}" == "200" ]] || {
@@ -789,11 +814,11 @@ gate_4_policy() {
     return 1
   }
 
-  CORDUM_API_KEY="${API_KEY}" \
+  (cd "${ROOT_DIR}" && CORDUM_API_KEY="${API_KEY}" \
     CORDUM_ORG_ID="${ORG_ID}" \
     CORDUM_TENANT_ID="${TENANT_ID}" \
     CORDUM_API_BASE="${API_BASE}" \
-    ./tools/scripts/demo_guardrails_run.sh >/dev/null 2>&1
+    "${SCRIPT_DIR}/demo_guardrails_run.sh" >/dev/null 2>&1)
 
   echo "policy evaluate/simulate/explain/remediation/audit checks passed"
 }
@@ -1102,11 +1127,24 @@ PY
       # Fallback for minimal systems. This is slower on Windows/MSYS, but keeps
       # the gate runnable when Python is unavailable.
       tmp_dir="$(mktemp -d)"
-      local _curl_tls_args=""
-      local _i
-      for _i in "${CURL_TLS_OPTS[@]}"; do _curl_tls_args="${_curl_tls_args} ${_i}"; done
-      seq 1 "${attempt_burst}" | xargs -I{} -P"${attempt_parallel}" \
-        sh -c "_raw=\$(curl -sS -w '\n%{http_code}' ${_curl_tls_args} '${API_BASE}/health' 2>/dev/null); printf '%s' \"\${_raw##*\$'\\n'}\" > '${tmp_dir}/{}'"
+      local _pids=()
+      local _i _pid
+      for _i in $(seq 1 "${attempt_burst}"); do
+        (
+          local _raw _code
+          _raw="$(curl -sS -w $'\n%{http_code}' "${CURL_TLS_OPTS[@]}" "${API_BASE}/health" 2>/dev/null || true)"
+          _code="$(printf '%s' "${_raw}" | tail -n 1 | tr -d '\r')"
+          printf '%s' "${_code}" >"${tmp_dir}/${_i}"
+        ) &
+        _pids+=($!)
+        if (( ${#_pids[@]} >= attempt_parallel )); then
+          wait "${_pids[0]}" 2>/dev/null || true
+          _pids=("${_pids[@]:1}")
+        fi
+      done
+      for _pid in "${_pids[@]}"; do
+        wait "${_pid}" 2>/dev/null || true
+      done
       rate_limited="$(grep -rl '^429$' "${tmp_dir}" 2>/dev/null | wc -l)"
       rm -rf "${tmp_dir}"
     fi
@@ -1170,21 +1208,49 @@ PY
     return 1
   }
 
+  ensure_mock_bank_pack
+  ensure_mock_bank_worker
+
   body="$(jq -cn \
     --arg prompt "security gate injection payload" \
-    --arg topic "job.default" \
+    --arg topic "job.bank-validators.process" \
     --arg inj "'; DROP TABLE jobs; --" \
-    '{prompt:$prompt, topic:$topic, labels: {sql:$inj, nosql:"{\"$ne\":null}"}, risk_tags:["injection-test"]}')"
-  code="$(api_code POST /jobs "${JSON_HEADERS[@]}" -d "${body}")"
+    --arg nosql '{"$ne":null}' \
+    '{
+      prompt:$prompt,
+      message:$prompt,
+      topic:$topic,
+      amount:1,
+      labels: {sql:$inj, nosql:$nosql},
+      risk_tags:["injection-test"]
+    }')"
+  local injection_raw injection_body injection_job injection_state
+  injection_raw="$(curl -sS -w $'\n%{http_code}' -X POST \
+    "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
+    -d "${body}" \
+    "$(api_url /jobs)" 2>/dev/null)" || true
+  code="$(printf '%s' "${injection_raw}" | tail -n 1 | tr -d '\r')"
   if [[ "${code}" == "500" ]]; then
     echo "injection payload triggered HTTP 500" >&2
     return 1
+  fi
+  if [[ "${code}" =~ ^2[0-9][0-9]$ ]]; then
+    injection_body="$(printf '%s' "${injection_raw}" | sed '$d')"
+    injection_job="$(echo "${injection_body}" | jq -r '.job_id // empty' 2>/dev/null || true)"
+    if [[ -n "${injection_job}" ]]; then
+      injection_state="$(poll_job_terminal "${injection_job}" 45 || true)"
+      if [[ "${injection_state}" == "__POLL_TIMEOUT__" ]]; then
+        api_code POST "/jobs/${injection_job}/cancel" >/dev/null 2>&1 || true
+        echo "injection payload job did not reach terminal state; cancelled ${injection_job}" >&2
+        return 1
+      fi
+    fi
   fi
 
   large_file="$(mktemp)"
   {
     printf '{"prompt":"'
-    python -c "import sys; sys.stdout.buffer.write(b'A' * 2100000)"
+    write_repeated_byte A 2100000
     printf '","topic":"job.default"}'
   } >"${large_file}"
   large_raw="$(curl -sS -w $'\n%{http_code}' -X POST \
@@ -1277,9 +1343,13 @@ gate_8_extensions() {
   }
 
   # Tool visibility is scope-enforced and intentionally fail-closed unless
-  # the request carries a valid agent identity. Create/reuse a high-trust
-  # gate-only identity and send it via X-Agent-Id for catalog checks.
+  # the request carries a valid agent identity. Create a short-lived,
+  # least-privilege gate-only identity and send it via X-Agent-Id for catalog
+  # checks. Keep a subshell EXIT cleanup because run_gate captures each gate in
+  # command substitution; without this, early returns can leak the temp agent.
   mcp_agent_id="$(ensure_mcp_gate_agent)" || return 1
+  MCP_GATE_AGENT_ID="${mcp_agent_id}"
+  trap 'delete_mcp_gate_agent "${MCP_GATE_AGENT_ID:-}"; MCP_GATE_AGENT_ID=""; cleanup' EXIT
 
   tools_list="$(curl -sS -X POST "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${JSON_HEADERS[@]}" \
     -H "X-Agent-Id: ${mcp_agent_id}" \
@@ -1304,6 +1374,8 @@ gate_8_extensions() {
     echo "mcp resources/read health probe failed" >&2
     return 1
   }
+  delete_mcp_gate_agent "${mcp_agent_id}"
+  MCP_GATE_AGENT_ID=""
 
   # Runtime output enforcement lives in scheduler and is env-gated.
   OUTPUT_POLICY_ENABLED=1 "${COMPOSE_CMD[@]}" up -d --force-recreate scheduler >/dev/null
@@ -1790,7 +1862,7 @@ gate_10_data_lifecycle() {
   oversize_file="$(mktemp)"
   {
     printf '{"content":"'
-    python -c "import sys; sys.stdout.buffer.write(b'B' * 2048)"
+    write_repeated_byte B 2048
     printf '"}'
   } >"${oversize_file}"
   oversize_raw="$(curl -sS -w $'\n%{http_code}' -X POST \
@@ -2418,16 +2490,19 @@ gate_16_degradation() {
     echo "failed to create gate16 submitter API key" >&2
     return 1
   }
+  GATE16_SUBMITTER_KEY_ID="${submitter_key_id}"
+  trap '[[ -n "${GATE16_SUBMITTER_KEY_ID:-}" ]] && api_code DELETE "/auth/keys/${GATE16_SUBMITTER_KEY_ID}" >/dev/null 2>&1 || true; GATE16_SUBMITTER_KEY_ID=""; cleanup' EXIT
 
   job_resp="$(curl -sS -X POST \
     "${CURL_TLS_OPTS[@]}" \
     -H "X-API-Key: ${submitter_key_secret}" -H "X-Tenant-ID: ${TENANT_ID}" \
     "${JSON_HEADERS[@]}" \
     -d "$(jq -cn '{prompt:"gate16 reject test", topic:"job.bank-executors.process"}')" \
-    "$(api_url /jobs)")"
+    "$(api_url /jobs)" 2>/dev/null)" || true
   # The job stores the submitter identity at creation time; revoke the
   # temporary key immediately so repeated gate runs do not accumulate keys.
   api_code DELETE "/auth/keys/${submitter_key_id}" >/dev/null 2>&1 || true
+  GATE16_SUBMITTER_KEY_ID=""
   approval_job="$(echo "${job_resp}" | jq -r '.job_id // empty' 2>/dev/null || true)"
   [[ -n "${approval_job}" ]] || {
     echo "failed to submit approval rejection test job" >&2
@@ -2541,7 +2616,7 @@ gate_16_degradation() {
 #            Content-Security-Policy, theme assets
 # ---------------------------------------------------------------------------
 gate_18_release_config() {
-  local compose_file="docker-compose.release.yml"
+  local compose_file="${ROOT_DIR}/docker-compose.release.yml"
   local line
   local required_var
 
@@ -2569,7 +2644,7 @@ gate_18_release_config() {
   # (Use placeholder values for compile-time substitution checks.)
   REDIS_PASSWORD="gate18-redispw" \
   CORDUM_API_KEY="gate18-apikey" \
-  CORDUM_TLS_DIR="${CORDUM_TLS_DIR:-./certs}" \
+  CORDUM_TLS_DIR="${CORDUM_TLS_DIR:-${ROOT_DIR}/certs}" \
   SAFETY_POLICY_PUBLIC_KEY="${SAFETY_POLICY_PUBLIC_KEY:-gate18-public-key}" \
   SAFETY_POLICY_SIGNATURE="${SAFETY_POLICY_SIGNATURE:-gate18-signature}" \
     "${COMPOSE_CMD[@]}" -f "${compose_file}" config >/dev/null 2>&1 || {
@@ -2788,7 +2863,8 @@ api_code_2() {
 # ── Gate 19: Horizontal Scaling HA ──
 
 gate_19_ha() {
-  local ha_overlay="docker-compose.ha.yaml"
+  local compose_file="${ROOT_DIR}/docker-compose.yml"
+  local ha_overlay="${ROOT_DIR}/docker-compose.ha.yaml"
   if [[ ! -f "${ha_overlay}" ]]; then
     echo "HA overlay ${ha_overlay} not found — skipping gate 19 (advisory)"
     return 0
@@ -2807,7 +2883,7 @@ gate_19_ha() {
 
   # --- Phase A: Deploy 2-replica topology ---
   log "gate 19: deploying HA overlay..."
-  "${COMPOSE_CMD[@]}" -f docker-compose.yml -f "${ha_overlay}" up -d --no-recreate --build api-gateway-2 scheduler-2 workflow-engine-2 2>&1 | tail -5
+  "${COMPOSE_CMD[@]}" -f "${compose_file}" -f "${ha_overlay}" up -d --no-recreate --build api-gateway-2 scheduler-2 workflow-engine-2 2>&1 | tail -5
 
   # Wait for gateway-1 (existing API_BASE)
   wait_for_status_ready 90 || {
@@ -2839,7 +2915,7 @@ gate_19_ha() {
   # Verify both schedulers are running
   if [[ "${ha_failed}" == "0" ]]; then
     local sched_count
-    sched_count="$("${COMPOSE_CMD[@]}" -f docker-compose.yml -f "${ha_overlay}" ps --format '{{.Name}}' 2>/dev/null | grep -c 'scheduler' || echo "0")"
+    sched_count="$("${COMPOSE_CMD[@]}" -f "${compose_file}" -f "${ha_overlay}" ps --format '{{.Name}}' 2>/dev/null | grep -c 'scheduler' || echo "0")"
     if (( sched_count < 2 )); then
       log "gate 19: expected 2 scheduler replicas, found ${sched_count}"
     fi
@@ -3004,7 +3080,7 @@ gate_19_ha() {
     done
 
     # Stop scheduler-2
-    "${COMPOSE_CMD[@]}" -f docker-compose.yml -f "${ha_overlay}" stop scheduler-2 2>/dev/null || true
+    "${COMPOSE_CMD[@]}" -f "${compose_file}" -f "${ha_overlay}" stop scheduler-2 2>/dev/null || true
     sleep 5  # Allow NATS queue group rebalance to scheduler-1
     log "gate 19: scheduler-2 stopped"
     ensure_mock_bank_worker || true
@@ -3060,7 +3136,7 @@ gate_19_ha() {
     fi
 
     # Restart scheduler-2
-    "${COMPOSE_CMD[@]}" -f docker-compose.yml -f "${ha_overlay}" start scheduler-2 2>/dev/null || true
+    "${COMPOSE_CMD[@]}" -f "${compose_file}" -f "${ha_overlay}" start scheduler-2 2>/dev/null || true
     sleep 5
 
     # Submit 2 more after restart — verify no duplicate processing
@@ -3081,8 +3157,8 @@ gate_19_ha() {
 
   # --- Teardown: restore single-replica topology ---
   log "gate 19: tearing down HA overlay..."
-  "${COMPOSE_CMD[@]}" -f docker-compose.yml -f "${ha_overlay}" stop api-gateway-2 scheduler-2 workflow-engine-2 2>/dev/null || true
-  "${COMPOSE_CMD[@]}" -f docker-compose.yml -f "${ha_overlay}" rm -f api-gateway-2 scheduler-2 workflow-engine-2 2>/dev/null || true
+  "${COMPOSE_CMD[@]}" -f "${compose_file}" -f "${ha_overlay}" stop api-gateway-2 scheduler-2 workflow-engine-2 2>/dev/null || true
+  "${COMPOSE_CMD[@]}" -f "${compose_file}" -f "${ha_overlay}" rm -f api-gateway-2 scheduler-2 workflow-engine-2 2>/dev/null || true
 
   # Verify gateway-1 still healthy after teardown
   wait_for_status_ready 30 || {
@@ -3121,7 +3197,7 @@ run_gate() {
 }
 
 write_results_json() {
-  local output_file="${RESULTS_FILE:-production_gate_results.json}"
+  local output_file="${RESULTS_FILE:-${ROOT_DIR}/production_gate_results.json}"
   local generated_at
   local selected_gate
   local all_passed="true"
@@ -3225,12 +3301,6 @@ require curl
 require go
 require openssl
 
-# Resolve script/repository paths once. Several gates are intentionally
-# runnable from any working directory; keep paths anchored to this script
-# instead of relying on the caller's environment.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-
 # jq: prefer system jq, fall back to local jq.exe (MSYS/Windows)
 if ! command -v jq >/dev/null 2>&1; then
   if [[ -x "${SCRIPT_DIR}/jq.exe" ]]; then
@@ -3252,8 +3322,8 @@ API_BASE_2="${CORDUM_API_BASE_2:-}"
 
 # TLS auto-detection: if CA cert exists, default to TLS URLs.
 _tls_ca="${CORDUM_TLS_CA:-}"
-if [[ -z "${_tls_ca}" && -f "./certs/ca/ca.crt" ]]; then
-  _tls_ca="./certs/ca/ca.crt"
+if [[ -z "${_tls_ca}" && -f "${ROOT_DIR}/certs/ca/ca.crt" ]]; then
+  _tls_ca="${ROOT_DIR}/certs/ca/ca.crt"
 fi
 if [[ -n "${_tls_ca}" ]]; then
   # Export so subprocess tools (cordumctl, platform_smoke.sh) pick it up.
@@ -3262,14 +3332,14 @@ if [[ -n "${_tls_ca}" ]]; then
   NATS_URL="${NATS_URL:-tls://localhost:4222}"
   REDIS_URL="${REDIS_URL:-rediss://:${REDIS_PASSWORD}@localhost:6379}"
   # Auto-set TLS env vars for mock-bank worker when certs directory exists.
-  if [[ -d "./certs" ]]; then
-    : "${NATS_TLS_CA:=./certs/ca/ca.crt}"
-    : "${NATS_TLS_CERT:=./certs/client/tls.crt}"
-    : "${NATS_TLS_KEY:=./certs/client/tls.key}"
+  if [[ -d "${ROOT_DIR}/certs" ]]; then
+    : "${NATS_TLS_CA:=${ROOT_DIR}/certs/ca/ca.crt}"
+    : "${NATS_TLS_CERT:=${ROOT_DIR}/certs/client/tls.crt}"
+    : "${NATS_TLS_KEY:=${ROOT_DIR}/certs/client/tls.key}"
     : "${NATS_TLS_SERVER_NAME:=localhost}"
-    : "${REDIS_TLS_CA:=./certs/ca/ca.crt}"
-    : "${REDIS_TLS_CERT:=./certs/client/tls.crt}"
-    : "${REDIS_TLS_KEY:=./certs/client/tls.key}"
+    : "${REDIS_TLS_CA:=${ROOT_DIR}/certs/ca/ca.crt}"
+    : "${REDIS_TLS_CERT:=${ROOT_DIR}/certs/client/tls.crt}"
+    : "${REDIS_TLS_KEY:=${ROOT_DIR}/certs/client/tls.key}"
     : "${REDIS_TLS_SERVER_NAME:=localhost}"
     export NATS_TLS_CA NATS_TLS_CERT NATS_TLS_KEY NATS_TLS_SERVER_NAME
     export REDIS_TLS_CA REDIS_TLS_CERT REDIS_TLS_KEY REDIS_TLS_SERVER_NAME
