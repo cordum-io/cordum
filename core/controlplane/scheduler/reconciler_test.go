@@ -532,6 +532,8 @@ func TestReconcilerSetsFailureReasonOnTimeout(t *testing.T) {
 }
 
 func TestReconcilerSetsFailureReasonOnDeadlineExpiry(t *testing.T) {
+	const deadlineExpiredReason = "timeout: deadline expired"
+
 	store := newFakeReconcileStore()
 
 	store.states["deadline-job"] = JobStateRunning
@@ -546,7 +548,8 @@ func TestReconcilerSetsFailureReasonOnDeadlineExpiry(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		s, _ := store.GetState(context.Background(), "deadline-job")
-		if s == JobStateTimeout {
+		reason, _ := store.GetFailureReason(context.Background(), "deadline-job")
+		if s == JobStateTimeout && reason == deadlineExpiredReason {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -558,8 +561,8 @@ func TestReconcilerSetsFailureReasonOnDeadlineExpiry(t *testing.T) {
 	}
 
 	reason, _ := store.GetFailureReason(context.Background(), "deadline-job")
-	if reason != "timeout: deadline expired" {
-		t.Fatalf("expected reason 'timeout: deadline expired', got %q", reason)
+	if reason != deadlineExpiredReason {
+		t.Fatalf("expected reason %q, got %q", deadlineExpiredReason, reason)
 	}
 }
 
