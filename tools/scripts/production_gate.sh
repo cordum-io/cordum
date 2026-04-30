@@ -2919,7 +2919,9 @@ gate_19_ha() {
   # Verify both schedulers are running
   if [[ "${ha_failed}" == "0" ]]; then
     local sched_count
-    sched_count="$("${COMPOSE_CMD[@]}" -f "${compose_file}" -f "${ha_overlay}" ps --format '{{.Name}}' 2>/dev/null | grep -c 'scheduler' || echo "0")"
+    sched_count="$("${COMPOSE_CMD[@]}" -f "${compose_file}" -f "${ha_overlay}" ps --format '{{.Name}}' 2>/dev/null | grep -c 'scheduler' || true)"
+    sched_count="$(printf '%s' "${sched_count}" | tr -d '[:space:]')"
+    [[ "${sched_count}" =~ ^[0-9]+$ ]] || sched_count=0
     if (( sched_count < 2 )); then
       log "gate 19: expected 2 scheduler replicas, found ${sched_count}"
     fi
@@ -3463,6 +3465,7 @@ gate_21_infra_health() {
   local health_raw health_code
   health_raw="$(curl -sS -w $'\n%{http_code}' \
     "${CURL_TLS_OPTS[@]}" \
+    "${AUTH_HEADERS[@]}" \
     "${health_url}" 2>/dev/null || true)"
   health_code="$(printf '%s' "${health_raw}" | tail -n 1 | tr -d '\r')"
   [[ -n "${health_code}" ]] || health_code="000"
