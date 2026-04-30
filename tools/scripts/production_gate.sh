@@ -6,6 +6,10 @@ set -euo pipefail
 # instead of relying on the caller's environment.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+CURL_TIMEOUT_OPTS=(
+  --connect-timeout "${CURL_CONNECT_TIMEOUT_SECONDS:-5}"
+  --max-time "${CURL_MAX_TIME_SECONDS:-15}"
+)
 
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -160,7 +164,7 @@ api_code() {
   local _attempt _raw _rc
   for _attempt in 1 2 3; do
     _raw="$(curl -sS -w $'\n%{http_code}' -X "${method}" \
-      "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")" 2>/dev/null)" && { printf '%s' "${_raw##*$'\n'}"; return 0; }
+      "${CURL_TIMEOUT_OPTS[@]}" "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")" 2>/dev/null)" && { printf '%s' "${_raw##*$'\n'}"; return 0; }
     _rc=$?
     if [[ ${_rc} -eq 7 || ${_rc} -eq 35 || ${_rc} -eq 56 ]]; then
       sleep 1
@@ -179,7 +183,7 @@ api_body() {
   shift 2
   local _attempt _out _rc
   for _attempt in 1 2 3; do
-    _out="$(curl -sS -X "${method}" "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")" 2>/dev/null)" && { printf '%s' "${_out}"; return 0; }
+    _out="$(curl -sS -X "${method}" "${CURL_TIMEOUT_OPTS[@]}" "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")" 2>/dev/null)" && { printf '%s' "${_out}"; return 0; }
     _rc=$?
     # Retry on transient TLS/connection errors (curl 7=connect, 35=ssl, 56=recv)
     if [[ ${_rc} -eq 7 || ${_rc} -eq 35 || ${_rc} -eq 56 ]]; then
@@ -210,7 +214,7 @@ http_code() {
   shift 2
   local _attempt _raw _rc
   for _attempt in 1 2 3; do
-    _raw="$(curl -s -w $'\n%{http_code}' -X "${method}" "${CURL_TLS_OPTS[@]}" "$@" "${url}" 2>/dev/null)" && { printf '%s' "${_raw##*$'\n'}"; return 0; }
+    _raw="$(curl -s -w $'\n%{http_code}' -X "${method}" "${CURL_TIMEOUT_OPTS[@]}" "${CURL_TLS_OPTS[@]}" "$@" "${url}" 2>/dev/null)" && { printf '%s' "${_raw##*$'\n'}"; return 0; }
     _rc=$?
     if [[ ${_rc} -eq 7 || ${_rc} -eq 35 || ${_rc} -eq 56 ]]; then
       sleep 1
