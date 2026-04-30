@@ -309,7 +309,9 @@ rules:
 	if len(match.AgentRiskTiers) != 1 || match.AgentRiskTiers[0] != "critical" {
 		t.Fatalf("unexpected agent risk tiers: %#v", match.AgentRiskTiers)
 	}
-	if len(match.AgentDataClassifications) != 2 || match.AgentDataClassifications[1] != "secrets" {
+	if len(match.AgentDataClassifications) != 2 ||
+		match.AgentDataClassifications[0] != "internal" ||
+		match.AgentDataClassifications[1] != "secrets" {
 		t.Fatalf("unexpected agent data classifications: %#v", match.AgentDataClassifications)
 	}
 }

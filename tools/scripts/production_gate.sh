@@ -1104,9 +1104,9 @@ burst = int(os.environ.get("BURST", "500"))
 parallel = max(1, min(int(os.environ.get("PARALLEL", "50")), burst))
 ca = os.environ.get("CORDUM_TLS_CA", "").strip()
 try:
-    ctx = ssl.create_default_context(cafile=ca) if ca else ssl._create_unverified_context()
+    ctx = ssl.create_default_context(cafile=ca) if ca else ssl.create_default_context()
 except Exception:
-    ctx = ssl._create_unverified_context()
+    ctx = ssl.create_default_context()
 
 def one(_):
     try:
@@ -1145,7 +1145,7 @@ PY
       for _pid in "${_pids[@]}"; do
         wait "${_pid}" 2>/dev/null || true
       done
-      rate_limited="$(grep -rl '^429$' "${tmp_dir}" 2>/dev/null | wc -l)"
+      rate_limited="$( { grep -rl '^429$' "${tmp_dir}" 2>/dev/null || true; } | wc -l | tr -d '[:space:]')"
       rm -rf "${tmp_dir}"
     fi
     [[ "${rate_limited}" =~ ^[0-9]+$ ]] || rate_limited=0
