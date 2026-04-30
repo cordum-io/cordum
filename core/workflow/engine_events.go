@@ -176,6 +176,21 @@ func (e *Engine) PendingTimers() int {
 	return len(e.pendingTimers)
 }
 
+// scheduleAt arms a timer for a persisted NextAttemptAt. scheduleReady can be
+// invoked slightly before the wall-clock timestamp (for example after a clock
+// adjustment while the original timer used monotonic time). Re-arming prevents
+// retry/delay steps from getting stuck pending with no timer.
+func (e *Engine) scheduleAt(next *time.Time, now time.Time, workflowID, runID string) {
+	if e == nil || next == nil {
+		return
+	}
+	delay := next.Sub(now)
+	if delay <= 0 {
+		return
+	}
+	e.scheduleAfter(delay, workflowID, runID)
+}
+
 func (e *Engine) scheduleAfter(delay time.Duration, workflowID, runID string) {
 	if delay <= 0 {
 		return

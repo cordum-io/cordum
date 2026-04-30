@@ -196,6 +196,8 @@
         "pack_ids": {"type": "array", "items": {"type": "string"}},
         "actor_ids": {"type": "array", "items": {"type": "string"}},
         "actor_types": {"type": "array", "items": {"type": "string"}},
+        "agent_risk_tiers": {"type": "array", "items": {"type": "string"}},
+        "agent_data_classifications": {"type": "array", "items": {"type": "string"}},
         "labels": {
           "type": "object",
           "additionalProperties": {"type": "string"}

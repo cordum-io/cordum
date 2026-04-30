@@ -988,6 +988,9 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 					}
 					continue
 				}
+				if parentSR.Status == StepStatusRunning && parentSR.NextAttemptAt != nil && parentSR.NextAttemptAt.After(now) {
+					e.scheduleAt(parentSR.NextAttemptAt, now, run.WorkflowID, run.ID)
+				}
 				run.Steps[stepID] = parentSR
 				continue
 			}
@@ -1726,6 +1729,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 						child = &StepRun{StepID: childID, Status: StepStatusPending}
 					}
 					if child.NextAttemptAt != nil && child.NextAttemptAt.After(now) {
+						e.scheduleAt(child.NextAttemptAt, now, run.WorkflowID, run.ID)
 						parentSR.Children[childID] = child
 						run.Steps[childID] = child
 						run.Steps[stepID] = parentSR
@@ -1955,6 +1959,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 						continue
 					}
 					if child.NextAttemptAt != nil && child.NextAttemptAt.After(now) {
+						e.scheduleAt(child.NextAttemptAt, now, run.WorkflowID, run.ID)
 						continue
 					}
 					jobID := fmt.Sprintf("%s:%s@%d", run.ID, childStepID, child.Attempts+1)
@@ -2103,6 +2108,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 						continue
 					}
 					if child.NextAttemptAt != nil && child.NextAttemptAt.After(now) {
+						e.scheduleAt(child.NextAttemptAt, now, run.WorkflowID, run.ID)
 						continue
 					}
 					jobID := fmt.Sprintf("%s:%s@%d", run.ID, childID, child.Attempts+1)
@@ -2306,6 +2312,7 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 
 			// Respect backoff windows for retrying steps.
 			if parentSR.NextAttemptAt != nil && parentSR.NextAttemptAt.After(now) {
+				e.scheduleAt(parentSR.NextAttemptAt, now, run.WorkflowID, run.ID)
 				run.Steps[stepID] = parentSR
 				continue
 			}

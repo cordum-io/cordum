@@ -263,8 +263,17 @@ func TestEngineRetriesAndBackoff(t *testing.T) {
 		t.Fatalf("handle job result: %v", err)
 	}
 
-	// Poll until the backoff retry triggers a second publish.
-	deadline := time.Now().Add(5 * time.Second)
+	// Poll until the backoff retry triggers a second publish. Keep the success
+	// path fast, but allow enough headroom for package-parallel Docker test runs
+	// where Go timers can be delayed by CPU contention.
+	wait := 15 * time.Second
+	if testDeadline, ok := t.Deadline(); ok {
+		remaining := time.Until(testDeadline) - time.Second
+		if remaining > 0 && remaining < wait {
+			wait = remaining
+		}
+	}
+	deadline := time.Now().Add(wait)
 	for time.Now().Before(deadline) {
 		if bus.Count() >= 2 {
 			break
@@ -272,7 +281,8 @@ func TestEngineRetriesAndBackoff(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	if bus.Count() < 2 {
-		t.Fatalf("expected retry publish, got %d", bus.Count())
+		latest, _ := store.GetRun(testCtx(t), run.ID)
+		t.Fatalf("expected retry publish, got %d (pending_timers=%d, run=%+v)", bus.Count(), engine.PendingTimers(), latest)
 	}
 
 	if err := engine.HandleJobResult(testCtx(t), &pb.JobResult{
@@ -284,6 +294,80 @@ func TestEngineRetriesAndBackoff(t *testing.T) {
 	final, _ := store.GetRun(testCtx(t), run.ID)
 	if final.Status != RunStatusSucceeded {
 		t.Fatalf("expected run succeeded after retry, got %s", final.Status)
+	}
+}
+
+func TestEngineRetryBackoffReschedulesWhenCheckedEarly(t *testing.T) {
+	store := newWorkflowStore(t)
+	defer func() { _ = store.Close() }()
+
+	bus := &recordingBus{}
+	engine := NewEngine(store, bus)
+	defer engine.Stop()
+
+	wf := &Workflow{
+		ID:    "wf-retry-early",
+		OrgID: "org-1",
+		Steps: map[string]*Step{
+			"step": {
+				ID:    "step",
+				Type:  StepTypeWorker,
+				Topic: "job.retry.early",
+				Retry: &RetryConfig{
+					MaxRetries:        1,
+					InitialBackoffSec: 1,
+					Multiplier:        1,
+				},
+			},
+		},
+	}
+	if err := store.SaveWorkflow(testCtx(t), wf); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+	now := time.Now().UTC()
+	next := now.Add(100 * time.Millisecond)
+	run := &WorkflowRun{
+		ID:         "run-retry-early",
+		WorkflowID: wf.ID,
+		OrgID:      "org-1",
+		Steps: map[string]*StepRun{
+			"step": {
+				StepID:        "step",
+				Status:        StepStatusPending,
+				Attempts:      1,
+				JobID:         "run-retry-early:step@1",
+				NextAttemptAt: &next,
+			},
+		},
+		Status:    RunStatusRunning,
+		StartedAt: &now,
+	}
+	if err := store.CreateRun(testCtx(t), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// Simulate a timer/reconciler waking just before NextAttemptAt. The engine
+	// must re-arm the pending retry instead of leaving it stuck with no timer.
+	if err := engine.StartRun(testCtx(t), wf.ID, run.ID); err != nil {
+		t.Fatalf("start run before retry window: %v", err)
+	}
+	if got := bus.Count(); got != 0 {
+		t.Fatalf("expected no publish before retry window, got %d", got)
+	}
+	if got := engine.PendingTimers(); got < 1 {
+		t.Fatalf("expected retry timer to be re-armed, got %d", got)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if bus.Count() >= 1 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if got := bus.Count(); got < 1 {
+		latest, _ := store.GetRun(testCtx(t), run.ID)
+		t.Fatalf("expected retry publish after re-armed timer, got %d (pending_timers=%d, run=%+v)", got, engine.PendingTimers(), latest)
 	}
 }
 

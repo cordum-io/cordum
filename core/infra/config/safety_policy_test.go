@@ -289,6 +289,31 @@ rules:
 	}
 }
 
+func TestParseSafetyPolicyAgentScopeMatchFields(t *testing.T) {
+	policy, err := ParseSafetyPolicy([]byte(`
+rules:
+  - id: agent-scoped
+    decision: allow
+    match:
+      topics: ["job.agent"]
+      agent_risk_tiers: ["critical"]
+      agent_data_classifications: ["internal", "secrets"]
+`))
+	if err != nil {
+		t.Fatalf("expected agent scope match fields to parse: %v", err)
+	}
+	if policy == nil || len(policy.Rules) != 1 {
+		t.Fatalf("expected one rule, got %#v", policy)
+	}
+	match := policy.Rules[0].Match
+	if len(match.AgentRiskTiers) != 1 || match.AgentRiskTiers[0] != "critical" {
+		t.Fatalf("unexpected agent risk tiers: %#v", match.AgentRiskTiers)
+	}
+	if len(match.AgentDataClassifications) != 2 || match.AgentDataClassifications[1] != "secrets" {
+		t.Fatalf("unexpected agent data classifications: %#v", match.AgentDataClassifications)
+	}
+}
+
 func TestParseSafetyPolicyInvalidDefaultDecision(t *testing.T) {
 	_, err := ParseSafetyPolicy([]byte(`default_decision: maybe`))
 	if err == nil {
