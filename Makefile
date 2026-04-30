@@ -5,7 +5,7 @@ PROTO_FILES = api.proto context.proto output_policy.proto
 OPENAPI_OUT = docs/api/openapi
 
 BIN_DIR ?= bin
-SERVICES = cordum-api-gateway cordum-scheduler cordum-safety-kernel cordum-workflow-engine cordum-context-engine cordum-mcp cordumctl
+SERVICES = cordum-api-gateway cordum-scheduler cordum-safety-kernel cordum-workflow-engine cordum-context-engine cordum-mcp cordumctl cordum-hook
 
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -91,7 +91,7 @@ help:
 	@echo ""
 	@echo "  make help               Show this help message"
 	@echo "  make build              Build all services (runs proto first)"
-	@echo "  make build SERVICE=X    Build a single service (e.g. SERVICE=cordum-scheduler)"
+	@echo "  make build SERVICE=X    Build a single service (e.g. SERVICE=cordum-scheduler or cordum-hook)"
 	@echo "  make proto              Regenerate protobuf Go code"
 	@echo "  make test               Run all Go tests"
 	@echo "  make test-integration   Run integration tests (requires Docker)"

@@ -688,6 +688,12 @@ scanners:
 | `OUTPUT_POLICY_ENABLED` | `false` | No | Enable output policy scanning: `true`, `1` |
 | `CORDUM_TENANT_ID` | — | No | Default tenant ID for SDK/MCP clients |
 | `CORDUM_INSTANCE_ID` | `os.Hostname()` | No | Override pod name used in Prometheus `pod` label. Defaults to hostname; falls back to `"unknown"` |
+| `CORDUM_HOOK_MAX_INPUT_BYTES` | `1048576` | No | Maximum stdin JSON payload size for `cordum-hook`; values above 8 MiB are ignored. |
+| `CORDUM_AGENTD_HOOK_TIMEOUT` | `10s` | No | Deadline for `cordum-hook` stdin read and local agentd decision calls. |
+| `CORDUM_AGENTD_URL` | `http://127.0.0.1:8765/v1/edge/hooks/claude` | No | Loopback-only local agentd decision endpoint used by `cordum-hook`; remote hosts are rejected. |
+| `CORDUM_AGENTD_FAIL_CLOSED` | `false` | No | When true, `cordum-hook` blocks/fails closed if local agentd is unavailable or returns an invalid response. |
+| `CORDUM_EDGE_MODE` | `observe` | No | Edge local hook mode: `observe`, `local-dev-enforce`, or `enterprise-strict`. |
+| `CORDUM_EDGE_EXECUTION_ID` | — | No | Optional Edge execution correlation ID forwarded from `cordum-hook` to local agentd. |
 
 > **Prometheus pod label**: All Cordum metrics include a `pod` const label (`os.Hostname()` or `CORDUM_INSTANCE_ID`) so Prometheus can distinguish replicas in HA deployments. Use `sum by (pod) (cordum_scheduler_jobs_received_total)` for per-replica breakdown.
 
@@ -1108,6 +1114,7 @@ The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for
 ## Cross-References
 
 - [configuration.md](configuration.md) — Quick-start config overview
+- [edge/cordum-hook.md](edge/cordum-hook.md) — Cordum Edge Claude command hook contract
 - [guides/tls-setup.md](guides/tls-setup.md) — TLS setup and troubleshooting
 - [safety-kernel.md](safety-kernel.md) — Safety kernel architecture and evaluation
 - [output-policy.md](output-policy.md) — Output scanning and quarantine system

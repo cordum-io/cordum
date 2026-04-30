@@ -5,6 +5,7 @@ Complete command reference for `cordumctl`, the Cordum control-plane CLI.
 For REST API endpoints, see [api-reference.md](api-reference.md).
 For pack format details, see [pack.md](pack.md).
 For configuration, see [configuration-reference.md](configuration-reference.md).
+For the Cordum Edge Claude hook binary, see [edge/cordum-hook.md](edge/cordum-hook.md).
 
 ---
 
