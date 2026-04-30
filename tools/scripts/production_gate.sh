@@ -10,6 +10,10 @@ CURL_TIMEOUT_OPTS=(
   --connect-timeout "${CURL_CONNECT_TIMEOUT_SECONDS:-5}"
   --max-time "${CURL_MAX_TIME_SECONDS:-15}"
 )
+QUICK_CURL_TIMEOUT_OPTS=(
+  --connect-timeout "${CURL_QUICK_CONNECT_TIMEOUT_SECONDS:-2}"
+  --max-time "${CURL_QUICK_MAX_TIME_SECONDS:-5}"
+)
 
 require() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -205,6 +209,24 @@ api_call() {
     api_body "${method}" "${path}" "${JSON_HEADERS[@]}" -d "${data}"
   else
     api_body "${method}" "${path}"
+  fi
+}
+
+api_body_quick() {
+  local method="$1"
+  local path="$2"
+  shift 2
+  curl -sS -X "${method}" "${QUICK_CURL_TIMEOUT_OPTS[@]}" "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "$@" "$(api_url "${path}")" 2>/dev/null
+}
+
+api_call_quick() {
+  local method="$1"
+  local path="$2"
+  local data="$3"
+  if [[ -n "${data}" ]]; then
+    api_body_quick "${method}" "${path}" "${JSON_HEADERS[@]}" -d "${data}"
+  else
+    api_body_quick "${method}" "${path}"
   fi
 }
 
@@ -578,7 +600,7 @@ gate_3_workflows() {
   local run_body timeline code
   local cancel_wf_payload cancel_wf_resp cancel_wf_id
   local ts
-  local policy_ready=0 policy_probe policy_decision
+  local policy_ready=0 policy_probe policy_decision policy_attempt
 
   ensure_mock_bank_pack
   ensure_mock_bank_worker
@@ -590,8 +612,10 @@ gate_3_workflows() {
   # so the deriver can compute the low-risk bucket deterministically.
   policy_probe="$(jq -cn --arg tenant "${TENANT_ID}" \
     '{tenant: $tenant, topic: "job.demo-mock-bank.transfer", labels: {"_content.payload_json": "{\"amount\":10}"}, meta: {risk_tags: ["finance", "transfer", "low"]}}')"
-  for _ in {1..60}; do
-    policy_decision="$(api_call POST /policy/evaluate "${policy_probe}" | jq -r '.decision // empty' 2>/dev/null || true)"
+  # Gate 3 is advisory in CI. Use short, non-retried readiness probes so an
+  # unavailable or slow policy path cannot consume the whole integration job.
+  for (( policy_attempt=1; policy_attempt<=${GATE3_POLICY_READY_ATTEMPTS:-12}; policy_attempt++ )); do
+    policy_decision="$(api_call_quick POST /policy/evaluate "${policy_probe}" | jq -r '.decision // empty' 2>/dev/null || true)"
     case "${policy_decision}" in
       ALLOW|DECISION_TYPE_ALLOW)
         policy_ready=1
@@ -601,7 +625,7 @@ gate_3_workflows() {
     sleep 1
   done
   [[ "${policy_ready}" == "1" ]] || {
-    echo "mock-bank policy not ready for auto workflow (decision=${policy_decision:-empty})" >&2
+    echo "mock-bank policy not ready for auto workflow after bounded probe (decision=${policy_decision:-empty})" >&2
     return 1
   }
 
@@ -922,7 +946,7 @@ gate_6_performance() {
   local p50 p95 p99 error_rate
   local start_all
   local jobs_json stuck_count idle_wait
-  local policy_probe policy_decision policy_ready=0
+  local policy_probe policy_decision policy_ready=0 policy_attempt
 
   declare -a job_ids
   declare -a latencies
@@ -938,8 +962,8 @@ gate_6_performance() {
   # so the gateway injects _content.payload_json for the safety kernel.
   policy_probe="$(jq -cn --arg tenant "${TENANT_ID}" \
     '{tenant: $tenant, topic: "job.demo-mock-bank.transfer", labels: {"_content.payload_json": "{\"amount\":10}"}, meta: {risk_tags: ["finance", "transfer", "low"]}}')"
-  for _ in {1..60}; do
-    policy_decision="$(api_call POST /policy/evaluate "${policy_probe}" | jq -r '.decision // empty' 2>/dev/null || true)"
+  for (( policy_attempt=1; policy_attempt<=${GATE6_POLICY_READY_ATTEMPTS:-12}; policy_attempt++ )); do
+    policy_decision="$(api_call_quick POST /policy/evaluate "${policy_probe}" | jq -r '.decision // empty' 2>/dev/null || true)"
     case "${policy_decision}" in
       ALLOW|DECISION_TYPE_ALLOW)
         policy_ready=1
