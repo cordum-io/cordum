@@ -31,6 +31,12 @@ Production Claude Code enforcement must use:
 - Explicit timeout and degraded/fail-closed behavior.
 - Structured deny JSON or command-hook exit-code semantics that block when a decision cannot be produced in strict modes.
 
+### Production-shaped P0
+
+EDGE-000's HTTP hook server is a disposable spike, but P0 after this ADR must be production-shaped rather than a separate throwaway demo. The demo and docs should exercise the real P0 architecture path with feature flags and safe defaults: command hook, local `cordum-agentd`, Gateway Edge APIs, Safety Kernel policy/evaluate, approvals, redaction, EdgeSession/AgentActionEvent logs, audit events, artifact pointers, dashboard, docs, and tests.
+
+Do not build a separate demo-only stack that has to be deleted or rebuilt for production. Demo polish belongs on top of the production-shaped components and their failure modes.
+
 ### AgentExecution semantics
 
 `Job` remains Cordum's production work unit. Do not turn every agent action, coding-agent session, or hook callback into a `Job`, and do not duplicate the existing Job lifecycle state inside `AgentExecution`.
