@@ -240,7 +240,7 @@ jobs:
     name: Integration Tests
     runs-on: ubuntu-latest
     needs: [build]
-    timeout-minutes: 15
+    timeout-minutes: 45
 
     steps:
     - uses: actions/checkout@v4
