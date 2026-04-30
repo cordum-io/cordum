@@ -1096,7 +1096,7 @@ gate_7_security() {
       # MSYS process spawning is slow enough to refill token buckets before a
       # shell/xargs burst completes. Use one Python process with threads so the
       # gate actually exercises the public rate limiter instead of the shell.
-      rate_limited="$(API_BASE="${API_BASE}" CORDUM_TLS_CA="${CORDUM_TLS_CA:-}" BURST="${attempt_burst}" PARALLEL="${attempt_parallel}" python - <<'PY'
+      rate_limited="$(API_BASE="${API_BASE}" API_KEY="${API_KEY}" TENANT_ID="${TENANT_ID}" CORDUM_TLS_CA="${CORDUM_TLS_CA:-}" BURST="${attempt_burst}" PARALLEL="${attempt_parallel}" python - <<'PY'
 import concurrent.futures
 import os
 import ssl
@@ -1104,6 +1104,8 @@ import urllib.error
 import urllib.request
 
 api_base = os.environ["API_BASE"].rstrip("/")
+api_key = os.environ.get("API_KEY", "")
+tenant_id = os.environ.get("TENANT_ID", "")
 burst = int(os.environ.get("BURST", "500"))
 parallel = max(1, min(int(os.environ.get("PARALLEL", "50")), burst))
 ca = os.environ.get("CORDUM_TLS_CA", "").strip()
@@ -1114,7 +1116,12 @@ except Exception:
 
 def one(_):
     try:
-        with urllib.request.urlopen(api_base + "/health", context=ctx, timeout=5) as resp:
+        req = urllib.request.Request(api_base + "/health")
+        if api_key:
+            req.add_header("X-API-Key", api_key)
+        if tenant_id:
+            req.add_header("X-Tenant-ID", tenant_id)
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
             resp.read(1)
             return int(resp.status)
     except urllib.error.HTTPError as exc:
@@ -1136,7 +1143,7 @@ PY
       for _i in $(seq 1 "${attempt_burst}"); do
         (
           local _raw _code
-          _raw="$(curl -sS -w $'\n%{http_code}' "${CURL_TLS_OPTS[@]}" "${API_BASE}/health" 2>/dev/null || true)"
+          _raw="$(curl -sS -w $'\n%{http_code}' "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" "${API_BASE}/health" 2>/dev/null || true)"
           _code="$(printf '%s' "${_raw}" | tail -n 1 | tr -d '\r')"
           printf '%s' "${_code}" >"${tmp_dir}/${_i}"
         ) &
@@ -2495,7 +2502,7 @@ gate_16_degradation() {
     return 1
   }
   GATE16_SUBMITTER_KEY_ID="${submitter_key_id}"
-  trap '[[ -n "${GATE16_SUBMITTER_KEY_ID:-}" ]] && api_code DELETE "/auth/keys/${GATE16_SUBMITTER_KEY_ID}" >/dev/null 2>&1 || true; GATE16_SUBMITTER_KEY_ID=""; cleanup' EXIT
+  trap 'if [[ -n "${GATE16_SUBMITTER_KEY_ID:-}" ]]; then if api_code DELETE "/auth/keys/${GATE16_SUBMITTER_KEY_ID}" >/dev/null 2>&1; then GATE16_SUBMITTER_KEY_ID=""; fi; fi; cleanup' EXIT
 
   job_resp="$(curl -sS -X POST \
     "${CURL_TLS_OPTS[@]}" \
@@ -2505,8 +2512,11 @@ gate_16_degradation() {
     "$(api_url /jobs)" 2>/dev/null)" || true
   # The job stores the submitter identity at creation time; revoke the
   # temporary key immediately so repeated gate runs do not accumulate keys.
-  api_code DELETE "/auth/keys/${submitter_key_id}" >/dev/null 2>&1 || true
-  GATE16_SUBMITTER_KEY_ID=""
+  if api_code DELETE "/auth/keys/${submitter_key_id}" >/dev/null 2>&1; then
+    GATE16_SUBMITTER_KEY_ID=""
+  else
+    echo "warning: failed to delete gate16 submitter API key immediately; EXIT cleanup remains armed" >&2
+  fi
   approval_job="$(echo "${job_resp}" | jq -r '.job_id // empty' 2>/dev/null || true)"
   [[ -n "${approval_job}" ]] || {
     echo "failed to submit approval rejection test job" >&2
