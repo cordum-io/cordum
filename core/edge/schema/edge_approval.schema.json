@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cordum.io/schemas/edge/edge_approval.schema.json",
+  "title": "EdgeApproval",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "approval_ref",
+    "tenant_id",
+    "session_id",
+    "execution_id",
+    "event_id",
+    "principal_id",
+    "requester",
+    "resolver_id",
+    "resolved_by",
+    "status",
+    "decision",
+    "reason",
+    "resolution_reason",
+    "rule_id",
+    "policy_snapshot",
+    "action_hash",
+    "input_hash",
+    "created_at",
+    "expires_at",
+    "resolved_at",
+    "labels",
+    "metadata"
+  ],
+  "properties": {
+    "approval_ref": { "type": "string", "minLength": 1 },
+    "tenant_id": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "minLength": 1 },
+    "execution_id": { "type": "string", "minLength": 1 },
+    "event_id": { "type": "string", "minLength": 1 },
+    "principal_id": { "type": "string" },
+    "requester": { "type": "string" },
+    "resolver_id": { "type": "string" },
+    "resolved_by": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "approved", "rejected", "expired", "invalidated"]
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["approve", "reject", "expire", "invalidate"]
+    },
+    "reason": { "type": "string" },
+    "resolution_reason": { "type": "string" },
+    "rule_id": { "type": "string" },
+    "policy_snapshot": { "type": "string" },
+    "action_hash": { "type": "string" },
+    "input_hash": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": ["string", "null"], "format": "date-time" },
+    "resolved_at": { "type": ["string", "null"], "format": "date-time" },
+    "labels": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "type": "string", "minLength": 1, "maxLength": 128 },
+      "additionalProperties": { "type": "string", "maxLength": 512 }
+    },
+    "metadata": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "type": "string", "minLength": 1, "maxLength": 128 },
+      "additionalProperties": { "type": "string", "maxLength": 512 }
+    }
+  }
+}

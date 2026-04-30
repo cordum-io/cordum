@@ -1,0 +1,116 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cordum.io/schemas/edge/agent_action_event.schema.json",
+  "title": "AgentActionEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "session_id",
+    "execution_id",
+    "tenant_id",
+    "principal_id",
+    "seq",
+    "ts",
+    "layer",
+    "kind",
+    "agent_product",
+    "tool_name",
+    "tool_use_id",
+    "action_name",
+    "capability",
+    "risk_tags",
+    "input_redacted",
+    "input_hash",
+    "decision",
+    "decision_reason",
+    "rule_id",
+    "policy_snapshot",
+    "approval_ref",
+    "artifact_ptrs",
+    "duration_ms",
+    "status",
+    "error_code",
+    "error_message",
+    "labels"
+  ],
+  "properties": {
+    "event_id": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "minLength": 1 },
+    "execution_id": { "type": "string", "minLength": 1 },
+    "tenant_id": { "type": "string", "minLength": 1 },
+    "principal_id": { "type": "string" },
+    "seq": { "type": "integer", "minimum": 0 },
+    "ts": { "type": "string", "format": "date-time" },
+    "layer": { "type": "string", "enum": ["hook", "mcp", "llm", "runtime", "workflow", "system"] },
+    "kind": { "type": "string", "minLength": 1 },
+    "agent_product": { "type": "string" },
+    "tool_name": { "type": "string" },
+    "tool_use_id": { "type": "string" },
+    "action_name": { "type": "string" },
+    "capability": { "type": "string" },
+    "risk_tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "input_redacted": {
+      "type": "object",
+      "maxProperties": 64,
+      "additionalProperties": true
+    },
+    "input_hash": { "type": "string" },
+    "decision": {
+      "type": "string",
+      "enum": ["ALLOW", "DENY", "REQUIRE_APPROVAL", "THROTTLE", "CONSTRAIN", "RECORDED"]
+    },
+    "decision_reason": { "type": "string" },
+    "rule_id": { "type": "string" },
+    "policy_snapshot": { "type": "string" },
+    "approval_ref": { "type": ["string", "null"] },
+    "artifact_ptrs": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "artifact_type",
+          "session_id",
+          "execution_id",
+          "event_id",
+          "tenant_id",
+          "retention_class",
+          "redaction_level",
+          "sha256",
+          "uri",
+          "created_at"
+        ],
+        "properties": {
+          "artifact_type": {
+            "type": "string",
+            "enum": ["edge.transcript", "edge.diff", "edge.tool_input", "edge.tool_result", "edge.evidence_bundle"]
+          },
+          "session_id": { "type": "string", "minLength": 1 },
+          "execution_id": { "type": "string", "minLength": 1 },
+          "event_id": { "type": "string", "minLength": 1 },
+          "tenant_id": { "type": "string", "minLength": 1 },
+          "retention_class": { "type": "string", "enum": ["short", "standard", "audit"] },
+          "redaction_level": { "type": "string", "enum": ["standard", "strict"] },
+          "sha256": { "type": "string", "minLength": 1 },
+          "uri": { "type": "string", "minLength": 1 },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "duration_ms": { "type": "integer", "minimum": 0 },
+    "status": { "type": "string", "enum": ["ok", "blocked", "failed", "degraded"] },
+    "error_code": { "type": ["string", "null"] },
+    "error_message": { "type": ["string", "null"] },
+    "labels": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "type": "string", "minLength": 1, "maxLength": 128 },
+      "additionalProperties": { "type": "string", "maxLength": 512 }
+    }
+  }
+}

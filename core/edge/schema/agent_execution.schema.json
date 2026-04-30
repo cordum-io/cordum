@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cordum.io/schemas/edge/agent_execution.schema.json",
+  "title": "AgentExecution",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "execution_id",
+    "session_id",
+    "tenant_id",
+    "adapter",
+    "mode",
+    "workflow_run_id",
+    "step_id",
+    "job_id",
+    "attempt",
+    "trace_id",
+    "worker_id",
+    "policy_snapshot",
+    "status",
+    "started_at",
+    "ended_at",
+    "metrics",
+    "labels"
+  ],
+  "properties": {
+    "execution_id": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "minLength": 1 },
+    "tenant_id": { "type": "string", "minLength": 1 },
+    "adapter": {
+      "type": "string",
+      "enum": ["claude-code-hook", "mcp-gateway", "llm-proxy", "runtime-sidecar", "sdk-runner"]
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["local-dev", "enterprise-managed", "workflow", "ci", "prod-runner"]
+    },
+    "workflow_run_id": { "type": ["string", "null"] },
+    "step_id": { "type": "string" },
+    "job_id": { "type": ["string", "null"] },
+    "attempt": { "type": "integer", "minimum": 0 },
+    "trace_id": { "type": "string" },
+    "worker_id": { "type": "string" },
+    "policy_snapshot": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["running", "waiting_for_approval", "succeeded", "failed", "cancelled", "timeout", "degraded"]
+    },
+    "started_at": { "type": "string", "format": "date-time" },
+    "ended_at": { "type": ["string", "null"], "format": "date-time" },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["events", "allow", "deny", "require_approval", "artifacts", "llm_cost_usd"],
+      "properties": {
+        "events": { "type": "integer", "minimum": 0 },
+        "allow": { "type": "integer", "minimum": 0 },
+        "deny": { "type": "integer", "minimum": 0 },
+        "require_approval": { "type": "integer", "minimum": 0 },
+        "artifacts": { "type": "integer", "minimum": 0 },
+        "llm_cost_usd": { "type": "number", "minimum": 0 }
+      }
+    },
+    "labels": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": { "type": "string", "minLength": 1, "maxLength": 128 },
+      "additionalProperties": { "type": "string", "maxLength": 512 }
+    }
+  }
+}
