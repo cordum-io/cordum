@@ -101,7 +101,13 @@ func (c *HTTPAgentdClient) EvaluateHook(ctx context.Context, req AgentdRequest) 
 	if err != nil {
 		return AgentdDecision{}, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		// Drain any remaining body bytes so the underlying connection can be
+		// reused and the keep-alive pool stays healthy when an oversize body
+		// gets truncated by io.LimitReader below.
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
 		return AgentdDecision{}, fmt.Errorf("agentd status %d", resp.StatusCode)

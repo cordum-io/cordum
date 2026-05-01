@@ -66,7 +66,7 @@ func preToolUseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxHookRequestBytes)
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	var in HookInput
 	decoder := json.NewDecoder(r.Body)

@@ -18,8 +18,6 @@ const (
 	defaultMaxEventBytes = 128 * 1024
 )
 
-var errRedisStoreNotImplemented = errors.New("edge redis store: not implemented")
-
 // StoreOption customizes RedisStore behavior. Options are primarily used by
 // tests to pin clock and safety limits without changing production defaults.
 type StoreOption func(*RedisStore)

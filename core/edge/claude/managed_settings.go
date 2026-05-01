@@ -92,12 +92,19 @@ func GenerateManagedSettingsTemplate(opts ManagedSettingsOptions) (ManagedSettin
 }
 
 func validateManagedSettingsOptions(opts ManagedSettingsOptions) error {
+	// hook_command is intentionally absent: GenerateManagedSettingsTemplate
+	// fills in the built-in default via hookCommandOrDefault when the caller
+	// leaves opts.HookCommand empty, so requiring it here would make the
+	// happy path unreachable. The default is still validated for sensitive
+	// values via the loop below.
 	required := map[string]string{
-		"hook_command":           opts.HookCommand,
 		"agentd_url":             opts.AgentdURL,
 		"mcp_gateway_url":        opts.MCPGatewayURL,
 		"llm_proxy_base_url":     opts.LLMProxyBaseURL,
 		"api_key_helper_command": opts.APIKeyHelperCommand,
+	}
+	if opts.HookCommand != "" && containsSensitiveValue(opts.HookCommand) {
+		return fmt.Errorf("hook_command contains sensitive value")
 	}
 	for name, value := range required {
 		if strings.TrimSpace(value) == "" {

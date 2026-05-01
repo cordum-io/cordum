@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 )
 
 func Run(ctx context.Context, opts RunOptions) int {
@@ -216,6 +215,3 @@ func warnf(w io.Writer, format string, args ...any) {
 func isEmptyOutput(out ClaudeHookOutput) bool {
 	return out.Continue == nil && out.StopReason == "" && out.SuppressOutput == nil && out.SystemMessage == "" && out.Decision == "" && out.Reason == "" && out.HookSpecificOutput == nil
 }
-
-// Keep time imported for public timeout docs in generated package docs.
-var _ = time.Second

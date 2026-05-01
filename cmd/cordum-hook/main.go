@@ -61,7 +61,7 @@ func runCLI(ctx context.Context, opts cliOptions) int {
 }
 
 func writeUsage(w io.Writer) {
-	fmt.Fprint(w, `usage: cordum-hook claude <hook-event>
+	_, _ = fmt.Fprint(w, `usage: cordum-hook claude <hook-event>
 
 Supported Claude hook events:
   cordum-hook claude pre-tool-use

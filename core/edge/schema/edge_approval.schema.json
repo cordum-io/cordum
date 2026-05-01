@@ -12,19 +12,13 @@
     "event_id",
     "principal_id",
     "requester",
-    "resolver_id",
-    "resolved_by",
     "status",
-    "decision",
-    "reason",
-    "resolution_reason",
     "rule_id",
     "policy_snapshot",
     "action_hash",
     "input_hash",
     "created_at",
     "expires_at",
-    "resolved_at",
     "labels",
     "metadata"
   ],
@@ -44,7 +38,7 @@
     },
     "decision": {
       "type": "string",
-      "enum": ["approve", "reject", "expire", "invalidate"]
+      "enum": ["", "approve", "reject", "expire", "invalidate"]
     },
     "reason": { "type": "string" },
     "resolution_reason": { "type": "string" },
@@ -67,5 +61,42 @@
       "propertyNames": { "type": "string", "minLength": 1, "maxLength": 128 },
       "additionalProperties": { "type": "string", "maxLength": 512 }
     }
-  }
+  },
+  "allOf": [
+    {
+      "comment": "Pending approvals must not carry resolution data; terminal approvals must.",
+      "if": {
+        "properties": { "status": { "const": "pending" } },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "decision": { "type": "string", "enum": [""] },
+          "resolver_id": { "type": "string", "maxLength": 0 },
+          "resolved_by": { "type": "string", "maxLength": 0 },
+          "resolution_reason": { "type": "string", "maxLength": 0 },
+          "resolved_at": { "type": "null" }
+        }
+      },
+      "else": {
+        "required": [
+          "decision",
+          "resolver_id",
+          "resolved_by",
+          "resolution_reason",
+          "resolved_at"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": ["approve", "reject", "expire", "invalidate"]
+          },
+          "resolver_id": { "type": "string", "minLength": 1 },
+          "resolved_by": { "type": "string", "minLength": 1 },
+          "resolution_reason": { "type": "string", "minLength": 1 },
+          "resolved_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  ]
 }
