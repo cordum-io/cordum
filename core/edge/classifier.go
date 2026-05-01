@@ -573,7 +573,7 @@ const shellMetaCharacters = ";&|<>`$(){}\n\r"
 //
 //  1. The command contains no shell metacharacters (no composition,
 //     substitution, redirection, fork-bomb syntax), and
-//  2. argv[0] and the leading positional arguments match a narrow set drawn
+//  2. argv[0] and every argument match a narrow read-only/build-test set drawn
 //     from PRD §7.14 (Demo policy defaults) and §11.3 (allow-test-commands rule).
 //
 // Anything else returns ("", false) and the caller must classify the command
@@ -584,12 +584,19 @@ const shellMetaCharacters = ";&|<>`$(){}\n\r"
 //     `<cmd> run build [...args]`. Install/audit/publish are NOT safe.
 //   - go: only `go test [...]`, `go build [...]`. `go install`/`go get` are NOT safe.
 //   - cargo: only `cargo test [...]`, `cargo build [...]`. `cargo publish` NOT safe.
-//   - make: only `make build [...]`, `make test [...]`. Other targets NOT safe.
+//   - make: only `make build [...]` or `make test [...]` with optional `KEY=VAL`
+//     variable assignments. Additional positional targets (e.g. `make build clean`)
+//     and flags (`-f`, `-C`, etc.) disqualify the shape because Make targets are
+//     user-controlled in the local Makefile and `-f`/`-C` can swap the Makefile.
 //   - pytest, vitest: any args (no shell metas allowed by the gate above).
-//   - git: only read-only subcommands (status/log/diff/show/branch/tag).
-//     Leading global options (-c, -C, --git-dir, --work-tree) disqualify the
-//     shape even on read-only subcommands because they can swap config or
-//     repository scope (e.g. `git -c core.fsmonitor=evil-binary status`).
+//   - git: only read-only subcommands (status/log/diff/show). `branch` and `tag`
+//     are NOT safe — both can mutate state (`git branch -D foo`, `git tag -d foo`,
+//     `git branch foo` create). Leading global options (-c, -C, --git-dir,
+//     --work-tree) disqualify even read-only subcommands because they can swap
+//     config or repository scope (`git -c core.fsmonitor=evil-binary status`).
+//     Per-subcommand args are constrained to an explicit read-only flag allowlist;
+//     unknown flags or write-capable flags (`--output`, `-o`, `--ext-diff`,
+//     `--exec`, `-c`) are rejected to keep the allowlist strictly read-only.
 func safeShellShape(command string) (string, bool) {
 	folded := strings.TrimSpace(command)
 	if folded == "" {
@@ -636,7 +643,7 @@ func safeShellShape(command string) (string, bool) {
 			}
 		}
 	case "make":
-		if len(fields) >= 2 {
+		if len(fields) >= 2 && safeMakeArgs(fields[2:]) {
 			switch fields[1] {
 			case "build":
 				return "build", true
@@ -645,14 +652,223 @@ func safeShellShape(command string) (string, bool) {
 			}
 		}
 	case "git":
-		if len(fields) >= 2 {
-			switch fields[1] {
-			case "status", "log", "diff", "show", "branch", "tag":
-				return "git_readonly", true
-			}
+		if len(fields) >= 2 && safeGitReadonlyArgs(fields[1], fields[2:]) {
+			return "git_readonly", true
 		}
 	}
 	return "", false
+}
+
+// safeMakeArgs allows only `KEY=VAL` variable assignments after `make build|test`.
+// Any flag (`-f`, `-C`, `--no-print-directory`) or extra positional target like
+// `clean`, `install_evil` is rejected. POSIX make variable assignments are
+// `<NAME>=<VALUE>` where NAME starts with a letter or underscore and is
+// followed by alphanumerics or underscore.
+func safeMakeArgs(args []string) bool {
+	for _, arg := range args {
+		if !looksLikeMakeVarAssignment(arg) {
+			return false
+		}
+	}
+	return true
+}
+
+func looksLikeMakeVarAssignment(s string) bool {
+	if s == "" {
+		return false
+	}
+	eq := strings.IndexByte(s, '=')
+	if eq <= 0 {
+		return false
+	}
+	name := s[:eq]
+	for i, r := range name {
+		if i == 0 {
+			if !(r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')) {
+				return false
+			}
+			continue
+		}
+		if !(r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
+// safeGitReadonlyArgs validates a git readonly invocation: subcommand must be
+// status/log/diff/show, and every flag must match a small read-only allowlist
+// per subcommand. Unknown flags are rejected so write-capable forms like
+// `--output=FILE`, `-o FILE`, `--ext-diff`, `--exec=...`, `-c key=val` cannot
+// silently classify as safe.
+func safeGitReadonlyArgs(subcommand string, args []string) bool {
+	allowed, ok := safeGitReadonlyFlags[subcommand]
+	if !ok {
+		return false
+	}
+	for _, arg := range args {
+		if arg == "" {
+			return false
+		}
+		if !strings.HasPrefix(arg, "-") {
+			// Positional pathspecs and revision refs are accepted; any shell
+			// metacharacter is already blocked at the top of safeShellShape.
+			continue
+		}
+		// Short numeric context like -U5 or -C50 (rename detection threshold)
+		// is permitted on diff/show without naming each variant. The command
+		// has been lowercased by classifyBashCommand before it reaches here,
+		// so prefixes must be lowercase.
+		if subcommand == "diff" || subcommand == "show" {
+			if isShortNumericFlag(arg, "-u", "-b", "-m", "-c") {
+				continue
+			}
+			if isLongValueFlag(arg, "--unified=", "--break-rewrites=", "--find-renames=", "--find-copies=") {
+				continue
+			}
+		}
+		if subcommand == "log" {
+			// `-<N>` is git log shorthand for --max-count=N (e.g. `git log -10`).
+			if len(arg) >= 2 && arg[0] == '-' && isAllDigits(arg[1:]) {
+				continue
+			}
+			if isShortNumericFlag(arg, "-n") {
+				continue
+			}
+			if isLongValueFlag(arg, "--max-count=", "--skip=", "--since=", "--until=", "--author=", "--committer=", "--grep=") {
+				continue
+			}
+		}
+		if _, allowedFlag := allowed[arg]; allowedFlag {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// safeGitReadonlyFlags is the per-subcommand allowlist of inert read-only
+// flags. Anything not in this set (notably `--output`, `-o`, `--ext-diff`,
+// `--exec`, `-c`, `-O`, format-specifying writers like `--output-indicator-*`)
+// is rejected by safeGitReadonlyArgs so a future option that exposes a
+// write/exec sink does not silently get classified as safe.
+var safeGitReadonlyFlags = map[string]map[string]struct{}{
+	"status": {
+		"-s": {}, "--short": {},
+		"-b": {}, "--branch": {},
+		"--porcelain": {}, "--porcelain=v1": {}, "--porcelain=v2": {},
+		"--long":            {},
+		"--show-stash":      {},
+		"--ahead-behind":    {},
+		"--no-ahead-behind": {},
+		"--untracked-files": {}, "--untracked-files=all": {}, "--untracked-files=normal": {}, "--untracked-files=no": {},
+		"--ignored":    {},
+		"--no-renames": {},
+		"--renames":    {},
+		"-z":           {},
+		"--":           {},
+	},
+	"log": {
+		"--oneline":       {},
+		"--graph":         {},
+		"--all":           {},
+		"--decorate":      {},
+		"--no-decorate":   {},
+		"--abbrev-commit": {},
+		"--no-color":      {},
+		"--name-only":     {},
+		"--name-status":   {},
+		"--stat":          {},
+		"--shortstat":     {},
+		"--summary":       {},
+		"--reverse":       {},
+		"--first-parent":  {},
+		"--merges":        {},
+		"--no-merges":     {},
+		"--":              {},
+	},
+	"diff": {
+		"--staged":              {},
+		"--cached":              {},
+		"--name-only":           {},
+		"--name-status":         {},
+		"--stat":                {},
+		"--shortstat":           {},
+		"--summary":             {},
+		"--no-color":            {},
+		"-w":                    {},
+		"-b":                    {},
+		"--ignore-all-space":    {},
+		"--ignore-space-change": {},
+		"--ignore-blank-lines":  {},
+		"--check":               {},
+		"--exit-code":           {},
+		"--quiet":               {},
+		"--no-renames":          {},
+		"--minimal":             {},
+		"--patience":            {},
+		"--histogram":           {},
+		"--":                    {},
+	},
+	"show": {
+		"--stat":        {},
+		"--shortstat":   {},
+		"--summary":     {},
+		"--name-only":   {},
+		"--name-status": {},
+		"--no-color":    {},
+		"-s":            {},
+		"--no-patch":    {},
+		"--":            {},
+	},
+}
+
+// isShortNumericFlag reports whether arg is one of the prefixes followed by an
+// optional numeric value (e.g. `-U5`, `-C50`). Bare prefix without the digit
+// is also accepted because git treats `-U` followed by a separate token as
+// the value, but we already require the value-token to be a positional
+// (handled by the per-arg loop in safeGitReadonlyArgs).
+func isShortNumericFlag(arg string, prefixes ...string) bool {
+	for _, p := range prefixes {
+		if !strings.HasPrefix(arg, p) {
+			continue
+		}
+		rest := arg[len(p):]
+		if rest == "" {
+			return true
+		}
+		for _, r := range rest {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// isLongValueFlag reports whether arg matches one of the `--name=...` value
+// flags. Empty value is allowed; the value content is not introspected because
+// the shell-meta gate already rejects metacharacter values.
+func isLongValueFlag(arg string, prefixes ...string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(arg, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func hasAnyToken(value string, tokens []string) bool {

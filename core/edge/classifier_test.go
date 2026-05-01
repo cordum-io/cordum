@@ -771,3 +771,133 @@ func TestClassifyShellNarrowAllowlistRejectsRiskyShapes(t *testing.T) {
 		})
 	}
 }
+
+// TestClassifyShellQARejectionRegressions pins down the EDGE-008.6 reopen-fix
+// scope from QA-694a (msg-75b086ab) + architect-989f (msg-fae363bd):
+//   - `git branch`/`git tag` are state-mutating and must not be safe.
+//   - `git diff`/`git show` with write/exec flags (`--output`, `-o`,
+//     `--ext-diff`) must not be safe.
+//   - `git status`/`git log` with config-override `-c` or unknown flags must
+//     not be safe.
+//   - `make build`/`make test` with extra positional targets (e.g.
+//     `make build clean`) or alt-Makefile flags (`-f`, `-C`) must not be safe.
+//   - `make build CC=clang` (KEY=VAL variable assignment) MUST remain safe so
+//     ordinary build invocations are not falsely demoted to review_required.
+//   - Known read-only flags on git diff/log/show MUST remain safe so the
+//     allowlist isn't so narrow it breaks normal usage.
+func TestClassifyShellQARejectionRegressions(t *testing.T) {
+	base := time.Date(2026, 5, 2, 10, 15, 0, 0, time.UTC)
+
+	t.Run("git_branch_unsafe", func(t *testing.T) {
+		assertClassifierNotSafe(t, base, "git branch")
+		assertClassifierNotSafe(t, base, "git branch -D feature")
+		assertClassifierNotSafe(t, base, "git branch new-feature")
+	})
+
+	t.Run("git_tag_unsafe", func(t *testing.T) {
+		assertClassifierNotSafe(t, base, "git tag")
+		assertClassifierNotSafe(t, base, "git tag -d v1.0.0")
+		assertClassifierNotSafe(t, base, "git tag v1.0.0")
+	})
+
+	t.Run("git_diff_with_output_rejected", func(t *testing.T) {
+		assertClassifierNotSafe(t, base, "git diff --output=/etc/passwd")
+		assertClassifierNotSafe(t, base, "git diff --output=/tmp/leak HEAD~1")
+	})
+
+	t.Run("git_show_with_output_rejected", func(t *testing.T) {
+		assertClassifierNotSafe(t, base, "git show --output=/etc/passwd HEAD")
+	})
+
+	t.Run("git_diff_ext_diff_rejected", func(t *testing.T) {
+		assertClassifierNotSafe(t, base, "git diff --ext-diff")
+		assertClassifierNotSafe(t, base, "git diff --no-ext-diff")
+	})
+
+	t.Run("git_diff_short_o_rejected", func(t *testing.T) {
+		// -o is the short alias; reject even when followed by a path token.
+		assertClassifierNotSafe(t, base, "git diff -o /tmp/leak")
+	})
+
+	t.Run("git_status_with_config_override_rejected", func(t *testing.T) {
+		// -c after subcommand is interpreted by the subcommand and is not in
+		// the allowlist; reject so future git versions cannot silently expose
+		// a write/exec sink under git status.
+		assertClassifierNotSafe(t, base, "git status -c core.fsmonitor=evil")
+	})
+
+	t.Run("git_log_with_unknown_flag_rejected", func(t *testing.T) {
+		// --output is not in the log allowlist; reject so future git releases
+		// cannot expose a write sink unnoticed.
+		assertClassifierNotSafe(t, base, "git log --output=/tmp/leak")
+	})
+
+	t.Run("make_multi_target_rejected", func(t *testing.T) {
+		assertClassifierNotSafe(t, base, "make build clean")
+		assertClassifierNotSafe(t, base, "make test install_evil")
+		assertClassifierNotSafe(t, base, "make build clean install")
+	})
+
+	t.Run("make_with_alt_makefile_rejected", func(t *testing.T) {
+		assertClassifierNotSafe(t, base, "make -f /tmp/evil.mk build")
+		assertClassifierNotSafe(t, base, "make build -f /tmp/evil.mk")
+		assertClassifierNotSafe(t, base, "make -C /tmp/evil build")
+	})
+
+	t.Run("make_with_var_assignment_safe", func(t *testing.T) {
+		assertClassifierSafe(t, base, "make build CC=clang", "build")
+		assertClassifierSafe(t, base, "make build CC=clang OPTIMIZE=-O3", "build")
+		assertClassifierSafe(t, base, "make test VERBOSE=1", "test")
+	})
+
+	t.Run("git_diff_known_readonly_flags_safe", func(t *testing.T) {
+		assertClassifierSafe(t, base, "git diff --staged", "git_readonly")
+		assertClassifierSafe(t, base, "git diff --name-only", "git_readonly")
+		assertClassifierSafe(t, base, "git diff --stat HEAD~1", "git_readonly")
+		assertClassifierSafe(t, base, "git diff -U5 HEAD", "git_readonly")
+	})
+
+	t.Run("git_log_known_readonly_flags_safe", func(t *testing.T) {
+		assertClassifierSafe(t, base, "git log --oneline -10", "git_readonly")
+		assertClassifierSafe(t, base, "git log --stat --max-count=5", "git_readonly")
+	})
+}
+
+func assertClassifierNotSafe(t *testing.T, base time.Time, command string) {
+	t.Helper()
+	event := classifierHookEvent(base, "Bash", map[string]any{"command": command})
+	got, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent(%q) returned error: %v", command, err)
+	}
+	if got.Labels["command.class"] == "safe" {
+		t.Fatalf("command %q must not be safe; labels=%#v risk=%#v", command, got.Labels, got.RiskTags)
+	}
+	switch got.Labels["command.family"] {
+	case "test", "build", "git_readonly":
+		t.Fatalf("command %q must not get safe family=%q", command, got.Labels["command.family"])
+	}
+	denyCapable := containsString(got.RiskTags, "review_required") ||
+		containsString(got.RiskTags, "destructive") ||
+		containsString(got.RiskTags, "network") ||
+		containsString(got.RiskTags, "install") ||
+		containsString(got.RiskTags, "deploy")
+	if !denyCapable {
+		t.Fatalf("command %q has no deny-capable risk tag; risk=%#v", command, got.RiskTags)
+	}
+}
+
+func assertClassifierSafe(t *testing.T, base time.Time, command, family string) {
+	t.Helper()
+	event := classifierHookEvent(base, "Bash", map[string]any{"command": command})
+	got, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent(%q) returned error: %v", command, err)
+	}
+	if got.Labels["command.class"] != "safe" {
+		t.Fatalf("safe command %q got class=%q; want safe; labels=%#v risk=%#v", command, got.Labels["command.class"], got.Labels, got.RiskTags)
+	}
+	if got.Labels["command.family"] != family {
+		t.Fatalf("safe command %q got family=%q; want %q", command, got.Labels["command.family"], family)
+	}
+}
