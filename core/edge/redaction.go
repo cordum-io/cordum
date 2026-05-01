@@ -365,7 +365,13 @@ func redactSlice(values []any, path string, depth int, opts normalizedRedactionO
 	if limit > opts.maxItems {
 		limit = opts.maxItems
 	}
-	out := make([]any, 0, limit+1)
+
+	capacity := limit
+	if len(values) > opts.maxItems && capacity < math.MaxInt {
+		capacity++
+	}
+
+	out := make([]any, 0, capacity)
 	for i := 0; i < limit; i++ {
 		out = append(out, redactAny(values[i], joinPath(path, strconv.Itoa(i)), depth+1, opts, state))
 	}
