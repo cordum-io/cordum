@@ -13,7 +13,7 @@ import (
 // writeEdgeSettingsOutput writes generated Claude settings to stdout when the
 // output path is "-" and otherwise creates a new file without overwriting an
 // existing operator-managed settings file.
-func writeEdgeSettingsOutput(stdout io.Writer, outputPath string, payload []byte) error {
+func writeEdgeSettingsOutput(stdout io.Writer, outputPath string, payload []byte) (err error) {
 	if stdout == nil {
 		stdout = io.Discard
 	}
@@ -38,7 +38,11 @@ func writeEdgeSettingsOutput(stdout io.Writer, outputPath string, payload []byte
 	if err != nil {
 		return fmt.Errorf("create settings output %s: %w", clean, err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close settings output %s: %w", clean, cerr)
+		}
+	}()
 	if _, err := f.Write(payload); err != nil {
 		return fmt.Errorf("write settings output %s: %w", clean, err)
 	}
