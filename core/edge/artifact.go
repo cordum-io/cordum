@@ -22,6 +22,13 @@ import (
 // trusts that every pointer on a session's events belongs to that session;
 // allowing a tenant-B pointer to land on a tenant-A event would let an
 // attacker splice cross-tenant evidence into the audit trail.
+//
+// Concurrency: this helper is NOT safe to call on the same *AgentActionEvent
+// from multiple goroutines. The slice append + duplicate scan is unsynchronized;
+// concurrent attaches on the same event can lose pointers or panic on a
+// concurrent slice grow. Callers must serialize attaches per-event (in
+// practice events are owned by a single hook→agentd flow, so this is
+// trivial — the constraint is documented to keep that property intentional).
 func AttachArtifactPointer(event *AgentActionEvent, ptr ArtifactPointer) error {
 	if event == nil {
 		return fmt.Errorf("event is required")
