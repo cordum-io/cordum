@@ -14,10 +14,12 @@ import (
 )
 
 const (
-	edgeRouteTestAPIKey  = "edge-route-test-key"
-	edgeRouteTenant      = "tenant-edge-a"
-	edgeRouteOtherAPIKey = "edge-route-other-key"
-	edgeRouteOtherTenant = "tenant-edge-b"
+	edgeRouteTestAPIKey     = "edge-route-test-key"
+	edgeRouteReviewerAPIKey = "edge-route-reviewer-key"
+	edgeRouteViewerAPIKey   = "edge-route-viewer-key"
+	edgeRouteTenant         = "tenant-edge-a"
+	edgeRouteOtherAPIKey    = "edge-route-other-key"
+	edgeRouteOtherTenant    = "tenant-edge-b"
 )
 
 type edgeRouteExpectation struct {
@@ -473,6 +475,8 @@ func newEdgeRouteTestServer(t *testing.T) (*server, http.Handler) {
 	s.auth = newBasicAuthForTest(t, map[string]string{
 		"CORDUM_API_KEYS": `[` +
 			`{"key":"` + edgeRouteTestAPIKey + `","tenant":"` + edgeRouteTenant + `","role":"admin","principal_id":"principal-edge-a"},` +
+			`{"key":"` + edgeRouteReviewerAPIKey + `","tenant":"` + edgeRouteTenant + `","role":"admin","principal_id":"principal-reviewer"},` +
+			`{"key":"` + edgeRouteViewerAPIKey + `","tenant":"` + edgeRouteTenant + `","role":"viewer","principal_id":"principal-viewer"},` +
 			`{"key":"` + edgeRouteOtherAPIKey + `","tenant":"` + edgeRouteOtherTenant + `","role":"admin","principal_id":"principal-edge-b"}` +
 			`]`,
 	})
@@ -622,6 +626,10 @@ func edgeRouteExpectations() []edgeRouteExpectation {
 		{method: http.MethodPost, path: "/api/v1/edge/executions"},
 		{method: http.MethodGet, path: "/api/v1/edge/executions/{execution_id}"},
 		{method: http.MethodPost, path: "/api/v1/edge/executions/{execution_id}/end"},
+		{method: http.MethodGet, path: "/api/v1/edge/approvals"},
+		{method: http.MethodGet, path: "/api/v1/edge/approvals/{approval_ref}"},
+		{method: http.MethodPost, path: "/api/v1/edge/approvals/{approval_ref}/approve"},
+		{method: http.MethodPost, path: "/api/v1/edge/approvals/{approval_ref}/reject"},
 		{method: http.MethodPost, path: "/api/v1/edge/evaluate"},
 	}
 }

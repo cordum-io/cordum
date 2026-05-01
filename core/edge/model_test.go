@@ -41,7 +41,7 @@ func TestEdgeContractsJSONRoundTripUsePRDSnakeCaseFields(t *testing.T) {
 	assertJSONKeys(t, approval, []string{
 		"approval_ref", "tenant_id", "session_id", "execution_id", "event_id", "principal_id", "requester",
 		"resolver_id", "resolved_by", "status", "decision", "reason", "resolution_reason", "rule_id",
-		"policy_snapshot", "action_hash", "input_hash", "created_at", "expires_at", "resolved_at", "labels", "metadata",
+		"policy_snapshot", "action_hash", "input_hash", "created_at", "expires_at", "resolved_at", "consumed_at", "labels", "metadata",
 	})
 
 	assertRoundTrip(t, session)
@@ -381,27 +381,23 @@ func validArtifactPointer(started time.Time) ArtifactPointer {
 func validEdgeApproval(started time.Time) EdgeApproval {
 	expires := started.Add(5 * time.Minute)
 	return EdgeApproval{
-		ApprovalRef:      "edge_appr_01J",
-		TenantID:         "tenant-a",
-		SessionID:        "edge_sess_01J",
-		ExecutionID:      "exec_01J",
-		EventID:          "evt_01J",
-		PrincipalID:      "user-a",
-		Requester:        "user-a",
-		ResolverID:       "approver-a",
-		ResolvedBy:       "approver-a",
-		Status:           ApprovalStatusPending,
-		Decision:         ApprovalDecisionApprove,
-		Reason:           "Editing protected files requires approval",
-		ResolutionReason: "Approved for demo",
-		RuleID:           "edge.require-approval",
-		PolicySnapshot:   "sha256:policy",
-		ActionHash:       "sha256:action",
-		InputHash:        "sha256:input",
-		CreatedAt:        started,
-		ExpiresAt:        &expires,
-		Labels:           Labels{"source": "dashboard"},
-		Metadata:         Metadata{"ticket": "SEC-123"},
+		ApprovalRef:    "edge_appr_01J",
+		TenantID:       "tenant-a",
+		SessionID:      "edge_sess_01J",
+		ExecutionID:    "exec_01J",
+		EventID:        "evt_01J",
+		PrincipalID:    "user-a",
+		Requester:      "user-a",
+		Status:         ApprovalStatusPending,
+		Reason:         "Editing protected files requires approval",
+		RuleID:         "edge.require-approval",
+		PolicySnapshot: "sha256:policy",
+		ActionHash:     "sha256:action",
+		InputHash:      "sha256:input",
+		CreatedAt:      started,
+		ExpiresAt:      &expires,
+		Labels:         Labels{"source": "dashboard"},
+		Metadata:       Metadata{"ticket": "SEC-123"},
 	}
 }
 

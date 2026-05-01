@@ -153,10 +153,22 @@ func (a EdgeApproval) Validate() error {
 	if err := requireString("approval_ref", a.ApprovalRef); err != nil {
 		return err
 	}
+	if err := requireString("principal_id", a.PrincipalID); err != nil {
+		return err
+	}
+	if err := requireString("requester", a.Requester); err != nil {
+		return err
+	}
+	if err := requireString("policy_snapshot", a.PolicySnapshot); err != nil {
+		return err
+	}
+	if err := requireString("action_hash", a.ActionHash); err != nil {
+		return err
+	}
 	if err := validateApprovalStatus(a.Status); err != nil {
 		return err
 	}
-	if err := validateApprovalDecision(a.Decision); err != nil {
+	if err := validateApprovalDecisionForStatus(a.Status, a.Decision); err != nil {
 		return err
 	}
 	if err := requireTime("created_at", a.CreatedAt); err != nil {
@@ -167,6 +179,48 @@ func (a EdgeApproval) Validate() error {
 	}
 	if a.ResolvedAt != nil && a.ResolvedAt.Before(a.CreatedAt) {
 		return fmt.Errorf("resolved_at must be >= created_at")
+	}
+	if a.ConsumedAt != nil && a.ConsumedAt.Before(a.CreatedAt) {
+		return fmt.Errorf("consumed_at must be >= created_at")
+	}
+	if a.ConsumedAt != nil && a.ResolvedAt != nil && a.ConsumedAt.Before(*a.ResolvedAt) {
+		return fmt.Errorf("consumed_at must be >= resolved_at")
+	}
+	if a.Status == ApprovalStatusPending {
+		if a.Decision != "" {
+			return fmt.Errorf("decision must be empty for pending approval")
+		}
+		if strings.TrimSpace(a.ResolverID) != "" {
+			return fmt.Errorf("resolver_id must be empty for pending approval")
+		}
+		if strings.TrimSpace(a.ResolvedBy) != "" {
+			return fmt.Errorf("resolved_by must be empty for pending approval")
+		}
+		if strings.TrimSpace(a.ResolutionReason) != "" {
+			return fmt.Errorf("resolution_reason must be empty for pending approval")
+		}
+		if a.ResolvedAt != nil {
+			return fmt.Errorf("resolved_at must be empty for pending approval")
+		}
+		if a.ConsumedAt != nil {
+			return fmt.Errorf("consumed_at must be empty for pending approval")
+		}
+	} else {
+		if err := requireString("resolver_id", a.ResolverID); err != nil {
+			return err
+		}
+		if err := requireString("resolved_by", a.ResolvedBy); err != nil {
+			return err
+		}
+		if err := requireString("resolution_reason", a.ResolutionReason); err != nil {
+			return err
+		}
+		if a.ResolvedAt == nil {
+			return fmt.Errorf("resolved_at is required")
+		}
+		if a.ConsumedAt != nil && a.Status != ApprovalStatusApproved {
+			return fmt.Errorf("consumed_at is only valid for approved approvals")
+		}
 	}
 	if err := validateLabels("labels", a.Labels); err != nil {
 		return err
@@ -380,11 +434,40 @@ func validateApprovalStatus(value ApprovalStatus) error {
 
 func validateApprovalDecision(value ApprovalDecision) error {
 	switch value {
-	case ApprovalDecisionApprove, ApprovalDecisionReject, ApprovalDecisionExpire, ApprovalDecisionInvalidate:
+	case "", ApprovalDecisionApprove, ApprovalDecisionReject, ApprovalDecisionExpire, ApprovalDecisionInvalidate:
 		return nil
 	default:
 		return fmt.Errorf("decision has unsafe approval value %q", value)
 	}
+}
+
+func validateApprovalDecisionForStatus(status ApprovalStatus, decision ApprovalDecision) error {
+	if err := validateApprovalDecision(decision); err != nil {
+		return err
+	}
+	switch status {
+	case ApprovalStatusPending:
+		if decision != "" {
+			return fmt.Errorf("decision must be empty for pending approval")
+		}
+	case ApprovalStatusApproved:
+		if decision != ApprovalDecisionApprove {
+			return fmt.Errorf("decision must be approve for approved approval")
+		}
+	case ApprovalStatusRejected:
+		if decision != ApprovalDecisionReject {
+			return fmt.Errorf("decision must be reject for rejected approval")
+		}
+	case ApprovalStatusExpired:
+		if decision != ApprovalDecisionExpire {
+			return fmt.Errorf("decision must be expire for expired approval")
+		}
+	case ApprovalStatusInvalidated:
+		if decision != ApprovalDecisionInvalidate {
+			return fmt.Errorf("decision must be invalidate for invalidated approval")
+		}
+	}
+	return nil
 }
 
 func validateArtifactType(value ArtifactType) error {

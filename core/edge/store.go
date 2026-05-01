@@ -36,6 +36,14 @@ type Store interface {
 	AppendEvent(ctx context.Context, event AgentActionEvent) (AgentActionEvent, error)
 	AppendEvents(ctx context.Context, events []AgentActionEvent) ([]AgentActionEvent, error)
 	ListEvents(ctx context.Context, query ListEventsQuery) (EventPage, error)
+
+	EnqueueApproval(ctx context.Context, req EdgeApprovalRequest) (*EdgeApproval, error)
+	GetApproval(ctx context.Context, tenantID, approvalRef string) (*EdgeApproval, bool, error)
+	ListApprovals(ctx context.Context, query ListApprovalsQuery) (ApprovalPage, error)
+	ApproveApproval(ctx context.Context, req ApprovalResolution) (*EdgeApproval, error)
+	RejectApproval(ctx context.Context, req ApprovalResolution) (*EdgeApproval, error)
+	ClaimApproval(ctx context.Context, req ApprovalClaimRequest) (*EdgeApproval, bool, error)
+	ExpireApprovals(ctx context.Context, tenantID string, now time.Time) (int, error)
 }
 
 // ListSessionsQuery pages Edge sessions for one tenant. When PrincipalID is

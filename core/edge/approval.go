@@ -46,6 +46,7 @@ type EdgeApproval struct {
 	CreatedAt        time.Time        `json:"created_at"`
 	ExpiresAt        *time.Time       `json:"expires_at"`
 	ResolvedAt       *time.Time       `json:"resolved_at"`
+	ConsumedAt       *time.Time       `json:"consumed_at"`
 	Labels           Labels           `json:"labels"`
 	Metadata         Metadata         `json:"metadata"`
 }

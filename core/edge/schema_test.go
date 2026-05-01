@@ -21,6 +21,10 @@ func TestEmbeddedEdgeSchemasValidateGoodSamples(t *testing.T) {
 	event := validAgentActionEvent(started)
 	approval := validEdgeApproval(started)
 	approval.Status = ApprovalStatusApproved
+	approval.Decision = ApprovalDecisionApprove
+	approval.ResolverID = "approver-a"
+	approval.ResolvedBy = "approver-a"
+	approval.ResolutionReason = "Approved for schema test"
 	approval.ResolvedAt = &resolved
 
 	cases := []struct {

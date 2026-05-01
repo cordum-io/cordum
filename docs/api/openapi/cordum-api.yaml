@@ -746,6 +746,191 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/edge/approvals:
+    get:
+      operationId: listEdgeApprovals
+      summary: List Edge action approvals
+      description: Lists tenant-scoped Edge approval records for action-level governance. Raw action payloads are never returned; actions are represented by `event_id`, `action_hash`, `input_hash`, and `policy_snapshot`.
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum: [pending, approved, rejected, expired, invalidated]
+      - name: session_id
+        in: query
+        description: Optional tuple filter; must be supplied with `execution_id` and `action_hash`.
+        schema:
+          type: string
+      - name: execution_id
+        in: query
+        description: Optional tuple filter; must be supplied with `session_id` and `action_hash`.
+        schema:
+          type: string
+      - name: action_hash
+        in: query
+        description: Optional tuple filter; must be supplied with `session_id` and `execution_id`.
+        schema:
+          type: string
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      responses:
+        '200':
+          description: Edge approval page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeApprovalPageResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/edge/approvals/{approval_ref}:
+    get:
+      operationId: getEdgeApproval
+      summary: Get an Edge action approval
+      description: Returns one tenant-scoped Edge approval record. Cross-tenant requests are reported as not found and no raw tool/action payload is exposed.
+      tags:
+      - Edge
+      parameters:
+      - name: approval_ref
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^edge_appr_[A-Za-z0-9_-]+$
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Edge approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeApproval'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/edge/approvals/{approval_ref}/approve:
+    post:
+      operationId: approveEdgeApproval
+      summary: Approve an Edge action approval
+      description: Resolves a pending Edge approval as approved for one retry/consume. Requires approval/admin permission, enforces tenant scope and self-approval protection, and fails with 409 if the session/execution/event/action hash or policy snapshot is stale.
+      tags:
+      - Edge
+      parameters:
+      - name: approval_ref
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^edge_appr_[A-Za-z0-9_-]+$
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EdgeApprovalDecisionRequest'
+      responses:
+        '200':
+          description: Approved Edge approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeApproval'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Approval permission denied or self-approval rejected (`code=self_approval_denied`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/edge/approvals/{approval_ref}/reject:
+    post:
+      operationId: rejectEdgeApproval
+      summary: Reject an Edge action approval
+      description: Resolves a pending Edge approval as rejected. Requires approval/admin permission, enforces tenant scope and self-approval protection, and fails with 409 if the referenced Edge session/execution/event is stale.
+      tags:
+      - Edge
+      parameters:
+      - name: approval_ref
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^edge_appr_[A-Za-z0-9_-]+$
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EdgeApprovalDecisionRequest'
+      responses:
+        '200':
+          description: Rejected Edge approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeApproval'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Approval permission denied or self-approval rejected (`code=self_approval_denied`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/edge/evaluate:
     post:
       operationId: evaluateEdgeAction
@@ -7064,6 +7249,97 @@ components:
         ended_at:
           type: string
           format: date-time
+    EdgeApprovalDecisionRequest:
+      type: object
+      description: Human resolver note for approving or rejecting an Edge action approval.
+      properties:
+        reason:
+          type: string
+          maxLength: 4096
+    EdgeApprovalPageResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EdgeApproval'
+        next_cursor:
+          type: string
+          nullable: true
+    EdgeApproval:
+      type: object
+      description: Tenant-scoped action approval bound to an Edge session/execution/event, action hash, and policy snapshot. Raw action/tool payloads are not stored here; use hashes and artifact pointers for evidence.
+      required: [approval_ref, tenant_id, session_id, execution_id, event_id, principal_id, requester, status, reason, rule_id, policy_snapshot, action_hash, input_hash, created_at, expires_at]
+      properties:
+        approval_ref:
+          type: string
+          pattern: ^edge_appr_[A-Za-z0-9_-]+$
+        tenant_id:
+          type: string
+        session_id:
+          type: string
+        execution_id:
+          type: string
+        event_id:
+          type: string
+        principal_id:
+          type: string
+          description: Principal that requested the governed action.
+        requester:
+          type: string
+          description: Authenticated requester identity used for self-approval protection.
+        resolver_id:
+          type: string
+          description: Principal that approved/rejected/expired the approval.
+        resolved_by:
+          type: string
+          description: Display/audit identity for the resolver.
+        status:
+          type: string
+          enum: [pending, approved, rejected, expired, invalidated]
+        decision:
+          type: string
+          enum: ["", approve, reject, expire, invalidate]
+          description: Empty while pending; terminal decisions match status.
+        reason:
+          type: string
+          description: Trigger reason explaining why approval was required.
+        resolution_reason:
+          type: string
+          description: Resolver-provided reason or system expiry reason for terminal records.
+        rule_id:
+          type: string
+        policy_snapshot:
+          type: string
+          description: Redacted policy snapshot identifier; used to reject stale approvals.
+        action_hash:
+          type: string
+          description: Stable action hash. The raw action payload is not stored.
+        input_hash:
+          type: string
+          description: Stable hash of the redacted/bounded action input used for evidence correlation.
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        resolved_at:
+          type: string
+          format: date-time
+          nullable: true
+        consumed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Set once an approved approval is atomically claimed by the agent retry path.
+        labels:
+          $ref: '#/components/schemas/EdgeLabels'
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
     EdgeSession:
       type: object
       required: [session_id, tenant_id, principal_type, mode, trace_id, policy_mode, status, risk_summary, started_at]

@@ -49,6 +49,7 @@
     "created_at": { "type": "string", "format": "date-time" },
     "expires_at": { "type": ["string", "null"], "format": "date-time" },
     "resolved_at": { "type": ["string", "null"], "format": "date-time" },
+    "consumed_at": { "type": ["string", "null"], "format": "date-time" },
     "labels": {
       "type": "object",
       "maxProperties": 64,
@@ -75,7 +76,8 @@
           "resolver_id": { "type": "string", "maxLength": 0 },
           "resolved_by": { "type": "string", "maxLength": 0 },
           "resolution_reason": { "type": "string", "maxLength": 0 },
-          "resolved_at": { "type": "null" }
+          "resolved_at": { "type": "null" },
+          "consumed_at": { "type": "null" }
         }
       },
       "else": {
