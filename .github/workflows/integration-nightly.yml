@@ -1,0 +1,142 @@
+name: Integration (Nightly)
+
+# Integration tests + production gates are slow and environment-sensitive.
+# They run on a nightly schedule (and manually via workflow_dispatch) instead
+# of on every PR so PR feedback stays fast. Failures here are not gating —
+# fix them in a follow-up rather than blocking unrelated PRs.
+on:
+  schedule:
+    # 03:17 UTC daily — odd minute to avoid the top-of-hour runner contention.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  integration:
+    name: Integration Tests (Nightly)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
+        cache: false
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Generate API key
+      run: echo "CORDUM_API_KEY=$(openssl rand -hex 32)" >> $GITHUB_ENV
+
+    - name: Generate Redis password
+      run: echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> $GITHUB_ENV
+
+    - name: Generate TLS certificates
+      run: |
+        go run ./cmd/cordumctl generate-certs --dir ./certs
+        # Redis container runs as UID 999 — make certs world-readable
+        # (a+rX = read files + traverse directories).
+        chmod -R a+rX ./certs
+
+    - name: Start services
+      run: |
+        docker compose up -d --build
+        echo "Waiting for services to become healthy..."
+        for i in $(seq 1 60); do
+          healthy=$(docker compose ps --format json | jq -r 'select(.Health == "healthy") | .Name' | wc -l)
+          total=$(docker compose ps --format json | jq -r '.Name' | wc -l)
+          echo "  Healthy: $healthy / $total"
+          if [ "$healthy" -ge "$total" ] && [ "$total" -gt 0 ]; then
+            echo "All services healthy"
+            break
+          fi
+          if [ "$i" -eq 60 ]; then
+            echo "Timed out waiting for services"
+            docker compose logs
+            exit 1
+          fi
+          sleep 5
+        done
+      env:
+        CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+
+    - name: Run platform smoke
+      run: make smoke
+      env:
+        CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+
+    - name: Run Go integration tests
+      run: go test -v -tags=integration -timeout 10m ./...
+      env:
+        CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+        REDIS_URL: rediss://:${{ env.REDIS_PASSWORD }}@localhost:6379
+        REDIS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+        REDIS_TLS_INSECURE: "false"
+        NATS_URL: tls://localhost:4222
+        NATS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+        NATS_TLS_CERT: ${{ github.workspace }}/certs/client/tls.crt
+        NATS_TLS_KEY: ${{ github.workspace }}/certs/client/tls.key
+
+    - name: Run production gates (2-4, 8-17)
+      run: |
+        failed=0
+        # Gate 6 (Performance) skipped on shared CI runners — p95 is hardware-dependent
+        # --strict promotes the advisory gates (8, 10-17) to blocking so the
+        # nightly run actually fails when an advisory gate fails instead of
+        # producing a false-green.
+        for gate in 2 3 4 8 9 10 11 12 13 14 15 16 17; do
+          echo "=== Gate $gate ==="
+          if ! bash tools/scripts/production_gate.sh --gate "$gate" --skip-rebuild --strict; then
+            failed=$((failed + 1))
+          fi
+        done
+        if [ "$failed" -gt 0 ]; then
+          echo "::error::$failed gate(s) failed"
+          exit 1
+        fi
+      env:
+        CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+        REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+        NATS_URL: tls://localhost:4222
+        NATS_TOKEN: cordum-dev-token
+        NATS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+        NATS_TLS_CERT: ${{ github.workspace }}/certs/client/tls.crt
+        NATS_TLS_KEY: ${{ github.workspace }}/certs/client/tls.key
+        REDIS_URL: rediss://:${{ env.REDIS_PASSWORD }}@localhost:6379
+        REDIS_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+        REDIS_TLS_CERT: ${{ github.workspace }}/certs/client/tls.crt
+        REDIS_TLS_KEY: ${{ github.workspace }}/certs/client/tls.key
+        REDIS_TLS_SERVER_NAME: localhost
+
+    - name: Dump debug logs on failure
+      if: failure()
+      run: |
+        echo "=== Mock-bank worker log ==="
+        cat /tmp/production-gate-mock-bank-worker.log 2>/dev/null || echo "(no log)"
+        echo ""
+        echo "=== Docker service logs (last 80 lines each) ==="
+        for svc in scheduler workflow-engine api-gateway safety-kernel nats redis; do
+          echo "--- $svc ---"
+          docker compose logs --tail=80 --no-color "$svc" 2>/dev/null || true
+        done
+
+    - name: Upload gate results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: production-gate-results
+        path: production_gate_results.json
+
+    - name: Tear down services
+      if: always()
+      run: docker compose down -v
