@@ -236,12 +236,17 @@ func TestRunStrictModeDeniesWhenAgentdTimesOut(t *testing.T) {
 		return AgentdDecision{}, ctx.Err()
 	}}
 
+	// 50ms is enough for the in-memory hook input to parse, then the fake
+	// agentd waits for ctx.Done() so the timeout is consumed by the agentd
+	// call — the path this test is asserting. A nanosecond-scale timeout
+	// would now trip during stdin parsing because the run uses a single
+	// end-to-end budget instead of double-counting it across read + call.
 	code, stdout, stderr := runHook(t, RunOptions{
 		Args:    []string{"claude", "pre-tool-use"},
 		Stdin:   hookInput(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"npm test"}}`),
 		Agentd:  agentd,
 		Env:     map[string]string{"CORDUM_AGENTD_FAIL_CLOSED": "true"},
-		Timeout: time.Nanosecond,
+		Timeout: 50 * time.Millisecond,
 	})
 
 	if code != 0 {

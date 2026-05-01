@@ -172,15 +172,19 @@ func supportedHookEvent(eventName string) bool {
 
 func hookOutputForRun(eventName string, decision AgentdDecision, opts RunOptions) ClaudeHookOutput {
 	switch eventName {
+	case "ConfigChange":
+		// ConfigChange is enforced only in enterprise-strict (fail-closed)
+		// mode by design — see TestRunConfigChangeDoesNotBlockOutsideEnterprise
+		// Strict. Outside strict mode the user is on a personal/dev machine
+		// and we still record the event but do not surface a deny back to
+		// Claude.
+		if !failClosed(opts) {
+			return ClaudeHookOutput{}
+		}
+		return ClaudeHookOutputForDecision(eventName, decision)
 	case "FileChanged":
-		// FileChanged is informational only — a successful evaluation never
-		// blocks anything, so emit an empty output regardless of decision.
 		return ClaudeHookOutput{}
 	default:
-		// All other events (including ConfigChange) honor the agentd decision.
-		// failClosed only governs how we react to evaluation errors (see
-		// handleAgentdError); a successful DecisionDeny must still be enforced
-		// or the hook would silently allow denied config changes.
 		return ClaudeHookOutputForDecision(eventName, decision)
 	}
 }
