@@ -1,6 +1,14 @@
 package edge
 
-import "time"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+	"time"
+
+	"github.com/cordum/cordum/core/infra/artifacts"
+)
 
 // ExportManifestVersion identifies the wire shape of SessionExportBundle.
 // Bumped when a backwards-incompatible field is added/removed/renamed; minor
@@ -130,4 +138,322 @@ type ExportOptions struct {
 	// — explicit opt-in is reserved for a future enterprise/strict mode
 	// task with stricter authentication. Today the Gateway hardcodes false.
 	IncludeArtifactBodies bool
+}
+
+// ExportSessionQuery names the session whose evidence the bundler should
+// assemble. TenantID is the auth-resolved tenant from the Gateway — the
+// bundler enforces tenant_id == session.TenantID before any read so a
+// request with the wrong tenant short-circuits with ErrNotFound.
+type ExportSessionQuery struct {
+	TenantID  string
+	SessionID string
+}
+
+// ArtifactStater is the metadata-only artifact-store contract the bundler
+// needs. *artifacts.RedisStore satisfies it implicitly. Defining it here
+// (instead of taking artifacts.Store directly) keeps tests free to inject
+// fakes that don't require the full Redis store, and locks the bundler to
+// metadata-only access — there is no Get on this interface, so a future
+// bug cannot accidentally start exporting raw artifact bodies.
+type ArtifactStater interface {
+	Stat(ctx context.Context, ptr string) (artifacts.Metadata, error)
+}
+
+// SessionExportAssembler builds a SessionExportBundle from the final Edge
+// store and artifact metadata store. Concurrency: an Assembler is safe for
+// concurrent reads; it owns no internal mutable state. Time injection via
+// Now is for testability — tests pin a deterministic GeneratedAt.
+type SessionExportAssembler struct {
+	Store         Store
+	ArtifactStore ArtifactStater
+	Now           func() time.Time
+}
+
+// defaultExportEventsCap is the assembler's safety ceiling on events when
+// the caller did not specify ExportOptions.MaxEvents. Hit this and the
+// bundle records EventsTruncated=true; the actual session-wide count is
+// reported via EventCount so auditors know the bundle is partial. Sized to
+// match maxStorePageLimit×N in the underlying store; the Gateway can tune
+// down via ExportOptions.MaxEvents.
+const defaultExportEventsCap = 5000
+
+// safetyExecutionsCap bounds executions per session at assembly time.
+// Sessions with more executions than this are extraordinary; the safety
+// cap prevents an unbounded loop if the store somehow returns infinite
+// pages. Truncation.ExecutionsTruncated surfaces the hit.
+const safetyExecutionsCap = 5000
+
+// Assemble runs the full Edge evidence-export pipeline:
+//
+//  1. Resolve and tenant-check the session (returns ErrNotFound on miss
+//     or cross-tenant access — same wire shape so neither path leaks
+//     existence to a mis-tenanted caller).
+//  2. Page executions for the session via the bounded ListExecutions
+//     cursor (PR #243 storage contract). Honors safetyExecutionsCap.
+//  3. Page events via ListEvents, capped at opts.MaxEvents (or
+//     defaultExportEventsCap if unset). Truncation.EventsTruncated and
+//     Truncation.EventCount surface partial bundles to auditors.
+//  4. Sort events deterministically by (Seq, Timestamp, EventID) so two
+//     exports of the same data produce byte-identical bundles.
+//  5. Page approvals via ListApprovals.
+//  6. Walk artifact_ptrs from every event, dedupe by URI, and Stat each
+//     against the artifact store. Cross-tenant pointers (a tenant-B URI
+//     on a tenant-A event — should never happen but defended anyway)
+//     and missing-artifact (TTL expiry / never-stored) pointers land in
+//     MissingArtifacts with the Reason set, never as silent omissions.
+//  7. Project executions' job_id/workflow_run_id/step_id into JobLinks
+//     so auditors can pivot from the bundle to the scheduler's record
+//     of the actual production work.
+//  8. Compute the bundle-wide RedactionLevel as the max strictness
+//     across present artifacts (strict wins over standard).
+//
+// Note that the Gateway route layered above this is responsible for
+// enforcing CORDUM_EDGE_EXPORT_MAX_BYTES as a final cap on the serialized
+// bundle (step-12 of EDGE-013); the assembler tracks but does not enforce
+// MaxBundleSizeBytes here.
+func (a *SessionExportAssembler) Assemble(ctx context.Context, q ExportSessionQuery, opts ExportOptions) (SessionExportBundle, error) {
+	if a == nil || a.Store == nil {
+		return SessionExportBundle{}, fmt.Errorf("export assembler not configured: store is required")
+	}
+	now := time.Now
+	if a.Now != nil {
+		now = a.Now
+	}
+	tenantID := q.TenantID
+	sessionID := q.SessionID
+	if tenantID == "" || sessionID == "" {
+		return SessionExportBundle{}, fmt.Errorf("tenant_id and session_id are required")
+	}
+
+	session, ok, err := a.Store.GetSession(ctx, tenantID, sessionID)
+	if err != nil {
+		return SessionExportBundle{}, fmt.Errorf("get session: %w", err)
+	}
+	if !ok || session == nil {
+		return SessionExportBundle{}, ErrNotFound
+	}
+
+	executions, executionsTruncated, err := a.collectExecutions(ctx, tenantID, sessionID)
+	if err != nil {
+		return SessionExportBundle{}, err
+	}
+
+	maxEvents := opts.MaxEvents
+	if maxEvents <= 0 {
+		maxEvents = defaultExportEventsCap
+	}
+	events, totalEvents, eventsTruncated, err := a.collectEvents(ctx, tenantID, sessionID, maxEvents)
+	if err != nil {
+		return SessionExportBundle{}, err
+	}
+
+	approvals, err := a.collectApprovals(ctx, tenantID, sessionID)
+	if err != nil {
+		return SessionExportBundle{}, err
+	}
+
+	artifactsList, missing := a.collectArtifacts(ctx, tenantID, events)
+
+	jobLinks := buildJobLinks(executions)
+	bundleRedaction := overallRedactionLevel(artifactsList)
+
+	bundle := SessionExportBundle{
+		ManifestVersion:  ExportManifestVersion,
+		GeneratedAt:      now().UTC(),
+		TenantID:         tenantID,
+		RedactionLevel:   bundleRedaction,
+		Session:          *session,
+		Executions:       executions,
+		Events:           events,
+		Approvals:        approvals,
+		Artifacts:        artifactsList,
+		MissingArtifacts: missing,
+		JobLinks:         jobLinks,
+		Truncation: ExportTruncation{
+			EventsTruncated:     eventsTruncated,
+			EventCount:          totalEvents,
+			EventScanLimitHit:   eventsTruncated && totalEvents == maxEvents,
+			ExecutionsTruncated: executionsTruncated,
+		},
+	}
+	return bundle, nil
+}
+
+func (a *SessionExportAssembler) collectExecutions(ctx context.Context, tenantID, sessionID string) ([]AgentExecution, bool, error) {
+	var executions []AgentExecution
+	cursor := ""
+	for {
+		page, err := a.Store.ListExecutions(ctx, ListExecutionsQuery{
+			TenantID:  tenantID,
+			SessionID: sessionID,
+			Cursor:    cursor,
+			Limit:     maxStorePageLimit,
+		})
+		if err != nil {
+			return nil, false, fmt.Errorf("list executions: %w", err)
+		}
+		executions = append(executions, page.Items...)
+		if len(executions) >= safetyExecutionsCap {
+			return executions[:safetyExecutionsCap], true, nil
+		}
+		if page.NextCursor == "" {
+			return executions, false, nil
+		}
+		cursor = page.NextCursor
+	}
+}
+
+func (a *SessionExportAssembler) collectEvents(ctx context.Context, tenantID, sessionID string, maxEvents int) ([]AgentActionEvent, int, bool, error) {
+	var events []AgentActionEvent
+	cursor := ""
+	truncated := false
+	totalSeen := 0
+	for {
+		page, err := a.Store.ListEvents(ctx, ListEventsQuery{
+			TenantID:  tenantID,
+			SessionID: sessionID,
+			Cursor:    cursor,
+			Limit:     maxStorePageLimit,
+		})
+		if err != nil {
+			return nil, 0, false, fmt.Errorf("list events: %w", err)
+		}
+		for _, e := range page.Items {
+			totalSeen++
+			if len(events) >= maxEvents {
+				truncated = true
+				continue
+			}
+			events = append(events, e)
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	sort.SliceStable(events, func(i, j int) bool {
+		if events[i].Seq != events[j].Seq {
+			return events[i].Seq < events[j].Seq
+		}
+		if !events[i].Timestamp.Equal(events[j].Timestamp) {
+			return events[i].Timestamp.Before(events[j].Timestamp)
+		}
+		return events[i].EventID < events[j].EventID
+	})
+	return events, totalSeen, truncated, nil
+}
+
+func (a *SessionExportAssembler) collectApprovals(ctx context.Context, tenantID, sessionID string) ([]EdgeApproval, error) {
+	var approvals []EdgeApproval
+	cursor := ""
+	for {
+		page, err := a.Store.ListApprovals(ctx, ListApprovalsQuery{
+			TenantID:  tenantID,
+			SessionID: sessionID,
+			Cursor:    cursor,
+			Limit:     maxStorePageLimit,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list approvals: %w", err)
+		}
+		approvals = append(approvals, page.Items...)
+		if page.NextCursor == "" {
+			return approvals, nil
+		}
+		cursor = page.NextCursor
+	}
+}
+
+func (a *SessionExportAssembler) collectArtifacts(ctx context.Context, tenantID string, events []AgentActionEvent) ([]ExportArtifactEntry, []ExportMissingArtifact) {
+	var entries []ExportArtifactEntry
+	var missing []ExportMissingArtifact
+	seen := make(map[string]struct{})
+
+	for _, e := range events {
+		for _, ptr := range e.ArtifactPointers {
+			if _, dup := seen[ptr.URI]; dup {
+				continue
+			}
+			seen[ptr.URI] = struct{}{}
+
+			// Defense in depth: the AttachArtifactPointer helper already
+			// rejects cross-tenant pointers at write time, but an export
+			// can run against historical data attached before the helper
+			// existed. Refuse to fetch a pointer whose tenant_id disagrees
+			// with the export tenant.
+			if ptr.TenantID != tenantID {
+				missing = append(missing, missingFromPointer(ptr, MissingArtifactReasonTenantMismatch))
+				continue
+			}
+			if a.ArtifactStore == nil {
+				// Without an artifact store wired in, every pointer is
+				// effectively unresolvable. Surface that as not_found so
+				// auditors see what is missing rather than getting a
+				// silently empty bundle.
+				missing = append(missing, missingFromPointer(ptr, MissingArtifactReasonNotFound))
+				continue
+			}
+			meta, err := a.ArtifactStore.Stat(ctx, ptr.URI)
+			if err != nil {
+				reason := MissingArtifactReasonStoreError
+				if errors.Is(err, artifacts.ErrArtifactNotFound) {
+					reason = MissingArtifactReasonNotFound
+				}
+				missing = append(missing, missingFromPointer(ptr, reason))
+				continue
+			}
+			entries = append(entries, ExportArtifactEntry{
+				SessionID:      ptr.SessionID,
+				ExecutionID:    ptr.ExecutionID,
+				EventID:        ptr.EventID,
+				ArtifactType:   ptr.ArtifactType,
+				RetentionClass: ptr.RetentionClass,
+				RedactionLevel: ptr.RedactionLevel,
+				SHA256:         ptr.SHA256,
+				URI:            ptr.URI,
+				SizeBytes:      meta.SizeBytes,
+				ContentType:    meta.ContentType,
+				CreatedAt:      ptr.CreatedAt,
+			})
+		}
+	}
+	return entries, missing
+}
+
+func missingFromPointer(ptr ArtifactPointer, reason MissingArtifactReason) ExportMissingArtifact {
+	return ExportMissingArtifact{
+		URI:          ptr.URI,
+		SHA256:       ptr.SHA256,
+		ArtifactType: ptr.ArtifactType,
+		SessionID:    ptr.SessionID,
+		ExecutionID:  ptr.ExecutionID,
+		EventID:      ptr.EventID,
+		Reason:       reason,
+	}
+}
+
+func buildJobLinks(executions []AgentExecution) []ExportJobLink {
+	var links []ExportJobLink
+	for _, e := range executions {
+		if e.JobID == "" && e.WorkflowRunID == "" && e.StepID == "" {
+			continue
+		}
+		links = append(links, ExportJobLink{
+			ExecutionID:   e.ExecutionID,
+			JobID:         e.JobID,
+			WorkflowRunID: e.WorkflowRunID,
+			StepID:        e.StepID,
+		})
+	}
+	return links
+}
+
+func overallRedactionLevel(entries []ExportArtifactEntry) RedactionLevel {
+	level := RedactionLevelStandard
+	for _, e := range entries {
+		if e.RedactionLevel == RedactionLevelStrict {
+			return RedactionLevelStrict
+		}
+	}
+	return level
 }
