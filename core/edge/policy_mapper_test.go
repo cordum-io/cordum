@@ -3,6 +3,7 @@ package edge
 import (
 	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,5 +117,88 @@ func TestMapEventToPolicyCheckRequestUsesClassifierOutputAndTrustedMetadata(t *t
 	}
 	if req.GetInputSizeBytes() != int64(len(content)) {
 		t.Fatalf("InputSizeBytes = %d, want %d", req.GetInputSizeBytes(), len(content))
+	}
+}
+
+func TestMapEventToPolicyCheckRequestValidationAndNormalization(t *testing.T) {
+	baseEvent := AgentActionEvent{
+		EventID:     "evt-map-validation",
+		SessionID:   "sess-map-validation",
+		ExecutionID: "exec-map-validation",
+		TenantID:    "tenant-map",
+		PrincipalID: "principal-map",
+		Timestamp:   time.Date(2026, 5, 1, 18, 40, 0, 0, time.UTC),
+		Layer:       LayerHook,
+		Kind:        EventKindHookPreToolUse,
+		ToolName:    "Bash",
+		Decision:    DecisionRecorded,
+		Status:      ActionStatusOK,
+		InputRedacted: map[string]any{
+			"command": "echo Bearer edge-mapper-validation-secret",
+		},
+		Labels: Labels{"custom.note": "Bearer edge-mapper-validation-secret"},
+	}
+	classification := ActionClassification{
+		ActionName:       "bash.exec",
+		Capability:       "exec.shell",
+		RiskTags:         []string{"exec", "filesystem", "exec"},
+		Labels:           Labels{"command.class": "destructive"},
+		InputContent:     []byte(`{"command":"<redacted>"}`),
+		InputContentType: "application/json",
+		InputSizeBytes:   24,
+	}
+
+	for _, tc := range []struct {
+		name      string
+		mutate    func(*AgentActionEvent, *ActionClassification)
+		wantField string
+	}{
+		{name: "missing tenant", mutate: func(event *AgentActionEvent, _ *ActionClassification) { event.TenantID = "" }, wantField: "tenant_id"},
+		{name: "missing session", mutate: func(event *AgentActionEvent, _ *ActionClassification) { event.SessionID = "" }, wantField: "session_id"},
+		{name: "missing execution", mutate: func(event *AgentActionEvent, _ *ActionClassification) { event.ExecutionID = "" }, wantField: "execution_id"},
+		{name: "missing event", mutate: func(event *AgentActionEvent, _ *ActionClassification) { event.EventID = "" }, wantField: "event_id"},
+		{name: "missing principal", mutate: func(event *AgentActionEvent, _ *ActionClassification) { event.PrincipalID = "" }, wantField: "principal_id"},
+		{name: "missing action", mutate: func(_ *AgentActionEvent, classification *ActionClassification) { classification.ActionName = "" }, wantField: "action_name"},
+		{name: "missing capability", mutate: func(_ *AgentActionEvent, classification *ActionClassification) { classification.Capability = "" }, wantField: "capability"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := baseEvent
+			classified := classification
+			tc.mutate(&event, &classified)
+
+			_, err := MapEventToPolicyCheckRequest(event, classified, PolicyMappingOptions{})
+			if err == nil {
+				t.Fatal("MapEventToPolicyCheckRequest error = nil, want missing-field error")
+			}
+			if !strings.Contains(err.Error(), tc.wantField) {
+				t.Fatalf("MapEventToPolicyCheckRequest error = %q, want field %q", err.Error(), tc.wantField)
+			}
+			if strings.Contains(err.Error(), "edge-mapper-validation-secret") {
+				t.Fatalf("MapEventToPolicyCheckRequest error leaked raw secret-like value: %q", err.Error())
+			}
+		})
+	}
+
+	req, err := MapEventToPolicyCheckRequest(baseEvent, classification, PolicyMappingOptions{})
+	if err != nil {
+		t.Fatalf("MapEventToPolicyCheckRequest normalized request error: %v", err)
+	}
+	if got := req.GetMeta().GetActorId(); got != "principal-map" {
+		t.Fatalf("default ActorId = %q, want principal-map", got)
+	}
+	if !reflect.DeepEqual(req.GetMeta().GetRiskTags(), []string{"exec", "filesystem"}) {
+		t.Fatalf("deduped/sorted RiskTags = %#v, want exec/filesystem", req.GetMeta().GetRiskTags())
+	}
+	if got := req.GetLabels()["custom.note"]; got != defaultRedactionMarker {
+		t.Fatalf("custom.note label = %q, want redaction marker in labels %#v", got, req.GetLabels())
+	}
+	for key, value := range req.GetLabels() {
+		if strings.Contains(key, "edge-mapper-validation-secret") || strings.Contains(value, "edge-mapper-validation-secret") {
+			t.Fatalf("policy label leaked secret-like value: %q=%q in %#v", key, value, req.GetLabels())
+		}
+	}
+	req.GetInputContent()[0] = '!'
+	if string(classification.InputContent) != `{"command":"<redacted>"}` {
+		t.Fatalf("mapper did not clone input content; classification content mutated to %s", string(classification.InputContent))
 	}
 }

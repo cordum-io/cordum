@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestClassifyEventDeterministicTable(t *testing.T) {
@@ -361,6 +362,52 @@ func TestClassifyEventRejectsHugeInputWithoutLeakingRawValue(t *testing.T) {
 	}
 }
 
+func TestClassifyEventRejectsMissingKindAndHookToolWithoutLeakingRawValue(t *testing.T) {
+	rawSecret := "Bearer edge-classifier-missing-field-secret"
+
+	for _, tc := range []struct {
+		name      string
+		mutate    func(*AgentActionEvent)
+		wantField string
+		forbidden string
+	}{
+		{
+			name: "missing kind",
+			mutate: func(event *AgentActionEvent) {
+				event.Kind = ""
+			},
+			wantField: "kind",
+			forbidden: rawSecret,
+		},
+		{
+			name: "missing hook tool",
+			mutate: func(event *AgentActionEvent) {
+				event.ToolName = " "
+			},
+			wantField: "tool_name",
+			forbidden: rawSecret,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := classifierHookEvent(time.Date(2026, 5, 1, 18, 22, 0, 0, time.UTC), "Bash", map[string]any{
+				"command": "echo " + rawSecret,
+			})
+			tc.mutate(&event)
+
+			_, err := ClassifyEvent(event)
+			if err == nil {
+				t.Fatal("ClassifyEvent error = nil, want missing-field error")
+			}
+			if !strings.Contains(err.Error(), tc.wantField) {
+				t.Fatalf("ClassifyEvent error = %q, want field %q", err.Error(), tc.wantField)
+			}
+			if strings.Contains(err.Error(), tc.forbidden) || strings.Contains(err.Error(), "missing-field-secret") {
+				t.Fatalf("ClassifyEvent error leaked raw secret-like value: %q", err.Error())
+			}
+		})
+	}
+}
+
 func TestClassifyEventDoesNotLeakSecretValuesIntoLabels(t *testing.T) {
 	const secret = "Bearer edge-classifier-secret"
 	event := classifierHookEvent(time.Date(2026, 5, 1, 18, 25, 0, 0, time.UTC), "Bash", map[string]any{
@@ -375,6 +422,142 @@ func TestClassifyEventDoesNotLeakSecretValuesIntoLabels(t *testing.T) {
 		if strings.Contains(key, secret) || strings.Contains(value, secret) {
 			t.Fatalf("label leaked secret value: %q=%q in %#v", key, value, got.Labels)
 		}
+	}
+}
+
+func TestClassifyEventRedactsSecretLikeRuntimeLabels(t *testing.T) {
+	const secret = "Bearer edge-runtime-label-secret"
+	event := classifierEvent(time.Date(2026, 5, 1, 18, 30, 0, 0, time.UTC), LayerRuntime, EventKindRuntimeProcessExec, "runtime-sidecar", "", map[string]any{
+		"command": "curl -H 'Authorization: " + secret + "' https://example.com",
+	})
+
+	got, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent returned error: %v", err)
+	}
+	if got.Labels["runtime.process"] != defaultRedactionMarker {
+		t.Fatalf("runtime.process = %q, want redaction marker in labels %#v", got.Labels["runtime.process"], got.Labels)
+	}
+	for key, value := range got.Labels {
+		if strings.Contains(key, secret) || strings.Contains(value, secret) || strings.Contains(value, "runtime-label-secret") {
+			t.Fatalf("label leaked secret-like runtime value: %q=%q in %#v", key, value, got.Labels)
+		}
+	}
+}
+
+func TestSafeLabelValueTruncatesUTF8AtByteLimit(t *testing.T) {
+	value := strings.Repeat("a", MaxLabelValueBytes-1) + "é"
+
+	got := safeLabelValue(value, "fallback")
+	if len(got) > MaxLabelValueBytes {
+		t.Fatalf("safeLabelValue length = %d, want <= %d", len(got), MaxLabelValueBytes)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("safeLabelValue returned invalid UTF-8: %q", got)
+	}
+	if got != strings.Repeat("a", MaxLabelValueBytes-1) {
+		t.Fatalf("safeLabelValue = %q, want truncated ASCII prefix", got)
+	}
+}
+
+func TestClassifyEventFutureLayerGenericClassifications(t *testing.T) {
+	base := time.Date(2026, 5, 1, 18, 35, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name       string
+		event      AgentActionEvent
+		actionName string
+		capability string
+		riskTags   []string
+		labels     map[string]string
+	}{
+		{
+			name: "mcp read tool from labels",
+			event: func() AgentActionEvent {
+				event := classifierEvent(base, LayerMCP, EventKindMCPToolPre, "mcp-client", "", nil)
+				event.Labels = Labels{"mcp.server": "github", "mcp.tool": "issues.list", "mcp.action": "list"}
+				return event
+			}(),
+			actionName: "mcp.issues.list",
+			capability: "mcp.read",
+			riskTags:   []string{"mcp", "read"},
+			labels: map[string]string{
+				"mcp.action": "list",
+				"mcp.server": "github",
+				"mcp.tool":   "issues.list",
+			},
+		},
+		{
+			name: "llm request provider model with data and cost",
+			event: classifierEvent(base, LayerLLM, EventKindLLMRequestPre, "claude", "", map[string]any{
+				"provider": "anthropic",
+				"model":    "claude-3-5-sonnet",
+				"messages": []string{"redacted"},
+				"cost_usd": "0.02",
+			}),
+			actionName: "llm.request",
+			capability: "llm.request",
+			riskTags:   []string{"cost", "data", "llm", "provider_call"},
+			labels: map[string]string{
+				"llm.model":    "claude-3-5-sonnet",
+				"llm.provider": "anthropic",
+			},
+		},
+		{
+			name: "runtime file write",
+			event: classifierEvent(base, LayerRuntime, EventKindRuntimeFileWrite, "runtime-sidecar", "", map[string]any{
+				"path": "src/auth/session.go",
+			}),
+			actionName: "runtime.file.write",
+			capability: "runtime.file",
+			riskTags:   []string{"filesystem", "runtime", "source_code", "write"},
+			labels: map[string]string{
+				"runtime.event":       "file.write",
+				"path.class":          "source_code",
+				"path.sensitive_area": "auth",
+			},
+		},
+		{
+			name: "runtime network connect",
+			event: classifierEvent(base, LayerRuntime, EventKindRuntimeNetworkConnect, "runtime-sidecar", "", map[string]any{
+				"host": "api.example.com",
+			}),
+			actionName: "runtime.network.connect",
+			capability: "runtime.network",
+			riskTags:   []string{"network", "runtime"},
+			labels: map[string]string{
+				"runtime.event": "network.connect",
+			},
+		},
+		{
+			name:       "unknown runtime fallback",
+			event:      classifierEvent(base, LayerRuntime, EventKind("runtime.registry.write"), "runtime-sidecar", "", nil),
+			actionName: "unknown.runtime",
+			capability: "edge.unknown",
+			riskTags:   []string{"review_required", "runtime", "unknown"},
+			labels:     map[string]string{"edge.layer": "runtime"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ClassifyEvent(tc.event)
+			if err != nil {
+				t.Fatalf("ClassifyEvent returned error: %v", err)
+			}
+			if got.ActionName != tc.actionName {
+				t.Fatalf("ActionName = %q, want %q", got.ActionName, tc.actionName)
+			}
+			if got.Capability != tc.capability {
+				t.Fatalf("Capability = %q, want %q", got.Capability, tc.capability)
+			}
+			if !reflect.DeepEqual(got.RiskTags, tc.riskTags) {
+				t.Fatalf("RiskTags = %#v, want %#v", got.RiskTags, tc.riskTags)
+			}
+			for key, want := range tc.labels {
+				if gotValue := got.Labels[key]; gotValue != want {
+					t.Fatalf("Labels[%q] = %q, want %q in labels %#v", key, gotValue, want, got.Labels)
+				}
+			}
+		})
 	}
 }
 

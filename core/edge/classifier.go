@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // EdgePolicyTopic is the P0 Safety Kernel topic for deterministic Edge action
@@ -32,7 +33,9 @@ const (
 
 // ActionClassification is the deterministic server-side classification of one
 // Edge action. Client-provided risk tags are not authoritative; callers should
-// use this output when constructing policy inputs.
+// use this output when constructing policy inputs. Large/raw hook payloads
+// should be represented as bounded redacted content plus artifact pointers, not
+// embedded in labels or logs.
 type ActionClassification struct {
 	ActionName       string
 	Capability       string
@@ -43,10 +46,21 @@ type ActionClassification struct {
 	InputSizeBytes   int64
 }
 
-// ClassifyEvent normalizes an AgentActionEvent into deterministic policy
-// dimensions. It does not mutate the input event and never stores raw command
-// strings in labels.
+// ClassifyEvent normalizes an AgentActionEvent into deterministic server-side
+// policy dimensions. It does not mutate the input event, does not trust
+// event.RiskTags for deterministic cases, and never stores raw command strings
+// or secret-like values in labels.
 func ClassifyEvent(event AgentActionEvent) (ActionClassification, error) {
+	if strings.TrimSpace(string(event.Layer)) == "" {
+		return ActionClassification{}, fmt.Errorf("layer is required")
+	}
+	if strings.TrimSpace(string(event.Kind)) == "" {
+		return ActionClassification{}, fmt.Errorf("kind is required")
+	}
+	if event.Layer == LayerHook && strings.TrimSpace(event.ToolName) == "" {
+		return ActionClassification{}, fmt.Errorf("tool_name is required")
+	}
+
 	content, contentType, size, err := classifiedInputContent(event.InputRedacted)
 	if err != nil {
 		return ActionClassification{}, err
@@ -138,6 +152,12 @@ func classifyBashCommand(command string, out *ActionClassification) {
 		out.Labels["command.family"] = "network_egress"
 		return
 	}
+	if isInstallCommand(folded) {
+		out.RiskTags = append(out.RiskTags, "install", "network")
+		out.Labels["command.class"] = "dependency_change"
+		out.Labels["command.family"] = "install"
+		return
+	}
 	if isBuildCommand(folded) {
 		out.RiskTags = append(out.RiskTags, "build")
 		out.Labels["command.class"] = "safe"
@@ -184,6 +204,9 @@ func classifyFileMove(path string, out *ActionClassification) {
 	out.Capability = capabilityFileMove
 	out.RiskTags = []string{"filesystem", "write"}
 	addPathLabels(path, out)
+	if out.Labels["path.class"] == "source_code" {
+		out.RiskTags = append(out.RiskTags, "source_code")
+	}
 }
 
 func classifyMCPEvent(event AgentActionEvent, out *ActionClassification) {
@@ -225,6 +248,12 @@ func classifyLLMEvent(event AgentActionEvent, out *ActionClassification) {
 	out.ActionName = "llm.request"
 	out.Capability = capabilityLLMRequest
 	out.RiskTags = []string{"llm", "provider_call"}
+	if hasAnyInputKey(event.InputRedacted, "input", "prompt", "messages", "content", "data") {
+		out.RiskTags = append(out.RiskTags, "data")
+	}
+	if hasAnyInputKey(event.InputRedacted, "cost", "cost_usd", "llm_cost_usd", "tokens", "input_tokens", "output_tokens") {
+		out.RiskTags = append(out.RiskTags, "cost")
+	}
 }
 
 func classifyRuntimeEvent(event AgentActionEvent, out *ActionClassification) {
@@ -239,13 +268,32 @@ func classifyRuntimeEvent(event AgentActionEvent, out *ActionClassification) {
 			out.Labels["runtime.process"] = safeLabelValue(process, "unknown")
 		}
 	case string(EventKindRuntimeFileRead), string(EventKindRuntimeFileWrite):
-		out.ActionName = strings.TrimPrefix(kind, "runtime.")
+		runtimeEvent := strings.TrimPrefix(kind, "runtime.")
+		out.ActionName = kind
 		out.Capability = capabilityRuntimeFile
 		out.RiskTags = []string{"filesystem", "runtime"}
+		if runtimeEvent == "file.write" {
+			out.RiskTags = append(out.RiskTags, "write")
+		} else {
+			out.RiskTags = append(out.RiskTags, "read")
+		}
+		out.Labels["runtime.event"] = runtimeEvent
+		addPathLabels(inputStringAny(event.InputRedacted, "path", "file_path"), out)
+		if out.Labels["path.class"] == "secret" {
+			out.RiskTags = append(out.RiskTags, "secrets")
+		}
+		if out.Labels["path.class"] == "source_code" {
+			out.RiskTags = append(out.RiskTags, "source_code")
+		}
 	case string(EventKindRuntimeNetworkConnect), string(EventKindRuntimeDNSQuery):
-		out.ActionName = strings.TrimPrefix(kind, "runtime.")
+		runtimeEvent := strings.TrimPrefix(kind, "runtime.")
+		out.ActionName = kind
 		out.Capability = capabilityRuntimeNetwork
 		out.RiskTags = []string{"network", "runtime"}
+		out.Labels["runtime.event"] = runtimeEvent
+		if host := inputStringAny(event.InputRedacted, "host", "hostname", "address"); host != "" {
+			out.Labels["runtime.host"] = safeLabelValue(host, "unknown")
+		}
 	default:
 		out.ActionName = "unknown.runtime"
 		out.Capability = capabilityUnknown
@@ -339,6 +387,18 @@ func inputString(input map[string]any, key string) string {
 	}
 }
 
+func hasAnyInputKey(input map[string]any, keys ...string) bool {
+	if len(input) == 0 {
+		return false
+	}
+	for _, key := range keys {
+		if _, ok := input[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizePathForClass(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -393,6 +453,17 @@ func isBuildCommand(command string) bool {
 		strings.HasPrefix(command, "go build") ||
 		strings.Contains(command, " make build") ||
 		strings.HasPrefix(command, "make build")
+}
+
+func isInstallCommand(command string) bool {
+	return strings.HasPrefix(command, "npm install") ||
+		strings.HasPrefix(command, "npm i ") ||
+		strings.HasPrefix(command, "npm add ") ||
+		strings.HasPrefix(command, "npm ci") ||
+		strings.HasPrefix(command, "pnpm install") ||
+		strings.HasPrefix(command, "pnpm add ") ||
+		strings.HasPrefix(command, "yarn install") ||
+		strings.HasPrefix(command, "yarn add ")
 }
 
 func isTestCommand(command string) bool {
@@ -452,10 +523,23 @@ func safeLabelValue(value, fallback string) string {
 	if value == "" {
 		return fallback
 	}
-	if len(value) > MaxLabelValueBytes {
-		return value[:MaxLabelValueBytes]
+	if !utf8.ValidString(value) {
+		return "<redacted:invalid_utf8>"
 	}
-	return value
+	if _, ok := secretStringType(value); ok {
+		return defaultRedactionMarker
+	}
+	if len(value) <= MaxLabelValueBytes {
+		return value
+	}
+	limit := MaxLabelValueBytes
+	for limit > 0 && !utf8.ValidString(value[:limit]) {
+		limit--
+	}
+	if limit == 0 {
+		return fallback
+	}
+	return value[:limit]
 }
 
 func sortedUniqueStrings(values []string) []string {
