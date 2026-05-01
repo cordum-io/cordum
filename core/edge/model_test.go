@@ -511,9 +511,9 @@ func TestArtifactTypeRejectsUnknownValues(t *testing.T) {
 		"",
 		"edge.unknown",
 		"edge.raw_secret",
-		"transcript",                      // missing "edge." prefix
-		"edge.transcript ",                // trailing whitespace, intentionally not normalized
-		"edge.tool_input/extra",           // path-like injection
+		"transcript",                        // missing "edge." prefix
+		"edge.transcript ",                  // trailing whitespace, intentionally not normalized
+		"edge.tool_input/extra",             // path-like injection
 		ArtifactType("edge.\x00transcript"), // NUL byte injection
 	}
 	for _, at := range cases {

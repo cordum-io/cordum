@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/redisutil"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )

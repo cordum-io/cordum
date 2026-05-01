@@ -115,7 +115,7 @@ type SessionExportBundle struct {
 	Artifacts        []ExportArtifactEntry   `json:"artifacts"`
 	MissingArtifacts []ExportMissingArtifact `json:"missing_artifacts"`
 	JobLinks         []ExportJobLink         `json:"job_links,omitempty"`
-	Truncation       ExportTruncation       `json:"truncation"`
+	Truncation       ExportTruncation        `json:"truncation"`
 }
 
 // ExportOptions tunes assembly. Callers pass it through from the Gateway
