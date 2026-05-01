@@ -1243,6 +1243,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "GET /api/v1/edge/approvals/{approval_ref}", s.instrumented("/api/v1/edge/approvals/{approval_ref}", s.handleGetEdgeApproval))
 	s.registerRoute(mux, "POST /api/v1/edge/approvals/{approval_ref}/approve", s.instrumented("/api/v1/edge/approvals/{approval_ref}/approve", s.handleApproveEdgeApproval))
 	s.registerRoute(mux, "POST /api/v1/edge/approvals/{approval_ref}/reject", s.instrumented("/api/v1/edge/approvals/{approval_ref}/reject", s.handleRejectEdgeApproval))
+	s.registerRoute(mux, "POST /api/v1/edge/approvals/{approval_ref}/wait", s.instrumented("/api/v1/edge/approvals/{approval_ref}/wait", s.handleWaitEdgeApproval))
 	s.registerRoute(mux, "POST /api/v1/edge/evaluate", s.instrumented("/api/v1/edge/evaluate", s.handleEdgeEvaluate))
 	s.registerRoute(mux, "POST /api/v1/edge/events", s.instrumented("/api/v1/edge/events", s.handleCreateEdgeEvent))
 	s.registerRoute(mux, "POST /api/v1/edge/events/batch", s.instrumented("/api/v1/edge/events/batch", s.handleCreateEdgeEventsBatch))

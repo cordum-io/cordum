@@ -257,3 +257,103 @@ func edgeApprovalRouteGETAs(t *testing.T, handler http.Handler, apiKey, tenantID
 	handler.ServeHTTP(rr, req)
 	return rr
 }
+
+func TestGatewayEdgeApprovalWaitReturnsResolvedDuringWait(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-a", "wait-resolve")
+
+	resolveDone := make(chan struct{})
+	go func() {
+		defer close(resolveDone)
+		time.Sleep(150 * time.Millisecond)
+		_, _ = s.edgeStore.ApproveApproval(context.Background(), edgecore.ApprovalResolution{
+			TenantID:    edgeRouteTenant,
+			ApprovalRef: approval.ApprovalRef,
+			ResolverID:  "principal-reviewer",
+			ResolvedBy:  "principal:principal-reviewer|role:admin",
+			Reason:      "approved during wait",
+			ResolvedAt:  time.Now().UTC(),
+		})
+	}()
+
+	rr := edgeApprovalRoutePOSTAs(t, handler, edgeRouteReviewerAPIKey, "/api/v1/edge/approvals/"+approval.ApprovalRef+"/wait", `{"timeout_ms":3000}`)
+	<-resolveDone
+	if rr.Code != http.StatusOK {
+		t.Fatalf("wait status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var resolved edgecore.EdgeApproval
+	decodeEdgeRouteJSON(t, rr, &resolved)
+	if resolved.Status != edgecore.ApprovalStatusApproved {
+		t.Fatalf("wait status after approve = %q, want approved", resolved.Status)
+	}
+	if resolved.ApprovalRef != approval.ApprovalRef {
+		t.Fatalf("wait approval_ref = %q, want %q", resolved.ApprovalRef, approval.ApprovalRef)
+	}
+}
+
+func TestGatewayEdgeApprovalWaitTimesOutKeepsPending(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-a", "wait-timeout")
+
+	start := time.Now()
+	rr := edgeApprovalRoutePOSTAs(t, handler, edgeRouteReviewerAPIKey, "/api/v1/edge/approvals/"+approval.ApprovalRef+"/wait", `{"timeout_ms":400}`)
+	elapsed := time.Since(start)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("wait status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var pending edgecore.EdgeApproval
+	decodeEdgeRouteJSON(t, rr, &pending)
+	if pending.Status != edgecore.ApprovalStatusPending {
+		t.Fatalf("wait status after timeout = %q, want pending", pending.Status)
+	}
+	if elapsed < 350*time.Millisecond {
+		t.Fatalf("wait timeout elapsed %v, expected >= ~400ms", elapsed)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("wait timeout elapsed %v, expected to honor 400ms cap", elapsed)
+	}
+}
+
+func TestGatewayEdgeApprovalWaitNotFoundForCrossTenant(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-a", "wait-cross-tenant")
+
+	rr := edgeApprovalRoutePOSTAsTenant(t, handler, edgeRouteReviewerAPIKey, edgeRouteOtherTenant, "/api/v1/edge/approvals/"+approval.ApprovalRef+"/wait", `{}`)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant wait status = %d, want 404 body=%s", rr.Code, rr.Body.String())
+	}
+	assertBodyOmits(t, rr.Body.String(), approval.ApprovalRef, edgeRouteTenant)
+}
+
+func TestGatewayEdgeApprovalWaitReturnsImmediatelyWhenAlreadyResolved(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-a", "wait-already-resolved")
+
+	if _, err := s.edgeStore.ApproveApproval(context.Background(), edgecore.ApprovalResolution{
+		TenantID:    edgeRouteTenant,
+		ApprovalRef: approval.ApprovalRef,
+		ResolverID:  "principal-reviewer",
+		ResolvedBy:  "principal:principal-reviewer|role:admin",
+		Reason:      "approved before wait",
+		ResolvedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("pre-approve: %v", err)
+	}
+
+	start := time.Now()
+	rr := edgeApprovalRoutePOSTAs(t, handler, edgeRouteReviewerAPIKey, "/api/v1/edge/approvals/"+approval.ApprovalRef+"/wait", `{"timeout_ms":5000}`)
+	elapsed := time.Since(start)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("wait status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var resolved edgecore.EdgeApproval
+	decodeEdgeRouteJSON(t, rr, &resolved)
+	if resolved.Status != edgecore.ApprovalStatusApproved {
+		t.Fatalf("status = %q, want approved", resolved.Status)
+	}
+	if elapsed > 1*time.Second {
+		t.Fatalf("already-resolved wait took %v, expected immediate return", elapsed)
+	}
+}

@@ -19,6 +19,13 @@ type edgeApprovalDecisionRequest struct {
 	Reason string `json:"reason"`
 }
 
+// edgeApprovalWaitRequest is the optional body for POST .../wait. Callers may
+// specify a wait budget; the gateway always clamps via boundEdgeEvaluateWaitTimeout
+// so an unbounded request cannot hang the handler.
+type edgeApprovalWaitRequest struct {
+	TimeoutMS int `json:"timeout_ms"`
+}
+
 func (s *server) handleListEdgeApprovals(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
 		return
@@ -160,6 +167,70 @@ func edgeApprovalListQueryFromRequest(r *http.Request, tenantID string) (edgecor
 		return edgecore.ListApprovalsQuery{}, errors.New("session_id, execution_id, and action_hash are required together")
 	}
 	return query, nil
+}
+
+// handleWaitEdgeApproval is the agentd/demo-only blocking-wait endpoint.
+// It bounds-waits for an approval to leave Pending and returns the resolved
+// EdgeApproval, or the still-pending record if the timeout elapsed first.
+//
+// Tenant isolation is enforced by GetApproval being tenant-scoped (cross-tenant
+// returns 404 with no metadata leakage). The timeout is clamped server-side via
+// boundEdgeEvaluateWaitTimeout — same helper as the inline-wait evaluate path —
+// so behavior is consistent and the handler cannot block indefinitely. Browser
+// or dashboard approval UX must never be required to call this; it is for
+// agentd/local-dev clients that prefer a single blocking RPC over poll-and-retry.
+func (s *server) handleWaitEdgeApproval(w http.ResponseWriter, r *http.Request) {
+	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user") {
+		return
+	}
+	store := s.edgeStoreOrUnavailable(w, r)
+	if store == nil {
+		return
+	}
+	tenantID, ok := s.edgeTenantFromRequest(w, r, "")
+	if !ok {
+		return
+	}
+	approvalRef, ok := requirePathParam(w, r, "approval_ref")
+	if !ok {
+		return
+	}
+
+	approval, found, err := store.GetApproval(r.Context(), tenantID, approvalRef)
+	if err != nil {
+		writeEdgeApprovalStoreError(w, r, err, "get edge approval for wait")
+		return
+	}
+	if !found || approval == nil {
+		writeErrorJSON(w, http.StatusNotFound, "edge approval not found")
+		return
+	}
+
+	var body edgeApprovalWaitRequest
+	if r.Body != nil && r.Body != http.NoBody {
+		if err := decodeJSONBody(w, r, &body); err != nil {
+			writeJSONDecodeError(w, err, "invalid edge approval wait request")
+			return
+		}
+	}
+
+	if approval.Status != edgecore.ApprovalStatusPending {
+		writeJSON(w, approval)
+		return
+	}
+
+	s.waitForEdgeApprovalResolution(r.Context(), store, tenantID, approvalRef, boundEdgeEvaluateWaitTimeout(body.TimeoutMS))
+
+	final, found, err := store.GetApproval(r.Context(), tenantID, approvalRef)
+	if err != nil {
+		writeEdgeApprovalStoreError(w, r, err, "get edge approval after wait")
+		return
+	}
+	if !found || final == nil {
+		writeErrorJSON(w, http.StatusNotFound, "edge approval not found")
+		return
+	}
+	writeJSON(w, final)
 }
 
 func writeEdgeApprovalStoreError(w http.ResponseWriter, r *http.Request, err error, operation string) {

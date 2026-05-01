@@ -883,6 +883,53 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/edge/approvals/{approval_ref}/wait:
+    post:
+      operationId: waitEdgeApproval
+      summary: Bounded blocking wait for an Edge approval to leave Pending
+      description: Agentd/local-dev affordance that polls the Edge approval store until the approval is non-pending or the bounded timeout elapses, then returns the current EdgeApproval. The server clamps `timeout_ms` to a 5 minute maximum and uses a 30 second default when omitted or non-positive. Tenant isolation is enforced; cross-tenant references return 404 with no metadata leakage. This endpoint is not required by the dashboard approve/reject UX — callers there should use the standard list/detail/approve/reject flow.
+      tags:
+      - Edge
+      parameters:
+      - name: approval_ref
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^edge_appr_[A-Za-z0-9_-]+$
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                timeout_ms:
+                  type: integer
+                  minimum: 0
+                  description: Caller-requested wait budget. Server clamps to a 5-minute max and uses a 30s default when omitted or non-positive.
+      responses:
+        '200':
+          description: Current Edge approval after the wait (resolved if approved/rejected/expired/invalidated; otherwise still pending).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeApproval'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/edge/approvals/{approval_ref}/reject:
     post:
       operationId: rejectEdgeApproval
