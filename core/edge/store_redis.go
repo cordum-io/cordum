@@ -909,36 +909,6 @@ func parseStoreCursor(raw string) (int, error) {
 	return offset, nil
 }
 
-func pageSessions(items []EdgeSession, start, limit int) SessionPage {
-	if start >= len(items) {
-		return SessionPage{Items: []EdgeSession{}}
-	}
-	end := start + limit
-	if end > len(items) {
-		end = len(items)
-	}
-	page := SessionPage{Items: append([]EdgeSession(nil), items[start:end]...)}
-	if end < len(items) {
-		page.NextCursor = strconv.Itoa(end)
-	}
-	return page
-}
-
-func pageExecutions(items []AgentExecution, start, limit int) ExecutionPage {
-	if start >= len(items) {
-		return ExecutionPage{Items: []AgentExecution{}}
-	}
-	end := start + limit
-	if end > len(items) {
-		end = len(items)
-	}
-	page := ExecutionPage{Items: append([]AgentExecution(nil), items[start:end]...)}
-	if end < len(items) {
-		page.NextCursor = strconv.Itoa(end)
-	}
-	return page
-}
-
 func pageEvents(items []AgentActionEvent, start, limit int) EventPage {
 	if start >= len(items) {
 		return EventPage{Items: []AgentActionEvent{}}
