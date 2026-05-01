@@ -1,0 +1,122 @@
+version: edge-policy-demo-v0
+default_decision: deny
+
+rules:
+  # EDGE-008/009 mapping: Claude Read/Edit/Bash actions are classified into
+  # topic job.edge.action with capability/risk_tags plus labels such as
+  # hook.tool_name, path.class, command.class, and command.family. This demo
+  # fragment never matches raw hook payload fields.
+  - id: claude-code.deny-secret-reads
+    match:
+      topics:
+        - job.edge.action
+      risk_tags:
+        - secrets
+      labels:
+        "path.class": secret
+    decision: deny
+    reason: "Claude Code attempted to access a secret-like path; demo policy denies secret reads by default."
+    remediations:
+      - id: redact-secret-access
+        title: "Use redacted configuration evidence"
+        summary: "Do not read .env, SSH, cloud credential, token, or key material. Use a redacted config example or ask a human to provide a safe value."
+
+  # Destructive Bash commands are identified by capability exec.shell,
+  # risk_tags including destructive/filesystem, and command.class=destructive.
+  - id: claude-code.deny-destructive-shell
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - exec.shell
+      risk_tags:
+        - destructive
+      labels:
+        "command.class": destructive
+    decision: deny
+    reason: "Destructive recursive shell operations are denied in the demo policy."
+    remediations:
+      - id: use-safe-cleanup
+        title: "Use a scoped cleanup command"
+        summary: "Replace recursive deletion with a reviewed, path-scoped cleanup or ask for approval outside the demo."
+
+  # File edits are mapped to capability file.write with risk_tags including
+  # write/filesystem/source_code. Demo mode requires a human approval before
+  # edits are allowed.
+  - id: claude-code.require-approval-for-edits
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - file.write
+      risk_tags:
+        - write
+    decision: require_approval
+    reason: "Demo mode requires approval before Claude Code edits files."
+
+  # Git pushes are Bash commands classified as command.family=git_push with
+  # risk_tags deploy/git/network.
+  - id: claude-code.require-approval-for-vcs-push
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - exec.shell
+      risk_tags:
+        - git
+      labels:
+        "command.family": git_push
+    decision: require_approval
+    reason: "Publishing repository state with git push requires approval."
+
+  # Generic network egress such as curl/wget is classified as exec.shell with
+  # command.class=network and risk_tags including network. Demo mode requires
+  # approval rather than silently allowing outbound calls.
+  - id: claude-code.require-approval-for-network
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - exec.shell
+      risk_tags:
+        - network
+      labels:
+        "command.class": network
+    decision: require_approval
+    reason: "Outbound network access from Claude Code requires approval in demo mode."
+
+  # Safe local test/build commands are Bash commands classified with
+  # command.class=safe and command.family=test or build. This rule is deliberately
+  # after denies/approvals so first-match policy evaluation remains fail-closed.
+  - id: claude-code.allow-safe-build-test
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - exec.shell
+      risk_tags:
+        - test
+        - build
+      labels:
+        "command.class": safe
+    decision: allow
+    reason: "Safe local test/build commands are allowed by the demo policy."
+
+  # Unknown high-impact hook actions are explicitly denied with a stable rule ID
+  # instead of relying on the default deny fallback. The classifier marks these
+  # as capability edge.unknown, risk_tags unknown/review_required/destructive,
+  # and unknown.impact=high.
+  - id: claude-code.deny-unknown-high-risk
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - edge.unknown
+      risk_tags:
+        - unknown
+        - review_required
+        - destructive
+      labels:
+        "unknown.impact": high
+    decision: deny
+    reason: "Unknown high-impact Claude Code actions are denied until a specific policy classification exists."

@@ -1,0 +1,21 @@
+apiVersion: cordum.io/v1alpha1
+kind: Pack
+
+metadata:
+  id: cordum-edge-pack
+  version: 0.1.0
+  title: Cordum Edge Policy Templates
+  description: Policy-only Edge templates and simulation fixtures for Claude Code governance.
+
+compatibility:
+  protocolVersion: 1
+  minCoreVersion: 0.6.0
+
+overlays:
+  policy:
+    - name: demo-edge-policy
+      strategy: bundle_fragment
+      path: overlays/policy.fragment.yaml
+    - name: production-edge-policy
+      strategy: bundle_fragment
+      path: overlays/policy.production.fragment.yaml

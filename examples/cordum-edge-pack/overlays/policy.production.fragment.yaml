@@ -1,0 +1,134 @@
+version: edge-policy-production-template-v0
+default_decision: deny
+
+rules:
+  # Production-oriented template: still a policy fragment, not the complete
+  # enterprise boundary. It expects EDGE-008/009 normalized policy inputs on
+  # topic job.edge.action and does not match raw Claude hook payload fields.
+  - id: claude-code.deny-secret-reads
+    match:
+      topics:
+        - job.edge.action
+      risk_tags:
+        - secrets
+      labels:
+        "path.class": secret
+    decision: deny
+    reason: "Secret-like file access is denied; production deployments should use managed secret injection instead of agent reads."
+
+  - id: claude-code.deny-destructive-shell
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - exec.shell
+      risk_tags:
+        - destructive
+      labels:
+        "command.class": destructive
+    decision: deny
+    reason: "Destructive recursive shell operations are denied by the production-oriented template."
+
+  - id: claude-code.deny-unknown-high-risk
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - edge.unknown
+      risk_tags:
+        - unknown
+        - review_required
+        - destructive
+      labels:
+        "unknown.impact": high
+    decision: deny
+    reason: "Unknown high-impact actions fail closed until classified by an explicit production policy rule."
+
+  # Production edit approval is narrower than the demo default: source-code
+  # writes only, as identified by capability file.write, risk_tags source_code,
+  # and path.class=source_code. Broader file writes fall through to default deny
+  # until a tenant-specific rule is added.
+  - id: claude-code.require-approval-for-edits
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - file.write
+      risk_tags:
+        - source_code
+      labels:
+        "path.class": source_code
+    decision: require_approval
+    reason: "Production template requires approval for source-code edits captured by Claude Code."
+
+  - id: claude-code.require-approval-for-vcs-push
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - exec.shell
+      risk_tags:
+        - git
+      labels:
+        "command.family": git_push
+    decision: require_approval
+    reason: "Publishing repository state with git push requires approval."
+
+  - id: claude-code.require-approval-for-network
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - exec.shell
+      risk_tags:
+        - network
+      labels:
+        "command.class": network
+    decision: require_approval
+    reason: "Generic outbound network egress requires approval in the production-oriented template."
+
+  # Safe local tests/builds remain allowed, but with explicit constraints for
+  # downstream Safety Kernel consumers. Gateway policy evaluation will surface
+  # these constraints as ALLOW_WITH_CONSTRAINTS.
+  - id: claude-code.allow-safe-build-test
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - exec.shell
+      risk_tags:
+        - test
+        - build
+      labels:
+        "command.class": safe
+    decision: allow
+    reason: "Safe local test/build commands are allowed with constrained execution guidance."
+    constraints:
+      budgets:
+        max_runtime_ms: 600000
+        max_retries: 0
+        max_artifact_bytes: 10485760
+      sandbox:
+        isolated: true
+        network_allowlist: []
+        fs_read_only:
+          - .
+        fs_read_write:
+          - ./tmp
+          - ./build
+          - ./dist
+      toolchain:
+        allowed_tools:
+          - Bash
+        allowed_commands:
+          - npm test
+          - npm run test
+          - npm run build
+          - go test
+          - go build
+          - pytest
+          - vitest
+      diff:
+        max_files: 0
+        max_lines: 0
+      redaction_level: strict

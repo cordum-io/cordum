@@ -1,0 +1,372 @@
+{
+  "cases": [
+    {
+      "name": "bash_npm_test",
+      "event": {
+        "event_id": "evt-edge-sim-bash-npm-test",
+        "session_id": "sess-edge-sim-demo",
+        "execution_id": "exec-edge-sim-demo",
+        "tenant_id": "tenant-edge-demo",
+        "principal_id": "principal-edge-demo",
+        "seq": 1,
+        "ts": "2026-05-01T00:00:00Z",
+        "layer": "hook",
+        "kind": "hook.pre_tool_use",
+        "agent_product": "claude-code",
+        "tool_name": "Bash",
+        "input_redacted": {
+          "command": "npm test -- --run"
+        },
+        "decision": "RECORDED",
+        "status": "ok",
+        "labels": {
+          "fixture.synthetic": "true"
+        }
+      },
+      "expected_policy_input": {
+        "topic": "job.edge.action",
+        "capability": "exec.shell",
+        "risk_tags": ["exec", "test"],
+        "labels": {
+          "agent.product": "claude-code",
+          "command.class": "safe",
+          "command.family": "test",
+          "edge.action_name": "bash.exec",
+          "edge.event_id": "evt-edge-sim-bash-npm-test",
+          "edge.execution_id": "exec-edge-sim-demo",
+          "edge.kind": "hook.pre_tool_use",
+          "edge.layer": "hook",
+          "edge.session_id": "sess-edge-sim-demo",
+          "hook.event": "hook.pre_tool_use",
+          "hook.tool_name": "Bash"
+        },
+        "input_content_type": "application/json"
+      },
+      "expected_decision": "ALLOW",
+      "expected_rule_id": "claude-code.allow-safe-build-test",
+      "expected_approval_required": false
+    },
+    {
+      "name": "bash_npm_run_build",
+      "event": {
+        "event_id": "evt-edge-sim-bash-npm-run-build",
+        "session_id": "sess-edge-sim-demo",
+        "execution_id": "exec-edge-sim-demo",
+        "tenant_id": "tenant-edge-demo",
+        "principal_id": "principal-edge-demo",
+        "seq": 2,
+        "ts": "2026-05-01T00:00:01Z",
+        "layer": "hook",
+        "kind": "hook.pre_tool_use",
+        "agent_product": "claude-code",
+        "tool_name": "Bash",
+        "input_redacted": {
+          "command": "npm run build"
+        },
+        "decision": "RECORDED",
+        "status": "ok",
+        "labels": {
+          "fixture.synthetic": "true"
+        }
+      },
+      "expected_policy_input": {
+        "topic": "job.edge.action",
+        "capability": "exec.shell",
+        "risk_tags": ["build", "exec"],
+        "labels": {
+          "agent.product": "claude-code",
+          "command.class": "safe",
+          "command.family": "build",
+          "edge.action_name": "bash.exec",
+          "edge.event_id": "evt-edge-sim-bash-npm-run-build",
+          "edge.execution_id": "exec-edge-sim-demo",
+          "edge.kind": "hook.pre_tool_use",
+          "edge.layer": "hook",
+          "edge.session_id": "sess-edge-sim-demo",
+          "hook.event": "hook.pre_tool_use",
+          "hook.tool_name": "Bash"
+        },
+        "input_content_type": "application/json"
+      },
+      "expected_decision": "ALLOW",
+      "expected_rule_id": "claude-code.allow-safe-build-test",
+      "expected_approval_required": false
+    },
+    {
+      "name": "bash_rm_rf",
+      "event": {
+        "event_id": "evt-edge-sim-bash-rm-rf",
+        "session_id": "sess-edge-sim-demo",
+        "execution_id": "exec-edge-sim-demo",
+        "tenant_id": "tenant-edge-demo",
+        "principal_id": "principal-edge-demo",
+        "seq": 3,
+        "ts": "2026-05-01T00:00:02Z",
+        "layer": "hook",
+        "kind": "hook.pre_tool_use",
+        "agent_product": "claude-code",
+        "tool_name": "Bash",
+        "input_redacted": {
+          "command": "rm -rf ./tmp/edge-demo"
+        },
+        "decision": "RECORDED",
+        "status": "ok",
+        "labels": {
+          "fixture.synthetic": "true"
+        }
+      },
+      "expected_policy_input": {
+        "topic": "job.edge.action",
+        "capability": "exec.shell",
+        "risk_tags": ["destructive", "exec", "filesystem"],
+        "labels": {
+          "agent.product": "claude-code",
+          "command.class": "destructive",
+          "command.family": "filesystem_delete",
+          "edge.action_name": "bash.exec",
+          "edge.event_id": "evt-edge-sim-bash-rm-rf",
+          "edge.execution_id": "exec-edge-sim-demo",
+          "edge.kind": "hook.pre_tool_use",
+          "edge.layer": "hook",
+          "edge.session_id": "sess-edge-sim-demo",
+          "hook.event": "hook.pre_tool_use",
+          "hook.tool_name": "Bash"
+        },
+        "input_content_type": "application/json"
+      },
+      "expected_decision": "DENY",
+      "expected_rule_id": "claude-code.deny-destructive-shell",
+      "expected_approval_required": false
+    },
+    {
+      "name": "read_dotenv",
+      "event": {
+        "event_id": "evt-edge-sim-read-dotenv",
+        "session_id": "sess-edge-sim-demo",
+        "execution_id": "exec-edge-sim-demo",
+        "tenant_id": "tenant-edge-demo",
+        "principal_id": "principal-edge-demo",
+        "seq": 4,
+        "ts": "2026-05-01T00:00:03Z",
+        "layer": "hook",
+        "kind": "hook.pre_tool_use",
+        "agent_product": "claude-code",
+        "tool_name": "Read",
+        "input_redacted": {
+          "file_path": ".env"
+        },
+        "decision": "RECORDED",
+        "status": "ok",
+        "labels": {
+          "fixture.synthetic": "true"
+        }
+      },
+      "expected_policy_input": {
+        "topic": "job.edge.action",
+        "capability": "file.read",
+        "risk_tags": ["filesystem", "read", "secrets"],
+        "labels": {
+          "agent.product": "claude-code",
+          "edge.action_name": "file.read",
+          "edge.event_id": "evt-edge-sim-read-dotenv",
+          "edge.execution_id": "exec-edge-sim-demo",
+          "edge.kind": "hook.pre_tool_use",
+          "edge.layer": "hook",
+          "edge.session_id": "sess-edge-sim-demo",
+          "hook.event": "hook.pre_tool_use",
+          "hook.tool_name": "Read",
+          "path.class": "secret"
+        },
+        "input_content_type": "application/json"
+      },
+      "expected_decision": "DENY",
+      "expected_rule_id": "claude-code.deny-secret-reads",
+      "expected_approval_required": false
+    },
+    {
+      "name": "edit_source",
+      "event": {
+        "event_id": "evt-edge-sim-edit-source",
+        "session_id": "sess-edge-sim-demo",
+        "execution_id": "exec-edge-sim-demo",
+        "tenant_id": "tenant-edge-demo",
+        "principal_id": "principal-edge-demo",
+        "seq": 5,
+        "ts": "2026-05-01T00:00:04Z",
+        "layer": "hook",
+        "kind": "hook.pre_tool_use",
+        "agent_product": "claude-code",
+        "tool_name": "Edit",
+        "input_redacted": {
+          "file_path": "src/server.go",
+          "old_string": "<redacted:old>",
+          "new_string": "<redacted:new>"
+        },
+        "decision": "RECORDED",
+        "status": "ok",
+        "labels": {
+          "fixture.synthetic": "true"
+        }
+      },
+      "expected_policy_input": {
+        "topic": "job.edge.action",
+        "capability": "file.write",
+        "risk_tags": ["filesystem", "source_code", "write"],
+        "labels": {
+          "agent.product": "claude-code",
+          "edge.action_name": "file.write",
+          "edge.event_id": "evt-edge-sim-edit-source",
+          "edge.execution_id": "exec-edge-sim-demo",
+          "edge.kind": "hook.pre_tool_use",
+          "edge.layer": "hook",
+          "edge.session_id": "sess-edge-sim-demo",
+          "hook.event": "hook.pre_tool_use",
+          "hook.tool_name": "Edit",
+          "path.class": "source_code"
+        },
+        "input_content_type": "application/json"
+      },
+      "expected_decision": "REQUIRE_HUMAN",
+      "expected_rule_id": "claude-code.require-approval-for-edits",
+      "expected_approval_required": true
+    },
+    {
+      "name": "git_push",
+      "event": {
+        "event_id": "evt-edge-sim-git-push",
+        "session_id": "sess-edge-sim-demo",
+        "execution_id": "exec-edge-sim-demo",
+        "tenant_id": "tenant-edge-demo",
+        "principal_id": "principal-edge-demo",
+        "seq": 6,
+        "ts": "2026-05-01T00:00:05Z",
+        "layer": "hook",
+        "kind": "hook.pre_tool_use",
+        "agent_product": "claude-code",
+        "tool_name": "Bash",
+        "input_redacted": {
+          "command": "git push origin main"
+        },
+        "decision": "RECORDED",
+        "status": "ok",
+        "labels": {
+          "fixture.synthetic": "true"
+        }
+      },
+      "expected_policy_input": {
+        "topic": "job.edge.action",
+        "capability": "exec.shell",
+        "risk_tags": ["deploy", "git", "network"],
+        "labels": {
+          "agent.product": "claude-code",
+          "command.class": "deploy",
+          "command.family": "git_push",
+          "edge.action_name": "bash.exec",
+          "edge.event_id": "evt-edge-sim-git-push",
+          "edge.execution_id": "exec-edge-sim-demo",
+          "edge.kind": "hook.pre_tool_use",
+          "edge.layer": "hook",
+          "edge.session_id": "sess-edge-sim-demo",
+          "hook.event": "hook.pre_tool_use",
+          "hook.tool_name": "Bash"
+        },
+        "input_content_type": "application/json"
+      },
+      "expected_decision": "REQUIRE_HUMAN",
+      "expected_rule_id": "claude-code.require-approval-for-vcs-push",
+      "expected_approval_required": true
+    },
+    {
+      "name": "curl_network",
+      "event": {
+        "event_id": "evt-edge-sim-curl-network",
+        "session_id": "sess-edge-sim-demo",
+        "execution_id": "exec-edge-sim-demo",
+        "tenant_id": "tenant-edge-demo",
+        "principal_id": "principal-edge-demo",
+        "seq": 7,
+        "ts": "2026-05-01T00:00:06Z",
+        "layer": "hook",
+        "kind": "hook.pre_tool_use",
+        "agent_product": "claude-code",
+        "tool_name": "Bash",
+        "input_redacted": {
+          "command": "curl https://example.invalid/api/health"
+        },
+        "decision": "RECORDED",
+        "status": "ok",
+        "labels": {
+          "fixture.synthetic": "true"
+        }
+      },
+      "expected_policy_input": {
+        "topic": "job.edge.action",
+        "capability": "exec.shell",
+        "risk_tags": ["exec", "network"],
+        "labels": {
+          "agent.product": "claude-code",
+          "command.class": "network",
+          "command.family": "network_egress",
+          "edge.action_name": "bash.exec",
+          "edge.event_id": "evt-edge-sim-curl-network",
+          "edge.execution_id": "exec-edge-sim-demo",
+          "edge.kind": "hook.pre_tool_use",
+          "edge.layer": "hook",
+          "edge.session_id": "sess-edge-sim-demo",
+          "hook.event": "hook.pre_tool_use",
+          "hook.tool_name": "Bash"
+        },
+        "input_content_type": "application/json"
+      },
+      "expected_decision": "REQUIRE_HUMAN",
+      "expected_rule_id": "claude-code.require-approval-for-network",
+      "expected_approval_required": true
+    },
+    {
+      "name": "unknown_high_risk",
+      "event": {
+        "event_id": "evt-edge-sim-unknown-high-risk",
+        "session_id": "sess-edge-sim-demo",
+        "execution_id": "exec-edge-sim-demo",
+        "tenant_id": "tenant-edge-demo",
+        "principal_id": "principal-edge-demo",
+        "seq": 8,
+        "ts": "2026-05-01T00:00:07Z",
+        "layer": "hook",
+        "kind": "hook.pre_tool_use",
+        "agent_product": "claude-code",
+        "tool_name": "UnknownTool",
+        "input_redacted": {
+          "operation": "drop production database",
+          "target": "synthetic-demo-db"
+        },
+        "decision": "RECORDED",
+        "status": "ok",
+        "labels": {
+          "fixture.synthetic": "true"
+        }
+      },
+      "expected_policy_input": {
+        "topic": "job.edge.action",
+        "capability": "edge.unknown",
+        "risk_tags": ["destructive", "review_required", "unknown"],
+        "labels": {
+          "agent.product": "claude-code",
+          "edge.action_name": "unknown.hook",
+          "edge.event_id": "evt-edge-sim-unknown-high-risk",
+          "edge.execution_id": "exec-edge-sim-demo",
+          "edge.kind": "hook.pre_tool_use",
+          "edge.layer": "hook",
+          "edge.session_id": "sess-edge-sim-demo",
+          "hook.event": "hook.pre_tool_use",
+          "hook.tool_name": "UnknownTool",
+          "unknown.impact": "high"
+        },
+        "input_content_type": "application/json"
+      },
+      "expected_decision": "DENY",
+      "expected_rule_id": "claude-code.deny-unknown-high-risk",
+      "expected_approval_required": false
+    }
+  ]
+}

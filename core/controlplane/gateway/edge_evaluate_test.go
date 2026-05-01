@@ -6,11 +6,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	edgecore "github.com/cordum/cordum/core/edge"
+	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
 )
@@ -531,7 +535,79 @@ func TestBuildEdgeEvaluatePolicyInputUsesClassifierAndMapper(t *testing.T) {
 	}
 }
 
-func newEdgeEvaluateTestServer(t *testing.T, safety *edgeEvaluateStubSafetyClient) (*server, http.Handler) {
+func TestGatewayEdgeEvaluateAppliesDemoPolicySimulationFixtures(t *testing.T) {
+	safety := &edgeEvaluatePolicySafetyClient{
+		policy:   loadEdgeEvaluateDemoPolicy(t),
+		snapshot: "edge-demo-policy-gateway-test",
+	}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	fixtures := loadEdgeEvaluatePolicySimulationFixtures(t)
+
+	for _, name := range []string{"bash_rm_rf", "read_dotenv", "bash_npm_test", "edit_source"} {
+		tc, ok := fixtures[name]
+		if !ok {
+			t.Fatalf("missing fixture case %q", name)
+		}
+		t.Run(name, func(t *testing.T) {
+			session := createEdgeRouteSession(t, handler)
+			rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBodyFromFixture(session.SessionID, session.ExecutionID, tc))
+			if rr.Code != http.StatusOK {
+				t.Fatalf("evaluate status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+			}
+
+			var resp edgeEvaluateResponseJSON
+			decodeEdgeRouteJSON(t, rr, &resp)
+			wantDecision := edgeEvaluateResponseDecisionForPolicyDecision(tc.ExpectedDecision)
+			if resp.Decision != wantDecision {
+				t.Fatalf("decision = %q, want %q body=%s", resp.Decision, wantDecision, rr.Body.String())
+			}
+			if resp.RuleID != tc.ExpectedRuleID {
+				t.Fatalf("rule_id = %q, want %q body=%s", resp.RuleID, tc.ExpectedRuleID, rr.Body.String())
+			}
+			if resp.PolicySnapshot != "edge-demo-policy-gateway-test" {
+				t.Fatalf("policy_snapshot = %q, want edge-demo-policy-gateway-test", resp.PolicySnapshot)
+			}
+			wantPermission := "deny"
+			wantExitCode := 2
+			if tc.ExpectedDecision == "ALLOW" {
+				wantPermission = "allow"
+				wantExitCode = 0
+			}
+			if resp.PermissionDecision != wantPermission || resp.ExitCode != wantExitCode {
+				t.Fatalf("hook permission/exit = %q/%d, want %q/%d body=%s", resp.PermissionDecision, resp.ExitCode, wantPermission, wantExitCode, rr.Body.String())
+			}
+			if tc.ExpectedApprovalRequired && resp.WaitStrategy != "manual_approval" {
+				t.Fatalf("wait_strategy = %q, want manual_approval body=%s", resp.WaitStrategy, rr.Body.String())
+			}
+
+			events := listEdgeEvaluateEvents(t, s, session.SessionID, session.ExecutionID)
+			if len(events) != 1 {
+				t.Fatalf("persisted events = %d, want exactly one Edge decision event: %#v", len(events), events)
+			}
+			event := events[0]
+			if event.Kind != edgecore.EventKindHookPolicyDecision {
+				t.Fatalf("event kind = %q, want %q", event.Kind, edgecore.EventKindHookPolicyDecision)
+			}
+			if event.RuleID != tc.ExpectedRuleID || event.PolicySnapshot != "edge-demo-policy-gateway-test" {
+				t.Fatalf("event policy fields = rule:%q snapshot:%q, want %q/edge-demo-policy-gateway-test", event.RuleID, event.PolicySnapshot, tc.ExpectedRuleID)
+			}
+			if event.Decision != edgeEvaluateEventDecisionForPolicyDecision(tc.ExpectedDecision) {
+				t.Fatalf("event decision = %q, want policy decision %q", event.Decision, tc.ExpectedDecision)
+			}
+		})
+	}
+
+	for _, req := range safety.capturedRequests() {
+		if req.GetJobId() != "" {
+			t.Fatalf("Edge evaluate policy request unexpectedly set job_id %q; Edge actions must not become Cordum Jobs", req.GetJobId())
+		}
+		if req.GetTopic() != edgecore.EdgePolicyTopic {
+			t.Fatalf("policy request topic = %q, want %q", req.GetTopic(), edgecore.EdgePolicyTopic)
+		}
+	}
+}
+
+func newEdgeEvaluateTestServer(t *testing.T, safety pb.SafetyKernelClient) (*server, http.Handler) {
 	t.Helper()
 	s, handler := newEdgeRouteTestServer(t)
 	s.safetyClient = safety
@@ -611,6 +687,22 @@ func edgeEvaluateBody(sessionID, executionID, tenantID, toolName string, input m
 	}`
 }
 
+func edgeEvaluateBodyFromFixture(sessionID, executionID string, tc edgeEvaluatePolicySimulationCase) string {
+	body := map[string]any{
+		"tenant_id":      edgeRouteTenant,
+		"principal_id":   "principal-edge-a",
+		"session_id":     sessionID,
+		"execution_id":   executionID,
+		"agent_product":  tc.Event.AgentProduct,
+		"layer":          tc.Event.Layer,
+		"kind":           tc.Event.Kind,
+		"tool_name":      tc.Event.ToolName,
+		"input_redacted": tc.Event.InputRedacted,
+	}
+	data, _ := json.Marshal(body)
+	return string(data)
+}
+
 func edgeEvaluateStringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -625,6 +717,25 @@ type edgeEvaluateStubSafetyClient struct {
 	requests []*pb.PolicyCheckRequest
 	response *pb.PolicyCheckResponse
 	err      error
+}
+
+type edgeEvaluatePolicySimulationFixture struct {
+	Cases []edgeEvaluatePolicySimulationCase `json:"cases"`
+}
+
+type edgeEvaluatePolicySimulationCase struct {
+	Name                     string                    `json:"name"`
+	Event                    edgecore.AgentActionEvent `json:"event"`
+	ExpectedDecision         string                    `json:"expected_decision"`
+	ExpectedRuleID           string                    `json:"expected_rule_id"`
+	ExpectedApprovalRequired bool                      `json:"expected_approval_required"`
+}
+
+type edgeEvaluatePolicySafetyClient struct {
+	mu       sync.Mutex
+	policy   *config.SafetyPolicy
+	snapshot string
+	requests []*pb.PolicyCheckRequest
 }
 
 type edgeEvaluateFailingAppendStore struct {
@@ -646,6 +757,92 @@ func (c *edgeEvaluateStubSafetyClient) Evaluate(ctx context.Context, in *pb.Poli
 		return c.response, nil
 	}
 	return &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW, Reason: "allowed"}, nil
+}
+
+func (c *edgeEvaluatePolicySafetyClient) Evaluate(_ context.Context, in *pb.PolicyCheckRequest, _ ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	c.mu.Lock()
+	c.requests = append(c.requests, in)
+	c.mu.Unlock()
+	return policybundles.EvaluatePolicyCheck(c.policy, c.snapshot, in), nil
+}
+
+func (c *edgeEvaluatePolicySafetyClient) capturedRequests() []*pb.PolicyCheckRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]*pb.PolicyCheckRequest, len(c.requests))
+	copy(out, c.requests)
+	return out
+}
+
+func (c *edgeEvaluatePolicySafetyClient) Check(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return nil, errors.New("unexpected Check call")
+}
+
+func (c *edgeEvaluatePolicySafetyClient) Explain(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return nil, errors.New("unexpected Explain call")
+}
+
+func (c *edgeEvaluatePolicySafetyClient) Simulate(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return nil, errors.New("unexpected Simulate call")
+}
+
+func (c *edgeEvaluatePolicySafetyClient) ListSnapshots(context.Context, *pb.ListSnapshotsRequest, ...grpc.CallOption) (*pb.ListSnapshotsResponse, error) {
+	return nil, errors.New("unexpected ListSnapshots call")
+}
+
+func loadEdgeEvaluatePolicySimulationFixtures(t *testing.T) map[string]edgeEvaluatePolicySimulationCase {
+	t.Helper()
+	path := filepath.Join("..", "..", "..", "examples", "cordum-edge-pack", "fixtures", "policy-simulations.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read edge policy simulation fixtures %s: %v", path, err)
+	}
+	var fixture edgeEvaluatePolicySimulationFixture
+	if err := json.Unmarshal(data, &fixture); err != nil {
+		t.Fatalf("parse edge policy simulation fixtures %s: %v", path, err)
+	}
+	out := make(map[string]edgeEvaluatePolicySimulationCase, len(fixture.Cases))
+	for _, tc := range fixture.Cases {
+		out[tc.Name] = tc
+	}
+	return out
+}
+
+func loadEdgeEvaluateDemoPolicy(t *testing.T) *config.SafetyPolicy {
+	t.Helper()
+	path := filepath.Join("..", "..", "..", "examples", "cordum-edge-pack", "overlays", "policy.fragment.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read demo Edge policy %s: %v", path, err)
+	}
+	policy, err := config.ParseSafetyPolicy(data)
+	if err != nil {
+		t.Fatalf("parse demo Edge policy %s: %v", path, err)
+	}
+	if policy == nil {
+		t.Fatalf("parse demo Edge policy %s returned nil", path)
+	}
+	return policy
+}
+
+func edgeEvaluateResponseDecisionForPolicyDecision(decision string) string {
+	if decision == "REQUIRE_HUMAN" {
+		return string(edgecore.DecisionRequireApproval)
+	}
+	return decision
+}
+
+func edgeEvaluateEventDecisionForPolicyDecision(decision string) edgecore.EdgeDecision {
+	switch decision {
+	case "ALLOW":
+		return edgecore.DecisionAllow
+	case "DENY":
+		return edgecore.DecisionDeny
+	case "REQUIRE_HUMAN":
+		return edgecore.DecisionRequireApproval
+	default:
+		return edgecore.EdgeDecision(decision)
+	}
 }
 
 func (c *edgeEvaluateStubSafetyClient) Check(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {

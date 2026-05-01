@@ -61,6 +61,7 @@ variables from your shell.
 | [configuration.md](configuration.md) | Config files and environment variables overview |
 | [configuration-reference.md](configuration-reference.md) | Complete config schema reference — system.yaml fields, overlay system, env vars master table |
 | [output-policy.md](output-policy.md) | Output safety scanning operator guide — rules, scanners, quarantine runbook |
+| [edge-policy.md](edge-policy.md) | Cordum Edge policy templates — classifier labels, demo/production fragments, simulation fixtures |
 | [production.md](production.md) | Production readiness guide — checklist, DR procedures, incident runbooks, scaling guide, monitoring alerts, security hardening |
 | [guides/production-deployment.md](guides/production-deployment.md) | Production deployment guide — Docker Compose, K8s, Helm with TLS |
 | [guides/tls-setup.md](guides/tls-setup.md) | TLS setup guide — architecture, cert generation, env vars, troubleshooting |
