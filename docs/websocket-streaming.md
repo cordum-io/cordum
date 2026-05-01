@@ -11,8 +11,8 @@ Reference for the Cordum real-time event stream over WebSocket. The gateway expo
 
 | Endpoint | Auth | Description |
 |----------|------|-------------|
-| `GET /api/v1/stream` | API key (subprotocol) + admin role | Global event stream — all jobs, heartbeats, audit events |
-| `GET /api/v1/jobs/{id}/stream` | API key (subprotocol) + tenant match | Per-job event stream — events for a specific job only |
+| `GET /api/v1/stream` | API key (subprotocol) + admin role | Global event stream — jobs, heartbeats, audit events, and Edge action events |
+| `GET /api/v1/jobs/{id}/stream` | API key (subprotocol) + tenant match | Per-job event stream — CAP job events for a specific job only |
 
 ---
 
@@ -54,7 +54,8 @@ The gateway echoes back the matched subprotocol in the `Sec-WebSocket-Protocol` 
 
 Each WebSocket client is associated with a tenant from the authenticated request context. Events are filtered server-side:
 
-- Events with a matching `tenant` field are delivered
+- CAP BusPacket events with a matching derived `tenant` field are delivered
+- Edge `edge.event` envelopes with a matching `tenant_id` are delivered
 - Events without a tenant field are dropped for non-cross-tenant clients
 - Cross-tenant clients (admin) receive all events
 
@@ -62,9 +63,52 @@ Each WebSocket client is associated with a tenant from the authenticated request
 
 ## 2. Message Format
 
-All messages are JSON-encoded [BusPacket](AGENT_PROTOCOL.md) protobuf messages serialized with `protojson`. Each message represents a single bus event.
+`GET /api/v1/stream` emits two JSON message families:
 
-### Wire Format (protojson)
+1. Existing [BusPacket](AGENT_PROTOCOL.md) protobuf messages serialized with `protojson`.
+2. Dedicated Edge action-event envelopes with top-level `type: "edge.event"`.
+
+Clients should inspect `message.type` first. If it is `"edge.event"`, parse it as the Edge envelope below; otherwise parse the message as the existing CAP BusPacket protojson shape. `GET /api/v1/jobs/{id}/stream` remains job-filtered and receives CAP job packets only; generic Edge action events are not delivered there unless a future explicit job-linked mirror is added.
+
+### Edge Event Envelope
+
+Edge action events written through the Gateway Edge event APIs are forwarded after successful persistence as best-effort stream messages:
+
+```json
+{
+  "type": "edge.event",
+  "tenant_id": "tenant-a",
+  "session_id": "edge_sess_123",
+  "execution_id": "exec_456",
+  "event": {
+    "event_id": "evt_789",
+    "tenant_id": "tenant-a",
+    "session_id": "edge_sess_123",
+    "execution_id": "exec_456",
+    "seq": 42,
+    "ts": "2026-05-01T12:07:00Z",
+    "layer": "hook",
+    "kind": "hook.pre_tool_use",
+    "agent_product": "claude-code",
+    "tool_name": "Bash",
+    "input_redacted": {
+      "command": "<redacted>"
+    },
+    "input_hash": "sha256:...",
+    "decision": "ALLOW",
+    "status": "ok",
+    "artifact_ptrs": []
+  }
+}
+```
+
+The `event` payload uses the JSON schema in [`core/edge/schema/agent_action_event.schema.json`](../core/edge/schema/agent_action_event.schema.json). Large/raw tool inputs and transcripts must be represented with artifact pointers, not inline raw payloads.
+
+Ordering is best-effort and follows the persisted event order returned by the write path for a single Gateway process. Slow clients may be evicted by the shared WebSocket backpressure behavior, and WebSockets do not provide replay; on reconnect, poll the Edge REST APIs for authoritative state.
+
+### CAP BusPacket Wire Format (protojson)
+
+Existing job, heartbeat, alert, and audit messages retain the original protojson BusPacket shape:
 
 ```json
 {
@@ -84,7 +128,7 @@ All messages are JSON-encoded [BusPacket](AGENT_PROTOCOL.md) protobuf messages s
 }
 ```
 
-### Payload Variants
+### CAP Payload Variants
 
 Each BusPacket contains exactly one payload field:
 
@@ -97,7 +141,7 @@ Each BusPacket contains exactly one payload field:
 | `heartbeat` | `Heartbeat` | Worker heartbeat with pool, active jobs, capacity |
 | `alert` | `Alert` | System alert |
 
-### Common Fields
+### CAP Common Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -141,11 +185,19 @@ The dashboard normalizes BusPackets into `StreamEvent` objects. Here are the eve
 
 The gateway subscribes to `sys.audit.>` NATS subjects. Audit events arrive as BusPackets and are forwarded to WebSocket clients as-is.
 
+### Edge Events
+
+| Event Type | Source | Payload Fields |
+|-----------|--------|----------------|
+| `edge.event` | Edge event write APIs | `tenant_id`, `session_id`, `execution_id`, `event` |
+
+For dashboard cache invalidation, use `event.kind` plus `session_id` and `execution_id` from the envelope. A new `edge.event` should invalidate the relevant Edge session/execution/event queries for the same tenant, then patch or refresh any per-session activity feed keyed by `session_id` and `execution_id`.
+
 ---
 
 ## 4. Bus Subscriptions
 
-The gateway subscribes to these NATS subjects and forwards matching packets to WebSocket clients:
+The gateway subscribes to these NATS subjects and forwards matching CAP packets to WebSocket clients:
 
 | NATS Subject | Events |
 |-------------|--------|
@@ -153,6 +205,8 @@ The gateway subscribes to these NATS subjects and forwards matching packets to W
 | `sys.job.>` | All job lifecycle events (submit, result, progress, cancel) |
 | `sys.audit.>` | Audit trail events |
 | `sys.job.dlq` | Dead-letter queue entries (also persisted to DLQ store) |
+
+Edge `edge.event` envelopes are not CAP BusPackets and are not synthesized as `sys.job.progress`; they are forwarded after successful Edge event persistence.
 
 ---
 
@@ -169,6 +223,7 @@ Server-side filtering:
 - Tenant access is verified against the job's tenant before the upgrade
 - Returns `404` if the job does not exist
 - Returns `403` if the caller's tenant does not match
+- Generic Edge `edge.event` messages are not delivered to per-job streams because they are session-log/audit events, not Cordum Jobs
 
 ---
 
@@ -367,9 +422,10 @@ The Cordum dashboard uses two hooks for WebSocket integration:
 - Manages the single WebSocket connection to `/api/v1/stream`
 - Authenticates via the `cordum-api-key.<base64url>` subprotocol
 - Auto-reconnects with exponential backoff (1s to 30s)
-- Converts raw `BusPacket` protojson to normalized `StreamEvent` objects
+- Converts raw `BusPacket` protojson to normalized `StreamEvent` objects and routes `type: "edge.event"` envelopes to Edge session/execution caches
 - Dispatches events to:
   - **React Query cache invalidation** — events matching `job.*`, `workflow.*`, `approval.*`, `worker.*`, `dlq.*`, `policy.*`, `run.*`, `pack.*`, `safety.*`, `audit.*` invalidate their respective query keys
+  - **Edge cache invalidation** — `edge.event` invalidates Edge event/session/execution queries for `tenant_id`, `session_id`, and `execution_id`; dashboards should use `event.kind` to update activity rows or refetch derived risk/approval counters
   - **Zustand event store** — all events buffered for the live activity feed
   - **Safety decision store** — `safety.*` events pushed to a dedicated buffer
 
@@ -394,6 +450,7 @@ The Cordum dashboard uses two hooks for WebSocket integration:
 | `pack.*` | `["packs"]` |
 | `safety.*` | `["safety"]` |
 | `audit.*` | `["audit"]` |
+| `edge.event` | `["edge", "sessions"]`, `["edge", "sessions", session_id, "events"]`, `["edge", "executions", execution_id, "events"]` |
 
 ---
 
@@ -423,5 +480,6 @@ When the gateway shuts down, it closes the broadcast channel (`stopBusTaps`), wh
 
 - [api-reference.md](api-reference.md) — REST endpoint reference
 - [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — CAP bus protocol and pointer semantics
+- [../core/edge/schema/agent_action_event.schema.json](../core/edge/schema/agent_action_event.schema.json) — Edge action-event payload schema
 - [sdk-reference.md](sdk-reference.md) — Go SDK client and worker runtime
 - [configuration.md](configuration.md) — CORS and gateway environment variables

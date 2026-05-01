@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -194,6 +195,126 @@ func TestGatewayEdgeEventSingleWriteRedactsHashesAndPreservesSeq(t *testing.T) {
 	if createdSecond.Seq != 2 {
 		t.Fatalf("second event seq = %d, want explicit seq 2 preserved", createdSecond.Seq)
 	}
+}
+
+func TestGatewayEdgeEventSingleWriteStreamsPersistedEdgeEnvelope(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	session := createEdgeRouteSession(t, handler)
+	drainGatewayEdgeStreamQueue(s.eventsCh)
+	streamQueue := &wsClient{ch: s.eventsCh}
+
+	rawSecretCommand := "Authorization: Bearer edge007-stream-secret"
+	created := edgeRoutePOST(t, handler, "/api/v1/edge/events", `{
+		"event_id":"evt-edge007-write-stream",
+		"session_id":"`+session.SessionID+`",
+		"execution_id":"`+session.ExecutionID+`",
+		"tenant_id":"`+edgeRouteTenant+`",
+		"ts":"2026-05-01T12:07:00Z",
+		"layer":"hook",
+		"kind":"hook.pre_tool_use",
+		"tool_name":"Bash",
+		"input_redacted":{"command":"`+rawSecretCommand+`"},
+		"decision":"ALLOW",
+		"status":"ok"
+	}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("single event create status = %d, want 201 body=%s", created.Code, created.Body.String())
+	}
+	var persisted edgecore.AgentActionEvent
+	decodeEdgeRouteJSON(t, created, &persisted)
+
+	streamed := readGatewayEdgeStreamEvent(t, streamQueue, "persisted single edge.event")
+	if streamed.tenant != edgeRouteTenant {
+		t.Fatalf("stream tenant = %q, want %q", streamed.tenant, edgeRouteTenant)
+	}
+	if streamed.jobID != "" {
+		t.Fatalf("stream jobID = %q, want empty for generic edge.event", streamed.jobID)
+	}
+	body := string(streamed.data)
+	if strings.Contains(body, rawSecretCommand) || strings.Contains(body, "edge007-stream-secret") {
+		t.Fatalf("streamed edge.event leaked raw command: %s", body)
+	}
+	for _, forbidden := range []string{"jobProgress", "jobRequest", "jobResult", "heartbeat"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("streamed edge.event contains BusPacket field %q: %s", forbidden, body)
+		}
+	}
+	var envelope struct {
+		Type        string                    `json:"type"`
+		TenantID    string                    `json:"tenant_id"`
+		SessionID   string                    `json:"session_id"`
+		ExecutionID string                    `json:"execution_id"`
+		Event       edgecore.AgentActionEvent `json:"event"`
+	}
+	if err := json.Unmarshal(streamed.data, &envelope); err != nil {
+		t.Fatalf("decode streamed edge.event: %v body=%s", err, body)
+	}
+	if envelope.Type != "edge.event" {
+		t.Fatalf("stream type = %q, want edge.event", envelope.Type)
+	}
+	if envelope.TenantID != persisted.TenantID || envelope.SessionID != persisted.SessionID || envelope.ExecutionID != persisted.ExecutionID {
+		t.Fatalf("stream envelope ids = %q/%q/%q, want persisted %q/%q/%q",
+			envelope.TenantID, envelope.SessionID, envelope.ExecutionID,
+			persisted.TenantID, persisted.SessionID, persisted.ExecutionID)
+	}
+	if envelope.Event.EventID != persisted.EventID || envelope.Event.Seq != persisted.Seq || envelope.Event.InputHash != persisted.InputHash {
+		t.Fatalf("stream payload = %#v, want persisted event id/seq/hash %q/%d/%q",
+			envelope.Event, persisted.EventID, persisted.Seq, persisted.InputHash)
+	}
+}
+
+func TestGatewayEdgeEventBatchWriteStreamsPersistedEventsInOrder(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	session := createEdgeRouteSession(t, handler)
+	drainGatewayEdgeStreamQueue(s.eventsCh)
+	streamQueue := &wsClient{ch: s.eventsCh}
+
+	batch := edgeRoutePOST(t, handler, "/api/v1/edge/events/batch", edgeEventBatchBody(
+		edgeEventJSON("evt-edge007-batch-stream-1", session.SessionID, session.ExecutionID, edgeRouteTenant, "", "2026-05-01T12:07:10Z", "hook.pre_tool_use", "ALLOW", "ok"),
+		edgeEventJSON("evt-edge007-batch-stream-2", session.SessionID, session.ExecutionID, edgeRouteTenant, "", "2026-05-01T12:07:11Z", "hook.policy_decision", "DENY", "blocked"),
+	))
+	if batch.Code != http.StatusCreated {
+		t.Fatalf("batch create status = %d, want 201 body=%s", batch.Code, batch.Body.String())
+	}
+	var persisted edgeEventBatchResponseJSON
+	decodeEdgeRouteJSON(t, batch, &persisted)
+	if len(persisted.Items) != 2 {
+		t.Fatalf("batch response items = %d, want 2", len(persisted.Items))
+	}
+
+	for i, want := range persisted.Items {
+		streamed := readGatewayEdgeStreamEvent(t, streamQueue, want.EventID)
+		if streamed.tenant != edgeRouteTenant {
+			t.Fatalf("stream[%d] tenant = %q, want %q", i, streamed.tenant, edgeRouteTenant)
+		}
+		if streamed.jobID != "" {
+			t.Fatalf("stream[%d] jobID = %q, want empty", i, streamed.jobID)
+		}
+		var envelope struct {
+			Type  string                    `json:"type"`
+			Event edgecore.AgentActionEvent `json:"event"`
+		}
+		if err := json.Unmarshal(streamed.data, &envelope); err != nil {
+			t.Fatalf("decode streamed batch event %d: %v body=%s", i, err, string(streamed.data))
+		}
+		if envelope.Type != "edge.event" || envelope.Event.EventID != want.EventID || envelope.Event.Seq != want.Seq {
+			t.Fatalf("stream[%d] = type %q event %q seq %d, want edge.event %q seq %d",
+				i, envelope.Type, envelope.Event.EventID, envelope.Event.Seq, want.EventID, want.Seq)
+		}
+	}
+	assertNoGatewayEdgeStreamEvent(t, streamQueue, "batch should stream exactly persisted events")
+}
+
+func TestGatewayEdgeEventWriteDoesNotStreamWhenPersistenceFails(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	drainGatewayEdgeStreamQueue(s.eventsCh)
+	streamQueue := &wsClient{ch: s.eventsCh}
+
+	missingParent := edgeRoutePOST(t, handler, "/api/v1/edge/events", edgeEventWriteBody("missing-session", "missing-execution", edgeRouteTenant, "evt-edge007-no-phantom"))
+	if missingParent.Code != http.StatusNotFound {
+		t.Fatalf("missing parent create status = %d, want 404 body=%s", missingParent.Code, missingParent.Body.String())
+	}
+	assertNoGatewayEdgeStreamEvent(t, streamQueue, "failed persistence must not stream phantom edge.event")
 }
 
 func TestGatewayEdgeEventWriteRejectsOversizeInlineInputsAndRawPayloads(t *testing.T) {
@@ -573,4 +694,14 @@ func readEdgeEventsFromStore(t *testing.T, s *server, executionID string) edgeEv
 		t.Fatalf("ListEvents(%s): %v", executionID, err)
 	}
 	return edgeEventPageResponseJSON{Items: page.Items, NextCursor: page.NextCursor}
+}
+
+func drainGatewayEdgeStreamQueue(ch <-chan wsEvent) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
+	}
 }

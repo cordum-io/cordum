@@ -2713,7 +2713,9 @@ Note: There are no `/healthz`, `/readyz`, or `/api/v1/system/health` routes in c
 - Auth: required + admin role
 - Upgrade: websocket
 - API key via `X-API-Key` or websocket subprotocol (`cordum-api-key, <base64url(key)>`)
-- Streams bus events (`sys.job.*`, `sys.audit.*`) filtered by tenant permissions.
+- Streams existing CAP BusPacket protojson events (`sys.job.*`, `sys.audit.*`, heartbeats) and dedicated Edge action envelopes filtered by tenant permissions.
+- Edge messages use `{ "type": "edge.event", "tenant_id": "...", "session_id": "...", "execution_id": "...", "event": { ... } }`; the `event` payload matches `core/edge/schema/agent_action_event.schema.json`.
+- Edge stream forwarding is best-effort after successful Edge event persistence. On reconnect, clients should poll the Edge REST APIs for authoritative state.
 - Server sends ping frames every 30 seconds by default (`GATEWAY_WS_PING_INTERVAL`) and expects pong handling to keep the socket alive.
 - Credentials are revalidated every 120 seconds; definitive revocation closes the socket with a policy-violation close frame.
 
@@ -2721,7 +2723,8 @@ Note: There are no `/healthz`, `/readyz`, or `/api/v1/system/health` routes in c
 
 - Auth: required + tenant access to that job
 - Upgrade: websocket
-- Streams only events for the specified job id.
+- Streams only CAP job events for the specified job id.
+- Generic Edge `edge.event` envelopes are not delivered to this endpoint unless a future explicit job-linked mirror is added.
 - Uses the same ping/pong keepalive and credential revalidation behavior as the global stream.
 
 ---

@@ -112,6 +112,7 @@ func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
 		writeEdgeEventStoreError(w, r, err, "append edge event")
 		return
 	}
+	s.forwardPersistedEdgeEvent(appended)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, appended)
@@ -163,6 +164,9 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		writeEdgeEventStoreError(w, r, err, "append edge event batch")
 		return
+	}
+	for _, event := range appended {
+		s.forwardPersistedEdgeEvent(event)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

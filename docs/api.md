@@ -27,7 +27,7 @@ User management (admin only):
 - `POST /api/v1/users` - Create a new user
 
 Common endpoints:
-- Status/stream: `GET /api/v1/status`, WebSocket `GET /api/v1/stream`
+- Status/stream: `GET /api/v1/status`, WebSocket `GET /api/v1/stream` (CAP BusPacket protojson plus `edge.event` envelopes)
 - Jobs: `GET /api/v1/jobs`, `GET /api/v1/jobs/{id}`, `GET /api/v1/jobs/{id}/stream` (WebSocket), `GET /api/v1/jobs/{id}/decisions`, `POST /api/v1/jobs`, `POST /api/v1/jobs/{id}/cancel`, `POST /api/v1/jobs/{id}/remediate`
 - Traces: `GET /api/v1/traces/{id}`
 - Workflows: `GET/POST /api/v1/workflows`, `GET/DELETE /api/v1/workflows/{id}`
@@ -49,6 +49,12 @@ Tags: websocket, jobs, streaming
 Use `GET /api/v1/jobs/{id}/stream` to receive job events for a single job. The
 connection uses the same API key WebSocket protocol as `/api/v1/stream` and
 requires `X-Tenant-ID` (or `?tenant_id=`) for tenant scoping.
+
+Use `GET /api/v1/stream` for the global dashboard stream. It emits the existing
+CAP BusPacket protojson messages and dedicated Edge action envelopes with
+`type: "edge.event"`, `tenant_id`, `session_id`, `execution_id`, and `event`
+payloads matching `core/edge/schema/agent_action_event.schema.json`. Generic
+Edge events are not delivered to `/api/v1/jobs/{id}/stream`.
 
 ## gRPC API
 
