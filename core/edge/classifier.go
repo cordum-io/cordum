@@ -684,12 +684,12 @@ func looksLikeMakeVarAssignment(s string) bool {
 	name := s[:eq]
 	for i, r := range name {
 		if i == 0 {
-			if !(r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')) {
+			if r != '_' && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') {
 				return false
 			}
 			continue
 		}
-		if !(r == '_' || (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+		if r != '_' && (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
 			return false
 		}
 	}
