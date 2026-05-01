@@ -64,6 +64,14 @@ type edgeEvaluateRequest struct {
 	// fresh safety snapshot, and lets the store CAS reject changed-command or
 	// stale-snapshot mismatches. Default callers omit it.
 	ApprovalRef string `json:"approval_ref"`
+
+	// WaitForApproval is the local/demo opt-in that asks the gateway to inline-wait
+	// for an approval to leave Pending before responding. The default is false:
+	// the response returns REQUIRE_APPROVAL immediately and the caller polls or
+	// reissues evaluate with approval_ref later. When true, ApprovalWaitTimeoutMS
+	// bounds the wait; the gateway always uses a server-side cap.
+	WaitForApproval       bool `json:"wait_for_approval"`
+	ApprovalWaitTimeoutMS int  `json:"approval_wait_timeout_ms"`
 }
 
 func (r edgeEvaluateRequest) redactedInput() map[string]any {
@@ -145,6 +153,9 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 	outcome.response.EventID = appended.EventID
 	switch {
 	case retryRef != "":
+		if evalCtx.req.WaitForApproval {
+			s.waitForEdgeApprovalResolution(r.Context(), evalCtx.store, evalCtx.tenantID, retryRef, boundEdgeEvaluateWaitTimeout(evalCtx.req.ApprovalWaitTimeoutMS))
+		}
 		retryOutcome, retryErr := s.consumeEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, retryRef, actionHash)
 		if retryErr != nil {
 			writeEdgeApprovalStoreError(w, r, retryErr, "consume edge evaluate approval")
@@ -158,6 +169,15 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		outcome = outcome.withApprovalRetryMetadata(*approval)
+		if evalCtx.req.WaitForApproval {
+			s.waitForEdgeApprovalResolution(r.Context(), evalCtx.store, evalCtx.tenantID, approval.ApprovalRef, boundEdgeEvaluateWaitTimeout(evalCtx.req.ApprovalWaitTimeoutMS))
+			waitedOutcome, waitErr := s.consumeEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, approval.ApprovalRef, actionHash)
+			if waitErr != nil {
+				writeEdgeApprovalStoreError(w, r, waitErr, "consume edge evaluate approval after wait")
+				return
+			}
+			outcome = waitedOutcome
+		}
 	}
 	writeJSON(w, outcome.response)
 }
@@ -548,6 +568,64 @@ func cloneEdgeEvaluateLabels(labels edgecore.Labels) edgecore.Labels {
 		out[key] = value
 	}
 	return out
+}
+
+// Inline-wait constants. The poll interval is the upper bound on how long the
+// caller waits past a resolution; the default and max timeouts cap caller
+// requests so the handler never blocks indefinitely.
+const (
+	edgeEvaluateInlineWaitPollInterval     = 250 * time.Millisecond
+	edgeEvaluateInlineWaitMaxTimeout       = 5 * time.Minute
+	edgeEvaluateInlineWaitDefaultTimeoutMS = 30 * 1000
+)
+
+// boundEdgeEvaluateWaitTimeout clamps the caller-requested timeout to the
+// server-side window. Zero or negative falls back to the default; values larger
+// than the max are capped silently because inline wait is a demo affordance and
+// a caller asking for an unbounded wait is asking for a hung handler.
+func boundEdgeEvaluateWaitTimeout(requestedMS int) time.Duration {
+	if requestedMS <= 0 {
+		return time.Duration(edgeEvaluateInlineWaitDefaultTimeoutMS) * time.Millisecond
+	}
+	if requestedMS > int(edgeEvaluateInlineWaitMaxTimeout/time.Millisecond) {
+		return edgeEvaluateInlineWaitMaxTimeout
+	}
+	return time.Duration(requestedMS) * time.Millisecond
+}
+
+// waitForEdgeApprovalResolution polls the EDGE-011 approval store at a capped
+// interval until the approval is non-pending, the parent context is cancelled,
+// or the bounded timeout elapses. It returns unconditionally; the caller routes
+// through consumeEdgeEvaluateApproval afterwards to surface whatever state the
+// approval ended in. The wait holds no locks and exits cleanly via deferred
+// cancel + ticker stop, so neither timeout nor request cancellation leaks
+// goroutines or tickers.
+func (s *server) waitForEdgeApprovalResolution(ctx context.Context, store edgecore.Store, tenantID, approvalRef string, timeout time.Duration) {
+	approvalRef = strings.TrimSpace(approvalRef)
+	if approvalRef == "" {
+		return
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(edgeEvaluateInlineWaitPollInterval)
+	defer ticker.Stop()
+	for {
+		approval, found, err := store.GetApproval(waitCtx, tenantID, approvalRef)
+		if err != nil {
+			return
+		}
+		if !found || approval == nil {
+			return
+		}
+		if approval.Status != edgecore.ApprovalStatusPending {
+			return
+		}
+		select {
+		case <-waitCtx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 // consumeEdgeEvaluateApproval resolves the retry case where the caller supplied

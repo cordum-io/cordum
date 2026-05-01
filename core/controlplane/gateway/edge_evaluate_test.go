@@ -675,6 +675,251 @@ func TestGatewayEdgeEvaluateRetryConcurrentExactlyOneAllow(t *testing.T) {
 	}
 }
 
+func TestGatewayEdgeEvaluateInlineWaitDefaultDoesNotBlock(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "needs approval",
+		RuleId:           "approval-rule",
+		ApprovalRequired: true,
+	}}
+	_, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeRouteSession(t, handler)
+	safety.response.PolicySnapshot = session.PolicySnapshot
+
+	cmd := map[string]any{"command": "rm -rf /var/edge-no-wait"}
+	body := edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd)
+
+	start := time.Now()
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+	elapsed := time.Since(start)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var resp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &resp)
+	if resp.Decision != string(edgecore.DecisionRequireApproval) {
+		t.Fatalf("decision = %q, want REQUIRE_APPROVAL (default returns immediately) body=%s", resp.Decision, rr.Body.String())
+	}
+	if resp.ApprovalRef == "" {
+		t.Fatalf("approval_ref empty body=%s", rr.Body.String())
+	}
+	// Default (no wait_for_approval) must respond well under the inline-wait
+	// poll interval, never anywhere near a default 30s timeout.
+	if elapsed > 1*time.Second {
+		t.Fatalf("default response took %v, want sub-second (no inline wait when wait_for_approval=false)", elapsed)
+	}
+}
+
+func TestGatewayEdgeEvaluateInlineWaitApproveDuringWaitReturnsAllow(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "needs approval",
+		RuleId:           "approval-rule",
+		ApprovalRequired: true,
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeRouteSession(t, handler)
+	safety.response.PolicySnapshot = session.PolicySnapshot
+
+	cmd := map[string]any{"command": "rm -rf /var/edge-wait-approve"}
+	body := edgeEvaluateBodyWithInlineWait(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd, "", 3000)
+
+	// Approver runs concurrently with the inline-wait handler: it can't fire
+	// until the handler has enqueued the approval (which happens just before
+	// the wait loop), so it polls the store briefly until the approval exists.
+	approverDone := make(chan struct{})
+	go func() {
+		defer close(approverDone)
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		var ref string
+		for {
+			page, err := s.edgeStore.ListApprovals(ctx, edgecore.ListApprovalsQuery{TenantID: edgeRouteTenant, Limit: 10})
+			if err == nil {
+				for _, a := range page.Items {
+					if a.SessionID == session.SessionID && a.ExecutionID == session.ExecutionID && a.Status == edgecore.ApprovalStatusPending {
+						ref = a.ApprovalRef
+						break
+					}
+				}
+			}
+			if ref != "" {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+		_, _ = s.edgeStore.ApproveApproval(context.Background(), edgecore.ApprovalResolution{
+			TenantID:    edgeRouteTenant,
+			ApprovalRef: ref,
+			ResolverID:  "human-1",
+			ResolvedBy:  "human-1",
+			ResolvedAt:  time.Now().UTC(),
+		})
+	}()
+
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+	<-approverDone
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var resp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &resp)
+	if resp.Decision != string(edgecore.DecisionAllow) {
+		t.Fatalf("decision = %q, want ALLOW (approved during inline wait) body=%s", resp.Decision, rr.Body.String())
+	}
+	if resp.PermissionDecision != "allow" || resp.ExitCode != 0 {
+		t.Fatalf("permission/exit = %q/%d, want allow/0", resp.PermissionDecision, resp.ExitCode)
+	}
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, resp.ApprovalRef)
+	if err != nil || !ok || stored == nil || stored.ConsumedAt == nil {
+		t.Fatalf("approval not consumed after inline-wait approve: stored=%#v ok=%v err=%v", stored, ok, err)
+	}
+}
+
+func TestGatewayEdgeEvaluateInlineWaitRejectDuringWaitReturnsDeny(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "needs approval",
+		RuleId:           "approval-rule",
+		ApprovalRequired: true,
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeRouteSession(t, handler)
+	safety.response.PolicySnapshot = session.PolicySnapshot
+
+	cmd := map[string]any{"command": "echo Bearer wait-reject-secret"}
+	body := edgeEvaluateBodyWithInlineWait(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd, "", 3000)
+
+	rejecterDone := make(chan struct{})
+	go func() {
+		defer close(rejecterDone)
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		var ref string
+		for {
+			page, err := s.edgeStore.ListApprovals(ctx, edgecore.ListApprovalsQuery{TenantID: edgeRouteTenant, Limit: 10})
+			if err == nil {
+				for _, a := range page.Items {
+					if a.SessionID == session.SessionID && a.ExecutionID == session.ExecutionID && a.Status == edgecore.ApprovalStatusPending {
+						ref = a.ApprovalRef
+						break
+					}
+				}
+			}
+			if ref != "" {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+		_, _ = s.edgeStore.RejectApproval(context.Background(), edgecore.ApprovalResolution{
+			TenantID:    edgeRouteTenant,
+			ApprovalRef: ref,
+			ResolverID:  "human-1",
+			ResolvedBy:  "human-1",
+			Reason:      "blocked during wait",
+			ResolvedAt:  time.Now().UTC(),
+		})
+	}()
+
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+	<-rejecterDone
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var resp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &resp)
+	if resp.Decision != string(edgecore.DecisionDeny) {
+		t.Fatalf("decision = %q, want DENY body=%s", resp.Decision, rr.Body.String())
+	}
+	combined := strings.ToLower(resp.Reason + " " + resp.TerminalMessage)
+	if !strings.Contains(combined, "block") && !strings.Contains(combined, "reject") {
+		t.Fatalf("reason/terminal = %q/%q, want rejection text", resp.Reason, resp.TerminalMessage)
+	}
+	assertBodyOmits(t, rr.Body.String(), "wait-reject-secret")
+}
+
+func TestGatewayEdgeEvaluateInlineWaitTimeoutKeepsApprovalPending(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "needs approval",
+		RuleId:           "approval-rule",
+		ApprovalRequired: true,
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeRouteSession(t, handler)
+	safety.response.PolicySnapshot = session.PolicySnapshot
+
+	cmd := map[string]any{"command": "rm -rf /var/edge-wait-timeout"}
+	body := edgeEvaluateBodyWithInlineWait(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd, "", 400)
+
+	start := time.Now()
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+	elapsed := time.Since(start)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var resp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &resp)
+	if resp.Decision != string(edgecore.DecisionRequireApproval) {
+		t.Fatalf("decision = %q, want REQUIRE_APPROVAL after timeout body=%s", resp.Decision, rr.Body.String())
+	}
+	if resp.ApprovalRef == "" {
+		t.Fatalf("approval_ref empty body=%s", rr.Body.String())
+	}
+	if resp.WaitAfter != "approve_then_retry" {
+		t.Fatalf("wait_after = %q, want approve_then_retry", resp.WaitAfter)
+	}
+	if elapsed < 350*time.Millisecond {
+		t.Fatalf("inline wait elapsed %v, expected >= ~400ms timeout", elapsed)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("inline wait elapsed %v, expected to honor 400ms cap", elapsed)
+	}
+
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, resp.ApprovalRef)
+	if err != nil || !ok || stored == nil {
+		t.Fatalf("GetApproval = (%#v, %v, %v); want stored", stored, ok, err)
+	}
+	if stored.Status != edgecore.ApprovalStatusPending {
+		t.Fatalf("approval status = %q, want pending after timeout", stored.Status)
+	}
+	if stored.ConsumedAt != nil {
+		t.Fatalf("approval was consumed despite timeout: %#v", stored)
+	}
+}
+
+func TestBoundEdgeEvaluateWaitTimeoutClampsAndDefaults(t *testing.T) {
+	cases := []struct {
+		name   string
+		input  int
+		wantMS int64
+	}{
+		{"zero defaults", 0, edgeEvaluateInlineWaitDefaultTimeoutMS},
+		{"negative defaults", -100, edgeEvaluateInlineWaitDefaultTimeoutMS},
+		{"under cap unchanged", 1500, 1500},
+		{"at cap unchanged", int(edgeEvaluateInlineWaitMaxTimeout / time.Millisecond), int64(edgeEvaluateInlineWaitMaxTimeout / time.Millisecond)},
+		{"over cap clamps", 60 * 60 * 1000, int64(edgeEvaluateInlineWaitMaxTimeout / time.Millisecond)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := boundEdgeEvaluateWaitTimeout(tc.input)
+			if got.Milliseconds() != tc.wantMS {
+				t.Fatalf("boundEdgeEvaluateWaitTimeout(%d) = %v, want %dms", tc.input, got, tc.wantMS)
+			}
+		})
+	}
+}
+
 func TestGatewayEdgeEvaluateSafetyUnavailableByPolicyMode(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
@@ -1194,6 +1439,30 @@ func edgeEvaluateBodyWithApprovalRef(sessionID, executionID, tenantID, toolName 
 		"tool_name":      toolName,
 		"input_redacted": input,
 		"approval_ref":   approvalRef,
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
+
+func edgeEvaluateBodyWithInlineWait(sessionID, executionID, tenantID, toolName string, input map[string]any, approvalRef string, timeoutMS int) string {
+	body := map[string]any{
+		"tenant_id":                tenantID,
+		"principal_id":             "principal-edge-a",
+		"session_id":               sessionID,
+		"execution_id":             executionID,
+		"agent_product":            "claude-code",
+		"layer":                    "hook",
+		"kind":                     "hook.pre_tool_use",
+		"tool_name":                toolName,
+		"input_redacted":           input,
+		"wait_for_approval":        true,
+		"approval_wait_timeout_ms": timeoutMS,
+	}
+	if approvalRef != "" {
+		body["approval_ref"] = approvalRef
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
