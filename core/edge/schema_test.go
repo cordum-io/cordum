@@ -112,3 +112,58 @@ func schemaPayload(t *testing.T, value any) map[string]any {
 	}
 	return payload
 }
+
+// TestAgentActionEventSchemaAcceptsAllP0ArtifactTypes ensures the embedded
+// JSON schema enum for artifact_ptrs[].artifact_type covers every entry in
+// AllArtifactTypes. Drift between the Go validateArtifactType switch and the
+// schema enum would let an artifact pointer that the validator accepts get
+// rejected by the schema (or vice versa), so they must be tested together.
+//
+// Test-first design: written before adding edge.test_output / edge.mcp_request
+// / edge.mcp_response / edge.llm_prompt_redacted / edge.llm_response_redacted
+// to the schema enum. On the prior 5-type enum the loop fails the first
+// non-listed type with "enum" validation error.
+func TestAgentActionEventSchemaAcceptsAllP0ArtifactTypes(t *testing.T) {
+	started := time.Date(2026, 4, 30, 10, 0, 0, 0, time.UTC)
+	schemaJSON, err := Schema("agent_action_event.schema.json")
+	if err != nil {
+		t.Fatalf("Schema(agent_action_event.schema.json): %v", err)
+	}
+	for _, at := range AllArtifactTypes {
+		event := validAgentActionEvent(started)
+		ptr := event.ArtifactPointers[0]
+		ptr.ArtifactType = at
+		event.ArtifactPointers = []ArtifactPointer{ptr}
+		payload := schemaPayload(t, event)
+		if err := infraschema.ValidateSchema("agent_action_event.schema.json", schemaJSON, payload); err != nil {
+			t.Errorf("schema rejects supported ArtifactType %q: %v", at, err)
+		}
+	}
+}
+
+// TestAgentActionEventSchemaRejectsUnknownArtifactType pairs with the Go-side
+// allowlist test. A tampered payload arriving over the wire with an unknown
+// artifact_type must be rejected at schema validation, not just at Go
+// validation, so untrusted JSON paths cannot smuggle unsafe types.
+func TestAgentActionEventSchemaRejectsUnknownArtifactType(t *testing.T) {
+	started := time.Date(2026, 4, 30, 10, 0, 0, 0, time.UTC)
+	schemaJSON, err := Schema("agent_action_event.schema.json")
+	if err != nil {
+		t.Fatalf("Schema(agent_action_event.schema.json): %v", err)
+	}
+	event := validAgentActionEvent(started)
+	payload := schemaPayload(t, event)
+	ptrs, ok := payload["artifact_ptrs"].([]any)
+	if !ok || len(ptrs) == 0 {
+		t.Fatalf("expected at least one artifact_ptrs entry in payload, got %T", payload["artifact_ptrs"])
+	}
+	ptrMap, ok := ptrs[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected artifact_ptrs[0] to be an object, got %T", ptrs[0])
+	}
+	ptrMap["artifact_type"] = "edge.unknown"
+	err = infraschema.ValidateSchema("agent_action_event.schema.json", schemaJSON, payload)
+	if err == nil || !strings.Contains(err.Error(), "enum") {
+		t.Fatalf("expected enum rejection for unknown artifact_type, got %v", err)
+	}
+}

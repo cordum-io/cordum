@@ -457,3 +457,70 @@ func tooManyArtifacts(started time.Time) []ArtifactPointer {
 	}
 	return artifacts
 }
+
+// TestArtifactTypeAcceptsAllP0EvidenceTypes pins the catalog of artifact types
+// that EDGE-013 evidence export must support. New types added to
+// AllArtifactTypes must validate; existing types must keep their stable wire
+// values so older events stay loadable.
+//
+// Test-first design: written before extending validateArtifactType to accept
+// edge.test_output, edge.mcp_request, edge.mcp_response,
+// edge.llm_prompt_redacted, and edge.llm_response_redacted. On the prior
+// 5-type switch, the new types fell through to the default branch and this
+// test would have failed with "artifact_type has unsafe value ..." for each.
+func TestArtifactTypeAcceptsAllP0EvidenceTypes(t *testing.T) {
+	started := time.Date(2026, 4, 30, 10, 0, 0, 0, time.UTC)
+	wantWireValues := map[ArtifactType]string{
+		ArtifactTypeTranscript:          "edge.transcript",
+		ArtifactTypeDiff:                "edge.diff",
+		ArtifactTypeToolInput:           "edge.tool_input",
+		ArtifactTypeToolResult:          "edge.tool_result",
+		ArtifactTypeTestOutput:          "edge.test_output",
+		ArtifactTypeMCPRequest:          "edge.mcp_request",
+		ArtifactTypeMCPResponse:         "edge.mcp_response",
+		ArtifactTypeLLMPromptRedacted:   "edge.llm_prompt_redacted",
+		ArtifactTypeLLMResponseRedacted: "edge.llm_response_redacted",
+		ArtifactTypeEvidenceBundle:      "edge.evidence_bundle",
+	}
+	if len(AllArtifactTypes) != len(wantWireValues) {
+		t.Fatalf("AllArtifactTypes length = %d, want %d", len(AllArtifactTypes), len(wantWireValues))
+	}
+	for _, at := range AllArtifactTypes {
+		want, ok := wantWireValues[at]
+		if !ok {
+			t.Errorf("AllArtifactTypes contains unmapped type %q — update wantWireValues", at)
+			continue
+		}
+		if string(at) != want {
+			t.Errorf("ArtifactType %q wire value = %q, want %q (PRD wire compat)", at, string(at), want)
+		}
+		ptr := validArtifactPointer(started)
+		ptr.ArtifactType = at
+		if err := ptr.Validate(); err != nil {
+			t.Errorf("ArtifactType %q: validate returned %v, want nil", at, err)
+		}
+	}
+}
+
+// TestArtifactTypeRejectsUnknownValues ensures validateArtifactType is a
+// closed allowlist. An attacker controlling event.artifact_ptrs cannot smuggle
+// arbitrary or future "raw_payload"-style types past the validator.
+func TestArtifactTypeRejectsUnknownValues(t *testing.T) {
+	started := time.Date(2026, 4, 30, 10, 0, 0, 0, time.UTC)
+	cases := []ArtifactType{
+		"",
+		"edge.unknown",
+		"edge.raw_secret",
+		"transcript",                      // missing "edge." prefix
+		"edge.transcript ",                // trailing whitespace, intentionally not normalized
+		"edge.tool_input/extra",           // path-like injection
+		ArtifactType("edge.\x00transcript"), // NUL byte injection
+	}
+	for _, at := range cases {
+		ptr := validArtifactPointer(started)
+		ptr.ArtifactType = at
+		if err := ptr.Validate(); err == nil {
+			t.Errorf("Validate accepted unsafe ArtifactType %q; want error", at)
+		}
+	}
+}

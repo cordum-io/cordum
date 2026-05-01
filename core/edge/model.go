@@ -123,12 +123,34 @@ const (
 type ArtifactType string
 
 const (
-	ArtifactTypeTranscript     ArtifactType = "edge.transcript"
-	ArtifactTypeDiff           ArtifactType = "edge.diff"
-	ArtifactTypeToolInput      ArtifactType = "edge.tool_input"
-	ArtifactTypeToolResult     ArtifactType = "edge.tool_result"
-	ArtifactTypeEvidenceBundle ArtifactType = "edge.evidence_bundle"
+	ArtifactTypeTranscript          ArtifactType = "edge.transcript"
+	ArtifactTypeDiff                ArtifactType = "edge.diff"
+	ArtifactTypeToolInput           ArtifactType = "edge.tool_input"
+	ArtifactTypeToolResult          ArtifactType = "edge.tool_result"
+	ArtifactTypeTestOutput          ArtifactType = "edge.test_output"
+	ArtifactTypeMCPRequest          ArtifactType = "edge.mcp_request"
+	ArtifactTypeMCPResponse         ArtifactType = "edge.mcp_response"
+	ArtifactTypeLLMPromptRedacted   ArtifactType = "edge.llm_prompt_redacted"
+	ArtifactTypeLLMResponseRedacted ArtifactType = "edge.llm_response_redacted"
+	ArtifactTypeEvidenceBundle      ArtifactType = "edge.evidence_bundle"
 )
+
+// AllArtifactTypes is the full P0 evidence catalog. Tests and the export
+// bundle helper iterate this list rather than hard-coding the set; adding a
+// new type means appending here, extending the schema enum, and the
+// validateArtifactType switch — those three must stay in sync.
+var AllArtifactTypes = []ArtifactType{
+	ArtifactTypeTranscript,
+	ArtifactTypeDiff,
+	ArtifactTypeToolInput,
+	ArtifactTypeToolResult,
+	ArtifactTypeTestOutput,
+	ArtifactTypeMCPRequest,
+	ArtifactTypeMCPResponse,
+	ArtifactTypeLLMPromptRedacted,
+	ArtifactTypeLLMResponseRedacted,
+	ArtifactTypeEvidenceBundle,
+}
 
 // RetentionClass identifies artifact/event retention posture.
 type RetentionClass string

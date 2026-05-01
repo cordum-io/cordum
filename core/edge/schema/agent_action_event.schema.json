@@ -88,7 +88,18 @@
         "properties": {
           "artifact_type": {
             "type": "string",
-            "enum": ["edge.transcript", "edge.diff", "edge.tool_input", "edge.tool_result", "edge.evidence_bundle"]
+            "enum": [
+              "edge.transcript",
+              "edge.diff",
+              "edge.tool_input",
+              "edge.tool_result",
+              "edge.test_output",
+              "edge.mcp_request",
+              "edge.mcp_response",
+              "edge.llm_prompt_redacted",
+              "edge.llm_response_redacted",
+              "edge.evidence_bundle"
+            ]
           },
           "session_id": { "type": "string", "minLength": 1 },
           "execution_id": { "type": "string", "minLength": 1 },

@@ -472,7 +472,16 @@ func validateApprovalDecisionForStatus(status ApprovalStatus, decision ApprovalD
 
 func validateArtifactType(value ArtifactType) error {
 	switch value {
-	case ArtifactTypeTranscript, ArtifactTypeDiff, ArtifactTypeToolInput, ArtifactTypeToolResult, ArtifactTypeEvidenceBundle:
+	case ArtifactTypeTranscript,
+		ArtifactTypeDiff,
+		ArtifactTypeToolInput,
+		ArtifactTypeToolResult,
+		ArtifactTypeTestOutput,
+		ArtifactTypeMCPRequest,
+		ArtifactTypeMCPResponse,
+		ArtifactTypeLLMPromptRedacted,
+		ArtifactTypeLLMResponseRedacted,
+		ArtifactTypeEvidenceBundle:
 		return nil
 	default:
 		return fmt.Errorf("artifact_type has unsafe value %q", value)
