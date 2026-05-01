@@ -1248,6 +1248,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "POST /api/v1/edge/events/batch", s.instrumented("/api/v1/edge/events/batch", s.handleCreateEdgeEventsBatch))
 	s.registerRoute(mux, "GET /api/v1/edge/sessions/{session_id}/events", s.instrumented("/api/v1/edge/sessions/{session_id}/events", s.handleListEdgeSessionEvents))
 	s.registerRoute(mux, "GET /api/v1/edge/executions/{execution_id}/events", s.instrumented("/api/v1/edge/executions/{execution_id}/events", s.handleListEdgeExecutionEvents))
+	s.registerRoute(mux, "POST /api/v1/edge/sessions/{session_id}/export", s.instrumented("/api/v1/edge/sessions/{session_id}/export", s.handleExportEdgeSession))
 
 	// 4.5 Memory pointers (debug)
 	s.registerRoute(mux, "GET /api/v1/memory", s.instrumented("/api/v1/memory", s.handleGetMemory))
