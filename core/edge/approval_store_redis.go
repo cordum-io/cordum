@@ -147,7 +147,7 @@ func (s *RedisStore) ListApprovals(ctx context.Context, query ListApprovalsQuery
 	if tenantID == "" {
 		return ApprovalPage{}, fmt.Errorf("tenant_id is required")
 	}
-	start, err := parseStoreCursor(query.Cursor)
+	start, err := parseApprovalOffsetCursor(query.Cursor)
 	if err != nil {
 		return ApprovalPage{}, err
 	}
@@ -639,16 +639,22 @@ func (s *RedisStore) validateApprovalRecordActionableTx(ctx context.Context, tx 
 }
 
 func (s *RedisStore) findEvent(ctx context.Context, tenantID, sessionID, executionID, eventID string) (*AgentActionEvent, bool, error) {
-	events, err := s.loadEventsForExecution(ctx, ListEventsQuery{TenantID: tenantID, SessionID: sessionID}, executionID)
-	if err != nil {
-		return nil, false, err
-	}
-	for i := range events {
-		if events[i].EventID == eventID && events[i].TenantID == tenantID && events[i].SessionID == sessionID && events[i].ExecutionID == executionID {
-			return &events[i], true, nil
+	cursor := ""
+	for {
+		page, err := s.listEventsForExecutionPage(ctx, ListEventsQuery{TenantID: tenantID, SessionID: sessionID}, executionID, cursor, maxStorePageLimit)
+		if err != nil {
+			return nil, false, err
 		}
+		for i := range page.Items {
+			if page.Items[i].EventID == eventID && page.Items[i].TenantID == tenantID && page.Items[i].SessionID == sessionID && page.Items[i].ExecutionID == executionID {
+				return &page.Items[i], true, nil
+			}
+		}
+		if page.NextCursor == "" {
+			return nil, false, nil
+		}
+		cursor = page.NextCursor
 	}
-	return nil, false, nil
 }
 
 func loadEventFromTx(ctx context.Context, tx *redis.Tx, approval EdgeApproval) (*AgentActionEvent, bool, error) {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,14 +22,23 @@ const (
 	// enough events to answer the current page.
 	maxSessionEventScan = 10000
 
-	storeCursorVersion   = 1
-	storeCursorMaxOffset = 1_000_000
+	storeCursorVersion = 1
 )
 
 type storeCursor struct {
-	Version int    `json:"v"`
-	Kind    string `json:"kind"`
-	Offset  int    `json:"offset,omitempty"`
+	Version        int     `json:"v"`
+	Kind           string  `json:"kind"`
+	Scope          string  `json:"scope,omitempty"`
+	Score          float64 `json:"score,omitempty"`
+	ID             string  `json:"id,omitempty"`
+	ExecutionScore float64 `json:"execution_score,omitempty"`
+	ExecutionID    string  `json:"execution_id,omitempty"`
+}
+
+type sessionEventRef struct {
+	ExecutionID string
+	Seq         int
+	EventID     string
 }
 
 // StoreOption customizes RedisStore behavior. Options are primarily used by
@@ -113,6 +121,10 @@ func edgeEventsKey(executionID string) string {
 
 func edgeEventSeqKey(executionID string) string {
 	return "edge:events:seq:" + strings.TrimSpace(executionID)
+}
+
+func edgeSessionEventsIndexKey(sessionID string) string {
+	return "edge:index:session_events:" + strings.TrimSpace(sessionID)
 }
 
 func edgeTenantIndexKey(tenantID string) string {
@@ -357,7 +369,7 @@ func (s *RedisStore) DeleteSession(ctx context.Context, tenantID, sessionID stri
 	}
 
 	_, err = s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.Del(ctx, edgeSessionKey(sessionID), edgeSessionHeartbeatKey(sessionID), edgeSessionExecutionsIndexKey(sessionID))
+		pipe.Del(ctx, edgeSessionKey(sessionID), edgeSessionHeartbeatKey(sessionID), edgeSessionExecutionsIndexKey(sessionID), edgeSessionEventsIndexKey(sessionID))
 		pipe.ZRem(ctx, edgeTenantIndexKey(session.TenantID), sessionID)
 		if strings.TrimSpace(session.PrincipalID) != "" {
 			pipe.ZRem(ctx, edgePrincipalIndexKey(session.TenantID, session.PrincipalID), sessionID)
@@ -724,8 +736,13 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			for executionID, group := range groups {
 				payloads := payloadsByExecution[executionID]
-				for _, payload := range payloads {
+				for payloadIndex, payload := range payloads {
 					pipe.RPush(ctx, edgeEventsKey(executionID), payload)
+					event := appended[group.events[payloadIndex]]
+					pipe.ZAdd(ctx, edgeSessionEventsIndexKey(event.SessionID), redis.Z{
+						Score:  float64(event.Timestamp.UTC().UnixMicro()),
+						Member: sessionEventIndexMember(event),
+					})
 				}
 				last := appended[group.events[len(group.events)-1]]
 				pipe.Set(ctx, edgeEventSeqKey(executionID), last.Seq, 0)
@@ -756,7 +773,7 @@ func (s *RedisStore) ListEvents(ctx context.Context, query ListEventsQuery) (Eve
 	if tenantID == "" || (executionID == "" && sessionID == "") {
 		return EventPage{}, fmt.Errorf("tenant_id and execution_id or session_id are required")
 	}
-	var items []AgentActionEvent
+	limit := normalizeStoreLimit(query.Limit)
 	if executionID != "" {
 		execution, ok, err := s.GetExecution(ctx, tenantID, executionID)
 		if err != nil {
@@ -765,10 +782,7 @@ func (s *RedisStore) ListEvents(ctx context.Context, query ListEventsQuery) (Eve
 		if !ok || execution == nil {
 			return EventPage{Items: []AgentActionEvent{}}, nil
 		}
-		items, err = s.loadEventsForExecution(ctx, query, executionID)
-		if err != nil {
-			return EventPage{}, err
-		}
+		return s.listEventsForExecutionPage(ctx, query, executionID, query.Cursor, limit)
 	} else {
 		session, ok, err := s.GetSession(ctx, tenantID, sessionID)
 		if err != nil {
@@ -777,91 +791,106 @@ func (s *RedisStore) ListEvents(ctx context.Context, query ListEventsQuery) (Eve
 		if !ok || session == nil {
 			return EventPage{Items: []AgentActionEvent{}}, nil
 		}
-		items, err = s.loadEventsForSession(ctx, query, sessionID)
-		if err != nil {
-			return EventPage{}, err
-		}
+		return s.listEventsForSessionPage(ctx, query, sessionID, query.Cursor, limit)
 	}
-	start, err := parseOffsetStoreCursor(query.Cursor, "events")
+}
+
+func (s *RedisStore) listEventsForSessionPage(ctx context.Context, query ListEventsQuery, sessionID, rawCursor string, limit int) (EventPage, error) {
+	cursor, hasCursor, err := parseSessionIndexEventCursor(rawCursor)
 	if err != nil {
 		return EventPage{}, err
 	}
-	return pageEvents(items, start, normalizeStoreLimit(query.Limit), "events"), nil
+	items := make([]AgentActionEvent, 0, limit)
+	indexKey := edgeSessionEventsIndexKey(sessionID)
+	var lastReturned redis.Z
+	for {
+		rows, err := s.listSessionEventIndexRows(ctx, indexKey, cursor, hasCursor, maxStorePageLimit)
+		if err != nil {
+			return EventPage{}, err
+		}
+		if len(rows) == 0 {
+			return EventPage{Items: items}, nil
+		}
+		for _, row := range rows {
+			cursor = cursorFromZSetRow("events", row)
+			hasCursor = true
+			ref, err := parseSessionEventIndexMember(row.Member)
+			if err != nil {
+				return EventPage{}, err
+			}
+			event, ok, err := s.loadEventByRef(ctx, ref)
+			if err != nil {
+				return EventPage{}, err
+			}
+			if !ok || !eventMatchesQuery(event, query, ref.ExecutionID) {
+				continue
+			}
+			if len(items) == limit {
+				return EventPage{Items: items, NextCursor: encodeStoreCursor(cursorFromZSetRow("events", lastReturned))}, nil
+			}
+			items = append(items, event)
+			lastReturned = row
+		}
+		if len(rows) < maxStorePageLimit {
+			return EventPage{Items: items}, nil
+		}
+	}
 }
 
-func (s *RedisStore) loadEventsForSession(ctx context.Context, query ListEventsQuery, sessionID string) ([]AgentActionEvent, error) {
-	items := []AgentActionEvent{}
-	cursor := ""
-	for {
-		page, err := s.ListExecutions(ctx, ListExecutionsQuery{
-			TenantID:  query.TenantID,
-			SessionID: sessionID,
-			Cursor:    cursor,
-			Limit:     maxStorePageLimit,
-		})
+func (s *RedisStore) listEventsForExecutionPage(ctx context.Context, query ListEventsQuery, executionID, rawCursor string, limit int) (EventPage, error) {
+	cursor, hasCursor, err := parseExecutionEventCursor(rawCursor, executionID)
+	if err != nil {
+		return EventPage{}, err
+	}
+	start := int64(0)
+	if hasCursor {
+		start = int64(cursor.Score)
+		if start < 0 {
+			return EventPage{}, fmt.Errorf("invalid cursor")
+		}
+	}
+	items := make([]AgentActionEvent, 0, limit+1)
+	for len(items) <= limit {
+		rawEvents, err := s.client.LRange(ctx, edgeEventsKey(executionID), start, start+int64(maxStorePageLimit)-1).Result()
 		if err != nil {
-			return nil, err
+			return EventPage{}, fmt.Errorf("list agent action events for execution %s: %w", executionID, err)
 		}
-		for _, execution := range page.Items {
-			executionQuery := query
-			executionQuery.SessionID = ""
-			executionQuery.ExecutionID = execution.ExecutionID
-			executionEvents, err := s.loadEventsForExecution(ctx, executionQuery, execution.ExecutionID)
-			if err != nil {
-				return nil, err
-			}
-			items = append(items, executionEvents...)
-		}
-		if page.NextCursor == "" {
+		if len(rawEvents) == 0 {
 			break
 		}
-		cursor = page.NextCursor
+		for i, raw := range rawEvents {
+			event, err := decodeStoreEvent(raw, executionID, int(start)+i)
+			if err != nil {
+				return EventPage{}, err
+			}
+			if eventMatchesQuery(event, query, executionID) {
+				items = append(items, event)
+				if len(items) > limit {
+					break
+				}
+			}
+		}
+		if len(rawEvents) < maxStorePageLimit {
+			break
+		}
+		start += int64(len(rawEvents))
 	}
-	sort.SliceStable(items, func(i, j int) bool {
-		if !items[i].Timestamp.Equal(items[j].Timestamp) {
-			return items[i].Timestamp.Before(items[j].Timestamp)
-		}
-		if items[i].ExecutionID != items[j].ExecutionID {
-			return items[i].ExecutionID < items[j].ExecutionID
-		}
-		return items[i].Seq < items[j].Seq
-	})
-	return items, nil
-}
-
-func (s *RedisStore) loadEventsForExecution(ctx context.Context, query ListEventsQuery, executionID string) ([]AgentActionEvent, error) {
-	rawEvents, err := s.client.LRange(ctx, edgeEventsKey(executionID), 0, -1).Result()
-	if err != nil {
-		return nil, fmt.Errorf("list agent action events for execution %s: %w", executionID, err)
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
 	}
-	tenantID := strings.TrimSpace(query.TenantID)
-	items := make([]AgentActionEvent, 0, len(rawEvents))
-	for i, raw := range rawEvents {
-		var event AgentActionEvent
-		if err := json.Unmarshal([]byte(raw), &event); err != nil {
-			return nil, fmt.Errorf("unmarshal agent action event %s[%d]: %w", executionID, i, err)
-		}
-		if event.TenantID != tenantID || event.ExecutionID != executionID {
-			continue
-		}
-		if query.SessionID != "" && event.SessionID != strings.TrimSpace(query.SessionID) {
-			continue
-		}
-		if query.Kind != "" && event.Kind != query.Kind {
-			continue
-		}
-		if query.Decision != "" && event.Decision != query.Decision {
-			continue
-		}
-		if !query.Since.IsZero() && event.Timestamp.Before(query.Since) {
-			continue
-		}
-		if !query.Until.IsZero() && event.Timestamp.After(query.Until) {
-			continue
-		}
-		items = append(items, event)
+	page := EventPage{Items: items}
+	if hasMore && len(items) > 0 {
+		last := items[len(items)-1]
+		page.NextCursor = encodeStoreCursor(storeCursor{
+			Kind:        "events",
+			Scope:       "execution",
+			ExecutionID: executionID,
+			Score:       float64(last.Seq),
+			ID:          last.EventID,
+		})
 	}
-	return items, nil
+	return page, nil
 }
 
 func (s *RedisStore) loadSession(ctx context.Context, sessionID string) (*EdgeSession, bool, error) {
@@ -903,13 +932,21 @@ func (s *RedisStore) loadExecution(ctx context.Context, executionID string) (*Ag
 }
 
 func (s *RedisStore) listZSetIDs(ctx context.Context, indexKey, rawCursor, kind string, limit int) ([]string, string, error) {
-	start, err := parseZSetStoreCursor(rawCursor, kind)
+	cursor, hasCursor, err := parseZSetStoreCursor(rawCursor, kind)
 	if err != nil {
 		return nil, "", err
 	}
-	rows, err := s.client.ZRevRangeWithScores(ctx, indexKey, int64(start), int64(start+limit)).Result()
-	if err != nil {
-		return nil, "", err
+	var rows []redis.Z
+	if !hasCursor {
+		rows, err = s.client.ZRevRangeWithScores(ctx, indexKey, 0, int64(limit)).Result()
+		if err != nil {
+			return nil, "", err
+		}
+	} else {
+		rows, err = s.listZSetRowsAfterCursor(ctx, indexKey, cursor, limit)
+		if err != nil {
+			return nil, "", err
+		}
 	}
 	hasMore := len(rows) > limit
 	if hasMore {
@@ -917,43 +954,166 @@ func (s *RedisStore) listZSetIDs(ctx context.Context, indexKey, rawCursor, kind 
 	}
 	ids := make([]string, 0, len(rows))
 	for _, row := range rows {
-		id, ok := row.Member.(string)
-		if !ok {
-			id = fmt.Sprint(row.Member)
-		}
-		ids = append(ids, id)
+		ids = append(ids, zSetMemberString(row.Member))
 	}
 	nextCursor := ""
 	if hasMore && len(rows) > 0 {
+		last := rows[len(rows)-1]
+		id := zSetMemberString(last.Member)
 		nextCursor = encodeStoreCursor(storeCursor{
 			Version: storeCursorVersion,
 			Kind:    kind,
-			Offset:  start + limit,
+			Score:   last.Score,
+			ID:      id,
 		})
 	}
 	return ids, nextCursor, nil
 }
 
-func parseZSetStoreCursor(raw, kind string) (int, error) {
-	cursor, err := parseOpaqueStoreCursor(raw, kind)
-	if err != nil || strings.TrimSpace(raw) == "" {
-		return 0, err
+func (s *RedisStore) listZSetRowsAfterCursor(ctx context.Context, indexKey string, cursor storeCursor, limit int) ([]redis.Z, error) {
+	rank, err := s.client.ZRevRank(ctx, indexKey, cursor.ID).Result()
+	if err == nil {
+		score, err := s.client.ZScore(ctx, indexKey, cursor.ID).Result()
+		if err == nil && score == cursor.Score {
+			return s.client.ZRevRangeWithScores(ctx, indexKey, int64(rank)+1, int64(rank)+int64(limit)+1).Result()
+		}
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return nil, err
+		}
+		return s.listZSetRowsAfterMissingCursor(ctx, indexKey, cursor, limit)
 	}
-	if cursor.Offset < 0 || cursor.Offset > storeCursorMaxOffset {
-		return 0, fmt.Errorf("invalid cursor")
+	if !errors.Is(err, redis.Nil) {
+		return nil, err
 	}
-	return cursor.Offset, nil
+	return s.listZSetRowsAfterMissingCursor(ctx, indexKey, cursor, limit)
 }
 
-func parseOffsetStoreCursor(raw, kind string) (int, error) {
+func (s *RedisStore) listZSetRowsAfterMissingCursor(ctx context.Context, indexKey string, cursor storeCursor, limit int) ([]redis.Z, error) {
+	rows := make([]redis.Z, 0, limit+1)
+	sameScoreRows, err := s.client.ZRevRangeByScoreWithScores(ctx, indexKey, &redis.ZRangeBy{
+		Max:   formatStoreScore(cursor.Score),
+		Min:   formatStoreScore(cursor.Score),
+		Count: int64(maxStorePageLimit + limit + 1),
+	}).Result()
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range sameScoreRows {
+		id := zSetMemberString(row.Member)
+		if id < cursor.ID {
+			rows = append(rows, row)
+			if len(rows) > limit {
+				return rows, nil
+			}
+		}
+	}
+	lowerRows, err := s.client.ZRevRangeByScoreWithScores(ctx, indexKey, &redis.ZRangeBy{
+		Max:   "(" + formatStoreScore(cursor.Score),
+		Min:   "-inf",
+		Count: int64(limit + 1 - len(rows)),
+	}).Result()
+	if err != nil {
+		return nil, err
+	}
+	rows = append(rows, lowerRows...)
+	return rows, nil
+}
+
+func (s *RedisStore) listSessionEventIndexRows(ctx context.Context, indexKey string, cursor storeCursor, hasCursor bool, limit int) ([]redis.Z, error) {
+	if !hasCursor {
+		return s.client.ZRangeWithScores(ctx, indexKey, 0, int64(limit)-1).Result()
+	}
+	rank, err := s.client.ZRank(ctx, indexKey, cursor.ID).Result()
+	if err == nil {
+		score, err := s.client.ZScore(ctx, indexKey, cursor.ID).Result()
+		if err == nil && score == cursor.Score {
+			return s.client.ZRangeWithScores(ctx, indexKey, int64(rank)+1, int64(rank)+int64(limit)).Result()
+		}
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return nil, err
+		}
+		return s.listSessionEventRowsAfterMissingCursor(ctx, indexKey, cursor, limit)
+	}
+	if !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	return s.listSessionEventRowsAfterMissingCursor(ctx, indexKey, cursor, limit)
+}
+
+func (s *RedisStore) listSessionEventRowsAfterMissingCursor(ctx context.Context, indexKey string, cursor storeCursor, limit int) ([]redis.Z, error) {
+	rows := make([]redis.Z, 0, limit)
+	sameScoreRows, err := s.client.ZRangeByScoreWithScores(ctx, indexKey, &redis.ZRangeBy{
+		Min:   formatStoreScore(cursor.Score),
+		Max:   formatStoreScore(cursor.Score),
+		Count: int64(maxStorePageLimit + limit),
+	}).Result()
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range sameScoreRows {
+		id := zSetMemberString(row.Member)
+		if id > cursor.ID {
+			rows = append(rows, row)
+			if len(rows) == limit {
+				return rows, nil
+			}
+		}
+	}
+	if len(rows) == limit {
+		return rows, nil
+	}
+	higherRows, err := s.client.ZRangeByScoreWithScores(ctx, indexKey, &redis.ZRangeBy{
+		Min:   "(" + formatStoreScore(cursor.Score),
+		Max:   "+inf",
+		Count: int64(limit - len(rows)),
+	}).Result()
+	if err != nil {
+		return nil, err
+	}
+	rows = append(rows, higherRows...)
+	return rows, nil
+}
+
+func parseZSetStoreCursor(raw, kind string) (storeCursor, bool, error) {
 	cursor, err := parseOpaqueStoreCursor(raw, kind)
-	if err != nil || strings.TrimSpace(raw) == "" {
-		return 0, err
+	if err != nil {
+		return storeCursor{}, false, err
 	}
-	if cursor.Offset < 0 || cursor.Offset > storeCursorMaxOffset {
-		return 0, fmt.Errorf("invalid cursor")
+	if strings.TrimSpace(raw) == "" {
+		return cursor, false, nil
 	}
-	return cursor.Offset, nil
+	if cursor.ID == "" {
+		return storeCursor{}, false, fmt.Errorf("invalid cursor")
+	}
+	return cursor, true, nil
+}
+
+func parseExecutionEventCursor(raw, executionID string) (storeCursor, bool, error) {
+	cursor, err := parseOpaqueStoreCursor(raw, "events")
+	if err != nil {
+		return storeCursor{}, false, err
+	}
+	if strings.TrimSpace(raw) == "" {
+		return cursor, false, nil
+	}
+	if cursor.Scope != "execution" || cursor.ExecutionID != executionID || cursor.ID == "" || cursor.Score < 0 {
+		return storeCursor{}, false, fmt.Errorf("invalid cursor")
+	}
+	return cursor, true, nil
+}
+
+func parseSessionIndexEventCursor(raw string) (storeCursor, bool, error) {
+	cursor, err := parseOpaqueStoreCursor(raw, "events")
+	if err != nil {
+		return storeCursor{}, false, err
+	}
+	if strings.TrimSpace(raw) == "" {
+		return cursor, false, nil
+	}
+	if cursor.Scope != "session_index" || cursor.ID == "" || cursor.Score < 0 {
+		return storeCursor{}, false, fmt.Errorf("invalid cursor")
+	}
+	return cursor, true, nil
 }
 
 func parseOpaqueStoreCursor(raw, kind string) (storeCursor, error) {
@@ -975,7 +1135,7 @@ func parseOpaqueStoreCursor(raw, kind string) (storeCursor, error) {
 	return cursor, nil
 }
 
-func parseStoreCursor(raw string) (int, error) {
+func parseApprovalOffsetCursor(raw string) (int, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return 0, nil
@@ -996,19 +1156,99 @@ func encodeStoreCursor(cursor storeCursor) string {
 	return base64.RawURLEncoding.EncodeToString(payload)
 }
 
-func pageEvents(items []AgentActionEvent, start, limit int, cursorKind string) EventPage {
-	if start >= len(items) {
-		return EventPage{Items: []AgentActionEvent{}}
+func cursorFromZSetRow(kind string, row redis.Z) storeCursor {
+	return storeCursor{
+		Kind:  kind,
+		Scope: "session_index",
+		Score: row.Score,
+		ID:    zSetMemberString(row.Member),
 	}
-	end := start + limit
-	if end > len(items) {
-		end = len(items)
+}
+
+func sessionEventIndexMember(event AgentActionEvent) string {
+	return strings.Join([]string{
+		event.ExecutionID,
+		fmt.Sprintf("%020d", event.Seq),
+		event.EventID,
+	}, "\x00")
+}
+
+func parseSessionEventIndexMember(member any) (sessionEventRef, error) {
+	parts := strings.SplitN(zSetMemberString(member), "\x00", 3)
+	if len(parts) != 3 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+		return sessionEventRef{}, fmt.Errorf("invalid session event index member")
 	}
-	page := EventPage{Items: append([]AgentActionEvent(nil), items[start:end]...)}
-	if end < len(items) {
-		page.NextCursor = encodeStoreCursor(storeCursor{Kind: cursorKind, Offset: end})
+	seq, err := strconv.Atoi(parts[1])
+	if err != nil || seq <= 0 {
+		return sessionEventRef{}, fmt.Errorf("invalid session event index member")
 	}
-	return page
+	return sessionEventRef{
+		ExecutionID: parts[0],
+		Seq:         seq,
+		EventID:     parts[2],
+	}, nil
+}
+
+func (s *RedisStore) loadEventByRef(ctx context.Context, ref sessionEventRef) (AgentActionEvent, bool, error) {
+	if strings.TrimSpace(ref.ExecutionID) == "" || ref.Seq <= 0 || strings.TrimSpace(ref.EventID) == "" {
+		return AgentActionEvent{}, false, fmt.Errorf("invalid session event reference")
+	}
+	raw, err := s.client.LIndex(ctx, edgeEventsKey(ref.ExecutionID), int64(ref.Seq-1)).Result()
+	if errors.Is(err, redis.Nil) {
+		return AgentActionEvent{}, false, nil
+	}
+	if err != nil {
+		return AgentActionEvent{}, false, fmt.Errorf("load agent action event %s[%d]: %w", ref.ExecutionID, ref.Seq-1, err)
+	}
+	event, err := decodeStoreEvent(raw, ref.ExecutionID, ref.Seq-1)
+	if err != nil {
+		return AgentActionEvent{}, false, err
+	}
+	if event.ExecutionID != ref.ExecutionID || event.Seq != ref.Seq || event.EventID != ref.EventID {
+		return AgentActionEvent{}, false, nil
+	}
+	return event, true, nil
+}
+
+func decodeStoreEvent(raw, executionID string, index int) (AgentActionEvent, error) {
+	var event AgentActionEvent
+	if err := json.Unmarshal([]byte(raw), &event); err != nil {
+		return AgentActionEvent{}, fmt.Errorf("unmarshal agent action event %s[%d]: %w", executionID, index, err)
+	}
+	return event, nil
+}
+
+func eventMatchesQuery(event AgentActionEvent, query ListEventsQuery, executionID string) bool {
+	if event.TenantID != strings.TrimSpace(query.TenantID) || event.ExecutionID != executionID {
+		return false
+	}
+	if query.SessionID != "" && event.SessionID != strings.TrimSpace(query.SessionID) {
+		return false
+	}
+	if query.Kind != "" && event.Kind != query.Kind {
+		return false
+	}
+	if query.Decision != "" && event.Decision != query.Decision {
+		return false
+	}
+	if !query.Since.IsZero() && event.Timestamp.Before(query.Since) {
+		return false
+	}
+	if !query.Until.IsZero() && event.Timestamp.After(query.Until) {
+		return false
+	}
+	return true
+}
+
+func formatStoreScore(score float64) string {
+	return strconv.FormatFloat(score, 'f', -1, 64)
+}
+
+func zSetMemberString(member any) string {
+	if id, ok := member.(string); ok {
+		return id
+	}
+	return fmt.Sprint(member)
 }
 
 func isTerminalSessionStatus(status SessionStatus) bool {

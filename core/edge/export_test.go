@@ -72,7 +72,11 @@ func setupExportTestEnv(t *testing.T) *exportTestEnv {
 	})); err != nil {
 		t.Fatalf("CreateExecution exec1: %v", err)
 	}
-	if err := store.CreateExecution(ctx, validStoreExecution(tenantID, sessionID, exec2, started.Add(2*time.Second), nil)); err != nil {
+	if err := store.CreateExecution(ctx, validStoreExecution(tenantID, sessionID, exec2, started.Add(2*time.Second), func(e *AgentExecution) {
+		e.JobID = ""
+		e.WorkflowRunID = ""
+		e.StepID = ""
+	})); err != nil {
 		t.Fatalf("CreateExecution exec2: %v", err)
 	}
 
@@ -200,10 +204,10 @@ func TestSessionExportAssemblerHappyPathContainsAllSessionEvidence(t *testing.T)
 	if bundle.Truncation.EventsTruncated {
 		t.Errorf("Truncation.EventsTruncated = true, want false on full session")
 	}
-	// validStoreExecution defaults JobID/WorkflowRunID/StepID for every
-	// execution, so the bundle should carry one JobLink per execution.
-	if got := len(bundle.JobLinks); got != len(bundle.Executions) {
-		t.Errorf("JobLinks length = %d, want %d (one per execution that has job IDs)", got, len(bundle.Executions))
+	if got := len(bundle.JobLinks); got != 1 {
+		t.Errorf("JobLinks length = %d, want 1 (only exec1 has job IDs)", got)
+	} else if link := bundle.JobLinks[0]; link.ExecutionID != env.exec1ID || link.JobID != "job-1" || link.WorkflowRunID != "run-1" || link.StepID != "step-1" {
+		t.Errorf("JobLinks[0] = %#v, want exec1 job/workflow/step link", link)
 	}
 }
 
