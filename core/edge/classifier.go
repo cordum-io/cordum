@@ -135,6 +135,10 @@ func classifyBashCommand(command string, out *ActionClassification) {
 		return
 	}
 	hasNetwork := hasAnyToken(folded, []string{"curl", "wget", "nc ", "netcat", "telnet", "ssh "})
+	// EDGE-008.6: destructive denylist remains for explicit policy rules
+	// (e.g. claude-code.deny-destructive-shell), but it is no longer the gate
+	// for safety. Even when this returns false, an unrecognized shape falls to
+	// command.class=unknown + review_required below — fail closed.
 	if isDestructiveShell(folded) {
 		out.RiskTags = append(out.RiskTags, "destructive", "filesystem")
 		if hasNetwork {
@@ -144,7 +148,7 @@ func classifyBashCommand(command string, out *ActionClassification) {
 		out.Labels["command.family"] = "filesystem_delete"
 		return
 	}
-	if isGitPush(folded) {
+	if isGitPushCommand(folded) {
 		out.RiskTags = []string{"deploy", "git", "network"}
 		out.Labels["command.class"] = "deploy"
 		out.Labels["command.family"] = "git_push"
@@ -162,16 +166,15 @@ func classifyBashCommand(command string, out *ActionClassification) {
 		out.Labels["command.family"] = "install"
 		return
 	}
-	if isBuildCommand(folded) {
-		out.RiskTags = append(out.RiskTags, "build")
+	// EDGE-008.6: explicit allowlist replaces the previous HasPrefix/Contains
+	// safe-detection. safeShellShape rejects any shell metacharacter (composition,
+	// substitution, redirection, fork-bomb syntax) before checking argv0+args
+	// against the narrow set from PRD §7.14 + §11.3. This is the only path that
+	// produces command.class=safe.
+	if family, ok := safeShellShape(folded); ok {
+		out.RiskTags = append(out.RiskTags, family)
 		out.Labels["command.class"] = "safe"
-		out.Labels["command.family"] = "build"
-		return
-	}
-	if isTestCommand(folded) {
-		out.RiskTags = append(out.RiskTags, "test")
-		out.Labels["command.class"] = "safe"
-		out.Labels["command.family"] = "test"
+		out.Labels["command.family"] = family
 		return
 	}
 	out.RiskTags = append(out.RiskTags, "review_required", "unknown")
@@ -518,16 +521,32 @@ func isDestructiveShell(command string) bool {
 		strings.Contains(command, "rmdir /s")
 }
 
-func isGitPush(command string) bool {
+// isGitPushCommand reports whether a command invokes `git push`, including
+// option-prefixed variants like `git -c http.proxy=foo push origin main` that
+// the previous strict-positional check missed (senior review on PR #243).
+// Leading git options (-c <key>=<val>, -C <path>, --git-dir=, --work-tree=, etc.)
+// are skipped before checking the subcommand.
+func isGitPushCommand(command string) bool {
 	fields := strings.Fields(command)
-	return len(fields) >= 2 && fields[0] == "git" && fields[1] == "push"
-}
-
-func isBuildCommand(command string) bool {
-	return strings.Contains(command, "npm run build") ||
-		strings.HasPrefix(command, "go build") ||
-		strings.Contains(command, " make build") ||
-		strings.HasPrefix(command, "make build")
+	if len(fields) < 2 || fields[0] != "git" {
+		return false
+	}
+	i := 1
+	for i < len(fields) {
+		f := fields[i]
+		// Two-token options that take a value as the next field.
+		if f == "-c" || f == "-C" {
+			i += 2
+			continue
+		}
+		// Single-token options (long --foo and short -X variants).
+		if strings.HasPrefix(f, "-") {
+			i++
+			continue
+		}
+		return f == "push"
+	}
+	return false
 }
 
 func isInstallCommand(command string) bool {
@@ -541,13 +560,99 @@ func isInstallCommand(command string) bool {
 		strings.HasPrefix(command, "yarn add ")
 }
 
-func isTestCommand(command string) bool {
-	return strings.HasPrefix(command, "npm test") ||
-		strings.Contains(command, "npm run test") ||
-		strings.HasPrefix(command, "go test") ||
-		strings.Contains(command, " go test ") ||
-		strings.Contains(command, "pytest") ||
-		strings.Contains(command, "vitest")
+// shellMetaCharacters is the set of characters that compose, substitute, or
+// redirect a shell command. Their presence in a command disqualifies it from
+// the safe allowlist regardless of how the command begins. This is what makes
+// `npm test && rm -rf /`, `npm test | mkfs.ext4 /dev/sda`, `git status \`rm -rf\“,
+// and similar bypass cases impossible to silently allow as safe.
+const shellMetaCharacters = ";&|<>`$(){}\n\r"
+
+// safeShellShape implements the EDGE-008.6 explicit allowlist for benign shell
+// commands. It returns the command family ("test", "build", "git_readonly")
+// only when:
+//
+//  1. The command contains no shell metacharacters (no composition,
+//     substitution, redirection, fork-bomb syntax), and
+//  2. argv[0] and the leading positional arguments match a narrow set drawn
+//     from PRD §7.14 (Demo policy defaults) and §11.3 (allow-test-commands rule).
+//
+// Anything else returns ("", false) and the caller must classify the command
+// as `command.class=unknown` + `review_required` so policy can fail closed.
+//
+// The allowlist is intentionally narrow:
+//   - npm/pnpm/yarn: only `<cmd> test [...args]`, `<cmd> run test [...args]`,
+//     `<cmd> run build [...args]`. Install/audit/publish are NOT safe.
+//   - go: only `go test [...]`, `go build [...]`. `go install`/`go get` are NOT safe.
+//   - cargo: only `cargo test [...]`, `cargo build [...]`. `cargo publish` NOT safe.
+//   - make: only `make build [...]`, `make test [...]`. Other targets NOT safe.
+//   - pytest, vitest: any args (no shell metas allowed by the gate above).
+//   - git: only read-only subcommands (status/log/diff/show/branch/tag).
+//     Leading global options (-c, -C, --git-dir, --work-tree) disqualify the
+//     shape even on read-only subcommands because they can swap config or
+//     repository scope (e.g. `git -c core.fsmonitor=evil-binary status`).
+func safeShellShape(command string) (string, bool) {
+	folded := strings.TrimSpace(command)
+	if folded == "" {
+		return "", false
+	}
+	if strings.ContainsAny(folded, shellMetaCharacters) {
+		return "", false
+	}
+	fields := strings.Fields(folded)
+	if len(fields) == 0 {
+		return "", false
+	}
+	switch fields[0] {
+	case "npm", "pnpm", "yarn":
+		if len(fields) >= 2 && fields[1] == "test" {
+			return "test", true
+		}
+		if len(fields) >= 3 && fields[1] == "run" {
+			switch fields[2] {
+			case "test":
+				return "test", true
+			case "build":
+				return "build", true
+			}
+		}
+	case "go":
+		if len(fields) >= 2 {
+			switch fields[1] {
+			case "test":
+				return "test", true
+			case "build":
+				return "build", true
+			}
+		}
+	case "pytest", "vitest":
+		return "test", true
+	case "cargo":
+		if len(fields) >= 2 {
+			switch fields[1] {
+			case "test":
+				return "test", true
+			case "build":
+				return "build", true
+			}
+		}
+	case "make":
+		if len(fields) >= 2 {
+			switch fields[1] {
+			case "build":
+				return "build", true
+			case "test":
+				return "test", true
+			}
+		}
+	case "git":
+		if len(fields) >= 2 {
+			switch fields[1] {
+			case "status", "log", "diff", "show", "branch", "tag":
+				return "git_readonly", true
+			}
+		}
+	}
+	return "", false
 }
 
 func hasAnyToken(value string, tokens []string) bool {

