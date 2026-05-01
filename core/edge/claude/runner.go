@@ -19,10 +19,16 @@ func Run(ctx context.Context, opts RunOptions) int {
 		stderr = io.Discard
 	}
 
+	// Single end-to-end timeout budget for the whole hook run. Previously we
+	// applied `timeout` separately to stdin parsing and to the agentd call,
+	// so the worst case was ~2×timeout — long enough to push past Claude's
+	// own deadline and undermine fail-closed behavior. One budget keeps the
+	// total wall clock <= timeout regardless of where time is spent.
 	timeout := hookTimeout(opts)
-	readCtx, cancel := context.WithTimeout(ctx, timeout)
-	input, err := readHookInput(readCtx, opts.Stdin, maxInputBytes(opts))
-	cancel()
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	input, err := readHookInput(runCtx, opts.Stdin, maxInputBytes(opts))
 	if err != nil {
 		writeInputError(stderr, err)
 		return 2
@@ -44,9 +50,7 @@ func Run(ctx context.Context, opts RunOptions) int {
 		agentd = client
 	}
 
-	callCtx, callCancel := context.WithTimeout(ctx, timeout)
-	decision, err := agentd.EvaluateHook(callCtx, agentdRequest(input, opts.Args, opts.Env))
-	callCancel()
+	decision, err := agentd.EvaluateHook(runCtx, agentdRequest(input, opts.Args, opts.Env))
 	if err != nil {
 		return handleAgentdError(stderr, stdout, input, err, opts)
 	}

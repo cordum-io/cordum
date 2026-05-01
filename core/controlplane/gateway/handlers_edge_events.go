@@ -98,6 +98,15 @@ func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Override client-supplied principal_id with the auth-context principal so
+	// a user-role API key cannot write events claiming any principal in its
+	// tenant. Mirrors handleEdgeEvaluate / handleSubmitJob.
+	principalID, err := s.resolvePrincipal(r, req.PrincipalID)
+	if err != nil {
+		writeForbidden(w, r, err)
+		return
+	}
+	req.PrincipalID = principalID
 	event, err := normalizeEdgeEventRequest(req, tenantID)
 	if err != nil {
 		writeEdgeEventRequestError(w, err, "invalid edge event request")
@@ -139,12 +148,21 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 		writeErrorJSON(w, http.StatusBadRequest, "edge event batch requires events")
 		return
 	}
+	// Resolve principal once from the auth context. Every event in the batch
+	// inherits the same principal — clients cannot mix per-event principals to
+	// spoof activity from another user inside their tenant.
+	principalID, err := s.resolvePrincipal(r, "")
+	if err != nil {
+		writeForbidden(w, r, err)
+		return
+	}
 	events := make([]edgecore.AgentActionEvent, 0, len(req.Events))
 	for _, item := range req.Events {
 		if requestedTenant := strings.TrimSpace(item.TenantID); requestedTenant != "" && requestedTenant != tenantID {
 			writeForbidden(w, r, fmt.Errorf("edge tenant body/header mismatch"))
 			return
 		}
+		item.PrincipalID = principalID
 		event, err := normalizeEdgeEventRequest(item, tenantID)
 		if err != nil {
 			writeEdgeEventRequestError(w, err, "invalid edge event batch request")

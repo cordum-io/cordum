@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/cordum/cordum/core/edge/claude"
 	"github.com/cordum/cordum/core/infra/logging"
@@ -21,7 +23,12 @@ type cliOptions struct {
 
 func main() {
 	logging.Init("cordum-hook")
-	code := runCLI(context.Background(), cliOptions{
+	// Honor SIGINT/SIGTERM so a stalled agentd socket doesn't pin Claude Code
+	// past its own deadline. The runner's own timeout still bounds the call;
+	// signals just give the user/parent a clean way to abort sooner.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	code := runCLI(ctx, cliOptions{
 		Args:   os.Args[1:],
 		Stdin:  os.Stdin,
 		Stdout: os.Stdout,

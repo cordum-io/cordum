@@ -16,6 +16,12 @@ import (
 const (
 	defaultHeartbeatTTL  = 30 * time.Second
 	defaultMaxEventBytes = 128 * 1024
+	// maxSessionEventScan caps how many events loadEventsForSession is willing
+	// to accumulate across all executions of a single session before stopping.
+	// A multi-million-event session would otherwise OOM the gateway. Callers
+	// that need to walk the full event history should page via execution-scoped
+	// queries instead.
+	maxSessionEventScan = 10000
 )
 
 // StoreOption customizes RedisStore behavior. Options are primarily used by
@@ -200,9 +206,21 @@ func (s *RedisStore) ListSessions(ctx context.Context, query ListSessionsQuery) 
 	if principalID := strings.TrimSpace(query.PrincipalID); principalID != "" {
 		indexKey = edgePrincipalIndexKey(tenantID, principalID)
 	}
-	ids, err := s.client.ZRevRange(ctx, indexKey, 0, -1).Result()
+	start, err := parseStoreCursor(query.Cursor)
+	if err != nil {
+		return SessionPage{}, err
+	}
+	limit := normalizeStoreLimit(query.Limit)
+	// Fetch only the requested page (+1 sentinel) instead of the entire index.
+	// Tenants with millions of sessions previously caused unbounded memory and
+	// per-call Redis fan-out; bound to limit+1 so the request stays O(limit).
+	ids, err := s.client.ZRevRange(ctx, indexKey, int64(start), int64(start+limit)).Result()
 	if err != nil {
 		return SessionPage{}, fmt.Errorf("list edge sessions index %s: %w", indexKey, err)
+	}
+	hasMore := len(ids) > limit
+	if hasMore {
+		ids = ids[:limit]
 	}
 	items := make([]EdgeSession, 0, len(ids))
 	for _, id := range ids {
@@ -215,11 +233,11 @@ func (s *RedisStore) ListSessions(ctx context.Context, query ListSessionsQuery) 
 		}
 		items = append(items, *session)
 	}
-	start, err := parseStoreCursor(query.Cursor)
-	if err != nil {
-		return SessionPage{}, err
+	page := SessionPage{Items: items}
+	if hasMore {
+		page.NextCursor = strconv.Itoa(start + limit)
 	}
-	return pageSessions(items, start, normalizeStoreLimit(query.Limit)), nil
+	return page, nil
 }
 
 func (s *RedisStore) EndSession(ctx context.Context, tenantID, sessionID string, endedAt time.Time, status SessionStatus) (*EdgeSession, error) {
@@ -481,9 +499,19 @@ func (s *RedisStore) ListExecutions(ctx context.Context, query ListExecutionsQue
 	default:
 		return ExecutionPage{}, fmt.Errorf("execution list index is required")
 	}
-	ids, err := s.client.ZRevRange(ctx, indexKey, 0, -1).Result()
+	start, err := parseStoreCursor(query.Cursor)
+	if err != nil {
+		return ExecutionPage{}, err
+	}
+	limit := normalizeStoreLimit(query.Limit)
+	// Bounded ZRevRange — see ListSessions for rationale.
+	ids, err := s.client.ZRevRange(ctx, indexKey, int64(start), int64(start+limit)).Result()
 	if err != nil {
 		return ExecutionPage{}, fmt.Errorf("list agent executions index %s: %w", indexKey, err)
+	}
+	hasMore := len(ids) > limit
+	if hasMore {
+		ids = ids[:limit]
 	}
 	items := make([]AgentExecution, 0, len(ids))
 	for _, id := range ids {
@@ -496,11 +524,11 @@ func (s *RedisStore) ListExecutions(ctx context.Context, query ListExecutionsQue
 		}
 		items = append(items, *execution)
 	}
-	start, err := parseStoreCursor(query.Cursor)
-	if err != nil {
-		return ExecutionPage{}, err
+	page := ExecutionPage{Items: items}
+	if hasMore {
+		page.NextCursor = strconv.Itoa(start + limit)
 	}
-	return pageExecutions(items, start, normalizeStoreLimit(query.Limit)), nil
+	return page, nil
 }
 
 func (s *RedisStore) EndExecution(ctx context.Context, tenantID, executionID string, endedAt time.Time, status ExecutionStatus) (*AgentExecution, error) {
@@ -612,13 +640,43 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 		group.events = append(group.events, i)
 	}
 
-	watchKeys := make([]string, 0, len(groups)*2)
+	watchKeys := make([]string, 0, len(groups)*3)
 	for executionID := range groups {
-		watchKeys = append(watchKeys, edgeEventSeqKey(executionID), edgeEventsKey(executionID))
+		// Watch the execution document too: a concurrent EndExecution must
+		// invalidate this transaction so we never append events past a
+		// terminal state. The seq key + list key alone do not catch a
+		// status-only mutation.
+		watchKeys = append(watchKeys, edgeEventSeqKey(executionID), edgeEventsKey(executionID), edgeExecutionKey(executionID))
 	}
 	appended := make([]AgentActionEvent, len(events))
 	var err error
 	err = s.client.Watch(ctx, func(tx *redis.Tx) error {
+		// Re-read each execution inside the watched transaction and reject
+		// the batch if it is missing, cross-tenant, or already terminal.
+		// Without this re-check, a TOCTOU window between the GetExecution
+		// done outside the closure (line ~597) and the seq read below
+		// would let events land on a session/execution that has since been
+		// ended, deleted, or moved to another tenant.
+		for executionID, group := range groups {
+			raw, err := tx.Get(ctx, edgeExecutionKey(executionID)).Bytes()
+			if errors.Is(err, redis.Nil) {
+				return fmt.Errorf("%w: agent execution %s", ErrNotFound, executionID)
+			}
+			if err != nil {
+				return fmt.Errorf("re-read agent execution %s: %w", executionID, err)
+			}
+			var fresh AgentExecution
+			if err := json.Unmarshal(raw, &fresh); err != nil {
+				return fmt.Errorf("unmarshal agent execution %s: %w", executionID, err)
+			}
+			if fresh.TenantID != group.execution.TenantID {
+				return fmt.Errorf("%w: agent execution %s", ErrNotFound, executionID)
+			}
+			if fresh.EndedAt != nil || isTerminalExecutionStatus(fresh.Status) {
+				return fmt.Errorf("agent execution %s is terminal; cannot append events", executionID)
+			}
+			group.execution = &fresh
+		}
 		payloadsByExecution := make(map[string][][]byte, len(groups))
 		for executionID, group := range groups {
 			lastSeq, err := tx.Get(ctx, edgeEventSeqKey(executionID)).Int()
@@ -742,8 +800,11 @@ func (s *RedisStore) loadEventsForSession(ctx context.Context, query ListEventsQ
 				return nil, err
 			}
 			items = append(items, executionEvents...)
+			if len(items) >= maxSessionEventScan {
+				break
+			}
 		}
-		if page.NextCursor == "" {
+		if page.NextCursor == "" || len(items) >= maxSessionEventScan {
 			break
 		}
 		cursor = page.NextCursor
@@ -757,6 +818,9 @@ func (s *RedisStore) loadEventsForSession(ctx context.Context, query ListEventsQ
 		}
 		return items[i].Seq < items[j].Seq
 	})
+	if len(items) > maxSessionEventScan {
+		items = items[:maxSessionEventScan]
+	}
 	return items, nil
 }
 

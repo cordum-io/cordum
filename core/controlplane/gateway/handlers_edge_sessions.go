@@ -101,6 +101,17 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Resolve principal from auth context. resolvePrincipal returns the
+	// authenticated principal (or the requested one only if the auth provider
+	// allows the impersonation), so a user-role API key cannot create a
+	// session claiming any principal in its tenant.
+	principalID, err := s.resolvePrincipal(r, req.PrincipalID)
+	if err != nil {
+		writeForbidden(w, r, err)
+		return
+	}
+	principalID = strings.TrimSpace(principalID)
+
 	now := time.Now().UTC()
 	sessionID := uuid.NewString()
 	executionID := uuid.NewString()
@@ -109,13 +120,7 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 		traceID = uuid.NewString()
 	}
 	policySnapshot := strings.TrimSpace(req.PolicySnapshot)
-	principalID := strings.TrimSpace(req.PrincipalID)
 	principalType := req.PrincipalType
-	if authCtx := auth.FromRequest(r); authCtx != nil {
-		if principalID == "" {
-			principalID = strings.TrimSpace(authCtx.PrincipalID)
-		}
-	}
 	if principalType == "" {
 		principalType = edgecore.PrincipalTypeUnknown
 	}
