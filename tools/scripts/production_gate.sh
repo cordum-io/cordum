@@ -371,6 +371,25 @@ ensure_demo_guardrails_pack() {
     go run ./cmd/cordumctl pack install --upgrade ./examples/demo-guardrails >/dev/null)
 }
 
+# Pack policy propagation is asynchronous; probe /policy/evaluate until the
+# safety kernel returns DENY for the demo-guardrails dangerous topic. Mirrors
+# the mock-bank readiness loop in gate_3 so DLQ/remediation probes do not race
+# the safety kernel.
+wait_for_demo_guardrails_policy() {
+  local probe decision attempt
+  probe="$(jq -cn --arg tenant "${TENANT_ID}" \
+    '{tenant: $tenant, topic: "job.demo-guardrails.dangerous", meta: {capability: "demo-guardrails.dangerous"}}')"
+  for (( attempt=1; attempt<=${DEMO_GUARDRAILS_READY_ATTEMPTS:-30}; attempt++ )); do
+    decision="$(api_call_quick POST /policy/evaluate "${probe}" | jq -r '.decision // empty' 2>/dev/null || true)"
+    case "${decision}" in
+      DENY|DECISION_TYPE_DENY) return 0 ;;
+    esac
+    sleep 1
+  done
+  echo "demo-guardrails policy not ready after bounded probe (last decision=${decision:-empty})" >&2
+  return 1
+}
+
 ensure_mcp_gate_agent() {
   local payload resp agent_id name
 
@@ -1821,6 +1840,7 @@ gate_10_data_lifecycle() {
   ensure_mock_bank_pack
   ensure_mock_bank_worker
   ensure_demo_guardrails_pack
+  wait_for_demo_guardrails_policy || return 1
 
   # --- DLQ: create a denied job to populate DLQ ---
   resp="$(api_call POST /jobs "$(jq -cn --arg topic "${dlq_topic}" '{prompt:"gate10 dlq lifecycle", topic:$topic}')")"
@@ -2179,6 +2199,7 @@ gate_12_adv_workflows() {
   # --- Job remediation endpoint ---
   # Submit a job that will fail/deny, then test remediate
   ensure_demo_guardrails_pack
+  wait_for_demo_guardrails_policy || return 1
   job_resp="$(api_call POST /jobs "$(jq -cn '{prompt:"gate12 remediate test", topic:"job.demo-guardrails.dangerous"}')")"
   job_id="$(echo "${job_resp}" | jq -r '.job_id // empty' 2>/dev/null || true)"
   if [[ -n "${job_id}" ]]; then
@@ -3466,9 +3487,11 @@ build_curl_tls_opts
 # ---------------------------------------------------------------------------
 gate_20_ws_metrics() {
   # Verify WebSocket metrics exist on /metrics endpoint (if available).
-  local metrics_url="${METRICS_URL:-https://localhost:9092/metrics}"
+  local metrics_scheme="https"
+  [[ "${API_BASE}" == http://* ]] && metrics_scheme="http"
+  local metrics_url="${METRICS_URL:-${metrics_scheme}://localhost:9092/metrics}"
   local metrics_resp
-  metrics_resp="$(curl -sS "${CURL_TLS_OPTS[@]}" "${metrics_url}" 2>/dev/null || echo "")"
+  metrics_resp="$(curl -sS "${QUICK_CURL_TIMEOUT_OPTS[@]}" "${CURL_TLS_OPTS[@]}" "${metrics_url}" 2>/dev/null || echo "")"
   if [[ -z "${metrics_resp}" ]]; then
     echo "metrics endpoint not reachable at ${metrics_url} — skipping metric checks"
   else
@@ -3481,7 +3504,7 @@ gate_20_ws_metrics() {
 
   # Verify /status returns valid JSON with expected fields.
   local status_resp
-  status_resp="$(curl -sS "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" \
+  status_resp="$(curl -sS "${CURL_TIMEOUT_OPTS[@]}" "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" \
     "$(api_url "/status")" 2>/dev/null || echo "{}")"
   echo "${status_resp}" | jq -e '.uptime_seconds' >/dev/null 2>&1 || {
     echo "/status missing uptime_seconds field" >&2
@@ -3498,6 +3521,7 @@ gate_21_infra_health() {
   local health_url="${API_BASE%/}/health"
   local health_raw health_code
   health_raw="$(curl -sS -w $'\n%{http_code}' \
+    "${CURL_TIMEOUT_OPTS[@]}" \
     "${CURL_TLS_OPTS[@]}" \
     "${AUTH_HEADERS[@]}" \
     "${health_url}" 2>/dev/null || true)"
@@ -3528,7 +3552,7 @@ gate_21_infra_health() {
 
   # Verify Redis pool is active (non-zero hit count).
   local status_resp
-  status_resp="$(curl -sS "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" \
+  status_resp="$(curl -sS "${CURL_TIMEOUT_OPTS[@]}" "${CURL_TLS_OPTS[@]}" "${AUTH_HEADERS[@]}" \
     "$(api_url "/status")" 2>/dev/null || echo "{}")"
   local pool_hits
   pool_hits="$(echo "${status_resp}" | jq -r '.redis_pool_stats.hits // 0' 2>/dev/null || echo "0")"
