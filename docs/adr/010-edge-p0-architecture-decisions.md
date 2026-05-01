@@ -27,7 +27,7 @@ EDGE-000 PASS is the gate condition for continuing P0 planning. It does **not** 
 Production Claude Code enforcement must use:
 
 - `type: "command"` hook configuration for `cordum-hook`.
-- Local `cordum-agentd` over a user-only local socket.
+- Local `cordum-agentd` over a loopback-only HTTP endpoint (default `CORDUM_AGENTD_URL=http://127.0.0.1:8765/v1/edge/hooks/claude`). The hook client rejects non-loopback hosts so the boundary stays on the same machine; a future user-only Unix-domain-socket or named-pipe transport is a possible hardening, not a P0 prerequisite. This loopback HTTP boundary is unrelated to the EDGE-000 HTTP hook server, which remains a disposable spike (see below).
 - Explicit timeout and degraded/fail-closed behavior.
 - Structured deny JSON or command-hook exit-code semantics that block when a decision cannot be produced in strict modes.
 
@@ -76,11 +76,11 @@ Policy-mode fail behavior:
 Token storage decisions:
 
 - Do not put long-lived Cordum API keys, tenant admin tokens, or model provider secrets in Claude settings.
-- Prefer a local user-only `cordum-agentd` socket for hook-to-agentd communication.
+- Prefer the loopback-only `cordum-agentd` HTTP endpoint (default `http://127.0.0.1:8765/v1/edge/hooks/claude`) for hook-to-agentd communication. Remote Gateway URLs are rejected by the hook client, so the trust boundary stays on the same machine. A future user-only Unix-domain-socket or named-pipe transport remains a hardening option but is not required for P0.
 - Use short-lived scoped session tokens only where a hook or wrapper must authenticate across a process boundary.
 - Redact token-like values before logs, events, artifacts, dashboard state, or evidence exports.
 - Enterprise deployments should use managed settings plus OS keychain, service bootstrap, or agentd-held credentials rather than user-editable secrets.
-- Dev mode may use a scoped token in generated local settings only when the local socket path is not sufficient; that token must be short-lived, least-privilege, and called out as a local-development tradeoff.
+- Dev mode may use a scoped token in generated local settings only when the loopback HTTP boundary alone is insufficient; that token must be short-lived, least-privilege, and called out as a local-development tradeoff.
 
 Shadow Agents scope:
 
