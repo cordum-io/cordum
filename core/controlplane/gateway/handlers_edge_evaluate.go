@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -56,6 +57,13 @@ type edgeEvaluateRequest struct {
 	Labels     edgecore.Labels `json:"labels"`
 
 	ArtifactPointers []edgecore.ArtifactPointer `json:"artifact_ptrs"`
+
+	// ApprovalRef signals that this evaluate is the consume-once retry of a
+	// previously approved EdgeApproval. When non-empty the gateway resolves the
+	// approval via the EDGE-011 store, recomputes the action_hash against the
+	// fresh safety snapshot, and lets the store CAS reject changed-command or
+	// stale-snapshot mismatches. Default callers omit it.
+	ApprovalRef string `json:"approval_ref"`
 }
 
 func (r edgeEvaluateRequest) redactedInput() map[string]any {
@@ -128,13 +136,22 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 		writeEdgeEventRequestError(w, err, "invalid edge evaluate request")
 		return
 	}
+	retryRef := strings.TrimSpace(evalCtx.req.ApprovalRef)
 	appended, err := s.appendEdgeEvaluateOutcome(r.Context(), evalCtx.store, policyInput.event, outcome, edgeEvaluateDurationMS(started))
 	if err != nil {
 		writeEdgeEventStoreError(w, r, err, "append edge evaluate decision event")
 		return
 	}
 	outcome.response.EventID = appended.EventID
-	if outcome.decision == edgecore.DecisionRequireApproval {
+	switch {
+	case retryRef != "":
+		retryOutcome, retryErr := s.consumeEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, retryRef, actionHash)
+		if retryErr != nil {
+			writeEdgeApprovalStoreError(w, r, retryErr, "consume edge evaluate approval")
+			return
+		}
+		outcome = retryOutcome
+	case outcome.decision == edgecore.DecisionRequireApproval:
 		approval, err := s.enqueueEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, actionHash)
 		if err != nil {
 			writeEdgeApprovalStoreError(w, r, err, "enqueue edge evaluate approval")
@@ -531,6 +548,134 @@ func cloneEdgeEvaluateLabels(labels edgecore.Labels) edgecore.Labels {
 		out[key] = value
 	}
 	return out
+}
+
+// consumeEdgeEvaluateApproval resolves the retry case where the caller supplied
+// approval_ref. It looks up the stored EDGE-011 approval, classifies the
+// terminal outcome by status, and (only for status=approved with no prior
+// consume) calls the store CAS primitive to atomically claim the approval. The
+// CAS rejects mismatched action_hash or policy_snapshot — that is how stale
+// snapshots and modified commands are forced back to a new approval cycle. The
+// fresh action_hash and policy_snapshot are recomputed from the current evaluate
+// event and the latest safety decision so the binding is server-authoritative.
+//
+// If the fresh safety decision is anything other than REQUIRE_APPROVAL, the
+// approval is not consumed: a fresh DENY/THROTTLE must win over a stale approval,
+// and a fresh ALLOW does not need one. The approval's lifecycle continues until
+// it is explicitly resolved or expires.
+func (s *server) consumeEdgeEvaluateApproval(ctx context.Context, store edgecore.Store, event edgecore.AgentActionEvent, outcome edgeEvaluateDecisionOutcome, approvalRef, actionHash string) (edgeEvaluateDecisionOutcome, error) {
+	if outcome.decision != edgecore.DecisionRequireApproval {
+		return outcome, nil
+	}
+	tenantID := strings.TrimSpace(event.TenantID)
+	approval, found, err := store.GetApproval(ctx, tenantID, approvalRef)
+	if err != nil {
+		return outcome, err
+	}
+	if !found || approval == nil {
+		return edgeEvaluateRetryDeny(outcome, approvalRef, "approval not found; request a new approval"), nil
+	}
+	switch approval.Status {
+	case edgecore.ApprovalStatusRejected:
+		reason := strings.TrimSpace(approval.ResolutionReason)
+		if reason == "" {
+			reason = strings.TrimSpace(approval.Reason)
+		}
+		if reason == "" {
+			reason = "approval rejected"
+		}
+		return edgeEvaluateRetryDeny(outcome, approvalRef, reason), nil
+	case edgecore.ApprovalStatusExpired, edgecore.ApprovalStatusInvalidated:
+		return edgeEvaluateRetryDeny(outcome, approvalRef, "approval expired; request a new approval"), nil
+	case edgecore.ApprovalStatusPending:
+		return outcome.edgeEvaluateRequireApproval().withApprovalRetryMetadata(*approval), nil
+	case edgecore.ApprovalStatusApproved:
+		if approval.ConsumedAt != nil {
+			return edgeEvaluateRetryDeny(outcome, approvalRef, "approval already consumed; request a new approval"), nil
+		}
+		// CAS uses the approval's stored session/execution/event tuple — the
+		// retry's freshly-appended evidence event has a new event_id that the
+		// approval was never bound to. action_hash and policy_snapshot are
+		// recomputed against the *current* safety decision so a stale snapshot
+		// or mutated command is forced into ErrApprovalConflict.
+		consumed, ok, err := store.ClaimApproval(ctx, edgecore.ApprovalClaimRequest{
+			TenantID:       tenantID,
+			ApprovalRef:    approvalRef,
+			SessionID:      strings.TrimSpace(approval.SessionID),
+			ExecutionID:    strings.TrimSpace(approval.ExecutionID),
+			EventID:        strings.TrimSpace(approval.EventID),
+			ActionHash:     strings.TrimSpace(actionHash),
+			PolicySnapshot: strings.TrimSpace(outcome.policySnapshot),
+			ConsumedAt:     time.Now().UTC(),
+		})
+		if err != nil {
+			if errors.Is(err, edgecore.ErrApprovalConflict) {
+				return edgeEvaluateRetryDeny(outcome, approvalRef, "approval action or policy snapshot mismatch; request a new approval"), nil
+			}
+			return outcome, err
+		}
+		if !ok || consumed == nil {
+			return edgeEvaluateRetryDeny(outcome, approvalRef, "approval not consumable; request a new approval"), nil
+		}
+		return outcome.edgeEvaluateRetryAllow(*consumed), nil
+	default:
+		return edgeEvaluateRetryDeny(outcome, approvalRef, "approval not actionable"), nil
+	}
+}
+
+// edgeEvaluateRetryDeny formats a deny outcome for a retry that could not
+// consume its approval. The caller-supplied reason is user-facing copy; the
+// approvalRef is echoed so hooks/agentd can correlate but a fresh approval is
+// always required.
+func edgeEvaluateRetryDeny(outcome edgeEvaluateDecisionOutcome, approvalRef, reason string) edgeEvaluateDecisionOutcome {
+	approvalRef = strings.TrimSpace(approvalRef)
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "approval not consumable"
+	}
+	out := outcome.edgeEvaluateDeny(reason)
+	out.approvalRef = approvalRef
+	out.response.ApprovalRef = approvalRef
+	out.response.ApprovalURL = edgeEvaluateApprovalDashboardPath(approvalRef)
+	out.response.WaitAfter = "request_new_approval"
+	return out
+}
+
+// edgeEvaluateRetryAllow flips the outcome to ALLOW after a successful CAS
+// consume. Wait/terminal fields are cleared because the action is permitted to
+// run; ActionHash/InputHash echo the consumed approval's binding so callers can
+// log audit-coherent retry coordinates.
+func (outcome edgeEvaluateDecisionOutcome) edgeEvaluateRetryAllow(approval edgecore.EdgeApproval) edgeEvaluateDecisionOutcome {
+	approvalRef := strings.TrimSpace(approval.ApprovalRef)
+	resolver := strings.TrimSpace(approval.ResolverID)
+	if resolver == "" {
+		resolver = strings.TrimSpace(approval.ResolvedBy)
+	}
+	reason := "approval consumed"
+	if resolver != "" {
+		reason = fmt.Sprintf("approval %s consumed (approved by %s)", approvalRef, resolver)
+	} else if approvalRef != "" {
+		reason = fmt.Sprintf("approval %s consumed", approvalRef)
+	}
+
+	outcome.decision = edgecore.DecisionAllow
+	outcome.status = edgecore.ActionStatusOK
+	outcome.reason = reason
+	outcome.approvalRef = approvalRef
+	outcome.response.Decision = edgecore.DecisionAllow
+	outcome.response.Reason = reason
+	outcome.response.PermissionDecision = "allow"
+	outcome.response.PermissionDecisionReason = reason
+	outcome.response.ExitCode = 0
+	outcome.response.TerminalTitle = ""
+	outcome.response.TerminalMessage = ""
+	outcome.response.WaitStrategy = ""
+	outcome.response.WaitAfter = ""
+	outcome.response.ApprovalRef = approvalRef
+	outcome.response.ApprovalURL = ""
+	outcome.response.ActionHash = strings.TrimSpace(approval.ActionHash)
+	outcome.response.InputHash = strings.TrimSpace(approval.InputHash)
+	return outcome
 }
 
 func (s *server) enqueueEdgeEvaluateApproval(ctx context.Context, store edgecore.Store, event edgecore.AgentActionEvent, outcome edgeEvaluateDecisionOutcome, actionHash string) (*edgecore.EdgeApproval, error) {
