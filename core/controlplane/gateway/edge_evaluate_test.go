@@ -1,0 +1,665 @@
+package gateway
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+
+	edgecore "github.com/cordum/cordum/core/edge"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"google.golang.org/grpc"
+)
+
+func TestGatewayEdgeEvaluateRouteRegisteredAndTenantScoped(t *testing.T) {
+	s, _ := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{})
+	routes := make(map[string]routeInfo, len(s.Routes()))
+	for _, route := range s.Routes() {
+		routes[route.methodPathKey()] = route
+	}
+
+	got, ok := routes[http.MethodPost+" /api/v1/edge/evaluate"]
+	if !ok {
+		t.Fatal("missing Edge evaluate route registration for POST /api/v1/edge/evaluate")
+	}
+	if got.Auth == "public" {
+		t.Fatal("Edge evaluate route was registered as public")
+	}
+	if got.Auth != "tenant" {
+		t.Fatalf("Edge evaluate route auth = %q, want tenant", got.Auth)
+	}
+}
+
+func TestGatewayEdgeEvaluateRequiresAuthTenantAndRejectsMalformedRequests(t *testing.T) {
+	_, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{})
+
+	missingAuth := httptest.NewRequest(http.MethodPost, "/api/v1/edge/evaluate", strings.NewReader(`{}`))
+	missingAuth.Header.Set("X-Tenant-ID", edgeRouteTenant)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, missingAuth)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("missing auth status = %d, want 401 body=%s", rr.Code, rr.Body.String())
+	}
+
+	missingTenant := httptest.NewRequest(http.MethodPost, "/api/v1/edge/evaluate", strings.NewReader(`{}`))
+	addEdgeRouteAuth(missingTenant)
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, missingTenant)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("missing tenant status = %d, want 403 body=%s", rr.Code, rr.Body.String())
+	}
+
+	badJSON := httptest.NewRequest(http.MethodPost, "/api/v1/edge/evaluate", strings.NewReader(`{"session_id":`))
+	addEdgeRouteAuth(badJSON)
+	badJSON.Header.Set("X-Tenant-ID", edgeRouteTenant)
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, badJSON)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("bad JSON status = %d, want 400 body=%s", rr.Code, rr.Body.String())
+	}
+	assertBodyOmits(t, rr.Body.String(), "enterprise_hook_token", "Bearer")
+
+	mismatch := httptest.NewRequest(http.MethodPost, "/api/v1/edge/evaluate", strings.NewReader(`{"tenant_id":"`+edgeRouteOtherTenant+`"}`))
+	addEdgeRouteAuth(mismatch)
+	mismatch.Header.Set("X-Tenant-ID", edgeRouteTenant)
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, mismatch)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("body tenant mismatch status = %d, want 403 body=%s", rr.Code, rr.Body.String())
+	}
+	assertBodyOmits(t, rr.Body.String(), edgeRouteOtherTenant)
+}
+
+func TestGatewayEdgeEvaluateRejectsMissingCrossTenantAndTerminalParents(t *testing.T) {
+	stub := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW, Reason: "ok"}}
+	s, handler := newEdgeEvaluateTestServer(t, stub)
+	session := createEdgeRouteSession(t, handler)
+
+	missing := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody("missing-session", "missing-execution", edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing parents status = %d, want 404 body=%s", missing.Code, missing.Body.String())
+	}
+	assertBodyOmits(t, missing.Body.String(), "missing-session", "missing-execution", "npm test")
+
+	crossTenant := httptest.NewRequest(http.MethodPost, "/api/v1/edge/evaluate", strings.NewReader(edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteOtherTenant, "Bash", map[string]any{"command": "echo Bearer cross-tenant-secret"})))
+	addEdgeRouteAuthFor(crossTenant, edgeRouteOtherAPIKey)
+	crossTenant.Header.Set("X-Tenant-ID", edgeRouteOtherTenant)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, crossTenant)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant status = %d, want 404 body=%s", rr.Code, rr.Body.String())
+	}
+	assertBodyOmits(t, rr.Body.String(), session.SessionID, session.ExecutionID, "cross-tenant-secret", edgeRouteTenant)
+
+	otherSession := createEdgeRouteSession(t, handler)
+	mismatchedExecution := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, otherSession.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}))
+	if mismatchedExecution.Code != http.StatusBadRequest {
+		t.Fatalf("mismatched execution status = %d, want 400 body=%s", mismatchedExecution.Code, mismatchedExecution.Body.String())
+	}
+	assertBodyOmits(t, mismatchedExecution.Body.String(), otherSession.ExecutionID)
+
+	endedAt := session.Session.StartedAt.Add(1)
+	if _, err := s.edgeStore.EndSession(context.Background(), edgeRouteTenant, session.SessionID, endedAt, edgecore.SessionStatusEnded); err != nil {
+		t.Fatalf("end session fixture: %v", err)
+	}
+	ended := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "echo Bearer ended-session-secret"}))
+	if ended.Code != http.StatusConflict {
+		t.Fatalf("ended session status = %d, want 409 body=%s", ended.Code, ended.Body.String())
+	}
+	assertBodyOmits(t, ended.Body.String(), "ended-session-secret")
+
+	terminalSession := createEdgeRouteSession(t, handler)
+	if _, err := s.edgeStore.EndExecution(context.Background(), edgeRouteTenant, terminalSession.ExecutionID, terminalSession.Execution.StartedAt.Add(1), edgecore.ExecutionStatusFailed); err != nil {
+		t.Fatalf("end execution fixture: %v", err)
+	}
+	terminal := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(terminalSession.SessionID, terminalSession.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}))
+	if terminal.Code != http.StatusConflict {
+		t.Fatalf("terminal execution status = %d, want 409 body=%s", terminal.Code, terminal.Body.String())
+	}
+}
+
+func TestGatewayEdgeEvaluateMapsSafetyDecisionsToHookResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		safety             *pb.PolicyCheckResponse
+		wantDecision       string
+		wantPermission     string
+		wantExitCode       int
+		wantApprovalRef    string
+		wantWaitStrategy   string
+		wantConstraints    bool
+		wantTerminalSubstr string
+	}{
+		{
+			name:           "allow",
+			safety:         &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW, Reason: "safe", PolicySnapshot: "snap-allow", RuleId: "allow-rule"},
+			wantDecision:   "ALLOW",
+			wantPermission: "allow",
+			wantExitCode:   0,
+		},
+		{
+			name:               "deny",
+			safety:             &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_DENY, Reason: "blocked", PolicySnapshot: "snap-deny", RuleId: "deny-rule"},
+			wantDecision:       "DENY",
+			wantPermission:     "deny",
+			wantExitCode:       2,
+			wantTerminalSubstr: "blocked",
+		},
+		{
+			name:               "require approval",
+			safety:             &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN, Reason: "needs approval", PolicySnapshot: "snap-approval", RuleId: "approval-rule", ApprovalRequired: true, ApprovalRef: "approval-edge-1"},
+			wantDecision:       "REQUIRE_APPROVAL",
+			wantPermission:     "deny",
+			wantExitCode:       2,
+			wantApprovalRef:    "approval-edge-1",
+			wantWaitStrategy:   "manual_approval",
+			wantTerminalSubstr: "approval",
+		},
+		{
+			name:               "throttle",
+			safety:             &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_THROTTLE, Reason: "slow down", PolicySnapshot: "snap-throttle", RuleId: "throttle-rule"},
+			wantDecision:       "THROTTLE",
+			wantPermission:     "deny",
+			wantExitCode:       2,
+			wantWaitStrategy:   "backoff",
+			wantTerminalSubstr: "slow down",
+		},
+		{
+			name: "constrain",
+			safety: &pb.PolicyCheckResponse{
+				Decision:       pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS,
+				Reason:         "allowed with constraints",
+				PolicySnapshot: "snap-constrain",
+				RuleId:         "constraint-rule",
+				Constraints: &pb.PolicyConstraints{
+					Toolchain: &pb.ToolchainConstraints{AllowedCommands: []string{"npm test"}},
+				},
+			},
+			wantDecision:    "CONSTRAIN",
+			wantPermission:  "allow",
+			wantExitCode:    0,
+			wantConstraints: true,
+		},
+		{
+			name:               "unspecified fail closed",
+			safety:             &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_UNSPECIFIED, Reason: "unknown"},
+			wantDecision:       "DENY",
+			wantPermission:     "deny",
+			wantExitCode:       2,
+			wantTerminalSubstr: "unknown",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{response: tc.safety})
+			session := createEdgeRouteSession(t, handler)
+
+			rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}))
+			if rr.Code != http.StatusOK {
+				t.Fatalf("evaluate status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+			}
+			var resp edgeEvaluateResponseJSON
+			decodeEdgeRouteJSON(t, rr, &resp)
+			if resp.Decision != tc.wantDecision {
+				t.Fatalf("decision = %q, want %q body=%s", resp.Decision, tc.wantDecision, rr.Body.String())
+			}
+			if resp.PermissionDecision != tc.wantPermission {
+				t.Fatalf("permission_decision = %q, want %q body=%s", resp.PermissionDecision, tc.wantPermission, rr.Body.String())
+			}
+			if resp.ExitCode != tc.wantExitCode {
+				t.Fatalf("exit_code = %d, want %d body=%s", resp.ExitCode, tc.wantExitCode, rr.Body.String())
+			}
+			if resp.ApprovalRef != tc.wantApprovalRef {
+				t.Fatalf("approval_ref = %q, want %q body=%s", resp.ApprovalRef, tc.wantApprovalRef, rr.Body.String())
+			}
+			if resp.WaitStrategy != tc.wantWaitStrategy {
+				t.Fatalf("wait_strategy = %q, want %q body=%s", resp.WaitStrategy, tc.wantWaitStrategy, rr.Body.String())
+			}
+			if tc.wantConstraints && len(resp.Constraints) == 0 {
+				t.Fatalf("constraints empty, want safety constraints body=%s", rr.Body.String())
+			}
+			if tc.wantTerminalSubstr != "" && !strings.Contains(strings.ToLower(resp.TerminalMessage), tc.wantTerminalSubstr) {
+				t.Fatalf("terminal_message = %q, want substring %q", resp.TerminalMessage, tc.wantTerminalSubstr)
+			}
+		})
+	}
+}
+
+func TestGatewayEdgeEvaluateSafetyUnavailableByPolicyMode(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		policyMode     edgecore.PolicyMode
+		command        string
+		wantDecision   string
+		wantPermission string
+		wantDegraded   bool
+	}{
+		{
+			name:           "observe degrades open with evidence warning",
+			policyMode:     edgecore.PolicyModeObserve,
+			command:        "rm -rf ./tmp/edge-observe",
+			wantDecision:   "ALLOW",
+			wantPermission: "allow",
+			wantDegraded:   true,
+		},
+		{
+			name:           "enforce high risk fails closed",
+			policyMode:     edgecore.PolicyModeEnforce,
+			command:        "rm -rf ./tmp/edge-enforce",
+			wantDecision:   "DENY",
+			wantPermission: "deny",
+			wantDegraded:   true,
+		},
+		{
+			name:           "enterprise strict fails closed even for low risk",
+			policyMode:     edgecore.PolicyModeEnterpriseStrict,
+			command:        "npm test",
+			wantDecision:   "DENY",
+			wantPermission: "deny",
+			wantDegraded:   true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{err: errors.New("safety unavailable: Bearer safety-secret")})
+			session := createEdgeEvaluateSessionWithPolicyMode(t, handler, tc.policyMode)
+
+			rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": tc.command}))
+			if rr.Code != http.StatusOK {
+				t.Fatalf("evaluate status = %d, want hook-friendly 200 body=%s", rr.Code, rr.Body.String())
+			}
+			var resp edgeEvaluateResponseJSON
+			decodeEdgeRouteJSON(t, rr, &resp)
+			if resp.Decision != tc.wantDecision {
+				t.Fatalf("decision = %q, want %q body=%s", resp.Decision, tc.wantDecision, rr.Body.String())
+			}
+			if resp.PermissionDecision != tc.wantPermission {
+				t.Fatalf("permission_decision = %q, want %q body=%s", resp.PermissionDecision, tc.wantPermission, rr.Body.String())
+			}
+			if resp.Degraded != tc.wantDegraded {
+				t.Fatalf("degraded = %v, want %v body=%s", resp.Degraded, tc.wantDegraded, rr.Body.String())
+			}
+			if resp.ErrorCode != "safety_unavailable" {
+				t.Fatalf("error_code = %q, want safety_unavailable body=%s", resp.ErrorCode, rr.Body.String())
+			}
+			assertBodyOmits(t, rr.Body.String(), "safety-secret")
+		})
+	}
+}
+
+func TestGatewayEdgeEvaluatePersistsDecisionEventWithRedactedInput(t *testing.T) {
+	s, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:       pb.DecisionType_DECISION_TYPE_DENY,
+		Reason:         "secret access blocked",
+		PolicySnapshot: "snap-decision",
+		RuleId:         "deny-secret-command",
+		ApprovalRef:    "approval-readonly-reference",
+	}})
+	session := createEdgeRouteSession(t, handler)
+
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{
+		"command": "echo Authorization: Bearer edge-persist-secret",
+	}))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("evaluate status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var resp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &resp)
+	if strings.TrimSpace(resp.EventID) == "" {
+		t.Fatalf("event_id empty in response body=%s", rr.Body.String())
+	}
+
+	events := listEdgeEvaluateEvents(t, s, session.SessionID, session.ExecutionID)
+	if len(events) != 1 {
+		t.Fatalf("persisted events = %d, want exactly 1: %#v", len(events), events)
+	}
+	event := events[0]
+	if event.EventID != resp.EventID {
+		t.Fatalf("persisted event_id = %q, response event_id = %q", event.EventID, resp.EventID)
+	}
+	if event.Kind != edgecore.EventKindHookPolicyDecision {
+		t.Fatalf("event kind = %q, want %q", event.Kind, edgecore.EventKindHookPolicyDecision)
+	}
+	if event.Decision != edgecore.DecisionDeny || event.Status != edgecore.ActionStatusBlocked {
+		t.Fatalf("event decision/status = %q/%q, want DENY/blocked", event.Decision, event.Status)
+	}
+	if got := event.InputRedacted["command"]; got != "<redacted>" {
+		t.Fatalf("event input_redacted command = %#v, want <redacted>", got)
+	}
+	if event.InputHash == "" || !strings.HasPrefix(event.InputHash, "sha256:") {
+		t.Fatalf("event input_hash = %q, want sha256 hash", event.InputHash)
+	}
+	if event.DurationMS <= 0 {
+		t.Fatalf("event duration_ms = %d, want > 0", event.DurationMS)
+	}
+	if event.RuleID != "deny-secret-command" || event.PolicySnapshot != "snap-decision" || event.ApprovalRef != "approval-readonly-reference" {
+		t.Fatalf("policy fields = rule:%q snapshot:%q approval:%q", event.RuleID, event.PolicySnapshot, event.ApprovalRef)
+	}
+	if event.ActionName != "bash.exec" || event.Capability != "exec.shell" {
+		t.Fatalf("classification fields = action:%q capability:%q", event.ActionName, event.Capability)
+	}
+	assertBodyOmits(t, rr.Body.String(), "edge-persist-secret")
+}
+
+func TestGatewayEdgeEvaluateStreamsOnlyPersistedDecisionEvents(t *testing.T) {
+	s, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:       pb.DecisionType_DECISION_TYPE_DENY,
+		Reason:         "stream blocked",
+		PolicySnapshot: "snap-stream",
+		RuleId:         "deny-stream",
+	}})
+	session := createEdgeRouteSession(t, handler)
+	drainGatewayEdgeStreamQueue(s.eventsCh)
+	streamQueue := &wsClient{ch: s.eventsCh}
+
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{
+		"command": "echo Bearer edge-stream-secret",
+	}))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("evaluate status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var resp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &resp)
+
+	streamed := readGatewayEdgeStreamEvent(t, streamQueue, "evaluate policy decision edge.event")
+	if streamed.tenant != edgeRouteTenant {
+		t.Fatalf("stream tenant = %q, want %q", streamed.tenant, edgeRouteTenant)
+	}
+	var envelope struct {
+		Type  string                    `json:"type"`
+		Event edgecore.AgentActionEvent `json:"event"`
+	}
+	if err := json.Unmarshal(streamed.data, &envelope); err != nil {
+		t.Fatalf("decode streamed evaluate edge.event: %v body=%s", err, string(streamed.data))
+	}
+	if envelope.Type != "edge.event" || envelope.Event.EventID != resp.EventID || envelope.Event.Kind != edgecore.EventKindHookPolicyDecision {
+		t.Fatalf("stream envelope = type %q event %q kind %q, want edge.event/%q/%q",
+			envelope.Type, envelope.Event.EventID, envelope.Event.Kind, resp.EventID, edgecore.EventKindHookPolicyDecision)
+	}
+	assertBodyOmits(t, string(streamed.data), "edge-stream-secret")
+	assertNoGatewayEdgeStreamEvent(t, streamQueue, "evaluate should stream exactly the persisted decision event")
+}
+
+func TestGatewayEdgeEvaluateDoesNotStreamWhenPersistenceFails(t *testing.T) {
+	s, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision: pb.DecisionType_DECISION_TYPE_ALLOW,
+		Reason:   "allow before append failure",
+	}})
+	session := createEdgeRouteSession(t, handler)
+	drainGatewayEdgeStreamQueue(s.eventsCh)
+	streamQueue := &wsClient{ch: s.eventsCh}
+	s.edgeStore = edgeEvaluateFailingAppendStore{Store: s.edgeStore}
+
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{
+		"command": "echo Bearer edge-append-failure-secret",
+	}))
+	if rr.Code != http.StatusInternalServerError && rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("append failure status = %d, want sanitized 5xx body=%s", rr.Code, rr.Body.String())
+	}
+	assertBodyOmits(t, rr.Body.String(), "edge-append-failure-secret", "append-failure-secret")
+	assertNoGatewayEdgeStreamEvent(t, streamQueue, "failed evaluate persistence must not stream phantom edge.event")
+}
+
+func TestGatewayEdgeEvaluatePersistsDegradedEventForSafetyUnavailable(t *testing.T) {
+	s, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{err: errors.New("safety down: Bearer edge-degraded-secret")})
+	session := createEdgeEvaluateSessionWithPolicyMode(t, handler, edgecore.PolicyModeObserve)
+
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("evaluate status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var resp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &resp)
+	if !resp.Degraded || resp.ErrorCode != "safety_unavailable" {
+		t.Fatalf("response degraded/error = %v/%q, want true/safety_unavailable body=%s", resp.Degraded, resp.ErrorCode, rr.Body.String())
+	}
+
+	events := listEdgeEvaluateEvents(t, s, session.SessionID, session.ExecutionID)
+	if len(events) != 1 {
+		t.Fatalf("persisted events = %d, want exactly 1: %#v", len(events), events)
+	}
+	event := events[0]
+	if event.Kind != edgecore.EventKindPolicyDegraded {
+		t.Fatalf("event kind = %q, want %q", event.Kind, edgecore.EventKindPolicyDegraded)
+	}
+	if event.Status != edgecore.ActionStatusDegraded {
+		t.Fatalf("event status = %q, want degraded", event.Status)
+	}
+	if event.Decision == edgecore.DecisionAllow {
+		t.Fatal("degraded event recorded false ALLOW decision")
+	}
+	if event.ErrorCode != "safety_unavailable" || strings.Contains(event.ErrorMessage, "edge-degraded-secret") {
+		t.Fatalf("event error fields = %q/%q, want sanitized safety_unavailable", event.ErrorCode, event.ErrorMessage)
+	}
+	if event.DurationMS <= 0 {
+		t.Fatalf("event duration_ms = %d, want > 0", event.DurationMS)
+	}
+}
+
+func TestGatewayEdgeEvaluateRejectsRawAndOversizeInputWithoutPersistence(t *testing.T) {
+	s, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}})
+	session := createEdgeRouteSession(t, handler)
+
+	raw := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", `{
+		"tenant_id":"`+edgeRouteTenant+`",
+		"principal_id":"principal-edge-a",
+		"session_id":"`+session.SessionID+`",
+		"execution_id":"`+session.ExecutionID+`",
+		"agent_product":"claude-code",
+		"layer":"hook",
+		"kind":"hook.pre_tool_use",
+		"tool_name":"Bash",
+		"tool_input":{"command":"echo Bearer edge-raw-secret"}
+	}`)
+	if raw.Code != http.StatusBadRequest {
+		t.Fatalf("raw payload status = %d, want 400 body=%s", raw.Code, raw.Body.String())
+	}
+	assertBodyOmits(t, raw.Body.String(), "edge-raw-secret")
+	if events := listEdgeEvaluateEvents(t, s, session.SessionID, session.ExecutionID); len(events) != 0 {
+		t.Fatalf("raw payload persisted events = %#v, want none", events)
+	}
+
+	oversizeValue := strings.Repeat("x", edgecore.MaxInputRedactedBytes+1024)
+	oversize := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": oversizeValue}))
+	if oversize.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversize input status = %d, want 413 body=%s", oversize.Code, oversize.Body.String())
+	}
+	if events := listEdgeEvaluateEvents(t, s, session.SessionID, session.ExecutionID); len(events) != 0 {
+		t.Fatalf("oversize payload persisted events = %#v, want none", events)
+	}
+}
+
+func TestBuildEdgeEvaluatePolicyInputUsesClassifierAndMapper(t *testing.T) {
+	_, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}})
+	session := createEdgeRouteSession(t, handler)
+
+	input, err := buildEdgeEvaluatePolicyInput(edgeEvaluateContext{
+		req: edgeEvaluateRequest{
+			TenantID:          edgeRouteTenant,
+			PrincipalID:       "principal-edge-a",
+			SessionID:         session.SessionID,
+			ExecutionID:       session.ExecutionID,
+			AgentProduct:      "claude-code",
+			Layer:             edgecore.LayerHook,
+			Kind:              edgecore.EventKindHookPreToolUse,
+			ToolName:          "Bash",
+			InputRedacted:     map[string]any{"command": "rm -rf ./tmp/edge-evaluate"},
+			ActionName:        "client.spoofed",
+			Capability:        "client.spoofed",
+			RiskTags:          []string{"safe"},
+			Labels:            edgecore.Labels{"edge.action_name": "client-spoofed", "custom.team": "platform"},
+			ArtifactPointers:  nil,
+			ToolInputRedacted: nil,
+			ToolInputHash:     "client-hash-should-be-overwritten",
+			InputHash:         "client-hash-should-be-overwritten",
+		},
+		tenantID:    edgeRouteTenant,
+		principalID: "principal-edge-a",
+		session:     &session.Session,
+		execution:   &session.Execution,
+	})
+	if err != nil {
+		t.Fatalf("buildEdgeEvaluatePolicyInput returned error: %v", err)
+	}
+	if input.event.ActionName != "bash.exec" || input.event.Capability != "exec.shell" {
+		t.Fatalf("event classification fields = %q/%q, want bash.exec/exec.shell", input.event.ActionName, input.event.Capability)
+	}
+	if input.event.InputHash == "" || !strings.HasPrefix(input.event.InputHash, "sha256:") || strings.Contains(input.event.InputHash, "client-hash") {
+		t.Fatalf("event input_hash = %q, want server-computed sha256", input.event.InputHash)
+	}
+	if got := input.policyRequest.GetTopic(); got != edgecore.EdgePolicyTopic {
+		t.Fatalf("policy topic = %q, want %q", got, edgecore.EdgePolicyTopic)
+	}
+	if got := input.policyRequest.GetMeta().GetCapability(); got != "exec.shell" {
+		t.Fatalf("policy capability = %q, want classifier capability", got)
+	}
+	if !edgeEvaluateStringSliceContains(input.policyRequest.GetMeta().GetRiskTags(), "destructive") ||
+		!edgeEvaluateStringSliceContains(input.policyRequest.GetMeta().GetRiskTags(), "filesystem") ||
+		edgeEvaluateStringSliceContains(input.policyRequest.GetMeta().GetRiskTags(), "safe") {
+		t.Fatalf("policy risk tags = %#v, want classifier destructive/filesystem and no client safe tag", input.policyRequest.GetMeta().GetRiskTags())
+	}
+	if got := input.policyRequest.GetLabels()["edge.action_name"]; got != "bash.exec" {
+		t.Fatalf("policy edge.action_name label = %q, want bash.exec in %#v", got, input.policyRequest.GetLabels())
+	}
+	if got := input.policyRequest.GetLabels()["custom.team"]; got != "platform" {
+		t.Fatalf("custom label not preserved: %#v", input.policyRequest.GetLabels())
+	}
+	if strings.Contains(string(input.policyRequest.GetInputContent()), "client.spoofed") {
+		t.Fatalf("policy input content leaked client spoofed classification: %s", string(input.policyRequest.GetInputContent()))
+	}
+}
+
+func newEdgeEvaluateTestServer(t *testing.T, safety *edgeEvaluateStubSafetyClient) (*server, http.Handler) {
+	t.Helper()
+	s, handler := newEdgeRouteTestServer(t)
+	s.safetyClient = safety
+	return s, handler
+}
+
+func listEdgeEvaluateEvents(t *testing.T, s *server, sessionID, executionID string) []edgecore.AgentActionEvent {
+	t.Helper()
+	page, err := s.edgeStore.ListEvents(context.Background(), edgecore.ListEventsQuery{
+		TenantID:    edgeRouteTenant,
+		SessionID:   sessionID,
+		ExecutionID: executionID,
+		Limit:       20,
+	})
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	return page.Items
+}
+
+func createEdgeEvaluateSessionWithPolicyMode(t *testing.T, handler http.Handler, mode edgecore.PolicyMode) edgeSessionCreateResponseJSON {
+	t.Helper()
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/sessions", `{
+		"agent_product":"claude-code",
+		"agent_version":"1.2.3",
+		"mode":"local-dev",
+		"policy_snapshot":"snap-edge-evaluate",
+		"policy_mode":"`+string(mode)+`"
+	}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create evaluate session status = %d, want 201 body=%s", rr.Code, rr.Body.String())
+	}
+	var session edgeSessionCreateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &session)
+	return session
+}
+
+type edgeEvaluateResponseJSON struct {
+	Decision                 string         `json:"decision"`
+	Reason                   string         `json:"reason"`
+	RuleID                   string         `json:"rule_id"`
+	PolicySnapshot           string         `json:"policy_snapshot"`
+	ApprovalRef              string         `json:"approval_ref"`
+	Constraints              map[string]any `json:"constraints"`
+	UpdatedInput             map[string]any `json:"updated_input"`
+	EventID                  string         `json:"event_id"`
+	Degraded                 bool           `json:"degraded"`
+	ErrorCode                string         `json:"error_code"`
+	ErrorMessage             string         `json:"error_message"`
+	PermissionDecision       string         `json:"permission_decision"`
+	PermissionDecisionReason string         `json:"permission_decision_reason"`
+	ExitCode                 int            `json:"exit_code"`
+	TerminalTitle            string         `json:"terminal_title"`
+	TerminalMessage          string         `json:"terminal_message"`
+	WaitStrategy             string         `json:"wait_strategy"`
+	TimeoutMS                int            `json:"timeout_ms"`
+}
+
+func edgeEvaluateBody(sessionID, executionID, tenantID, toolName string, input map[string]any) string {
+	command := ""
+	if value, ok := input["command"].(string); ok {
+		encoded, _ := json.Marshal(value)
+		command = string(encoded)
+	} else {
+		command = `""`
+	}
+	return `{
+		"tenant_id":"` + tenantID + `",
+		"principal_id":"principal-edge-a",
+		"session_id":"` + sessionID + `",
+		"execution_id":"` + executionID + `",
+		"agent_product":"claude-code",
+		"layer":"hook",
+		"kind":"hook.pre_tool_use",
+		"tool_name":"` + toolName + `",
+		"input_redacted":{"command":` + command + `}
+	}`
+}
+
+func edgeEvaluateStringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+type edgeEvaluateStubSafetyClient struct {
+	mu       sync.Mutex
+	requests []*pb.PolicyCheckRequest
+	response *pb.PolicyCheckResponse
+	err      error
+}
+
+type edgeEvaluateFailingAppendStore struct {
+	edgecore.Store
+}
+
+func (s edgeEvaluateFailingAppendStore) AppendEvent(context.Context, edgecore.AgentActionEvent) (edgecore.AgentActionEvent, error) {
+	return edgecore.AgentActionEvent{}, errors.New("append failed: Bearer edge-append-failure-secret")
+}
+
+func (c *edgeEvaluateStubSafetyClient) Evaluate(ctx context.Context, in *pb.PolicyCheckRequest, _ ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.requests = append(c.requests, in)
+	if c.err != nil {
+		return nil, c.err
+	}
+	if c.response != nil {
+		return c.response, nil
+	}
+	return &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW, Reason: "allowed"}, nil
+}
+
+func (c *edgeEvaluateStubSafetyClient) Check(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return nil, errors.New("unexpected Check call")
+}
+
+func (c *edgeEvaluateStubSafetyClient) Explain(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return nil, errors.New("unexpected Explain call")
+}
+
+func (c *edgeEvaluateStubSafetyClient) Simulate(context.Context, *pb.PolicyCheckRequest, ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {
+	return nil, errors.New("unexpected Simulate call")
+}
+
+func (c *edgeEvaluateStubSafetyClient) ListSnapshots(context.Context, *pb.ListSnapshotsRequest, ...grpc.CallOption) (*pb.ListSnapshotsResponse, error) {
+	return nil, errors.New("unexpected ListSnapshots call")
+}

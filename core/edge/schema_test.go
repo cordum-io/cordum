@@ -20,6 +20,7 @@ func TestEmbeddedEdgeSchemasValidateGoodSamples(t *testing.T) {
 	execution.EndedAt = &ended
 	event := validAgentActionEvent(started)
 	approval := validEdgeApproval(started)
+	approval.Status = ApprovalStatusApproved
 	approval.ResolvedAt = &resolved
 
 	cases := []struct {

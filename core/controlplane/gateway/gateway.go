@@ -1239,6 +1239,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "POST /api/v1/edge/executions", s.instrumented("/api/v1/edge/executions", s.handleCreateEdgeExecution))
 	s.registerRoute(mux, "GET /api/v1/edge/executions/{execution_id}", s.instrumented("/api/v1/edge/executions/{execution_id}", s.handleGetEdgeExecution))
 	s.registerRoute(mux, "POST /api/v1/edge/executions/{execution_id}/end", s.instrumented("/api/v1/edge/executions/{execution_id}/end", s.handleEndEdgeExecution))
+	s.registerRoute(mux, "POST /api/v1/edge/evaluate", s.instrumented("/api/v1/edge/evaluate", s.handleEdgeEvaluate))
 	s.registerRoute(mux, "POST /api/v1/edge/events", s.instrumented("/api/v1/edge/events", s.handleCreateEdgeEvent))
 	s.registerRoute(mux, "POST /api/v1/edge/events/batch", s.instrumented("/api/v1/edge/events/batch", s.handleCreateEdgeEventsBatch))
 	s.registerRoute(mux, "GET /api/v1/edge/sessions/{session_id}/events", s.instrumented("/api/v1/edge/sessions/{session_id}/events", s.handleListEdgeSessionEvents))

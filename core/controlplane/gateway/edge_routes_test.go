@@ -622,6 +622,7 @@ func edgeRouteExpectations() []edgeRouteExpectation {
 		{method: http.MethodPost, path: "/api/v1/edge/executions"},
 		{method: http.MethodGet, path: "/api/v1/edge/executions/{execution_id}"},
 		{method: http.MethodPost, path: "/api/v1/edge/executions/{execution_id}/end"},
+		{method: http.MethodPost, path: "/api/v1/edge/evaluate"},
 	}
 }
 
