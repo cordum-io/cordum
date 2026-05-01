@@ -315,13 +315,18 @@ func TestGatewayEdgeApprovalWaitTimesOutKeepsPending(t *testing.T) {
 	}
 }
 
-func TestGatewayEdgeApprovalWaitNotFoundForCrossTenant(t *testing.T) {
+func TestGatewayEdgeApprovalWaitDeniesCrossTenant(t *testing.T) {
 	s, handler := newEdgeRouteTestServer(t)
 	approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-a", "wait-cross-tenant")
 
+	// A reviewer API key bound to edgeRouteTenant is rejected by the auth layer
+	// when it asserts a different X-Tenant-ID, so we never reach the handler's
+	// tenant-scoped GetApproval. Both 403 (tenant access denied) and 404 (handler
+	// scoped) are valid tenant-isolation outcomes — what matters is the response
+	// must not leak the approval_ref or the original tenant.
 	rr := edgeApprovalRoutePOSTAsTenant(t, handler, edgeRouteReviewerAPIKey, edgeRouteOtherTenant, "/api/v1/edge/approvals/"+approval.ApprovalRef+"/wait", `{}`)
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("cross-tenant wait status = %d, want 404 body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusForbidden && rr.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant wait status = %d, want 403 or 404 body=%s", rr.Code, rr.Body.String())
 	}
 	assertBodyOmits(t, rr.Body.String(), approval.ApprovalRef, edgeRouteTenant)
 }
