@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -660,6 +661,53 @@ func TestRedisStoreListSessionsScoreIDCursorSurvivesInsertDeleteBetweenPages(t *
 	assertSessionIDs(t, page2.Items, []string{storePagingID("sess-mutate", 2), storePagingID("sess-mutate", 1)})
 }
 
+func TestRedisStoreListSessionsDeletedSameScoreCursorBeyondFirstWindow(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	startedAt := time.Date(2026, 5, 1, 16, 25, 0, 0, time.UTC)
+	total := maxStorePageLimit*4 + 5
+	for i := 0; i < total; i++ {
+		session := validStoreSession("tenant-a", fmt.Sprintf("sess-same-delete-%04d", i), "principal-a", startedAt)
+		if err := store.CreateSession(ctx, session); err != nil {
+			t.Fatalf("CreateSession(%s): %v", session.SessionID, err)
+		}
+	}
+
+	page1, err := store.ListSessions(ctx, ListSessionsQuery{TenantID: "tenant-a", Limit: maxStorePageLimit})
+	if err != nil {
+		t.Fatalf("ListSessions same-score page1: %v", err)
+	}
+	if len(page1.Items) != maxStorePageLimit || page1.NextCursor == "" {
+		t.Fatalf("ListSessions same-score page1 len/cursor = %d/%q, want full page and cursor", len(page1.Items), page1.NextCursor)
+	}
+	page2, err := store.ListSessions(ctx, ListSessionsQuery{TenantID: "tenant-a", Cursor: page1.NextCursor, Limit: maxStorePageLimit})
+	if err != nil {
+		t.Fatalf("ListSessions same-score page2: %v", err)
+	}
+	if len(page2.Items) != maxStorePageLimit || page2.NextCursor == "" {
+		t.Fatalf("ListSessions same-score page2 len/cursor = %d/%q, want full page and cursor", len(page2.Items), page2.NextCursor)
+	}
+	page2Cursor := decodeStoreCursorForTest(t, page2.NextCursor)
+	if err := store.DeleteSession(ctx, "tenant-a", page2Cursor.ID); err != nil {
+		t.Fatalf("DeleteSession cursor member %q: %v", page2Cursor.ID, err)
+	}
+
+	page3, err := store.ListSessions(ctx, ListSessionsQuery{TenantID: "tenant-a", Cursor: page2.NextCursor, Limit: maxStorePageLimit})
+	if err != nil {
+		t.Fatalf("ListSessions same-score page3 after deleted cursor: %v", err)
+	}
+	if len(page3.Items) != maxStorePageLimit || page3.NextCursor == "" {
+		t.Fatalf("ListSessions same-score page3 len/cursor = %d/%q, want full page and cursor after deleted cursor member", len(page3.Items), page3.NextCursor)
+	}
+	for _, session := range page3.Items {
+		if session.SessionID == page2Cursor.ID {
+			t.Fatalf("ListSessions page3 returned deleted cursor member %q", page2Cursor.ID)
+		}
+	}
+}
+
 func TestRedisStoreListExecutionsUsesOpaqueCursorPastMaxPageLimit(t *testing.T) {
 	ctx := context.Background()
 	store, _, _, cleanup := newRedisEdgeStore(t)
@@ -697,6 +745,56 @@ func TestRedisStoreListExecutionsUsesOpaqueCursorPastMaxPageLimit(t *testing.T) 
 	}
 	if _, err := store.ListExecutions(ctx, ListExecutionsQuery{TenantID: "tenant-a", SessionID: "sess-exec-page", Cursor: "999999999", Limit: 1}); err == nil {
 		t.Fatalf("ListExecutions accepted fabricated integer cursor, want invalid cursor error")
+	}
+}
+
+func TestRedisStoreListExecutionsDeletedSameScoreCursorBeyondFirstWindow(t *testing.T) {
+	ctx := context.Background()
+	store, client, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	startedAt := time.Date(2026, 5, 1, 16, 35, 0, 0, time.UTC)
+	if err := store.CreateSession(ctx, validStoreSession("tenant-a", "sess-exec-same-delete", "principal-a", startedAt)); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	total := maxStorePageLimit*4 + 5
+	for i := 0; i < total; i++ {
+		execution := validStoreExecution("tenant-a", "sess-exec-same-delete", fmt.Sprintf("exec-same-delete-%04d", i), startedAt.Add(time.Second), nil)
+		if err := store.CreateExecution(ctx, execution); err != nil {
+			t.Fatalf("CreateExecution(%s): %v", execution.ExecutionID, err)
+		}
+	}
+
+	page1, err := store.ListExecutions(ctx, ListExecutionsQuery{TenantID: "tenant-a", SessionID: "sess-exec-same-delete", Limit: maxStorePageLimit})
+	if err != nil {
+		t.Fatalf("ListExecutions same-score page1: %v", err)
+	}
+	if len(page1.Items) != maxStorePageLimit || page1.NextCursor == "" {
+		t.Fatalf("ListExecutions same-score page1 len/cursor = %d/%q, want full page and cursor", len(page1.Items), page1.NextCursor)
+	}
+	page2, err := store.ListExecutions(ctx, ListExecutionsQuery{TenantID: "tenant-a", SessionID: "sess-exec-same-delete", Cursor: page1.NextCursor, Limit: maxStorePageLimit})
+	if err != nil {
+		t.Fatalf("ListExecutions same-score page2: %v", err)
+	}
+	if len(page2.Items) != maxStorePageLimit || page2.NextCursor == "" {
+		t.Fatalf("ListExecutions same-score page2 len/cursor = %d/%q, want full page and cursor", len(page2.Items), page2.NextCursor)
+	}
+	page2Cursor := decodeStoreCursorForTest(t, page2.NextCursor)
+	if removed, err := client.ZRem(ctx, edgeSessionExecutionsIndexKey("sess-exec-same-delete"), page2Cursor.ID).Result(); err != nil || removed != 1 {
+		t.Fatalf("ZRem cursor execution member %q = %d, %v; want 1,nil", page2Cursor.ID, removed, err)
+	}
+
+	page3, err := store.ListExecutions(ctx, ListExecutionsQuery{TenantID: "tenant-a", SessionID: "sess-exec-same-delete", Cursor: page2.NextCursor, Limit: maxStorePageLimit})
+	if err != nil {
+		t.Fatalf("ListExecutions same-score page3 after deleted cursor: %v", err)
+	}
+	if len(page3.Items) != maxStorePageLimit || page3.NextCursor == "" {
+		t.Fatalf("ListExecutions same-score page3 len/cursor = %d/%q, want full page and cursor after deleted cursor member", len(page3.Items), page3.NextCursor)
+	}
+	for _, execution := range page3.Items {
+		if execution.ExecutionID == page2Cursor.ID {
+			t.Fatalf("ListExecutions page3 returned deleted cursor member %q", page2Cursor.ID)
+		}
 	}
 }
 

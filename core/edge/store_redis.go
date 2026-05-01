@@ -990,22 +990,11 @@ func (s *RedisStore) listZSetRowsAfterCursor(ctx context.Context, indexKey strin
 
 func (s *RedisStore) listZSetRowsAfterMissingCursor(ctx context.Context, indexKey string, cursor storeCursor, limit int) ([]redis.Z, error) {
 	rows := make([]redis.Z, 0, limit+1)
-	sameScoreRows, err := s.client.ZRevRangeByScoreWithScores(ctx, indexKey, &redis.ZRangeBy{
-		Max:   formatStoreScore(cursor.Score),
-		Min:   formatStoreScore(cursor.Score),
-		Count: int64(maxStorePageLimit + limit + 1),
-	}).Result()
-	if err != nil {
+	if err := s.appendSameScoreRowsAfterMissingCursorDesc(ctx, indexKey, cursor, limit+1, &rows); err != nil {
 		return nil, err
 	}
-	for _, row := range sameScoreRows {
-		id := zSetMemberString(row.Member)
-		if id < cursor.ID {
-			rows = append(rows, row)
-			if len(rows) > limit {
-				return rows, nil
-			}
-		}
+	if len(rows) > limit {
+		return rows, nil
 	}
 	lowerRows, err := s.client.ZRevRangeByScoreWithScores(ctx, indexKey, &redis.ZRangeBy{
 		Max:   "(" + formatStoreScore(cursor.Score),
@@ -1017,6 +1006,37 @@ func (s *RedisStore) listZSetRowsAfterMissingCursor(ctx context.Context, indexKe
 	}
 	rows = append(rows, lowerRows...)
 	return rows, nil
+}
+
+func (s *RedisStore) appendSameScoreRowsAfterMissingCursorDesc(ctx context.Context, indexKey string, cursor storeCursor, target int, rows *[]redis.Z) error {
+	for offset := int64(0); len(*rows) < target; {
+		sameScoreRows, err := s.client.ZRevRangeByScoreWithScores(ctx, indexKey, &redis.ZRangeBy{
+			Max:    formatStoreScore(cursor.Score),
+			Min:    formatStoreScore(cursor.Score),
+			Offset: offset,
+			Count:  int64(maxStorePageLimit),
+		}).Result()
+		if err != nil {
+			return err
+		}
+		if len(sameScoreRows) == 0 {
+			break
+		}
+		for _, row := range sameScoreRows {
+			id := zSetMemberString(row.Member)
+			if id < cursor.ID {
+				*rows = append(*rows, row)
+				if len(*rows) == target {
+					return nil
+				}
+			}
+		}
+		offset += int64(len(sameScoreRows))
+		if len(sameScoreRows) < maxStorePageLimit {
+			break
+		}
+	}
+	return nil
 }
 
 func (s *RedisStore) listSessionEventIndexRows(ctx context.Context, indexKey string, cursor storeCursor, hasCursor bool, limit int) ([]redis.Z, error) {
@@ -1042,22 +1062,8 @@ func (s *RedisStore) listSessionEventIndexRows(ctx context.Context, indexKey str
 
 func (s *RedisStore) listSessionEventRowsAfterMissingCursor(ctx context.Context, indexKey string, cursor storeCursor, limit int) ([]redis.Z, error) {
 	rows := make([]redis.Z, 0, limit)
-	sameScoreRows, err := s.client.ZRangeByScoreWithScores(ctx, indexKey, &redis.ZRangeBy{
-		Min:   formatStoreScore(cursor.Score),
-		Max:   formatStoreScore(cursor.Score),
-		Count: int64(maxStorePageLimit + limit),
-	}).Result()
-	if err != nil {
+	if err := s.appendSameScoreRowsAfterMissingCursorAsc(ctx, indexKey, cursor, limit, &rows); err != nil {
 		return nil, err
-	}
-	for _, row := range sameScoreRows {
-		id := zSetMemberString(row.Member)
-		if id > cursor.ID {
-			rows = append(rows, row)
-			if len(rows) == limit {
-				return rows, nil
-			}
-		}
 	}
 	if len(rows) == limit {
 		return rows, nil
@@ -1072,6 +1078,37 @@ func (s *RedisStore) listSessionEventRowsAfterMissingCursor(ctx context.Context,
 	}
 	rows = append(rows, higherRows...)
 	return rows, nil
+}
+
+func (s *RedisStore) appendSameScoreRowsAfterMissingCursorAsc(ctx context.Context, indexKey string, cursor storeCursor, target int, rows *[]redis.Z) error {
+	for offset := int64(0); len(*rows) < target; {
+		sameScoreRows, err := s.client.ZRangeByScoreWithScores(ctx, indexKey, &redis.ZRangeBy{
+			Min:    formatStoreScore(cursor.Score),
+			Max:    formatStoreScore(cursor.Score),
+			Offset: offset,
+			Count:  int64(maxStorePageLimit),
+		}).Result()
+		if err != nil {
+			return err
+		}
+		if len(sameScoreRows) == 0 {
+			break
+		}
+		for _, row := range sameScoreRows {
+			id := zSetMemberString(row.Member)
+			if id > cursor.ID {
+				*rows = append(*rows, row)
+				if len(*rows) == target {
+					return nil
+				}
+			}
+		}
+		offset += int64(len(sameScoreRows))
+		if len(sameScoreRows) < maxStorePageLimit {
+			break
+		}
+	}
+	return nil
 }
 
 func parseZSetStoreCursor(raw, kind string) (storeCursor, bool, error) {
