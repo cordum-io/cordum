@@ -93,11 +93,47 @@ func TestRunCLIRedactsEnvAndAgentdErrorSecrets(t *testing.T) {
 	}
 }
 
-func TestRunCLIRejectsUnsupportedClaudeSubcommand(t *testing.T) {
+func TestRunCLISupportsConfigChangeSubcommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runCLI(context.Background(), cliOptions{
 		Args:   []string{"claude", "config-change"},
-		Stdin:  strings.NewReader(`{"hook_event_name":"ConfigChange"}`),
+		Stdin:  strings.NewReader(`{"hook_event_name":"ConfigChange","source":"project_settings","file_path":"/repo/.claude/settings.json"}`),
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Agentd: cliFakeAgentd{},
+		Env:    map[string]string{"CORDUM_EDGE_MODE": "enterprise-strict"},
+	})
+	if code != 0 {
+		t.Fatalf("exit code=%d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"decision":"block"`) {
+		t.Fatalf("stdout missing ConfigChange block decision: %q", stdout.String())
+	}
+}
+
+func TestRunCLISupportsFileChangedSubcommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runCLI(context.Background(), cliOptions{
+		Args:   []string{"claude", "file-changed"},
+		Stdin:  strings.NewReader(`{"hook_event_name":"FileChanged","file_path":"/repo/.envrc","event":"change"}`),
+		Stdout: &stdout,
+		Stderr: &stderr,
+		Agentd: cliFakeAgentd{},
+		Env:    map[string]string{"CORDUM_EDGE_MODE": "enterprise-strict"},
+	})
+	if code != 0 {
+		t.Fatalf("exit code=%d stderr=%q", code, stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout=%q, want empty because FileChanged cannot block", stdout.String())
+	}
+}
+
+func TestRunCLIRejectsUnsupportedClaudeSubcommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runCLI(context.Background(), cliOptions{
+		Args:   []string{"claude", "session-start"},
+		Stdin:  strings.NewReader(`{"hook_event_name":"SessionStart"}`),
 		Stdout: &stdout,
 		Stderr: &stderr,
 	})

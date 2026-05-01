@@ -21,7 +21,7 @@ func TestRunUnknownEventFallbackByMode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			code, stdout, stderr := runHook(t, RunOptions{
 				Args:  []string{"claude", "pre-tool-use"},
-				Stdin: hookInput(`{"hook_event_name":"ConfigChange","session_id":"sess-sk-test-secret","prompt":"ghp_testtoken"}`),
+				Stdin: hookInput(`{"hook_event_name":"SessionStart","session_id":"sess-sk-test-secret","prompt":"ghp_testtoken"}`),
 				Env:   tt.env,
 			})
 			if code != tt.wantCode {

@@ -31,6 +31,9 @@ type AgentdRequest struct {
 	ToolUseID       string         `json:"tool_use_id,omitempty"`
 	DurationMS      int            `json:"duration_ms,omitempty"`
 	Prompt          string         `json:"prompt,omitempty"`
+	Source          string         `json:"source,omitempty"`
+	FilePath        string         `json:"file_path,omitempty"`
+	FileEvent       string         `json:"file_event,omitempty"`
 	ToolInput       map[string]any `json:"tool_input,omitempty"`
 	ToolResponse    map[string]any `json:"tool_response,omitempty"`
 	RawPayload      []byte         `json:"raw_payload,omitempty"`

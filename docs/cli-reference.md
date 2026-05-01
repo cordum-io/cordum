@@ -6,6 +6,7 @@ For REST API endpoints, see [api-reference.md](api-reference.md).
 For pack format details, see [pack.md](pack.md).
 For configuration, see [configuration-reference.md](configuration-reference.md).
 For the Cordum Edge Claude hook binary, see [edge/cordum-hook.md](edge/cordum-hook.md).
+For Cordum Edge Claude settings generator behavior, see [edge/cordumctl-edge-claude.md](edge/cordumctl-edge-claude.md).
 
 ---
 
@@ -60,6 +61,7 @@ cordumctl status --gateway https://prod:8081 --api-key $KEY --cacert ./certs/ca/
 | `pack list` | List installed packs |
 | `pack show` | Show pack details |
 | `pack verify` | Run pack policy simulation tests |
+| `edge claude --settings-output` | Planned EDGE-019 Claude launch/settings wrapper; generator helpers are implemented, final command name is gated on EDGE-019 |
 
 ---
 

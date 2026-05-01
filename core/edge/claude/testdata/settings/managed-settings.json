@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "allowManagedHooksOnly": true,
+  "allowManagedMcpServersOnly": true,
+  "allowedHttpHookUrls": [],
+  "allowedMcpServers": [
+    {
+      "serverName": "cordum-edge"
+    }
+  ],
+  "disableBypassPermissionsMode": "disable",
+  "forceRemoteSettingsRefresh": true,
+  "apiKeyHelper": "/opt/cordum/bin/cordum-agentd claude api-key-helper",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://llm-proxy.cordum.example",
+    "CORDUM_AGENTD_FAIL_CLOSED": "true",
+    "CORDUM_AGENTD_HOOK_TIMEOUT": "5s",
+    "CORDUM_AGENTD_URL": "http://127.0.0.1:8765/v1/edge/hooks/claude",
+    "CORDUM_EDGE_MODE": "enterprise-strict",
+    "CORDUM_EDGE_PLATFORM": "linux"
+  },
+  "hooks": {
+    "ConfigChange": [
+      {
+        "matcher": "user_settings|project_settings|local_settings|skills",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/cordum/bin/cordum-hook claude config-change",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "FileChanged": [
+      {
+        "matcher": ".claude/settings.json|.claude/settings.local.json|CLAUDE.md",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/cordum/bin/cordum-hook claude file-changed",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/cordum/bin/cordum-hook claude post-tool-use",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/cordum/bin/cordum-hook claude post-tool-use-failure",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/cordum/bin/cordum-hook claude pre-tool-use",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/cordum/bin/cordum-hook claude user-prompt-submit",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

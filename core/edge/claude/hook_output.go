@@ -28,6 +28,10 @@ func ClaudeHookOutputForDecision(eventName string, d AgentdDecision) ClaudeHookO
 		return userPromptSubmitOutput(d)
 	case "PostToolUse", "PostToolUseFailure":
 		return postToolUseOutput(eventName, d)
+	case "ConfigChange":
+		return configChangeOutput(d)
+	case "FileChanged":
+		return ClaudeHookOutput{}
 	default:
 		return ClaudeHookOutput{}
 	}
@@ -91,6 +95,24 @@ func postToolUseOutput(eventName string, d AgentdDecision) ClaudeHookOutput {
 		if d.AdditionalContext == "" {
 			return ClaudeHookOutput{}
 		}
+	default:
+		return ClaudeHookOutput{}
+	}
+	return out
+}
+
+func configChangeOutput(d AgentdDecision) ClaudeHookOutput {
+	out := ClaudeHookOutput{HookSpecificOutput: &HookSpecificOutput{HookEventName: "ConfigChange"}}
+	switch d.Decision {
+	case DecisionDeny, DecisionRequireApproval:
+		out.Decision = "block"
+		if d.Reason != "" {
+			out.Reason = d.Reason
+		} else {
+			out.Reason = "configuration change blocked by Cordum policy"
+		}
+	case DecisionAllow:
+		return ClaudeHookOutput{}
 	default:
 		return ClaudeHookOutput{}
 	}

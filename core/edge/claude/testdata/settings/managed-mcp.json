@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cordum-edge": {
+      "type": "http",
+      "url": "https://mcp.cordum.example/mcp",
+      "headersHelper": "/opt/cordum/bin/cordum-agentd mcp headers"
+    }
+  }
+}

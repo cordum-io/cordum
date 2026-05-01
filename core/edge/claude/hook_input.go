@@ -54,6 +54,9 @@ type HookInput struct {
 	DurationMS     int            `json:"duration_ms,omitempty"`
 	Prompt         string         `json:"prompt,omitempty"`
 	Error          string         `json:"error,omitempty"`
+	Source         string         `json:"source,omitempty"`
+	FilePath       string         `json:"file_path,omitempty"`
+	FileEvent      string         `json:"event,omitempty"`
 	IsInterrupt    bool           `json:"is_interrupt,omitempty"`
 	RawPayload     []byte         `json:"-"`
 }

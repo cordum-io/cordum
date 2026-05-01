@@ -45,7 +45,7 @@ func runCLI(ctx context.Context, opts cliOptions) int {
 		return 2
 	}
 	switch opts.Args[1] {
-	case "pre-tool-use", "post-tool-use", "post-tool-use-failure", "user-prompt-submit":
+	case "pre-tool-use", "post-tool-use", "post-tool-use-failure", "user-prompt-submit", "config-change", "file-changed":
 		return claude.Run(ctx, claude.RunOptions{
 			Args:   opts.Args,
 			Stdin:  opts.Stdin,
@@ -68,6 +68,8 @@ Supported Claude hook events:
   cordum-hook claude post-tool-use
   cordum-hook claude post-tool-use-failure
   cordum-hook claude user-prompt-submit
+  cordum-hook claude config-change
+  cordum-hook claude file-changed
 
 The hook reads one Claude hook JSON payload from stdin. Stdout is reserved for Claude-compatible JSON; diagnostics go to stderr.
 `)

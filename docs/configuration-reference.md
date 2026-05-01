@@ -693,7 +693,12 @@ scanners:
 | `CORDUM_AGENTD_URL` | `http://127.0.0.1:8765/v1/edge/hooks/claude` | No | Loopback-only local agentd decision endpoint used by `cordum-hook`; remote hosts are rejected. |
 | `CORDUM_AGENTD_FAIL_CLOSED` | `false` | No | When true, `cordum-hook` blocks/fails closed if local agentd is unavailable or returns an invalid response. |
 | `CORDUM_EDGE_MODE` | `observe` | No | Edge local hook mode: `observe`, `local-dev-enforce`, or `enterprise-strict`. |
+| `CORDUM_EDGE_SESSION_ID` | — | No | Optional generated Claude settings/session correlation ID. Claude hook payload `session_id` remains the runtime source of truth. |
 | `CORDUM_EDGE_EXECUTION_ID` | — | No | Optional Edge execution correlation ID forwarded from `cordum-hook` to local agentd. |
+| `CORDUM_EDGE_APPROVAL_WAIT_TIMEOUT` | — | No | Optional future approval-wait UX timeout emitted by settings generators; current hook behavior still returns immediate approval references. |
+| `CORDUM_EDGE_PLATFORM` | — | No | Optional settings-generator platform marker for diagnostics and generated examples. |
+
+Generated Claude settings and enterprise managed-settings templates must not contain long-lived `ANTHROPIC_API_KEY`, `CORDUM_API_KEY`, bearer tokens, raw prompts, or raw tool payloads. Enterprise deployments should use `cordum-agentd` memory/keychain/service bootstrap through Claude `apiKeyHelper` and MCP `headersHelper` placeholders.
 
 > **Prometheus pod label**: All Cordum metrics include a `pod` const label (`os.Hostname()` or `CORDUM_INSTANCE_ID`) so Prometheus can distinguish replicas in HA deployments. Use `sum by (pod) (cordum_scheduler_jobs_received_total)` for per-replica breakdown.
 

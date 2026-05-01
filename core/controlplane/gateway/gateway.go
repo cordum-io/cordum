@@ -29,6 +29,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
+	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/governance"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/buildinfo"
@@ -123,6 +124,7 @@ type server struct {
 	pb.UnimplementedCordumApiServer
 	memStore              store.Store
 	jobStore              *store.RedisJobStore // Typed for ListRecentJobs
+	edgeStore             edgecore.Store
 	decisionLogStore      model.DecisionLogStore
 	copilotStore          copilot.Store
 	governanceHealthCache *governance.Cache
@@ -598,6 +600,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	s := &server{
 		memStore:               memStore,
 		jobStore:               jobStore,
+		edgeStore:              edgecore.NewRedisStoreFromClient(jobStore.Client()),
 		decisionLogStore:       decisionLogStore,
 		copilotStore:           copilot.NotImplementedStore{},
 		governanceHealthCache:  governance.NewCache(60 * time.Second),
@@ -1227,6 +1230,20 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "POST /api/v1/jobs/{id}/cancel", s.instrumented("/api/v1/jobs/{id}/cancel", s.handleCancelJob))
 	s.registerRoute(mux, "POST /api/v1/jobs/{id}/remediate", s.instrumented("/api/v1/jobs/{id}/remediate", s.handleRemediateJob))
 
+	// 4.25 Edge session/execution APIs and action event APIs.
+	s.registerRoute(mux, "POST /api/v1/edge/sessions", s.instrumented("/api/v1/edge/sessions", s.handleCreateEdgeSession))
+	s.registerRoute(mux, "GET /api/v1/edge/sessions", s.instrumented("/api/v1/edge/sessions", s.handleListEdgeSessions))
+	s.registerRoute(mux, "GET /api/v1/edge/sessions/{session_id}", s.instrumented("/api/v1/edge/sessions/{session_id}", s.handleGetEdgeSession))
+	s.registerRoute(mux, "POST /api/v1/edge/sessions/{session_id}/heartbeat", s.instrumented("/api/v1/edge/sessions/{session_id}/heartbeat", s.handleHeartbeatEdgeSession))
+	s.registerRoute(mux, "POST /api/v1/edge/sessions/{session_id}/end", s.instrumented("/api/v1/edge/sessions/{session_id}/end", s.handleEndEdgeSession))
+	s.registerRoute(mux, "POST /api/v1/edge/executions", s.instrumented("/api/v1/edge/executions", s.handleCreateEdgeExecution))
+	s.registerRoute(mux, "GET /api/v1/edge/executions/{execution_id}", s.instrumented("/api/v1/edge/executions/{execution_id}", s.handleGetEdgeExecution))
+	s.registerRoute(mux, "POST /api/v1/edge/executions/{execution_id}/end", s.instrumented("/api/v1/edge/executions/{execution_id}/end", s.handleEndEdgeExecution))
+	s.registerRoute(mux, "POST /api/v1/edge/events", s.instrumented("/api/v1/edge/events", s.handleCreateEdgeEvent))
+	s.registerRoute(mux, "POST /api/v1/edge/events/batch", s.instrumented("/api/v1/edge/events/batch", s.handleCreateEdgeEventsBatch))
+	s.registerRoute(mux, "GET /api/v1/edge/sessions/{session_id}/events", s.instrumented("/api/v1/edge/sessions/{session_id}/events", s.handleListEdgeSessionEvents))
+	s.registerRoute(mux, "GET /api/v1/edge/executions/{execution_id}/events", s.instrumented("/api/v1/edge/executions/{execution_id}/events", s.handleListEdgeExecutionEvents))
+
 	// 4.5 Memory pointers (debug)
 	s.registerRoute(mux, "GET /api/v1/memory", s.instrumented("/api/v1/memory", s.handleGetMemory))
 	// 4.6 Artifact store
@@ -1510,6 +1527,7 @@ var tenantRoutePrefixes = []string{
 	"/api/v1/artifacts",
 	"/api/v1/auth/logout",
 	"/api/v1/auth/password",
+	"/api/v1/edge",
 	"/api/v1/evals",
 	"/api/v1/governance/approvals/analytics",
 	"/api/v1/governance/decisions",

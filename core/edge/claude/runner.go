@@ -51,7 +51,7 @@ func Run(ctx context.Context, opts RunOptions) int {
 	if err != nil {
 		return handleAgentdError(stderr, stdout, input, err, opts)
 	}
-	out := ClaudeHookOutputForDecision(input.HookEventName, decision)
+	out := hookOutputForRun(input.HookEventName, decision, opts)
 	if isEmptyOutput(out) {
 		return 0
 	}
@@ -83,6 +83,9 @@ func handleAgentdError(stderr, stdout io.Writer, input HookInput, err error, opt
 		reason = "Cordum Edge timeout; blocking by fail-closed policy"
 	}
 	warnf(stderr, "%s error=%s", code, redactDiagnostic(err.Error()))
+	if input.HookEventName == "FileChanged" {
+		return 0
+	}
 	if failClosed(opts) {
 		out := failClosedOutput(input.HookEventName, reason)
 		if isEmptyOutput(out) {
@@ -114,6 +117,8 @@ func failClosedOutput(eventName, reason string) ClaudeHookOutput {
 	case "PreToolUse":
 		return ClaudeHookOutputForDecision(eventName, AgentdDecision{Decision: DecisionDeny, Reason: reason})
 	case "UserPromptSubmit", "PostToolUse", "PostToolUseFailure":
+		return ClaudeHookOutputForDecision(eventName, AgentdDecision{Decision: DecisionDeny, Reason: reason})
+	case "ConfigChange":
 		return ClaudeHookOutputForDecision(eventName, AgentdDecision{Decision: DecisionDeny, Reason: reason})
 	default:
 		return ClaudeHookOutput{}
@@ -155,10 +160,24 @@ func parseBool(v string) bool {
 
 func supportedHookEvent(eventName string) bool {
 	switch eventName {
-	case "PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit":
+	case "PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit", "ConfigChange", "FileChanged":
 		return true
 	default:
 		return false
+	}
+}
+
+func hookOutputForRun(eventName string, decision AgentdDecision, opts RunOptions) ClaudeHookOutput {
+	switch eventName {
+	case "ConfigChange":
+		if !failClosed(opts) {
+			return ClaudeHookOutput{}
+		}
+		return ClaudeHookOutputForDecision(eventName, decision)
+	case "FileChanged":
+		return ClaudeHookOutput{}
+	default:
+		return ClaudeHookOutputForDecision(eventName, decision)
 	}
 }
 
@@ -174,6 +193,9 @@ func agentdRequest(input HookInput, args []string, env map[string]string) Agentd
 		ToolUseID:       input.ToolUseID,
 		DurationMS:      input.DurationMS,
 		Prompt:          input.Prompt,
+		Source:          input.Source,
+		FilePath:        input.FilePath,
+		FileEvent:       input.FileEvent,
 		ToolInput:       input.ToolInput,
 		ToolResponse:    input.ToolResponse,
 		RawPayload:      append([]byte(nil), input.RawPayload...),

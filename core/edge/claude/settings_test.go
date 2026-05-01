@@ -1,0 +1,243 @@
+package claude
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestGenerateDevSettingsJSONIncludesCordumCommandHooks(t *testing.T) {
+	data, err := GenerateDevSettingsJSON(DevSettingsOptions{
+		SessionID:            "sess-123",
+		ExecutionID:          "exec-456",
+		AgentdURL:            "http://127.0.0.1:8765/v1/edge/hooks/claude",
+		HookCommand:          "cordum-hook",
+		HookTimeout:          5 * time.Second,
+		PolicyMode:           "local-dev-enforce",
+		FailClosed:           true,
+		ApprovalWaitTimeout:  30 * time.Second,
+		Platform:             "windows",
+		ExtraEnv:             map[string]string{"CORDUM_EDGE_TRACE_ID": "trace-789"},
+		FileChangedWatchList: []string{".claude/settings.json", ".claude/settings.local.json", "CLAUDE.md"},
+	})
+	if err != nil {
+		t.Fatalf("GenerateDevSettingsJSON returned error: %v", err)
+	}
+
+	settings := decodeJSONMap(t, data)
+	if got := settings["$schema"]; got != "https://json.schemastore.org/claude-code-settings.json" {
+		t.Fatalf("$schema = %v", got)
+	}
+
+	env := jsonObject(t, settings["env"])
+	wantEnv := map[string]string{
+		"CORDUM_EDGE_SESSION_ID":            "sess-123",
+		"CORDUM_EDGE_EXECUTION_ID":          "exec-456",
+		"CORDUM_AGENTD_URL":                 "http://127.0.0.1:8765/v1/edge/hooks/claude",
+		"CORDUM_AGENTD_HOOK_TIMEOUT":        "5s",
+		"CORDUM_EDGE_MODE":                  "local-dev-enforce",
+		"CORDUM_AGENTD_FAIL_CLOSED":         "true",
+		"CORDUM_EDGE_APPROVAL_WAIT_TIMEOUT": "30s",
+		"CORDUM_EDGE_PLATFORM":              "windows",
+		"CORDUM_EDGE_TRACE_ID":              "trace-789",
+	}
+	if len(env) != len(wantEnv) {
+		t.Fatalf("env len = %d, want %d: %#v", len(env), len(wantEnv), env)
+	}
+	for key, want := range wantEnv {
+		if got := env[key]; got != want {
+			t.Fatalf("env[%s] = %v, want %q", key, got, want)
+		}
+	}
+
+	hooks := jsonObject(t, settings["hooks"])
+	assertCommandHook(t, hooks, "UserPromptSubmit", "", "cordum-hook claude user-prompt-submit", 5)
+	assertCommandHook(t, hooks, "PreToolUse", "*", "cordum-hook claude pre-tool-use", 5)
+	assertCommandHook(t, hooks, "PostToolUse", "*", "cordum-hook claude post-tool-use", 5)
+	assertCommandHook(t, hooks, "PostToolUseFailure", "*", "cordum-hook claude post-tool-use-failure", 5)
+	assertCommandHook(t, hooks, "ConfigChange", "user_settings|project_settings|local_settings|skills", "cordum-hook claude config-change", 5)
+	assertCommandHook(t, hooks, "FileChanged", ".claude/settings.json|.claude/settings.local.json|CLAUDE.md", "cordum-hook claude file-changed", 5)
+
+	compact := string(data)
+	if strings.Contains(compact, `"url"`) || strings.Contains(compact, `"type":"http"`) || strings.Contains(compact, "http://localhost") {
+		t.Fatalf("dev settings must not generate HTTP hook configuration: %s", compact)
+	}
+	assertNoSyntheticSecrets(t, compact)
+}
+
+func TestGenerateDevSettingsJSONRejectsRawSecretEnv(t *testing.T) {
+	_, err := GenerateDevSettingsJSON(DevSettingsOptions{
+		SessionID:           "sess-123",
+		ExecutionID:         "exec-456",
+		AgentdURL:           "http://127.0.0.1:8765/v1/edge/hooks/claude",
+		HookCommand:         "cordum-hook",
+		HookTimeout:         5 * time.Second,
+		PolicyMode:          "local-dev-enforce",
+		ApprovalWaitTimeout: 30 * time.Second,
+		ExtraEnv:            map[string]string{"ANTHROPIC_API_KEY": "sk-test-secret"},
+	})
+	if err == nil {
+		t.Fatalf("GenerateDevSettingsJSON accepted raw API key env")
+	}
+	if strings.Contains(err.Error(), "sk-test-secret") {
+		t.Fatalf("error leaked raw secret: %v", err)
+	}
+}
+
+func TestGenerateDevSettingsJSONNormalizesHookCommandPaths(t *testing.T) {
+	cases := []struct {
+		name        string
+		platform    string
+		hookCommand string
+		want        string
+	}{
+		{
+			name:        "windows program files",
+			platform:    "windows",
+			hookCommand: `C:\Program Files\Cordum\cordum-hook.exe`,
+			want:        `"C:\Program Files\Cordum\cordum-hook.exe" claude pre-tool-use`,
+		},
+		{
+			name:        "msys path with spaces",
+			platform:    "msys",
+			hookCommand: `/c/Program Files/Cordum/cordum-hook.exe`,
+			want:        `"/c/Program Files/Cordum/cordum-hook.exe" claude pre-tool-use`,
+		},
+		{
+			name:        "wsl linux path",
+			platform:    "wsl",
+			hookCommand: `/usr/local/bin/cordum-hook`,
+			want:        `/usr/local/bin/cordum-hook claude pre-tool-use`,
+		},
+		{
+			name:        "macos path with spaces",
+			platform:    "darwin",
+			hookCommand: `/Applications/Cordum Edge/cordum-hook`,
+			want:        `"/Applications/Cordum Edge/cordum-hook" claude pre-tool-use`,
+		},
+		{
+			name:        "relative dev path",
+			platform:    "linux",
+			hookCommand: `tools/bin/cordum-hook`,
+			want:        `tools/bin/cordum-hook claude pre-tool-use`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := GenerateDevSettingsJSON(DevSettingsOptions{
+				SessionID:           "sess-123",
+				ExecutionID:         "exec-456",
+				AgentdURL:           "http://127.0.0.1:8765/v1/edge/hooks/claude",
+				HookCommand:         tc.hookCommand,
+				HookTimeout:         5 * time.Second,
+				PolicyMode:          "local-dev-enforce",
+				ApprovalWaitTimeout: 30 * time.Second,
+				Platform:            tc.platform,
+			})
+			if err != nil {
+				t.Fatalf("GenerateDevSettingsJSON returned error: %v", err)
+			}
+			hooks := jsonObject(t, decodeJSONMap(t, data)["hooks"])
+			assertCommandHook(t, hooks, "PreToolUse", "*", tc.want, 5)
+		})
+	}
+}
+
+func TestGenerateDevSettingsJSONDefaultsDevHookCommandToPathBinary(t *testing.T) {
+	data, err := GenerateDevSettingsJSON(DevSettingsOptions{
+		SessionID:           "sess-123",
+		ExecutionID:         "exec-456",
+		AgentdURL:           "http://127.0.0.1:8765/v1/edge/hooks/claude",
+		HookTimeout:         5 * time.Second,
+		PolicyMode:          "local-dev-enforce",
+		ApprovalWaitTimeout: 30 * time.Second,
+		Platform:            "linux",
+	})
+	if err != nil {
+		t.Fatalf("GenerateDevSettingsJSON returned error: %v", err)
+	}
+	hooks := jsonObject(t, decodeJSONMap(t, data)["hooks"])
+	assertCommandHook(t, hooks, "PreToolUse", "*", "cordum-hook claude pre-tool-use", 5)
+	assertCommandHook(t, hooks, "UserPromptSubmit", "", "cordum-hook claude user-prompt-submit", 5)
+}
+
+func TestSettingsPreviewRedactsSecretsAndExplainsTokenTradeoff(t *testing.T) {
+	preview := RenderSettingsPreview([]byte(`{
+		"env": {
+			"ANTHROPIC_API_KEY": "sk-test-secret",
+			"CORDUM_API_KEY": "ghp_testtoken",
+			"CORDUM_EDGE_SESSION_ID": "sess-123"
+		}
+	}`), "dev")
+	assertNoSyntheticSecrets(t, preview)
+	if !strings.Contains(preview, "[REDACTED]") {
+		t.Fatalf("preview did not redact sensitive values: %s", preview)
+	}
+	for _, want := range []string{"dev settings carry session metadata", "enterprise uses agentd memory/keychain/service bootstrap", "Do not store long-lived API keys"} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("preview missing token tradeoff text %q: %s", want, preview)
+		}
+	}
+}
+
+func decodeJSONMap(t *testing.T, data []byte) map[string]any {
+	t.Helper()
+	var out map[string]any
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("invalid JSON: %v; raw=%s", err, data)
+	}
+	return out
+}
+
+func jsonObject(t *testing.T, v any) map[string]any {
+	t.Helper()
+	out, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("value is %T, want object: %#v", v, v)
+	}
+	return out
+}
+
+func jsonArray(t *testing.T, v any) []any {
+	t.Helper()
+	out, ok := v.([]any)
+	if !ok {
+		t.Fatalf("value is %T, want array: %#v", v, v)
+	}
+	return out
+}
+
+func assertCommandHook(t *testing.T, hooks map[string]any, eventName, matcher, command string, timeout float64) {
+	t.Helper()
+	entries := jsonArray(t, hooks[eventName])
+	if len(entries) != 1 {
+		t.Fatalf("%s entries len = %d, want 1", eventName, len(entries))
+	}
+	group := jsonObject(t, entries[0])
+	if matcher == "" {
+		if _, ok := group["matcher"]; ok {
+			t.Fatalf("%s matcher present for matcherless event: %#v", eventName, group["matcher"])
+		}
+	} else if got := group["matcher"]; got != matcher {
+		t.Fatalf("%s matcher = %v, want %q", eventName, got, matcher)
+	}
+	commands := jsonArray(t, group["hooks"])
+	if len(commands) != 1 {
+		t.Fatalf("%s hooks len = %d, want 1", eventName, len(commands))
+	}
+	hook := jsonObject(t, commands[0])
+	if got := hook["type"]; got != "command" {
+		t.Fatalf("%s hook type = %v, want command", eventName, got)
+	}
+	if got := hook["command"]; got != command {
+		t.Fatalf("%s hook command = %v, want %q", eventName, got, command)
+	}
+	if got := hook["timeout"]; got != timeout {
+		t.Fatalf("%s hook timeout = %v, want %v", eventName, got, timeout)
+	}
+	if _, ok := hook["url"]; ok {
+		t.Fatalf("%s hook unexpectedly contains url: %#v", eventName, hook)
+	}
+}
