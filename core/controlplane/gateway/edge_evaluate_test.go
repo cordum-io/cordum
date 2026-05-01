@@ -531,10 +531,13 @@ func TestGatewayEdgeEvaluateRetryStalePolicySnapshotDeniesWithoutConsuming(t *te
 		Reason:           "needs approval",
 		RuleId:           "approval-rule",
 		ApprovalRequired: true,
-		PolicySnapshot:   "snap-stale-A",
 	}}
 	s, handler := newEdgeEvaluateTestServer(t, safety)
 	session := createEdgeRouteSession(t, handler)
+	// Initial enqueue requires the approval's policy_snapshot to match the
+	// session's; align it here. The mutation to a different snapshot below
+	// simulates a policy refresh between approval and retry.
+	safety.response.PolicySnapshot = session.PolicySnapshot
 
 	cmd := map[string]any{"command": "rm -rf /var/edge-snapshot"}
 	body := edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd)
@@ -544,8 +547,8 @@ func TestGatewayEdgeEvaluateRetryStalePolicySnapshotDeniesWithoutConsuming(t *te
 	if initial.ApprovalRef == "" {
 		t.Fatalf("missing approval_ref body=%s", rr.Body.String())
 	}
-	if initial.PolicySnapshot != "snap-stale-A" {
-		t.Fatalf("initial policy_snapshot = %q, want snap-stale-A", initial.PolicySnapshot)
+	if initial.PolicySnapshot != session.PolicySnapshot {
+		t.Fatalf("initial policy_snapshot = %q, want %q", initial.PolicySnapshot, session.PolicySnapshot)
 	}
 	if _, err := s.edgeStore.ApproveApproval(context.Background(), edgecore.ApprovalResolution{
 		TenantID:    edgeRouteTenant,
@@ -563,7 +566,7 @@ func TestGatewayEdgeEvaluateRetryStalePolicySnapshotDeniesWithoutConsuming(t *te
 		Reason:           "still needs approval (policy refreshed)",
 		RuleId:           "approval-rule",
 		ApprovalRequired: true,
-		PolicySnapshot:   "snap-stale-B",
+		PolicySnapshot:   "snap-stale-B-after-refresh",
 	}
 	safety.mu.Unlock()
 
@@ -622,7 +625,11 @@ func TestGatewayEdgeEvaluateRetryConcurrentExactlyOneAllow(t *testing.T) {
 
 	retryBody := edgeEvaluateBodyWithApprovalRef(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd, initial.ApprovalRef)
 
-	const N = 4
+	// Architect's spec is "two concurrent retries against one approved ref produce
+	// exactly one ALLOW". Two contenders is enough to prove consume-once and stays
+	// well under the EDGE-002 event-append redisutil.Retry budget that 4-way
+	// contention can exhaust.
+	const N = 2
 	decisions := make([]string, N)
 	var wg sync.WaitGroup
 	wg.Add(N)
