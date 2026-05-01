@@ -1109,6 +1109,87 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/edge/sessions/{session_id}/export:
+    post:
+      operationId: exportEdgeSession
+      summary: Assemble an Edge session evidence bundle
+      description: |
+        Returns a `SessionExportBundle` for the named session — session record,
+        executions, ordered AgentActionEvents, approvals, and a metadata-only
+        manifest of every artifact pointer attached to those events. Bundles
+        contain artifact metadata (URI, sha256, size, content_type, retention,
+        redaction level) but never raw artifact bodies. Cross-tenant probes
+        receive 404 indistinguishable from missing-session.
+      tags:
+      - Edge
+      parameters:
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                max_events:
+                  type: integer
+                  minimum: 1
+                  description: |
+                    Caps the number of events the bundle carries. When the
+                    session has more, `truncation.events_truncated = true`
+                    and `truncation.event_count` records the actual total.
+      responses:
+        '200':
+          description: Edge session export bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                description: |
+                  SessionExportBundle. See docs/edge-export.md for full schema
+                  including artifact_type catalog and missing_artifacts reasons.
+                additionalProperties: true
+                required:
+                - manifest_version
+                - generated_at
+                - tenant_id
+                - session
+                properties:
+                  manifest_version:
+                    type: string
+                    example: edge.export.v1
+                  generated_at:
+                    type: string
+                    format: date-time
+                  tenant_id:
+                    type: string
+                  redaction_level:
+                    type: string
+                    enum: [standard, strict]
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          description: Bundle exceeds `CORDUM_EDGE_EXPORT_MAX_BYTES`; reduce `max_events` and retry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/edge/executions/{execution_id}/events:
     get:
       operationId: listEdgeExecutionEvents
