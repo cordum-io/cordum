@@ -7316,7 +7316,7 @@ components:
           $ref: '#/components/schemas/EdgeLabels'
     EdgeArtifactPointer:
       type: object
-      description: Pointer to redacted evidence stored outside the event row. Its tenant/session/execution/event IDs must match the enclosing event.
+      description: Pointer to redacted evidence stored outside the event row. Its tenant/session/execution/event IDs must match the enclosing event, and the URI must be an internal artifact reference rather than a signed URL or token-bearing external URI.
       required: [artifact_type, session_id, execution_id, event_id, tenant_id, retention_class, redaction_level, sha256, uri, created_at]
       properties:
         artifact_type:
@@ -7340,6 +7340,7 @@ components:
           type: string
         uri:
           type: string
+          description: Internal artifact URI such as `artifact://...` or `edge-artifact://...`; signed URLs, query-string tokens, userinfo, fragments, and external HTTP(S) storage URLs are rejected before persistence.
         created_at:
           type: string
           format: date-time

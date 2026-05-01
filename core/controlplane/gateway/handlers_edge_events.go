@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -13,7 +14,13 @@ import (
 	edgecore "github.com/cordum/cordum/core/edge"
 )
 
-const maxInlineRawEventPayloadBytes = 1024
+const (
+	maxInlineRawEventPayloadBytes     = 1024
+	maxEdgeArtifactPointerURIBytes    = 2048
+	edgeArtifactPointerErrorMessage   = "invalid edge event artifact pointer"
+	edgeArtifactPointerSchemeArtifact = "artifact"
+	edgeArtifactPointerSchemeEdge     = "edge-artifact"
+)
 
 type edgeEventWriteRequest struct {
 	EventID          string                     `json:"event_id"`
@@ -294,54 +301,137 @@ func normalizeEdgeEventRequest(req edgeEventWriteRequest, tenantID string) (edge
 		return edgecore.AgentActionEvent{}, err
 	}
 	event := edgecore.AgentActionEvent{
-		EventID:          strings.TrimSpace(req.EventID),
-		SessionID:        strings.TrimSpace(req.SessionID),
-		ExecutionID:      strings.TrimSpace(req.ExecutionID),
-		TenantID:         tenantID,
-		PrincipalID:      mustRedactEdgeString(req.PrincipalID),
-		Seq:              req.Seq,
-		Timestamp:        req.Timestamp.UTC(),
-		Layer:            req.Layer,
-		Kind:             edgecore.EventKind(strings.TrimSpace(string(req.Kind))),
-		AgentProduct:     mustRedactEdgeString(req.AgentProduct),
-		ToolName:         mustRedactEdgeString(req.ToolName),
-		ToolUseID:        mustRedactEdgeString(req.ToolUseID),
-		ActionName:       mustRedactEdgeString(req.ActionName),
-		Capability:       mustRedactEdgeString(req.Capability),
-		RiskTags:         riskTags,
-		InputRedacted:    inputRedacted,
-		InputHash:        inputHash,
-		Decision:         req.Decision,
-		DecisionReason:   mustRedactEdgeString(req.DecisionReason),
-		RuleID:           mustRedactEdgeString(req.RuleID),
-		PolicySnapshot:   mustRedactEdgeString(req.PolicySnapshot),
-		ApprovalRef:      mustRedactEdgeString(req.ApprovalRef),
-		ArtifactPointers: req.ArtifactPointers,
-		DurationMS:       req.DurationMS,
-		Status:           req.Status,
-		ErrorCode:        mustRedactEdgeString(req.ErrorCode),
-		ErrorMessage:     mustRedactEdgeString(req.ErrorMessage),
-		Labels:           labels,
+		EventID:        strings.TrimSpace(req.EventID),
+		SessionID:      strings.TrimSpace(req.SessionID),
+		ExecutionID:    strings.TrimSpace(req.ExecutionID),
+		TenantID:       tenantID,
+		PrincipalID:    mustRedactEdgeString(req.PrincipalID),
+		Seq:            req.Seq,
+		Timestamp:      req.Timestamp.UTC(),
+		Layer:          req.Layer,
+		Kind:           edgecore.EventKind(strings.TrimSpace(string(req.Kind))),
+		AgentProduct:   mustRedactEdgeString(req.AgentProduct),
+		ToolName:       mustRedactEdgeString(req.ToolName),
+		ToolUseID:      mustRedactEdgeString(req.ToolUseID),
+		ActionName:     mustRedactEdgeString(req.ActionName),
+		Capability:     mustRedactEdgeString(req.Capability),
+		RiskTags:       riskTags,
+		InputRedacted:  inputRedacted,
+		InputHash:      inputHash,
+		Decision:       req.Decision,
+		DecisionReason: mustRedactEdgeString(req.DecisionReason),
+		RuleID:         mustRedactEdgeString(req.RuleID),
+		PolicySnapshot: mustRedactEdgeString(req.PolicySnapshot),
+		ApprovalRef:    mustRedactEdgeString(req.ApprovalRef),
+		DurationMS:     req.DurationMS,
+		Status:         req.Status,
+		ErrorCode:      mustRedactEdgeString(req.ErrorCode),
+		ErrorMessage:   mustRedactEdgeString(req.ErrorMessage),
+		Labels:         labels,
 	}
+	artifactPointers, err := normalizeEdgeEventArtifactPointers(req.ArtifactPointers, event)
+	if err != nil {
+		return edgecore.AgentActionEvent{}, err
+	}
+	event.ArtifactPointers = artifactPointers
 	if err := event.Validate(); err != nil {
 		return edgecore.AgentActionEvent{}, edgeEventRequestError{status: http.StatusBadRequest, message: "invalid edge event request"}
-	}
-	if err := validateEdgeEventArtifactPointers(event); err != nil {
-		return edgecore.AgentActionEvent{}, err
 	}
 	return event, nil
 }
 
-func validateEdgeEventArtifactPointers(event edgecore.AgentActionEvent) error {
-	for _, artifact := range event.ArtifactPointers {
-		if strings.TrimSpace(artifact.TenantID) != event.TenantID ||
-			strings.TrimSpace(artifact.SessionID) != event.SessionID ||
-			strings.TrimSpace(artifact.ExecutionID) != event.ExecutionID ||
-			strings.TrimSpace(artifact.EventID) != event.EventID {
-			return edgeEventRequestError{status: http.StatusBadRequest, message: "invalid edge event artifact pointer"}
+func normalizeEdgeEventArtifactPointers(artifacts []edgecore.ArtifactPointer, event edgecore.AgentActionEvent) ([]edgecore.ArtifactPointer, error) {
+	if len(artifacts) == 0 {
+		return nil, nil
+	}
+	normalized := make([]edgecore.ArtifactPointer, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		item := edgecore.ArtifactPointer{
+			ArtifactType:   artifact.ArtifactType,
+			SessionID:      strings.TrimSpace(artifact.SessionID),
+			ExecutionID:    strings.TrimSpace(artifact.ExecutionID),
+			EventID:        strings.TrimSpace(artifact.EventID),
+			TenantID:       strings.TrimSpace(artifact.TenantID),
+			RetentionClass: artifact.RetentionClass,
+			RedactionLevel: artifact.RedactionLevel,
+			SHA256:         strings.TrimSpace(artifact.SHA256),
+			URI:            strings.TrimSpace(artifact.URI),
+			CreatedAt:      artifact.CreatedAt.UTC(),
+		}
+		if item.TenantID != event.TenantID ||
+			item.SessionID != event.SessionID ||
+			item.ExecutionID != event.ExecutionID ||
+			item.EventID != event.EventID {
+			return nil, edgeEventRequestError{status: http.StatusBadRequest, message: edgeArtifactPointerErrorMessage}
+		}
+		if !isSafeEdgeArtifactPointerURI(item.URI) {
+			return nil, edgeEventRequestError{status: http.StatusBadRequest, message: edgeArtifactPointerErrorMessage}
+		}
+		normalized = append(normalized, item)
+	}
+	return normalized, nil
+}
+
+func isSafeEdgeArtifactPointerURI(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || len([]byte(raw)) > maxEdgeArtifactPointerURIBytes {
+		return false
+	}
+	redacted, err := edgecore.RedactValue(raw, edgecore.RedactionOptions{
+		HashMode:       edgecore.RedactionHashNone,
+		MaxStringBytes: maxEdgeArtifactPointerURIBytes,
+		MaxTotalBytes:  maxEdgeArtifactPointerURIBytes,
+	})
+	if err != nil || redacted.Redacted || redacted.Truncated {
+		return false
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case edgeArtifactPointerSchemeArtifact, edgeArtifactPointerSchemeEdge:
+	default:
+		return false
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	if parsed.Host == "" && parsed.Opaque == "" {
+		return false
+	}
+	return !containsSecretBearingArtifactURIComponent(raw)
+}
+
+func containsSecretBearingArtifactURIComponent(raw string) bool {
+	lower := strings.ToLower(raw)
+	for _, marker := range []string{
+		"access_token=",
+		"api_key=",
+		"apikey=",
+		"authorization=",
+		"bearer ",
+		"bearer%20",
+		"client_secret=",
+		"password=",
+		"passwd=",
+		"refresh_token=",
+		"sharedaccesssignature=",
+		"sig=",
+		"signature=",
+		"token=",
+		"x-amz-credential=",
+		"x-amz-security-token=",
+		"x-amz-signature=",
+		"x-goog-credential=",
+		"x-goog-security-token=",
+		"x-goog-signature=",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
 		}
 	}
-	return nil
+	return false
 }
 
 func rejectRawEdgeEventPayload(req edgeEventWriteRequest) error {

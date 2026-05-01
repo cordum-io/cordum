@@ -272,6 +272,75 @@ func TestGatewayEdgeEventWriteRejectsMismatchedArtifactPointers(t *testing.T) {
 	assertEdgeEventIDs(t, afterMismatch.Items, []string{})
 }
 
+func TestGatewayEdgeEventWriteRejectsSecretBearingArtifactPointerURI(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	session := createEdgeRouteSession(t, handler)
+
+	secretURI := "https://storage.example.com/evidence/tool-input.json?X-Amz-Signature=secret-sig&token=ghp_secretTokenValue123"
+	rejected := edgeRoutePOST(t, handler, "/api/v1/edge/events", `{
+		"event_id":"evt-edge006-artifact-secret-uri",
+		"session_id":"`+session.SessionID+`",
+		"execution_id":"`+session.ExecutionID+`",
+		"tenant_id":"`+edgeRouteTenant+`",
+		"ts":"2026-05-01T12:02:03Z",
+		"layer":"hook",
+		"kind":"hook.pre_tool_use",
+		"artifact_ptrs":[{
+			"artifact_type":"edge.tool_input",
+			"session_id":"`+session.SessionID+`",
+			"execution_id":"`+session.ExecutionID+`",
+			"event_id":"evt-edge006-artifact-secret-uri",
+			"tenant_id":"`+edgeRouteTenant+`",
+			"retention_class":"short",
+			"redaction_level":"standard",
+			"sha256":"sha256:abcdef",
+			"uri":"`+secretURI+`",
+			"created_at":"2026-05-01T12:02:03Z"
+		}],
+		"decision":"ALLOW",
+		"status":"ok"
+	}`)
+	if rejected.Code != http.StatusBadRequest {
+		t.Fatalf("secret-bearing artifact pointer status = %d, want 400 body=%s", rejected.Code, rejected.Body.String())
+	}
+	assertBodyOmits(t, rejected.Body.String(), secretURI, "secret-sig", "ghp_secretTokenValue123")
+	afterRejected := readEdgeEventsFromStore(t, s, session.ExecutionID)
+	assertEdgeEventIDs(t, afterRejected.Items, []string{})
+
+	safeURI := "artifact://edge/evt-edge006-artifact-safe-uri/tool-input"
+	accepted := edgeRoutePOST(t, handler, "/api/v1/edge/events", `{
+		"event_id":"evt-edge006-artifact-safe-uri",
+		"session_id":"`+session.SessionID+`",
+		"execution_id":"`+session.ExecutionID+`",
+		"tenant_id":"`+edgeRouteTenant+`",
+		"ts":"2026-05-01T12:02:04Z",
+		"layer":"hook",
+		"kind":"hook.pre_tool_use",
+		"artifact_ptrs":[{
+			"artifact_type":"edge.tool_input",
+			"session_id":"`+session.SessionID+`",
+			"execution_id":"`+session.ExecutionID+`",
+			"event_id":"evt-edge006-artifact-safe-uri",
+			"tenant_id":"`+edgeRouteTenant+`",
+			"retention_class":"short",
+			"redaction_level":"standard",
+			"sha256":"sha256:abcdef",
+			"uri":"`+safeURI+`",
+			"created_at":"2026-05-01T12:02:04Z"
+		}],
+		"decision":"ALLOW",
+		"status":"ok"
+	}`)
+	if accepted.Code != http.StatusCreated {
+		t.Fatalf("safe artifact pointer status = %d, want 201 body=%s", accepted.Code, accepted.Body.String())
+	}
+	var created edgecore.AgentActionEvent
+	decodeEdgeRouteJSON(t, accepted, &created)
+	if len(created.ArtifactPointers) != 1 || created.ArtifactPointers[0].URI != safeURI {
+		t.Fatalf("created artifact pointers = %#v, want sanitized internal uri %q", created.ArtifactPointers, safeURI)
+	}
+}
+
 func TestGatewayEdgeEventWriteRejectsInvalidRequiredFields(t *testing.T) {
 	_, handler := newEdgeRouteTestServer(t)
 	session := createEdgeRouteSession(t, handler)
