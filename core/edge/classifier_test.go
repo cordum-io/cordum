@@ -306,6 +306,27 @@ func TestClassifyEventAdversarialInputs(t *testing.T) {
 			},
 		},
 		{
+			name:       "move into secret destination is classified as secret",
+			event:      classifierHookEvent(base, "Move", map[string]any{"source": "tmp/readme.txt", "destination": ".env.production"}),
+			actionName: "file.move",
+			capability: "file.move",
+			riskTags:   []string{"filesystem", "secrets", "write"},
+			labels: map[string]string{
+				"path.class": "secret",
+			},
+		},
+		{
+			name:       "rename into source destination is classified as source code",
+			event:      classifierHookEvent(base, "Rename", map[string]any{"source": "tmp/session.txt", "destination": "src/auth/session.go"}),
+			actionName: "file.move",
+			capability: "file.move",
+			riskTags:   []string{"filesystem", "source_code", "write"},
+			labels: map[string]string{
+				"path.class":          "source_code",
+				"path.sensitive_area": "auth",
+			},
+		},
+		{
 			name:       "unknown high impact operation is conservative",
 			event:      classifierHookEvent(base, "MysteryTool", map[string]any{"operation": "delete production database"}),
 			actionName: "unknown.hook",

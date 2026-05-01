@@ -105,7 +105,7 @@ Use command hooks. HTTP hooks are permitted only for the EDGE-000 spike.
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",

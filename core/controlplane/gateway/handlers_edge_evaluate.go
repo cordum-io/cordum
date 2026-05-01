@@ -136,7 +136,7 @@ type edgeEvaluateContext struct {
 }
 
 func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Request) (edgeEvaluateContext, bool) {
-	if !s.requirePermissionOrRole(w, r, auth.PermPolicyWrite, "admin") {
+	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return edgeEvaluateContext{}, false
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -614,6 +614,9 @@ func edgeEvaluateContextLabels(labels edgecore.Labels, req edgeEvaluateRequest, 
 }
 
 func edgeEvaluateMergeLabels(base edgecore.Labels, trusted edgecore.Labels) (edgecore.Labels, error) {
+	if len(base) > edgecore.MaxLabelEntries || len(trusted) > edgecore.MaxLabelEntries || len(base) > edgecore.MaxLabelEntries-len(trusted) {
+		return nil, edgeEventRequestError{status: http.StatusBadRequest, message: "invalid edge evaluate request"}
+	}
 	out := make(edgecore.Labels, len(base)+len(trusted))
 	for key, value := range base {
 		out[key] = value

@@ -93,6 +93,29 @@ func TestMarshalEdgeEventEnvelopeRejectsNilAndInvalidEventsSafely(t *testing.T) 
 	}
 }
 
+func TestEnqueueEdgeEventReturnsQueueDropSignalWhenWSBufferFull(t *testing.T) {
+	s := &server{
+		eventsCh: make(chan wsEvent, 1),
+	}
+	first := validGatewayEdgeStreamEvent()
+	queued, err := s.enqueueEdgeEvent(first)
+	if err != nil {
+		t.Fatalf("enqueueEdgeEvent(first) error = %v", err)
+	}
+	if !queued {
+		t.Fatal("enqueueEdgeEvent(first) queued = false, want true")
+	}
+	second := validGatewayEdgeStreamEvent()
+	second.EventID = "evt-edge007-dropped"
+	queued, err = s.enqueueEdgeEvent(second)
+	if err != nil {
+		t.Fatalf("enqueueEdgeEvent(second) error = %v", err)
+	}
+	if queued {
+		t.Fatal("enqueueEdgeEvent(second) queued = true for full websocket queue, want false")
+	}
+}
+
 func TestEdgeEventStreamTenantFilteringAndBusPacketRegression(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	s.shutdownCh = make(chan struct{})
@@ -113,8 +136,10 @@ func TestEdgeEventStreamTenantFilteringAndBusPacketRegression(t *testing.T) {
 	crossTenant := registerGatewayEdgeStreamClient(t, s, "", true)
 
 	eventA := validGatewayEdgeStreamEvent()
-	if err := s.enqueueEdgeEvent(eventA); err != nil {
+	if queued, err := s.enqueueEdgeEvent(eventA); err != nil {
 		t.Fatalf("enqueueEdgeEvent(tenant A): %v", err)
+	} else if !queued {
+		t.Fatal("enqueueEdgeEvent(tenant A) queued = false, want true")
 	}
 	assertGatewayEdgeStreamEvent(t, readGatewayEdgeStreamEvent(t, tenantA, "tenant A edge.event"), "evt-edge007-stream-1", "edge.event")
 	assertGatewayEdgeStreamEvent(t, readGatewayEdgeStreamEvent(t, crossTenant, "cross-tenant edge.event A"), "evt-edge007-stream-1", "edge.event")
@@ -123,8 +148,10 @@ func TestEdgeEventStreamTenantFilteringAndBusPacketRegression(t *testing.T) {
 	eventB := validGatewayEdgeStreamEvent()
 	eventB.EventID = "evt-edge007-stream-b"
 	eventB.TenantID = "tenant-edge-b"
-	if err := s.enqueueEdgeEvent(eventB); err != nil {
+	if queued, err := s.enqueueEdgeEvent(eventB); err != nil {
 		t.Fatalf("enqueueEdgeEvent(tenant B): %v", err)
+	} else if !queued {
+		t.Fatal("enqueueEdgeEvent(tenant B) queued = false, want true")
 	}
 	assertGatewayEdgeStreamEvent(t, readGatewayEdgeStreamEvent(t, tenantB, "tenant B edge.event"), "evt-edge007-stream-b", "edge.event")
 	assertGatewayEdgeStreamEvent(t, readGatewayEdgeStreamEvent(t, crossTenant, "cross-tenant edge.event B"), "evt-edge007-stream-b", "edge.event")
@@ -133,7 +160,7 @@ func TestEdgeEventStreamTenantFilteringAndBusPacketRegression(t *testing.T) {
 	missingTenant := validGatewayEdgeStreamEvent()
 	missingTenant.EventID = "evt-edge007-missing-tenant"
 	missingTenant.TenantID = " "
-	if err := s.enqueueEdgeEvent(missingTenant); err == nil {
+	if _, err := s.enqueueEdgeEvent(missingTenant); err == nil {
 		t.Fatal("enqueueEdgeEvent(missing tenant) error = nil, want fail-closed validation error")
 	}
 	assertNoGatewayEdgeStreamEvent(t, tenantA, "tenant A must not receive missing-tenant edge.event")
@@ -196,8 +223,10 @@ func TestMixedStreamKeepsBusPacketShapeAndDoesNotFloodJobStream(t *testing.T) {
 
 	edgeEvent := validGatewayEdgeStreamEvent()
 	edgeEvent.EventID = "evt-edge007-mixed"
-	if err := s.enqueueEdgeEvent(edgeEvent); err != nil {
+	if queued, err := s.enqueueEdgeEvent(edgeEvent); err != nil {
 		t.Fatalf("enqueueEdgeEvent(mixed): %v", err)
+	} else if !queued {
+		t.Fatal("enqueueEdgeEvent(mixed) queued = false, want true")
 	}
 	assertGatewayEdgeStreamEvent(t, readGatewayEdgeStreamEvent(t, globalTenantA, "global tenant A edge.event"), "evt-edge007-mixed", "edge.event")
 	assertGatewayEdgeStreamEvent(t, readGatewayEdgeStreamEvent(t, crossTenant, "cross-tenant edge.event"), "evt-edge007-mixed", "edge.event")

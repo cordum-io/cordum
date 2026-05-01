@@ -56,25 +56,25 @@ func normalizeEdgeEventForStream(event *edgecore.AgentActionEvent) (edgecore.Age
 	return normalized, nil
 }
 
-func (s *server) enqueueEdgeEvent(event edgecore.AgentActionEvent) error {
+func (s *server) enqueueEdgeEvent(event edgecore.AgentActionEvent) (bool, error) {
 	if s == nil {
-		return errors.New("edge stream server required")
+		return false, errors.New("edge stream server required")
 	}
 
 	normalized, err := normalizeEdgeEventForStream(&event)
 	if err != nil {
-		return err
+		return false, err
 	}
 	data, err := marshalEdgeEventEnvelope(&normalized)
 	if err != nil {
-		return err
+		return false, err
 	}
-	s.enqueueWSEvent(data, normalized.TenantID, "")
-	return nil
+	return s.enqueueWSEvent(data, normalized.TenantID, ""), nil
 }
 
 func (s *server) forwardPersistedEdgeEvent(event edgecore.AgentActionEvent) {
-	if err := s.enqueueEdgeEvent(event); err != nil {
+	queued, err := s.enqueueEdgeEvent(event)
+	if err != nil {
 		slog.Warn("edge event stream enqueue dropped",
 			"tenant_id", sanitizeUTF8ForLog(strings.TrimSpace(event.TenantID)),
 			"session_id", sanitizeUTF8ForLog(strings.TrimSpace(event.SessionID)),
@@ -82,6 +82,16 @@ func (s *server) forwardPersistedEdgeEvent(event edgecore.AgentActionEvent) {
 			"event_id", sanitizeUTF8ForLog(strings.TrimSpace(event.EventID)),
 			"kind", sanitizeUTF8ForLog(strings.TrimSpace(string(event.Kind))),
 			"error", err,
+		)
+		return
+	}
+	if !queued {
+		slog.Warn("edge event stream queue full; persisted event was not broadcast",
+			"tenant_id", sanitizeUTF8ForLog(strings.TrimSpace(event.TenantID)),
+			"session_id", sanitizeUTF8ForLog(strings.TrimSpace(event.SessionID)),
+			"execution_id", sanitizeUTF8ForLog(strings.TrimSpace(event.ExecutionID)),
+			"event_id", sanitizeUTF8ForLog(strings.TrimSpace(event.EventID)),
+			"kind", sanitizeUTF8ForLog(strings.TrimSpace(string(event.Kind))),
 		)
 	}
 }

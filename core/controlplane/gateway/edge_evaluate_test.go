@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -76,6 +77,34 @@ func TestGatewayEdgeEvaluateRequiresAuthTenantAndRejectsMalformedRequests(t *tes
 		t.Fatalf("body tenant mismatch status = %d, want 403 body=%s", rr.Code, rr.Body.String())
 	}
 	assertBodyOmits(t, rr.Body.String(), edgeRouteOtherTenant)
+}
+
+func TestGatewayEdgeEvaluateAllowsTenantUserWithJobsWriteAndRejectsViewer(t *testing.T) {
+	_, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{
+		response: &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW, Reason: "user allowed"},
+	})
+	session := createEdgeEvaluateSessionWithAPIKey(t, handler, edgeRouteUserAPIKey)
+	userBody := strings.Replace(
+		edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}),
+		`"principal_id":"principal-edge-a"`,
+		`"principal_id":"principal-edge-user"`,
+		1,
+	)
+
+	userEvaluate := edgeRoutePOSTWithAPIKey(t, handler, edgeRouteUserAPIKey, "/api/v1/edge/evaluate", userBody)
+	if userEvaluate.Code != http.StatusOK {
+		t.Fatalf("user evaluate status = %d, want 200 body=%s", userEvaluate.Code, userEvaluate.Body.String())
+	}
+	var userResp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, userEvaluate, &userResp)
+	if userResp.PermissionDecision != "allow" {
+		t.Fatalf("user evaluate permission_decision = %q, want allow", userResp.PermissionDecision)
+	}
+
+	viewerEvaluate := edgeRoutePOSTWithAPIKey(t, handler, edgeRouteViewerAPIKey, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}))
+	if viewerEvaluate.Code != http.StatusForbidden {
+		t.Fatalf("viewer evaluate status = %d, want 403 body=%s", viewerEvaluate.Code, viewerEvaluate.Body.String())
+	}
 }
 
 func TestGatewayEdgeEvaluateRejectsMissingCrossTenantAndTerminalParents(t *testing.T) {
@@ -535,6 +564,21 @@ func TestBuildEdgeEvaluatePolicyInputUsesClassifierAndMapper(t *testing.T) {
 	}
 }
 
+func TestEdgeEvaluateMergeLabelsRejectsOversizeBeforeAllocation(t *testing.T) {
+	base := make(edgecore.Labels, edgecore.MaxLabelEntries)
+	for i := 0; i < edgecore.MaxLabelEntries; i++ {
+		base["base.label."+strconv.Itoa(i)] = "ok"
+	}
+	_, err := edgeEvaluateMergeLabels(base, edgecore.Labels{"overflow": "true"})
+	if err == nil {
+		t.Fatal("edgeEvaluateMergeLabels oversize error = nil, want request rejection before allocation")
+	}
+	var requestErr edgeEventRequestError
+	if !errors.As(err, &requestErr) || requestErr.status != http.StatusBadRequest {
+		t.Fatalf("edgeEvaluateMergeLabels oversize error = %T %v, want bad request edgeEventRequestError", err, err)
+	}
+}
+
 func TestGatewayEdgeEvaluateAppliesDemoPolicySimulationFixtures(t *testing.T) {
 	safety := &edgeEvaluatePolicySafetyClient{
 		policy:   loadEdgeEvaluateDemoPolicy(t),
@@ -643,6 +687,34 @@ func createEdgeEvaluateSessionWithPolicyMode(t *testing.T, handler http.Handler,
 	var session edgeSessionCreateResponseJSON
 	decodeEdgeRouteJSON(t, rr, &session)
 	return session
+}
+
+func createEdgeEvaluateSessionWithAPIKey(t *testing.T, handler http.Handler, apiKey string) edgeSessionCreateResponseJSON {
+	t.Helper()
+	rr := edgeRoutePOSTWithAPIKey(t, handler, apiKey, "/api/v1/edge/sessions", `{
+		"agent_product":"claude-code",
+		"agent_version":"1.2.3",
+		"mode":"local-dev",
+		"policy_snapshot":"snap-edge-evaluate-user",
+		"policy_mode":"observe"
+	}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create evaluate user session status = %d, want 201 body=%s", rr.Code, rr.Body.String())
+	}
+	var session edgeSessionCreateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &session)
+	return session
+}
+
+func edgeRoutePOSTWithAPIKey(t *testing.T, handler http.Handler, apiKey, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	addEdgeRouteAuthFor(req, apiKey)
+	req.Header.Set("X-Tenant-ID", edgeRouteTenant)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	return rr
 }
 
 type edgeEvaluateResponseJSON struct {

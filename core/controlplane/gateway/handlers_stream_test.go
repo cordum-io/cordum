@@ -1621,16 +1621,22 @@ func waitForCondition(timeout, interval time.Duration, fn func() bool) bool {
 	return fn()
 }
 
-// TestEnqueueWSEventDropsSilently verifies that when the event channel is full,
-// enqueueWSEvent drops the event with no error and no panic.
-func TestEnqueueWSEventDropsSilently(t *testing.T) {
+func TestEnqueueWSEventReturnsFalseAndCountsFullQueueDrop(t *testing.T) {
 	s := &server{
 		eventsCh: make(chan wsEvent, 1), // tiny buffer
 	}
+	before := testutil.ToFloat64(wsEventsDropped.WithLabelValues("queue_full"))
+
 	// Fill the buffer.
-	s.enqueueWSEvent([]byte("first"), "t", "")
-	// This should drop silently (no panic, no error).
-	s.enqueueWSEvent([]byte("dropped"), "t", "")
+	if queued := s.enqueueWSEvent([]byte("first"), "t", ""); !queued {
+		t.Fatal("first enqueue returned false, want queued")
+	}
+	if queued := s.enqueueWSEvent([]byte("dropped"), "t", ""); queued {
+		t.Fatal("second enqueue returned true for full buffer, want drop signal")
+	}
+	if diff := testutil.ToFloat64(wsEventsDropped.WithLabelValues("queue_full")) - before; diff != 1 {
+		t.Fatalf("queue_full drop counter delta = %.0f, want 1", diff)
+	}
 	// Verify only the first event is in the buffer.
 	select {
 	case evt := <-s.eventsCh:

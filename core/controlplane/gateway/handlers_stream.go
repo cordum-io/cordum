@@ -38,6 +38,11 @@ var wsPacketsDroppedTotal = promauto.NewCounter(prometheus.CounterOpts{
 	Help: "Total WebSocket bus packets dropped due to marshal failure",
 })
 
+var wsEventsDropped = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "cordum_gateway_ws_events_dropped_total",
+	Help: "Total WebSocket events dropped before broadcast",
+}, []string{"reason"})
+
 var wsSlowClientEvictions = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name: "cordum_gateway_ws_slow_client_evictions_total",
 	Help: "Total WebSocket clients evicted because their send buffer was full",
@@ -734,18 +739,25 @@ func filterQuarantinedPacket(p *pb.BusPacket) *pb.BusPacket {
 	return out
 }
 
-func (s *server) enqueueWSEvent(data []byte, tenant string, jobID string) {
+func (s *server) enqueueWSEvent(data []byte, tenant string, jobID string) (queued bool) {
 	if s == nil || len(data) == 0 || s.eventsStopped.Load() {
-		return
+		if len(data) > 0 {
+			wsEventsDropped.WithLabelValues("stopped").Inc()
+		}
+		return false
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			_ = r // channel closed between flag check and send; safe to ignore
+			wsEventsDropped.WithLabelValues("closed").Inc()
+			queued = false // channel closed between flag check and send; safe to ignore
 		}
 	}()
 	select {
 	case s.eventsCh <- wsEvent{data: data, tenant: strings.TrimSpace(tenant), jobID: strings.TrimSpace(jobID)}:
+		return true
 	default:
+		wsEventsDropped.WithLabelValues("queue_full").Inc()
+		return false
 	}
 }
 

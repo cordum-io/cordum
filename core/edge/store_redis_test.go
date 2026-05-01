@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -285,6 +286,93 @@ func TestRedisStoreAppendEventsAtomicPrevalidation(t *testing.T) {
 	assertEventIDs(t, page.Items, []string{"event-batch-1", "event-batch-2"})
 }
 
+func TestRedisStoreListSessionEventsPagesBeyondOldScanCap(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Date(2026, 5, 1, 13, 45, 0, 0, time.UTC)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-long-events", "exec-long-events", base)
+
+	const batchSize = 500
+	total := maxSessionEventScan + 2
+	for start := 0; start < total; start += batchSize {
+		end := start + batchSize
+		if end > total {
+			end = total
+		}
+		events := make([]AgentActionEvent, 0, end-start)
+		for i := start; i < end; i++ {
+			events = append(events, validStoreEvent(
+				"tenant-a",
+				"sess-long-events",
+				"exec-long-events",
+				storePagingID("event-long", i),
+				0,
+				base.Add(time.Duration(i)*time.Millisecond),
+				EventKindHookPostToolUse,
+				DecisionAllow,
+			))
+		}
+		if _, err := store.AppendEvents(ctx, events); err != nil {
+			t.Fatalf("AppendEvents batch %d..%d: %v", start, end, err)
+		}
+	}
+
+	var got []string
+	cursor := ""
+	for {
+		page, err := store.ListEvents(ctx, ListEventsQuery{
+			TenantID:  "tenant-a",
+			SessionID: "sess-long-events",
+			Cursor:    cursor,
+			Limit:     maxStorePageLimit,
+		})
+		if err != nil {
+			t.Fatalf("ListEvents cursor %q: %v", cursor, err)
+		}
+		for _, event := range page.Items {
+			got = append(got, event.EventID)
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+		if len(got) > total {
+			t.Fatalf("ListEvents returned more than seeded events: got %d want %d", len(got), total)
+		}
+	}
+	if len(got) != total {
+		t.Fatalf("ListEvents by session returned %d events, want complete history %d; first=%q last=%q", len(got), total, got[0], got[len(got)-1])
+	}
+	if got[0] != storePagingID("event-long", 0) || got[len(got)-1] != storePagingID("event-long", total-1) {
+		t.Fatalf("ListEvents order endpoints = %q/%q, want %q/%q", got[0], got[len(got)-1], storePagingID("event-long", 0), storePagingID("event-long", total-1))
+	}
+}
+
+func TestRedisStoreAppendEventsRejectsTerminalExecution(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Date(2026, 5, 1, 13, 50, 0, 0, time.UTC)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-terminal", "exec-terminal", base)
+	if _, err := store.EndExecution(ctx, "tenant-a", "exec-terminal", base.Add(time.Minute), ExecutionStatusSucceeded); err != nil {
+		t.Fatalf("EndExecution: %v", err)
+	}
+	_, err := store.AppendEvents(ctx, []AgentActionEvent{
+		validStoreEvent("tenant-a", "sess-terminal", "exec-terminal", "event-after-terminal", 0, base.Add(2*time.Minute), EventKindHookPostToolUse, DecisionAllow),
+	})
+	if err == nil || !strings.Contains(err.Error(), "terminal") {
+		t.Fatalf("AppendEvents terminal execution error = %v, want terminal rejection", err)
+	}
+	page, err := store.ListEvents(ctx, ListEventsQuery{TenantID: "tenant-a", ExecutionID: "exec-terminal", Limit: 10})
+	if err != nil {
+		t.Fatalf("ListEvents after terminal append rejection: %v", err)
+	}
+	assertEventIDs(t, page.Items, []string{})
+}
+
 func TestRedisStoreHeartbeatTTL(t *testing.T) {
 	ctx := context.Background()
 	ttl := 3 * time.Second
@@ -347,6 +435,180 @@ func TestRedisStoreSkipsStaleIndexesAndReportsCorruptRecords(t *testing.T) {
 	}
 	if _, err := store.ListSessions(ctx, ListSessionsQuery{TenantID: "tenant-a", Limit: 10}); err == nil || !strings.Contains(err.Error(), "unmarshal") {
 		t.Fatalf("ListSessions corrupt record error = %v, want unmarshal error", err)
+	}
+}
+
+func TestRedisStoreTraceRunIndexesStayEntityScopedWhenSessionIDEqualsExecutionID(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Date(2026, 5, 1, 15, 30, 0, 0, time.UTC)
+	collisionID := "collision-id"
+	traceID := "trace-collision"
+	runID := "run-collision"
+	sessionToDelete := validStoreSession("tenant-a", collisionID, "principal-a", base)
+	sessionToDelete.TraceID = traceID
+	sessionToDelete.WorkflowRunID = runID
+	if err := store.CreateSession(ctx, sessionToDelete); err != nil {
+		t.Fatalf("CreateSession collision session: %v", err)
+	}
+	ownerSession := validStoreSession("tenant-a", "owner-session", "principal-a", base.Add(time.Minute))
+	ownerSession.TraceID = traceID
+	ownerSession.WorkflowRunID = runID
+	if err := store.CreateSession(ctx, ownerSession); err != nil {
+		t.Fatalf("CreateSession owner session: %v", err)
+	}
+	execution := validStoreExecution("tenant-a", ownerSession.SessionID, collisionID, base.Add(2*time.Minute), func(e *AgentExecution) {
+		e.TraceID = traceID
+		e.WorkflowRunID = runID
+	})
+	if err := store.CreateExecution(ctx, execution); err != nil {
+		t.Fatalf("CreateExecution collision execution: %v", err)
+	}
+
+	beforeTrace, err := store.ListExecutions(ctx, ListExecutionsQuery{TenantID: "tenant-a", TraceID: traceID, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListExecutions by trace before delete: %v", err)
+	}
+	assertExecutionIDs(t, beforeTrace.Items, []string{collisionID})
+	beforeRun, err := store.ListExecutions(ctx, ListExecutionsQuery{TenantID: "tenant-a", WorkflowRunID: runID, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListExecutions by run before delete: %v", err)
+	}
+	assertExecutionIDs(t, beforeRun.Items, []string{collisionID})
+
+	if err := store.DeleteSession(ctx, "tenant-a", collisionID); err != nil {
+		t.Fatalf("DeleteSession collision session: %v", err)
+	}
+	if got, ok, err := store.GetExecution(ctx, "tenant-a", collisionID); err != nil || !ok || got == nil {
+		t.Fatalf("GetExecution after deleting same-id session = (%#v,%v,%v), want execution still present", got, ok, err)
+	}
+	afterTrace, err := store.ListExecutions(ctx, ListExecutionsQuery{TenantID: "tenant-a", TraceID: traceID, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListExecutions by trace after delete: %v", err)
+	}
+	assertExecutionIDs(t, afterTrace.Items, []string{collisionID})
+	afterRun, err := store.ListExecutions(ctx, ListExecutionsQuery{TenantID: "tenant-a", WorkflowRunID: runID, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListExecutions by run after delete: %v", err)
+	}
+	assertExecutionIDs(t, afterRun.Items, []string{collisionID})
+}
+
+func TestRedisStoreListSessionsUsesOpaqueCursorPastMaxPageLimit(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Date(2026, 5, 1, 16, 0, 0, 0, time.UTC)
+	for i := 0; i < maxStorePageLimit+2; i++ {
+		session := validStoreSession("tenant-a", storePagingID("sess", i), "principal-a", base.Add(time.Duration(i)*time.Second))
+		if err := store.CreateSession(ctx, session); err != nil {
+			t.Fatalf("CreateSession(%s): %v", session.SessionID, err)
+		}
+	}
+
+	page1, err := store.ListSessions(ctx, ListSessionsQuery{TenantID: "tenant-a", Limit: maxStorePageLimit})
+	if err != nil {
+		t.Fatalf("ListSessions page1: %v", err)
+	}
+	assertSessionIDs(t, page1.Items[:3], []string{storePagingID("sess", maxStorePageLimit+1), storePagingID("sess", maxStorePageLimit), storePagingID("sess", maxStorePageLimit-1)})
+	if len(page1.Items) != maxStorePageLimit {
+		t.Fatalf("ListSessions page1 len=%d, want %d", len(page1.Items), maxStorePageLimit)
+	}
+	assertOpaqueStoreCursor(t, page1.NextCursor)
+
+	page2, err := store.ListSessions(ctx, ListSessionsQuery{TenantID: "tenant-a", Cursor: page1.NextCursor, Limit: maxStorePageLimit})
+	if err != nil {
+		t.Fatalf("ListSessions page2: %v", err)
+	}
+	assertSessionIDs(t, page2.Items, []string{storePagingID("sess", 1), storePagingID("sess", 0)})
+	if page2.NextCursor != "" {
+		t.Fatalf("ListSessions page2 NextCursor=%q, want empty", page2.NextCursor)
+	}
+	if _, err := store.ListSessions(ctx, ListSessionsQuery{TenantID: "tenant-a", Cursor: "999999999", Limit: 1}); err == nil {
+		t.Fatalf("ListSessions accepted fabricated integer cursor, want invalid cursor error")
+	}
+}
+
+func TestRedisStoreListSessionsCursorDoesNotSkipSameTimestampRows(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	startedAt := time.Date(2026, 5, 1, 16, 15, 0, 0, time.UTC)
+	for _, id := range []string{"sess-same-a", "sess-same-b", "sess-same-c", "sess-same-d"} {
+		if err := store.CreateSession(ctx, validStoreSession("tenant-a", id, "principal-a", startedAt)); err != nil {
+			t.Fatalf("CreateSession(%s): %v", id, err)
+		}
+	}
+
+	page1, err := store.ListSessions(ctx, ListSessionsQuery{TenantID: "tenant-a", Limit: 2})
+	if err != nil {
+		t.Fatalf("ListSessions same timestamp page1: %v", err)
+	}
+	if len(page1.Items) != 2 || page1.NextCursor == "" {
+		t.Fatalf("ListSessions same timestamp page1 len/cursor = %d/%q, want 2 and cursor", len(page1.Items), page1.NextCursor)
+	}
+	page2, err := store.ListSessions(ctx, ListSessionsQuery{TenantID: "tenant-a", Cursor: page1.NextCursor, Limit: 2})
+	if err != nil {
+		t.Fatalf("ListSessions same timestamp page2: %v", err)
+	}
+	got := append(append([]EdgeSession{}, page1.Items...), page2.Items...)
+	if len(got) != 4 {
+		t.Fatalf("same-timestamp pagination returned %d sessions, want 4", len(got))
+	}
+	seen := map[string]bool{}
+	for _, session := range got {
+		if seen[session.SessionID] {
+			t.Fatalf("same-timestamp pagination duplicated session %q", session.SessionID)
+		}
+		seen[session.SessionID] = true
+	}
+	for _, id := range []string{"sess-same-a", "sess-same-b", "sess-same-c", "sess-same-d"} {
+		if !seen[id] {
+			t.Fatalf("same-timestamp pagination skipped session %q; got %#v", id, seen)
+		}
+	}
+}
+
+func TestRedisStoreListExecutionsUsesOpaqueCursorPastMaxPageLimit(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Date(2026, 5, 1, 16, 30, 0, 0, time.UTC)
+	if err := store.CreateSession(ctx, validStoreSession("tenant-a", "sess-exec-page", "principal-a", base)); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	for i := 0; i < maxStorePageLimit+2; i++ {
+		execution := validStoreExecution("tenant-a", "sess-exec-page", storePagingID("exec", i), base.Add(time.Duration(i)*time.Second), nil)
+		if err := store.CreateExecution(ctx, execution); err != nil {
+			t.Fatalf("CreateExecution(%s): %v", execution.ExecutionID, err)
+		}
+	}
+
+	page1, err := store.ListExecutions(ctx, ListExecutionsQuery{TenantID: "tenant-a", SessionID: "sess-exec-page", Limit: maxStorePageLimit})
+	if err != nil {
+		t.Fatalf("ListExecutions page1: %v", err)
+	}
+	assertExecutionIDs(t, page1.Items[:3], []string{storePagingID("exec", maxStorePageLimit+1), storePagingID("exec", maxStorePageLimit), storePagingID("exec", maxStorePageLimit-1)})
+	if len(page1.Items) != maxStorePageLimit {
+		t.Fatalf("ListExecutions page1 len=%d, want %d", len(page1.Items), maxStorePageLimit)
+	}
+	assertOpaqueStoreCursor(t, page1.NextCursor)
+
+	page2, err := store.ListExecutions(ctx, ListExecutionsQuery{TenantID: "tenant-a", SessionID: "sess-exec-page", Cursor: page1.NextCursor, Limit: maxStorePageLimit})
+	if err != nil {
+		t.Fatalf("ListExecutions page2: %v", err)
+	}
+	assertExecutionIDs(t, page2.Items, []string{storePagingID("exec", 1), storePagingID("exec", 0)})
+	if page2.NextCursor != "" {
+		t.Fatalf("ListExecutions page2 NextCursor=%q, want empty", page2.NextCursor)
+	}
+	if _, err := store.ListExecutions(ctx, ListExecutionsQuery{TenantID: "tenant-a", SessionID: "sess-exec-page", Cursor: "999999999", Limit: 1}); err == nil {
+		t.Fatalf("ListExecutions accepted fabricated integer cursor, want invalid cursor error")
 	}
 }
 
@@ -490,5 +752,19 @@ func assertEventIDs(t *testing.T, got []AgentActionEvent, want []string) {
 	}
 	if !reflect.DeepEqual(ids, want) {
 		t.Fatalf("event ids = %#v, want %#v", ids, want)
+	}
+}
+
+func storePagingID(prefix string, i int) string {
+	return prefix + "-" + strconv.Itoa(i)
+}
+
+func assertOpaqueStoreCursor(t *testing.T, cursor string) {
+	t.Helper()
+	if strings.TrimSpace(cursor) == "" {
+		t.Fatalf("NextCursor empty, want opaque continuation")
+	}
+	if _, err := strconv.Atoi(cursor); err == nil {
+		t.Fatalf("NextCursor %q is a bare integer offset, want opaque cursor", cursor)
 	}
 }

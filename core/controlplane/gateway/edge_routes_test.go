@@ -17,6 +17,7 @@ const (
 	edgeRouteTestAPIKey     = "edge-route-test-key"
 	edgeRouteReviewerAPIKey = "edge-route-reviewer-key"
 	edgeRouteViewerAPIKey   = "edge-route-viewer-key"
+	edgeRouteUserAPIKey     = "edge-route-user-key"
 	edgeRouteTenant         = "tenant-edge-a"
 	edgeRouteOtherAPIKey    = "edge-route-other-key"
 	edgeRouteOtherTenant    = "tenant-edge-b"
@@ -477,6 +478,7 @@ func newEdgeRouteTestServer(t *testing.T) (*server, http.Handler) {
 			`{"key":"` + edgeRouteTestAPIKey + `","tenant":"` + edgeRouteTenant + `","role":"admin","principal_id":"principal-edge-a"},` +
 			`{"key":"` + edgeRouteReviewerAPIKey + `","tenant":"` + edgeRouteTenant + `","role":"admin","principal_id":"principal-reviewer"},` +
 			`{"key":"` + edgeRouteViewerAPIKey + `","tenant":"` + edgeRouteTenant + `","role":"viewer","principal_id":"principal-viewer"},` +
+			`{"key":"` + edgeRouteUserAPIKey + `","tenant":"` + edgeRouteTenant + `","role":"user","principal_id":"principal-edge-user"},` +
 			`{"key":"` + edgeRouteOtherAPIKey + `","tenant":"` + edgeRouteOtherTenant + `","role":"admin","principal_id":"principal-edge-b"}` +
 			`]`,
 	})

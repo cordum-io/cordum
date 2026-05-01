@@ -106,7 +106,11 @@ func classifyHookEvent(event AgentActionEvent, out *ActionClassification) {
 	case "delete", "remove":
 		classifyFileDelete(inputStringAny(event.InputRedacted, "file_path", "path"), out)
 	case "move", "rename":
-		classifyFileMove(inputStringAny(event.InputRedacted, "file_path", "path", "source"), out)
+		classifyFileMove(
+			inputStringAny(event.InputRedacted, "file_path", "path", "source", "old_path", "from"),
+			inputStringAny(event.InputRedacted, "destination", "dest", "dest_path", "target", "new_path", "to"),
+			out,
+		)
 	default:
 		out.ActionName = actionUnknownHook
 		out.Capability = capabilityUnknown
@@ -208,12 +212,21 @@ func classifyFileDelete(path string, out *ActionClassification) {
 	}
 }
 
-func classifyFileMove(path string, out *ActionClassification) {
+func classifyFileMove(sourcePath, destinationPath string, out *ActionClassification) {
 	out.ActionName = "file.move"
 	out.Capability = capabilityFileMove
 	out.RiskTags = []string{"filesystem", "write"}
-	addPathLabels(path, out)
-	if out.Labels["path.class"] == "source_code" {
+	sourceLabels := classifyPathLabels(sourcePath)
+	destinationLabels := Labels{}
+	if strings.TrimSpace(destinationPath) != "" {
+		destinationLabels = classifyPathLabels(destinationPath)
+	}
+	mergePathLabels(out.Labels, sourceLabels)
+	mergePathLabels(out.Labels, destinationLabels)
+	if hasPathClass("secret", sourceLabels, destinationLabels) {
+		out.RiskTags = append(out.RiskTags, "secrets")
+	}
+	if hasPathClass("source_code", sourceLabels, destinationLabels) {
 		out.RiskTags = append(out.RiskTags, "source_code")
 	}
 }
@@ -353,6 +366,59 @@ func addPathLabels(path string, out *ActionClassification) {
 		return
 	}
 	out.Labels["path.class"] = "file"
+}
+
+func classifyPathLabels(path string) Labels {
+	labels := Labels{}
+	addPathLabels(path, &ActionClassification{Labels: labels})
+	return labels
+}
+
+func mergePathLabels(dst Labels, src Labels) {
+	if len(src) == 0 {
+		return
+	}
+	dst["path.class"] = moreSensitivePathClass(dst["path.class"], src["path.class"])
+	if src["path.traversal"] == "true" {
+		dst["path.traversal"] = "true"
+	}
+	if src["path.sensitive_area"] != "" {
+		dst["path.sensitive_area"] = src["path.sensitive_area"]
+	}
+}
+
+func moreSensitivePathClass(left, right string) string {
+	if pathClassRank(right) > pathClassRank(left) {
+		return right
+	}
+	if left != "" {
+		return left
+	}
+	return right
+}
+
+func pathClassRank(value string) int {
+	switch value {
+	case "secret":
+		return 4
+	case "source_code":
+		return 3
+	case "file":
+		return 2
+	case "unknown":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func hasPathClass(value string, labelSets ...Labels) bool {
+	for _, labels := range labelSets {
+		if labels["path.class"] == value {
+			return true
+		}
+	}
+	return false
 }
 
 func classifiedInputContent(input map[string]any) ([]byte, string, int64, error) {

@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,18 +13,26 @@ import (
 
 func TestHTTPAgentdClientPostsBoundedRequestToLoopback(t *testing.T) {
 	seen := make(chan AgentdRequest, 1)
+	handlerErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			t.Fatalf("method=%s, want POST", r.Method)
+			reportAgentdHandlerErr(handlerErr, fmt.Errorf("method=%s, want POST", r.Method))
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
 		}
 		if got := r.Header.Get("Content-Type"); !strings.Contains(got, "application/json") {
-			t.Fatalf("Content-Type=%q, want application/json", got)
+			reportAgentdHandlerErr(handlerErr, fmt.Errorf("Content-Type=%q, want application/json", got))
+			http.Error(w, "bad content type", http.StatusUnsupportedMediaType)
+			return
 		}
 		var req AgentdRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-			t.Fatalf("decode agentd request: %v", err)
+			reportAgentdHandlerErr(handlerErr, fmt.Errorf("decode agentd request: %w", err))
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
 		}
 		seen <- req
+		reportAgentdHandlerErr(handlerErr, nil)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"decision":"allow","reason":"loopback ok"}`))
 	}))
@@ -41,6 +50,7 @@ func TestHTTPAgentdClientPostsBoundedRequestToLoopback(t *testing.T) {
 		ToolUseID:   "toolu-789",
 		RawPayload:  []byte(`{"hook_event_name":"PreToolUse"}`),
 	})
+	assertAgentdHandlerErr(t, handlerErr)
 	if err != nil {
 		t.Fatalf("EvaluateHook returned error: %v", err)
 	}
@@ -53,6 +63,25 @@ func TestHTTPAgentdClientPostsBoundedRequestToLoopback(t *testing.T) {
 	}
 	if string(got.RawPayload) != `{"hook_event_name":"PreToolUse"}` {
 		t.Fatalf("raw payload mismatch: %q", got.RawPayload)
+	}
+}
+
+func reportAgentdHandlerErr(ch chan<- error, err error) {
+	select {
+	case ch <- err:
+	default:
+	}
+}
+
+func assertAgentdHandlerErr(t *testing.T, ch <-chan error) {
+	t.Helper()
+	select {
+	case err := <-ch:
+		if err != nil {
+			t.Fatalf("agentd test handler failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("agentd test handler did not report its assertion result")
 	}
 }
 

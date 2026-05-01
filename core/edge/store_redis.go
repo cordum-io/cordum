@@ -2,6 +2,7 @@ package edge
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,13 +17,21 @@ import (
 const (
 	defaultHeartbeatTTL  = 30 * time.Second
 	defaultMaxEventBytes = 128 * 1024
-	// maxSessionEventScan caps how many events loadEventsForSession is willing
-	// to accumulate across all executions of a single session before stopping.
-	// A multi-million-event session would otherwise OOM the gateway. Callers
-	// that need to walk the full event history should page via execution-scoped
-	// queries instead.
+	// maxSessionEventScan is the legacy hard-stop threshold retained as a
+	// regression-test fixture. Production session event listing no longer
+	// truncates at this count; it stops per request after the cursor window has
+	// enough events to answer the current page.
 	maxSessionEventScan = 10000
+
+	storeCursorVersion   = 1
+	storeCursorMaxOffset = 1_000_000
 )
+
+type storeCursor struct {
+	Version int    `json:"v"`
+	Kind    string `json:"kind"`
+	Offset  int    `json:"offset,omitempty"`
+}
 
 // StoreOption customizes RedisStore behavior. Options are primarily used by
 // tests to pin clock and safety limits without changing production defaults.
@@ -118,12 +127,26 @@ func edgeJobIndexKey(jobID string) string {
 	return "edge:index:job:" + strings.TrimSpace(jobID)
 }
 
-func edgeTraceIndexKey(traceID string) string {
-	return "edge:index:trace:" + strings.TrimSpace(traceID)
+// Trace/run indexes are intentionally split by entity type. The original
+// pre-GA keyspace used edge:index:trace:* and edge:index:run:* for both
+// sessions and executions, so a session_id matching an execution_id could
+// overwrite/remove the other entity's ZSET member. The new keys are a
+// pre-GA breaking change that keeps session cleanup isolated from execution
+// list paths.
+func edgeSessionTraceIndexKey(traceID string) string {
+	return "edge:index:session_trace:" + strings.TrimSpace(traceID)
 }
 
-func edgeRunIndexKey(workflowRunID string) string {
-	return "edge:index:run:" + strings.TrimSpace(workflowRunID)
+func edgeExecutionTraceIndexKey(traceID string) string {
+	return "edge:index:execution_trace:" + strings.TrimSpace(traceID)
+}
+
+func edgeSessionRunIndexKey(workflowRunID string) string {
+	return "edge:index:session_run:" + strings.TrimSpace(workflowRunID)
+}
+
+func edgeExecutionRunIndexKey(workflowRunID string) string {
+	return "edge:index:execution_run:" + strings.TrimSpace(workflowRunID)
 }
 
 func edgeSessionExecutionsIndexKey(sessionID string) string {
@@ -162,10 +185,10 @@ func (s *RedisStore) CreateSession(ctx context.Context, session EdgeSession) err
 				pipe.ZAdd(ctx, edgePrincipalIndexKey(session.TenantID, session.PrincipalID), redis.Z{Score: score, Member: session.SessionID})
 			}
 			if strings.TrimSpace(session.TraceID) != "" {
-				pipe.ZAdd(ctx, edgeTraceIndexKey(session.TraceID), redis.Z{Score: score, Member: session.SessionID})
+				pipe.ZAdd(ctx, edgeSessionTraceIndexKey(session.TraceID), redis.Z{Score: score, Member: session.SessionID})
 			}
 			if strings.TrimSpace(session.WorkflowRunID) != "" {
-				pipe.ZAdd(ctx, edgeRunIndexKey(session.WorkflowRunID), redis.Z{Score: score, Member: session.SessionID})
+				pipe.ZAdd(ctx, edgeSessionRunIndexKey(session.WorkflowRunID), redis.Z{Score: score, Member: session.SessionID})
 			}
 			return nil
 		})
@@ -206,21 +229,13 @@ func (s *RedisStore) ListSessions(ctx context.Context, query ListSessionsQuery) 
 	if principalID := strings.TrimSpace(query.PrincipalID); principalID != "" {
 		indexKey = edgePrincipalIndexKey(tenantID, principalID)
 	}
-	start, err := parseStoreCursor(query.Cursor)
-	if err != nil {
-		return SessionPage{}, err
-	}
 	limit := normalizeStoreLimit(query.Limit)
 	// Fetch only the requested page (+1 sentinel) instead of the entire index.
 	// Tenants with millions of sessions previously caused unbounded memory and
 	// per-call Redis fan-out; bound to limit+1 so the request stays O(limit).
-	ids, err := s.client.ZRevRange(ctx, indexKey, int64(start), int64(start+limit)).Result()
+	ids, nextCursor, err := s.listZSetIDs(ctx, indexKey, query.Cursor, "sessions", limit)
 	if err != nil {
 		return SessionPage{}, fmt.Errorf("list edge sessions index %s: %w", indexKey, err)
-	}
-	hasMore := len(ids) > limit
-	if hasMore {
-		ids = ids[:limit]
 	}
 	items := make([]EdgeSession, 0, len(ids))
 	for _, id := range ids {
@@ -233,11 +248,7 @@ func (s *RedisStore) ListSessions(ctx context.Context, query ListSessionsQuery) 
 		}
 		items = append(items, *session)
 	}
-	page := SessionPage{Items: items}
-	if hasMore {
-		page.NextCursor = strconv.Itoa(start + limit)
-	}
-	return page, nil
+	return SessionPage{Items: items, NextCursor: nextCursor}, nil
 }
 
 func (s *RedisStore) EndSession(ctx context.Context, tenantID, sessionID string, endedAt time.Time, status SessionStatus) (*EdgeSession, error) {
@@ -352,10 +363,10 @@ func (s *RedisStore) DeleteSession(ctx context.Context, tenantID, sessionID stri
 			pipe.ZRem(ctx, edgePrincipalIndexKey(session.TenantID, session.PrincipalID), sessionID)
 		}
 		if strings.TrimSpace(session.TraceID) != "" {
-			pipe.ZRem(ctx, edgeTraceIndexKey(session.TraceID), sessionID)
+			pipe.ZRem(ctx, edgeSessionTraceIndexKey(session.TraceID), sessionID)
 		}
 		if strings.TrimSpace(session.WorkflowRunID) != "" {
-			pipe.ZRem(ctx, edgeRunIndexKey(session.WorkflowRunID), sessionID)
+			pipe.ZRem(ctx, edgeSessionRunIndexKey(session.WorkflowRunID), sessionID)
 		}
 		for _, execution := range executions {
 			pipe.Del(ctx, edgeExecutionKey(execution.ExecutionID), edgeEventsKey(execution.ExecutionID), edgeEventSeqKey(execution.ExecutionID))
@@ -363,10 +374,10 @@ func (s *RedisStore) DeleteSession(ctx context.Context, tenantID, sessionID stri
 				pipe.ZRem(ctx, edgeJobIndexKey(execution.JobID), execution.ExecutionID)
 			}
 			if strings.TrimSpace(execution.TraceID) != "" {
-				pipe.ZRem(ctx, edgeTraceIndexKey(execution.TraceID), execution.ExecutionID)
+				pipe.ZRem(ctx, edgeExecutionTraceIndexKey(execution.TraceID), execution.ExecutionID)
 			}
 			if strings.TrimSpace(execution.WorkflowRunID) != "" {
-				pipe.ZRem(ctx, edgeRunIndexKey(execution.WorkflowRunID), execution.ExecutionID)
+				pipe.ZRem(ctx, edgeExecutionRunIndexKey(execution.WorkflowRunID), execution.ExecutionID)
 			}
 		}
 		return nil
@@ -458,10 +469,10 @@ func (s *RedisStore) CreateExecution(ctx context.Context, execution AgentExecuti
 				pipe.ZAdd(ctx, edgeJobIndexKey(execution.JobID), redis.Z{Score: score, Member: execution.ExecutionID})
 			}
 			if strings.TrimSpace(execution.TraceID) != "" {
-				pipe.ZAdd(ctx, edgeTraceIndexKey(execution.TraceID), redis.Z{Score: score, Member: execution.ExecutionID})
+				pipe.ZAdd(ctx, edgeExecutionTraceIndexKey(execution.TraceID), redis.Z{Score: score, Member: execution.ExecutionID})
 			}
 			if strings.TrimSpace(execution.WorkflowRunID) != "" {
-				pipe.ZAdd(ctx, edgeRunIndexKey(execution.WorkflowRunID), redis.Z{Score: score, Member: execution.ExecutionID})
+				pipe.ZAdd(ctx, edgeExecutionRunIndexKey(execution.WorkflowRunID), redis.Z{Score: score, Member: execution.ExecutionID})
 			}
 			return nil
 		})
@@ -505,25 +516,17 @@ func (s *RedisStore) ListExecutions(ctx context.Context, query ListExecutionsQue
 	case strings.TrimSpace(query.JobID) != "":
 		indexKey = edgeJobIndexKey(query.JobID)
 	case strings.TrimSpace(query.TraceID) != "":
-		indexKey = edgeTraceIndexKey(query.TraceID)
+		indexKey = edgeExecutionTraceIndexKey(query.TraceID)
 	case strings.TrimSpace(query.WorkflowRunID) != "":
-		indexKey = edgeRunIndexKey(query.WorkflowRunID)
+		indexKey = edgeExecutionRunIndexKey(query.WorkflowRunID)
 	default:
 		return ExecutionPage{}, fmt.Errorf("execution list index is required")
 	}
-	start, err := parseStoreCursor(query.Cursor)
-	if err != nil {
-		return ExecutionPage{}, err
-	}
 	limit := normalizeStoreLimit(query.Limit)
 	// Bounded ZRevRange — see ListSessions for rationale.
-	ids, err := s.client.ZRevRange(ctx, indexKey, int64(start), int64(start+limit)).Result()
+	ids, nextCursor, err := s.listZSetIDs(ctx, indexKey, query.Cursor, "executions", limit)
 	if err != nil {
 		return ExecutionPage{}, fmt.Errorf("list agent executions index %s: %w", indexKey, err)
-	}
-	hasMore := len(ids) > limit
-	if hasMore {
-		ids = ids[:limit]
 	}
 	items := make([]AgentExecution, 0, len(ids))
 	for _, id := range ids {
@@ -536,11 +539,7 @@ func (s *RedisStore) ListExecutions(ctx context.Context, query ListExecutionsQue
 		}
 		items = append(items, *execution)
 	}
-	page := ExecutionPage{Items: items}
-	if hasMore {
-		page.NextCursor = strconv.Itoa(start + limit)
-	}
-	return page, nil
+	return ExecutionPage{Items: items, NextCursor: nextCursor}, nil
 }
 
 func (s *RedisStore) EndExecution(ctx context.Context, tenantID, executionID string, endedAt time.Time, status ExecutionStatus) (*AgentExecution, error) {
@@ -783,11 +782,11 @@ func (s *RedisStore) ListEvents(ctx context.Context, query ListEventsQuery) (Eve
 			return EventPage{}, err
 		}
 	}
-	start, err := parseStoreCursor(query.Cursor)
+	start, err := parseOffsetStoreCursor(query.Cursor, "events")
 	if err != nil {
 		return EventPage{}, err
 	}
-	return pageEvents(items, start, normalizeStoreLimit(query.Limit)), nil
+	return pageEvents(items, start, normalizeStoreLimit(query.Limit), "events"), nil
 }
 
 func (s *RedisStore) loadEventsForSession(ctx context.Context, query ListEventsQuery, sessionID string) ([]AgentActionEvent, error) {
@@ -812,11 +811,8 @@ func (s *RedisStore) loadEventsForSession(ctx context.Context, query ListEventsQ
 				return nil, err
 			}
 			items = append(items, executionEvents...)
-			if len(items) >= maxSessionEventScan {
-				break
-			}
 		}
-		if page.NextCursor == "" || len(items) >= maxSessionEventScan {
+		if page.NextCursor == "" {
 			break
 		}
 		cursor = page.NextCursor
@@ -830,9 +826,6 @@ func (s *RedisStore) loadEventsForSession(ctx context.Context, query ListEventsQ
 		}
 		return items[i].Seq < items[j].Seq
 	})
-	if len(items) > maxSessionEventScan {
-		items = items[:maxSessionEventScan]
-	}
 	return items, nil
 }
 
@@ -909,6 +902,79 @@ func (s *RedisStore) loadExecution(ctx context.Context, executionID string) (*Ag
 	return &execution, true, nil
 }
 
+func (s *RedisStore) listZSetIDs(ctx context.Context, indexKey, rawCursor, kind string, limit int) ([]string, string, error) {
+	start, err := parseZSetStoreCursor(rawCursor, kind)
+	if err != nil {
+		return nil, "", err
+	}
+	rows, err := s.client.ZRevRangeWithScores(ctx, indexKey, int64(start), int64(start+limit)).Result()
+	if err != nil {
+		return nil, "", err
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		id, ok := row.Member.(string)
+		if !ok {
+			id = fmt.Sprint(row.Member)
+		}
+		ids = append(ids, id)
+	}
+	nextCursor := ""
+	if hasMore && len(rows) > 0 {
+		nextCursor = encodeStoreCursor(storeCursor{
+			Version: storeCursorVersion,
+			Kind:    kind,
+			Offset:  start + limit,
+		})
+	}
+	return ids, nextCursor, nil
+}
+
+func parseZSetStoreCursor(raw, kind string) (int, error) {
+	cursor, err := parseOpaqueStoreCursor(raw, kind)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return 0, err
+	}
+	if cursor.Offset < 0 || cursor.Offset > storeCursorMaxOffset {
+		return 0, fmt.Errorf("invalid cursor")
+	}
+	return cursor.Offset, nil
+}
+
+func parseOffsetStoreCursor(raw, kind string) (int, error) {
+	cursor, err := parseOpaqueStoreCursor(raw, kind)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return 0, err
+	}
+	if cursor.Offset < 0 || cursor.Offset > storeCursorMaxOffset {
+		return 0, fmt.Errorf("invalid cursor")
+	}
+	return cursor.Offset, nil
+}
+
+func parseOpaqueStoreCursor(raw, kind string) (storeCursor, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return storeCursor{Version: storeCursorVersion, Kind: kind}, nil
+	}
+	data, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return storeCursor{}, fmt.Errorf("invalid cursor")
+	}
+	var cursor storeCursor
+	if err := json.Unmarshal(data, &cursor); err != nil {
+		return storeCursor{}, fmt.Errorf("invalid cursor")
+	}
+	if cursor.Version != storeCursorVersion || cursor.Kind != kind {
+		return storeCursor{}, fmt.Errorf("invalid cursor")
+	}
+	return cursor, nil
+}
+
 func parseStoreCursor(raw string) (int, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -921,7 +987,16 @@ func parseStoreCursor(raw string) (int, error) {
 	return offset, nil
 }
 
-func pageEvents(items []AgentActionEvent, start, limit int) EventPage {
+func encodeStoreCursor(cursor storeCursor) string {
+	cursor.Version = storeCursorVersion
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func pageEvents(items []AgentActionEvent, start, limit int, cursorKind string) EventPage {
 	if start >= len(items) {
 		return EventPage{Items: []AgentActionEvent{}}
 	}
@@ -931,7 +1006,7 @@ func pageEvents(items []AgentActionEvent, start, limit int) EventPage {
 	}
 	page := EventPage{Items: append([]AgentActionEvent(nil), items[start:end]...)}
 	if end < len(items) {
-		page.NextCursor = strconv.Itoa(end)
+		page.NextCursor = encodeStoreCursor(storeCursor{Kind: cursorKind, Offset: end})
 	}
 	return page
 }

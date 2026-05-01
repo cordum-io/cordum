@@ -80,6 +80,9 @@ func readHookInput(ctx context.Context, r io.Reader, maxBytes int64) (HookInput,
 	}()
 	select {
 	case <-ctx.Done():
+		if closer, ok := r.(io.Closer); ok {
+			_ = closer.Close()
+		}
 		return HookInput{}, errInputTimeout
 	case res := <-ch:
 		if res.err != nil {

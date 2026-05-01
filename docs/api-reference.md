@@ -75,7 +75,7 @@ Tenant access is enforced by middleware and per-handler checks.
 
 For websocket upgrades, API key can be provided as subprotocol:
 
-- `Sec-WebSocket-Protocol: cordum-api-key, <base64url(api_key)>`
+- `Sec-WebSocket-Protocol: cordum-api-key.<base64url(api_key)>`
 
 ## Common Error Format
 
@@ -2712,7 +2712,7 @@ Note: There are no `/healthz`, `/readyz`, or `/api/v1/system/health` routes in c
 
 - Auth: required + admin role
 - Upgrade: websocket
-- API key via `X-API-Key` or websocket subprotocol (`cordum-api-key, <base64url(key)>`)
+- API key via `X-API-Key` or websocket subprotocol (`cordum-api-key.<base64url(key)>`)
 - Streams existing CAP BusPacket protojson events (`sys.job.*`, `sys.audit.*`, heartbeats) and dedicated Edge action envelopes filtered by tenant permissions.
 - Edge messages use `{ "type": "edge.event", "tenant_id": "...", "session_id": "...", "execution_id": "...", "event": { ... } }`; the `event` payload matches `core/edge/schema/agent_action_event.schema.json`.
 - Edge stream forwarding is best-effort after successful Edge event persistence. On reconnect, clients should poll the Edge REST APIs for authoritative state.
