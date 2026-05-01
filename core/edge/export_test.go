@@ -200,8 +200,10 @@ func TestSessionExportAssemblerHappyPathContainsAllSessionEvidence(t *testing.T)
 	if bundle.Truncation.EventsTruncated {
 		t.Errorf("Truncation.EventsTruncated = true, want false on full session")
 	}
-	if got := len(bundle.JobLinks); got != 1 {
-		t.Errorf("JobLinks length = %d, want 1 (only exec1 has job IDs)", got)
+	// validStoreExecution defaults JobID/WorkflowRunID/StepID for every
+	// execution, so the bundle should carry one JobLink per execution.
+	if got := len(bundle.JobLinks); got != len(bundle.Executions) {
+		t.Errorf("JobLinks length = %d, want %d (one per execution that has job IDs)", got, len(bundle.Executions))
 	}
 }
 
