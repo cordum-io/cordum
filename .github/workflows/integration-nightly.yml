@@ -91,9 +91,12 @@ jobs:
       run: |
         failed=0
         # Gate 6 (Performance) skipped on shared CI runners — p95 is hardware-dependent
+        # --strict promotes the advisory gates (8, 10-17) to blocking so the
+        # nightly run actually fails when an advisory gate fails instead of
+        # producing a false-green.
         for gate in 2 3 4 8 9 10 11 12 13 14 15 16 17; do
           echo "=== Gate $gate ==="
-          if ! bash tools/scripts/production_gate.sh --gate $gate --skip-rebuild; then
+          if ! bash tools/scripts/production_gate.sh --gate "$gate" --skip-rebuild --strict; then
             failed=$((failed + 1))
           fi
         done
