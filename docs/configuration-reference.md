@@ -697,6 +697,7 @@ scanners:
 | `CORDUM_EDGE_EXECUTION_ID` | — | No | Optional Edge execution correlation ID forwarded from `cordum-hook` to local agentd. |
 | `CORDUM_EDGE_APPROVAL_WAIT_TIMEOUT` | — | No | Optional future approval-wait UX timeout emitted by settings generators; current hook behavior still returns immediate approval references. |
 | `CORDUM_EDGE_PLATFORM` | — | No | Optional settings-generator platform marker for diagnostics and generated examples. |
+| `CORDUM_EDGE_EXPORT_MAX_BYTES` | `10485760` (10 MiB) | No | Maximum serialized size of a `POST /api/v1/edge/sessions/{id}/export` response. Bundles larger than this return HTTP 413 with a hint to lower `max_events`. Clamped one-way: values below 1 KiB or above the 64 MiB ceiling fall back to the default. See [Edge evidence export](edge-export.md). |
 
 Generated Claude settings and enterprise managed-settings templates must not contain long-lived `ANTHROPIC_API_KEY`, `CORDUM_API_KEY`, bearer tokens, raw prompts, or raw tool payloads. Enterprise deployments should use `cordum-agentd` memory/keychain/service bootstrap through Claude `apiKeyHelper` and MCP `headersHelper` placeholders.
 
