@@ -172,14 +172,15 @@ func supportedHookEvent(eventName string) bool {
 
 func hookOutputForRun(eventName string, decision AgentdDecision, opts RunOptions) ClaudeHookOutput {
 	switch eventName {
-	case "ConfigChange":
-		if !failClosed(opts) {
-			return ClaudeHookOutput{}
-		}
-		return ClaudeHookOutputForDecision(eventName, decision)
 	case "FileChanged":
+		// FileChanged is informational only — a successful evaluation never
+		// blocks anything, so emit an empty output regardless of decision.
 		return ClaudeHookOutput{}
 	default:
+		// All other events (including ConfigChange) honor the agentd decision.
+		// failClosed only governs how we react to evaluation errors (see
+		// handleAgentdError); a successful DecisionDeny must still be enforced
+		// or the hook would silently allow denied config changes.
 		return ClaudeHookOutputForDecision(eventName, decision)
 	}
 }

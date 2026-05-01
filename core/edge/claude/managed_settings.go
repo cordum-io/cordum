@@ -128,7 +128,11 @@ func managedHeadersHelper(opts ManagedSettingsOptions) string {
 			return base + " mcp headers"
 		}
 	}
-	command := strings.TrimSpace(opts.HookCommand)
+	// Mirror GenerateManagedSettingsTemplate's default-fill so an empty
+	// HookCommand still produces a usable headersHelper. Returning "" here
+	// would silently omit headersHelper from managed-mcp.json even though
+	// the hook command path itself is otherwise valid.
+	command := strings.TrimSpace(hookCommandOrDefault(opts.HookCommand))
 	if command == "" {
 		return ""
 	}

@@ -117,7 +117,17 @@ func (c *HTTPAgentdClient) EvaluateHook(ctx context.Context, req AgentdRequest) 
 	if err := dec.Decode(&decision); err != nil {
 		return AgentdDecision{}, fmt.Errorf("decode agentd decision: %w", err)
 	}
-	return decision, nil
+	// Reject decisions outside the documented enum. A 200 response with
+	// decision="unexpected" or "" would otherwise decode successfully and
+	// fall through hookOutputForRun to an empty output — effectively
+	// allowing the action. Surface the error so the caller's fail-closed
+	// branch handles it instead.
+	switch decision.Decision {
+	case DecisionAllow, DecisionDeny, DecisionAsk, DecisionRequireApproval:
+		return decision, nil
+	default:
+		return AgentdDecision{}, fmt.Errorf("agentd returned unknown decision: %q", decision.Decision)
+	}
 }
 
 func isLoopbackHost(host string) bool {

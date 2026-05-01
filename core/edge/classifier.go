@@ -197,6 +197,15 @@ func classifyFileDelete(path string, out *ActionClassification) {
 	out.Capability = capabilityFileDelete
 	out.RiskTags = []string{"destructive", "filesystem", "write"}
 	addPathLabels(path, out)
+	// Promote secrets/source_code path tags into risk tags so policy.evaluate
+	// sees the destructive-on-sensitive combo without having to re-derive
+	// it from labels.
+	switch out.Labels["path.class"] {
+	case "secret":
+		out.RiskTags = append(out.RiskTags, "secrets")
+	case "source_code":
+		out.RiskTags = append(out.RiskTags, "source_code")
+	}
 }
 
 func classifyFileMove(path string, out *ActionClassification) {
@@ -317,7 +326,7 @@ func baseClassificationLabels(event AgentActionEvent) Labels {
 			labels["hook.event"] = string(event.Kind)
 		}
 		if tool := strings.TrimSpace(event.ToolName); tool != "" {
-			labels["hook.tool_name"] = tool
+			labels["hook.tool_name"] = safeLabelValue(tool, "unknown")
 		}
 	}
 	return labels

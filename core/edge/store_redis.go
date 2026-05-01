@@ -287,6 +287,11 @@ func (s *RedisStore) EndSession(ctx context.Context, tenantID, sessionID string,
 		}
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.Set(ctx, key, payload, 0)
+			// Drop the heartbeat key in the same transaction so HeartbeatAlive
+			// stops returning true the moment a session is ended. Without this
+			// a terminal session would still look alive until the heartbeat
+			// TTL elapsed (up to s.heartbeatTTL).
+			pipe.Del(ctx, edgeSessionHeartbeatKey(sessionID))
 			return nil
 		})
 		if err != nil {
@@ -382,6 +387,13 @@ func (s *RedisStore) TouchHeartbeat(ctx context.Context, tenantID, sessionID str
 	}
 	if !ok || session == nil {
 		return fmt.Errorf("%w: edge session %s", ErrNotFound, strings.TrimSpace(sessionID))
+	}
+	// Reject heartbeats for sessions that are already terminal. EndSession
+	// drops the heartbeat key in the same transaction (see above), but a
+	// stray client/loop could still recreate it via TouchHeartbeat and make
+	// HeartbeatAlive lie about an ended session. Refuse the write here.
+	if session.EndedAt != nil || isTerminalSessionStatus(session.Status) {
+		return fmt.Errorf("edge session %s is terminal; cannot touch heartbeat", session.SessionID)
 	}
 	value := s.now().UTC().Format(time.RFC3339Nano)
 	if err := s.client.Set(ctx, edgeSessionHeartbeatKey(session.SessionID), value, s.heartbeatTTL).Err(); err != nil {

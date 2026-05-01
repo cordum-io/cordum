@@ -105,7 +105,10 @@ func newDenyDecision(reason string) HookDecision {
 func isDestructiveRecursiveDelete(command string) bool {
 	fields := strings.Fields(command)
 	for i, field := range fields {
-		if normalizeShellToken(field) != "rm" || !isCommandPosition(fields, i) {
+		// Match by basename so absolute paths like /bin/rm and /usr/bin/rm
+		// still trigger the denial. Without this, a caller could trivially
+		// bypass by writing the full path to rm.
+		if commandBasename(normalizeShellToken(field)) != "rm" || !isCommandPosition(fields, i) {
 			continue
 		}
 
@@ -160,6 +163,13 @@ func isShellEvalPosition(fields []string, index int) bool {
 
 func normalizeShellToken(token string) string {
 	return strings.Trim(token, " \t\r\n;&|(){}'\"")
+}
+
+func commandBasename(token string) string {
+	if i := strings.LastIndex(token, "/"); i >= 0 {
+		return token[i+1:]
+	}
+	return token
 }
 
 func logHookInput(in HookInput, destructive bool) {
