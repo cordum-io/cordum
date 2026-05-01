@@ -402,6 +402,19 @@ func (a *SessionExportAssembler) collectArtifacts(ctx context.Context, tenantID 
 				missing = append(missing, missingFromPointer(ptr, reason))
 				continue
 			}
+			// Defense in depth: do not trust the pointer's tenant scope alone.
+			// The artifact-store metadata also carries identity labels written
+			// at Put time. Mismatched labels mean either tampered evidence or
+			// a buggy producer; in either case refusing to include the entry
+			// is the only safe call. Empty labels are treated as "label not
+			// asserted" — older artifacts may have been stored without the
+			// edge-side identity convention and we accept those by pointer
+			// alone, which is what the existing pointer cross-scope guard
+			// above already protects.
+			if !artifactStoreLabelsMatchPointer(meta.Labels, ptr) {
+				missing = append(missing, missingFromPointer(ptr, MissingArtifactReasonTenantMismatch))
+				continue
+			}
 			entries = append(entries, ExportArtifactEntry{
 				SessionID:      ptr.SessionID,
 				ExecutionID:    ptr.ExecutionID,
@@ -430,6 +443,39 @@ func missingFromPointer(ptr ArtifactPointer, reason MissingArtifactReason) Expor
 		EventID:      ptr.EventID,
 		Reason:       reason,
 	}
+}
+
+// artifactStoreLabelsMatchPointer cross-checks the artifact-store metadata
+// labels against the pointer's identity scope. The store's metadata is
+// written at Put time by the producing pack and is treated as a second
+// source of truth: if the pointer claims this artifact belongs to tenant-A
+// but the store's labels say tenant-B, the artifact is either tampered or
+// misattributed and must NOT appear in the export.
+//
+// A label that is absent in the metadata is treated as "not asserted" —
+// older artifacts may have been stored without the Edge identity
+// convention and the pointer-only path remains the fallback. A label that
+// is present and disagrees with the pointer is a hard reject.
+func artifactStoreLabelsMatchPointer(labels map[string]string, ptr ArtifactPointer) bool {
+	checks := []struct {
+		key  string
+		want string
+	}{
+		{"tenant_id", ptr.TenantID},
+		{"session_id", ptr.SessionID},
+		{"execution_id", ptr.ExecutionID},
+		{"event_id", ptr.EventID},
+	}
+	for _, c := range checks {
+		got, ok := labels[c.key]
+		if !ok {
+			continue
+		}
+		if got != c.want {
+			return false
+		}
+	}
+	return true
 }
 
 func buildJobLinks(executions []AgentExecution) []ExportJobLink {

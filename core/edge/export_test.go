@@ -346,6 +346,77 @@ func TestSessionExportAssemblerRecordsTenantMismatchPointerWithoutFetching(t *te
 	}
 }
 
+// TestSessionExportAssemblerRejectsArtifactStoreLabelMismatch is the
+// QA-driven regression for the export rejection at 30d2f2cc. The pointer
+// fields all match the export tenant/session/execution/event, so the
+// pointer-side cross-scope guard accepts the artifact and Stat is called.
+// The artifact-store metadata, however, carries labels for tenant-B (or a
+// different session/execution/event). Defense in depth: the bundler must
+// treat the label disagreement as tenant_mismatch and refuse to include
+// the entry, preventing a tenant-A event from exporting tenant-B
+// artifact metadata that another worker stored into a shared store.
+func TestSessionExportAssemblerRejectsArtifactStoreLabelMismatch(t *testing.T) {
+	env := setupExportTestEnv(t)
+
+	// Build a stater whose returned metadata carries WRONG labels for every
+	// pointer. The pointers themselves are still correctly scoped to
+	// tenant-a / sess-edge_sess_export — the test exercises the path where
+	// the pointer-side guard accepts the artifact and Stat returns
+	// authoritative-but-wrong identity labels.
+	metas := make(map[string]artifacts.Metadata, len(env.pointers))
+	for _, p := range env.pointers {
+		metas[p.URI] = artifacts.Metadata{
+			ContentType: "application/json",
+			SizeBytes:   1234,
+			Retention:   artifacts.RetentionAudit,
+			Labels: map[string]string{
+				// Mismatched tenant — the most important case.
+				"tenant_id": "tenant-b",
+				// Plus deliberately mismatched session/execution/event so
+				// the test also exercises the other label checks.
+				"session_id":   "edge_sess_other",
+				"execution_id": "exec_other",
+				"event_id":     "evt_other",
+			},
+		}
+	}
+	stater := &fakeArtifactStater{metas: metas}
+	a := &SessionExportAssembler{Store: env.store, ArtifactStore: stater, Now: time.Now}
+
+	bundle, err := a.Assemble(context.Background(), ExportSessionQuery{
+		TenantID:  env.tenantID,
+		SessionID: env.sessionID,
+	}, ExportOptions{})
+	if err != nil {
+		t.Fatalf("Assemble: %v", err)
+	}
+	if got := len(bundle.Artifacts); got != 0 {
+		t.Errorf("Artifacts length = %d, want 0 — every Stat returned mismatched labels and must NOT be included", got)
+	}
+	if got := len(bundle.MissingArtifacts); got != len(env.pointers) {
+		t.Errorf("MissingArtifacts length = %d, want %d (one tenant_mismatch per pointer)", got, len(env.pointers))
+	}
+	for _, m := range bundle.MissingArtifacts {
+		if m.Reason != MissingArtifactReasonTenantMismatch {
+			t.Errorf("MissingArtifact %q reason = %q, want %q (Stat label mismatch)", m.URI, m.Reason, MissingArtifactReasonTenantMismatch)
+		}
+	}
+
+	// Wire-shape paranoia: the leaked labels (tenant-b, edge_sess_other,
+	// exec_other, evt_other) must NOT appear anywhere in the marshaled
+	// bundle. If a future regression starts including the rejected entry
+	// or leaking labels via the missing manifest, this catches it.
+	raw, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatalf("marshal bundle: %v", err)
+	}
+	for _, leaked := range []string{"tenant-b", "edge_sess_other", "exec_other", "evt_other"} {
+		if strings.Contains(string(raw), leaked) {
+			t.Errorf("bundle JSON unexpectedly contained leaked label %q from rejected artifact", leaked)
+		}
+	}
+}
+
 // TestSessionExportAssemblerTruncatesAtMaxEventsAndReportsTotal — the
 // EventsTruncated signal is the only way an auditor can tell a partial
 // bundle from a complete one. Asserts the count cap is honored and the
