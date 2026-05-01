@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 )
 
@@ -190,7 +191,7 @@ func hookOutputForRun(eventName string, decision AgentdDecision, opts RunOptions
 }
 
 func agentdRequest(input HookInput, args []string, env map[string]string) AgentdRequest {
-	return AgentdRequest{
+	req := AgentdRequest{
 		EventName:       input.HookEventName,
 		SessionID:       input.SessionID,
 		ExecutionID:     envValue(env, "CORDUM_EDGE_EXECUTION_ID"),
@@ -209,6 +210,47 @@ func agentdRequest(input HookInput, args []string, env map[string]string) Agentd
 		RawPayload:      append([]byte(nil), input.RawPayload...),
 		HookCommandArgs: append([]string(nil), args...),
 	}
+
+	// EDGE-016: run the mapper so agentd receives deterministic mapped/
+	// redacted/hashed action fields. Failures are non-fatal — if the
+	// mapper errors (e.g. on a future schema we haven't taught it about)
+	// the agentd still receives the raw fields above and can fall back to
+	// its own classification path.
+	mapped, err := MapHookInput(input, mappingContextFromEnv(env))
+	if err != nil {
+		return req
+	}
+	req.Layer = string(mapped.Layer)
+	req.Kind = string(mapped.Kind)
+	req.TenantID = mapped.TenantID
+	req.PrincipalID = mapped.PrincipalID
+	req.Capability = mapped.Capability
+	req.RiskTags = append([]string(nil), mapped.RiskTags...)
+	req.Labels = mappedLabelsCopy(mapped.Labels)
+	req.InputRedacted = mapped.InputRedacted
+	req.InputHash = mapped.InputHash
+	req.ActionHash = mapped.ActionHash
+	req.ReasonCode = mapped.ReasonCode
+	// Override SessionID/ExecutionID with the agentd-trusted values from
+	// the mapping context. cordum-agentd sets CORDUM_EDGE_SESSION_ID/
+	// EXECUTION_ID when it spawns the hook; whatever Claude reported in
+	// the hook stdin is informational only.
+	if mapped.SessionID != "" {
+		req.SessionID = mapped.SessionID
+	}
+	if mapped.ExecutionID != "" {
+		req.ExecutionID = mapped.ExecutionID
+	}
+	return req
+}
+
+func mappedLabelsCopy(labels map[string]string) map[string]string {
+	if len(labels) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(labels))
+	maps.Copy(out, labels)
+	return out
 }
 
 func writeJSON(w io.Writer, v any) error {

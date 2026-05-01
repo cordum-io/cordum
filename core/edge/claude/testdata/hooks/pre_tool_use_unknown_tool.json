@@ -1,0 +1,13 @@
+{
+  "session_id": "sess_synthetic_pretooluse_unknown",
+  "transcript_path": "synthetic-transcript-id",
+  "cwd": "/redacted/cwd",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "MysteryTool",
+  "tool_use_id": "tu_synthetic_7",
+  "tool_input": {
+    "operation": "do something the mapper has never seen",
+    "future_field_a": "synthetic-extra"
+  }
+}

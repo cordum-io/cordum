@@ -1,0 +1,8 @@
+{
+  "session_id": "sess_synthetic_userpromptsubmit",
+  "transcript_path": "synthetic-transcript-id",
+  "cwd": "/redacted/cwd",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "redacted-prompt-text"
+}

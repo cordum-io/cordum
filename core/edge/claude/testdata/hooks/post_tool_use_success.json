@@ -1,0 +1,14 @@
+{
+  "session_id": "sess_synthetic_posttooluse_success",
+  "transcript_path": "synthetic-transcript-id",
+  "cwd": "/redacted/cwd",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_use_id": "tu_synthetic_1",
+  "duration_ms": 142,
+  "tool_response": {
+    "stdout": "redacted-stdout",
+    "exit_code": 0
+  }
+}

@@ -20,6 +20,12 @@ type AgentdClient interface {
 
 // AgentdRequest is sent only to the local agentd. RawPayload is bounded by the
 // runner and must never be logged or persisted by the hook.
+//
+// EDGE-016 added the trailing block of mapped/redacted/hashed fields so
+// cordum-agentd can call Gateway evaluate without re-classifying — the hook
+// already did the work via core/edge/claude.MapHookInput. Older agentd
+// builds that don't know about these fields will silently ignore them via
+// JSON optional decoding.
 type AgentdRequest struct {
 	EventName       string         `json:"event_name"`
 	SessionID       string         `json:"session_id,omitempty"`
@@ -38,6 +44,20 @@ type AgentdRequest struct {
 	ToolResponse    map[string]any `json:"tool_response,omitempty"`
 	RawPayload      []byte         `json:"raw_payload,omitempty"`
 	HookCommandArgs []string       `json:"hook_command_args,omitempty"`
+
+	// EDGE-016 mapped/redacted/hashed fields. All optional so older agentd
+	// builds keep working; presence indicates the hook ran the mapper.
+	Layer         string            `json:"edge_layer,omitempty"`
+	Kind          string            `json:"edge_kind,omitempty"`
+	TenantID      string            `json:"tenant_id,omitempty"`
+	PrincipalID   string            `json:"principal_id,omitempty"`
+	Capability    string            `json:"capability,omitempty"`
+	RiskTags      []string          `json:"risk_tags,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	InputRedacted map[string]any    `json:"input_redacted,omitempty"`
+	InputHash     string            `json:"input_hash,omitempty"`
+	ActionHash    string            `json:"action_hash,omitempty"`
+	ReasonCode    string            `json:"reason_code,omitempty"`
 }
 
 type Decision string

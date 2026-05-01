@@ -1,0 +1,11 @@
+{
+  "session_id": "sess_synthetic_missing_tool_name",
+  "transcript_path": "synthetic-transcript-id",
+  "cwd": "/redacted/cwd",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_use_id": "tu_synthetic_8",
+  "tool_input": {
+    "command": "go test ./..."
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "session_id": "sess_synthetic_missing_tool_input",
+  "transcript_path": "synthetic-transcript-id",
+  "cwd": "/redacted/cwd",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_use_id": "tu_synthetic_9"
+}

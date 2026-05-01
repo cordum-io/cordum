@@ -1,0 +1,16 @@
+{
+  "session_id": "sess_synthetic_pretooluse_multiedit",
+  "transcript_path": "synthetic-transcript-id",
+  "cwd": "/redacted/cwd",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "MultiEdit",
+  "tool_use_id": "tu_synthetic_6",
+  "tool_input": {
+    "file_path": "core/edge/claude/mapper.go",
+    "edits": [
+      {"old_string": "redacted-a", "new_string": "redacted-b"},
+      {"old_string": "redacted-c", "new_string": "redacted-d"}
+    ]
+  }
+}

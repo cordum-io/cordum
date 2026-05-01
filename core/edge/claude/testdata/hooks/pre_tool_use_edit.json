@@ -1,0 +1,14 @@
+{
+  "session_id": "sess_synthetic_pretooluse_edit",
+  "transcript_path": "synthetic-transcript-id",
+  "cwd": "/redacted/cwd",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Edit",
+  "tool_use_id": "tu_synthetic_5",
+  "tool_input": {
+    "file_path": "core/edge/claude/mapper.go",
+    "old_string": "redacted-old",
+    "new_string": "redacted-new"
+  }
+}
