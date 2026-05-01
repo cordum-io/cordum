@@ -118,6 +118,9 @@ func (s *RedisStore) Get(ctx context.Context, ptr string) ([]byte, Metadata, err
 
 	content, err := contentCmd.Bytes()
 	if err != nil {
+		if err == redis.Nil {
+			return nil, Metadata{}, ErrArtifactNotFound
+		}
 		return nil, Metadata{}, err
 	}
 	var meta Metadata
@@ -125,6 +128,44 @@ func (s *RedisStore) Get(ctx context.Context, ptr string) ([]byte, Metadata, err
 		_ = json.Unmarshal(data, &meta)
 	}
 	return content, meta, nil
+}
+
+// Stat returns metadata for a pointer without loading the artifact body.
+// Used by the Edge evidence-export bundler (EDGE-013) to assemble manifests
+// containing thousands of pointers without paying the memory/bandwidth cost
+// of loading every artifact body. Returns ErrArtifactNotFound when no
+// artifact (or no metadata record) exists for the pointer — callers
+// distinguish this from transient Redis errors and record the missing
+// artifact in the bundle's missing_artifacts section instead of failing the
+// whole export.
+func (s *RedisStore) Stat(ctx context.Context, ptr string) (Metadata, error) {
+	if s == nil || s.client == nil {
+		return Metadata{}, fmt.Errorf("artifact store unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	key, err := store.KeyFromPointer(ptr)
+	if err != nil {
+		return Metadata{}, err
+	}
+	id := strings.TrimPrefix(key, "art:")
+	if id == "" {
+		return Metadata{}, fmt.Errorf("invalid artifact key")
+	}
+	metaKey := artifactMetaKey(id)
+	data, err := s.client.Get(ctx, metaKey).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return Metadata{}, ErrArtifactNotFound
+		}
+		return Metadata{}, fmt.Errorf("get artifact metadata: %w", err)
+	}
+	var meta Metadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return Metadata{}, fmt.Errorf("decode artifact metadata: %w", err)
+	}
+	return meta, nil
 }
 
 func (s *RedisStore) ttlFor(retention RetentionClass) time.Duration {

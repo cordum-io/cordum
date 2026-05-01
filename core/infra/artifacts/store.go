@@ -1,6 +1,15 @@
 package artifacts
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrArtifactNotFound is returned by Stat (and indirectly by Get) when no
+// artifact exists for the requested pointer. Callers building exports use
+// errors.Is(err, ErrArtifactNotFound) to record the artifact in a
+// missing-artifacts manifest section instead of failing the whole bundle.
+var ErrArtifactNotFound = errors.New("artifact not found")
 
 // RetentionClass controls artifact TTL semantics.
 type RetentionClass string
@@ -20,7 +29,13 @@ type Metadata struct {
 }
 
 // Store provides artifact pointer storage.
+//
+// Stat returns metadata only. The Edge evidence-export bundler (EDGE-013)
+// uses Stat instead of Get so building a session manifest does not require
+// loading every artifact body into memory — bundles cap at thousands of
+// pointers but bodies can be megabytes apiece.
 type Store interface {
 	Put(ctx context.Context, content []byte, meta Metadata) (string, error)
 	Get(ctx context.Context, ptr string) ([]byte, Metadata, error)
+	Stat(ctx context.Context, ptr string) (Metadata, error)
 }
