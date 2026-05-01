@@ -188,7 +188,7 @@ func TestGatewayEdgeEvaluateMapsSafetyDecisionsToHookResponse(t *testing.T) {
 			wantDecision:       "REQUIRE_APPROVAL",
 			wantPermission:     "deny",
 			wantExitCode:       2,
-			wantApprovalRef:    "approval-edge-1",
+			wantApprovalRef:    edgecore.ApprovalRefPrefix,
 			wantWaitStrategy:   "manual_approval",
 			wantTerminalSubstr: "approval",
 		},
@@ -229,6 +229,9 @@ func TestGatewayEdgeEvaluateMapsSafetyDecisionsToHookResponse(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{response: tc.safety})
 			session := createEdgeRouteSession(t, handler)
+			if tc.safety.GetApprovalRequired() || tc.safety.GetDecision() == pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN {
+				tc.safety.PolicySnapshot = session.PolicySnapshot
+			}
 
 			rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}))
 			if rr.Code != http.StatusOK {
@@ -245,7 +248,11 @@ func TestGatewayEdgeEvaluateMapsSafetyDecisionsToHookResponse(t *testing.T) {
 			if resp.ExitCode != tc.wantExitCode {
 				t.Fatalf("exit_code = %d, want %d body=%s", resp.ExitCode, tc.wantExitCode, rr.Body.String())
 			}
-			if resp.ApprovalRef != tc.wantApprovalRef {
+			if tc.wantApprovalRef == edgecore.ApprovalRefPrefix {
+				if !strings.HasPrefix(resp.ApprovalRef, edgecore.ApprovalRefPrefix) {
+					t.Fatalf("approval_ref = %q, want generated %q prefix body=%s", resp.ApprovalRef, edgecore.ApprovalRefPrefix, rr.Body.String())
+				}
+			} else if resp.ApprovalRef != tc.wantApprovalRef {
 				t.Fatalf("approval_ref = %q, want %q body=%s", resp.ApprovalRef, tc.wantApprovalRef, rr.Body.String())
 			}
 			if resp.WaitStrategy != tc.wantWaitStrategy {
@@ -258,6 +265,73 @@ func TestGatewayEdgeEvaluateMapsSafetyDecisionsToHookResponse(t *testing.T) {
 				t.Fatalf("terminal_message = %q, want substring %q", resp.TerminalMessage, tc.wantTerminalSubstr)
 			}
 		})
+	}
+}
+
+func TestGatewayEdgeEvaluateRequireApprovalResponseIncludesRetryMetadata(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "production edit requires approval",
+		RuleId:           "claude-code.prod-edit-approval",
+		ApprovalRequired: true,
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeRouteSession(t, handler)
+	safety.response.PolicySnapshot = session.PolicySnapshot
+
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{
+		"command": "echo Bearer edge-approval-secret && npm test",
+	}))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("evaluate status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var resp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &resp)
+	if resp.Decision != string(edgecore.DecisionRequireApproval) {
+		t.Fatalf("decision = %q, want REQUIRE_APPROVAL body=%s", resp.Decision, rr.Body.String())
+	}
+	if resp.Reason != "production edit requires approval" || resp.RuleID != "claude-code.prod-edit-approval" || resp.PolicySnapshot != session.PolicySnapshot {
+		t.Fatalf("policy fields = reason:%q rule:%q snapshot:%q body=%s", resp.Reason, resp.RuleID, resp.PolicySnapshot, rr.Body.String())
+	}
+	if !strings.HasPrefix(resp.ApprovalRef, edgecore.ApprovalRefPrefix) {
+		t.Fatalf("approval_ref = %q, want generated %q prefix body=%s", resp.ApprovalRef, edgecore.ApprovalRefPrefix, rr.Body.String())
+	}
+	if resp.ApprovalURL != "/edge/approvals/"+resp.ApprovalRef {
+		t.Fatalf("approval_url = %q, want dashboard path for approval_ref %q", resp.ApprovalURL, resp.ApprovalRef)
+	}
+	if resp.ActionHash == "" || !strings.HasPrefix(resp.ActionHash, "sha256:") {
+		t.Fatalf("action_hash = %q, want server-generated sha256 binding", resp.ActionHash)
+	}
+	if resp.InputHash == "" || !strings.HasPrefix(resp.InputHash, "sha256:") {
+		t.Fatalf("input_hash = %q, want server-computed sha256 binding", resp.InputHash)
+	}
+	if resp.WaitStrategy != "manual_approval" || resp.WaitAfter != "approve_then_retry" {
+		t.Fatalf("wait guidance = strategy:%q wait_after:%q, want manual_approval/approve_then_retry body=%s", resp.WaitStrategy, resp.WaitAfter, rr.Body.String())
+	}
+	if resp.PermissionDecision != "deny" || resp.ExitCode != 2 {
+		t.Fatalf("hook permission/exit = %q/%d, want deny/2 body=%s", resp.PermissionDecision, resp.ExitCode, rr.Body.String())
+	}
+	for _, want := range []string{"not run", resp.ApprovalRef, "approve", "retry"} {
+		if !strings.Contains(strings.ToLower(resp.TerminalMessage), strings.ToLower(want)) {
+			t.Fatalf("terminal_message = %q, want substring %q", resp.TerminalMessage, want)
+		}
+		if !strings.Contains(strings.ToLower(resp.PermissionDecisionReason), strings.ToLower(want)) {
+			t.Fatalf("permission_decision_reason = %q, want substring %q", resp.PermissionDecisionReason, want)
+		}
+	}
+	assertBodyOmits(t, rr.Body.String(), "edge-approval-secret")
+
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, resp.ApprovalRef)
+	if err != nil || !ok {
+		t.Fatalf("GetApproval(%q) = (%#v,%v,%v), want stored pending approval", resp.ApprovalRef, stored, ok, err)
+	}
+	if stored.Status != edgecore.ApprovalStatusPending ||
+		stored.EventID != resp.EventID ||
+		stored.ActionHash != resp.ActionHash ||
+		stored.InputHash != resp.InputHash ||
+		stored.PolicySnapshot != resp.PolicySnapshot {
+		t.Fatalf("stored approval binding = status:%q event:%q action:%q input:%q snapshot:%q, want response binding %#v",
+			stored.Status, stored.EventID, stored.ActionHash, stored.InputHash, stored.PolicySnapshot, resp)
 	}
 }
 
@@ -593,7 +667,7 @@ func TestGatewayEdgeEvaluateAppliesDemoPolicySimulationFixtures(t *testing.T) {
 			t.Fatalf("missing fixture case %q", name)
 		}
 		t.Run(name, func(t *testing.T) {
-			session := createEdgeRouteSession(t, handler)
+			session := createEdgeEvaluateSessionWithPolicySnapshot(t, handler, safety.snapshot, edgecore.PolicyModeObserve)
 			rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBodyFromFixture(session.SessionID, session.ExecutionID, tc))
 			if rr.Code != http.StatusOK {
 				t.Fatalf("evaluate status = %d, want 200 body=%s", rr.Code, rr.Body.String())
@@ -674,11 +748,16 @@ func listEdgeEvaluateEvents(t *testing.T, s *server, sessionID, executionID stri
 
 func createEdgeEvaluateSessionWithPolicyMode(t *testing.T, handler http.Handler, mode edgecore.PolicyMode) edgeSessionCreateResponseJSON {
 	t.Helper()
+	return createEdgeEvaluateSessionWithPolicySnapshot(t, handler, "snap-edge-evaluate", mode)
+}
+
+func createEdgeEvaluateSessionWithPolicySnapshot(t *testing.T, handler http.Handler, snapshot string, mode edgecore.PolicyMode) edgeSessionCreateResponseJSON {
+	t.Helper()
 	rr := edgeRoutePOST(t, handler, "/api/v1/edge/sessions", `{
 		"agent_product":"claude-code",
 		"agent_version":"1.2.3",
 		"mode":"local-dev",
-		"policy_snapshot":"snap-edge-evaluate",
+		"policy_snapshot":"`+snapshot+`",
 		"policy_mode":"`+string(mode)+`"
 	}`)
 	if rr.Code != http.StatusCreated {
@@ -723,6 +802,9 @@ type edgeEvaluateResponseJSON struct {
 	RuleID                   string         `json:"rule_id"`
 	PolicySnapshot           string         `json:"policy_snapshot"`
 	ApprovalRef              string         `json:"approval_ref"`
+	ApprovalURL              string         `json:"approval_url"`
+	ActionHash               string         `json:"action_hash"`
+	InputHash                string         `json:"input_hash"`
 	Constraints              map[string]any `json:"constraints"`
 	UpdatedInput             map[string]any `json:"updated_input"`
 	EventID                  string         `json:"event_id"`
@@ -735,6 +817,7 @@ type edgeEvaluateResponseJSON struct {
 	TerminalTitle            string         `json:"terminal_title"`
 	TerminalMessage          string         `json:"terminal_message"`
 	WaitStrategy             string         `json:"wait_strategy"`
+	WaitAfter                string         `json:"wait_after"`
 	TimeoutMS                int            `json:"timeout_ms"`
 }
 

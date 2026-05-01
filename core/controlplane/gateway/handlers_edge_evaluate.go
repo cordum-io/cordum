@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -76,6 +78,9 @@ type edgeEvaluateResponse struct {
 	RuleID         string                `json:"rule_id,omitempty"`
 	PolicySnapshot string                `json:"policy_snapshot,omitempty"`
 	ApprovalRef    string                `json:"approval_ref,omitempty"`
+	ApprovalURL    string                `json:"approval_url,omitempty"`
+	ActionHash     string                `json:"action_hash,omitempty"`
+	InputHash      string                `json:"input_hash,omitempty"`
 	Constraints    map[string]any        `json:"constraints,omitempty"`
 	UpdatedInput   map[string]any        `json:"updated_input,omitempty"`
 	EventID        string                `json:"event_id,omitempty"`
@@ -90,6 +95,7 @@ type edgeEvaluateResponse struct {
 	TerminalTitle            string `json:"terminal_title,omitempty"`
 	TerminalMessage          string `json:"terminal_message,omitempty"`
 	WaitStrategy             string `json:"wait_strategy,omitempty"`
+	WaitAfter                string `json:"wait_after,omitempty"`
 	TimeoutMS                int    `json:"timeout_ms,omitempty"`
 }
 
@@ -117,12 +123,25 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	outcome := edgeEvaluateOutcomeFromSafety(policyInput.event.EventID, safetyResp)
+	actionHash, err := edgeEvaluateActionHash(policyInput.event, outcome.policySnapshot)
+	if err != nil {
+		writeEdgeEventRequestError(w, err, "invalid edge evaluate request")
+		return
+	}
 	appended, err := s.appendEdgeEvaluateOutcome(r.Context(), evalCtx.store, policyInput.event, outcome, edgeEvaluateDurationMS(started))
 	if err != nil {
 		writeEdgeEventStoreError(w, r, err, "append edge evaluate decision event")
 		return
 	}
 	outcome.response.EventID = appended.EventID
+	if outcome.decision == edgecore.DecisionRequireApproval {
+		approval, err := s.enqueueEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, actionHash)
+		if err != nil {
+			writeEdgeApprovalStoreError(w, r, err, "enqueue edge evaluate approval")
+			return
+		}
+		outcome = outcome.withApprovalRetryMetadata(*approval)
+	}
 	writeJSON(w, outcome.response)
 }
 
@@ -428,6 +447,113 @@ func (outcome edgeEvaluateDecisionOutcome) edgeEvaluateRequireApproval() edgeEva
 	outcome.response.TerminalMessage = reason
 	outcome.response.WaitStrategy = "manual_approval"
 	return outcome
+}
+
+func (outcome edgeEvaluateDecisionOutcome) withApprovalRetryMetadata(approval edgecore.EdgeApproval) edgeEvaluateDecisionOutcome {
+	approvalRef := strings.TrimSpace(approval.ApprovalRef)
+	actionHash := strings.TrimSpace(approval.ActionHash)
+	inputHash := strings.TrimSpace(approval.InputHash)
+	message := edgeEvaluateApprovalRetryMessage(defaultEdgeEvaluateReason(outcome.reason, "approval required"), approvalRef)
+
+	outcome.approvalRef = approvalRef
+	outcome.response.ApprovalRef = approvalRef
+	outcome.response.ApprovalURL = edgeEvaluateApprovalDashboardPath(approvalRef)
+	outcome.response.ActionHash = actionHash
+	outcome.response.InputHash = inputHash
+	outcome.response.WaitAfter = "approve_then_retry"
+	outcome.response.PermissionDecisionReason = message
+	outcome.response.TerminalMessage = message
+	return outcome
+}
+
+func edgeEvaluateApprovalRetryMessage(reason, approvalRef string) string {
+	reason = defaultEdgeEvaluateReason(reason, "approval required")
+	if strings.TrimSpace(approvalRef) == "" {
+		return reason + ". This action was not run. Approve it in Cordum, then retry the command."
+	}
+	return fmt.Sprintf("%s. This action was not run. Approval: %s. Approve it in Cordum, then retry the command.", reason, approvalRef)
+}
+
+func edgeEvaluateApprovalDashboardPath(approvalRef string) string {
+	approvalRef = strings.TrimSpace(approvalRef)
+	if approvalRef == "" {
+		return ""
+	}
+	return "/edge/approvals/" + approvalRef
+}
+
+func edgeEvaluateActionHash(event edgecore.AgentActionEvent, policySnapshot string) (string, error) {
+	payload := struct {
+		TenantID       string             `json:"tenant_id"`
+		SessionID      string             `json:"session_id"`
+		ExecutionID    string             `json:"execution_id"`
+		PrincipalID    string             `json:"principal_id"`
+		Layer          edgecore.Layer     `json:"layer"`
+		Kind           edgecore.EventKind `json:"kind"`
+		ToolName       string             `json:"tool_name"`
+		ToolUseID      string             `json:"tool_use_id,omitempty"`
+		ActionName     string             `json:"action_name"`
+		Capability     string             `json:"capability"`
+		RiskTags       []string           `json:"risk_tags,omitempty"`
+		Labels         edgecore.Labels    `json:"labels,omitempty"`
+		InputHash      string             `json:"input_hash"`
+		PolicySnapshot string             `json:"policy_snapshot"`
+	}{
+		TenantID:       strings.TrimSpace(event.TenantID),
+		SessionID:      strings.TrimSpace(event.SessionID),
+		ExecutionID:    strings.TrimSpace(event.ExecutionID),
+		PrincipalID:    strings.TrimSpace(event.PrincipalID),
+		Layer:          event.Layer,
+		Kind:           event.Kind,
+		ToolName:       strings.TrimSpace(event.ToolName),
+		ToolUseID:      strings.TrimSpace(event.ToolUseID),
+		ActionName:     strings.TrimSpace(event.ActionName),
+		Capability:     strings.TrimSpace(event.Capability),
+		RiskTags:       append([]string(nil), event.RiskTags...),
+		Labels:         cloneEdgeEvaluateLabels(event.Labels),
+		InputHash:      strings.TrimSpace(event.InputHash),
+		PolicySnapshot: strings.TrimSpace(policySnapshot),
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal edge action hash: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func cloneEdgeEvaluateLabels(labels edgecore.Labels) edgecore.Labels {
+	if len(labels) == 0 {
+		return nil
+	}
+	out := make(edgecore.Labels, len(labels))
+	for key, value := range labels {
+		out[key] = value
+	}
+	return out
+}
+
+func (s *server) enqueueEdgeEvaluateApproval(ctx context.Context, store edgecore.Store, event edgecore.AgentActionEvent, outcome edgeEvaluateDecisionOutcome, actionHash string) (*edgecore.EdgeApproval, error) {
+	policySnapshot := strings.TrimSpace(outcome.policySnapshot)
+	if policySnapshot == "" {
+		policySnapshot = strings.TrimSpace(event.PolicySnapshot)
+	}
+	return store.EnqueueApproval(ctx, edgecore.EdgeApprovalRequest{
+		TenantID:       strings.TrimSpace(event.TenantID),
+		SessionID:      strings.TrimSpace(event.SessionID),
+		ExecutionID:    strings.TrimSpace(event.ExecutionID),
+		EventID:        strings.TrimSpace(event.EventID),
+		PrincipalID:    strings.TrimSpace(event.PrincipalID),
+		Requester:      strings.TrimSpace(event.PrincipalID),
+		Reason:         defaultEdgeEvaluateReason(outcome.reason, "approval required"),
+		RuleID:         strings.TrimSpace(outcome.ruleID),
+		PolicySnapshot: policySnapshot,
+		ActionHash:     strings.TrimSpace(actionHash),
+		InputHash:      strings.TrimSpace(event.InputHash),
+		TTL:            5 * time.Minute,
+		Labels:         edgecore.Labels{"source": "edge.evaluate"},
+		Metadata:       edgecore.Metadata{"source": "edge.evaluate"},
+	})
 }
 
 func edgeEvaluateConstraintsToMap(constraints *pb.PolicyConstraints) map[string]any {
