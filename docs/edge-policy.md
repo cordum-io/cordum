@@ -163,10 +163,21 @@ inline-wait fields:
 
 The wait helper polls the EDGE-011 store every 250 ms with `context.WithTimeout`
 and `time.NewTicker`, both released via `defer` so timeout, request cancellation,
-and store errors all exit without leaking goroutines or tickers. After the wait
-returns, the consume helper surfaces whatever state the approval ended in
-(approved → consume → ALLOW, rejected → DENY, expired → DENY, still pending →
-REQUIRE_APPROVAL with the same approval_ref).
+and store errors all exit without leaking goroutines or tickers.
+
+For `wait_for_approval=true` on `/api/v1/edge/evaluate`, a resolved wait routes
+through the same consume helper (approved → consume → `ALLOW`, rejected →
+`DENY`, expired → `DENY`). If the wait times out while the approval is still
+pending, evaluate returns `DENY` timeout guidance, keeps the action blocked, and
+includes the existing `approval_ref`, `wait_after=approve_then_retry`, and
+terminal copy telling the caller that the action was not run, the approval is
+still pending, and the caller should approve it in Cordum and then retry. The
+pending approval remains unconsumed.
+
+The standalone `POST /api/v1/edge/approvals/{approval_ref}/wait` endpoint is
+observation-only: it returns the resolved `EdgeApproval`, or the still-pending
+`EdgeApproval` if its bounded timeout elapses. It never consumes an approval or
+changes an evaluate decision by itself.
 
 Inline wait is **not** required by browser/dashboard approval UX. Production
 hooks and agentd should default to `wait_for_approval: false` and treat the
