@@ -30,7 +30,7 @@ Common options:
 | Setting | Purpose |
 | --- | --- |
 | `CORDUM_EDGE_POLICY_MODE` | `observe`, `enforce`, or `enterprise-strict` |
-| `CORDUM_AGENTD_SOCKET` | User-local socket path or local loopback URL |
+| `CORDUM_AGENTD_SOCKET` | Local `http://127.0.0.1`/`localhost` hook URL; non-HTTP socket paths are rejected in P0 |
 | `CORDUM_AGENTD_HOOK_TIMEOUT` | Local hook/evaluator timeout (positive, bounded) |
 | `CORDUM_AGENTD_GATEWAY_TIMEOUT` | Per-call Gateway timeout |
 | `CORDUM_EDGE_HEARTBEAT_TTL` | Gateway heartbeat TTL |
@@ -57,7 +57,7 @@ Persisted state is intentionally small:
 - `session_id`, `execution_id`, `trace_id`
 - `tenant_id`, `principal_id`
 - `policy_snapshot`, `policy_mode`, `dashboard_url`
-- local socket path / bind metadata
+- local hook bind metadata
 - start/end timestamps and degraded/pending-shutdown flags
 - non-secret metadata such as cwd/repo/git identifiers
 
@@ -73,16 +73,19 @@ The P0 implementation defaults to a local-only hook endpoint:
 http://127.0.0.1:8765/v1/edge/hooks/claude
 ```
 
-Loopback fallback requires a high-entropy per-session nonce. Agentd accepts the
+Loopback transport requires a high-entropy per-session nonce. Agentd accepts the
 nonce either in `X-Cordum-Agentd-Nonce` or as a `?nonce=` query parameter so the
 existing `cordum-hook` HTTP client can use a configured local URL without a
-shared-code change. Broad or remote binds such as `0.0.0.0` are rejected. Unix
-socket directory preparation uses user-only permissions where supported.
+shared-code change. Broad or remote binds such as `0.0.0.0` are rejected.
 
-Enterprise deployments should prefer a user-owned socket/named-pipe transport
-when available. The local-dev loopback fallback is local-only and nonce guarded;
-the nonce is process-local and must not be written into generated Claude
-settings or persisted state.
+P0 does **not** start a Unix socket or Windows named-pipe listener. If
+`CORDUM_AGENTD_SOCKET` is set to a non-HTTP path such as
+`/tmp/cordum-agentd.sock`, startup fails instead of silently running without a
+hook listener. Enterprise deployments should prefer a user-owned
+socket/named-pipe transport once that listener is implemented; until then the
+local-dev loopback endpoint is local-only and nonce guarded. The nonce is
+process-local and must not be written into generated Claude settings or
+persisted state.
 
 ## Heartbeat, degraded state, and shutdown
 
@@ -91,9 +94,12 @@ greater than half the configured TTL. Heartbeats do not overlap: if a previous
 heartbeat is still in flight, the next tick is skipped rather than creating a
 pile-up.
 
-Consecutive Gateway failures mark local status degraded. In
+Consecutive Gateway failures mark persisted local status degraded and, when the
+Gateway is reachable for evidence writes, emit a session-degraded event. In
 `enterprise-strict`/fail-closed mode, repeated heartbeat or startup failures are
 reported as fail-closed instead of silently allowing the session to proceed.
+State persistence failures are returned as runtime errors instead of being
+reported as success with stale or missing local evidence.
 
 On SIGINT/SIGTERM or context cancellation, agentd:
 

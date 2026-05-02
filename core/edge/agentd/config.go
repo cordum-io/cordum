@@ -114,10 +114,14 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("invalid CORDUM_EDGE_POLICY_MODE %q", c.PolicyMode)
 	}
-	if c.BindURL != "" {
-		if err := validateLocalBindURL(c.BindURL); err != nil {
-			return err
-		}
+	if strings.TrimSpace(c.SocketPath) != "" {
+		return fmt.Errorf("CORDUM_AGENTD_SOCKET socket paths are not supported in this P0 build; use a local http loopback URL such as %s", defaultAgentdBindURL)
+	}
+	if strings.TrimSpace(c.BindURL) == "" {
+		return fmt.Errorf("CORDUM_AGENTD_SOCKET must be a local http loopback URL such as %s; socket paths are not supported in this P0 build", defaultAgentdBindURL)
+	}
+	if err := validateLocalBindURL(c.BindURL); err != nil {
+		return err
 	}
 	for name, value := range map[string]time.Duration{
 		"CORDUM_AGENTD_HOOK_TIMEOUT":     c.HookTimeout,
@@ -152,7 +156,7 @@ func validateLocalBindURL(raw string) error {
 		return fmt.Errorf("invalid local agentd bind URL: %w", err)
 	}
 	if u.Scheme != "http" {
-		return fmt.Errorf("agentd bind URL must use local http loopback or a user socket, got %q", u.Scheme)
+		return fmt.Errorf("agentd bind URL must use local http loopback, got %q", u.Scheme)
 	}
 	if !isLoopbackHost(u.Hostname()) {
 		return fmt.Errorf("agentd bind URL must be local-only loopback, got host %q", u.Hostname())

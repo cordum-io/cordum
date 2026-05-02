@@ -81,7 +81,9 @@ func (m *SessionManager) Start(ctx context.Context) (*SessionState, error) {
 	if err != nil {
 		if isTimeoutLike(err) && !m.shouldFailClosed() {
 			state := m.degradedState("gateway timeout while creating edge session")
-			_ = m.store.Save(ctx, state)
+			if err := m.store.Save(ctx, state); err != nil {
+				return nil, fmt.Errorf("persist degraded session state: %w", err)
+			}
 			m.mu.Lock()
 			m.state = &state
 			m.mu.Unlock()
@@ -145,20 +147,30 @@ func (m *SessionManager) Shutdown(ctx context.Context, opts ShutdownOptions) err
 	}
 	if strings.TrimSpace(state.ExecutionID) != "" {
 		if err := m.gateway.EndExecution(ctx, state.ExecutionID, EndExecutionRequest{Status: execStatus, EndedAt: &now}); err != nil {
-			m.recordShutdownFailure(ctx, state, err, now)
+			if saveErr := m.recordShutdownFailure(ctx, state, err, now); saveErr != nil {
+				return errors.Join(err, saveErr)
+			}
 			return err
 		}
 	}
 	if strings.TrimSpace(state.SessionID) != "" {
 		if err := m.gateway.EndSession(ctx, state.SessionID, EndSessionRequest{Status: sessStatus, EndedAt: &now}); err != nil {
-			m.recordShutdownFailure(ctx, state, err, now)
+			if saveErr := m.recordShutdownFailure(ctx, state, err, now); saveErr != nil {
+				return errors.Join(err, saveErr)
+			}
 			return err
 		}
 	}
 	state.Status = sessStatus
 	state.EndedAt = &now
 	state.PendingGatewayEnd = false
-	_ = m.store.Save(ctx, state)
+	if err := m.store.Save(ctx, state); err != nil {
+		m.mu.Lock()
+		m.state = &state
+		m.shutdown = true
+		m.mu.Unlock()
+		return fmt.Errorf("persist final session state: %w", err)
+	}
 	m.mu.Lock()
 	m.state = &state
 	m.shutdown = true
@@ -178,7 +190,51 @@ func (m *SessionManager) State() SessionState {
 	return *m.state
 }
 
-func (m *SessionManager) recordShutdownFailure(ctx context.Context, state SessionState, err error, now time.Time) {
+func (m *SessionManager) RecordHeartbeatStatus(ctx context.Context, status HeartbeatStatus) (SessionState, error) {
+	if m == nil {
+		return SessionState{}, errors.New("session manager is nil")
+	}
+	if !status.Degraded && !status.FailClosed {
+		return m.State(), nil
+	}
+	reason := strings.TrimSpace(status.Reason)
+	if reason == "" {
+		reason = "gateway heartbeat status degraded"
+	}
+	if status.ConsecutiveFailures > 0 {
+		reason = fmt.Sprintf("%s (consecutive failures: %d)", reason, status.ConsecutiveFailures)
+	}
+	m.mu.Lock()
+	if m.state == nil {
+		m.mu.Unlock()
+		return SessionState{}, nil
+	}
+	state := *m.state
+	if state.Status == edgecore.SessionStatusEnded || state.EndedAt != nil {
+		m.mu.Unlock()
+		return state, nil
+	}
+	state.Status = edgecore.SessionStatusDegraded
+	state.DegradedReason = reason
+	state.FailClosed = status.FailClosed
+	if status.FailClosed {
+		state.Status = edgecore.SessionStatusFailed
+		state.PendingGatewayEnd = true
+	}
+	m.mu.Unlock()
+
+	if err := m.store.Save(ctx, state); err != nil {
+		return state, fmt.Errorf("persist heartbeat session state: %w", err)
+	}
+	m.mu.Lock()
+	if m.state != nil && m.state.SessionID == state.SessionID {
+		m.state = &state
+	}
+	m.mu.Unlock()
+	return state, nil
+}
+
+func (m *SessionManager) recordShutdownFailure(ctx context.Context, state SessionState, err error, now time.Time) error {
 	state.Status = edgecore.SessionStatusFailed
 	state.EndedAt = &now
 	state.PendingGatewayEnd = true
@@ -186,10 +242,14 @@ func (m *SessionManager) recordShutdownFailure(ctx context.Context, state Sessio
 	if !isTimeoutLike(err) {
 		state.DegradedReason = "gateway error during shutdown"
 	}
-	_ = m.store.Save(ctx, state)
+	saveErr := m.store.Save(ctx, state)
 	m.mu.Lock()
 	m.state = &state
 	m.mu.Unlock()
+	if saveErr != nil {
+		return fmt.Errorf("persist failed session state: %w", saveErr)
+	}
+	return nil
 }
 
 func (m *SessionManager) restore(ctx context.Context) (*SessionState, bool) {

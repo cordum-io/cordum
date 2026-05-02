@@ -73,6 +73,24 @@ func TestLoadConfigRejectsNonLocalAgentdBindURL(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectsNonHTTPSocketPathUntilSocketListenerImplemented(t *testing.T) {
+	t.Parallel()
+
+	_, err := LoadConfig(map[string]string{
+		"CORDUM_GATEWAY":       "http://127.0.0.1:8081",
+		"CORDUM_API_KEY":       "api-key-123",
+		"CORDUM_TENANT_ID":     "tenant-a",
+		"CORDUM_AGENTD_SOCKET": "/tmp/cordum-agentd.sock",
+	})
+	if err == nil {
+		t.Fatal("LoadConfig returned nil error for unsupported non-HTTP socket path")
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "socket") || !strings.Contains(msg, "not supported") {
+		t.Fatalf("error = %q, want unsupported socket-path guidance", err.Error())
+	}
+}
+
 func TestLoadConfigRejectsInvalidDurations(t *testing.T) {
 	t.Parallel()
 

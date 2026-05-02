@@ -56,6 +56,40 @@ func TestSessionManagerCreateSessionTimeoutDegradesOutsideEnterpriseStrict(t *te
 	}
 }
 
+func TestSessionManagerStartReturnsDegradedStateSaveError(t *testing.T) {
+	t.Parallel()
+
+	saveErr := errors.New("state store permission denied")
+	gateway := stubGatewayLifecycleClient{
+		createSession: func(context.Context, CreateSessionRequest) (CreateSessionResponse, error) {
+			return CreateSessionResponse{}, ErrGatewayTimeout
+		},
+	}
+	manager := NewSessionManager(SessionManagerConfig{
+		Gateway:    gateway,
+		StateStore: failingStateStore{saveErr: saveErr},
+		Metadata: LocalSessionMetadata{
+			TenantID:      "tenant-a",
+			PrincipalID:   "principal-a",
+			PrincipalType: edgecore.PrincipalTypeHuman,
+			CWD:           "D:/Cordum/cordum",
+		},
+		PolicyMode: edgecore.PolicyModeObserve,
+		Clock:      fixedClock{now: time.Date(2026, 5, 2, 7, 12, 0, 0, time.UTC)},
+	})
+
+	state, err := manager.Start(context.Background())
+	if !errors.Is(err, saveErr) {
+		t.Fatalf("Start error = %v, want state store save error", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "persist degraded session state") {
+		t.Fatalf("Start error = %v, want degraded persistence context", err)
+	}
+	if state != nil {
+		t.Fatalf("state = %#v, want nil when degraded state cannot be persisted", state)
+	}
+}
+
 func TestSessionManagerCreateSessionTimeoutFailsClosedInEnterpriseStrict(t *testing.T) {
 	t.Parallel()
 
@@ -312,6 +346,49 @@ func TestSessionManagerShutdownEndsExecutionAndSessionExactlyOnce(t *testing.T) 
 	}
 }
 
+func TestSessionManagerRecordHeartbeatStatusFailClosedPersistsFailedState(t *testing.T) {
+	t.Parallel()
+
+	store := NewMemoryStateStore()
+	manager := NewSessionManager(SessionManagerConfig{
+		Gateway:    stubGatewayLifecycleClient{},
+		StateStore: store,
+		InitialState: &SessionState{
+			SessionID:    "sess-heartbeat-fail",
+			ExecutionID:  "exec-heartbeat-fail",
+			TenantID:     "tenant-a",
+			PrincipalID:  "principal-a",
+			PolicyMode:   edgecore.PolicyModeEnterpriseStrict,
+			Status:       edgecore.SessionStatusRunning,
+			StartedAt:    time.Date(2026, 5, 2, 7, 25, 0, 0, time.UTC),
+			DashboardURL: "/edge/sessions/sess-heartbeat-fail",
+		},
+	})
+
+	state, err := manager.RecordHeartbeatStatus(context.Background(), HeartbeatStatus{
+		ConsecutiveFailures: 3,
+		Degraded:            true,
+		FailClosed:          true,
+		Reason:              "gateway heartbeat failures exceeded threshold",
+	})
+	if err != nil {
+		t.Fatalf("RecordHeartbeatStatus: %v", err)
+	}
+	if state.Status != edgecore.SessionStatusFailed || !state.FailClosed || !state.PendingGatewayEnd {
+		t.Fatalf("heartbeat fail-closed state = %#v", state)
+	}
+	if !strings.Contains(strings.ToLower(state.DegradedReason), "heartbeat") {
+		t.Fatalf("degraded reason = %q, want heartbeat", state.DegradedReason)
+	}
+	persisted, ok, err := store.Load(context.Background(), "sess-heartbeat-fail")
+	if err != nil || !ok {
+		t.Fatalf("load persisted state ok=%v err=%v", ok, err)
+	}
+	if persisted.Status != edgecore.SessionStatusFailed || !persisted.FailClosed || !persisted.PendingGatewayEnd {
+		t.Fatalf("persisted heartbeat fail-closed state = %#v", persisted)
+	}
+}
+
 func TestSessionManagerShutdownGatewayTimeoutRecordsFailedState(t *testing.T) {
 	t.Parallel()
 
@@ -350,4 +427,77 @@ func TestSessionManagerShutdownGatewayTimeoutRecordsFailedState(t *testing.T) {
 	if !strings.Contains(strings.ToLower(state.DegradedReason), "timeout") {
 		t.Fatalf("degraded reason = %q, want timeout", state.DegradedReason)
 	}
+}
+
+func TestSessionManagerShutdownReturnsFinalStatePersistenceError(t *testing.T) {
+	t.Parallel()
+
+	saveErr := errors.New("state store disk full")
+	manager := NewSessionManager(SessionManagerConfig{
+		Gateway:    stubGatewayLifecycleClient{},
+		StateStore: failingStateStore{saveErr: saveErr},
+		InitialState: &SessionState{
+			SessionID:   "sess-save",
+			ExecutionID: "exec-save",
+			TenantID:    "tenant-a",
+			Status:      edgecore.SessionStatusRunning,
+		},
+		Clock: fixedClock{now: time.Date(2026, 5, 2, 7, 35, 0, 0, time.UTC)},
+	})
+
+	err := manager.Shutdown(context.Background(), ShutdownOptions{
+		ExecutionStatus: edgecore.ExecutionStatusSucceeded,
+		SessionStatus:   edgecore.SessionStatusEnded,
+	})
+	if !errors.Is(err, saveErr) {
+		t.Fatalf("Shutdown error = %v, want state store save error", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "persist final session state") {
+		t.Fatalf("Shutdown error = %v, want final persistence context", err)
+	}
+}
+
+func TestSessionManagerShutdownReturnsGatewayAndFailedStatePersistenceErrors(t *testing.T) {
+	t.Parallel()
+
+	saveErr := errors.New("state store read-only")
+	gateway := stubGatewayLifecycleClient{
+		endExecution: func(context.Context, string, EndExecutionRequest) error {
+			return ErrGatewayTimeout
+		},
+	}
+	manager := NewSessionManager(SessionManagerConfig{
+		Gateway:    gateway,
+		StateStore: failingStateStore{saveErr: saveErr},
+		InitialState: &SessionState{
+			SessionID:   "sess-fail-save",
+			ExecutionID: "exec-fail-save",
+			TenantID:    "tenant-a",
+			Status:      edgecore.SessionStatusRunning,
+		},
+		Clock: fixedClock{now: time.Date(2026, 5, 2, 7, 40, 0, 0, time.UTC)},
+	})
+
+	err := manager.Shutdown(context.Background(), ShutdownOptions{
+		ExecutionStatus: edgecore.ExecutionStatusSucceeded,
+		SessionStatus:   edgecore.SessionStatusEnded,
+	})
+	if !errors.Is(err, ErrGatewayTimeout) || !errors.Is(err, saveErr) {
+		t.Fatalf("Shutdown error = %v, want joined gateway timeout and state save errors", err)
+	}
+	if !strings.Contains(err.Error(), "persist failed session state") {
+		t.Fatalf("Shutdown error = %v, want failed-state persistence context", err)
+	}
+}
+
+type failingStateStore struct {
+	saveErr error
+}
+
+func (s failingStateStore) Save(context.Context, SessionState) error {
+	return s.saveErr
+}
+
+func (s failingStateStore) Load(context.Context, string) (SessionState, bool, error) {
+	return SessionState{}, false, nil
 }

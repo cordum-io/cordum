@@ -149,3 +149,7 @@ type GatewayLifecycleClient interface {
 type HeartbeatClient interface {
 	Heartbeat(context.Context, string) (HeartbeatResponse, error)
 }
+
+type SessionDegradedWriter interface {
+	MarkSessionDegraded(context.Context, SessionState, string) (edgecore.AgentActionEvent, error)
+}

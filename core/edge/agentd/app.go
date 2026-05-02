@@ -7,7 +7,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
+
+	edgecore "github.com/cordum/cordum/core/edge"
 )
 
 type RunOptions struct {
@@ -86,26 +89,32 @@ func Run(ctx context.Context, opts RunOptions) error {
 	var httpServer *http.Server
 	var listener net.Listener
 	serverErr := make(chan error, 1)
-	if cfg.BindURL != "" {
-		httpServer, listener, err = newHTTPServer(cfg, local)
-		if err != nil {
-			return err
-		}
-		go func() {
-			err := httpServer.Serve(listener)
-			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				serverErr <- err
-				return
-			}
-			serverErr <- nil
-		}()
+	httpServer, listener, err = newHTTPServer(cfg, local)
+	if err != nil {
+		return err
 	}
+	go func() {
+		err := httpServer.Serve(listener)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+			return
+		}
+		serverErr <- nil
+	}()
 
 	hbCtx, hbCancel := context.WithCancel(ctx)
 	defer hbCancel()
+	heartbeatStatusErr := make(chan error, 1)
+	sendHeartbeatStatusErr := func(err error) {
+		select {
+		case heartbeatStatusErr <- err:
+		default:
+		}
+	}
 	if heartbeat, ok := gateway.(HeartbeatClient); ok {
 		ticker := time.NewTicker(cfg.HeartbeatInterval)
 		defer ticker.Stop()
+		degradedWriter, _ := gateway.(SessionDegradedWriter)
 		service := NewHeartbeatService(HeartbeatConfig{
 			Gateway:                heartbeat,
 			SessionID:              state.SessionID,
@@ -113,16 +122,36 @@ func Run(ctx context.Context, opts RunOptions) error {
 			MaxConsecutiveFailures: 3,
 			PolicyMode:             cfg.PolicyMode,
 			FailClosed:             cfg.FailClosed,
+			OnStatus: func(status HeartbeatStatus) {
+				statusCtx, cancel := context.WithTimeout(context.Background(), cfg.GatewayTimeout)
+				defer cancel()
+				updated, err := manager.RecordHeartbeatStatus(statusCtx, status)
+				if err != nil {
+					sendHeartbeatStatusErr(err)
+					return
+				}
+				if degradedWriter != nil && status.Degraded && strings.TrimSpace(updated.SessionID) != "" {
+					_, _ = degradedWriter.MarkSessionDegraded(statusCtx, updated, status.Reason)
+				}
+				if status.FailClosed {
+					sendHeartbeatStatusErr(fmt.Errorf("%w: %s", ErrFailClosed, status.Reason))
+				}
+			},
 		})
 		go service.Run(hbCtx, ticker.C)
 		defer service.Wait()
 	}
 
+	var runErr error
 	select {
 	case <-ctx.Done():
 	case err := <-serverErr:
 		if err != nil {
-			return err
+			runErr = err
+		}
+	case err := <-heartbeatStatusErr:
+		if err != nil {
+			runErr = err
 		}
 	}
 
@@ -134,8 +163,20 @@ func Run(ctx context.Context, opts RunOptions) error {
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.GatewayTimeout)
 	defer cancel()
-	if err := manager.Shutdown(shutdownCtx, ShutdownOptions{}); err != nil {
-		return err
+	shutdownOpts := ShutdownOptions{}
+	if errors.Is(runErr, ErrFailClosed) {
+		shutdownOpts.ExecutionStatus = edgecore.ExecutionStatusFailed
+		shutdownOpts.SessionStatus = edgecore.SessionStatusFailed
+	}
+	shutdownErr := manager.Shutdown(shutdownCtx, shutdownOpts)
+	if runErr != nil && shutdownErr != nil {
+		return errors.Join(runErr, shutdownErr)
+	}
+	if runErr != nil {
+		return runErr
+	}
+	if shutdownErr != nil {
+		return shutdownErr
 	}
 	return nil
 }

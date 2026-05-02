@@ -63,7 +63,7 @@ func runCLI(ctx context.Context, opts cliOptions) int {
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&cfg.Gateway, "gateway", cfg.Gateway, "Cordum Gateway base URL")
 	fs.StringVar(&cfg.TenantID, "tenant", cfg.TenantID, "Cordum tenant ID")
-	fs.StringVar(&cfg.SocketPath, "socket", cfg.SocketPath, "local cordum-agentd socket path")
+	fs.StringVar(&cfg.SocketPath, "socket", cfg.SocketPath, "local cordum-agentd hook URL (P0 supports http loopback only)")
 	fs.BoolVar(&cfg.FailClosed, "fail-closed", cfg.FailClosed, "fail closed when local governance cannot start")
 	help := fs.Bool("help", false, "show help")
 	if err := fs.Parse(opts.Args); err != nil {
@@ -119,7 +119,7 @@ Runs the local Cordum Edge agent daemon for Claude hook sessions.
 Flags:
   --gateway URL       Cordum Gateway base URL (or CORDUM_GATEWAY)
   --tenant ID         Cordum tenant ID (or CORDUM_TENANT_ID)
-  --socket PATH       User-local socket path (or CORDUM_AGENTD_SOCKET)
+  --socket URL        Local http loopback hook URL (or CORDUM_AGENTD_SOCKET)
   --fail-closed       Exit non-zero when governance cannot start (or CORDUM_AGENTD_FAIL_CLOSED=true)
   --help              Show this help
 
