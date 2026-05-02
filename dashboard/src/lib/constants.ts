@@ -27,6 +27,14 @@ export const API_PATHS = {
   traces: "/traces",
   dlq: "/dlq",
   auth: "/auth",
+  edge: {
+    sessions: "/edge/sessions",
+    executions: "/edge/executions",
+    approvals: "/edge/approvals",
+    evaluate: "/edge/evaluate",
+    events: "/edge/events",
+    eventsBatch: "/edge/events/batch",
+  },
 } as const;
 
 export const APP_TITLE =
