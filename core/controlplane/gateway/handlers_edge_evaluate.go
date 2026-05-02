@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -572,6 +573,8 @@ func edgeEvaluateApprovalDashboardPath(approvalRef string) string {
 }
 
 func edgeEvaluateActionHash(event edgecore.AgentActionEvent, policySnapshot string) (string, error) {
+	riskTags := append([]string(nil), event.RiskTags...)
+	sort.Strings(riskTags)
 	payload := struct {
 		TenantID       string             `json:"tenant_id"`
 		SessionID      string             `json:"session_id"`
@@ -598,7 +601,7 @@ func edgeEvaluateActionHash(event edgecore.AgentActionEvent, policySnapshot stri
 		ToolUseID:      strings.TrimSpace(event.ToolUseID),
 		ActionName:     strings.TrimSpace(event.ActionName),
 		Capability:     strings.TrimSpace(event.Capability),
-		RiskTags:       append([]string(nil), event.RiskTags...),
+		RiskTags:       riskTags,
 		Labels:         cloneEdgeEvaluateLabels(event.Labels),
 		InputHash:      strings.TrimSpace(event.InputHash),
 		PolicySnapshot: strings.TrimSpace(policySnapshot),
@@ -780,6 +783,7 @@ func (s *server) consumeEdgeEvaluateApproval(ctx context.Context, store edgecore
 			ExecutionID:    strings.TrimSpace(approval.ExecutionID),
 			EventID:        strings.TrimSpace(approval.EventID),
 			ActionHash:     strings.TrimSpace(actionHash),
+			InputHash:      strings.TrimSpace(event.InputHash),
 			PolicySnapshot: strings.TrimSpace(outcome.policySnapshot),
 			ConsumedAt:     time.Now().UTC(),
 		})

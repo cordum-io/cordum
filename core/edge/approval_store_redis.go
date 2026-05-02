@@ -778,6 +778,7 @@ func normalizeApprovalClaimRequest(req ApprovalClaimRequest) ApprovalClaimReques
 	req.ExecutionID = strings.TrimSpace(req.ExecutionID)
 	req.EventID = strings.TrimSpace(req.EventID)
 	req.ActionHash = strings.TrimSpace(req.ActionHash)
+	req.InputHash = strings.TrimSpace(req.InputHash)
 	req.PolicySnapshot = strings.TrimSpace(req.PolicySnapshot)
 	if !req.ConsumedAt.IsZero() {
 		req.ConsumedAt = req.ConsumedAt.UTC()
@@ -805,6 +806,7 @@ func approvalClaimMatches(approval *EdgeApproval, req ApprovalClaimRequest) bool
 		approval.ExecutionID == req.ExecutionID &&
 		approval.EventID == req.EventID &&
 		approval.ActionHash == req.ActionHash &&
+		approval.InputHash == req.InputHash &&
 		approval.PolicySnapshot == req.PolicySnapshot
 }
 

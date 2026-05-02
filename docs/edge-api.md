@@ -40,6 +40,18 @@ This is a forward-only fix. Existing orphaned pending markers from before this
 change are not backfilled; operators may manually delete those Redis
 `edge:idempotency:*` keys if needed after confirming the persisted event log.
 
+## Evaluate action hash and approval CAS
+
+`/api/v1/edge/evaluate` computes `action_hash` from the canonicalized action
+tuple. `risk_tags` are sorted lexicographically before hashing, and label keys
+are serialized in deterministic JSON key order. This keeps equivalent classifier
+outputs stable across Go versions and platforms.
+
+Approval consume-once CAS checks the stored `action_hash`, `policy_snapshot`,
+and `input_hash`. The explicit `input_hash` equality check is defense-in-depth:
+even if a future `action_hash` refactor changes which fields are folded into the
+hash, an approval cannot be replayed against different input bytes.
+
 ## Audit and metrics
 
 Gateway Edge handlers reuse `core/edge.Recorder` and the existing audit exporter:

@@ -135,6 +135,7 @@ func TestRedisStoreApprovalLifecycleEnqueueResolveListAndConsume(t *testing.T) {
 		ExecutionID:    req.ExecutionID,
 		EventID:        req.EventID,
 		ActionHash:     req.ActionHash,
+		InputHash:      req.InputHash,
 		PolicySnapshot: req.PolicySnapshot,
 		ConsumedAt:     consumedAt,
 	})
@@ -158,6 +159,7 @@ func TestRedisStoreApprovalLifecycleEnqueueResolveListAndConsume(t *testing.T) {
 		ExecutionID:    req.ExecutionID,
 		EventID:        req.EventID,
 		ActionHash:     req.ActionHash,
+		InputHash:      req.InputHash,
 		PolicySnapshot: req.PolicySnapshot,
 		ConsumedAt:     consumedAt.Add(time.Second),
 	})
@@ -315,6 +317,7 @@ func TestRedisStoreApprovalExpireAndStaleParentsFailClosed(t *testing.T) {
 		ExecutionID:    staleReq.ExecutionID,
 		EventID:        staleReq.EventID,
 		ActionHash:     "different-action-hash",
+		InputHash:      staleReq.InputHash,
 		PolicySnapshot: staleReq.PolicySnapshot,
 		ConsumedAt:     base.Add(12 * time.Minute),
 	})
@@ -328,6 +331,7 @@ func TestRedisStoreApprovalExpireAndStaleParentsFailClosed(t *testing.T) {
 		ExecutionID:    staleReq.ExecutionID,
 		EventID:        staleReq.EventID,
 		ActionHash:     staleReq.ActionHash,
+		InputHash:      staleReq.InputHash,
 		PolicySnapshot: "policy-v2",
 		ConsumedAt:     base.Add(12 * time.Minute),
 	})
@@ -346,6 +350,7 @@ func TestRedisStoreApprovalExpireAndStaleParentsFailClosed(t *testing.T) {
 		ExecutionID:    staleReq.ExecutionID,
 		EventID:        staleReq.EventID,
 		ActionHash:     staleReq.ActionHash,
+		InputHash:      staleReq.InputHash,
 		PolicySnapshot: staleReq.PolicySnapshot,
 		ConsumedAt:     base.Add(14 * time.Minute),
 	})
@@ -492,6 +497,7 @@ func TestRedisStoreApprovalConcurrentClaimConsumesOnce(t *testing.T) {
 				ExecutionID:    req.ExecutionID,
 				EventID:        req.EventID,
 				ActionHash:     req.ActionHash,
+				InputHash:      req.InputHash,
 				PolicySnapshot: req.PolicySnapshot,
 				ConsumedAt:     base.Add(2*time.Minute + time.Duration(i)*time.Microsecond),
 			})
@@ -532,6 +538,60 @@ func TestRedisStoreApprovalConcurrentClaimConsumesOnce(t *testing.T) {
 	}
 	if len(members) != 0 {
 		t.Fatalf("tuple index after concurrent claim = %#v, want empty", members)
+	}
+}
+
+func TestApprovalCASRejectsSameActionHashDifferentInputHash(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 1, 18, 30, 0, 0, time.UTC)
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	createApprovalParents(t, ctx, store, "tenant-a", "sess-input-cas", "exec-input-cas", "event-input-cas", base)
+	req := validApprovalRequest("tenant-a", "sess-input-cas", "exec-input-cas", "event-input-cas", base)
+	approval, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval: %v", err)
+	}
+	if _, err := store.ApproveApproval(ctx, ApprovalResolution{
+		TenantID:    req.TenantID,
+		ApprovalRef: approval.ApprovalRef,
+		ResolverID:  "reviewer",
+		ResolvedBy:  "reviewer@example.invalid",
+		Reason:      "approve for input CAS",
+		ResolvedAt:  base.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("ApproveApproval: %v", err)
+	}
+
+	claimed, ok, err := store.ClaimApproval(ctx, ApprovalClaimRequest{
+		TenantID:       req.TenantID,
+		ApprovalRef:    approval.ApprovalRef,
+		SessionID:      req.SessionID,
+		ExecutionID:    req.ExecutionID,
+		EventID:        req.EventID,
+		ActionHash:     req.ActionHash,
+		InputHash:      "sha256:different-input",
+		PolicySnapshot: req.PolicySnapshot,
+		ConsumedAt:     base.Add(2 * time.Minute),
+	})
+	if !errors.Is(err, ErrApprovalConflict) || ok || claimed != nil {
+		t.Fatalf("ClaimApproval same action/different input = (%#v,%v,%v), want ErrApprovalConflict nil,false", claimed, ok, err)
+	}
+
+	claimed, ok, err = store.ClaimApproval(ctx, ApprovalClaimRequest{
+		TenantID:       req.TenantID,
+		ApprovalRef:    approval.ApprovalRef,
+		SessionID:      req.SessionID,
+		ExecutionID:    req.ExecutionID,
+		EventID:        req.EventID,
+		ActionHash:     req.ActionHash,
+		InputHash:      req.InputHash,
+		PolicySnapshot: req.PolicySnapshot,
+		ConsumedAt:     base.Add(3 * time.Minute),
+	})
+	if err != nil || !ok || claimed == nil {
+		t.Fatalf("ClaimApproval correct input after rejected mismatch = (%#v,%v,%v), want consumed approval", claimed, ok, err)
 	}
 }
 

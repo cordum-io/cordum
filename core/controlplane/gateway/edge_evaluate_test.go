@@ -81,6 +81,40 @@ func TestGatewayEdgeEvaluateRequiresAuthTenantAndRejectsMalformedRequests(t *tes
 	assertBodyOmits(t, rr.Body.String(), edgeRouteOtherTenant)
 }
 
+func TestEdgeEvaluateActionHashIsRiskTagOrderInvariant(t *testing.T) {
+	base := edgecore.AgentActionEvent{
+		TenantID:       "tenant-a",
+		SessionID:      "sess-action-hash",
+		ExecutionID:    "exec-action-hash",
+		PrincipalID:    "principal-a",
+		Layer:          edgecore.LayerHook,
+		Kind:           edgecore.EventKindHookPreToolUse,
+		ToolName:       "Bash",
+		ToolUseID:      "toolu-action-hash",
+		ActionName:     "bash.exec",
+		Capability:     "exec.shell",
+		RiskTags:       []string{"exec", "network", "destructive"},
+		Labels:         edgecore.Labels{"zeta": "last", "alpha": "first"},
+		InputHash:      "sha256:input-action-hash",
+		PolicySnapshot: "policy-v1",
+	}
+	scrambled := base
+	scrambled.RiskTags = []string{"destructive", "exec", "network"}
+	scrambled.Labels = edgecore.Labels{"alpha": "first", "zeta": "last"}
+
+	first, err := edgeEvaluateActionHash(base, "policy-v1")
+	if err != nil {
+		t.Fatalf("edgeEvaluateActionHash first: %v", err)
+	}
+	second, err := edgeEvaluateActionHash(scrambled, "policy-v1")
+	if err != nil {
+		t.Fatalf("edgeEvaluateActionHash scrambled: %v", err)
+	}
+	if first != second {
+		t.Fatalf("action_hash changed with equivalent risk-tag/label ordering: first=%s second=%s", first, second)
+	}
+}
+
 func TestGatewayEdgeEvaluateAllowsTenantUserWithJobsWriteAndRejectsViewer(t *testing.T) {
 	_, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{
 		response: &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW, Reason: "user allowed"},

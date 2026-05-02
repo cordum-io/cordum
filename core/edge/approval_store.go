@@ -81,6 +81,7 @@ type ApprovalClaimRequest struct {
 	ExecutionID    string
 	EventID        string
 	ActionHash     string
+	InputHash      string
 	PolicySnapshot string
 	ConsumedAt     time.Time
 }
