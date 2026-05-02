@@ -82,43 +82,45 @@ The Edge Gateway surface is not a bypass around the existing API posture:
 
 ## Dashboard Edge posture
 
-The 2026-05-02 HEAD review found API/types/hooks for Edge, but no routed Edge
-Sessions/detail/approvals pages yet:
+The EDGE-032 re-review supersedes the earlier EDGE-031 pre-dashboard note: the
+P0 Edge dashboard route and component surfaces are now present and were verified
+without changing dashboard files in this acceptance task.
 
-- `dashboard/src/api/client.ts:36-56` centralizes HTTP auth headers. Edge fetches
+- `dashboard/src/api/client.ts` centralizes HTTP auth headers. Edge fetches
   reuse `get`/`post` from this client, so `X-API-Key`, `X-Tenant-ID`,
-  `X-Principal-Id`, and `X-Principal-Role` are preserved for the Edge HTTP API
+  `X-Principal-Id`, and `X-Principal-Role` are preserved for Edge HTTP API
   calls.
-- `dashboard/src/lib/constants.ts:30-36` declares `/edge/sessions`,
-  `/edge/executions`, `/edge/approvals`, `/edge/evaluate`, `/edge/events`, and
-  `/edge/events/batch` paths.
-- `dashboard/src/hooks/useEdgeSessions.ts:139-249` calls the Edge sessions,
-  events, approvals, wait, and export APIs through the shared authenticated
-  client, and `dashboard/src/hooks/useEdgeSessions.ts:251-357` keys the React
-  Query hooks by Edge session/execution/approval IDs.
-- `dashboard/src/api/types.ts:16-19` and `dashboard/src/api/types.ts:300-303`
-  explicitly ban raw prompts, raw tool payloads, transcripts, command output,
-  tokens, Authorization headers, and signed URLs from Edge dashboard state.
-- `dashboard/src/api/transform.ts:2398-2478` drops unsafe Edge keys such as
+- `dashboard/src/lib/constants.ts` declares the Edge session, execution,
+  approval, evaluate, event, and batch-event API paths.
+- `dashboard/src/hooks/useEdgeSessions.ts` calls the Edge sessions, events,
+  executions, approvals, wait, and export APIs through the shared authenticated
+  client, and keys React Query caches by Edge session/execution/approval IDs.
+- `dashboard/src/api/types.ts` explicitly bans raw prompts, raw tool payloads,
+  transcripts, command output, tokens, Authorization headers, and signed URLs
+  from Edge dashboard state.
+- `dashboard/src/api/transform.ts` drops unsafe Edge keys such as
   `raw_payload`, `raw_prompt`, `tool_input`, `tool_result`, `transcript`,
-  `authorization`, `token`, `secret`, `password`, and `signed_url`;
-  `dashboard/src/api/transform.ts:2661-2720` maps events and approvals through
-  these sanitized helpers.
-- `dashboard/src/hooks/useEventStream.ts:168-203` narrows live Edge WebSocket
-  cache entries to identifiers, decisions, hashes, artifact pointers, and
-  redacted summaries; `dashboard/src/hooks/useEventStream.ts:260-283`
-  invalidates Edge session/execution/approval/export query keys without copying
-  raw frames into React Query.
-- `dashboard/src/App.tsx:120-170` has no Edge Sessions/detail/approval routes on
-  HEAD, and `rg -n "Edge Sessions|/edge|useEdgeSessions" dashboard/src/pages`
-  finds no page-level Edge renderer. Therefore dashboard-side render review is
-  limited to the API/transform/hook layer above; full page copy and component
-  review belongs to the EDGE-022..025 dashboard task family once those routes
-  exist.
+  `authorization`, `token`, `secret`, `password`, and `signed_url`, then maps
+  Edge events, approvals, and export bundles through sanitized helpers.
+- `dashboard/src/hooks/useEventStream.ts` narrows live Edge WebSocket cache
+  entries to identifiers, decisions, hashes, artifact pointers, and redacted
+  summaries, then invalidates Edge query keys without copying raw frames into
+  React Query.
+- `dashboard/src/App.tsx` routes `/edge/sessions` and
+  `/edge/sessions/:sessionId` to the Edge Sessions list/detail pages.
+  `dashboard/src/pages/EdgeSessionsPage.tsx` renders the session list; the
+  detail page composes `EdgeEventInspector`, `EdgeApprovalsDrawer`, and
+  `EdgeArtifactsPanel`.
+- EDGE-032 dashboard rail evidence passed on 2026-05-02:
+  `node ./node_modules/typescript/bin/tsc --noEmit` exit 0;
+  `npx vitest run` exit 0 with `222` files / `1797` tests passed;
+  `npm run build` exit 0; focused Edge dashboard smoke exit 0 with `7` files /
+  `109` tests passed.
 
-No `cordum/dashboard/*` files are modified by EDGE-031. The dashboard
-verification rail is therefore not triggered for this docs-only security review;
-the dashboard rail still applies to the separate dashboard implementation tasks.
+The dashboard is an evidence/review surface for P0. It must not claim
+wrapper-only enterprise enforcement, and it must continue to render only
+redacted summaries, IDs, hashes, decisions, approval metadata, and artifact
+pointer metadata.
 
 ## Hook and agentd fail-closed / token-handling posture
 
@@ -284,7 +286,6 @@ roadmap enforcement.
 | Runtime bypass detection. | P0 ships governed hook/agentd evidence and optional observe-only diagnostics; it does not scan arbitrary local processes, shell/network activity, or ungoverned agents. | Runtime security / Shadow Agents owner. | EDGE-140 (`task-74ac5153`), EDGE-141 (`task-06aaab74`), EDGE-142 (`task-4cd8299f`), EDGE-143 (`task-de50a293`), and EDGE-144 (`task-f2bf3c65`) remain P3 follow-ups. | Runtime detector is opt-in, privacy-reviewed, and can report/remediate ungoverned agent activity without over-collecting developer data. |
 | MCP Gateway enforcement. | P0 managed settings can force the `cordum-edge` managed MCP entry, but the full Cordum MCP Gateway is out of P0 enforcement scope. | MCP Gateway owner. | EDGE-100 (`task-0ffcac35`), EDGE-101 (`task-fb11aa72`), EDGE-102 (`task-032e01fa`), EDGE-103 (`task-968d6646`), EDGE-104 (`task-9351f243`), and EDGE-105 (`task-a04699dc`) remain P1 follow-ups. | MCP traffic is mediated by the Gateway with tenant auth, audit, policy hooks, and bypass-resistant managed settings. |
 | LLM Proxy enforcement. | P0 templates include `ANTHROPIC_BASE_URL` placeholder support, but provider-token mediation and model-provider policy enforcement are P2, not P0. | LLM Proxy / provider-governance owner. | EDGE-120 (`task-b4d53633`), EDGE-121 (`task-24a7fe60`), EDGE-122 (`task-ce77541d`), EDGE-123 (`task-7a2ab379`), and EDGE-124 (`task-10bf1a83`) remain P2 follow-ups. | Provider traffic flows through a policy/audit proxy with token mediation, tenant isolation, and redacted evidence. |
-| Edge dashboard page-level security review. | EDGE-022 delivered API/types/hooks; on 2026-05-02 there were no routed Edge Sessions/detail/approval pages to review. API/transform/hook sanitization is reviewed above. | Dashboard Edge Sessions owner. | EDGE-023 (`task-29ad86e6`), EDGE-024 (`task-8d5efd47`), EDGE-025 (`task-93bf4a9f`), and EDGE-026 (`task-d1956e69`) remain dashboard follow-ups. | Routed dashboard pages render only sanitized Edge fields, preserve shared auth/tenant client behavior, and avoid enterprise-enforcement copy that is not backed by managed settings. |
 | Agentd nonce-in-query compatibility removal. | P0 strips legacy URL nonce values and requires runtime nonce env for hook calls, but the compatibility cleanup is tracked separately so old docs/scripts can be retired safely. | Agentd / hook protocol owner. | EDGE-017.4.1 (`task-3d754b38`, PLANNING). | Hook/agentd docs, settings, and scripts no longer accept nonce-in-query compatibility paths and tests prove header-only nonce auth. |
 
 ## Adversarial review notes
@@ -322,9 +323,10 @@ EDGE-032 final acceptance must use this section as the security closure anchor:
   `docs/security/edge-p0-threat-model-evidence-20260502.txt`.
 - [x] Gateway auth, X-Tenant-ID isolation, body bounds, rate limits, and TLS
   deployment posture are reviewed without weakening API key/JWT requirements.
-- [x] Dashboard review is explicitly read-only for EDGE-031; no
-  `cordum/dashboard/*` files are modified by this task, so the dashboard
-  verification rail belongs to the separate dashboard implementation tasks.
+- [x] Dashboard review includes the routed Edge Sessions list/detail pages,
+  redacted event inspector, approval drawer, artifacts panel, export API
+  mapping, shared auth/tenant client behavior, and EDGE-032 dashboard rail
+  evidence (`tsc`, `vitest`, and `build` all exit 0).
 - [x] Hook/agentd strict-mode failure behavior, token/nonce handling, redaction,
   audit, artifact retention, and known enterprise rollout gaps are documented.
 - [x] P1 MCP Gateway, P2 LLM Proxy, and P3 Shadow/runtime detection remain out
