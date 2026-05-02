@@ -3,8 +3,11 @@ package edge
 import (
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/cordum/cordum/core/audit"
 )
 
 // TestNoopRecorderImplementsRecorder pins that the no-op recorder
@@ -349,6 +352,284 @@ func TestEventLogAttrsThroughSlog(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("slog output missing %q in: %s", want, out)
 		}
+	}
+}
+
+// recordingAuditSender is a minimal AuditSender for tests: it records
+// every Send call so assertions can inspect the emitted events.
+type recordingAuditSender struct {
+	mu     sync.Mutex
+	events []audit.SIEMEvent
+}
+
+func (r *recordingAuditSender) Send(event audit.SIEMEvent) {
+	r.mu.Lock()
+	r.events = append(r.events, event)
+	r.mu.Unlock()
+}
+
+func (r *recordingAuditSender) Close() error { return nil }
+
+func (r *recordingAuditSender) snapshot() []audit.SIEMEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]audit.SIEMEvent, len(r.events))
+	copy(out, r.events)
+	return out
+}
+
+// panicAuditSender simulates an exploding audit pipeline. Used to prove
+// SendSIEMEvent's panic-recovery contract: a broken audit sink MUST NEVER
+// fail the calling Edge handler.
+type panicAuditSender struct{}
+
+func (panicAuditSender) Send(audit.SIEMEvent) { panic("synthetic audit failure") }
+func (panicAuditSender) Close() error         { return nil }
+
+// TestSIEMEventForActionMapsDecisionAndSeverity pins the event_type +
+// severity matrix for AgentActionEvent → SIEMEvent.
+func TestSIEMEventForActionMapsDecisionAndSeverity(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		decision     EdgeDecision
+		wantType     string
+		wantSeverity string
+		wantNorm     string
+	}{
+		{"allow → policy_decision/info", DecisionAllow, audit.EventEdgePolicyDecision, audit.SeverityInfo, "allow"},
+		{"deny → action_denied/high", "DENY", audit.EventEdgeActionDenied, audit.SeverityHigh, "deny"},
+		{"require_approval → approval_requested/medium", "REQUIRE_APPROVAL", audit.EventEdgeApprovalRequested, audit.SeverityMedium, "require_approval"},
+		{"throttle → action_denied/medium", "THROTTLE", audit.EventEdgeActionDenied, audit.SeverityMedium, "throttle"},
+		{"recorded → policy_decision/info", DecisionRecorded, audit.EventEdgePolicyDecision, audit.SeverityInfo, "recorded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := AgentActionEvent{
+				EventID:     "evt-edge014-siem-1",
+				SessionID:   "edge_sess_siem",
+				ExecutionID: "edge_exec_siem",
+				TenantID:    "tenant-edge014",
+				PrincipalID: "principal-edge014",
+				Timestamp:   time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC),
+				Layer:       LayerHook,
+				Kind:        EventKindHookPreToolUse,
+				ToolName:    "Bash",
+				ActionName:  "bash.exec",
+				Capability:  "exec.shell",
+				RiskTags:    []string{"exec"},
+				Decision:    tc.decision,
+				Status:      ActionStatusOK,
+				InputHash:   "sha256:abc",
+				RuleID:      "claude-code.allow-tests",
+			}
+			got := SIEMEventForAction(event)
+			if got.EventType != tc.wantType {
+				t.Errorf("EventType = %q, want %q", got.EventType, tc.wantType)
+			}
+			if got.Severity != tc.wantSeverity {
+				t.Errorf("Severity = %q, want %q", got.Severity, tc.wantSeverity)
+			}
+			if got.Decision != tc.wantNorm {
+				t.Errorf("Decision = %q, want normalized %q", got.Decision, tc.wantNorm)
+			}
+			if got.TenantID != "tenant-edge014" {
+				t.Errorf("TenantID = %q, want passthrough", got.TenantID)
+			}
+			if got.MatchedRule != "claude-code.allow-tests" {
+				t.Errorf("MatchedRule = %q, want passthrough", got.MatchedRule)
+			}
+		})
+	}
+}
+
+// TestSIEMEventForActionExtraIsBoundedAndSecretFree pins the Extra-map
+// invariant: only safe IDs/hashes/policy_snapshot/approval_ref/tool_name
+// (bounded). No raw labels, no InputRedacted maps, no raw command.
+func TestSIEMEventForActionExtraIsBoundedAndSecretFree(t *testing.T) {
+	const rawSecret = "Authorization: Bearer edge014-siem-secret-xyz"
+	event := AgentActionEvent{
+		EventID:        "evt-edge014-siem-extra",
+		SessionID:      "edge_sess_siem_extra",
+		ExecutionID:    "edge_exec_siem_extra",
+		TenantID:       "tenant-edge014",
+		PrincipalID:    "principal-edge014",
+		Timestamp:      time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC),
+		Layer:          LayerHook,
+		Kind:           EventKindHookPreToolUse,
+		ToolName:       "Bash",
+		ActionName:     "bash.exec",
+		Capability:     "exec.shell",
+		Decision:       DecisionAllow,
+		Status:         ActionStatusOK,
+		InputHash:      "sha256:" + strings.Repeat("a", 64),
+		PolicySnapshot: "sha256:policy-snap-abc",
+		ApprovalRef:    "edge_appr_test_001",
+		Labels:         Labels{"command.class": "safe", "leak": rawSecret},
+		InputRedacted:  map[string]any{"command": rawSecret},
+	}
+	got := SIEMEventForAction(event)
+	for k, v := range got.Extra {
+		if strings.Contains(k, rawSecret) || strings.Contains(v, rawSecret) {
+			t.Errorf("SIEMEventForAction Extra leaked raw secret in %q=%q", k, v)
+		}
+		if strings.Contains(v, "Bearer ") || strings.Contains(v, "Authorization") {
+			t.Errorf("SIEMEventForAction Extra leaked secret-marker substring in %q=%q", k, v)
+		}
+	}
+	for _, want := range []string{"session_id", "execution_id", "event_id", "layer", "kind", "tool_name", "input_hash", "policy_snapshot", "approval_ref"} {
+		if _, ok := got.Extra[want]; !ok {
+			t.Errorf("Extra missing required key %q; got %#v", want, got.Extra)
+		}
+	}
+	for _, banned := range []string{"command", "labels", "input_redacted", "raw", "leak"} {
+		if _, ok := got.Extra[banned]; ok {
+			t.Errorf("Extra contains banned key %q (raw passthrough): %#v", banned, got.Extra)
+		}
+	}
+}
+
+// TestSIEMEventForSessionLifecycle pins start/end event types + severity
+// (info on clean end, high on failed/degraded).
+func TestSIEMEventForSessionLifecycle(t *testing.T) {
+	startedAt := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+	endedAt := startedAt.Add(time.Hour)
+	for _, tc := range []struct {
+		name         string
+		status       SessionStatus
+		wantEvent    string
+		wantSeverity string
+	}{
+		{"clean end is info", SessionStatusEnded, audit.EventEdgeSessionEnded, audit.SeverityInfo},
+		{"failed is high", SessionStatusFailed, audit.EventEdgeSessionEnded, audit.SeverityHigh},
+		{"degraded is high", SessionStatusDegraded, audit.EventEdgeSessionEnded, audit.SeverityHigh},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session := EdgeSession{
+				TenantID:     "tenant-edge014",
+				SessionID:    "edge_sess_lifecycle",
+				PrincipalID:  "principal-edge014",
+				AgentProduct: "claude-code",
+				Mode:         "local-dev",
+				Status:       tc.status,
+				StartedAt:    startedAt,
+				EndedAt:      &endedAt,
+			}
+			got := SIEMEventForSessionEnded(session)
+			if got.EventType != tc.wantEvent {
+				t.Errorf("EventType = %q, want %q", got.EventType, tc.wantEvent)
+			}
+			if got.Severity != tc.wantSeverity {
+				t.Errorf("Severity = %q, want %q", got.Severity, tc.wantSeverity)
+			}
+			if got.TenantID != "tenant-edge014" {
+				t.Errorf("TenantID = %q, want passthrough", got.TenantID)
+			}
+			if got.Extra["mode"] != "local-dev" {
+				t.Errorf("Extra[mode] = %q, want local-dev", got.Extra["mode"])
+			}
+		})
+	}
+
+	// Started events are always info-severity.
+	startSession := EdgeSession{
+		TenantID: "tenant-edge014", SessionID: "edge_sess_started", Status: SessionStatusRunning,
+		StartedAt: startedAt, AgentProduct: "claude-code", Mode: "local-dev",
+	}
+	startEvent := SIEMEventForSessionStarted(startSession)
+	if startEvent.EventType != audit.EventEdgeSessionStarted {
+		t.Errorf("started EventType = %q, want %q", startEvent.EventType, audit.EventEdgeSessionStarted)
+	}
+	if startEvent.Severity != audit.SeverityInfo {
+		t.Errorf("started Severity = %q, want info", startEvent.Severity)
+	}
+}
+
+// TestSIEMEventForApprovalResolvedSeverity pins the outcome → severity
+// mapping per architect's table.
+func TestSIEMEventForApprovalResolvedSeverity(t *testing.T) {
+	at := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		outcome      string
+		wantType     string
+		wantSeverity string
+	}{
+		{"approved", audit.EventEdgeApprovalResolved, audit.SeverityInfo},
+		{"rejected", audit.EventEdgeApprovalRejected, audit.SeverityHigh},
+		{"expired", audit.EventEdgeApprovalExpired, audit.SeverityMedium},
+		{"timeout", audit.EventEdgeApprovalResolved, audit.SeverityMedium},
+		{"invalidated", audit.EventEdgeApprovalResolved, audit.SeverityMedium},
+		{"banana", audit.EventEdgeApprovalResolved, audit.SeverityInfo}, // collapsed to "other" → info default
+	} {
+		t.Run(tc.outcome, func(t *testing.T) {
+			got := SIEMEventForApprovalResolved("tenant-edge014", "edge_appr_xyz", "claude-code.require-approval-prod", tc.outcome, "principal-resolver", at, nil)
+			if got.EventType != tc.wantType {
+				t.Errorf("EventType = %q, want %q", got.EventType, tc.wantType)
+			}
+			if got.Severity != tc.wantSeverity {
+				t.Errorf("Severity = %q, want %q", got.Severity, tc.wantSeverity)
+			}
+			if got.Extra["approval_ref"] != "edge_appr_xyz" {
+				t.Errorf("Extra[approval_ref] = %q, want passthrough", got.Extra["approval_ref"])
+			}
+		})
+	}
+}
+
+// TestSIEMEventForFailClosedIsCriticalSeverity pins the architect-locked
+// severity for enterprise-strict fail-closed outcomes.
+func TestSIEMEventForFailClosedIsCriticalSeverity(t *testing.T) {
+	got := SIEMEventForFailClosed("tenant-edge014", "enterprise-strict", "gateway", "gateway_unavailable", time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC))
+	if got.EventType != audit.EventEdgeFailClosed {
+		t.Errorf("EventType = %q, want %q", got.EventType, audit.EventEdgeFailClosed)
+	}
+	if got.Severity != audit.SeverityCritical {
+		t.Errorf("Severity = %q, want CRITICAL", got.Severity)
+	}
+	if got.Decision != "deny" {
+		t.Errorf("Decision = %q, want deny", got.Decision)
+	}
+}
+
+// TestSendSIEMEventNilSenderIsNoOp pins that a nil AuditSender does NOT
+// panic and does NOT block the calling code path. Critical for callers
+// that accept an optional audit pipeline (s.auditExporter may be nil
+// when audit is intentionally disabled).
+func TestSendSIEMEventNilSenderIsNoOp(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("SendSIEMEvent with nil sender panicked: %v", r)
+		}
+	}()
+	SendSIEMEvent(nil, audit.SIEMEvent{EventType: audit.EventEdgePolicyDecision})
+}
+
+// TestSendSIEMEventSwallowsPanic pins that a panicking AuditSender does
+// NOT propagate up to the caller. Edge call sites must never have a
+// policy decision flipped by a broken audit pipeline.
+func TestSendSIEMEventSwallowsPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("SendSIEMEvent did not swallow sender panic: %v", r)
+		}
+	}()
+	SendSIEMEvent(panicAuditSender{}, audit.SIEMEvent{EventType: audit.EventEdgePolicyDecision})
+}
+
+// TestSendSIEMEventDeliversToWorkingSender pins the happy-path delivery.
+func TestSendSIEMEventDeliversToWorkingSender(t *testing.T) {
+	rec := &recordingAuditSender{}
+	want := audit.SIEMEvent{
+		EventType: audit.EventEdgePolicyDecision,
+		TenantID:  "tenant-edge014",
+		Action:    "bash.exec",
+		Decision:  "allow",
+	}
+	SendSIEMEvent(rec, want)
+	got := rec.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("recorder got %d events, want 1", len(got))
+	}
+	if got[0].EventType != want.EventType {
+		t.Errorf("EventType = %q, want %q", got[0].EventType, want.EventType)
 	}
 }
 

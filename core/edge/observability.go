@@ -26,6 +26,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/cordum/cordum/core/audit"
 )
 
 // Recorder is the EDGE-014 Edge observability surface. Every Edge call
@@ -355,4 +357,287 @@ func boundedShortString(value string, max int) string {
 		return v
 	}
 	return v[:max] + "…"
+}
+
+// SIEMEventForAction builds an `audit.SIEMEvent` for an Edge AgentActionEvent.
+// The EventType is determined by the event's decision: ALLOW/RECORDED →
+// `edge.policy_decision`; DENY → `edge.action_denied`; REQUIRE_APPROVAL →
+// `edge.approval_requested`. Severity follows architect's table: allow/info,
+// require_approval/medium, deny/reject/high.
+//
+// Extra carries only safe values: session_id, execution_id, event_id, layer,
+// kind, tool_name (bounded), input_hash, action_hash, policy_snapshot,
+// rule_id (bounded), approval_ref. Raw InputRedacted/Labels/Reason MUST NOT
+// be added by callers via this builder.
+func SIEMEventForAction(event AgentActionEvent) audit.SIEMEvent {
+	decision := strings.ToUpper(strings.TrimSpace(string(event.Decision)))
+	eventType := audit.EventEdgePolicyDecision
+	severity := audit.SeverityInfo
+	switch decision {
+	case "DENY":
+		eventType = audit.EventEdgeActionDenied
+		severity = audit.SeverityHigh
+	case "REQUIRE_APPROVAL":
+		eventType = audit.EventEdgeApprovalRequested
+		severity = audit.SeverityMedium
+	case "THROTTLE":
+		eventType = audit.EventEdgeActionDenied
+		severity = audit.SeverityMedium
+	}
+	timestamp := event.Timestamp
+	if timestamp.IsZero() {
+		timestamp = time.Now().UTC()
+	}
+	se := audit.SIEMEvent{
+		Timestamp:    timestamp,
+		EventType:    eventType,
+		Severity:     severity,
+		TenantID:     boundedID(event.TenantID),
+		Action:       boundedShortString(event.ActionName, 64),
+		Decision:     NormalizeDecision(string(event.Decision)),
+		MatchedRule:  boundedShortString(event.RuleID, 80),
+		RiskTags:     boundedTagSlice(event.RiskTags, 8),
+		Capabilities: boundedCapabilities(event.Capability),
+		Identity:     boundedID(event.PrincipalID),
+		Extra:        actionExtra(event),
+	}
+	// Edge actions are not Cordum Jobs by themselves; SIEMEvent.JobID is
+	// only populated when the Edge action is linked to a real production
+	// Job/WorkflowRun. AgentActionEvent does not carry a job_id today,
+	// so we leave SIEMEvent.JobID empty per ADR-010.
+	return se
+}
+
+// SIEMEventForSessionStarted builds an audit event for an EdgeSession that
+// just transitioned to the active state. Severity is info — session creation
+// is benign.
+func SIEMEventForSessionStarted(session EdgeSession) audit.SIEMEvent {
+	timestamp := session.StartedAt
+	if timestamp.IsZero() {
+		timestamp = time.Now().UTC()
+	}
+	se := audit.SIEMEvent{
+		Timestamp: timestamp,
+		EventType: audit.EventEdgeSessionStarted,
+		Severity:  audit.SeverityInfo,
+		TenantID:  boundedID(session.TenantID),
+		Action:    "edge_session_create",
+		Identity:  boundedID(session.PrincipalID),
+		Extra:     sessionExtra(session),
+	}
+	return se
+}
+
+// SIEMEventForSessionEnded builds an audit event for a session that has
+// transitioned to a terminal status. Severity is info on clean end, high
+// on failed/degraded.
+func SIEMEventForSessionEnded(session EdgeSession) audit.SIEMEvent {
+	severity := audit.SeverityInfo
+	switch session.Status {
+	case SessionStatusFailed, SessionStatusDegraded:
+		severity = audit.SeverityHigh
+	}
+	timestamp := time.Now().UTC()
+	if session.EndedAt != nil && !session.EndedAt.IsZero() {
+		timestamp = *session.EndedAt
+	}
+	se := audit.SIEMEvent{
+		Timestamp: timestamp,
+		EventType: audit.EventEdgeSessionEnded,
+		Severity:  severity,
+		TenantID:  boundedID(session.TenantID),
+		Action:    "edge_session_end",
+		Identity:  boundedID(session.PrincipalID),
+		Extra:     sessionExtra(session),
+	}
+	return se
+}
+
+// SIEMEventForApprovalResolved builds an audit event for an approval that
+// reached a terminal state (approved/rejected/expired/invalidated/consumed).
+// Severity follows: approved/info, rejected/high, expired/medium,
+// invalidated/medium.
+func SIEMEventForApprovalResolved(tenantID, approvalRef, ruleID, outcome, resolverID string, at time.Time, extra map[string]string) audit.SIEMEvent {
+	normalized := NormalizeApprovalOutcome(outcome)
+	severity := audit.SeverityInfo
+	eventType := audit.EventEdgeApprovalResolved
+	switch normalized {
+	case "rejected":
+		severity = audit.SeverityHigh
+		eventType = audit.EventEdgeApprovalRejected
+	case "expired":
+		severity = audit.SeverityMedium
+		eventType = audit.EventEdgeApprovalExpired
+	case "invalidated":
+		severity = audit.SeverityMedium
+	case "timeout":
+		severity = audit.SeverityMedium
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	out := audit.SIEMEvent{
+		Timestamp:   at,
+		EventType:   eventType,
+		Severity:    severity,
+		TenantID:    boundedID(tenantID),
+		Action:      "edge_approval_resolved",
+		Decision:    normalized,
+		MatchedRule: boundedShortString(ruleID, 80),
+		Identity:    boundedID(resolverID),
+		Extra:       approvalExtra(approvalRef, extra),
+	}
+	return out
+}
+
+// SIEMEventForFailClosed builds an audit event for an enterprise-strict
+// fail-closed outcome (Gateway unavailable, agentd unavailable, etc.).
+// Severity is critical — the user's action was blocked because Cordum
+// could not produce a fresh governance decision.
+func SIEMEventForFailClosed(tenantID, mode, component, reasonCode string, at time.Time) audit.SIEMEvent {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	return audit.SIEMEvent{
+		Timestamp: at,
+		EventType: audit.EventEdgeFailClosed,
+		Severity:  audit.SeverityCritical,
+		TenantID:  boundedID(tenantID),
+		Action:    "edge_fail_closed",
+		Decision:  "deny",
+		Extra: map[string]string{
+			"mode":        boundedShortString(mode, 32),
+			"component":   boundedShortString(component, 32),
+			"reason_code": boundedShortString(reasonCode, 64),
+		},
+	}
+}
+
+// SIEMEventForDegraded builds an audit event for a degraded state (Gateway
+// timeout, agentd degraded, evidence write failure). Severity is medium
+// for observe mode, high for local-dev-enforce.
+func SIEMEventForDegraded(tenantID, mode, component, reasonCode string, at time.Time) audit.SIEMEvent {
+	severity := audit.SeverityMedium
+	if strings.EqualFold(strings.TrimSpace(mode), "local-dev-enforce") {
+		severity = audit.SeverityHigh
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	return audit.SIEMEvent{
+		Timestamp: at,
+		EventType: audit.EventEdgeAgentdDegraded,
+		Severity:  severity,
+		TenantID:  boundedID(tenantID),
+		Action:    "edge_agentd_degraded",
+		Decision:  "degraded",
+		Extra: map[string]string{
+			"mode":        boundedShortString(mode, 32),
+			"component":   boundedShortString(component, 32),
+			"reason_code": boundedShortString(reasonCode, 64),
+		},
+	}
+}
+
+// SendSIEMEvent forwards the event to the supplied AuditSender, swallowing
+// nil-sender / panic and never failing the caller. Edge call sites use this
+// to make audit emission strictly best-effort: a missing or failing audit
+// pipeline must NEVER change a policy/evaluate/hook decision.
+func SendSIEMEvent(sender audit.AuditSender, event audit.SIEMEvent) {
+	if sender == nil {
+		return
+	}
+	defer func() {
+		// AuditSender.Send is documented as non-error-returning, but we
+		// guard against panics defensively because audit-pipeline outage
+		// must not kill the calling request.
+		_ = recover()
+	}()
+	sender.Send(event)
+}
+
+// actionExtra builds the safe Extra map for an AgentActionEvent.
+func actionExtra(event AgentActionEvent) map[string]string {
+	extra := map[string]string{
+		"session_id":   boundedID(event.SessionID),
+		"execution_id": boundedID(event.ExecutionID),
+		"event_id":     boundedID(event.EventID),
+		"layer":        NormalizeLayer(string(event.Layer)),
+		"kind":         NormalizeKind(string(event.Kind)),
+	}
+	if v := strings.TrimSpace(event.ToolName); v != "" {
+		extra["tool_name"] = boundedShortString(v, 32)
+	}
+	if v := strings.TrimSpace(event.InputHash); v != "" {
+		extra["input_hash"] = boundedShortString(v, 80)
+	}
+	if v := strings.TrimSpace(event.PolicySnapshot); v != "" {
+		extra["policy_snapshot"] = boundedShortString(v, 80)
+	}
+	if v := strings.TrimSpace(event.ApprovalRef); v != "" {
+		extra["approval_ref"] = boundedShortString(v, 64)
+	}
+	return extra
+}
+
+// sessionExtra builds the safe Extra map for an EdgeSession lifecycle event.
+func sessionExtra(session EdgeSession) map[string]string {
+	extra := map[string]string{
+		"session_id": boundedID(session.SessionID),
+		"mode":       boundedShortString(string(session.Mode), 32),
+		"status":     boundedShortString(string(session.Status), 32),
+	}
+	if v := strings.TrimSpace(session.AgentProduct); v != "" {
+		extra["agent_product"] = boundedShortString(v, 32)
+	}
+	return extra
+}
+
+// approvalExtra builds the safe Extra map for an approval audit event,
+// bounding the approval_ref and merging caller-supplied bounded extras.
+func approvalExtra(approvalRef string, extra map[string]string) map[string]string {
+	out := map[string]string{
+		"approval_ref": boundedShortString(approvalRef, 64),
+	}
+	for k, v := range extra {
+		out[boundedShortString(k, 32)] = boundedShortString(v, 80)
+	}
+	return out
+}
+
+// boundedTagSlice returns a copy of tags with each entry trimmed/clamped
+// and the slice length bounded; nil-safe and empty-safe.
+func boundedTagSlice(tags []string, maxEntries int) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+	if maxEntries <= 0 {
+		maxEntries = 8
+	}
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if len(out) >= maxEntries {
+			break
+		}
+		s := boundedShortString(t, 32)
+		if s == "" {
+			continue
+		}
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// boundedCapabilities returns a single-entry slice for the SIEMEvent
+// Capabilities field; the Edge classifier emits a single Capability per
+// action, so we wrap rather than introducing an array contract.
+func boundedCapabilities(capability string) []string {
+	v := strings.TrimSpace(capability)
+	if v == "" {
+		return nil
+	}
+	return []string{boundedShortString(v, 32)}
 }

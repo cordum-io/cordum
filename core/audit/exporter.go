@@ -107,6 +107,29 @@ const (
 	// role_name and tenant. Identity carries the actor. SIEM rules can
 	// detect cleanup-after-attack patterns (delete role to remove evidence).
 	EventAuthRoleDeleted = "auth.role_deleted"
+
+	// EDGE-014 audit event constants. These cover the Edge action
+	// lifecycle (sessions, executions, decisions, approvals, degraded /
+	// fail-closed outcomes, evidence export). Extra map convention:
+	// only safe IDs (tenant, session, execution, event), bounded
+	// hashes (input_hash, action_hash, policy_snapshot), bounded
+	// labels/codes (decision, fail_mode, reason_code, error_code,
+	// artifact_type, redaction_level), and approval_ref. Raw command/
+	// prompt/tool_response/secret content MUST NEVER appear in Extra.
+	EventEdgeSessionStarted    = "edge.session_started"
+	EventEdgeSessionEnded      = "edge.session_ended"
+	EventEdgeExecutionStarted  = "edge.execution_started"
+	EventEdgeExecutionEnded    = "edge.execution_ended"
+	EventEdgeActionAttempted   = "edge.action_attempted"
+	EventEdgePolicyDecision    = "edge.policy_decision"
+	EventEdgeActionDenied      = "edge.action_denied"
+	EventEdgeApprovalRequested = "edge.approval_requested"
+	EventEdgeApprovalResolved  = "edge.approval_resolved"
+	EventEdgeApprovalRejected  = "edge.approval_rejected"
+	EventEdgeApprovalExpired   = "edge.approval_expired"
+	EventEdgeArtifactExported  = "edge.artifact_exported"
+	EventEdgeAgentdDegraded    = "edge.agentd_degraded"
+	EventEdgeFailClosed        = "edge.fail_closed"
 )
 
 // Severity levels for SIEM events.
