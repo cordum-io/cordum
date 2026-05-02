@@ -44,6 +44,27 @@ Future `cordum-agentd` work may add a user-only socket transport. Until then, th
 
 The request sent to agentd contains bounded hook metadata, session/execution IDs, tool metadata, and the bounded raw Claude payload only in memory. The hook does not persist or log raw payloads.
 
+## Mapper contract
+
+Before calling local `cordum-agentd`, the hook runs the EDGE-016 Claude mapper
+documented in [`claude-hook-mapper.md`](./claude-hook-mapper.md). The mapper:
+
+- parses the known Claude hook fields from bounded stdin and tolerates unknown
+  future fields without trusting them;
+- maps supported events to Edge action kinds for `PreToolUse`, `PostToolUse`,
+  `PostToolUseFailure`, `UserPromptSubmit`, `ConfigChange`, and `FileChanged`;
+- classifies tools through the shared Edge classifier (`Bash`, `Read`,
+  `Edit`/`Write`/`MultiEdit`, `Delete`/`Remove`, `Move`/`Rename`, and unknown
+  tools);
+- redacts action inputs and sanitized context before building agentd/evaluate
+  fields; and
+- emits stable `input_hash` and `action_hash` values used by approval retry and
+  replay checks.
+
+`RawPayload` is the only verbatim hook input copy and stays in memory for the
+local agentd boundary. It must not be logged, persisted, written to docs, or sent
+directly to Gateway.
+
 ## Stdout and stderr rules
 
 - Stdout is reserved for Claude hook JSON only.

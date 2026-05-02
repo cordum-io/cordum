@@ -106,6 +106,7 @@ const (
 // source of truth for session/execution binding, not whatever Claude reports
 // in the hook stdin.
 func MapHookInput(input HookInput, ctx MappingContext) (MappedHookAction, error) {
+	ctx = sanitizeMappingContext(ctx)
 	now := time.Now().UTC()
 	if ctx.Now != nil {
 		now = ctx.Now()
@@ -359,7 +360,7 @@ func redactHookActionInput(input HookInput, kind edge.EventKind) (map[string]any
 		// map so downstream JSON encoding is stable.
 		return map[string]any{"_redacted": result.Value}, nil
 	}
-	return redacted, nil
+	return sanitizeHookBoundaryMap(redacted), nil
 }
 
 // baseHookLabels builds the labels every Claude hook event carries before
@@ -486,6 +487,112 @@ func envOrDefault(env map[string]string, key, fallback string) string {
 	return fallback
 }
 
+func sanitizeMappingContext(ctx MappingContext) MappingContext {
+	ctx.TenantID = redactHookBoundaryString(ctx.TenantID)
+	ctx.PrincipalID = redactHookBoundaryString(ctx.PrincipalID)
+	ctx.SessionID = redactHookBoundaryString(ctx.SessionID)
+	ctx.ExecutionID = redactHookBoundaryString(ctx.ExecutionID)
+	ctx.AgentProduct = redactHookBoundaryString(ctx.AgentProduct)
+	ctx.AgentVersion = redactHookBoundaryString(ctx.AgentVersion)
+	return ctx
+}
+
+func redactHookBoundaryString(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	candidate := value
+	result, err := edge.RedactValue(value, edge.RedactionOptions{HashMode: edge.RedactionHashNone})
+	if err == nil {
+		if redacted, ok := result.Value.(string); ok {
+			candidate = redacted
+		} else if result.Value != nil {
+			candidate = fmt.Sprint(result.Value)
+		}
+	}
+	diagnostic := redactDiagnostic(candidate)
+	if result.Redacted || result.Truncated || diagnostic != candidate || strings.Contains(diagnostic, "[REDACTED]") || strings.Contains(strings.ToLower(diagnostic), "secret") {
+		return "<redacted>"
+	}
+	return diagnostic
+}
+
+func redactHookBoundaryStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, redactHookBoundaryString(value))
+	}
+	return out
+}
+
+func redactHookBoundaryMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return nil
+	}
+	result, err := edge.RedactValue(values, edge.RedactionOptions{HashMode: edge.RedactionHashNone})
+	if err != nil {
+		return map[string]any{"_redacted": "<redacted>"}
+	}
+	sanitized := sanitizeHookBoundaryValue(result.Value)
+	if redacted, ok := sanitized.(map[string]any); ok {
+		return redacted
+	}
+	return map[string]any{"_redacted": sanitized}
+}
+
+func sanitizeHookBoundaryMap(values map[string]any) map[string]any {
+	if len(values) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = sanitizeHookBoundaryValue(value)
+	}
+	return out
+}
+
+func sanitizeHookBoundaryValue(value any) any {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case string:
+		return redactHookBoundaryString(v)
+	case map[string]any:
+		return sanitizeHookBoundaryMap(v)
+	case map[string]string:
+		out := make(map[string]any, len(v))
+		for key, child := range v {
+			out[key] = redactHookBoundaryString(child)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(v))
+		for _, child := range v {
+			out = append(out, sanitizeHookBoundaryValue(child))
+		}
+		return out
+	case []string:
+		out := make([]any, 0, len(v))
+		for _, child := range v {
+			out = append(out, redactHookBoundaryString(child))
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+func sanitizeEdgeDecisionResponse(resp EdgeDecisionResponse) EdgeDecisionResponse {
+	resp.Reason = redactHookBoundaryString(resp.Reason)
+	resp.AdditionalContext = redactHookBoundaryString(resp.AdditionalContext)
+	resp.UpdatedInput = redactHookBoundaryMap(resp.UpdatedInput)
+	return resp
+}
+
 // safeHookEventLabel produces a bounded lowercase label fragment for an
 // unrecognized hook event. The classifier rejects high-cardinality client
 // strings; we follow the same pattern.
@@ -573,6 +680,7 @@ const (
 // fail-closed deny or no-op based on strict mode. Lowercase decisions are
 // accepted defensively for legacy AgentdDecision passthrough.
 func MapEdgeDecisionToHookOutput(eventName string, resp EdgeDecisionResponse) (ClaudeHookOutput, error) {
+	resp = sanitizeEdgeDecisionResponse(resp)
 	if !isSupportedHookEventName(eventName) {
 		return ClaudeHookOutput{}, nil
 	}
