@@ -20,6 +20,7 @@ type EvaluatorConfig struct {
 	Cache          *SafeAllowCache
 	ApprovalWaiter ApprovalWaiter
 	ApprovalConfig ApprovalDecisionConfig
+	Recorder       edgecore.Recorder
 
 	HookTimeout         time.Duration
 	ResponseWriteBudget time.Duration
@@ -37,6 +38,7 @@ type Evaluator struct {
 	cache          *SafeAllowCache
 	approvalWaiter ApprovalWaiter
 	approvalConfig ApprovalDecisionConfig
+	recorder       edgecore.Recorder
 
 	hookTimeout         time.Duration
 	responseWriteBudget time.Duration
@@ -62,6 +64,7 @@ func NewEvaluator(cfg EvaluatorConfig) *Evaluator {
 		cache:               cfg.Cache,
 		approvalWaiter:      cfg.ApprovalWaiter,
 		approvalConfig:      approvalCfg,
+		recorder:            cfg.Recorder,
 		hookTimeout:         hookTimeout,
 		responseWriteBudget: budget,
 	}
@@ -76,38 +79,49 @@ func (e *Evaluator) EvaluateHook(ctx context.Context, req claude.AgentdRequest) 
 	}
 	evalCtx, cancel := e.evaluationContext(ctx)
 	defer cancel()
+	startedAt := time.Now()
 
 	evalReq := e.evaluateRequest(req)
 	cacheReq := e.cacheRequest(req, evalReq)
 	if cached, ok := e.cache.Get(cacheReq); ok {
+		e.recordCacheLookup(evalReq, "hit")
 		cached.EventID = ""
 		decision := AgentdDecisionFromEvaluateResponse(evalCtx, cached, e.approvalConfig, e.approvalWaiter)
-		_, _ = RecordDecisionEvidence(context.Background(), e.eventWriter, decision, DecisionEvidence{
+		e.recordDecisionObservability(req, evalReq, cached, decision, startedAt)
+		if _, err := RecordDecisionEvidence(context.Background(), e.eventWriter, decision, DecisionEvidence{
 			State:      e.state,
 			Request:    req,
 			Response:   cached,
 			CacheHit:   true,
 			DurationMS: req.DurationMS,
-		})
+		}); err != nil {
+			e.recordEvidenceFailure(evalReq)
+		}
 		return decision, nil
+	}
+	if e.cache != nil {
+		e.recordCacheLookup(evalReq, "miss")
 	}
 
 	resp, err := e.client.Evaluate(evalCtx, evalReq)
 	if err != nil {
-		return e.degradedDecision(req, err, cacheReq), nil
+		return e.degradedDecision(req, evalReq, err, cacheReq, startedAt), nil
 	}
 	if resp == nil {
-		return e.degradedDecision(req, ErrEvaluateResponseMalformed, cacheReq), nil
+		return e.degradedDecision(req, evalReq, ErrEvaluateResponseMalformed, cacheReq, startedAt), nil
 	}
 	decision := AgentdDecisionFromEvaluateResponse(evalCtx, *resp, e.approvalConfig, e.approvalWaiter)
+	e.recordDecisionObservability(req, evalReq, *resp, decision, startedAt)
 	_ = e.cache.Put(cacheReq, *resp)
-	_, _ = RecordDecisionEvidence(context.Background(), e.eventWriter, decision, DecisionEvidence{
+	if _, err := RecordDecisionEvidence(context.Background(), e.eventWriter, decision, DecisionEvidence{
 		State:      e.state,
 		Request:    req,
 		Response:   *resp,
 		CacheMiss:  e.cache != nil,
 		DurationMS: req.DurationMS,
-	})
+	}); err != nil {
+		e.recordEvidenceFailure(evalReq)
+	}
 	return decision, nil
 }
 
@@ -168,7 +182,7 @@ func (e *Evaluator) cacheRequest(req claude.AgentdRequest, evalReq EvaluateReque
 	}
 }
 
-func (e *Evaluator) degradedDecision(req claude.AgentdRequest, err error, cacheReq SafeAllowCacheRequest) claude.AgentdDecision {
+func (e *Evaluator) degradedDecision(req claude.AgentdRequest, evalReq EvaluateRequest, err error, cacheReq SafeAllowCacheRequest, startedAt time.Time) claude.AgentdDecision {
 	category := ClassifyEvaluateError(err)
 	outcome := ApplyFailMode(FailModeContext{
 		PolicyMode:           nonEmptyPolicyMode(e.state.PolicyMode, edgecore.PolicyModeObserve),
@@ -184,6 +198,7 @@ func (e *Evaluator) degradedDecision(req claude.AgentdRequest, err error, cacheR
 	} else if outcome.Decision != claude.DecisionAllow {
 		decision.Reason = boundDecisionText(outcome.Reason)
 	}
+	e.recordFailModeObservability(req, evalReq, outcome, category, startedAt)
 	resp := EvaluateResponse{
 		Decision:           string(edgeDecisionFromClaude(outcome.Decision)),
 		Reason:             outcome.Reason,
@@ -194,7 +209,7 @@ func (e *Evaluator) degradedDecision(req claude.AgentdRequest, err error, cacheR
 		PermissionDecision: string(outcome.Decision),
 		TerminalMessage:    outcome.TerminalCopy,
 	}
-	_, _ = RecordDecisionEvidence(context.Background(), e.eventWriter, decision, DecisionEvidence{
+	if _, err := RecordDecisionEvidence(context.Background(), e.eventWriter, decision, DecisionEvidence{
 		State:        e.state,
 		Request:      req,
 		Response:     resp,
@@ -203,7 +218,9 @@ func (e *Evaluator) degradedDecision(req claude.AgentdRequest, err error, cacheR
 		ErrorCode:    string(category),
 		ErrorMessage: outcome.Reason,
 		DurationMS:   req.DurationMS,
-	})
+	}); err != nil {
+		e.recordEvidenceFailure(evalReq)
+	}
 	return decision
 }
 

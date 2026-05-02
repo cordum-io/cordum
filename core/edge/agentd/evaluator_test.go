@@ -165,6 +165,131 @@ func TestEvaluatorEvidenceFailureDoesNotFlipFreshDecision(t *testing.T) {
 	}
 }
 
+func TestEvaluatorRecordsObservabilityForCacheAndEvidenceFailure(t *testing.T) {
+	t.Parallel()
+
+	evaluate := &stubEvaluateClient{resp: &EvaluateResponse{
+		Decision:           string(edgecore.DecisionAllow),
+		PolicySnapshot:     "snap-eval",
+		EventID:            "evt-metrics-cache",
+		ActionHash:         "sha256:action-metrics",
+		InputHash:          "sha256:input-metrics",
+		PermissionDecision: "allow",
+		CacheEligible:      true,
+	}}
+	recorder := &captureRecorder{}
+	evaluator := NewEvaluator(EvaluatorConfig{
+		Client:      evaluate,
+		EventWriter: &captureEventWriter{err: errors.New("event sink unavailable")},
+		State:       evaluatorTestState(edgecore.PolicyModeEnforce),
+		Cache: NewSafeAllowCache(SafeAllowCacheConfig{
+			Enabled:    true,
+			TTL:        time.Minute,
+			MaxEntries: 4,
+		}, fixedClock{now: time.Date(2026, 5, 2, 16, 0, 0, 0, time.UTC)}),
+		Recorder:    recorder,
+		HookTimeout: time.Second,
+	})
+	req := evaluatorMetricsRequest()
+	if decision, err := evaluator.EvaluateHook(context.Background(), req); err != nil || decision.Decision != claude.DecisionAllow {
+		t.Fatalf("first EvaluateHook = %#v, %v; want allow", decision, err)
+	}
+	if decision, err := evaluator.EvaluateHook(context.Background(), req); err != nil || decision.Decision != claude.DecisionAllow {
+		t.Fatalf("second EvaluateHook = %#v, %v; want cached allow", decision, err)
+	}
+	if len(evaluate.requests) != 1 {
+		t.Fatalf("gateway evaluate calls = %d, want 1 (second call should be cache hit)", len(evaluate.requests))
+	}
+	if !recorder.hasCacheResult("miss") || !recorder.hasCacheResult("hit") {
+		t.Fatalf("cache lookup metrics = %#v, want miss and hit", recorder.cacheLookups)
+	}
+	if !recorder.hasActionDecision("allow") {
+		t.Fatalf("action decision metrics = %#v, want allow", recorder.actionDecisions)
+	}
+	if !recorder.hasDegradedReason("evidence_write_failed") {
+		t.Fatalf("degraded metrics = %#v, want evidence_write_failed", recorder.degraded)
+	}
+	if len(recorder.evaluateLatency) == 0 || len(recorder.hookLatency) == 0 {
+		t.Fatalf("latency metrics evaluate=%d hook=%d, want both", len(recorder.evaluateLatency), len(recorder.hookLatency))
+	}
+}
+
+func TestEvaluatorRecordsObservabilityForEnterpriseStrictFailClosed(t *testing.T) {
+	t.Parallel()
+
+	recorder := &captureRecorder{}
+	evaluator := NewEvaluator(EvaluatorConfig{
+		Client:      &stubEvaluateClient{err: ErrGatewayTimeout},
+		EventWriter: &captureEventWriter{},
+		State:       evaluatorTestState(edgecore.PolicyModeEnterpriseStrict),
+		Recorder:    recorder,
+		HookTimeout: time.Second,
+	})
+	decision, err := evaluator.EvaluateHook(context.Background(), claude.AgentdRequest{
+		EventName:     "PreToolUse",
+		SessionID:     "edge_sess_eval",
+		ExecutionID:   "edge_exec_eval",
+		TenantID:      "tenant-eval",
+		PrincipalID:   "principal-eval",
+		ToolName:      "Bash",
+		InputRedacted: map[string]any{"command": "rm -rf /tmp/project"},
+		InputHash:     "sha256:input-rm",
+		ActionHash:    "sha256:action-rm",
+		RiskTags:      []string{"destructive"},
+	})
+	if err != nil {
+		t.Fatalf("EvaluateHook: %v", err)
+	}
+	if decision.Decision != claude.DecisionDeny {
+		t.Fatalf("decision = %#v, want deny", decision)
+	}
+	if !recorder.hasFailClosedReason(string(GatewayErrorTimeout)) {
+		t.Fatalf("fail-closed metrics = %#v, want timeout", recorder.failClosed)
+	}
+	if !recorder.hasDegradedReason(string(GatewayErrorTimeout)) {
+		t.Fatalf("degraded metrics = %#v, want timeout", recorder.degraded)
+	}
+	if !recorder.hasActionDecision("deny") {
+		t.Fatalf("action decision metrics = %#v, want deny", recorder.actionDecisions)
+	}
+}
+
+func TestEvaluatorRecordsObservabilityForInlineApprovalWait(t *testing.T) {
+	t.Parallel()
+
+	recorder := &captureRecorder{}
+	evaluator := NewEvaluator(EvaluatorConfig{
+		Client: &stubEvaluateClient{resp: &EvaluateResponse{
+			Decision:       string(edgecore.DecisionRequireApproval),
+			PolicySnapshot: "snap-eval",
+			EventID:        "evt-metrics-approval",
+			ApprovalRef:    "edge_appr_metrics",
+			ApprovalURL:    "/edge/approvals/edge_appr_metrics",
+			ActionHash:     "sha256:action-approval",
+			InputHash:      "sha256:input-approval",
+		}},
+		EventWriter:    &captureEventWriter{},
+		State:          evaluatorTestState(edgecore.PolicyModeEnforce),
+		ApprovalWaiter: &fakeApprovalWaiter{result: ApprovalWaitResult{Status: ApprovalWaitApproved, Reason: "approved"}},
+		ApprovalConfig: ApprovalDecisionConfig{InlineWaitEnabled: true, InlineWaitTimeout: time.Second, PolicyMode: edgecore.PolicyModeEnforce},
+		Recorder:       recorder,
+		HookTimeout:    2 * time.Second,
+	})
+	decision, err := evaluator.EvaluateHook(context.Background(), evaluatorMetricsRequest())
+	if err != nil {
+		t.Fatalf("EvaluateHook: %v", err)
+	}
+	if decision.Decision != claude.DecisionAllow {
+		t.Fatalf("decision = %#v, want inline approval allow", decision)
+	}
+	if len(recorder.approvalRequested) != 1 {
+		t.Fatalf("approval requested metrics = %#v, want one", recorder.approvalRequested)
+	}
+	if !recorder.hasApprovalResolved("approved") {
+		t.Fatalf("approval resolved metrics = %#v, want approved", recorder.approvalResolved)
+	}
+}
+
 func TestLocalServerUsesConfiguredEvaluator(t *testing.T) {
 	t.Parallel()
 
@@ -229,4 +354,153 @@ func evaluatorTestState(mode edgecore.PolicyMode) SessionState {
 		PolicySnapshot: "snap-eval",
 		PolicyMode:     mode,
 	}
+}
+
+func evaluatorMetricsRequest() claude.AgentdRequest {
+	return claude.AgentdRequest{
+		EventName:     "PreToolUse",
+		SessionID:     "edge_sess_eval",
+		ExecutionID:   "edge_exec_eval",
+		TenantID:      "tenant-eval",
+		PrincipalID:   "principal-eval",
+		ToolName:      "Bash",
+		InputRedacted: map[string]any{"command": "npm test"},
+		InputHash:     "sha256:input-metrics",
+		ActionHash:    "sha256:action-metrics",
+		Capability:    "exec.shell",
+		RiskTags:      []string{"exec", "test"},
+		Labels:        map[string]string{"command.class": "safe"},
+		DurationMS:    17,
+	}
+}
+
+type captureRecorder struct {
+	actionDecisions   []recordActionDecisionCall
+	cacheLookups      []recordCacheLookupCall
+	degraded          []recordReasonCall
+	failClosed        []recordReasonCall
+	approvalRequested []recordApprovalCall
+	approvalResolved  []recordApprovalResolvedCall
+	evaluateLatency   []recordEvaluateLatencyCall
+	hookLatency       []recordHookLatencyCall
+}
+
+type recordActionDecisionCall struct {
+	tenant, layer, kind, decision, mode string
+}
+
+type recordCacheLookupCall struct {
+	tenant, layer, kind, result string
+}
+
+type recordReasonCall struct {
+	tenant, mode, component, reason string
+}
+
+type recordApprovalCall struct {
+	tenant, layer, kind string
+}
+
+type recordApprovalResolvedCall struct {
+	tenant, layer, kind, outcome string
+}
+
+type recordEvaluateLatencyCall struct {
+	tenant, layer, kind, decision string
+	duration                      time.Duration
+}
+
+type recordHookLatencyCall struct {
+	tenant, hookEvent, decision string
+	duration                    time.Duration
+}
+
+func (r *captureRecorder) RecordSessionCreated(string, string, string)   {}
+func (r *captureRecorder) RecordSessionEnded(string, string, string)     {}
+func (r *captureRecorder) SetSessionsActive(string, string, int)         {}
+func (r *captureRecorder) RecordExecutionStarted(string, string, string) {}
+func (r *captureRecorder) RecordExecutionEnded(string, string, string)   {}
+
+func (r *captureRecorder) RecordActionDecision(tenant, layer, kind, decision, mode string) {
+	r.actionDecisions = append(r.actionDecisions, recordActionDecisionCall{tenant: tenant, layer: layer, kind: kind, decision: decision, mode: mode})
+}
+
+func (r *captureRecorder) RecordActionDenied(string, string, string, string) {}
+
+func (r *captureRecorder) RecordApprovalRequested(tenant, layer, kind string) {
+	r.approvalRequested = append(r.approvalRequested, recordApprovalCall{tenant: tenant, layer: layer, kind: kind})
+}
+
+func (r *captureRecorder) RecordApprovalResolved(tenant, layer, kind, outcome string) {
+	r.approvalResolved = append(r.approvalResolved, recordApprovalResolvedCall{tenant: tenant, layer: layer, kind: kind, outcome: outcome})
+}
+
+func (r *captureRecorder) RecordDegraded(tenant, mode, component, reasonCode string) {
+	r.degraded = append(r.degraded, recordReasonCall{tenant: tenant, mode: mode, component: component, reason: reasonCode})
+}
+
+func (r *captureRecorder) RecordFailClosed(tenant, mode, reasonCode string) {
+	r.failClosed = append(r.failClosed, recordReasonCall{tenant: tenant, mode: mode, reason: reasonCode})
+}
+
+func (r *captureRecorder) RecordArtifactExport(string, string, string) {}
+
+func (r *captureRecorder) ObserveHookLatency(tenant, hookEvent, decision string, duration time.Duration) {
+	r.hookLatency = append(r.hookLatency, recordHookLatencyCall{tenant: tenant, hookEvent: hookEvent, decision: decision, duration: duration})
+}
+
+func (r *captureRecorder) ObserveEvaluateLatency(tenant, layer, kind, decision string, duration time.Duration) {
+	r.evaluateLatency = append(r.evaluateLatency, recordEvaluateLatencyCall{tenant: tenant, layer: layer, kind: kind, decision: decision, duration: duration})
+}
+
+func (r *captureRecorder) RecordCacheLookup(tenant, layer, kind, result string) {
+	r.cacheLookups = append(r.cacheLookups, recordCacheLookupCall{tenant: tenant, layer: layer, kind: kind, result: result})
+}
+
+func (r *captureRecorder) AddStreamClients(string, int) {}
+func (r *captureRecorder) RecordStreamDrop(string)      {}
+
+func (r *captureRecorder) hasCacheResult(result string) bool {
+	for _, call := range r.cacheLookups {
+		if call.result == result {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *captureRecorder) hasActionDecision(decision string) bool {
+	for _, call := range r.actionDecisions {
+		if call.decision == decision {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *captureRecorder) hasDegradedReason(reason string) bool {
+	for _, call := range r.degraded {
+		if call.reason == reason {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *captureRecorder) hasFailClosedReason(reason string) bool {
+	for _, call := range r.failClosed {
+		if call.reason == reason {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *captureRecorder) hasApprovalResolved(outcome string) bool {
+	for _, call := range r.approvalResolved {
+		if call.outcome == outcome {
+			return true
+		}
+	}
+	return false
 }

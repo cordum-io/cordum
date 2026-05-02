@@ -18,6 +18,7 @@ type RunOptions struct {
 	Metadata   LocalSessionMetadata
 	Gateway    GatewayLifecycleClient
 	StateStore StateStore
+	Recorder   edgecore.Recorder
 	Clock      Clock
 }
 
@@ -94,6 +95,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 			State:          *state,
 			Cache:          safeAllowCache,
 			ApprovalWaiter: approvalWaiter,
+			Recorder:       opts.Recorder,
 			ApprovalConfig: ApprovalDecisionConfig{
 				InlineWaitEnabled: cfg.InlineApprovalWaitEnabled && approvalWaiter != nil,
 				InlineWaitTimeout: cfg.InlineApprovalWaitTimeout,
