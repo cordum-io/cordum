@@ -3,6 +3,8 @@ package agentd
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -40,6 +42,32 @@ type ApprovalWaitResult struct {
 
 type ApprovalWaiter interface {
 	WaitForApproval(context.Context, ApprovalWaitRequest) (ApprovalWaitResult, error)
+}
+
+// WaitForApproval calls Gateway's bounded EDGE-012 approval wait endpoint.
+// The endpoint returns the current/final EdgeApproval record; agentd maps
+// pending/timeouts to a DENY-at-hook decision instead of deferring execution.
+func (c *GatewayClient) WaitForApproval(ctx context.Context, req ApprovalWaitRequest) (ApprovalWaitResult, error) {
+	ref := strings.TrimSpace(req.ApprovalRef)
+	if ref == "" {
+		return ApprovalWaitResult{}, fmt.Errorf("approval_ref is required")
+	}
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = defaultInlineApprovalWaitTimeout
+	}
+	if timeout > maxAgentdDuration {
+		timeout = maxAgentdDuration
+	}
+	timeoutMS := int(timeout / time.Millisecond)
+	if timeoutMS <= 0 {
+		timeoutMS = 1
+	}
+	var approval edgecore.EdgeApproval
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/edge/approvals/"+url.PathEscape(ref)+"/wait", map[string]int{"timeout_ms": timeoutMS}, &approval); err != nil {
+		return ApprovalWaitResult{}, err
+	}
+	return approvalWaitResultFromEdgeApproval(approval), nil
 }
 
 // AgentdDecisionFromEvaluateResponse maps a fresh Gateway evaluate response to
@@ -148,6 +176,25 @@ func approvalAdditionalContext(resp EvaluateResponse) string {
 		return ""
 	}
 	return boundDecisionText("Cordum approval URL: " + url)
+}
+
+func approvalWaitResultFromEdgeApproval(approval edgecore.EdgeApproval) ApprovalWaitResult {
+	reason := strings.TrimSpace(approval.ResolutionReason)
+	if reason == "" {
+		reason = strings.TrimSpace(approval.Reason)
+	}
+	result := ApprovalWaitResult{Reason: boundDecisionText(reason)}
+	switch approval.Status {
+	case edgecore.ApprovalStatusApproved:
+		result.Status = ApprovalWaitApproved
+	case edgecore.ApprovalStatusRejected, edgecore.ApprovalStatusExpired, edgecore.ApprovalStatusInvalidated:
+		result.Status = ApprovalWaitRejected
+	case edgecore.ApprovalStatusPending, "":
+		result.Status = ApprovalWaitPending
+	default:
+		result.Status = ApprovalWaitPending
+	}
+	return result
 }
 
 func decisionReason(resp EvaluateResponse) string {

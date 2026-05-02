@@ -2,7 +2,11 @@ package agentd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -134,6 +138,76 @@ func TestAgentdDecisionFromEvaluateMapsAllowQuietlyAndRiskyDenyWithConciseCopy(t
 	}
 	if len(deny.Reason) > MaxGatewayMetadataValueBytes+8 {
 		t.Fatalf("deny reason length = %d, want bounded", len(deny.Reason))
+	}
+}
+
+func TestGatewayClientWaitForApprovalPostsTimeoutAndMapsStatuses(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		status     edgecore.ApprovalStatus
+		reason     string
+		resolution string
+		want       ApprovalWaitStatus
+	}{
+		{name: "approved", status: edgecore.ApprovalStatusApproved, resolution: "approved by reviewer", want: ApprovalWaitApproved},
+		{name: "rejected", status: edgecore.ApprovalStatusRejected, resolution: "too risky", want: ApprovalWaitRejected},
+		{name: "pending", status: edgecore.ApprovalStatusPending, reason: "still waiting", want: ApprovalWaitPending},
+		{name: "expired", status: edgecore.ApprovalStatusExpired, resolution: "expired", want: ApprovalWaitRejected},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got struct {
+				method    string
+				path      string
+				apiKey    string
+				tenant    string
+				timeoutMS float64
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got.method = r.Method
+				got.path = r.URL.Path
+				got.apiKey = r.Header.Get("X-API-Key")
+				got.tenant = r.Header.Get("X-Tenant-ID")
+				body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+				var req map[string]any
+				_ = json.Unmarshal(body, &req)
+				got.timeoutMS, _ = req["timeout_ms"].(float64)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(edgecore.EdgeApproval{
+					ApprovalRef:      "edge_appr_http",
+					Status:           tc.status,
+					Reason:           tc.reason,
+					ResolutionReason: tc.resolution,
+				})
+			}))
+			defer server.Close()
+			client, err := NewGatewayClient(GatewayClientConfig{BaseURL: server.URL, APIKey: "approval-api-key", TenantID: "tenant-approval"})
+			if err != nil {
+				t.Fatalf("NewGatewayClient: %v", err)
+			}
+			result, err := client.WaitForApproval(context.Background(), ApprovalWaitRequest{ApprovalRef: "edge_appr_http", Timeout: 1500 * time.Millisecond})
+			if err != nil {
+				t.Fatalf("WaitForApproval: %v", err)
+			}
+			if got.method != http.MethodPost || got.path != "/api/v1/edge/approvals/edge_appr_http/wait" {
+				t.Fatalf("request = %s %s, want POST wait path", got.method, got.path)
+			}
+			if got.apiKey != "approval-api-key" || got.tenant != "tenant-approval" {
+				t.Fatalf("auth headers = api:%q tenant:%q", got.apiKey, got.tenant)
+			}
+			if got.timeoutMS != 1500 {
+				t.Fatalf("timeout_ms = %v, want 1500", got.timeoutMS)
+			}
+			if result.Status != tc.want {
+				t.Fatalf("status = %q, want %q", result.Status, tc.want)
+			}
+			if tc.resolution != "" && !strings.Contains(result.Reason, tc.resolution) {
+				t.Fatalf("reason = %q, want resolution %q", result.Reason, tc.resolution)
+			}
+		})
 	}
 }
 

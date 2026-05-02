@@ -25,6 +25,8 @@ func TestLoadConfigFromEnvAppliesDefaultsAndExplicitValues(t *testing.T) {
 		"CORDUM_AGENTD_SAFE_ALLOW_CACHE":             "true",
 		"CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL":         "2m",
 		"CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES": "32",
+		"CORDUM_AGENTD_INLINE_APPROVAL_WAIT":         "true",
+		"CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT": "4s",
 	})
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
@@ -46,6 +48,9 @@ func TestLoadConfigFromEnvAppliesDefaultsAndExplicitValues(t *testing.T) {
 	}
 	if !cfg.SafeAllowCache.Enabled || cfg.SafeAllowCache.TTL != 2*time.Minute || cfg.SafeAllowCache.MaxEntries != 32 {
 		t.Fatalf("safe allow cache config = %#v, want enabled ttl=2m max=32", cfg.SafeAllowCache)
+	}
+	if !cfg.InlineApprovalWaitEnabled || cfg.InlineApprovalWaitTimeout != 4*time.Second {
+		t.Fatalf("inline approval wait config = enabled:%v timeout:%s, want true/4s", cfg.InlineApprovalWaitEnabled, cfg.InlineApprovalWaitTimeout)
 	}
 }
 
@@ -77,6 +82,33 @@ func TestLoadConfigSafeAllowCacheDefaultsOffAndRejectsInvalidBounds(t *testing.T
 	invalidMax["CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES"] = "0"
 	if _, err := LoadConfig(invalidMax); err == nil || !strings.Contains(err.Error(), "CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES") {
 		t.Fatalf("LoadConfig invalid cache max err = %v, want env var name", err)
+	}
+}
+
+func TestLoadConfigInlineApprovalWaitDefaultsOffAndRejectsInvalidTimeout(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]string{
+		"CORDUM_GATEWAY":   "http://127.0.0.1:8081",
+		"CORDUM_API_KEY":   "api-key-123",
+		"CORDUM_TENANT_ID": "tenant-a",
+	}
+	cfg, err := LoadConfig(base)
+	if err != nil {
+		t.Fatalf("LoadConfig defaults: %v", err)
+	}
+	if cfg.InlineApprovalWaitEnabled {
+		t.Fatalf("inline approval wait enabled by default")
+	}
+	if cfg.InlineApprovalWaitTimeout != defaultInlineApprovalWaitTimeout {
+		t.Fatalf("inline approval wait default timeout = %s, want %s", cfg.InlineApprovalWaitTimeout, defaultInlineApprovalWaitTimeout)
+	}
+
+	invalid := cloneConfigEnv(base)
+	invalid["CORDUM_AGENTD_INLINE_APPROVAL_WAIT"] = "true"
+	invalid["CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT"] = "0s"
+	if _, err := LoadConfig(invalid); err == nil || !strings.Contains(err.Error(), "CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT") {
+		t.Fatalf("LoadConfig invalid inline approval wait timeout err = %v, want env var name", err)
 	}
 }
 

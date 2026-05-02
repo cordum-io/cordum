@@ -15,21 +15,23 @@ import (
 )
 
 type Config struct {
-	GatewayURL        string
-	APIKey            string
-	TenantID          string
-	PrincipalID       string
-	PolicyMode        edgecore.PolicyMode
-	BindURL           string
-	SocketPath        string
-	LogLevel          string
-	HookTimeout       time.Duration
-	GatewayTimeout    time.Duration
-	HeartbeatTTL      time.Duration
-	HeartbeatInterval time.Duration
-	FailClosed        bool
-	SafeAllowCache    SafeAllowCacheConfig
-	StateDir          string
+	GatewayURL                string
+	APIKey                    string
+	TenantID                  string
+	PrincipalID               string
+	PolicyMode                edgecore.PolicyMode
+	BindURL                   string
+	SocketPath                string
+	LogLevel                  string
+	HookTimeout               time.Duration
+	GatewayTimeout            time.Duration
+	HeartbeatTTL              time.Duration
+	HeartbeatInterval         time.Duration
+	FailClosed                bool
+	SafeAllowCache            SafeAllowCacheConfig
+	InlineApprovalWaitEnabled bool
+	InlineApprovalWaitTimeout time.Duration
+	StateDir                  string
 }
 
 func LoadConfig(env map[string]string) (Config, error) {
@@ -51,7 +53,9 @@ func LoadConfig(env map[string]string) (Config, error) {
 			TTL:        defaultSafeAllowCacheTTL,
 			MaxEntries: defaultSafeAllowCacheMaxEntries,
 		},
-		StateDir: defaultStateDir(),
+		InlineApprovalWaitEnabled: false,
+		InlineApprovalWaitTimeout: defaultInlineApprovalWaitTimeout,
+		StateDir:                  defaultStateDir(),
 	}
 	if raw := strings.TrimSpace(envString(env, "CORDUM_EDGE_POLICY_MODE")); raw != "" {
 		cfg.PolicyMode = edgecore.PolicyMode(raw)
@@ -113,6 +117,16 @@ func LoadConfig(env map[string]string) (Config, error) {
 		}
 		cfg.SafeAllowCache.MaxEntries = n
 	}
+	if raw := strings.TrimSpace(envString(env, "CORDUM_AGENTD_INLINE_APPROVAL_WAIT")); raw != "" {
+		cfg.InlineApprovalWaitEnabled = parseBool(raw)
+	}
+	if raw := strings.TrimSpace(envString(env, "CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT")); raw != "" {
+		d, err := parseBoundedDuration("CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.InlineApprovalWaitTimeout = d
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -166,6 +180,11 @@ func (c Config) Validate() error {
 		}
 		if c.SafeAllowCache.MaxEntries <= 0 || c.SafeAllowCache.MaxEntries > 10000 {
 			return errors.New("CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES must be >0 and <= 10000")
+		}
+	}
+	if c.InlineApprovalWaitEnabled {
+		if c.InlineApprovalWaitTimeout <= 0 || c.InlineApprovalWaitTimeout > maxAgentdDuration {
+			return fmt.Errorf("CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT must be >0 and <= %s", maxAgentdDuration)
 		}
 	}
 	return nil

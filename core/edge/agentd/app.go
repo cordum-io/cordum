@@ -80,15 +80,24 @@ func Run(ctx context.Context, opts RunOptions) error {
 	if cfg.SafeAllowCache.Enabled {
 		safeAllowCache = NewSafeAllowCache(cfg.SafeAllowCache, clock)
 	}
+	var approvalWaiter ApprovalWaiter
+	if cfg.InlineApprovalWaitEnabled {
+		if waiter, ok := gateway.(ApprovalWaiter); ok {
+			approvalWaiter = waiter
+		}
+	}
 	var evaluator *Evaluator
 	if evaluateClient, ok := gateway.(EvaluateClient); ok {
 		evaluator = NewEvaluator(EvaluatorConfig{
-			Client:      evaluateClient,
-			EventWriter: eventWriter,
-			State:       *state,
-			Cache:       safeAllowCache,
+			Client:         evaluateClient,
+			EventWriter:    eventWriter,
+			State:          *state,
+			Cache:          safeAllowCache,
+			ApprovalWaiter: approvalWaiter,
 			ApprovalConfig: ApprovalDecisionConfig{
-				PolicyMode: cfg.PolicyMode,
+				InlineWaitEnabled: cfg.InlineApprovalWaitEnabled && approvalWaiter != nil,
+				InlineWaitTimeout: cfg.InlineApprovalWaitTimeout,
+				PolicyMode:        cfg.PolicyMode,
 			},
 			HookTimeout: cfg.HookTimeout,
 		})
