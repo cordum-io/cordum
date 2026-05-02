@@ -390,6 +390,21 @@ func TestGatewayEdgeEvaluateRetryConsumesApprovedApprovalAndDeniesDuplicate(t *t
 	if retry.WaitAfter != "" || retry.WaitStrategy != "" {
 		t.Fatalf("retry should clear wait guidance, got wait_strategy=%q wait_after=%q", retry.WaitStrategy, retry.WaitAfter)
 	}
+	events := listEdgeEvaluateEvents(t, s, session.SessionID, session.ExecutionID)
+	var retryEvent *edgecore.AgentActionEvent
+	for i := range events {
+		if events[i].EventID == retry.EventID {
+			retryEvent = &events[i]
+			break
+		}
+	}
+	if retryEvent == nil {
+		t.Fatalf("retry event_id %q not found in persisted events: %#v", retry.EventID, events)
+	}
+	if retryEvent.Decision != edgecore.DecisionAllow || retryEvent.Status != edgecore.ActionStatusOK || retryEvent.ApprovalRef != initial.ApprovalRef {
+		t.Fatalf("retry event decision/status/ref = %q/%q/%q, want ALLOW/ok/%q (event=%#v)",
+			retryEvent.Decision, retryEvent.Status, retryEvent.ApprovalRef, initial.ApprovalRef, retryEvent)
+	}
 
 	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, initial.ApprovalRef)
 	if err != nil || !ok || stored == nil {
@@ -870,14 +885,33 @@ func TestGatewayEdgeEvaluateInlineWaitTimeoutKeepsApprovalPending(t *testing.T) 
 	}
 	var resp edgeEvaluateResponseJSON
 	decodeEdgeRouteJSON(t, rr, &resp)
-	if resp.Decision != string(edgecore.DecisionRequireApproval) {
-		t.Fatalf("decision = %q, want REQUIRE_APPROVAL after timeout body=%s", resp.Decision, rr.Body.String())
+	if resp.Decision != string(edgecore.DecisionDeny) {
+		t.Fatalf("decision = %q, want DENY after inline-wait timeout body=%s", resp.Decision, rr.Body.String())
 	}
 	if resp.ApprovalRef == "" {
 		t.Fatalf("approval_ref empty body=%s", rr.Body.String())
 	}
 	if resp.WaitAfter != "approve_then_retry" {
 		t.Fatalf("wait_after = %q, want approve_then_retry", resp.WaitAfter)
+	}
+	combined := strings.ToLower(resp.Reason + " " + resp.TerminalMessage + " " + resp.PermissionDecisionReason)
+	if !strings.Contains(combined, "timeout") || !strings.Contains(combined, "retry") {
+		t.Fatalf("timeout response reason/terminal/permission = %q/%q/%q, want timeout + retry guidance", resp.Reason, resp.TerminalMessage, resp.PermissionDecisionReason)
+	}
+	events := listEdgeEvaluateEvents(t, s, session.SessionID, session.ExecutionID)
+	var timeoutEvent *edgecore.AgentActionEvent
+	for i := range events {
+		if events[i].EventID == resp.EventID {
+			timeoutEvent = &events[i]
+			break
+		}
+	}
+	if timeoutEvent == nil {
+		t.Fatalf("timeout response event_id %q not found in persisted events: %#v", resp.EventID, events)
+	}
+	if timeoutEvent.Decision != edgecore.DecisionDeny || timeoutEvent.Status != edgecore.ActionStatusBlocked || timeoutEvent.ApprovalRef != resp.ApprovalRef {
+		t.Fatalf("timeout event decision/status/ref = %q/%q/%q, want DENY/blocked/%q (event=%#v)",
+			timeoutEvent.Decision, timeoutEvent.Status, timeoutEvent.ApprovalRef, resp.ApprovalRef, timeoutEvent)
 	}
 	if elapsed < 350*time.Millisecond {
 		t.Fatalf("inline wait elapsed %v, expected >= ~400ms timeout", elapsed)

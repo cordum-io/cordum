@@ -145,6 +145,44 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	retryRef := strings.TrimSpace(evalCtx.req.ApprovalRef)
+	if retryRef != "" {
+		waitTimeout := boundEdgeEvaluateWaitTimeout(evalCtx.req.ApprovalWaitTimeoutMS)
+		if evalCtx.req.WaitForApproval {
+			resolved := s.waitForEdgeApprovalResolution(r.Context(), evalCtx.store, evalCtx.tenantID, retryRef, waitTimeout)
+			if !resolved {
+				timeoutOutcome, handled, timeoutErr := s.edgeEvaluateInlineWaitTimeoutOutcome(r.Context(), evalCtx.store, evalCtx.tenantID, outcome, retryRef, waitTimeout)
+				if timeoutErr != nil {
+					writeEdgeApprovalStoreError(w, r, timeoutErr, "load edge evaluate approval after wait timeout")
+					return
+				}
+				if handled {
+					appended, appendErr := s.appendEdgeEvaluateOutcome(r.Context(), evalCtx.store, policyInput.event, timeoutOutcome, edgeEvaluateDurationMS(started))
+					if appendErr != nil {
+						writeEdgeEventStoreError(w, r, appendErr, "append edge evaluate retry timeout event")
+						return
+					}
+					timeoutOutcome.response.EventID = appended.EventID
+					writeJSON(w, timeoutOutcome.response)
+					return
+				}
+			}
+		}
+
+		retryOutcome, retryErr := s.consumeEdgeEvaluateApproval(r.Context(), evalCtx.store, policyInput.event, outcome, retryRef, actionHash)
+		if retryErr != nil {
+			writeEdgeApprovalStoreError(w, r, retryErr, "consume edge evaluate approval")
+			return
+		}
+		appended, appendErr := s.appendEdgeEvaluateOutcome(r.Context(), evalCtx.store, policyInput.event, retryOutcome, edgeEvaluateDurationMS(started))
+		if appendErr != nil {
+			writeEdgeEventStoreError(w, r, appendErr, "append edge evaluate retry outcome event")
+			return
+		}
+		retryOutcome.response.EventID = appended.EventID
+		writeJSON(w, retryOutcome.response)
+		return
+	}
+
 	appended, err := s.appendEdgeEvaluateOutcome(r.Context(), evalCtx.store, policyInput.event, outcome, edgeEvaluateDurationMS(started))
 	if err != nil {
 		writeEdgeEventStoreError(w, r, err, "append edge evaluate decision event")
@@ -152,16 +190,6 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 	}
 	outcome.response.EventID = appended.EventID
 	switch {
-	case retryRef != "":
-		if evalCtx.req.WaitForApproval {
-			s.waitForEdgeApprovalResolution(r.Context(), evalCtx.store, evalCtx.tenantID, retryRef, boundEdgeEvaluateWaitTimeout(evalCtx.req.ApprovalWaitTimeoutMS))
-		}
-		retryOutcome, retryErr := s.consumeEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, retryRef, actionHash)
-		if retryErr != nil {
-			writeEdgeApprovalStoreError(w, r, retryErr, "consume edge evaluate approval")
-			return
-		}
-		outcome = retryOutcome
 	case outcome.decision == edgecore.DecisionRequireApproval:
 		approval, err := s.enqueueEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, actionHash)
 		if err != nil {
@@ -170,12 +198,36 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 		}
 		outcome = outcome.withApprovalRetryMetadata(*approval)
 		if evalCtx.req.WaitForApproval {
-			s.waitForEdgeApprovalResolution(r.Context(), evalCtx.store, evalCtx.tenantID, approval.ApprovalRef, boundEdgeEvaluateWaitTimeout(evalCtx.req.ApprovalWaitTimeoutMS))
+			waitTimeout := boundEdgeEvaluateWaitTimeout(evalCtx.req.ApprovalWaitTimeoutMS)
+			resolved := s.waitForEdgeApprovalResolution(r.Context(), evalCtx.store, evalCtx.tenantID, approval.ApprovalRef, waitTimeout)
+			if !resolved {
+				timeoutOutcome, handled, timeoutErr := s.edgeEvaluateInlineWaitTimeoutOutcome(r.Context(), evalCtx.store, evalCtx.tenantID, outcome, approval.ApprovalRef, waitTimeout)
+				if timeoutErr != nil {
+					writeEdgeApprovalStoreError(w, r, timeoutErr, "load edge evaluate approval after wait timeout")
+					return
+				}
+				if handled {
+					appendedFinal, appendErr := s.appendEdgeEvaluateOutcome(r.Context(), evalCtx.store, edgeEvaluateFollowupEvent(policyInput.event), timeoutOutcome, edgeEvaluateDurationMS(started))
+					if appendErr != nil {
+						writeEdgeEventStoreError(w, r, appendErr, "append edge evaluate inline-wait timeout event")
+						return
+					}
+					timeoutOutcome.response.EventID = appendedFinal.EventID
+					outcome = timeoutOutcome
+					break
+				}
+			}
 			waitedOutcome, waitErr := s.consumeEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, approval.ApprovalRef, actionHash)
 			if waitErr != nil {
 				writeEdgeApprovalStoreError(w, r, waitErr, "consume edge evaluate approval after wait")
 				return
 			}
+			appendedFinal, appendErr := s.appendEdgeEvaluateOutcome(r.Context(), evalCtx.store, edgeEvaluateFollowupEvent(policyInput.event), waitedOutcome, edgeEvaluateDurationMS(started))
+			if appendErr != nil {
+				writeEdgeEventStoreError(w, r, appendErr, "append edge evaluate inline-wait outcome event")
+				return
+			}
+			waitedOutcome.response.EventID = appendedFinal.EventID
 			outcome = waitedOutcome
 		}
 	}
@@ -595,15 +647,14 @@ func boundEdgeEvaluateWaitTimeout(requestedMS int) time.Duration {
 
 // waitForEdgeApprovalResolution polls the EDGE-011 approval store at a capped
 // interval until the approval is non-pending, the parent context is cancelled,
-// or the bounded timeout elapses. It returns unconditionally; the caller routes
-// through consumeEdgeEvaluateApproval afterwards to surface whatever state the
-// approval ended in. The wait holds no locks and exits cleanly via deferred
-// cancel + ticker stop, so neither timeout nor request cancellation leaks
-// goroutines or tickers.
-func (s *server) waitForEdgeApprovalResolution(ctx context.Context, store edgecore.Store, tenantID, approvalRef string, timeout time.Duration) {
+// or the bounded timeout elapses. It returns true only when a non-pending
+// approval was observed; false means unresolved, missing, errored, or cancelled.
+// The wait holds no locks and exits cleanly via deferred cancel + ticker stop,
+// so neither timeout nor request cancellation leaks goroutines or tickers.
+func (s *server) waitForEdgeApprovalResolution(ctx context.Context, store edgecore.Store, tenantID, approvalRef string, timeout time.Duration) bool {
 	approvalRef = strings.TrimSpace(approvalRef)
 	if approvalRef == "" {
-		return
+		return false
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -612,20 +663,66 @@ func (s *server) waitForEdgeApprovalResolution(ctx context.Context, store edgeco
 	for {
 		approval, found, err := store.GetApproval(waitCtx, tenantID, approvalRef)
 		if err != nil {
-			return
+			return false
 		}
 		if !found || approval == nil {
-			return
+			return false
 		}
 		if approval.Status != edgecore.ApprovalStatusPending {
-			return
+			return true
 		}
 		select {
 		case <-waitCtx.Done():
-			return
+			return false
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *server) edgeEvaluateInlineWaitTimeoutOutcome(ctx context.Context, store edgecore.Store, tenantID string, outcome edgeEvaluateDecisionOutcome, approvalRef string, timeout time.Duration) (edgeEvaluateDecisionOutcome, bool, error) {
+	approval, found, err := store.GetApproval(ctx, tenantID, approvalRef)
+	if err != nil {
+		return outcome, false, err
+	}
+	if !found || approval == nil || approval.Status != edgecore.ApprovalStatusPending {
+		return outcome, false, nil
+	}
+	return edgeEvaluateInlineWaitTimeoutDeny(outcome, *approval, timeout), true, nil
+}
+
+func edgeEvaluateInlineWaitTimeoutDeny(outcome edgeEvaluateDecisionOutcome, approval edgecore.EdgeApproval, timeout time.Duration) edgeEvaluateDecisionOutcome {
+	approvalRef := strings.TrimSpace(approval.ApprovalRef)
+	reason := edgeEvaluateApprovalWaitTimeoutMessage(approvalRef)
+	out := outcome.edgeEvaluateDeny(reason)
+	out.approvalRef = approvalRef
+	if snapshot := strings.TrimSpace(approval.PolicySnapshot); snapshot != "" {
+		out.policySnapshot = snapshot
+		out.response.PolicySnapshot = snapshot
+	}
+	out.response.ApprovalRef = approvalRef
+	out.response.ApprovalURL = edgeEvaluateApprovalDashboardPath(approvalRef)
+	out.response.ActionHash = strings.TrimSpace(approval.ActionHash)
+	out.response.InputHash = strings.TrimSpace(approval.InputHash)
+	out.response.WaitStrategy = "manual_approval"
+	out.response.WaitAfter = "approve_then_retry"
+	out.response.TimeoutMS = int(timeout / time.Millisecond)
+	out.response.TerminalTitle = "Cordum Edge approval timed out"
+	return out
+}
+
+func edgeEvaluateApprovalWaitTimeoutMessage(approvalRef string) string {
+	approvalRef = strings.TrimSpace(approvalRef)
+	if approvalRef == "" {
+		return "approval wait timeout; this action was not run. Approve it in Cordum, then retry the command."
+	}
+	return fmt.Sprintf("approval wait timeout for %s; this action was not run. Approve it in Cordum, then retry the command.", approvalRef)
+}
+
+func edgeEvaluateFollowupEvent(base edgecore.AgentActionEvent) edgecore.AgentActionEvent {
+	base.EventID = uuid.NewString()
+	base.Seq = 0
+	base.Timestamp = time.Now().UTC()
+	return base
 }
 
 // consumeEdgeEvaluateApproval resolves the retry case where the caller supplied
