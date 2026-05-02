@@ -16,12 +16,14 @@ import (
 
 func runEdgeCmd(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: cordumctl edge <claude>")
+		fmt.Fprintln(os.Stderr, "usage: cordumctl edge <claude|doctor>")
 		return 2
 	}
 	switch args[0] {
 	case "claude":
 		return runEdgeClaudeCmd(args[1:], os.Stdin, os.Stdout, os.Stderr)
+	case "doctor":
+		return runEdgeDoctorCmd(args[1:], os.Stdout, os.Stderr)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown edge subcommand %q\n", args[0])
 		return 2

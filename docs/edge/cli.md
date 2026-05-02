@@ -133,6 +133,7 @@ or inspect enforcement credentials.
 - [Root Claude Code guide](../edge-claude-code.md)
 - [Manual demo](demo.md)
 - [Configuration](configuration.md)
+- [cordumctl edge doctor](cordumctl-edge-doctor.md)
 - [cordum-hook](cordum-hook.md)
 - [cordum-agentd](cordum-agentd.md)
 - [Managed settings template](managed-settings-template.md)

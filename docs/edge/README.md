@@ -109,7 +109,8 @@ enterprise shape, but do not treat the developer wrapper as fleet enforcement.
 - **Manual demo:** [demo.md](demo.md) and the root
   [docs/demo-edge-claude.md](../demo-edge-claude.md).
 - **CLI reference:** [cli.md](cli.md) and the existing
-  [cordumctl edge claude contract](cordumctl-edge-claude.md).
+  [cordumctl edge claude contract](cordumctl-edge-claude.md). Use
+  [cordumctl edge doctor](cordumctl-edge-doctor.md) for local diagnostics.
 - **Configuration:** [configuration.md](configuration.md).
 - **API reference:** [api.md](api.md) plus the canonical
   [OpenAPI spec](../api/openapi/cordum-api.yaml).

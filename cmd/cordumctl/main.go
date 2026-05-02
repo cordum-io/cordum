@@ -427,6 +427,7 @@ Usage:
   cordumctl delegation <subcommand> [...]
   cordumctl governance <subcommand> [...]
   cordumctl edge claude [--policy-mode enforce] [--dry-run|--no-launch] [--settings-output path|-] [--claude-path path] [-- --claude-args]
+  cordumctl edge doctor [--json] [--policy-mode enforce] [--settings-path path] [--claude-path path]
 
 Global flags:
   --gateway    Gateway base URL (default from CORDUM_GATEWAY)
