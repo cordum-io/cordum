@@ -129,14 +129,13 @@ calls for the hook subprocess and is intended only for CI hosts without
 the Go toolchain or `openssl`. PASS line shapes are identical between
 modes.
 
-**EDGE-017.4 forward-compat**: the agentd loopback nonce is currently
-embedded in the URL query string (`http://127.0.0.1:<port>/v1/edge/hooks/
-claude?nonce=<value>`) and exported to `cordum-hook` via
-`CORDUM_AGENTD_URL`. When EDGE-017.4 (cordum-hook reads nonce from
-`CORDUM_AGENTD_HOOK_NONCE` env and sends it as `X-Cordum-Agentd-Nonce`
-header) lands, the script's `compose_agentd_url` and `run_hook` helpers
-will switch to the env-and-header transport. PASS line shapes will stay
-stable across that migration.
+**Header-only hook nonce auth**: default hook mode now keeps
+`CORDUM_AGENTD_URL` as the bare
+`http://127.0.0.1:<port>/v1/edge/hooks/claude` endpoint. The script passes the
+same runtime nonce to `cordum-hook` through `CORDUM_AGENTD_HOOK_NONCE`, and
+`cordum-hook` sends it to agentd as `X-Cordum-Agentd-Nonce`. URL query-string
+nonces (`?nonce=`) are refused; PASS line shapes stayed stable across the
+EDGE-017.4.1 removal.
 
 ## Manual flow (no workers)
 

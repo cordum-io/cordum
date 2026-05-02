@@ -48,9 +48,8 @@ EDGE-015 supports a loopback HTTP endpoint for the local agentd contract:
 Future `cordum-agentd` work may add a user-only socket transport. Until then,
 the loopback URL is still a local-agentd boundary; do not configure the hook to
 call Gateway or any remote host. Existing `CORDUM_AGENTD_URL?...nonce=` settings
-fail closed with a migration error unless `CORDUM_AGENTD_HOOK_NONCE` is present;
-agentd accepts the query-param path only for one release transition and emits a
-deprecation warning.
+fail closed with a migration error; regenerate settings so the URL stays bare
+and `CORDUM_AGENTD_HOOK_NONCE` is supplied only in the hook process environment.
 
 The request sent to agentd contains bounded hook metadata, session/execution IDs, tool metadata, and the bounded raw Claude payload only in memory. The hook does not persist or log raw payloads.
 
