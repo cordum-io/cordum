@@ -47,6 +47,7 @@ import {
   type RunTimelineEvent,
 } from "@/hooks/useWorkflows";
 import { GovernanceTimeline } from "@/components/governance/GovernanceTimeline";
+import { AgentExecutionsPanel } from "@/components/edge/AgentExecutionsPanel";
 
 interface ChatMessage {
   id: string;
@@ -619,6 +620,10 @@ export default function WorkflowRunDetailPage() {
               Chat
             </button>
           </div>
+        <AgentExecutionsPanel
+          workflowRunId={run?.id ?? runId}
+          className="mx-5 my-3 shrink-0"
+        />
         <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
         {/* Steps Panel — Animated Graph */}
           <div

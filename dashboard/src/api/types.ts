@@ -13,6 +13,325 @@ export interface PaginationParams {
   sort?: string;
 }
 
+// JSON values safe to keep in dashboard state. Edge transforms use these for
+// redacted/bounded metadata only; raw prompts, tool payloads, transcripts,
+// command output, tokens, Authorization headers, and signed URLs must not be
+// cached in these shapes.
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
+export interface JsonObject {
+  [key: string]: JsonValue;
+}
+
+// ---------------------------------------------------------------------------
+// Cordum Edge
+// ---------------------------------------------------------------------------
+
+export type EdgePrincipalType = "human" | "service" | "unknown";
+export type EdgeMode = "local-dev" | "enterprise-managed" | "workflow" | "ci" | "prod-runner";
+export type EdgePolicyMode = "observe" | "enforce" | "enterprise-strict";
+export type EdgeSessionStatus = "starting" | "running" | "waiting_for_approval" | "degraded" | "ended" | "failed";
+export type EdgeExecutionStatus = "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled" | "timeout" | "degraded";
+export type EdgeLayer = "hook" | "mcp" | "llm" | "runtime" | "workflow" | "system";
+export type EdgeDecision = "ALLOW" | "DENY" | "REQUIRE_APPROVAL" | "THROTTLE" | "CONSTRAIN" | "RECORDED";
+export type EdgeActionStatus = "ok" | "blocked" | "failed" | "degraded";
+export type EdgeRiskLevel = "low" | "medium" | "high" | "critical";
+export type EdgeAdapter = "claude-code-hook" | "mcp-gateway" | "llm-proxy" | "runtime-sidecar" | "sdk-runner";
+export type EdgeApprovalStatus = "pending" | "approved" | "rejected" | "expired" | "invalidated";
+export type EdgeApprovalDecision = "" | "approve" | "reject" | "expire" | "invalidate";
+export type EdgeArtifactType =
+  | "edge.transcript"
+  | "edge.diff"
+  | "edge.tool_input"
+  | "edge.tool_result"
+  | "edge.test_output"
+  | "edge.mcp_request"
+  | "edge.mcp_response"
+  | "edge.llm_prompt_redacted"
+  | "edge.llm_response_redacted"
+  | "edge.evidence_bundle";
+export type EdgeRetentionClass = "short" | "standard" | "audit";
+export type EdgeRedactionLevel = "standard" | "strict";
+
+export interface EdgePage<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
+export interface EdgeLabels {
+  [key: string]: string;
+}
+
+export interface EdgeEnforcementLayers {
+  [key: string]: boolean;
+}
+
+export interface EdgeRiskSummary {
+  deniedCount: number;
+  approvalCount: number;
+  artifactCount: number;
+  maxRisk?: EdgeRiskLevel | string;
+}
+
+export interface EdgeExecutionMetrics {
+  events?: number;
+  allow?: number;
+  deny?: number;
+  requireApproval?: number;
+  artifacts?: number;
+  llmCostUsd?: number;
+}
+
+export interface EdgeArtifactPointer {
+  artifactType: EdgeArtifactType | string;
+  sessionId: string;
+  executionId: string;
+  eventId: string;
+  tenantId: string;
+  retentionClass: EdgeRetentionClass | string;
+  redactionLevel: EdgeRedactionLevel | string;
+  sha256: string;
+  uri: string;
+  createdAt: string;
+  sizeBytes?: number;
+  contentType?: string;
+}
+
+export interface EdgeSession {
+  sessionId: string;
+  tenantId: string;
+  principalId?: string;
+  principalType: EdgePrincipalType | string;
+  agentProduct?: string;
+  agentVersion?: string;
+  mode: EdgeMode | string;
+  repo?: string;
+  gitRemote?: string;
+  gitBranch?: string;
+  gitSha?: string;
+  cwd?: string;
+  hostId?: string;
+  deviceId?: string;
+  traceId: string;
+  workflowRunId?: string;
+  jobId?: string;
+  policySnapshot?: string;
+  enforcementLayers?: EdgeEnforcementLayers;
+  policyMode: EdgePolicyMode | string;
+  status: EdgeSessionStatus | string;
+  riskSummary: EdgeRiskSummary;
+  startedAt: string;
+  endedAt?: string | null;
+  labels?: EdgeLabels;
+}
+
+export interface AgentExecution {
+  executionId: string;
+  sessionId: string;
+  tenantId: string;
+  adapter: EdgeAdapter | string;
+  mode: EdgeMode | string;
+  workflowRunId?: string;
+  stepId?: string;
+  jobId?: string;
+  attempt?: number;
+  traceId?: string;
+  workerId?: string;
+  policySnapshot?: string;
+  status: EdgeExecutionStatus | string;
+  startedAt: string;
+  endedAt?: string | null;
+  metrics?: EdgeExecutionMetrics;
+  labels?: EdgeLabels;
+}
+
+export interface AgentActionEvent {
+  eventId: string;
+  sessionId: string;
+  executionId: string;
+  tenantId: string;
+  principalId?: string;
+  seq: number;
+  ts: string;
+  layer: EdgeLayer | string;
+  kind: string;
+  agentProduct?: string;
+  toolName?: string;
+  toolUseId?: string;
+  actionName?: string;
+  capability?: string;
+  riskTags?: string[];
+  inputRedacted?: JsonObject | null;
+  inputHash?: string;
+  decision: EdgeDecision | string;
+  decisionReason?: string;
+  ruleId?: string;
+  policySnapshot?: string;
+  approvalRef?: string;
+  artifactPtrs?: EdgeArtifactPointer[];
+  durationMs?: number;
+  status: EdgeActionStatus | string;
+  errorCode?: string;
+  errorMessage?: string;
+  labels?: EdgeLabels;
+}
+
+export interface EdgeApproval {
+  approvalRef: string;
+  tenantId: string;
+  sessionId: string;
+  executionId: string;
+  eventId: string;
+  principalId: string;
+  requester: string;
+  resolverId?: string;
+  resolvedBy?: string;
+  status: EdgeApprovalStatus | string;
+  decision?: EdgeApprovalDecision | string;
+  reason: string;
+  resolutionReason?: string;
+  ruleId: string;
+  policySnapshot: string;
+  actionHash: string;
+  inputHash: string;
+  createdAt: string;
+  expiresAt?: string | null;
+  resolvedAt?: string | null;
+  consumedAt?: string | null;
+  labels?: EdgeLabels;
+  metadata?: Record<string, string>;
+}
+
+export interface EdgeSessionCreateResponse {
+  sessionId: string;
+  executionId: string;
+  traceId: string;
+  policySnapshot: string;
+  dashboardUrl: string;
+  session: EdgeSession;
+  execution: AgentExecution;
+}
+
+export interface EdgeHeartbeatResponse {
+  sessionId: string;
+  heartbeatAlive: boolean;
+}
+
+export interface EdgeSessionListParams {
+  cursor?: string;
+  limit?: number;
+  status?: EdgeSessionStatus | string;
+  principalId?: string;
+  agentProduct?: string;
+}
+
+export interface EdgeExecutionListParams {
+  cursor?: string;
+  limit?: number;
+  sessionId?: string;
+  jobId?: string;
+  traceId?: string;
+  workflowRunId?: string;
+}
+
+export interface EdgeEventListParams {
+  cursor?: string;
+  limit?: number;
+  kind?: string;
+  decision?: EdgeDecision | string;
+  since?: string;
+  until?: string;
+}
+
+export interface EdgeApprovalListParams {
+  cursor?: string;
+  limit?: number;
+  status?: EdgeApprovalStatus | string;
+  sessionId?: string;
+  executionId?: string;
+  actionHash?: string;
+}
+
+export interface EdgeExportRequest {
+  maxEvents?: number;
+}
+
+export interface EdgeMissingArtifact {
+  uri: string;
+  sha256?: string;
+  artifactType?: EdgeArtifactType | string;
+  sessionId?: string;
+  executionId?: string;
+  eventId?: string;
+  reason: "not_found" | "tenant_mismatch" | "store_error" | string;
+}
+
+export interface EdgeJobLink {
+  executionId: string;
+  jobId?: string;
+  workflowRunId?: string;
+  stepId?: string;
+}
+
+export interface EdgeExportTruncation {
+  eventsTruncated?: boolean;
+  eventCount?: number;
+  eventScanLimitHit?: boolean;
+  executionsTruncated?: boolean;
+}
+
+export interface EdgeSessionExportBundle {
+  manifestVersion: "edge.export.v1" | string;
+  generatedAt: string;
+  tenantId: string;
+  redactionLevel?: EdgeRedactionLevel | string;
+  session: EdgeSession;
+  executions?: AgentExecution[];
+  events?: AgentActionEvent[];
+  approvals?: EdgeApproval[];
+  artifacts?: EdgeArtifactPointer[];
+  missingArtifacts?: EdgeMissingArtifact[];
+  jobLinks?: EdgeJobLink[];
+  truncation?: EdgeExportTruncation;
+}
+
+export interface EdgeError {
+  code: string;
+  message: string;
+  requestId?: string;
+  details?: JsonObject;
+}
+
+export type EdgeSessionPage = EdgePage<EdgeSession>;
+export type EdgeApprovalPage = EdgePage<EdgeApproval>;
+export type AgentExecutionPage = EdgePage<AgentExecution>;
+export type AgentActionEventPage = EdgePage<AgentActionEvent>;
+
+// UI-safe live Edge events expose identifiers, decisions, hashes, artifact
+// pointers, and redacted summaries only. Raw prompts, tool payloads,
+// transcripts, signed URLs, command output, and tokens must stay out of
+// dashboard state and React Query caches.
+export interface EdgeStreamPayload {
+  tenantId?: string;
+  sessionId?: string;
+  executionId?: string;
+  eventId?: string;
+  kind?: string;
+  layer?: EdgeLayer | string;
+  decision?: EdgeDecision | string;
+  approvalRef?: string;
+  artifactPtrs?: EdgeArtifactPointer[];
+  summary?: string;
+}
+
+export interface EdgeEventStreamEnvelope {
+  type: "edge.event";
+  tenantId?: string;
+  sessionId?: string;
+  executionId?: string;
+  event?: AgentActionEvent;
+}
+
 // ---------------------------------------------------------------------------
 // Jobs
 // ---------------------------------------------------------------------------

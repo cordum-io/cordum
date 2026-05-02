@@ -51,6 +51,33 @@ import type {
   DelegationChainLink,
   DelegationListResponse,
   DelegationView,
+  AgentActionEvent,
+  AgentActionEventPage,
+  AgentExecution,
+  AgentExecutionPage,
+  EdgeApproval,
+  EdgeApprovalDecision,
+  EdgeApprovalPage,
+  EdgeApprovalStatus,
+  EdgeArtifactPointer,
+  EdgeArtifactType,
+  EdgeDecision,
+  EdgeError,
+  EdgeEventStreamEnvelope,
+  EdgeJobLink,
+  EdgeLabels,
+  EdgeLayer,
+  EdgeMissingArtifact,
+  EdgePage,
+  EdgeRedactionLevel,
+  EdgeRetentionClass,
+  EdgeSession,
+  EdgeSessionCreateResponse,
+  EdgeSessionExportBundle,
+  EdgeSessionPage,
+  EdgeStreamPayload,
+  JsonObject,
+  JsonValue,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -1995,5 +2022,869 @@ export function mapDelegationListResponse(
   return {
     items: Array.isArray(raw.items) ? raw.items.map(mapDelegationView) : [],
     nextCursor: raw.next_cursor ?? raw.nextCursor ?? undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Cordum Edge
+// ---------------------------------------------------------------------------
+
+export interface BackendEdgeLabels {
+  [key: string]: unknown;
+}
+
+export interface BackendEdgeEnforcementLayers {
+  [key: string]: unknown;
+}
+
+export interface BackendEdgeRiskSummary {
+  denied_count?: unknown;
+  approval_count?: unknown;
+  artifact_count?: unknown;
+  max_risk?: unknown;
+}
+
+export interface BackendEdgeExecutionMetrics {
+  events?: unknown;
+  allow?: unknown;
+  deny?: unknown;
+  require_approval?: unknown;
+  artifacts?: unknown;
+  llm_cost_usd?: unknown;
+}
+
+export interface BackendEdgeArtifactPointer {
+  artifact_type?: unknown;
+  session_id?: unknown;
+  execution_id?: unknown;
+  event_id?: unknown;
+  tenant_id?: unknown;
+  retention_class?: unknown;
+  redaction_level?: unknown;
+  sha256?: unknown;
+  uri?: unknown;
+  created_at?: unknown;
+  size_bytes?: unknown;
+  content_type?: unknown;
+}
+
+export interface BackendEdgeSession {
+  session_id?: unknown;
+  tenant_id?: unknown;
+  principal_id?: unknown;
+  principal_type?: unknown;
+  agent_product?: unknown;
+  agent_version?: unknown;
+  mode?: unknown;
+  repo?: unknown;
+  git_remote?: unknown;
+  git_branch?: unknown;
+  git_sha?: unknown;
+  cwd?: unknown;
+  host_id?: unknown;
+  device_id?: unknown;
+  trace_id?: unknown;
+  workflow_run_id?: unknown;
+  job_id?: unknown;
+  policy_snapshot?: unknown;
+  enforcement_layers?: BackendEdgeEnforcementLayers;
+  policy_mode?: unknown;
+  status?: unknown;
+  risk_summary?: BackendEdgeRiskSummary;
+  started_at?: unknown;
+  ended_at?: unknown;
+  labels?: BackendEdgeLabels;
+}
+
+export interface BackendEdgeAgentExecution {
+  execution_id?: unknown;
+  session_id?: unknown;
+  tenant_id?: unknown;
+  adapter?: unknown;
+  mode?: unknown;
+  workflow_run_id?: unknown;
+  step_id?: unknown;
+  job_id?: unknown;
+  attempt?: unknown;
+  trace_id?: unknown;
+  worker_id?: unknown;
+  policy_snapshot?: unknown;
+  status?: unknown;
+  started_at?: unknown;
+  ended_at?: unknown;
+  metrics?: BackendEdgeExecutionMetrics;
+  labels?: BackendEdgeLabels;
+}
+
+export interface BackendEdgeAgentActionEvent {
+  event_id?: unknown;
+  session_id?: unknown;
+  execution_id?: unknown;
+  tenant_id?: unknown;
+  principal_id?: unknown;
+  seq?: unknown;
+  ts?: unknown;
+  layer?: unknown;
+  kind?: unknown;
+  agent_product?: unknown;
+  tool_name?: unknown;
+  tool_use_id?: unknown;
+  action_name?: unknown;
+  capability?: unknown;
+  risk_tags?: unknown;
+  input_redacted?: unknown;
+  input_hash?: unknown;
+  decision?: unknown;
+  decision_reason?: unknown;
+  rule_id?: unknown;
+  policy_snapshot?: unknown;
+  approval_ref?: unknown;
+  artifact_ptrs?: unknown;
+  duration_ms?: unknown;
+  status?: unknown;
+  error_code?: unknown;
+  error_message?: unknown;
+  labels?: BackendEdgeLabels;
+}
+
+export interface BackendEdgeApproval {
+  approval_ref?: unknown;
+  tenant_id?: unknown;
+  session_id?: unknown;
+  execution_id?: unknown;
+  event_id?: unknown;
+  principal_id?: unknown;
+  requester?: unknown;
+  resolver_id?: unknown;
+  resolved_by?: unknown;
+  status?: unknown;
+  decision?: unknown;
+  reason?: unknown;
+  resolution_reason?: unknown;
+  rule_id?: unknown;
+  policy_snapshot?: unknown;
+  action_hash?: unknown;
+  input_hash?: unknown;
+  created_at?: unknown;
+  expires_at?: unknown;
+  resolved_at?: unknown;
+  consumed_at?: unknown;
+  labels?: BackendEdgeLabels;
+  metadata?: BackendEdgeLabels;
+}
+
+export interface BackendEdgePage<T> {
+  items?: T[];
+  next_cursor?: unknown;
+  nextCursor?: unknown;
+}
+
+export interface BackendEdgeSessionCreateResponse {
+  session_id?: unknown;
+  execution_id?: unknown;
+  trace_id?: unknown;
+  policy_snapshot?: unknown;
+  dashboard_url?: unknown;
+  session?: BackendEdgeSession;
+  execution?: BackendEdgeAgentExecution;
+}
+
+export interface BackendEdgeHeartbeatResponse {
+  session_id?: unknown;
+  heartbeat_alive?: unknown;
+}
+
+export interface BackendEdgeMissingArtifact {
+  uri?: unknown;
+  sha256?: unknown;
+  artifact_type?: unknown;
+  session_id?: unknown;
+  execution_id?: unknown;
+  event_id?: unknown;
+  reason?: unknown;
+}
+
+export interface BackendEdgeJobLink {
+  execution_id?: unknown;
+  job_id?: unknown;
+  workflow_run_id?: unknown;
+  step_id?: unknown;
+}
+
+export interface BackendEdgeExportTruncation {
+  events_truncated?: unknown;
+  event_count?: unknown;
+  event_scan_limit_hit?: unknown;
+  executions_truncated?: unknown;
+}
+
+export interface BackendEdgeSessionExportBundle {
+  manifest_version?: unknown;
+  generated_at?: unknown;
+  tenant_id?: unknown;
+  redaction_level?: unknown;
+  session?: BackendEdgeSession;
+  executions?: unknown;
+  events?: unknown;
+  approvals?: unknown;
+  artifacts?: unknown;
+  missing_artifacts?: unknown;
+  job_links?: unknown;
+  truncation?: BackendEdgeExportTruncation;
+}
+
+export interface BackendEdgeError {
+  code?: unknown;
+  message?: unknown;
+  request_id?: unknown;
+  details?: unknown;
+}
+
+export interface BackendEdgeEventStreamEnvelope {
+  type?: unknown;
+  tenant_id?: unknown;
+  tenantId?: unknown;
+  session_id?: unknown;
+  sessionId?: unknown;
+  execution_id?: unknown;
+  executionId?: unknown;
+  event?: unknown;
+}
+
+const EDGE_DECISIONS = new Set<EdgeDecision>([
+  "ALLOW",
+  "DENY",
+  "REQUIRE_APPROVAL",
+  "THROTTLE",
+  "CONSTRAIN",
+  "RECORDED",
+]);
+
+const EDGE_LAYERS = new Set<EdgeLayer>([
+  "hook",
+  "mcp",
+  "llm",
+  "runtime",
+  "workflow",
+  "system",
+]);
+
+const EDGE_APPROVAL_DECISIONS = new Set<EdgeApprovalDecision>([
+  "",
+  "approve",
+  "reject",
+  "expire",
+  "invalidate",
+]);
+
+const EDGE_APPROVAL_STATUSES = new Set<EdgeApprovalStatus>([
+  "pending",
+  "approved",
+  "rejected",
+  "expired",
+  "invalidated",
+]);
+
+const EDGE_ARTIFACT_TYPES = new Set<EdgeArtifactType>([
+  "edge.transcript",
+  "edge.diff",
+  "edge.tool_input",
+  "edge.tool_result",
+  "edge.test_output",
+  "edge.mcp_request",
+  "edge.mcp_response",
+  "edge.llm_prompt_redacted",
+  "edge.llm_response_redacted",
+  "edge.evidence_bundle",
+]);
+
+const EDGE_RETENTION_CLASSES = new Set<EdgeRetentionClass>([
+  "short",
+  "standard",
+  "audit",
+]);
+
+const EDGE_REDACTION_LEVELS = new Set<EdgeRedactionLevel>([
+  "standard",
+  "strict",
+]);
+
+const EDGE_JSON_MAX_DEPTH = 6;
+const EDGE_JSON_MAX_ARRAY_ITEMS = 50;
+const EDGE_JSON_MAX_STRING_LENGTH = 4096;
+
+function isEdgeRecord(raw: unknown): raw is Record<string, unknown> {
+  return typeof raw === "object" && raw !== null && !Array.isArray(raw);
+}
+
+function edgeString(raw: unknown, fallback = ""): string {
+  return typeof raw === "string" ? raw : fallback;
+}
+
+function edgeOptionalString(raw: unknown): string | undefined {
+  const value = edgeString(raw).trim();
+  return value && !looksSensitiveString(value) ? value : undefined;
+}
+
+function edgeSafeText(raw: unknown, fallback = ""): string {
+  const value = edgeString(raw).trim();
+  if (!value) return fallback;
+  return looksSensitiveString(value) ? fallback : value;
+}
+
+function edgeNumber(raw: unknown, fallback = 0): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return fallback;
+  return raw;
+}
+
+function edgeOptionalNumber(raw: unknown): number | undefined {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
+  return raw;
+}
+
+function edgeBoolean(raw: unknown, fallback = false): boolean {
+  return typeof raw === "boolean" ? raw : fallback;
+}
+
+function edgeTimestamp(raw: unknown): string {
+  return normalizeIsoTimestamp(raw) ?? edgeString(raw);
+}
+
+function edgeOptionalTimestamp(raw: unknown): string | null | undefined {
+  if (raw === null) return null;
+  const normalized = normalizeIsoTimestamp(raw);
+  if (normalized) return normalized;
+  return edgeOptionalString(raw);
+}
+
+function normalizeEdgeUpper<T extends string>(
+  raw: unknown,
+  allowed: Set<T>,
+  fallback: T,
+): T | string {
+  const value = edgeString(raw).trim();
+  if (!value) return fallback;
+  const upper = value.toUpperCase();
+  return allowed.has(upper as T) ? (upper as T) : value;
+}
+
+function normalizeEdgeLower<T extends string>(
+  raw: unknown,
+  allowed: Set<T>,
+  fallback: T,
+): T | string {
+  const value = edgeString(raw).trim();
+  if (!value) return fallback;
+  const lower = value.toLowerCase();
+  return allowed.has(lower as T) ? (lower as T) : value;
+}
+
+function looksSensitiveString(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return (
+    /authorization\s*:/i.test(value) ||
+    /bearer\s+[a-z0-9._~+/-]+/i.test(value) ||
+    /\bsk-[a-z0-9_-]{8,}/i.test(value) ||
+    /\bghp_[a-z0-9_]{8,}/i.test(value) ||
+    /\bakia[0-9a-z]{16}\b/i.test(value) ||
+    normalized.includes("x-amz-signature=") ||
+    normalized.includes("signed_url") ||
+    normalized.includes("token=") ||
+    normalized.includes("api_key=") ||
+    normalized.includes("apikey=") ||
+    normalized.includes("secret=")
+  );
+}
+
+function isUnsafeEdgeKey(key: string): boolean {
+  const normalized = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[-\s]+/g, "_")
+    .toLowerCase();
+  if (
+    normalized.includes("redacted") ||
+    normalized.endsWith("_hash") ||
+    normalized.includes("hash")
+  ) {
+    return false;
+  }
+  return [
+    "raw_payload",
+    "raw_prompt",
+    "raw_input",
+    "raw_transcript",
+    "authorization",
+    "bearer",
+    "token",
+    "api_key",
+    "apikey",
+    "secret",
+    "password",
+    "signed_url",
+    "prompt",
+    "tool_input",
+    "tool_result",
+    "transcript",
+    "command_output",
+  ].some((needle) => normalized === needle || normalized.includes(`${needle}_`));
+}
+
+function sanitizeEdgeString(value: string): string {
+  if (looksSensitiveString(value)) return "[redacted]";
+  return value.length > EDGE_JSON_MAX_STRING_LENGTH
+    ? `${value.slice(0, EDGE_JSON_MAX_STRING_LENGTH)}…`
+    : value;
+}
+
+function sanitizeEdgeJsonValue(raw: unknown, depth = 0): JsonValue | undefined {
+  if (raw === null) return null;
+  switch (typeof raw) {
+    case "string":
+      return sanitizeEdgeString(raw);
+    case "number":
+      return Number.isFinite(raw) ? raw : undefined;
+    case "boolean":
+      return raw;
+    case "object":
+      if (Array.isArray(raw)) {
+        if (depth >= EDGE_JSON_MAX_DEPTH) return [];
+        const values: JsonValue[] = [];
+        for (const item of raw.slice(0, EDGE_JSON_MAX_ARRAY_ITEMS)) {
+          const sanitized = sanitizeEdgeJsonValue(item, depth + 1);
+          if (sanitized !== undefined) values.push(sanitized);
+        }
+        return values;
+      }
+      if (!isEdgeRecord(raw)) return undefined;
+      if (depth >= EDGE_JSON_MAX_DEPTH) return {};
+      return sanitizeEdgeJsonObject(raw, depth + 1);
+    default:
+      return undefined;
+  }
+}
+
+function sanitizeEdgeJsonObject(
+  raw: Record<string, unknown>,
+  depth = 0,
+): JsonObject {
+  const out: JsonObject = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (isUnsafeEdgeKey(key)) continue;
+    const sanitized = sanitizeEdgeJsonValue(value, depth);
+    if (sanitized !== undefined) {
+      out[key] = sanitized;
+    }
+  }
+  return out;
+}
+
+function sanitizeEdgeJsonObjectOrNull(raw: unknown): JsonObject | null | undefined {
+  if (raw === null) return null;
+  if (!isEdgeRecord(raw)) return undefined;
+  return sanitizeEdgeJsonObject(raw);
+}
+
+function mapEdgeLabels(raw: unknown): EdgeLabels | undefined {
+  if (!isEdgeRecord(raw)) return undefined;
+  const labels: EdgeLabels = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (isUnsafeEdgeKey(key) || typeof value !== "string" || looksSensitiveString(value)) {
+      continue;
+    }
+    labels[key] = value;
+  }
+  return Object.keys(labels).length ? labels : undefined;
+}
+
+function mapEdgeEnforcementLayers(raw: unknown): Record<string, boolean> | undefined {
+  if (!isEdgeRecord(raw)) return undefined;
+  const layers: Record<string, boolean> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!isUnsafeEdgeKey(key) && typeof value === "boolean") {
+      layers[key] = value;
+    }
+  }
+  return Object.keys(layers).length ? layers : undefined;
+}
+
+function mapEdgeStringMetadata(raw: unknown): Record<string, string> | undefined {
+  if (!isEdgeRecord(raw)) return undefined;
+  const metadata: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (isUnsafeEdgeKey(key) || typeof value !== "string" || looksSensitiveString(value)) {
+      continue;
+    }
+    metadata[key] = value;
+  }
+  return Object.keys(metadata).length ? metadata : undefined;
+}
+
+function edgeStringArray(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const values = raw.filter(
+    (value): value is string => typeof value === "string" && !looksSensitiveString(value),
+  );
+  return values.length ? values : undefined;
+}
+
+function edgeArtifactUri(raw: unknown): string {
+  const value = edgeString(raw).trim();
+  const lower = value.toLowerCase();
+  if (
+    !value ||
+    /^https?:\/\//i.test(value) ||
+    value.includes("?") ||
+    value.includes("#") ||
+    lower.includes("token") ||
+    lower.includes("signature") ||
+    lower.includes("x-amz-")
+  ) {
+    return "";
+  }
+  return value;
+}
+
+export function mapEdgeArtifactPointer(raw: unknown): EdgeArtifactPointer | null {
+  if (!isEdgeRecord(raw)) return null;
+  const artifactType = normalizeEdgeLower(
+    raw.artifact_type,
+    EDGE_ARTIFACT_TYPES,
+    "edge.evidence_bundle",
+  );
+  const retentionClass = normalizeEdgeLower(
+    raw.retention_class,
+    EDGE_RETENTION_CLASSES,
+    "standard",
+  );
+  const redactionLevel = normalizeEdgeLower(
+    raw.redaction_level,
+    EDGE_REDACTION_LEVELS,
+    "standard",
+  );
+  return {
+    artifactType,
+    sessionId: edgeString(raw.session_id),
+    executionId: edgeString(raw.execution_id),
+    eventId: edgeString(raw.event_id),
+    tenantId: edgeString(raw.tenant_id),
+    retentionClass,
+    redactionLevel,
+    sha256: edgeSafeText(raw.sha256),
+    uri: edgeArtifactUri(raw.uri),
+    createdAt: edgeTimestamp(raw.created_at),
+    sizeBytes: edgeOptionalNumber(raw.size_bytes),
+    contentType: edgeOptionalString(raw.content_type),
+  };
+}
+
+function mapEdgeArtifactPointers(raw: unknown): EdgeArtifactPointer[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const pointers = raw
+    .map(mapEdgeArtifactPointer)
+    .filter((value): value is EdgeArtifactPointer => value !== null);
+  return pointers.length ? pointers : undefined;
+}
+
+function mapEdgeRiskSummary(raw: unknown): EdgeSession["riskSummary"] {
+  const record = isEdgeRecord(raw) ? raw : {};
+  return {
+    deniedCount: edgeNumber(record.denied_count),
+    approvalCount: edgeNumber(record.approval_count),
+    artifactCount: edgeNumber(record.artifact_count),
+    maxRisk: edgeOptionalString(record.max_risk),
+  };
+}
+
+function mapEdgeExecutionMetrics(raw: unknown): AgentExecution["metrics"] {
+  if (!isEdgeRecord(raw)) return undefined;
+  return {
+    events: edgeOptionalNumber(raw.events),
+    allow: edgeOptionalNumber(raw.allow),
+    deny: edgeOptionalNumber(raw.deny),
+    requireApproval: edgeOptionalNumber(raw.require_approval),
+    artifacts: edgeOptionalNumber(raw.artifacts),
+    llmCostUsd: edgeOptionalNumber(raw.llm_cost_usd),
+  };
+}
+
+export function mapEdgeSession(raw: BackendEdgeSession): EdgeSession {
+  return {
+    sessionId: edgeString(raw.session_id),
+    tenantId: edgeString(raw.tenant_id),
+    principalId: edgeOptionalString(raw.principal_id),
+    principalType: normalizeEdgeLower(raw.principal_type, new Set(["human", "service", "unknown"]), "unknown"),
+    agentProduct: edgeOptionalString(raw.agent_product),
+    agentVersion: edgeOptionalString(raw.agent_version),
+    mode: edgeSafeText(raw.mode, "local-dev"),
+    repo: edgeOptionalString(raw.repo),
+    gitRemote: edgeOptionalString(raw.git_remote),
+    gitBranch: edgeOptionalString(raw.git_branch),
+    gitSha: edgeOptionalString(raw.git_sha),
+    cwd: edgeOptionalString(raw.cwd),
+    hostId: edgeOptionalString(raw.host_id),
+    deviceId: edgeOptionalString(raw.device_id),
+    traceId: edgeString(raw.trace_id),
+    workflowRunId: edgeOptionalString(raw.workflow_run_id),
+    jobId: edgeOptionalString(raw.job_id),
+    policySnapshot: edgeOptionalString(raw.policy_snapshot),
+    enforcementLayers: mapEdgeEnforcementLayers(raw.enforcement_layers),
+    policyMode: edgeSafeText(raw.policy_mode, "observe"),
+    status: edgeSafeText(raw.status, "running"),
+    riskSummary: mapEdgeRiskSummary(raw.risk_summary),
+    startedAt: edgeTimestamp(raw.started_at),
+    endedAt: edgeOptionalTimestamp(raw.ended_at),
+    labels: mapEdgeLabels(raw.labels),
+  };
+}
+
+export function mapAgentExecution(raw: BackendEdgeAgentExecution): AgentExecution {
+  return {
+    executionId: edgeString(raw.execution_id),
+    sessionId: edgeString(raw.session_id),
+    tenantId: edgeString(raw.tenant_id),
+    adapter: edgeSafeText(raw.adapter, "claude-code-hook"),
+    mode: edgeSafeText(raw.mode, "local-dev"),
+    workflowRunId: edgeOptionalString(raw.workflow_run_id),
+    stepId: edgeOptionalString(raw.step_id),
+    jobId: edgeOptionalString(raw.job_id),
+    attempt: edgeOptionalNumber(raw.attempt),
+    traceId: edgeOptionalString(raw.trace_id),
+    workerId: edgeOptionalString(raw.worker_id),
+    policySnapshot: edgeOptionalString(raw.policy_snapshot),
+    status: edgeSafeText(raw.status, "running"),
+    startedAt: edgeTimestamp(raw.started_at),
+    endedAt: edgeOptionalTimestamp(raw.ended_at),
+    metrics: mapEdgeExecutionMetrics(raw.metrics),
+    labels: mapEdgeLabels(raw.labels),
+  };
+}
+
+export function mapAgentActionEvent(raw: BackendEdgeAgentActionEvent): AgentActionEvent {
+  return {
+    eventId: edgeString(raw.event_id),
+    sessionId: edgeString(raw.session_id),
+    executionId: edgeString(raw.execution_id),
+    tenantId: edgeString(raw.tenant_id),
+    principalId: edgeOptionalString(raw.principal_id),
+    seq: edgeNumber(raw.seq),
+    ts: edgeTimestamp(raw.ts),
+    layer: normalizeEdgeLower(raw.layer, EDGE_LAYERS, "system"),
+    kind: edgeSafeText(raw.kind, "unknown"),
+    agentProduct: edgeOptionalString(raw.agent_product),
+    toolName: edgeOptionalString(raw.tool_name),
+    toolUseId: edgeOptionalString(raw.tool_use_id),
+    actionName: edgeOptionalString(raw.action_name),
+    capability: edgeOptionalString(raw.capability),
+    riskTags: edgeStringArray(raw.risk_tags),
+    inputRedacted: sanitizeEdgeJsonObjectOrNull(raw.input_redacted),
+    inputHash: edgeOptionalString(raw.input_hash),
+    decision: normalizeEdgeUpper(raw.decision, EDGE_DECISIONS, "RECORDED"),
+    decisionReason: edgeOptionalString(raw.decision_reason),
+    ruleId: edgeOptionalString(raw.rule_id),
+    policySnapshot: edgeOptionalString(raw.policy_snapshot),
+    approvalRef: edgeOptionalString(raw.approval_ref),
+    artifactPtrs: mapEdgeArtifactPointers(raw.artifact_ptrs),
+    durationMs: edgeOptionalNumber(raw.duration_ms),
+    status: edgeSafeText(raw.status, "ok"),
+    errorCode: edgeOptionalString(raw.error_code),
+    errorMessage: edgeOptionalString(raw.error_message),
+    labels: mapEdgeLabels(raw.labels),
+  };
+}
+
+export function mapEdgeApproval(raw: BackendEdgeApproval): EdgeApproval {
+  return {
+    approvalRef: edgeString(raw.approval_ref),
+    tenantId: edgeString(raw.tenant_id),
+    sessionId: edgeString(raw.session_id),
+    executionId: edgeString(raw.execution_id),
+    eventId: edgeString(raw.event_id),
+    principalId: edgeString(raw.principal_id),
+    requester: edgeString(raw.requester),
+    resolverId: edgeOptionalString(raw.resolver_id),
+    resolvedBy: edgeOptionalString(raw.resolved_by),
+    status: normalizeEdgeLower(raw.status, EDGE_APPROVAL_STATUSES, "pending"),
+    decision: normalizeEdgeLower(raw.decision, EDGE_APPROVAL_DECISIONS, ""),
+    reason: edgeSafeText(raw.reason),
+    resolutionReason: edgeOptionalString(raw.resolution_reason),
+    ruleId: edgeString(raw.rule_id),
+    policySnapshot: edgeString(raw.policy_snapshot),
+    actionHash: edgeString(raw.action_hash),
+    inputHash: edgeString(raw.input_hash),
+    createdAt: edgeTimestamp(raw.created_at),
+    expiresAt: edgeOptionalTimestamp(raw.expires_at),
+    resolvedAt: edgeOptionalTimestamp(raw.resolved_at),
+    consumedAt: edgeOptionalTimestamp(raw.consumed_at),
+    labels: mapEdgeLabels(raw.labels),
+    metadata: mapEdgeStringMetadata(raw.metadata),
+  };
+}
+
+function mapEdgeArray<TBackend, TOut>(
+  raw: unknown,
+  mapper: (item: TBackend) => TOut,
+): TOut[] {
+  return Array.isArray(raw) ? raw.map((item) => mapper(item as TBackend)) : [];
+}
+
+export function mapEdgePage<TBackend, TOut>(
+  raw: BackendEdgePage<TBackend>,
+  mapper: (item: TBackend) => TOut,
+): EdgePage<TOut> {
+  return {
+    items: mapEdgeArray(raw.items, mapper),
+    nextCursor: edgeOptionalString(raw.next_cursor ?? raw.nextCursor) ?? null,
+  };
+}
+
+export function mapEdgeSessionPage(raw: BackendEdgePage<BackendEdgeSession>): EdgeSessionPage {
+  return mapEdgePage(raw, mapEdgeSession);
+}
+
+export function mapAgentExecutionPage(raw: BackendEdgePage<BackendEdgeAgentExecution>): AgentExecutionPage {
+  return mapEdgePage(raw, mapAgentExecution);
+}
+
+export function mapEdgeApprovalPage(raw: BackendEdgePage<BackendEdgeApproval>): EdgeApprovalPage {
+  return mapEdgePage(raw, mapEdgeApproval);
+}
+
+export function mapAgentActionEventPage(
+  raw: BackendEdgePage<BackendEdgeAgentActionEvent>,
+): AgentActionEventPage {
+  return mapEdgePage(raw, mapAgentActionEvent);
+}
+
+export function mapEdgeSessionCreateResponse(
+  raw: BackendEdgeSessionCreateResponse,
+): EdgeSessionCreateResponse {
+  return {
+    sessionId: edgeString(raw.session_id),
+    executionId: edgeString(raw.execution_id),
+    traceId: edgeString(raw.trace_id),
+    policySnapshot: edgeString(raw.policy_snapshot),
+    dashboardUrl: edgeString(raw.dashboard_url),
+    session: mapEdgeSession(raw.session ?? {}),
+    execution: mapAgentExecution(raw.execution ?? {}),
+  };
+}
+
+export function mapEdgeHeartbeatResponse(
+  raw: BackendEdgeHeartbeatResponse,
+): { sessionId: string; heartbeatAlive: boolean } {
+  return {
+    sessionId: edgeString(raw.session_id),
+    heartbeatAlive: edgeBoolean(raw.heartbeat_alive),
+  };
+}
+
+function mapEdgeMissingArtifact(raw: unknown): EdgeMissingArtifact | null {
+  if (!isEdgeRecord(raw)) return null;
+  return {
+    uri: edgeArtifactUri(raw.uri),
+    sha256: edgeOptionalString(raw.sha256),
+    artifactType: normalizeEdgeLower(
+      raw.artifact_type,
+      EDGE_ARTIFACT_TYPES,
+      "edge.evidence_bundle",
+    ),
+    sessionId: edgeOptionalString(raw.session_id),
+    executionId: edgeOptionalString(raw.execution_id),
+    eventId: edgeOptionalString(raw.event_id),
+    reason: edgeSafeText(raw.reason, "unknown"),
+  };
+}
+
+function mapEdgeJobLink(raw: unknown): EdgeJobLink | null {
+  if (!isEdgeRecord(raw)) return null;
+  return {
+    executionId: edgeString(raw.execution_id),
+    jobId: edgeOptionalString(raw.job_id),
+    workflowRunId: edgeOptionalString(raw.workflow_run_id),
+    stepId: edgeOptionalString(raw.step_id),
+  };
+}
+
+export function mapEdgeSessionExportBundle(
+  raw: BackendEdgeSessionExportBundle,
+): EdgeSessionExportBundle {
+  return {
+    manifestVersion: edgeSafeText(raw.manifest_version, "edge.export.v1"),
+    generatedAt: edgeTimestamp(raw.generated_at),
+    tenantId: edgeString(raw.tenant_id),
+    redactionLevel: normalizeEdgeLower(
+      raw.redaction_level,
+      EDGE_REDACTION_LEVELS,
+      "standard",
+    ),
+    session: mapEdgeSession(raw.session ?? {}),
+    executions: mapEdgeArray(raw.executions, mapAgentExecution),
+    events: mapEdgeArray(raw.events, mapAgentActionEvent),
+    approvals: mapEdgeArray(raw.approvals, mapEdgeApproval),
+    artifacts: mapEdgeArray(raw.artifacts, mapEdgeArtifactPointer).filter(
+      (item): item is EdgeArtifactPointer => item !== null,
+    ),
+    missingArtifacts: mapEdgeArray(raw.missing_artifacts, mapEdgeMissingArtifact).filter(
+      (item): item is EdgeMissingArtifact => item !== null,
+    ),
+    jobLinks: mapEdgeArray(raw.job_links, mapEdgeJobLink).filter(
+      (item): item is EdgeJobLink => item !== null,
+    ),
+    truncation: raw.truncation
+      ? {
+          eventsTruncated: edgeBoolean(raw.truncation.events_truncated),
+          eventCount: edgeOptionalNumber(raw.truncation.event_count),
+          eventScanLimitHit: edgeBoolean(raw.truncation.event_scan_limit_hit),
+          executionsTruncated: edgeBoolean(raw.truncation.executions_truncated),
+        }
+      : undefined,
+  };
+}
+
+export function mapEdgeErrorEnvelope(raw: unknown): EdgeError {
+  const record = isEdgeRecord(raw) ? raw : {};
+  const details = sanitizeEdgeJsonObjectOrNull(record.details);
+  return {
+    code: edgeSafeText(record.code, "edge_error"),
+    message: edgeSafeText(record.message, "Edge request failed"),
+    requestId: edgeOptionalString(record.request_id),
+    details: details ?? undefined,
+  };
+}
+
+export function mapEdgeEventStreamEnvelope(
+  raw: BackendEdgeEventStreamEnvelope,
+): EdgeEventStreamEnvelope | null {
+  if (edgeString(raw.type) !== "edge.event") return null;
+  const event = isEdgeRecord(raw.event)
+    ? mapAgentActionEvent(raw.event as BackendEdgeAgentActionEvent)
+    : undefined;
+  return {
+    type: "edge.event",
+    tenantId: edgeOptionalString(raw.tenant_id ?? raw.tenantId),
+    sessionId: edgeOptionalString(raw.session_id ?? raw.sessionId) ?? event?.sessionId,
+    executionId:
+      edgeOptionalString(raw.execution_id ?? raw.executionId) ?? event?.executionId,
+    event,
+  };
+}
+
+export function mapEdgeStreamPayload(
+  envelope: EdgeEventStreamEnvelope,
+): EdgeStreamPayload {
+  const event = envelope.event;
+  return {
+    tenantId: envelope.tenantId ?? event?.tenantId,
+    sessionId: envelope.sessionId ?? event?.sessionId,
+    executionId: envelope.executionId ?? event?.executionId,
+    eventId: event?.eventId,
+    kind: event?.kind,
+    layer: event?.layer,
+    decision: event?.decision,
+    approvalRef: event?.approvalRef,
+    artifactPtrs: event?.artifactPtrs,
+    summary: event
+      ? `${event.kind || "edge.event"} ${event.decision || "RECORDED"}`
+      : "edge.event",
   };
 }

@@ -72,6 +72,7 @@ vi.mock("../state/config", () => ({
 // Import after mocks
 const { useEventStore } = await import("../state/events");
 const { useEventStream } = await import("./useEventStream");
+const { queryKeys } = await import("../lib/queryKeys");
 
 // Minimal React hooks mock — useEffect runs synchronously, useRef returns object
 let cleanupFn: (() => void) | undefined;
@@ -177,6 +178,135 @@ describe("useEventStream", () => {
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["job", "j1"] });
     // All job list caches invalidated (broad match for filtered views)
     expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: ["jobs"] });
+  });
+
+  it("buffers edge event frames with redacted payload fields", () => {
+    useEventStream();
+    MockWebSocket.instances[0].simulateOpen();
+    MockWebSocket.instances[0].simulateMessage({
+      type: "edge.event",
+      tenant_id: "tenant-a",
+      session_id: "edge_sess_1",
+      execution_id: "exec-1",
+      event: {
+        event_id: "evt-1",
+        session_id: "edge_sess_1",
+        execution_id: "exec-1",
+        tenant_id: "tenant-a",
+        seq: 1,
+        ts: "2026-05-02T10:00:02Z",
+        layer: "hook",
+        kind: "hook.pre_tool_use",
+        decision: "DENY",
+        status: "blocked",
+        approval_ref: "edge_appr_1",
+        raw_payload: { prompt: "secret prompt" },
+        tool_input: { command: "cat .env" },
+        input_redacted: { safe_summary: "redacted only" },
+        artifact_ptrs: [
+          {
+            artifact_type: "edge.diff",
+            session_id: "edge_sess_1",
+            execution_id: "exec-1",
+            event_id: "evt-1",
+            tenant_id: "tenant-a",
+            uri: "edge://artifacts/diff-1",
+            sha256: "sha256:diff",
+            created_at: "2026-05-02T10:00:02Z",
+          },
+        ],
+      },
+    });
+
+    const events = useEventStore.getState().events;
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      id: "evt-1",
+      type: "edge.event",
+      timestamp: "2026-05-02T10:00:02.000Z",
+      eventType: "hook.pre_tool_use",
+      source: "edge",
+      payload: {
+        tenantId: "tenant-a",
+        sessionId: "edge_sess_1",
+        executionId: "exec-1",
+        eventId: "evt-1",
+        kind: "hook.pre_tool_use",
+        layer: "hook",
+        decision: "DENY",
+        approvalRef: "edge_appr_1",
+        summary: "hook.pre_tool_use DENY",
+      },
+    });
+    expect(JSON.stringify(events[0])).not.toContain("raw_payload");
+    expect(JSON.stringify(events[0])).not.toContain("secret prompt");
+    expect(JSON.stringify(events[0])).not.toContain("tool_input");
+    expect(JSON.stringify(events[0])).not.toContain("cat .env");
+    expect(JSON.stringify(events[0].payload.artifactPtrs)).toContain("edge://artifacts/diff-1");
+  });
+
+  it("invalidates precise Edge cache keys for sessions, executions, approvals, and exports", () => {
+    useEventStream();
+    MockWebSocket.instances[0].simulateOpen();
+    mockInvalidateQueries.mockClear();
+    MockWebSocket.instances[0].simulateMessage({
+      type: "edge.event",
+      tenant_id: "tenant-a",
+      session_id: "edge_sess_1",
+      execution_id: "exec-1",
+      event: {
+        event_id: "evt-2",
+        session_id: "edge_sess_1",
+        execution_id: "exec-1",
+        tenant_id: "tenant-a",
+        seq: 2,
+        ts: "2026-05-02T10:00:03Z",
+        layer: "hook",
+        kind: "approval.requested",
+        decision: "REQUIRE_APPROVAL",
+        status: "approval_required",
+        approval_ref: "edge_appr_1",
+        artifact_ptrs: [
+          {
+            artifact_type: "edge.evidence_bundle",
+            session_id: "edge_sess_1",
+            execution_id: "exec-1",
+            event_id: "evt-2",
+            tenant_id: "tenant-a",
+            uri: "edge://artifacts/evidence-1",
+            sha256: "sha256:evidence",
+            created_at: "2026-05-02T10:00:03Z",
+          },
+        ],
+      },
+    });
+
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.edge.sessions.lists() });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.edge.executions.lists() });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.edge.sessions.detail("edge_sess_1") });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.edge.sessions.eventLists("edge_sess_1") });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.edge.executions.detail("exec-1") });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.edge.executions.eventLists("exec-1") });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.edge.approvals.lists() });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.edge.approvals.detail("edge_appr_1") });
+    expect(mockInvalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.edge.sessions.export("edge_sess_1") });
+    expect(mockInvalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["jobs"] });
+    expect(mockInvalidateQueries).not.toHaveBeenCalledWith({ queryKey: ["dlq"] });
+  });
+
+  it("drops malformed Edge envelopes without buffering a synthetic live event", () => {
+    useEventStream();
+    MockWebSocket.instances[0].simulateOpen();
+    MockWebSocket.instances[0].simulateMessage({
+      type: "edge.event",
+      tenant_id: "tenant-a",
+      session_id: "edge_sess_missing_event",
+    });
+
+    expect(useEventStore.getState().events).toHaveLength(0);
+    expect(mockInvalidateQueries).not.toHaveBeenCalledWith({
+      queryKey: queryKeys.edge.sessions.detail("edge_sess_missing_event"),
+    });
   });
 
   it("ignores non-JSON messages", () => {

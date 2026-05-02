@@ -1,6 +1,6 @@
 import { fireEvent, screen, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
 import type { AgentActionEvent, EdgeApproval } from "@/api/types";
 import { renderWithProviders } from "@/test-utils/render";
@@ -110,12 +110,18 @@ function renderDrawer(props: Partial<ComponentProps<typeof EdgeApprovalsDrawer>>
 
 describe("EdgeApprovalsDrawer", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-02T16:30:00Z"));
     refetch.mockReset();
     approveMutate.mockReset();
     rejectMutate.mockReset();
     vi.mocked(useEdgeApprovals).mockReset();
     vi.mocked(useApproveEdgeApproval).mockReset();
     vi.mocked(useRejectEdgeApproval).mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("renders approval context and redacted event input without raw payload fields", () => {

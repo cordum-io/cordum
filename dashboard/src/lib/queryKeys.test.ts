@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hashKey } from "@tanstack/react-query";
+import { API_PATHS } from "./constants";
 import { queryKeys } from "./queryKeys";
 
 describe("queryKeys factory", () => {
@@ -97,5 +98,109 @@ describe("queryKeys factory", () => {
   it("approvals.all is a prefix of approvals.list", () => {
     const list = queryKeys.approvals.list("pending");
     expect(list[0]).toBe(queryKeys.approvals.all[0]);
+  });
+
+  it("edge API paths match the Edge route namespace", () => {
+    expect(API_PATHS.edge).toEqual({
+      sessions: "/edge/sessions",
+      executions: "/edge/executions",
+      approvals: "/edge/approvals",
+      evaluate: "/edge/evaluate",
+      events: "/edge/events",
+      eventsBatch: "/edge/events/batch",
+    });
+  });
+
+  it("edge query keys are prefix-friendly and avoid broad filter objects", () => {
+    expect(queryKeys.edge.all).toEqual(["edge"]);
+    expect(queryKeys.edge.sessions.all).toEqual(["edge", "sessions"]);
+    expect(queryKeys.edge.sessions.lists()).toEqual(["edge", "sessions", "list"]);
+    expect(queryKeys.edge.sessions.list({
+      status: "running",
+      principalId: "user-1",
+      agentProduct: "claude-code",
+      cursor: "cur-1",
+      limit: 25,
+    })).toEqual([
+      "edge",
+      "sessions",
+      "list",
+      ["running", "user-1", "claude-code", "cur-1", 25],
+    ]);
+    expect(queryKeys.edge.sessions.detail("edge_sess_1")).toEqual([
+      "edge",
+      "sessions",
+      "detail",
+      "edge_sess_1",
+    ]);
+    expect(queryKeys.edge.sessions.events("edge_sess_1", {
+      kind: "hook.pre_tool_use",
+      decision: "DENY",
+      cursor: "event-cur",
+      limit: 50,
+    })).toEqual([
+      "edge",
+      "sessions",
+      "events",
+      "edge_sess_1",
+      ["hook.pre_tool_use", "DENY", "since:all", "until:all", "event-cur", 50],
+    ]);
+    expect(queryKeys.edge.sessions.eventLists("edge_sess_1")).toEqual([
+      "edge",
+      "sessions",
+      "events",
+      "edge_sess_1",
+    ]);
+    expect(queryKeys.edge.sessions.export("edge_sess_1")).toEqual([
+      "edge",
+      "sessions",
+      "export",
+      "edge_sess_1",
+    ]);
+    expect(queryKeys.edge.executions.lists()).toEqual(["edge", "executions", "list"]);
+    expect(queryKeys.edge.executions.list({
+      sessionId: "edge_sess_1",
+      jobId: "job-1",
+      traceId: "trace-1",
+      workflowRunId: "run-1",
+      cursor: "cur-1",
+      limit: 10,
+    })).toEqual([
+      "edge",
+      "executions",
+      "list",
+      ["edge_sess_1", "job-1", "trace-1", "run-1", "cur-1", 10],
+    ]);
+    expect(queryKeys.edge.executions.detail("exec-1")).toEqual([
+      "edge",
+      "executions",
+      "detail",
+      "exec-1",
+    ]);
+    expect(queryKeys.edge.executions.events("exec-1")).toEqual([
+      "edge",
+      "executions",
+      "events",
+      "exec-1",
+      ["all", "all", "since:all", "until:all", "first", "default"],
+    ]);
+    expect(queryKeys.edge.approvals.lists()).toEqual(["edge", "approvals", "list"]);
+    expect(queryKeys.edge.approvals.list({
+      status: "pending",
+      sessionId: "edge_sess_1",
+      executionId: "exec-1",
+      actionHash: "sha256:action",
+    })).toEqual([
+      "edge",
+      "approvals",
+      "list",
+      ["pending", "edge_sess_1", "exec-1", "sha256:action", "first", "default"],
+    ]);
+    expect(queryKeys.edge.approvals.detail("edge_appr_1")).toEqual([
+      "edge",
+      "approvals",
+      "detail",
+      "edge_appr_1",
+    ]);
   });
 });

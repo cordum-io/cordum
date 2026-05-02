@@ -38,6 +38,7 @@ import { CodeBlock } from "@/components/ui/CodeBlock";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Tabs } from "@/components/ui/Tabs";
 import { GovernanceTimeline } from "@/components/governance/GovernanceTimeline";
+import { AgentExecutionsPanel } from "@/components/edge/AgentExecutionsPanel";
 
 // ---------------------------------------------------------------------------
 // Status configuration — colors, icons, labels for each outcome
@@ -1142,6 +1143,8 @@ export default function JobDetailPage() {
                   <SafetyTimeline job={job} />
                 </div>
               </motion.div>
+
+              <AgentExecutionsPanel jobId={job.id} className="lg:col-span-12" />
 
               {/* Error block */}
               {(job.errorMessage || job.status === "failed") && (

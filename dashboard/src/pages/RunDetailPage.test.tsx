@@ -104,6 +104,11 @@ vi.mock("@/components/governance/GovernanceTimeline", () => ({
   },
 }));
 
+vi.mock("@/components/edge/AgentExecutionsPanel", () => ({
+  AgentExecutionsPanel: (props: Record<string, unknown>) =>
+    React.createElement("div", { "data-testid": "agent-executions-panel" }, String(props.workflowRunId ?? "")),
+}));
+
 const WorkflowRunDetailPage = (await import("./RunDetailPage")).default;
 
 function makeRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
@@ -182,6 +187,16 @@ beforeEach(() => {
 });
 
 describe("WorkflowRunDetailPage governance tab integration", () => {
+  it("passes the current run id into the Agent Executions panel", () => {
+    const { container, cleanup } = renderPage();
+
+    try {
+      expect(container.querySelector('[data-testid="agent-executions-panel"]')?.textContent).toBe("run-1");
+    } finally {
+      cleanup();
+    }
+  });
+
   it("adds the governance tab and only mounts the timeline after activation", () => {
     const { container, cleanup } = renderPage();
 

@@ -52,6 +52,11 @@ type edgeSessionPageResponse struct {
 	NextCursor string                 `json:"next_cursor"`
 }
 
+type edgeExecutionPageResponse struct {
+	Items      []edgecore.AgentExecution `json:"items"`
+	NextCursor string                    `json:"next_cursor"`
+}
+
 type edgeHeartbeatResponse struct {
 	SessionID      string `json:"session_id"`
 	HeartbeatAlive bool   `json:"heartbeat_alive"`
@@ -502,6 +507,31 @@ func (s *server) handleGetEdgeExecution(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, execution)
 }
 
+func (s *server) handleListEdgeExecutions(w http.ResponseWriter, r *http.Request) {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
+		return
+	}
+	store := s.edgeStoreOrUnavailable(w, r)
+	if store == nil {
+		return
+	}
+	tenantID, ok := s.edgeTenantFromRequest(w, r, "")
+	if !ok {
+		return
+	}
+	query := edgeExecutionListQuery(r, tenantID)
+	page, err := store.ListExecutions(r.Context(), query)
+	if err != nil {
+		if isEdgeValidationError(err) {
+			writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution query", nil)
+			return
+		}
+		writeEdgeInternalError(w, r, "list edge executions", err)
+		return
+	}
+	writeJSON(w, edgeExecutionPageResponse{Items: page.Items, NextCursor: page.NextCursor})
+}
+
 func (s *server) handleEndEdgeExecution(w http.ResponseWriter, r *http.Request) {
 	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
@@ -598,6 +628,19 @@ func edgeQueryLimit(r *http.Request) int {
 		return 0
 	}
 	return limit
+}
+
+func edgeExecutionListQuery(r *http.Request, tenantID string) edgecore.ListExecutionsQuery {
+	values := r.URL.Query()
+	return edgecore.ListExecutionsQuery{
+		TenantID:      tenantID,
+		SessionID:     strings.TrimSpace(values.Get("session_id")),
+		JobID:         strings.TrimSpace(values.Get("job_id")),
+		TraceID:       strings.TrimSpace(values.Get("trace_id")),
+		WorkflowRunID: strings.TrimSpace(values.Get("workflow_run_id")),
+		Cursor:        strings.TrimSpace(values.Get("cursor")),
+		Limit:         edgeQueryLimit(r),
+	}
 }
 
 type redactedEdgeSessionCreateRequest struct {

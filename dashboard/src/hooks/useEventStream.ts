@@ -3,9 +3,15 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useConfigStore } from "../state/config";
 import { useEventStore } from "../state/events";
 import { useToastStore } from "../state/toast";
-import type { StreamEvent } from "../api/types";
+import type { EdgeStreamPayload, StreamEvent } from "../api/types";
 import { API_PATHS } from "../lib/constants";
-import { normalizeDecisionType } from "../api/transform";
+import { queryKeys } from "../lib/queryKeys";
+import {
+  mapEdgeEventStreamEnvelope,
+  mapEdgeStreamPayload,
+  normalizeDecisionType,
+  type BackendEdgeEventStreamEnvelope,
+} from "../api/transform";
 import { generateUUID } from "../lib/uuid";
 import { logger } from "../lib/logger";
 
@@ -156,6 +162,73 @@ function busPacketToEvent(packet: BusPacket): StreamEvent | null {
 }
 
 // ---------------------------------------------------------------------------
+// Edge event envelopes to StreamEvent
+// ---------------------------------------------------------------------------
+
+// Keep this live-feed surface intentionally narrow: stream cache entries may
+// contain redacted summaries, ids, decisions, hashes, and artifact pointers;
+// raw prompts, tool payloads, transcripts, signed URLs, command output, and
+// tokens must never be copied from the WebSocket frame into dashboard state.
+
+function edgePayloadRecord(payload: EdgeStreamPayload): Record<string, unknown> {
+  const record: Record<string, unknown> = {};
+  if (payload.tenantId) record.tenantId = payload.tenantId;
+  if (payload.sessionId) record.sessionId = payload.sessionId;
+  if (payload.executionId) record.executionId = payload.executionId;
+  if (payload.eventId) record.eventId = payload.eventId;
+  if (payload.kind) record.kind = payload.kind;
+  if (payload.layer) record.layer = payload.layer;
+  if (payload.decision) record.decision = payload.decision;
+  if (payload.approvalRef) record.approvalRef = payload.approvalRef;
+  if (payload.artifactPtrs && payload.artifactPtrs.length > 0) {
+    record.artifactPtrs = payload.artifactPtrs;
+  }
+  if (payload.summary) record.summary = payload.summary;
+  return record;
+}
+
+function edgeEnvelopeToEvent(raw: unknown): StreamEvent | null {
+  if (!raw || typeof raw !== "object") return null;
+  const envelope = mapEdgeEventStreamEnvelope(raw as BackendEdgeEventStreamEnvelope);
+  if (!envelope) return null;
+  const payload = mapEdgeStreamPayload(envelope);
+  if (!payload.eventId || !payload.sessionId || !payload.executionId) return null;
+  return {
+    id: payload.eventId ?? payload.executionId ?? payload.sessionId ?? generateUUID(),
+    type: "edge.event",
+    timestamp: envelope.event?.ts ?? new Date().toISOString(),
+    payload: edgePayloadRecord(payload),
+    eventType: payload.kind,
+    source: "edge",
+  };
+}
+
+function stringField(payload: Record<string, unknown>, key: string): string | undefined {
+  const value = payload[key];
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function edgeKindNeedsApprovalInvalidation(kind?: string, approvalRef?: string): boolean {
+  if (approvalRef) return true;
+  const normalized = (kind ?? "").toLowerCase();
+  return normalized.includes("approval");
+}
+
+function edgeKindNeedsExportInvalidation(
+  payload: Record<string, unknown>,
+  kind?: string,
+): boolean {
+  if (Array.isArray(payload.artifactPtrs) && payload.artifactPtrs.length > 0) return true;
+  const normalized = (kind ?? "").toLowerCase();
+  return (
+    normalized.includes("artifact") ||
+    normalized.includes("export") ||
+    normalized.includes("session.end") ||
+    normalized.includes("session_ended")
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Map event type prefixes to React Query cache keys to invalidate
 // ---------------------------------------------------------------------------
 
@@ -183,6 +256,34 @@ function invalidateForEvent(
   const payload = event?.payload as Record<string, unknown> | undefined;
   const jobId = payload?.jobId as string | undefined;
   const workerId = payload?.workerId as string | undefined;
+
+  if (eventType === "edge.event" && payload) {
+    const sessionId = stringField(payload, "sessionId");
+    const executionId = stringField(payload, "executionId");
+    const approvalRef = stringField(payload, "approvalRef");
+    const kind = stringField(payload, "kind");
+
+    if (sessionId) {
+      queryClient.invalidateQueries({ queryKey: queryKeys.edge.sessions.lists() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.edge.executions.lists() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.edge.sessions.detail(sessionId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.edge.sessions.eventLists(sessionId) });
+      if (edgeKindNeedsExportInvalidation(payload, kind)) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.edge.sessions.export(sessionId) });
+      }
+    }
+    if (executionId) {
+      queryClient.invalidateQueries({ queryKey: queryKeys.edge.executions.detail(executionId) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.edge.executions.eventLists(executionId) });
+    }
+    if (edgeKindNeedsApprovalInvalidation(kind, approvalRef)) {
+      queryClient.invalidateQueries({ queryKey: queryKeys.edge.approvals.lists() });
+      if (approvalRef) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.edge.approvals.detail(approvalRef) });
+      }
+    }
+    return;
+  }
 
   // Invalidate both detail and list queries so filtered views update in real-time.
   // Using default refetchType ("active") so visible queries refetch immediately.
@@ -299,9 +400,9 @@ export function useEventStream(): void {
       };
 
       ws.onmessage = (msg) => {
-        let packet: BusPacket;
+        let raw: unknown;
         try {
-          packet = JSON.parse(msg.data as string) as BusPacket;
+          raw = JSON.parse(msg.data as string) as unknown;
         } catch {
           parseFailuresRef.current++;
           logger.warn("ws", "Non-JSON frame dropped", {
@@ -323,7 +424,7 @@ export function useEventStream(): void {
         }
         // Reset consecutive failure counter on successful parse.
         parseFailuresRef.current = 0;
-        const event = busPacketToEvent(packet);
+        const event = edgeEnvelopeToEvent(raw) ?? busPacketToEvent(raw as BusPacket);
         if (!event) {
           logger.debug("ws", "Unrecognized packet dropped");
           return;

@@ -1246,6 +1246,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "POST /api/v1/edge/sessions/{session_id}/heartbeat", s.instrumented("/api/v1/edge/sessions/{session_id}/heartbeat", s.handleHeartbeatEdgeSession))
 	s.registerRoute(mux, "POST /api/v1/edge/sessions/{session_id}/end", s.instrumented("/api/v1/edge/sessions/{session_id}/end", s.handleEndEdgeSession))
 	s.registerRoute(mux, "POST /api/v1/edge/executions", s.instrumented("/api/v1/edge/executions", s.handleCreateEdgeExecution))
+	s.registerRoute(mux, "GET /api/v1/edge/executions", s.instrumented("/api/v1/edge/executions", s.handleListEdgeExecutions))
 	s.registerRoute(mux, "GET /api/v1/edge/executions/{execution_id}", s.instrumented("/api/v1/edge/executions/{execution_id}", s.handleGetEdgeExecution))
 	s.registerRoute(mux, "POST /api/v1/edge/executions/{execution_id}/end", s.instrumented("/api/v1/edge/executions/{execution_id}/end", s.handleEndEdgeExecution))
 	s.registerRoute(mux, "GET /api/v1/edge/approvals", s.instrumented("/api/v1/edge/approvals", s.handleListEdgeApprovals))

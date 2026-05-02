@@ -69,6 +69,11 @@ vi.mock("@/components/governance/GovernanceTimeline", () => ({
   },
 }));
 
+vi.mock("@/components/edge/AgentExecutionsPanel", () => ({
+  AgentExecutionsPanel: (props: Record<string, unknown>) =>
+    React.createElement("div", { "data-testid": "agent-executions-panel" }, String(props.jobId ?? "")),
+}));
+
 const JobDetailPage = (await import("./JobDetailPage")).default;
 
 function makeJob(overrides: Partial<Job> = {}): Job {
@@ -295,6 +300,16 @@ describe("Job status variant mapping", () => {
 });
 
 describe("JobDetailPage governance tab integration", () => {
+  it("renders the Agent Executions panel placeholder with the current job id", () => {
+    const { container, cleanup } = renderPage();
+
+    try {
+      expect(container.querySelector('[data-testid="agent-executions-panel"]')?.textContent).toBe("job-123");
+    } finally {
+      cleanup();
+    }
+  });
+
   it("renders the governance tab and lazy-mounts the timeline on activation", () => {
     const { container, cleanup } = renderPage();
 

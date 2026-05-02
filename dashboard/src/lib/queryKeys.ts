@@ -17,6 +17,50 @@ import type { ApprovalHistoryFilters } from "../hooks/useApprovals";
 import type { AuditFilters, ExportFormat } from "../hooks/useAudit";
 import type { WorkflowListParams, WorkflowRunsParams, AllRunsParams } from "../hooks/useWorkflows";
 import type { QuarantinedJobsFilters } from "../hooks/useOutputPolicy";
+import type {
+  EdgeApprovalListParams,
+  EdgeEventListParams,
+  EdgeExecutionListParams,
+  EdgeSessionListParams,
+} from "../api/types";
+
+const scalarKey = (value: string | number | null | undefined, fallback = "all") =>
+  value === null || value === undefined || value === "" ? fallback : value;
+
+const edgeSessionListFilterKey = (params?: EdgeSessionListParams) => [
+  scalarKey(params?.status),
+  scalarKey(params?.principalId),
+  scalarKey(params?.agentProduct),
+  scalarKey(params?.cursor, "first"),
+  scalarKey(params?.limit, "default"),
+] as const;
+
+const edgeExecutionListFilterKey = (params?: EdgeExecutionListParams) => [
+  scalarKey(params?.sessionId),
+  scalarKey(params?.jobId),
+  scalarKey(params?.traceId),
+  scalarKey(params?.workflowRunId),
+  scalarKey(params?.cursor, "first"),
+  scalarKey(params?.limit, "default"),
+] as const;
+
+const edgeEventFilterKey = (params?: EdgeEventListParams) => [
+  scalarKey(params?.kind),
+  scalarKey(params?.decision),
+  scalarKey(params?.since, "since:all"),
+  scalarKey(params?.until, "until:all"),
+  scalarKey(params?.cursor, "first"),
+  scalarKey(params?.limit, "default"),
+] as const;
+
+const edgeApprovalListFilterKey = (params?: EdgeApprovalListParams) => [
+  scalarKey(params?.status),
+  scalarKey(params?.sessionId),
+  scalarKey(params?.executionId),
+  scalarKey(params?.actionHash),
+  scalarKey(params?.cursor, "first"),
+  scalarKey(params?.limit, "default"),
+] as const;
 
 export const queryKeys = {
   // ── Jobs ──────────────────────────────────────────────────────────
@@ -131,6 +175,45 @@ export const queryKeys = {
     session: () => ["auth-session"] as const,
     sessionValidate: () => ["auth-session-validate"] as const,
     apiKeys: () => ["api-keys"] as const,
+  },
+
+  // ── Cordum Edge ───────────────────────────────────────────────────
+  edge: {
+    all: ["edge"] as const,
+    sessions: {
+      all: ["edge", "sessions"] as const,
+      lists: () => ["edge", "sessions", "list"] as const,
+      list: (params?: EdgeSessionListParams) =>
+        ["edge", "sessions", "list", edgeSessionListFilterKey(params)] as const,
+      detail: (sessionId: string | null | undefined) =>
+        ["edge", "sessions", "detail", scalarKey(sessionId, "missing")] as const,
+      events: (sessionId: string | null | undefined, params?: EdgeEventListParams) =>
+        ["edge", "sessions", "events", scalarKey(sessionId, "missing"), edgeEventFilterKey(params)] as const,
+      eventLists: (sessionId: string | null | undefined) =>
+        ["edge", "sessions", "events", scalarKey(sessionId, "missing")] as const,
+      export: (sessionId: string | null | undefined) =>
+        ["edge", "sessions", "export", scalarKey(sessionId, "missing")] as const,
+    },
+    executions: {
+      all: ["edge", "executions"] as const,
+      lists: () => ["edge", "executions", "list"] as const,
+      list: (params?: EdgeExecutionListParams) =>
+        ["edge", "executions", "list", edgeExecutionListFilterKey(params)] as const,
+      detail: (executionId: string | null | undefined) =>
+        ["edge", "executions", "detail", scalarKey(executionId, "missing")] as const,
+      events: (executionId: string | null | undefined, params?: EdgeEventListParams) =>
+        ["edge", "executions", "events", scalarKey(executionId, "missing"), edgeEventFilterKey(params)] as const,
+      eventLists: (executionId: string | null | undefined) =>
+        ["edge", "executions", "events", scalarKey(executionId, "missing")] as const,
+    },
+    approvals: {
+      all: ["edge", "approvals"] as const,
+      lists: () => ["edge", "approvals", "list"] as const,
+      list: (params?: EdgeApprovalListParams) =>
+        ["edge", "approvals", "list", edgeApprovalListFilterKey(params)] as const,
+      detail: (approvalRef: string | null | undefined) =>
+        ["edge", "approvals", "detail", scalarKey(approvalRef, "missing")] as const,
+    },
   },
 
   // ── Packs ─────────────────────────────────────────────────────────
