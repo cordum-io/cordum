@@ -154,6 +154,23 @@ graph LR
 - **DURING (Safety)**: Real-time visibility into active agent runs. Monitor progress, handle step-level approvals, and enforce timeouts or circuit breakers on the fly.
 - **ACROSS (Observability)**: Manage your entire fleet from a single control plane. Aggregate audit trails, track capability-based routing, and observe agent pool health in real-time.
 
+
+### Cordum Edge: Compliance Firewall for AI agents
+
+Cordum Edge extends the control plane to local AI-agent actions. For Claude Code,
+`cordumctl edge claude` launches the real P0 path — command hook, local
+`cordum-agentd`, Gateway Edge APIs, Safety Kernel policy/evaluate, approvals,
+artifact pointers, and dashboard evidence.
+
+Cordum stays quiet until governance matters. Developers see Cordum exactly when
+it protects them, their team, and production: before risky tools run, when an
+action needs approval, and when evidence must be exported. The wrapper is the
+developer/demo path; enterprise enforcement requires managed Claude settings and
+endpoint controls.
+
+Start here: [Edge overview](docs/edge.md), [Claude Code guide](docs/edge-claude-code.md),
+[manual demo](docs/demo-edge-claude.md), and [Edge API](docs/edge/api.md).
+
 ## Quickstart
 
 ### First Time?

@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+
+#### Cordum Edge P0 documentation and Claude Code launcher
+- Added Edge product, API, configuration, CLI, and demo documentation for the P0
+  Compliance Firewall surface (`docs/edge.md`, `docs/edge-claude-code.md`,
+  `docs/demo-edge-claude.md`, and `docs/edge/`).
+- Documented `cordumctl edge claude`, local `cordum-hook`/`cordum-agentd`
+  behavior, generated settings, approval retry UX, fail modes, token tradeoffs,
+  and the developer-wrapper vs enterprise-managed-settings boundary.
+
 #### Control Plane Boundary Hardening
 - **Topic registry** (`GET/POST/DELETE /api/v1/topics`) — canonical source of truth for registered topics with pool, schema, pack, and status metadata
 - **Submit-time topic validation** — unknown topics rejected with 400 at both gateway and scheduler boundaries; known topics with zero workers stay valid (degraded, `ErrNoWorkers` retry)

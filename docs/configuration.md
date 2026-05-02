@@ -59,6 +59,30 @@ Shared across services:
   `CORDUM_PACK_CATALOG_TITLE`, `CORDUM_PACK_CATALOG_DEFAULT_DISABLED=1`
 - Marketplace fetch: `CORDUM_MARKETPLACE_ALLOW_HTTP=1`, `CORDUM_MARKETPLACE_HTTP_TIMEOUT` (e.g. `15s`)
 
+## Cordum Edge
+
+Cordum Edge P0 adds Gateway-backed agent governance for Claude Code command-hook
+sessions. See [Edge configuration](edge/configuration.md) for the full table and
+security notes. The short version:
+
+- Required identity: `CORDUM_GATEWAY`, `CORDUM_API_KEY`, `CORDUM_TENANT_ID`, and
+  a principal (`CORDUM_PRINCIPAL_ID` or generated launcher principal).
+- Local hook transport: `CORDUM_AGENTD_SOCKET` binds raw `cordum-agentd` to a
+  loopback-only HTTP URL; `CORDUM_AGENTD_URL` is the bare hook URL consumed by
+  `cordum-hook` and must never include `?nonce=`.
+- Nonces: `CORDUM_AGENTD_NONCE` is a trusted-launcher-to-agentd secret;
+  `CORDUM_AGENTD_HOOK_NONCE` is injected only into the hook process and sent as
+  `X-Cordum-Agentd-Nonce`. Neither value belongs in Claude settings, managed
+  settings, logs, metrics, state, or evidence exports.
+- Hook deadline: generated Claude settings use `CORDUM_AGENTD_HOOK_TIMEOUT=4.5s`
+  so Cordum stays below Claude Code's 5s command-hook deadline.
+- Modes: `CORDUM_EDGE_POLICY_MODE` accepts `observe`, `enforce`, and
+  `enterprise-strict`; `CORDUM_AGENTD_FAIL_CLOSED=true` forces fail-closed
+  behavior when local governance cannot respond safely.
+- State and exports: `CORDUM_AGENTD_STATE_DIR` stores small non-secret state,
+  `CORDUM_AGENTD_STRICT_PERMS=1` fails closed on broad Windows ACLs, and
+  `CORDUM_EDGE_EXPORT_MAX_BYTES` caps metadata-only evidence bundles.
+
 ### User authentication
 
 The gateway supports user/password authentication in addition to API key authentication:
