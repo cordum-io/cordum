@@ -644,6 +644,55 @@ paths:
         '500':
           $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/executions:
+    get:
+      operationId: listEdgeExecutions
+      summary: List Edge agent executions for a tenant
+      tags:
+      - Edge
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: session_id
+        in: query
+        schema:
+          type: string
+      - name: job_id
+        in: query
+        schema:
+          type: string
+      - name: trace_id
+        in: query
+        schema:
+          type: string
+      - name: workflow_run_id
+        in: query
+        schema:
+          type: string
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      responses:
+        '200':
+          description: Edge execution page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeExecutionPageResponse'
+        '400':
+          $ref: '#/components/responses/EdgeBadRequest'
+        '401':
+          $ref: '#/components/responses/EdgeUnauthorized'
+        '403':
+          $ref: '#/components/responses/EdgeForbidden'
+        '503':
+          $ref: '#/components/responses/EdgeServiceUnavailable'
+        '500':
+          $ref: '#/components/responses/EdgeInternalServerError'
     post:
       operationId: createEdgeExecution
       summary: Create an Edge agent execution
@@ -7431,6 +7480,16 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/EdgeSession'
+        next_cursor:
+          type: string
+          nullable: true
+    EdgeExecutionPageResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EdgeAgentExecution'
         next_cursor:
           type: string
           nullable: true
