@@ -68,7 +68,7 @@ func TestHeartbeatServiceSkipsOverlappingTicksAndStopsOnCancel(t *testing.T) {
 func TestHeartbeatServiceMarksDegradedAfterConsecutiveFailures(t *testing.T) {
 	t.Parallel()
 
-	var statuses []HeartbeatStatus
+	rec := &heartbeatStatusRecorder{}
 	gateway := &stubHeartbeatGateway{
 		heartbeat: func(context.Context, string) (HeartbeatResponse, error) {
 			return HeartbeatResponse{}, ErrGatewayTimeout
@@ -81,9 +81,7 @@ func TestHeartbeatServiceMarksDegradedAfterConsecutiveFailures(t *testing.T) {
 		Timeout:                time.Second,
 		MaxConsecutiveFailures: 2,
 		PolicyMode:             edgecore.PolicyModeObserve,
-		OnStatus: func(status HeartbeatStatus) {
-			statuses = append(statuses, status)
-		},
+		OnStatus:               rec.record,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -97,9 +95,10 @@ func TestHeartbeatServiceMarksDegradedAfterConsecutiveFailures(t *testing.T) {
 	eventually(t, time.Second, func() bool { return !service.InFlight() })
 	ticks <- time.Now()
 	eventually(t, time.Second, func() bool {
-		return len(statuses) > 0 && statuses[len(statuses)-1].Degraded
+		last, ok := rec.last()
+		return ok && last.Degraded
 	})
-	last := statuses[len(statuses)-1]
+	last, _ := rec.last()
 	if last.ConsecutiveFailures != 2 {
 		t.Fatalf("consecutive failures = %d, want 2", last.ConsecutiveFailures)
 	}
@@ -113,7 +112,7 @@ func TestHeartbeatServiceMarksDegradedAfterConsecutiveFailures(t *testing.T) {
 func TestHeartbeatServiceFailClosesEnterpriseStrictAfterFailures(t *testing.T) {
 	t.Parallel()
 
-	var last HeartbeatStatus
+	rec := &heartbeatStatusRecorder{}
 	gateway := &stubHeartbeatGateway{heartbeat: func(context.Context, string) (HeartbeatResponse, error) {
 		return HeartbeatResponse{}, errors.New("gateway unavailable")
 	}}
@@ -125,7 +124,7 @@ func TestHeartbeatServiceFailClosesEnterpriseStrictAfterFailures(t *testing.T) {
 		MaxConsecutiveFailures: 1,
 		PolicyMode:             edgecore.PolicyModeEnterpriseStrict,
 		FailClosed:             true,
-		OnStatus:               func(status HeartbeatStatus) { last = status },
+		OnStatus:               rec.record,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -136,12 +135,40 @@ func TestHeartbeatServiceFailClosesEnterpriseStrictAfterFailures(t *testing.T) {
 	}()
 
 	ticks <- time.Now()
-	eventually(t, time.Second, func() bool { return last.Degraded })
+	eventually(t, time.Second, func() bool {
+		last, ok := rec.last()
+		return ok && last.Degraded
+	})
+	last, _ := rec.last()
 	if !last.FailClosed {
 		t.Fatalf("last status = %#v, want fail-closed", last)
 	}
 	cancel()
 	<-done
+}
+
+// heartbeatStatusRecorder is a goroutine-safe collector for OnStatus callbacks.
+// Heartbeat callbacks fire from the heartbeat goroutine while the test asserts
+// from the main goroutine via eventually(); without this mutex, -race flags
+// the captured-variable read/write as a data race.
+type heartbeatStatusRecorder struct {
+	mu       sync.Mutex
+	statuses []HeartbeatStatus
+}
+
+func (r *heartbeatStatusRecorder) record(status HeartbeatStatus) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.statuses = append(r.statuses, status)
+}
+
+func (r *heartbeatStatusRecorder) last() (HeartbeatStatus, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.statuses) == 0 {
+		return HeartbeatStatus{}, false
+	}
+	return r.statuses[len(r.statuses)-1], true
 }
 
 type stubHeartbeatGateway struct {
