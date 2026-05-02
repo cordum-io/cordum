@@ -83,7 +83,7 @@ type edgeEndExecutionRequest struct {
 }
 
 func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -93,7 +93,7 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 
 	var req edgeSessionCreateRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
-		writeJSONDecodeError(w, err, "invalid edge session request")
+		writeEdgeJSONDecodeError(w, r, err, "invalid edge session request")
 		return
 	}
 	tenantID, ok := s.edgeTenantFromRequest(w, r, req.TenantID)
@@ -107,7 +107,7 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 	// session claiming any principal in its tenant.
 	principalID, err := s.resolvePrincipal(r, req.PrincipalID)
 	if err != nil {
-		writeForbidden(w, r, err)
+		writeEdgeForbidden(w, r, err)
 		return
 	}
 	principalID = strings.TrimSpace(principalID)
@@ -134,7 +134,7 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 	}
 	redacted, err := redactEdgeSessionCreateRequest(req)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid edge session request")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session request", nil)
 		return
 	}
 	traceID = redacted.String(traceID)
@@ -169,7 +169,7 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 		Labels:    redacted.Labels,
 	}
 	if err := session.Validate(); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid edge session request")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session request", nil)
 		return
 	}
 
@@ -188,30 +188,30 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 		Labels:         redacted.Labels,
 	}
 	if err := execution.Validate(); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid edge execution request")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
 		return
 	}
 
 	if err := store.CreateSession(r.Context(), session); err != nil {
 		if isEdgeValidationError(err) {
-			writeErrorJSON(w, http.StatusBadRequest, "invalid edge session request")
+			writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session request", nil)
 			return
 		}
-		writeInternalError(w, r, "create edge session", err)
+		writeEdgeInternalError(w, r, "create edge session", err)
 		return
 	}
 	if err := store.CreateExecution(r.Context(), execution); err != nil {
 		s.cleanupFailedEdgeSessionCreate(r, tenantID, sessionID)
 		if errors.Is(err, edgecore.ErrNotFound) || isEdgeValidationError(err) {
-			writeErrorJSON(w, http.StatusBadRequest, "invalid edge execution request")
+			writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
 			return
 		}
-		writeInternalError(w, r, "create initial edge execution", err)
+		writeEdgeInternalError(w, r, "create initial edge execution", err)
 		return
 	}
 	if err := store.TouchHeartbeat(r.Context(), tenantID, sessionID); err != nil {
 		s.cleanupFailedEdgeSessionCreate(r, tenantID, sessionID)
-		writeInternalError(w, r, "touch edge session heartbeat", err)
+		writeEdgeInternalError(w, r, "touch edge session heartbeat", err)
 		return
 	}
 
@@ -229,7 +229,7 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *server) handleListEdgeSessions(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -249,17 +249,17 @@ func (s *server) handleListEdgeSessions(w http.ResponseWriter, r *http.Request) 
 	page, err := store.ListSessions(r.Context(), query)
 	if err != nil {
 		if isEdgeValidationError(err) {
-			writeErrorJSON(w, http.StatusBadRequest, "invalid edge session query")
+			writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session query", nil)
 			return
 		}
-		writeInternalError(w, r, "list edge sessions", err)
+		writeEdgeInternalError(w, r, "list edge sessions", err)
 		return
 	}
 	writeJSON(w, edgeSessionPageResponse{Items: page.Items, NextCursor: page.NextCursor})
 }
 
 func (s *server) handleGetEdgeSession(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -270,24 +270,24 @@ func (s *server) handleGetEdgeSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sessionID, ok := requirePathParam(w, r, "session_id")
+	sessionID, ok := requireEdgePathParam(w, r, "session_id")
 	if !ok {
 		return
 	}
 	session, found, err := store.GetSession(r.Context(), tenantID, sessionID)
 	if err != nil {
-		writeInternalError(w, r, "get edge session", err)
+		writeEdgeInternalError(w, r, "get edge session", err)
 		return
 	}
 	if !found || session == nil {
-		writeErrorJSON(w, http.StatusNotFound, "edge session not found")
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
 		return
 	}
 	writeJSON(w, session)
 }
 
 func (s *server) handleHeartbeatEdgeSession(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -298,28 +298,28 @@ func (s *server) handleHeartbeatEdgeSession(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	sessionID, ok := requirePathParam(w, r, "session_id")
+	sessionID, ok := requireEdgePathParam(w, r, "session_id")
 	if !ok {
 		return
 	}
 	if err := store.TouchHeartbeat(r.Context(), tenantID, sessionID); err != nil {
 		if errors.Is(err, edgecore.ErrNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, "edge session not found")
+			writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
 			return
 		}
-		writeInternalError(w, r, "touch edge session heartbeat", err)
+		writeEdgeInternalError(w, r, "touch edge session heartbeat", err)
 		return
 	}
 	alive, err := store.HeartbeatAlive(r.Context(), tenantID, sessionID)
 	if err != nil {
-		writeInternalError(w, r, "read edge session heartbeat", err)
+		writeEdgeInternalError(w, r, "read edge session heartbeat", err)
 		return
 	}
 	writeJSON(w, edgeHeartbeatResponse{SessionID: sessionID, HeartbeatAlive: alive})
 }
 
 func (s *server) handleEndEdgeSession(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -330,14 +330,14 @@ func (s *server) handleEndEdgeSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sessionID, ok := requirePathParam(w, r, "session_id")
+	sessionID, ok := requireEdgePathParam(w, r, "session_id")
 	if !ok {
 		return
 	}
 	req := edgeEndSessionRequest{Status: edgecore.SessionStatusEnded}
 	if r.Body != nil && r.Body != http.NoBody {
 		if err := decodeJSONBody(w, r, &req); err != nil {
-			writeJSONDecodeError(w, err, "invalid edge session end request")
+			writeEdgeJSONDecodeError(w, r, err, "invalid edge session end request")
 			return
 		}
 	}
@@ -346,7 +346,7 @@ func (s *server) handleEndEdgeSession(w http.ResponseWriter, r *http.Request) {
 		status = edgecore.SessionStatusEnded
 	}
 	if status != edgecore.SessionStatusEnded && status != edgecore.SessionStatusFailed {
-		writeErrorJSON(w, http.StatusBadRequest, "session end status must be terminal")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "session end status must be terminal", nil)
 		return
 	}
 	endedAt := time.Now().UTC()
@@ -356,21 +356,21 @@ func (s *server) handleEndEdgeSession(w http.ResponseWriter, r *http.Request) {
 	ended, err := store.EndSession(r.Context(), tenantID, sessionID, endedAt, status)
 	if err != nil {
 		if errors.Is(err, edgecore.ErrNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, "edge session not found")
+			writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
 			return
 		}
 		if isEdgeValidationError(err) {
-			writeErrorJSON(w, http.StatusBadRequest, "invalid edge session end request")
+			writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session end request", nil)
 			return
 		}
-		writeInternalError(w, r, "end edge session", err)
+		writeEdgeInternalError(w, r, "end edge session", err)
 		return
 	}
 	writeJSON(w, ended)
 }
 
 func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -379,7 +379,7 @@ func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Reques
 	}
 	var req edgeExecutionCreateRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
-		writeJSONDecodeError(w, err, "invalid edge execution request")
+		writeEdgeJSONDecodeError(w, r, err, "invalid edge execution request")
 		return
 	}
 	tenantID, ok := s.edgeTenantFromRequest(w, r, req.TenantID)
@@ -388,16 +388,16 @@ func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Reques
 	}
 	sessionID := strings.TrimSpace(req.SessionID)
 	if sessionID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "session_id is required")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeMissingField, "session_id is required", nil)
 		return
 	}
 	parent, found, err := store.GetSession(r.Context(), tenantID, sessionID)
 	if err != nil {
-		writeInternalError(w, r, "load edge execution parent session", err)
+		writeEdgeInternalError(w, r, "load edge execution parent session", err)
 		return
 	}
 	if !found || parent == nil {
-		writeErrorJSON(w, http.StatusNotFound, "edge session not found")
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
 		return
 	}
 
@@ -419,7 +419,7 @@ func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Reques
 	}
 	redacted, err := redactEdgeExecutionCreateRequest(req)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid edge execution request")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
 		return
 	}
 	traceID = redacted.String(traceID)
@@ -443,19 +443,19 @@ func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Reques
 		Labels:         redacted.Labels,
 	}
 	if err := execution.Validate(); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid edge execution request")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
 		return
 	}
 	if err := store.CreateExecution(r.Context(), execution); err != nil {
 		if errors.Is(err, edgecore.ErrNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, "edge session not found")
+			writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
 			return
 		}
 		if isEdgeValidationError(err) {
-			writeErrorJSON(w, http.StatusBadRequest, "invalid edge execution request")
+			writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
 			return
 		}
-		writeInternalError(w, r, "create edge execution", err)
+		writeEdgeInternalError(w, r, "create edge execution", err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -464,7 +464,7 @@ func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *server) handleGetEdgeExecution(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -475,24 +475,24 @@ func (s *server) handleGetEdgeExecution(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	executionID, ok := requirePathParam(w, r, "execution_id")
+	executionID, ok := requireEdgePathParam(w, r, "execution_id")
 	if !ok {
 		return
 	}
 	execution, found, err := store.GetExecution(r.Context(), tenantID, executionID)
 	if err != nil {
-		writeInternalError(w, r, "get edge execution", err)
+		writeEdgeInternalError(w, r, "get edge execution", err)
 		return
 	}
 	if !found || execution == nil {
-		writeErrorJSON(w, http.StatusNotFound, "edge execution not found")
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge execution not found", nil)
 		return
 	}
 	writeJSON(w, execution)
 }
 
 func (s *server) handleEndEdgeExecution(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -503,14 +503,14 @@ func (s *server) handleEndEdgeExecution(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	executionID, ok := requirePathParam(w, r, "execution_id")
+	executionID, ok := requireEdgePathParam(w, r, "execution_id")
 	if !ok {
 		return
 	}
 	req := edgeEndExecutionRequest{Status: edgecore.ExecutionStatusSucceeded}
 	if r.Body != nil && r.Body != http.NoBody {
 		if err := decodeJSONBody(w, r, &req); err != nil {
-			writeJSONDecodeError(w, err, "invalid edge execution end request")
+			writeEdgeJSONDecodeError(w, r, err, "invalid edge execution end request")
 			return
 		}
 	}
@@ -519,7 +519,7 @@ func (s *server) handleEndEdgeExecution(w http.ResponseWriter, r *http.Request) 
 		status = edgecore.ExecutionStatusSucceeded
 	}
 	if !isTerminalEdgeExecutionStatus(status) {
-		writeErrorJSON(w, http.StatusBadRequest, "execution end status must be terminal")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "execution end status must be terminal", nil)
 		return
 	}
 	endedAt := time.Now().UTC()
@@ -529,14 +529,14 @@ func (s *server) handleEndEdgeExecution(w http.ResponseWriter, r *http.Request) 
 	ended, err := store.EndExecution(r.Context(), tenantID, executionID, endedAt, status)
 	if err != nil {
 		if errors.Is(err, edgecore.ErrNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, "edge execution not found")
+			writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge execution not found", nil)
 			return
 		}
 		if isEdgeValidationError(err) {
-			writeErrorJSON(w, http.StatusBadRequest, "invalid edge execution end request")
+			writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution end request", nil)
 			return
 		}
-		writeInternalError(w, r, "end edge execution", err)
+		writeEdgeInternalError(w, r, "end edge execution", err)
 		return
 	}
 	writeJSON(w, ended)
@@ -544,7 +544,8 @@ func (s *server) handleEndEdgeExecution(w http.ResponseWriter, r *http.Request) 
 
 func (s *server) edgeStoreOrUnavailable(w http.ResponseWriter, r *http.Request) edgecore.Store {
 	if s == nil || isNilStore(s.edgeStore) {
-		writeServiceUnavailable(w, r, "edge store", errors.New("edge store unavailable"))
+		slog.Error("edge store unavailable", "method", r.Method, "path", r.URL.Path)
+		writeEdgeError(w, r, http.StatusServiceUnavailable, edgeErrCodeStoreUnavailable, "edge store unavailable", nil)
 		return nil
 	}
 	return s.edgeStore
@@ -553,15 +554,17 @@ func (s *server) edgeStoreOrUnavailable(w http.ResponseWriter, r *http.Request) 
 func (s *server) edgeTenantFromRequest(w http.ResponseWriter, r *http.Request, requested string) (string, bool) {
 	headerTenant := strings.TrimSpace(auth.HeaderValue(r, "X-Tenant-ID"))
 	if headerTenant == "" {
-		writeErrorJSON(w, http.StatusForbidden, "tenant id required")
+		writeEdgeError(w, r, http.StatusForbidden, edgeErrCodeTenantRequired, "X-Tenant-ID header is required", nil)
 		return "", false
 	}
 	if strings.TrimSpace(requested) != "" && strings.TrimSpace(requested) != headerTenant {
-		writeForbidden(w, r, fmt.Errorf("edge tenant body/header mismatch"))
+		slog.Warn("edge tenant body/header mismatch", "method", r.Method, "path", r.URL.Path)
+		writeEdgeError(w, r, http.StatusForbidden, edgeErrCodeTenantMismatch, "tenant_id in body does not match X-Tenant-ID header", nil)
 		return "", false
 	}
 	if err := s.requireTenantAccess(r, headerTenant); err != nil {
-		writeForbidden(w, r, err)
+		slog.Warn("edge tenant access denied", "method", r.Method, "path", r.URL.Path, "error", err)
+		writeEdgeError(w, r, http.StatusForbidden, edgeErrCodeTenantAccessDenied, "tenant access denied", nil)
 		return "", false
 	}
 	return headerTenant, true

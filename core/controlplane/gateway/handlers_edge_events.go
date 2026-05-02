@@ -82,7 +82,7 @@ func (e edgeEventRequestError) Error() string {
 }
 
 func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -91,7 +91,7 @@ func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	var req edgeEventWriteRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
-		writeJSONDecodeError(w, err, "invalid edge event request")
+		writeEdgeJSONDecodeError(w, r, err, "invalid edge event request")
 		return
 	}
 	tenantID, ok := s.edgeTenantFromRequest(w, r, req.TenantID)
@@ -103,13 +103,13 @@ func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
 	// tenant. Mirrors handleEdgeEvaluate / handleSubmitJob.
 	principalID, err := s.resolvePrincipal(r, req.PrincipalID)
 	if err != nil {
-		writeForbidden(w, r, err)
+		writeEdgeForbidden(w, r, err)
 		return
 	}
 	req.PrincipalID = principalID
 	event, err := normalizeEdgeEventRequest(req, tenantID)
 	if err != nil {
-		writeEdgeEventRequestError(w, err, "invalid edge event request")
+		writeEdgeEventRequestError(w, r, err, "invalid edge event request")
 		return
 	}
 	if err := validateEdgeEventParents(r.Context(), store, event); err != nil {
@@ -128,7 +128,7 @@ func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -137,7 +137,7 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 	}
 	var req edgeEventBatchTenantProbeRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
-		writeJSONDecodeError(w, err, "invalid edge event batch request")
+		writeEdgeJSONDecodeError(w, r, err, "invalid edge event batch request")
 		return
 	}
 	tenantID, ok := s.edgeTenantFromRequest(w, r, "")
@@ -145,7 +145,7 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if len(req.Events) == 0 {
-		writeErrorJSON(w, http.StatusBadRequest, "edge event batch requires events")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "edge event batch requires events", nil)
 		return
 	}
 	// Resolve principal once from the auth context. Every event in the batch
@@ -153,19 +153,19 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 	// spoof activity from another user inside their tenant.
 	principalID, err := s.resolvePrincipal(r, "")
 	if err != nil {
-		writeForbidden(w, r, err)
+		writeEdgeForbidden(w, r, err)
 		return
 	}
 	events := make([]edgecore.AgentActionEvent, 0, len(req.Events))
 	for _, item := range req.Events {
 		if requestedTenant := strings.TrimSpace(item.TenantID); requestedTenant != "" && requestedTenant != tenantID {
-			writeForbidden(w, r, fmt.Errorf("edge tenant body/header mismatch"))
+			writeEdgeForbidden(w, r, fmt.Errorf("edge tenant body/header mismatch"))
 			return
 		}
 		item.PrincipalID = principalID
 		event, err := normalizeEdgeEventRequest(item, tenantID)
 		if err != nil {
-			writeEdgeEventRequestError(w, err, "invalid edge event batch request")
+			writeEdgeEventRequestError(w, r, err, "invalid edge event batch request")
 			return
 		}
 		if err := validateEdgeEventParents(r.Context(), store, event); err != nil {
@@ -192,7 +192,7 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *server) handleListEdgeSessionEvents(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -203,20 +203,20 @@ func (s *server) handleListEdgeSessionEvents(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	sessionID, ok := requirePathParam(w, r, "session_id")
+	sessionID, ok := requireEdgePathParam(w, r, "session_id")
 	if !ok {
 		return
 	}
 	if session, found, err := store.GetSession(r.Context(), tenantID, sessionID); err != nil {
-		writeInternalError(w, r, "get edge event parent session", err)
+		writeEdgeInternalError(w, r, "get edge event parent session", err)
 		return
 	} else if !found || session == nil {
-		writeErrorJSON(w, http.StatusNotFound, "edge session not found")
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
 		return
 	}
 	query, err := edgeEventListQueryFromRequest(r, tenantID)
 	if err != nil {
-		writeEdgeEventRequestError(w, err, "invalid edge event query")
+		writeEdgeEventRequestError(w, r, err, "invalid edge event query")
 		return
 	}
 	query.SessionID = sessionID
@@ -229,7 +229,7 @@ func (s *server) handleListEdgeSessionEvents(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *server) handleListEdgeExecutionEvents(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -240,20 +240,20 @@ func (s *server) handleListEdgeExecutionEvents(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	executionID, ok := requirePathParam(w, r, "execution_id")
+	executionID, ok := requireEdgePathParam(w, r, "execution_id")
 	if !ok {
 		return
 	}
 	if execution, found, err := store.GetExecution(r.Context(), tenantID, executionID); err != nil {
-		writeInternalError(w, r, "get edge event parent execution", err)
+		writeEdgeInternalError(w, r, "get edge event parent execution", err)
 		return
 	} else if !found || execution == nil {
-		writeErrorJSON(w, http.StatusNotFound, "edge execution not found")
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge execution not found", nil)
 		return
 	}
 	query, err := edgeEventListQueryFromRequest(r, tenantID)
 	if err != nil {
-		writeEdgeEventRequestError(w, err, "invalid edge event query")
+		writeEdgeEventRequestError(w, r, err, "invalid edge event query")
 		return
 	}
 	query.ExecutionID = executionID
@@ -562,36 +562,66 @@ func validateEdgeEventParents(ctx context.Context, store edgecore.Store, event e
 	return nil
 }
 
-func writeEdgeEventRequestError(w http.ResponseWriter, err error, fallback string) {
+func writeEdgeEventRequestError(w http.ResponseWriter, r *http.Request, err error, fallback string) {
 	var requestErr edgeEventRequestError
 	if errors.As(err, &requestErr) {
-		writeErrorJSON(w, requestErr.status, requestErr.message)
+		writeEdgeError(w, r, requestErr.status, edgeEventRequestCode(requestErr), requestErr.message, nil)
 		return
 	}
-	writeErrorJSON(w, http.StatusBadRequest, fallback)
+	writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, fallback, nil)
 }
 
 func writeEdgeEventStoreError(w http.ResponseWriter, r *http.Request, err error, operation string) {
 	var requestErr edgeEventRequestError
 	if errors.As(err, &requestErr) {
-		writeErrorJSON(w, requestErr.status, requestErr.message)
+		writeEdgeError(w, r, requestErr.status, edgeEventRequestCode(requestErr), requestErr.message, nil)
 		return
 	}
 	if errors.Is(err, edgecore.ErrNotFound) {
-		writeErrorJSON(w, http.StatusNotFound, "edge event parent not found")
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge event parent not found", nil)
 		return
 	}
-	if strings.Contains(err.Error(), "invalid cursor") {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid edge event query")
+	errStr := err.Error()
+	if strings.Contains(errStr, "invalid cursor") {
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge event query", nil)
 		return
 	}
 	if isEdgeValidationError(err) {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid edge event request")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge event request", nil)
 		return
 	}
-	if strings.Contains(err.Error(), "exceeds max") || strings.Contains(err.Error(), "too large") {
-		writeErrorJSON(w, http.StatusRequestEntityTooLarge, "edge event too large; use artifact_ptrs")
+	if strings.Contains(errStr, "exceeds max") || strings.Contains(errStr, "too large") {
+		writeEdgeError(w, r, http.StatusRequestEntityTooLarge, edgeErrCodeRequestTooLarge, "edge event too large; use artifact_ptrs", nil)
 		return
 	}
-	writeInternalError(w, r, operation, err)
+	writeEdgeInternalError(w, r, operation, err)
+}
+
+// edgeEventRequestCode classifies an edgeEventRequestError into a stable Edge
+// API code. It looks at HTTP status first (broad bucket) then at the message
+// (narrow case for raw/artifact rejections that are part of the request
+// contract).
+func edgeEventRequestCode(req edgeEventRequestError) string {
+	switch req.status {
+	case http.StatusRequestEntityTooLarge:
+		return edgeErrCodeRequestTooLarge
+	case http.StatusNotFound:
+		return edgeErrCodeNotFound
+	case http.StatusConflict:
+		return edgeErrCodeConflict
+	case http.StatusForbidden:
+		return edgeErrCodeAccessDenied
+	}
+	msg := strings.ToLower(req.message)
+	switch {
+	case strings.Contains(msg, "raw "), strings.Contains(msg, "transcript"), strings.Contains(msg, "tool_input"):
+		return edgeErrCodeRawPayloadRejected
+	case strings.Contains(msg, "artifact"):
+		return edgeErrCodeArtifactPointerInvalid
+	case strings.Contains(msg, "tenant"):
+		return edgeErrCodeTenantMismatch
+	case strings.Contains(msg, "execution"):
+		return edgeErrCodeExecutionMismatch
+	}
+	return edgeErrCodeInvalidRequest
 }

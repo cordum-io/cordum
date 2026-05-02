@@ -82,20 +82,10 @@ func TestGatewayEdgeEventWriteRejectsBadJSONTenantMismatchAndUnavailableStore(t 
 
 	s.edgeStore = nil
 	unavailableWrite := edgeRoutePOST(t, handler, "/api/v1/edge/events", edgeEventWriteBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "evt-unavailable-write"))
-	if unavailableWrite.Code != http.StatusServiceUnavailable {
-		t.Fatalf("nil store write status = %d, want 503 body=%s", unavailableWrite.Code, unavailableWrite.Body.String())
-	}
-	if unavailableWrite.Body.String() != "{\"error\":\"service unavailable\",\"status\":503}\n" {
-		t.Fatalf("nil store write response = %q, want generic service unavailable", unavailableWrite.Body.String())
-	}
+	assertEdgeErrorShape(t, unavailableWrite, http.StatusServiceUnavailable, edgeErrCodeStoreUnavailable)
 
 	unavailableRead := edgeRouteGET(t, handler, "/api/v1/edge/executions/"+session.ExecutionID+"/events")
-	if unavailableRead.Code != http.StatusServiceUnavailable {
-		t.Fatalf("nil store read status = %d, want 503 body=%s", unavailableRead.Code, unavailableRead.Body.String())
-	}
-	if unavailableRead.Body.String() != "{\"error\":\"service unavailable\",\"status\":503}\n" {
-		t.Fatalf("nil store read response = %q, want generic service unavailable", unavailableRead.Body.String())
-	}
+	assertEdgeErrorShape(t, unavailableRead, http.StatusServiceUnavailable, edgeErrCodeStoreUnavailable)
 }
 
 func TestGatewayEdgeEventRoutesDenyCrossTenantWithoutLeakingIDs(t *testing.T) {

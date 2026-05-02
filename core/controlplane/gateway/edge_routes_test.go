@@ -461,12 +461,7 @@ func TestGatewayEdgeErrorMappingAndTenantIsolation(t *testing.T) {
 
 	s.edgeStore = nil
 	unavailable := edgeRouteGET(t, handler, "/api/v1/edge/sessions")
-	if unavailable.Code != http.StatusServiceUnavailable {
-		t.Fatalf("nil store status = %d, want 503 body=%s", unavailable.Code, unavailable.Body.String())
-	}
-	if unavailable.Body.String() != "{\"error\":\"service unavailable\",\"status\":503}\n" {
-		t.Fatalf("nil store response = %q, want generic service unavailable", unavailable.Body.String())
-	}
+	assertEdgeErrorShape(t, unavailable, http.StatusServiceUnavailable, edgeErrCodeStoreUnavailable)
 }
 
 func newEdgeRouteTestServer(t *testing.T) (*server, http.Handler) {
@@ -588,6 +583,41 @@ func assertBodyOmits(t *testing.T, body string, forbidden ...string) {
 
 func bodyHasRedactionMarker(body string) bool {
 	return strings.Contains(body, "<redacted>") || strings.Contains(body, `\u003credacted\u003e`)
+}
+
+// assertEdgeErrorShape verifies that an /api/v1/edge/* error response uses
+// the standard envelope `{ code, message, request_id, details? }` documented
+// in PRD_ROADMAP §7.10. Pass empty wantCode to accept any code.
+func assertEdgeErrorShape(t *testing.T, rr *httptest.ResponseRecorder, wantStatus int, wantCode string) {
+	t.Helper()
+	if rr.Code != wantStatus {
+		t.Fatalf("edge error status = %d, want %d body=%s", rr.Code, wantStatus, rr.Body.String())
+	}
+	var envelope struct {
+		Code      string         `json:"code"`
+		Message   string         `json:"message"`
+		RequestID *string        `json:"request_id"`
+		Details   map[string]any `json:"details"`
+		Error     *string        `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode edge error envelope %q: %v", rr.Body.String(), err)
+	}
+	if envelope.Error != nil {
+		t.Fatalf("edge error response uses legacy {error,status} shape: %s", rr.Body.String())
+	}
+	if strings.TrimSpace(envelope.Code) == "" {
+		t.Fatalf("edge error response missing `code` field body=%s", rr.Body.String())
+	}
+	if strings.TrimSpace(envelope.Message) == "" {
+		t.Fatalf("edge error response missing `message` field body=%s", rr.Body.String())
+	}
+	if envelope.RequestID == nil {
+		t.Fatalf("edge error response missing `request_id` field body=%s", rr.Body.String())
+	}
+	if wantCode != "" && envelope.Code != wantCode {
+		t.Fatalf("edge error code = %q, want %q body=%s", envelope.Code, wantCode, rr.Body.String())
+	}
 }
 
 type edgeCreateSessionFailureStore struct {

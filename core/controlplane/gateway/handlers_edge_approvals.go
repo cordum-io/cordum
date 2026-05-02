@@ -27,7 +27,7 @@ type edgeApprovalWaitRequest struct {
 }
 
 func (s *server) handleListEdgeApprovals(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -40,7 +40,7 @@ func (s *server) handleListEdgeApprovals(w http.ResponseWriter, r *http.Request)
 	}
 	query, err := edgeApprovalListQueryFromRequest(r, tenantID)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid edge approval query")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge approval query", nil)
 		return
 	}
 	page, err := store.ListApprovals(r.Context(), query)
@@ -52,7 +52,7 @@ func (s *server) handleListEdgeApprovals(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *server) handleGetEdgeApproval(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -63,7 +63,7 @@ func (s *server) handleGetEdgeApproval(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	approvalRef, ok := requirePathParam(w, r, "approval_ref")
+	approvalRef, ok := requireEdgePathParam(w, r, "approval_ref")
 	if !ok {
 		return
 	}
@@ -73,7 +73,7 @@ func (s *server) handleGetEdgeApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !found || approval == nil {
-		writeErrorJSON(w, http.StatusNotFound, "edge approval not found")
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge approval not found", nil)
 		return
 	}
 	writeJSON(w, approval)
@@ -88,7 +88,7 @@ func (s *server) handleRejectEdgeApproval(w http.ResponseWriter, r *http.Request
 }
 
 func (s *server) handleResolveEdgeApproval(w http.ResponseWriter, r *http.Request, decision edgecore.ApprovalDecision) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsApprove, "admin") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsApprove, "admin") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -99,7 +99,7 @@ func (s *server) handleResolveEdgeApproval(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	approvalRef, ok := requirePathParam(w, r, "approval_ref")
+	approvalRef, ok := requireEdgePathParam(w, r, "approval_ref")
 	if !ok {
 		return
 	}
@@ -109,17 +109,17 @@ func (s *server) handleResolveEdgeApproval(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !found || existing == nil {
-		writeErrorJSON(w, http.StatusNotFound, "edge approval not found")
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge approval not found", nil)
 		return
 	}
 	if edgeApprovalRequesterMatchesResolver(existing, r) {
-		writeJSONError(w, http.StatusForbidden, "self_approval_denied", "self-approval not permitted: the resolver cannot be the same principal as the approval requester")
+		writeEdgeError(w, r, http.StatusForbidden, "self_approval_denied", "self-approval not permitted: the resolver cannot be the same principal as the approval requester", nil)
 		return
 	}
 	var body edgeApprovalDecisionRequest
 	if r.Body != nil && r.Body != http.NoBody {
 		if err := decodeJSONBody(w, r, &body); err != nil {
-			writeJSONDecodeError(w, err, "invalid edge approval decision request")
+			writeEdgeJSONDecodeError(w, r, err, "invalid edge approval decision request")
 			return
 		}
 	}
@@ -180,7 +180,7 @@ func edgeApprovalListQueryFromRequest(r *http.Request, tenantID string) (edgecor
 // or dashboard approval UX must never be required to call this; it is for
 // agentd/local-dev clients that prefer a single blocking RPC over poll-and-retry.
 func (s *server) handleWaitEdgeApproval(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -191,7 +191,7 @@ func (s *server) handleWaitEdgeApproval(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	approvalRef, ok := requirePathParam(w, r, "approval_ref")
+	approvalRef, ok := requireEdgePathParam(w, r, "approval_ref")
 	if !ok {
 		return
 	}
@@ -202,14 +202,14 @@ func (s *server) handleWaitEdgeApproval(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !found || approval == nil {
-		writeErrorJSON(w, http.StatusNotFound, "edge approval not found")
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge approval not found", nil)
 		return
 	}
 
 	var body edgeApprovalWaitRequest
 	if r.Body != nil && r.Body != http.NoBody {
 		if err := decodeJSONBody(w, r, &body); err != nil {
-			writeJSONDecodeError(w, err, "invalid edge approval wait request")
+			writeEdgeJSONDecodeError(w, r, err, "invalid edge approval wait request")
 			return
 		}
 	}
@@ -227,7 +227,7 @@ func (s *server) handleWaitEdgeApproval(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if !found || final == nil {
-		writeErrorJSON(w, http.StatusNotFound, "edge approval not found")
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge approval not found", nil)
 		return
 	}
 	writeJSON(w, final)
@@ -236,13 +236,13 @@ func (s *server) handleWaitEdgeApproval(w http.ResponseWriter, r *http.Request) 
 func writeEdgeApprovalStoreError(w http.ResponseWriter, r *http.Request, err error, operation string) {
 	switch {
 	case errors.Is(err, edgecore.ErrNotFound):
-		writeErrorJSON(w, http.StatusNotFound, "edge approval not found")
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge approval not found", nil)
 	case errors.Is(err, edgecore.ErrApprovalConflict):
-		writeErrorJSON(w, http.StatusConflict, "edge approval conflict")
+		writeEdgeError(w, r, http.StatusConflict, edgeErrCodeApprovalConflict, "edge approval conflict", nil)
 	case isEdgeValidationError(err):
-		writeErrorJSON(w, http.StatusBadRequest, "invalid edge approval request")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge approval request", nil)
 	default:
-		writeInternalError(w, r, operation, err)
+		writeEdgeInternalError(w, r, operation, err)
 	}
 }
 

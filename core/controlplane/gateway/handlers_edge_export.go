@@ -74,7 +74,7 @@ type edgeExportRequest struct {
 //   - 503 edge store unavailable
 //   - 500 unexpected store error
 func (s *server) handleExportEdgeSession(w http.ResponseWriter, r *http.Request) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsRead, "admin", "user", "viewer") {
 		return
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -85,13 +85,13 @@ func (s *server) handleExportEdgeSession(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	sessionID, ok := requirePathParam(w, r, "session_id")
+	sessionID, ok := requireEdgePathParam(w, r, "session_id")
 	if !ok {
 		return
 	}
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "session_id is required")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeMissingField, "session_id is required", nil)
 		return
 	}
 
@@ -100,7 +100,7 @@ func (s *server) handleExportEdgeSession(w http.ResponseWriter, r *http.Request)
 	var req edgeExportRequest
 	if r.ContentLength > 0 {
 		if err := decodeJSONBody(w, r, &req); err != nil {
-			writeJSONDecodeError(w, err, "invalid edge export request")
+			writeEdgeJSONDecodeError(w, r, err, "invalid edge export request")
 			return
 		}
 	}
@@ -137,10 +137,10 @@ func (s *server) handleExportEdgeSession(w http.ResponseWriter, r *http.Request)
 		// Cross-tenant and missing-session both map to 404 by design so
 		// the existence of a session in another tenant cannot be probed.
 		if errors.Is(err, edgecore.ErrNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, "edge session not found")
+			writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
 			return
 		}
-		writeInternalError(w, r, "assemble edge session export", err)
+		writeEdgeInternalError(w, r, "assemble edge session export", err)
 		return
 	}
 
@@ -153,14 +153,13 @@ func (s *server) handleExportEdgeSession(w http.ResponseWriter, r *http.Request)
 	// signal in the response status code.
 	payload, marshalErr := json.Marshal(bundle)
 	if marshalErr != nil {
-		writeInternalError(w, r, "marshal edge session export", marshalErr)
+		writeEdgeInternalError(w, r, "marshal edge session export", marshalErr)
 		return
 	}
 	maxBytes := edgeExportMaxBytes()
 	if int64(len(payload)) > maxBytes {
-		writeErrorJSON(w, http.StatusRequestEntityTooLarge, fmt.Sprintf(
-			"edge export bundle is %d bytes, exceeds cap of %d bytes; reduce max_events", len(payload), maxBytes,
-		))
+		writeEdgeError(w, r, http.StatusRequestEntityTooLarge, edgeErrCodeRequestTooLarge,
+			fmt.Sprintf("edge export bundle is %d bytes, exceeds cap of %d bytes; reduce max_events", len(payload), maxBytes), nil)
 		return
 	}
 

@@ -123,7 +123,7 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 	}
 	policyInput, err := buildEdgeEvaluatePolicyInput(evalCtx)
 	if err != nil {
-		writeEdgeEventRequestError(w, err, "invalid edge evaluate request")
+		writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")
 		return
 	}
 	safetyResp, err := s.evaluateEdgeSafety(r.Context(), policyInput.policyRequest)
@@ -141,7 +141,7 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 	outcome := edgeEvaluateOutcomeFromSafety(policyInput.event.EventID, safetyResp)
 	actionHash, err := edgeEvaluateActionHash(policyInput.event, outcome.policySnapshot)
 	if err != nil {
-		writeEdgeEventRequestError(w, err, "invalid edge evaluate request")
+		writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")
 		return
 	}
 	retryRef := strings.TrimSpace(evalCtx.req.ApprovalRef)
@@ -244,7 +244,7 @@ type edgeEvaluateContext struct {
 }
 
 func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Request) (edgeEvaluateContext, bool) {
-	if !s.requirePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
+	if !s.requireEdgePermissionOrRole(w, r, auth.PermJobsWrite, "admin", "user") {
 		return edgeEvaluateContext{}, false
 	}
 	store := s.edgeStoreOrUnavailable(w, r)
@@ -254,7 +254,7 @@ func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Reque
 
 	var req edgeEvaluateRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
-		writeJSONDecodeError(w, err, "invalid edge evaluate request")
+		writeEdgeJSONDecodeError(w, r, err, "invalid edge evaluate request")
 		return edgeEvaluateContext{}, false
 	}
 	tenantID, ok := s.edgeTenantFromRequest(w, r, req.TenantID)
@@ -263,58 +263,58 @@ func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Reque
 	}
 	principalID, err := s.resolvePrincipal(r, req.PrincipalID)
 	if err != nil {
-		writeForbidden(w, r, err)
+		writeEdgeForbidden(w, r, err)
 		return edgeEvaluateContext{}, false
 	}
 	if strings.TrimSpace(principalID) == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "principal_id is required")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeMissingField, "principal_id is required", nil)
 		return edgeEvaluateContext{}, false
 	}
 
 	sessionID := strings.TrimSpace(req.SessionID)
 	if sessionID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "session_id is required")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeMissingField, "session_id is required", nil)
 		return edgeEvaluateContext{}, false
 	}
 	executionID := strings.TrimSpace(req.ExecutionID)
 	if executionID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "execution_id is required")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeMissingField, "execution_id is required", nil)
 		return edgeEvaluateContext{}, false
 	}
 
 	session, found, err := store.GetSession(r.Context(), tenantID, sessionID)
 	if err != nil {
-		writeInternalError(w, r, "get edge evaluate session", err)
+		writeEdgeInternalError(w, r, "get edge evaluate session", err)
 		return edgeEvaluateContext{}, false
 	}
 	if !found || session == nil {
-		writeErrorJSON(w, http.StatusNotFound, "edge event parent not found")
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge event parent not found", nil)
 		return edgeEvaluateContext{}, false
 	}
 	if strings.TrimSpace(session.PrincipalID) != "" && strings.TrimSpace(session.PrincipalID) != principalID {
-		writeForbidden(w, r, fmt.Errorf("edge session principal mismatch"))
+		writeEdgeForbidden(w, r, fmt.Errorf("edge session principal mismatch"))
 		return edgeEvaluateContext{}, false
 	}
 	if isTerminalEdgeSessionStatus(session.Status) {
-		writeErrorJSON(w, http.StatusConflict, "edge session is not actionable")
+		writeEdgeError(w, r, http.StatusConflict, edgeErrCodeSessionTerminal, "edge session is not actionable", nil)
 		return edgeEvaluateContext{}, false
 	}
 
 	execution, found, err := store.GetExecution(r.Context(), tenantID, executionID)
 	if err != nil {
-		writeInternalError(w, r, "get edge evaluate execution", err)
+		writeEdgeInternalError(w, r, "get edge evaluate execution", err)
 		return edgeEvaluateContext{}, false
 	}
 	if !found || execution == nil {
-		writeErrorJSON(w, http.StatusNotFound, "edge event parent not found")
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge event parent not found", nil)
 		return edgeEvaluateContext{}, false
 	}
 	if execution.SessionID != sessionID {
-		writeErrorJSON(w, http.StatusBadRequest, "execution does not belong to session")
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeExecutionMismatch, "execution does not belong to session", nil)
 		return edgeEvaluateContext{}, false
 	}
 	if isTerminalEdgeExecutionStatus(execution.Status) {
-		writeErrorJSON(w, http.StatusConflict, "edge execution is not actionable")
+		writeEdgeError(w, r, http.StatusConflict, edgeErrCodeExecutionTerminal, "edge execution is not actionable", nil)
 		return edgeEvaluateContext{}, false
 	}
 
