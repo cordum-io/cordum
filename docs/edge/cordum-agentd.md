@@ -36,7 +36,62 @@ Common options:
 | `CORDUM_EDGE_HEARTBEAT_TTL` | Gateway heartbeat TTL |
 | `CORDUM_EDGE_HEARTBEAT_INTERVAL` | Heartbeat interval; must be <= TTL/2 |
 | `CORDUM_AGENTD_FAIL_CLOSED` | Treat startup/Gateway failure as fail-closed |
+| `CORDUM_AGENTD_SAFE_ALLOW_CACHE` | Optional in-memory cache for low-risk Gateway `ALLOW` responses; default off |
+| `CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL` | Safe-allow cache TTL when enabled |
+| `CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES` | Safe-allow cache entry cap when enabled |
+| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT` | Local/demo-only inline approval wait; default off |
+| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | Strict inline wait timeout; timeout/rejection denies and asks the user to retry |
 | `CORDUM_AGENTD_STATE_DIR` | Override state root |
+
+## Evaluate, cache, approvals, and fail modes
+
+For each local Claude hook request, agentd forwards the already-redacted and
+hashed action summary to Gateway `POST /api/v1/edge/evaluate`. It sends only
+bounded metadata such as tenant/principal/session/execution IDs, hook layer and
+kind, tool name, action/input hashes, classifier labels/risk tags, and
+`input_redacted`. It does **not** send raw `tool_input`, raw prompts, raw
+transcripts, authorization headers, local transcript paths, or model-provider
+secrets.
+
+Gateway decisions map to the hook result as follows:
+
+- `ALLOW` returns a quiet allow so safe actions are not noisy.
+- `DENY`, `THROTTLE`, malformed responses, and fail-closed degraded paths return
+  concise deny copy. The action is not run.
+- `CONSTRAIN` returns allow with `updated_input` from Gateway.
+- `REQUIRE_APPROVAL` defaults to an immediate retry flow: agentd returns the
+  `approval_ref`, approval URL/context when available, and guidance to approve
+  then retry the same tool call. P0 does not rely on Claude interactive defer
+  semantics.
+
+Inline approval wait is intentionally opt-in and local/demo-oriented. It is
+enabled only when `CORDUM_AGENTD_INLINE_APPROVAL_WAIT=true`; agentd then calls
+`POST /api/v1/edge/approvals/{approval_ref}/wait` with
+`CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT`. Approval allows the action,
+optional reviewer-updated input is forwarded, and rejection/timeout/Gateway wait
+errors return `DENY` with retry guidance. Approval-derived allows are never
+stored in the safe allow cache.
+
+The safe allow cache is disabled by default. When explicitly enabled, it is
+bounded in memory by TTL and max entries, keyed by tenant, policy mode,
+`policy_snapshot`, action kind/capability/risk, action hash, and input hash. It
+stores only minimal sanitized allow metadata. It never stores raw payloads,
+tokens, approval references, reviewer-updated inputs, degraded results, high-risk
+actions, unknown actions, or decisions from a different policy snapshot/mode.
+
+Gateway outage behavior follows the PRD modes:
+
+- `observe`: allow degraded and write evidence.
+- `enforce`: allow only locally known-safe actions during a degraded miss; risky
+  or unknown actions deny/fail closed.
+- `enterprise-strict`: deny/fail closed when Cordum governance is unavailable.
+- Workflow actions tagged `requires-edge-governance` fail closed on a Gateway
+  miss even if the session policy mode is observe.
+
+Agentd records hook/evaluate/decision/degraded evidence using Edge session/action
+events and the shared observability recorder when supplied. Evidence writes and
+metrics/audit emission are best-effort: failure to upload evidence is recorded as
+degraded but does not change a fresh Gateway decision.
 
 ## State persistence
 
@@ -115,7 +170,10 @@ reconcile evidence. It does not delete local evidence or mark a false success.
 
 ## Current P0 boundary
 
-Until EDGE-018 wires the full evaluate/cache/approval path, the local hook
-endpoint records bounded hook evidence and returns an explicit not-ready `deny`
-decision. Raw hook payloads and raw tool inputs are not persisted; only
-redacted summaries and hashes cross the local process boundary.
+Agentd is the local Edge session/action/evidence path for Claude Code. Claude
+tool actions are represented as `EdgeSession -> AgentExecution ->
+AgentActionEvent` evidence plus audit/artifact pointers. They are **not** Cordum
+Jobs unless a real production workflow/job already exists and the Edge execution
+links to that job/workflow. Raw hook payloads and raw tool inputs are not
+persisted; only redacted summaries, hashes, and artifact pointers cross the
+local process boundary.

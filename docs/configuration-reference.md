@@ -690,16 +690,27 @@ scanners:
 | `CORDUM_INSTANCE_ID` | `os.Hostname()` | No | Override pod name used in Prometheus `pod` label. Defaults to hostname; falls back to `"unknown"` |
 | `CORDUM_HOOK_MAX_INPUT_BYTES` | `1048576` | No | Maximum stdin JSON payload size for `cordum-hook`; values above 8 MiB are ignored. |
 | `CORDUM_AGENTD_HOOK_TIMEOUT` | `10s` | No | Deadline for `cordum-hook` stdin read and local agentd decision calls. |
+| `CORDUM_AGENTD_GATEWAY_TIMEOUT` | `5s` | No | Per-call timeout for `cordum-agentd` Gateway lifecycle/evaluate/approval/evidence requests. |
 | `CORDUM_AGENTD_URL` | `http://127.0.0.1:8765/v1/edge/hooks/claude` | No | Loopback-only local agentd decision endpoint used by `cordum-hook`; remote hosts are rejected. |
+| `CORDUM_AGENTD_SOCKET` | `http://127.0.0.1:8765/v1/edge/hooks/claude` | No | `cordum-agentd` local bind URL. P0 accepts loopback HTTP only; Unix socket / named-pipe paths fail fast instead of silently disabling enforcement. |
 | `CORDUM_AGENTD_FAIL_CLOSED` | `false` | No | When true, `cordum-hook` blocks/fails closed if local agentd is unavailable or returns an invalid response. |
+| `CORDUM_AGENTD_STATE_DIR` | `~/.cordum/edge/sessions` | No | Root directory for small local agentd state files; never stores API keys, hook nonces, raw hook payloads, transcripts, or authorization headers. |
+| `CORDUM_EDGE_POLICY_MODE` | `observe` | No | `cordum-agentd` session/evaluate policy mode: `observe`, `enforce`, or `enterprise-strict`. Enterprise-strict denies/fails closed when Cordum governance is unavailable. |
 | `CORDUM_EDGE_MODE` | `observe` | No | Edge local hook mode: `observe`, `local-dev-enforce`, or `enterprise-strict`. |
 | `CORDUM_EDGE_SESSION_ID` | — | No | Optional generated Claude settings/session correlation ID. Claude hook payload `session_id` remains the runtime source of truth. |
 | `CORDUM_EDGE_EXECUTION_ID` | — | No | Optional Edge execution correlation ID forwarded from `cordum-hook` to local agentd. |
-| `CORDUM_EDGE_APPROVAL_WAIT_TIMEOUT` | — | No | Optional future approval-wait UX timeout emitted by settings generators; current hook behavior still returns immediate approval references. |
+| `CORDUM_AGENTD_SAFE_ALLOW_CACHE` | `false` | No | Enables optional bounded in-memory cache for low-risk, cache-eligible Gateway `ALLOW` decisions only. Never caches approvals, high-risk/unknown actions, degraded decisions, raw payloads, tokens, or reviewer-updated input. |
+| `CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL` | `5m` | No | Safe-allow cache TTL when the cache is enabled; bounded and validated by agentd. |
+| `CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES` | `128` | No | Safe-allow cache entry cap when the cache is enabled; invalid non-positive or very large values are rejected. |
+| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT` | `false` | No | Local/demo-only inline approval wait for Gateway `REQUIRE_APPROVAL`. Default behavior returns an approval ref/URL and asks the user to approve then retry. |
+| `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | `30s` | No | Strict inline approval wait budget. Approval allows the action; rejection, timeout, pending, or wait errors return `DENY` and do not consume/cache an allow. |
+| `CORDUM_EDGE_HEARTBEAT_TTL` | `30s` | No | Agentd Gateway heartbeat TTL for active Edge sessions. |
+| `CORDUM_EDGE_HEARTBEAT_INTERVAL` | `TTL/2` | No | Agentd heartbeat interval; must be positive and no greater than half the TTL. |
+| `CORDUM_EDGE_APPROVAL_WAIT_TIMEOUT` | — | No | Legacy/settings-generator placeholder for approval-wait UX. Agentd runtime inline wait uses `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT`. |
 | `CORDUM_EDGE_PLATFORM` | — | No | Optional settings-generator platform marker for diagnostics and generated examples. |
 | `CORDUM_EDGE_EXPORT_MAX_BYTES` | `10485760` (10 MiB) | No | Maximum serialized size of a `POST /api/v1/edge/sessions/{id}/export` response. Bundles larger than this return HTTP 413 with a hint to lower `max_events`. Clamped one-way: values below 1 KiB or above the 64 MiB ceiling fall back to the default. See [Edge evidence export](edge-export.md). |
 
-Generated Claude settings and enterprise managed-settings templates must not contain long-lived `ANTHROPIC_API_KEY`, `CORDUM_API_KEY`, bearer tokens, raw prompts, or raw tool payloads. Enterprise deployments should use `cordum-agentd` memory/keychain/service bootstrap through Claude `apiKeyHelper` and MCP `headersHelper` placeholders.
+Generated Claude settings and enterprise managed-settings templates must not contain long-lived `ANTHROPIC_API_KEY`, `CORDUM_API_KEY`, bearer tokens, raw prompts, or raw tool payloads. Enterprise deployments should use `cordum-agentd` memory/keychain/service bootstrap through Claude `apiKeyHelper` and MCP `headersHelper` placeholders. Claude tool actions are recorded as Edge sessions/executions/action events plus audit/artifact evidence; they are not Cordum Jobs unless linked to a real production workflow/job.
 
 > **Prometheus pod label**: All Cordum metrics include a `pod` const label (`os.Hostname()` or `CORDUM_INSTANCE_ID`) so Prometheus can distinguish replicas in HA deployments. Use `sum by (pod) (cordum_scheduler_jobs_received_total)` for per-replica breakdown.
 
