@@ -132,10 +132,10 @@ Loopback transport requires a high-entropy per-session nonce. Hook-to-agentd
 authentication uses `CORDUM_AGENTD_HOOK_NONCE` in the `cordum-hook` process
 environment and sends it as the `X-Cordum-Agentd-Nonce` request header. The
 nonce is **never** embedded in `CORDUM_AGENTD_URL`, generated Claude settings,
-managed-settings JSON, or persisted agentd state. Agentd still accepts the
-legacy `?nonce=` query-parameter path for one release transition and logs a
-deprecation warning on each query-param hit; removal is tracked by
-`EDGE-017.4.1`. Broad or remote binds such as `0.0.0.0` are rejected.
+managed-settings JSON, or persisted agentd state. Header-only authentication is
+the only supported loopback nonce delivery path; the legacy `?nonce=`
+query-parameter path was removed in `EDGE-017.4.1`. Broad or remote binds such
+as `0.0.0.0` are rejected.
 
 P0 does **not** start a Unix socket or Windows named-pipe listener. If
 `CORDUM_AGENTD_SOCKET` is set to a non-HTTP path such as

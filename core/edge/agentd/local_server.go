@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -112,33 +111,15 @@ func (s *LocalServer) Nonce() string {
 	return s.nonce
 }
 
-func (s *LocalServer) HookURLWithNonce() string {
-	if s == nil || s.bindURL == "" || s.nonce == "" {
-		return ""
-	}
-	u, err := url.Parse(s.bindURL)
-	if err != nil {
-		return s.bindURL
-	}
-	q := u.Query()
-	q.Set("nonce", s.nonce)
-	u.RawQuery = q.Encode()
-	return u.String()
-}
-
 func (s *LocalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeLocalError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	nonce, usedLegacyQueryNonce := requestNonce(r)
+	nonce := requestNonce(r)
 	if s == nil || subtleMismatch(nonce, s.nonce) {
 		writeLocalError(w, http.StatusUnauthorized, "unauthorized")
 		return
-	}
-	if usedLegacyQueryNonce {
-		// TODO(EDGE-017.4.1): remove the deprecated ?nonce= fallback after one release.
-		slog.Warn("deprecated agentd hook nonce query parameter used; configure CORDUM_AGENTD_HOOK_NONCE as X-Cordum-Agentd-Nonce header instead")
 	}
 	maxBody := s.maxBodyBytes
 	if maxBody <= 0 {
@@ -301,15 +282,14 @@ func writeLocalError(w http.ResponseWriter, status int, message string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
-func requestNonce(r *http.Request) (string, bool) {
+func requestNonce(r *http.Request) string {
 	if r == nil {
-		return "", false
+		return ""
 	}
 	if value := r.Header.Get(agentdNonceHeader); strings.TrimSpace(value) != "" {
-		return value, false
+		return value
 	}
-	value := r.URL.Query().Get("nonce")
-	return value, strings.TrimSpace(value) != ""
+	return ""
 }
 
 func subtleMismatch(got, want string) bool {

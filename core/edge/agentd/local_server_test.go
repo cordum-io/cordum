@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -81,7 +80,7 @@ func TestLocalServerLoopbackRequiresNonceAndBoundsRoutesMethodsAndBody(t *testin
 	}
 }
 
-func TestLocalServerAcceptsNonceQueryForCordumHookURLCompatibility(t *testing.T) {
+func TestRequestNonceQueryParamRejected(t *testing.T) {
 	t.Parallel()
 
 	server, err := NewLocalServer(LocalServerConfig{
@@ -92,46 +91,14 @@ func TestLocalServerAcceptsNonceQueryForCordumHookURLCompatibility(t *testing.T)
 	if err != nil {
 		t.Fatalf("NewLocalServer: %v", err)
 	}
-	if got := server.HookURLWithNonce(); got != "http://127.0.0.1:8765/v1/edge/hooks/claude?nonce=nonce-123" {
-		t.Fatalf("HookURLWithNonce = %q", got)
-	}
 	req := httptest.NewRequest(http.MethodPost, "/v1/edge/hooks/claude?nonce=nonce-123", strings.NewReader(`{"event_name":"PreToolUse"}`))
 	rr := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%q, want 200", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body=%q, want 401", rr.Code, rr.Body.String())
 	}
 	if strings.Contains(rr.Body.String(), "nonce-123") {
 		t.Fatalf("response leaked nonce: %q", rr.Body.String())
-	}
-}
-
-func TestLocalServerDeprecatedNonceQueryLogsWarningWithoutValue(t *testing.T) {
-	var logs bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-
-	server, err := NewLocalServer(LocalServerConfig{
-		BindURL:      "http://127.0.0.1:8765/v1/edge/hooks/claude",
-		Nonce:        "nonce-123",
-		MaxBodyBytes: 1 << 20,
-	})
-	if err != nil {
-		t.Fatalf("NewLocalServer: %v", err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/v1/edge/hooks/claude?nonce=nonce-123", strings.NewReader(`{"event_name":"PreToolUse"}`))
-	rr := httptest.NewRecorder()
-	server.Handler().ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%q, want 200", rr.Code, rr.Body.String())
-	}
-	logText := logs.String()
-	if !strings.Contains(logText, "deprecated agentd hook nonce query parameter used") {
-		t.Fatalf("query nonce warning missing: %q", logText)
-	}
-	if strings.Contains(logText, "nonce-123") {
-		t.Fatalf("query nonce warning leaked nonce value: %q", logText)
 	}
 }
 
@@ -148,7 +115,7 @@ func TestSameUserImpersonationCannotForgeHookFromSettingsOnly(t *testing.T) {
 	settingsJSON, err := claude.GenerateDevSettingsJSON(claude.DevSettingsOptions{
 		SessionID:           "sess-impersonation",
 		ExecutionID:         "exec-impersonation",
-		AgentdURL:           server.HookURLWithNonce(),
+		AgentdURL:           "http://127.0.0.1:8765/v1/edge/hooks/claude",
 		AgentdHookNonce:     syntheticNonce,
 		HookCommand:         "cordum-hook",
 		HookTimeout:         claude.DefaultHookTimeout,

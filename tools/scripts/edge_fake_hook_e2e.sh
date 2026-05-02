@@ -24,9 +24,9 @@
 #
 # Contract owners: Cordum Edge (epic-545b186e), task EDGE-027.
 # Style template: tools/scripts/platform_smoke.sh.
-# EDGE-017.4 forward-compat: when nonce moves out of CORDUM_AGENTD_URL into
-# CORDUM_AGENTD_HOOK_NONCE env + X-Cordum-Agentd-Nonce header, switch the
-# URL composition + header injection in compose_agentd_url accordingly.
+# EDGE-017.4.1: hook-mode authentication is header-only. The script keeps
+# CORDUM_AGENTD_URL bare and passes the runtime nonce to cordum-hook through
+# CORDUM_AGENTD_HOOK_NONCE so cordum-hook sends X-Cordum-Agentd-Nonce.
 
 set -euo pipefail
 
@@ -523,11 +523,9 @@ init_tempdir() {
 # are wired). Other 4xx are also accepted as "server up". Connection
 # refused or timeouts loop until budget expires.
 #
-# compose_agentd_url: assembles `http://127.0.0.1:<port>/v1/edge/hooks/
-# claude?nonce=<nonce>`. EDGE-017.4 forward-compat note: when EDGE-017.4
-# moves nonce out of the URL into a CORDUM_AGENTD_HOOK_NONCE env +
-# X-Cordum-Agentd-Nonce header, drop the query-param suffix here and
-# pass the nonce to run_hook via env instead.
+# compose_agentd_url: assembles the bare
+# `http://127.0.0.1:<port>/v1/edge/hooks/claude` endpoint. The matching nonce
+# is passed only through CORDUM_AGENTD_HOOK_NONCE in run_hook.
 #
 # run_hook: pipes a synthetic Claude hook JSON to ./bin/cordum-hook with
 # the verified env (CORDUM_AGENTD_URL, CORDUM_EDGE_SESSION_ID,
@@ -596,7 +594,7 @@ generate_agentd_nonce() {
 }
 
 compose_agentd_url() {
-  AGENTD_URL="http://127.0.0.1:${AGENTD_PORT}/v1/edge/hooks/claude?nonce=${AGENTD_NONCE}"
+  AGENTD_URL="http://127.0.0.1:${AGENTD_PORT}/v1/edge/hooks/claude"
 }
 
 start_agentd() {
@@ -657,6 +655,7 @@ run_hook() {
   HOOK_LAST_STDERR_FILE="${stderr_file}"
   local rc=0
   CORDUM_AGENTD_URL="${AGENTD_URL}" \
+    CORDUM_AGENTD_HOOK_NONCE="${AGENTD_NONCE}" \
     CORDUM_EDGE_SESSION_ID="${EDGE_SESSION_ID}" \
     CORDUM_EDGE_EXECUTION_ID="${EDGE_EXECUTION_ID}" \
     CORDUM_TENANT_ID="${CORDUM_TENANT_ID}" \
@@ -824,11 +823,8 @@ EDGE_PRINCIPAL_ID=""
 #                                    export is admin-side and never flows
 #                                    through agentd.
 #
-# EDGE-017.4 forward-compat: when nonce moves out of the URL into an env
-# var consumed by cordum-hook + a header sent by agentd, update
-# compose_agentd_url to drop the ?nonce= suffix and inject the value via
-# run_hook's CORDUM_AGENTD_HOOK_NONCE env instead. PASS line shapes stay
-# stable so QA evidence does not churn across that migration.
+# EDGE-017.4.1: hook-mode uses header-only nonce auth. PASS line shapes stay
+# stable so QA evidence does not churn across the migration.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
