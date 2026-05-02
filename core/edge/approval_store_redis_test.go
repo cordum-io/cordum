@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func TestRedisStoreApprovalLifecycleEnqueueResolveListAndConsume(t *testing.T) {
@@ -471,6 +473,8 @@ func TestRedisStoreApprovalConcurrentClaimConsumesOnce(t *testing.T) {
 		t.Fatalf("ApproveApproval: %v", err)
 	}
 
+	prewarmRedisClientPool(t, ctx, client)
+
 	const goroutines = 32
 	start := make(chan struct{})
 	results := make(chan bool, goroutines)
@@ -544,6 +548,8 @@ func TestRedisStoreApprovalConcurrentResolveExpireHasSingleOutcome(t *testing.T)
 	if err != nil {
 		t.Fatalf("EnqueueApproval: %v", err)
 	}
+
+	prewarmRedisClientPool(t, ctx, client)
 
 	const goroutines = 24
 	start := make(chan struct{})
@@ -691,5 +697,28 @@ func assertApprovalRefs(t *testing.T, got []EdgeApproval, want []string) {
 	}
 	if !reflect.DeepEqual(refs, want) {
 		t.Fatalf("approval refs = %#v, want %#v", refs, want)
+	}
+}
+
+// prewarmRedisClientPool serially pings the redis client enough times to
+// fully populate the connection pool before the test fans out to many
+// concurrent goroutines. It exists to defuse the go-redis v9 lazy-init
+// race in (*baseClient).initConn vs (*Options).clone — when many
+// goroutines hit the pool for the first time simultaneously, -race trips
+// on the shared Options struct because every connection's first use clones
+// the pool-level Options. Sequential warm-up forces every per-connection
+// init to run on the test goroutine, so the parallel fan-out below pulls
+// already-initialized connections out of the pool with no further Options
+// reads/writes.
+//
+// Default go-redis PoolSize in v9 is 10 connections per CPU; we ping 32
+// times to cover modern multi-core CI runners where the effective pool is
+// larger. The Pings are sequential so initConn runs on this goroutine only.
+func prewarmRedisClientPool(t *testing.T, ctx context.Context, client *redis.Client) {
+	t.Helper()
+	for i := 0; i < 32; i++ {
+		if err := client.Ping(ctx).Err(); err != nil {
+			t.Fatalf("redis prewarm ping %d: %v", i, err)
+		}
 	}
 }
