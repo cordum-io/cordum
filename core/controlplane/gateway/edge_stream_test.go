@@ -3,6 +3,8 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -244,6 +246,110 @@ func TestMixedStreamKeepsBusPacketShapeAndDoesNotFloodJobStream(t *testing.T) {
 	assertNoGatewayEdgeStreamEvent(t, jobStream, "per-job stream must not receive tenantless heartbeat")
 }
 
+func TestEdgeEventStreamLiveForwardingAndCursorResumeRegression(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	drainGatewayEdgeStreamQueue(s.eventsCh)
+	streamQueue := &wsClient{ch: s.eventsCh}
+	session := createEdgeRouteSession(t, handler)
+	execution2 := createEdgeRouteExecution(t, handler, session.SessionID)
+	drainGatewayEdgeStreamQueue(s.eventsCh)
+
+	first := edgeRoutePOST(t, handler, "/api/v1/edge/events",
+		edgeEventJSON("evt-edge028-stream-live-1", session.SessionID, session.ExecutionID, edgeRouteTenant, "", "2026-05-01T12:40:00Z", "hook.pre_tool_use", "ALLOW", "ok"))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first live event status = %d, want 201 body=%s", first.Code, first.Body.String())
+	}
+	assertStreamedEdgeEvent(t, readGatewayEdgeStreamEvent(t, streamQueue, "subscribe-before first edge.event"), "evt-edge028-stream-live-1", edgecore.DecisionAllow, edgecore.EventKindHookPreToolUse)
+
+	second := edgeRoutePOST(t, handler, "/api/v1/edge/events",
+		edgeEventJSON("evt-edge028-stream-live-2", session.SessionID, execution2.ExecutionID, edgeRouteTenant, "", "2026-05-01T12:40:01Z", "hook.policy_decision", "DENY", "blocked"))
+	if second.Code != http.StatusCreated {
+		t.Fatalf("second live event status = %d, want 201 body=%s", second.Code, second.Body.String())
+	}
+	assertStreamedEdgeEvent(t, readGatewayEdgeStreamEvent(t, streamQueue, "subscribe-before second edge.event"), "evt-edge028-stream-live-2", edgecore.DecisionDeny, edgecore.EventKindHookPolicyDecision)
+
+	// The WebSocket stream is live-only on HEAD: there is no Edge-specific
+	// cursor parameter on /api/v1/stream. Cursor catch-up/resume for a
+	// subscriber that connects after writes is provided by the session/execution
+	// event list endpoints, so pin both surfaces together here.
+	page1RR := edgeRouteGET(t, handler, "/api/v1/edge/sessions/"+session.SessionID+"/events?limit=1")
+	if page1RR.Code != http.StatusOK {
+		t.Fatalf("session events page1 status = %d, want 200 body=%s", page1RR.Code, page1RR.Body.String())
+	}
+	var page edgeEventPageResponseJSON
+	decodeEdgeRouteJSON(t, page1RR, &page)
+	assertEdgeEventIDs(t, page.Items, []string{"evt-edge028-stream-live-1"})
+	if page.NextCursor == "" {
+		t.Fatalf("session events page1 next_cursor empty, want bounded resume cursor")
+	}
+
+	page2RR := edgeRouteGET(t, handler, "/api/v1/edge/sessions/"+session.SessionID+"/events?limit=1&cursor="+page.NextCursor)
+	if page2RR.Code != http.StatusOK {
+		t.Fatalf("session events page2 status = %d, want 200 body=%s", page2RR.Code, page2RR.Body.String())
+	}
+	decodeEdgeRouteJSON(t, page2RR, &page)
+	assertEdgeEventIDs(t, page.Items, []string{"evt-edge028-stream-live-2"})
+	if page.NextCursor != "" {
+		t.Fatalf("session events page2 next_cursor = %q, want empty after bounded resume", page.NextCursor)
+	}
+
+	exec1RR := edgeRouteGET(t, handler, "/api/v1/edge/executions/"+session.ExecutionID+"/events?limit=10")
+	if exec1RR.Code != http.StatusOK {
+		t.Fatalf("execution1 events status = %d, want 200 body=%s", exec1RR.Code, exec1RR.Body.String())
+	}
+	decodeEdgeRouteJSON(t, exec1RR, &page)
+	assertEdgeEventIDs(t, page.Items, []string{"evt-edge028-stream-live-1"})
+
+	exec2RR := edgeRouteGET(t, handler, "/api/v1/edge/executions/"+execution2.ExecutionID+"/events?limit=10")
+	if exec2RR.Code != http.StatusOK {
+		t.Fatalf("execution2 events status = %d, want 200 body=%s", exec2RR.Code, exec2RR.Body.String())
+	}
+	decodeEdgeRouteJSON(t, exec2RR, &page)
+	assertEdgeEventIDs(t, page.Items, []string{"evt-edge028-stream-live-2"})
+}
+
+func TestEdgeEventStreamHeartbeatShutdownAndGoroutineBound(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.shutdownCh = make(chan struct{})
+	s.eventsCh = make(chan wsEvent, 16)
+	s.clients = make(map[*websocket.Conn]*wsClient)
+	s.wsClientBufSz = 8
+	baselineGoroutines := runtime.NumGoroutine()
+	if err := s.startBusTaps(); err != nil {
+		t.Fatalf("startBusTaps: %v", err)
+	}
+	stopped := false
+	t.Cleanup(func() {
+		if !stopped {
+			close(s.shutdownCh)
+			s.stopBusTaps()
+			s.stopWorkerExpiry()
+		}
+	})
+
+	crossTenant := registerGatewayEdgeStreamClient(t, s, "", true)
+	tenantScoped := registerGatewayEdgeStreamClient(t, s, "tenant-edge-a", false)
+	heartbeatPacket := &pb.BusPacket{Payload: &pb.BusPacket_Heartbeat{Heartbeat: &pb.Heartbeat{WorkerId: "worker-edge028-heartbeat"}}}
+	wantHeartbeat, err := protojson.Marshal(heartbeatPacket)
+	if err != nil {
+		t.Fatalf("protojson marshal heartbeat packet: %v", err)
+	}
+	s.enqueueBusPacket(heartbeatPacket)
+	assertGatewayEdgeStreamRawJSON(t, readGatewayEdgeStreamEvent(t, crossTenant, "cross-tenant heartbeat keepalive").data, wantHeartbeat)
+	assertNoGatewayEdgeStreamEvent(t, tenantScoped, "tenant-scoped stream must not receive tenantless heartbeat keepalive")
+
+	close(s.shutdownCh)
+	s.stopBusTaps()
+	s.stopWorkerExpiry()
+	stopped = true
+	if queued := s.enqueueWSEvent([]byte(`{"type":"edge.event","event":{"event_id":"evt-after-stop"}}`), "tenant-edge-a", ""); queued {
+		t.Fatal("enqueueWSEvent after shutdown queued=true, want false after ctx-cancel/stop")
+	}
+	eventuallyGatewayEdgeStream(t, 2*time.Second, func() bool {
+		return runtime.NumGoroutine() <= baselineGoroutines+5
+	}, "stream goroutines to return to bounded baseline after shutdown")
+}
+
 // recordingEdgeRecorder captures RecordStreamDrop / AddStreamClients
 // calls so EDGE-014 step-11 tests can pin the drop-reason contract
 // without depending on a real Prometheus registry.
@@ -420,5 +526,23 @@ func assertGatewayEdgeStreamRawJSON(t *testing.T, got []byte, want []byte) {
 	}
 	if strings.Contains(string(got), `"type":"edge.event"`) || strings.Contains(string(got), `"type": "edge.event"`) {
 		t.Fatalf("BusPacket stream data was wrapped as edge.event: %s", string(got))
+	}
+}
+
+func eventuallyGatewayEdgeStream(t *testing.T, timeout time.Duration, condition func() bool, label string) {
+	t.Helper()
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if condition() {
+			return
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf("timed out waiting for %s", label)
+		case <-ticker.C:
+		}
 	}
 }

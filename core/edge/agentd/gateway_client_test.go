@@ -312,6 +312,81 @@ func TestGatewayClientMarkSessionDegradedWritesBoundedEdgeEventNoSecretEcho(t *t
 	}
 }
 
+func TestGatewayClientWriteEventsUsesAtomicBatchEndpoint(t *testing.T) {
+	t.Parallel()
+
+	var captured struct {
+		Method         string
+		Path           string
+		IdempotencyKey string
+		Body           struct {
+			Events []edgecore.AgentActionEvent `json:"events"`
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured.Method = r.Method
+		captured.Path = r.URL.Path
+		captured.IdempotencyKey = r.Header.Get("Idempotency-Key")
+		if strings.Contains(r.URL.Path, "/jobs") {
+			t.Fatalf("used Job API route: %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured.Body); err != nil {
+			t.Fatalf("decode batch request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"items": captured.Body.Events})
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewGatewayClient(GatewayClientConfig{BaseURL: server.URL, APIKey: "key", TenantID: "tenant-a", HTTPClient: server.Client(), Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewGatewayClient: %v", err)
+	}
+	events := []edgecore.AgentActionEvent{
+		{
+			EventID:        "evt-receipt",
+			SessionID:      "sess-1",
+			ExecutionID:    "exec-1",
+			TenantID:       "tenant-a",
+			PrincipalID:    "principal-a",
+			Timestamp:      time.Unix(10, 0).UTC(),
+			Layer:          edgecore.LayerHook,
+			Kind:           edgecore.EventKindHookPreToolUse,
+			Decision:       edgecore.DecisionRecorded,
+			PolicySnapshot: "snap-1",
+		},
+		{
+			EventID:        "evt-decision",
+			SessionID:      "sess-1",
+			ExecutionID:    "exec-1",
+			TenantID:       "tenant-a",
+			PrincipalID:    "principal-a",
+			Timestamp:      time.Unix(11, 0).UTC(),
+			Layer:          edgecore.LayerHook,
+			Kind:           edgecore.EventKindHookPolicyDecision,
+			Decision:       edgecore.DecisionAllow,
+			PolicySnapshot: "snap-1",
+		},
+	}
+	got, err := client.WriteEventsWithIdempotency(context.Background(), events, "agentd-hook-idem-test")
+	if err != nil {
+		t.Fatalf("WriteEventsWithIdempotency: %v", err)
+	}
+	if captured.Method != http.MethodPost || captured.Path != "/api/v1/edge/events/batch" {
+		t.Fatalf("route = %s %s, want POST /api/v1/edge/events/batch", captured.Method, captured.Path)
+	}
+	if captured.IdempotencyKey != "agentd-hook-idem-test" {
+		t.Fatalf("Idempotency-Key = %q, want agentd-hook-idem-test", captured.IdempotencyKey)
+	}
+	if len(captured.Body.Events) != 2 || captured.Body.Events[0].EventID != "evt-receipt" || captured.Body.Events[1].EventID != "evt-decision" {
+		t.Fatalf("captured batch events = %#v, want receipt+decision", captured.Body.Events)
+	}
+	if len(got) != 2 || got[0].EventID != "evt-receipt" || got[1].Decision != edgecore.DecisionAllow {
+		t.Fatalf("WriteEvents response = %#v, want echoed batch", got)
+	}
+}
+
 type createSessionRequestJSON struct {
 	TenantID          string                     `json:"tenant_id"`
 	PrincipalID       string                     `json:"principal_id"`

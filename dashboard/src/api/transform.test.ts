@@ -8,6 +8,17 @@ import {
   mapDelegationListResponse,
   mapDelegationView,
   mapDLQEntry,
+  mapAgentActionEvent,
+  mapAgentActionEventPage,
+  mapAgentExecution,
+  mapEdgeApproval,
+  mapEdgeApprovalPage,
+  mapEdgeErrorEnvelope,
+  mapEdgeEventStreamEnvelope,
+  mapEdgeSession,
+  mapEdgeSessionExportBundle,
+  mapEdgeSessionPage,
+  mapEdgeStreamPayload,
   mapGovernanceDecision,
   mapHeartbeatToWorker,
   mapJobDetail,
@@ -923,6 +934,415 @@ describe("transform contract hardening", () => {
     it("handles empty findings array", () => {
       const result = mapOutputSafetyRecord({ decision: "ALLOW", findings: [] });
       expect(result!.findings).toEqual([]);
+    });
+  });
+});
+
+describe("api/transform edge mappers", () => {
+  const token = "Bearer edge022-secret-token";
+  const apiKey = "sk-edge022-secret-value";
+
+  it("maps Edge session pages with camelCase fields, future enum preservation, and cursor pagination", () => {
+    const minimal = mapEdgeSession({
+      session_id: "edge_sess_min",
+      tenant_id: "tenant-a",
+      principal_type: "service",
+      trace_id: "trace-min",
+      policy_mode: "enforce",
+      status: "running",
+      started_at: "2026-05-02T09:59:00Z",
+    });
+    const page = mapEdgeSessionPage({
+      items: [
+        {
+          session_id: "edge_sess_1",
+          tenant_id: "tenant-a",
+          principal_id: "user-1",
+          principal_type: "human",
+          agent_product: "claude-code",
+          agent_version: "1.2.3",
+          mode: "future-mode",
+          repo: "cordum",
+          git_remote: "origin",
+          git_branch: "feature/edge",
+          git_sha: "abc123",
+          cwd: "D:/Cordum/cordum",
+          host_id: "host-1",
+          device_id: "device-1",
+          trace_id: "trace-1",
+          workflow_run_id: "run-1",
+          job_id: "job-1",
+          policy_snapshot: "policy:v1",
+          enforcement_layers: { hook: true, mcp: false },
+          policy_mode: "observe",
+          status: "paused_future",
+          risk_summary: {
+            denied_count: 2,
+            approval_count: 1,
+            artifact_count: 3,
+            max_risk: "extreme",
+          },
+          started_at: "2026-05-02T10:00:00Z",
+          ended_at: null,
+          labels: { safe: "yes", token },
+        },
+      ],
+      next_cursor: "cursor-2",
+    });
+
+    expect(minimal).toMatchObject({
+      sessionId: "edge_sess_min",
+      riskSummary: { deniedCount: 0, approvalCount: 0, artifactCount: 0 },
+      endedAt: undefined,
+    });
+    expect(page.nextCursor).toBe("cursor-2");
+    expect(page.items[0]).toMatchObject({
+      sessionId: "edge_sess_1",
+      tenantId: "tenant-a",
+      principalId: "user-1",
+      principalType: "human",
+      agentProduct: "claude-code",
+      mode: "future-mode",
+      status: "paused_future",
+      workflowRunId: "run-1",
+      jobId: "job-1",
+      riskSummary: {
+        deniedCount: 2,
+        approvalCount: 1,
+        artifactCount: 3,
+        maxRisk: "extreme",
+      },
+      endedAt: null,
+      labels: { safe: "yes" },
+    });
+    expect(page.items[0].startedAt).toBe("2026-05-02T10:00:00.000Z");
+    expect(JSON.stringify(page)).not.toContain(token);
+  });
+
+  it("maps Edge executions and action events while preserving only redacted event surfaces", () => {
+    const execution = mapAgentExecution({
+      execution_id: "exec-1",
+      session_id: "edge_sess_1",
+      tenant_id: "tenant-a",
+      adapter: "custom-adapter",
+      mode: "local-dev",
+      workflow_run_id: "run-1",
+      step_id: "step-1",
+      job_id: "job-1",
+      attempt: 2,
+      trace_id: "trace-1",
+      worker_id: "worker-1",
+      policy_snapshot: "policy:v1",
+      status: "future-status",
+      started_at: "2026-05-02T10:00:01Z",
+      ended_at: null,
+      metrics: {
+        events: 4,
+        allow: 1,
+        deny: 1,
+        require_approval: 1,
+        artifacts: 2,
+        llm_cost_usd: 0.25,
+      },
+    });
+
+    const event = mapAgentActionEvent({
+      event_id: "evt-1",
+      session_id: "edge_sess_1",
+      execution_id: "exec-1",
+      tenant_id: "tenant-a",
+      principal_id: "user-1",
+      seq: 7,
+      ts: "2026-05-02T10:00:02Z",
+      layer: "future-layer",
+      kind: "hook.pre_tool_use",
+      agent_product: "claude-code",
+      tool_name: "Bash",
+      tool_use_id: "tool-1",
+      action_name: "shell.exec",
+      capability: "runtime.process",
+      risk_tags: ["shell", token],
+      input_redacted: {
+        safe_summary: "redacted shell request",
+        prompt: "raw prompt must disappear",
+        tool_input: { command: "rm -rf /" },
+        tool_input_redacted: { command_redacted: "rm -rf <path>" },
+        nested: {
+          Authorization: token,
+          input_hash: "sha256:input",
+        },
+      },
+      input_hash: "sha256:input",
+      decision: "FUTURE_DECISION",
+      decision_reason: apiKey,
+      rule_id: "rule-secret-read",
+      policy_snapshot: "policy:v1",
+      approval_ref: "edge_appr_1",
+      artifact_ptrs: [
+        {
+          artifact_type: "edge.tool_input",
+          session_id: "edge_sess_1",
+          execution_id: "exec-1",
+          event_id: "evt-1",
+          tenant_id: "tenant-a",
+          retention_class: "audit",
+          redaction_level: "strict",
+          sha256: "sha256:artifact",
+          uri: "artifact://tenant-a/evt-1",
+          created_at: "2026-05-02T10:00:03Z",
+          size_bytes: 123,
+          content_type: "application/json",
+        },
+        {
+          artifact_type: "edge.transcript",
+          session_id: "edge_sess_1",
+          execution_id: "exec-1",
+          event_id: "evt-1",
+          tenant_id: "tenant-a",
+          retention_class: "audit",
+          redaction_level: "strict",
+          sha256: "sha256:bad",
+          uri: "https://storage.example/download?X-Amz-Signature=secret",
+          created_at: "2026-05-02T10:00:04Z",
+        },
+      ],
+      duration_ms: 123,
+      status: "degraded",
+      error_code: "safety_unavailable",
+      error_message: token,
+      labels: { safe: "label", signed_url: "https://signed.example?token=secret" },
+    });
+    const eventPage = mapAgentActionEventPage({
+      items: [
+        {
+          event_id: "evt-page",
+          session_id: "edge_sess_1",
+          execution_id: "exec-1",
+          tenant_id: "tenant-a",
+          seq: 8,
+          ts: "2026-05-02T10:00:05Z",
+          layer: "hook",
+          kind: "hook.post_tool_use",
+          decision: "RECORDED",
+          status: "ok",
+        },
+      ],
+      next_cursor: null,
+    });
+
+    expect(execution).toMatchObject({
+      executionId: "exec-1",
+      status: "future-status",
+      metrics: {
+        events: 4,
+        allow: 1,
+        deny: 1,
+        requireApproval: 1,
+        artifacts: 2,
+        llmCostUsd: 0.25,
+      },
+    });
+    expect(event).toMatchObject({
+      eventId: "evt-1",
+      seq: 7,
+      layer: "future-layer",
+      decision: "FUTURE_DECISION",
+      approvalRef: "edge_appr_1",
+      artifactPtrs: [
+        { uri: "artifact://tenant-a/evt-1", sizeBytes: 123 },
+        { uri: "" },
+      ],
+      labels: { safe: "label" },
+    });
+    expect(event.riskTags).toEqual(["shell"]);
+    expect(eventPage).toMatchObject({
+      nextCursor: null,
+      items: [{ eventId: "evt-page", decision: "RECORDED" }],
+    });
+    expect(event.decisionReason).toBeUndefined();
+    expect(event.errorMessage).toBeUndefined();
+    expect(event.inputRedacted).toEqual({
+      safe_summary: "redacted shell request",
+      tool_input_redacted: { command_redacted: "rm -rf <path>" },
+      nested: { input_hash: "sha256:input" },
+    });
+    const serialized = JSON.stringify(event);
+    expect(serialized).not.toContain(token);
+    expect(serialized).not.toContain(apiKey);
+    expect(serialized).not.toContain("raw prompt must disappear");
+    expect(serialized).not.toContain("rm -rf /");
+    expect(serialized).not.toContain("X-Amz-Signature");
+  });
+
+  it("maps pending and resolved Edge approvals with nullable timestamps", () => {
+    const pending = mapEdgeApproval({
+      approval_ref: "edge_appr_pending",
+      tenant_id: "tenant-a",
+      session_id: "edge_sess_1",
+      execution_id: "exec-1",
+      event_id: "evt-1",
+      principal_id: "user-1",
+      requester: "user-1",
+      status: "pending",
+      decision: "",
+      reason: "requires approval",
+      rule_id: "rule-approval",
+      policy_snapshot: "policy:v1",
+      action_hash: "sha256:action",
+      input_hash: "sha256:input",
+      created_at: "2026-05-02T10:00:00Z",
+      expires_at: null,
+      labels: { queue: "default" },
+    });
+    const resolvedPage = mapEdgeApprovalPage({
+      items: [
+        {
+          approval_ref: "edge_appr_resolved",
+          tenant_id: "tenant-a",
+          session_id: "edge_sess_1",
+          execution_id: "exec-1",
+          event_id: "evt-1",
+          principal_id: "user-1",
+          requester: "user-1",
+          resolver_id: "user-2",
+          resolved_by: "Alice",
+          status: "resolved_future",
+          decision: "approve",
+          reason: "requires approval",
+          resolution_reason: "safe",
+          rule_id: "rule-approval",
+          policy_snapshot: "policy:v1",
+          action_hash: "sha256:action",
+          input_hash: "sha256:input",
+          created_at: "2026-05-02T10:00:00Z",
+          expires_at: "2026-05-02T10:05:00Z",
+          resolved_at: "2026-05-02T10:01:00Z",
+          consumed_at: null,
+          metadata: { safe: "yes", Authorization: token },
+        },
+      ],
+      next_cursor: null,
+    });
+
+    expect(pending).toMatchObject({
+      approvalRef: "edge_appr_pending",
+      status: "pending",
+      decision: "",
+      expiresAt: null,
+    });
+    expect(resolvedPage.nextCursor).toBeNull();
+    expect(resolvedPage.items[0]).toMatchObject({
+      approvalRef: "edge_appr_resolved",
+      status: "resolved_future",
+      decision: "approve",
+      resolverId: "user-2",
+      resolvedBy: "Alice",
+      consumedAt: null,
+      metadata: { safe: "yes" },
+    });
+    expect(resolvedPage.items[0].resolvedAt).toBe("2026-05-02T10:01:00.000Z");
+    expect(JSON.stringify(resolvedPage)).not.toContain(token);
+  });
+
+  it("maps Edge export bundles and error envelopes without leaking unsafe details", () => {
+    const bundle = mapEdgeSessionExportBundle({
+      manifest_version: "edge.export.v1",
+      generated_at: "2026-05-02T10:10:00Z",
+      tenant_id: "tenant-a",
+      redaction_level: "strict",
+      session: {
+        session_id: "edge_sess_1",
+        tenant_id: "tenant-a",
+        principal_type: "service",
+        trace_id: "trace-1",
+        policy_mode: "enforce",
+        status: "ended",
+        risk_summary: { denied_count: 0, approval_count: 1, artifact_count: 1 },
+        started_at: "2026-05-02T10:00:00Z",
+      },
+      executions: [{ execution_id: "exec-1", session_id: "edge_sess_1", tenant_id: "tenant-a", adapter: "claude-code-hook", mode: "local-dev", status: "succeeded", started_at: "2026-05-02T10:00:01Z" }],
+      events: [{ event_id: "evt-1", session_id: "edge_sess_1", execution_id: "exec-1", tenant_id: "tenant-a", seq: 1, ts: "2026-05-02T10:00:02Z", layer: "hook", kind: "hook.pre_tool_use", decision: "ALLOW", status: "ok" }],
+      approvals: [{ approval_ref: "edge_appr_1", tenant_id: "tenant-a", session_id: "edge_sess_1", execution_id: "exec-1", event_id: "evt-1", principal_id: "user-1", requester: "user-1", status: "approved", decision: "approve", reason: "safe", rule_id: "rule-1", policy_snapshot: "policy:v1", action_hash: "sha256:action", input_hash: "sha256:input", created_at: "2026-05-02T10:00:00Z" }],
+      artifacts: [{ artifact_type: "edge.evidence_bundle", session_id: "edge_sess_1", execution_id: "exec-1", event_id: "evt-1", tenant_id: "tenant-a", retention_class: "audit", redaction_level: "strict", sha256: "sha256:bundle", uri: "edge-artifact://bundle", created_at: "2026-05-02T10:00:03Z" }],
+      missing_artifacts: [{ uri: "edge-artifact://missing", sha256: "sha256:missing", artifact_type: "edge.transcript", session_id: "edge_sess_1", execution_id: "exec-1", event_id: "evt-2", reason: "not_found" }],
+      job_links: [{ execution_id: "exec-1", job_id: "job-1", workflow_run_id: "run-1", step_id: "step-1" }],
+      truncation: { events_truncated: false, event_count: 1, event_scan_limit_hit: false, executions_truncated: false },
+    });
+    const error = mapEdgeErrorEnvelope({
+      code: "idempotency_conflict",
+      message: "idempotency key already used",
+      request_id: "req-1",
+      details: {
+        safe_code: "idempotency_conflict",
+        token,
+        nested: { signed_url: "https://signed.example?token=secret", count: 1 },
+      },
+    });
+
+    expect(bundle).toMatchObject({
+      manifestVersion: "edge.export.v1",
+      tenantId: "tenant-a",
+      redactionLevel: "strict",
+      session: { sessionId: "edge_sess_1" },
+      truncation: { eventsTruncated: false, eventCount: 1 },
+    });
+    expect(bundle.executions).toHaveLength(1);
+    expect(bundle.events?.[0].eventId).toBe("evt-1");
+    expect(bundle.approvals?.[0].approvalRef).toBe("edge_appr_1");
+    expect(bundle.artifacts?.[0].uri).toBe("edge-artifact://bundle");
+    expect(bundle.missingArtifacts?.[0].reason).toBe("not_found");
+    expect(bundle.jobLinks?.[0]).toEqual({
+      executionId: "exec-1",
+      jobId: "job-1",
+      workflowRunId: "run-1",
+      stepId: "step-1",
+    });
+    expect(error).toEqual({
+      code: "idempotency_conflict",
+      message: "idempotency key already used",
+      requestId: "req-1",
+      details: { safe_code: "idempotency_conflict", nested: { count: 1 } },
+    });
+    expect(JSON.stringify(error)).not.toContain(token);
+    expect(JSON.stringify(error)).not.toContain("signed.example");
+  });
+
+  it("maps edge.event stream envelopes into safe cache payloads and drops malformed frames", () => {
+    expect(mapEdgeEventStreamEnvelope({ type: "bus.packet" })).toBeNull();
+
+    const envelope = mapEdgeEventStreamEnvelope({
+      type: "edge.event",
+      tenant_id: "tenant-a",
+      session_id: "edge_sess_1",
+      execution_id: "exec-1",
+      event: {
+        event_id: "evt-1",
+        session_id: "edge_sess_1",
+        execution_id: "exec-1",
+        tenant_id: "tenant-a",
+        seq: 1,
+        ts: "2026-05-02T10:00:02Z",
+        layer: "hook",
+        kind: "approval.requested",
+        decision: "REQUIRE_APPROVAL",
+        approval_ref: "edge_appr_1",
+        status: "blocked",
+      },
+    });
+
+    expect(envelope).not.toBeNull();
+    expect(envelope?.event?.decision).toBe("REQUIRE_APPROVAL");
+    expect(mapEdgeStreamPayload(envelope!)).toEqual({
+      tenantId: "tenant-a",
+      sessionId: "edge_sess_1",
+      executionId: "exec-1",
+      eventId: "evt-1",
+      kind: "approval.requested",
+      layer: "hook",
+      decision: "REQUIRE_APPROVAL",
+      approvalRef: "edge_appr_1",
+      artifactPtrs: undefined,
+      summary: "approval.requested REQUIRE_APPROVAL",
     });
   });
 });

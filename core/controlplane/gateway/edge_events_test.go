@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 
@@ -65,6 +66,7 @@ func TestGatewayEdgeEventWriteRejectsBadJSONTenantMismatchAndUnavailableStore(t 
 	s, handler := newEdgeRouteTestServer(t)
 	session := createEdgeRouteSession(t, handler)
 
+	beforeBadJSON := edgeRedisKeySnapshot(t, s)
 	badJSON := httptest.NewRequest(http.MethodPost, "/api/v1/edge/events", strings.NewReader(`{"event_id":`))
 	addEdgeRouteAuth(badJSON)
 	badJSON.Header.Set("X-Tenant-ID", edgeRouteTenant)
@@ -74,6 +76,8 @@ func TestGatewayEdgeEventWriteRejectsBadJSONTenantMismatchAndUnavailableStore(t 
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("bad JSON status = %d, want 400 body=%s", rr.Code, rr.Body.String())
 	}
+	assertEdgeErrorShape(t, rr, http.StatusBadRequest, edgeErrCodeInvalidJSON)
+	assertEdgeRedisKeysUnchanged(t, s, beforeBadJSON)
 
 	mismatch := edgeRoutePOST(t, handler, "/api/v1/edge/events", edgeEventWriteBody(session.SessionID, session.ExecutionID, edgeRouteOtherTenant, "evt-tenant-mismatch"))
 	if mismatch.Code != http.StatusForbidden {
@@ -308,10 +312,12 @@ func TestGatewayEdgeEventWriteDoesNotStreamWhenPersistenceFails(t *testing.T) {
 }
 
 func TestGatewayEdgeEventWriteRejectsOversizeInlineInputsAndRawPayloads(t *testing.T) {
-	_, handler := newEdgeRouteTestServer(t)
+	s, handler := newEdgeRouteTestServer(t)
 	session := createEdgeRouteSession(t, handler)
+	beforeRejects := edgeRedisKeySnapshot(t, s)
 
-	hugeInput := strings.Repeat("x", edgecore.MaxInputRedactedBytes+1024)
+	oversizeSentinel := "edge028-inline-oversize-secret"
+	hugeInput := oversizeSentinel + strings.Repeat("x", edgecore.MaxInputRedactedBytes+1024)
 	oversize := edgeRoutePOST(t, handler, "/api/v1/edge/events", `{
 		"event_id":"evt-edge006-oversize",
 		"session_id":"`+session.SessionID+`",
@@ -327,7 +333,13 @@ func TestGatewayEdgeEventWriteRejectsOversizeInlineInputsAndRawPayloads(t *testi
 	if oversize.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversize inline input status = %d, want 413 body=%s", oversize.Code, oversize.Body.String())
 	}
+	assertBodyOmits(t, oversize.Body.String(), oversizeSentinel)
+	assertEdgeRedisKeysUnchanged(t, s, beforeRejects)
+	if events := readEdgeEventsFromStore(t, s, session.ExecutionID); len(events.Items) != 0 {
+		t.Fatalf("oversize inline input persisted events = %#v, want none", events.Items)
+	}
 
+	rawPayloadSentinel := "edge028-raw-tool-secret"
 	rawPayload := edgeRoutePOST(t, handler, "/api/v1/edge/events", `{
 		"event_id":"evt-edge006-raw-payload",
 		"session_id":"`+session.SessionID+`",
@@ -336,7 +348,7 @@ func TestGatewayEdgeEventWriteRejectsOversizeInlineInputsAndRawPayloads(t *testi
 		"ts":"2026-05-01T12:02:01Z",
 		"layer":"hook",
 		"kind":"hook.pre_tool_use",
-		"tool_input":{"raw":"`+strings.Repeat("x", 4096)+`"},
+		"tool_input":{"raw":"`+rawPayloadSentinel+strings.Repeat("x", 4096)+`"},
 		"decision":"ALLOW",
 		"status":"ok"
 	}`)
@@ -345,6 +357,53 @@ func TestGatewayEdgeEventWriteRejectsOversizeInlineInputsAndRawPayloads(t *testi
 	}
 	if !strings.Contains(rawPayload.Body.String(), "artifact_ptrs") {
 		t.Fatalf("large raw payload response = %s, want artifact_ptrs guidance", rawPayload.Body.String())
+	}
+	assertBodyOmits(t, rawPayload.Body.String(), rawPayloadSentinel)
+	assertEdgeRedisKeysUnchanged(t, s, beforeRejects)
+	if events := readEdgeEventsFromStore(t, s, session.ExecutionID); len(events.Items) != 0 {
+		t.Fatalf("large raw payload persisted events = %#v, want none", events.Items)
+	}
+}
+
+func TestGatewayEdgeEventWriteRejectsBodyOverMaxBytesWithoutOrphanKeys(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	session := createEdgeRouteSession(t, handler)
+	t.Setenv(envGatewayMaxJSONBodyBytes, "256")
+	beforeOversizeBody := edgeRedisKeySnapshot(t, s)
+
+	oversizeBodySentinel := "edge028-max-body-secret"
+	body := `{
+		"event_id":"evt-edge028-max-body",
+		"session_id":"` + session.SessionID + `",
+		"execution_id":"` + session.ExecutionID + `",
+		"tenant_id":"` + edgeRouteTenant + `",
+		"ts":"2026-05-01T12:02:00Z",
+		"layer":"hook",
+		"kind":"hook.pre_tool_use",
+		"input_redacted":{"command":"` + oversizeBodySentinel + strings.Repeat("x", 512) + `"},
+		"decision":"ALLOW",
+		"status":"ok"
+	}`
+	if len(body) <= 256 {
+		t.Fatalf("oversize fixture length = %d, want > 256", len(body))
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/edge/events", strings.NewReader(body))
+	addEdgeRouteAuth(req)
+	req.Header.Set("X-Tenant-ID", edgeRouteTenant)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("body over max bytes status = %d, want 403 tier-limit body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "tier_limit_exceeded") || !strings.Contains(rr.Body.String(), "max_body_bytes") {
+		t.Fatalf("body over max bytes response = %s, want tier_limit_exceeded/max_body_bytes", rr.Body.String())
+	}
+	assertBodyOmits(t, rr.Body.String(), oversizeBodySentinel)
+	assertEdgeRedisKeysUnchanged(t, s, beforeOversizeBody)
+	if events := readEdgeEventsFromStore(t, s, session.ExecutionID); len(events.Items) != 0 {
+		t.Fatalf("body over max bytes persisted events = %#v, want none", events.Items)
 	}
 }
 
@@ -684,6 +743,27 @@ func readEdgeEventsFromStore(t *testing.T, s *server, executionID string) edgeEv
 		t.Fatalf("ListEvents(%s): %v", executionID, err)
 	}
 	return edgeEventPageResponseJSON{Items: page.Items, NextCursor: page.NextCursor}
+}
+
+func edgeRedisKeySnapshot(t *testing.T, s *server) string {
+	t.Helper()
+	if s == nil || s.jobStore == nil || s.jobStore.Client() == nil {
+		t.Fatal("edge Redis key snapshot requires gateway Redis job store")
+	}
+	keys, err := s.jobStore.Client().Keys(context.Background(), "edge:*").Result()
+	if err != nil {
+		t.Fatalf("snapshot edge Redis keys: %v", err)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, "\n")
+}
+
+func assertEdgeRedisKeysUnchanged(t *testing.T, s *server, before string) {
+	t.Helper()
+	after := edgeRedisKeySnapshot(t, s)
+	if after != before {
+		t.Fatalf("edge Redis keys changed after rejected request\nbefore:\n%s\nafter:\n%s", before, after)
+	}
 }
 
 func drainGatewayEdgeStreamQueue(ch <-chan wsEvent) {

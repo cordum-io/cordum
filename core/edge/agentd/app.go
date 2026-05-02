@@ -2,8 +2,10 @@ package agentd
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,6 +22,18 @@ type RunOptions struct {
 	StateStore StateStore
 	Recorder   edgecore.Recorder
 	Clock      Clock
+	// Nonce, if non-empty, pre-seeds LocalServerConfig.Nonce; it must be
+	// base64-encoded and decode to at least 32 raw bytes. Empty values trigger
+	// auto-generation. NEVER persist this value or echo it in logs/responses.
+	Nonce string
+}
+
+var errInvalidExternalNonce = errors.New("agentd: CORDUM_AGENTD_NONCE invalid: must be base64 encoding of >= 32 bytes")
+
+// ValidateExternalNonce validates a trusted launcher-supplied nonce without
+// echoing the value. Empty input is valid and means Run will auto-generate.
+func ValidateExternalNonce(nonce string) (string, error) {
+	return validateExternalNonce(nonce)
 }
 
 func Run(ctx context.Context, opts RunOptions) error {
@@ -28,6 +42,10 @@ func Run(ctx context.Context, opts RunOptions) error {
 	}
 	cfg := opts.Config
 	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	nonce, err := validateExternalNonce(opts.Nonce)
+	if err != nil {
 		return err
 	}
 	gateway := opts.Gateway
@@ -106,6 +124,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 	}
 	local, err := NewLocalServer(LocalServerConfig{
 		BindURL:      cfg.BindURL,
+		Nonce:        nonce,
 		MaxBodyBytes: defaultMaxHookBodyBytes,
 		Evaluator:    evaluator,
 		State:        *state,
@@ -133,6 +152,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 
 	hbCtx, hbCancel := context.WithCancel(ctx)
 	defer hbCancel()
+	var heartbeatService *HeartbeatService
 	heartbeatStatusErr := make(chan error, 1)
 	sendHeartbeatStatusErr := func(err error) {
 		select {
@@ -152,7 +172,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 			PolicyMode:             cfg.PolicyMode,
 			FailClosed:             cfg.FailClosed,
 			OnStatus: func(status HeartbeatStatus) {
-				statusCtx, cancel := context.WithTimeout(context.Background(), cfg.GatewayTimeout)
+				statusCtx, cancel := context.WithTimeout(hbCtx, cfg.GatewayTimeout)
 				defer cancel()
 				updated, err := manager.RecordHeartbeatStatus(statusCtx, status)
 				if err != nil {
@@ -167,8 +187,8 @@ func Run(ctx context.Context, opts RunOptions) error {
 				}
 			},
 		})
+		heartbeatService = service
 		go service.Run(hbCtx, ticker.C)
-		defer service.Wait()
 	}
 
 	var runErr error
@@ -185,6 +205,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 	}
 
 	hbCancel()
+	waitForHeartbeatDrain(heartbeatService, cfg.GatewayTimeout)
 	if httpServer != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.HookTimeout)
 		_ = httpServer.Shutdown(shutdownCtx)
@@ -208,6 +229,45 @@ func Run(ctx context.Context, opts RunOptions) error {
 		return shutdownErr
 	}
 	return nil
+}
+
+func waitForHeartbeatDrain(service *HeartbeatService, timeout time.Duration) bool {
+	if service == nil {
+		return true
+	}
+	if timeout <= 0 {
+		service.Wait()
+		return true
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	timer := time.AfterFunc(timeout, func() {
+		slog.Warn("agentd heartbeat drain timed out during shutdown", "timeout", timeout)
+		cancel()
+	})
+	defer func() {
+		timer.Stop()
+		cancel()
+	}()
+	return service.WaitContext(ctx)
+}
+
+func validateExternalNonce(raw string) (string, error) {
+	nonce := strings.TrimSpace(raw)
+	if nonce == "" {
+		return "", nil
+	}
+	for _, enc := range []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	} {
+		decoded, err := enc.DecodeString(nonce)
+		if err == nil && len(decoded) >= 32 {
+			return nonce, nil
+		}
+	}
+	return "", errInvalidExternalNonce
 }
 
 func newHTTPServer(cfg Config, local *LocalServer) (*http.Server, net.Listener, error) {

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	"github.com/cordum/cordum/core/licensing"
 )
 
 func resolveEntitlementResolver(resolvers ...*licensing.EntitlementResolver) *licensing.EntitlementResolver {

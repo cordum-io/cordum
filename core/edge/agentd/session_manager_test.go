@@ -389,6 +389,44 @@ func TestSessionManagerRecordHeartbeatStatusFailClosedPersistsFailedState(t *tes
 	}
 }
 
+func TestRecordHeartbeatStatusEarlyReturnsAfterShutdown(t *testing.T) {
+	t.Parallel()
+
+	store := &saveCountingStateStore{}
+	manager := NewSessionManager(SessionManagerConfig{
+		Gateway:    stubGatewayLifecycleClient{},
+		StateStore: store,
+		InitialState: &SessionState{
+			SessionID:    "sess-heartbeat-shutdown",
+			ExecutionID:  "exec-heartbeat-shutdown",
+			TenantID:     "tenant-a",
+			PrincipalID:  "principal-a",
+			PolicyMode:   edgecore.PolicyModeObserve,
+			Status:       edgecore.SessionStatusRunning,
+			StartedAt:    time.Date(2026, 5, 2, 7, 28, 0, 0, time.UTC),
+			DashboardURL: "/edge/sessions/sess-heartbeat-shutdown",
+		},
+	})
+	manager.mu.Lock()
+	manager.shutdown = true
+	manager.mu.Unlock()
+
+	state, err := manager.RecordHeartbeatStatus(context.Background(), HeartbeatStatus{
+		ConsecutiveFailures: 3,
+		Degraded:            true,
+		Reason:              "gateway heartbeat failures exceeded threshold",
+	})
+	if err != nil {
+		t.Fatalf("RecordHeartbeatStatus: %v", err)
+	}
+	if state.Status != edgecore.SessionStatusRunning {
+		t.Fatalf("state status = %q, want unchanged running state", state.Status)
+	}
+	if store.saveCalls != 0 {
+		t.Fatalf("store.Save calls = %d, want 0 after shutdown began", store.saveCalls)
+	}
+}
+
 func TestSessionManagerShutdownGatewayTimeoutRecordsFailedState(t *testing.T) {
 	t.Parallel()
 
@@ -499,5 +537,18 @@ func (s failingStateStore) Save(context.Context, SessionState) error {
 }
 
 func (s failingStateStore) Load(context.Context, string) (SessionState, bool, error) {
+	return SessionState{}, false, nil
+}
+
+type saveCountingStateStore struct {
+	saveCalls int
+}
+
+func (s *saveCountingStateStore) Save(context.Context, SessionState) error {
+	s.saveCalls++
+	return nil
+}
+
+func (s *saveCountingStateStore) Load(context.Context, string) (SessionState, bool, error) {
 	return SessionState{}, false, nil
 }

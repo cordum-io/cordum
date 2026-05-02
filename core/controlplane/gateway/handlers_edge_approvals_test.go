@@ -70,23 +70,30 @@ func TestGatewayEdgeApprovalResolveEmitsAuditEvent(t *testing.T) {
 
 func TestGatewayEdgeApprovalRejectsSelfApproval(t *testing.T) {
 	s, handler := newEdgeRouteTestServer(t)
-	approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-a", "self")
 
-	rr := edgeApprovalRoutePOSTAs(t, handler, edgeRouteTestAPIKey, "/api/v1/edge/approvals/"+approval.ApprovalRef+"/approve", `{"reason":"approve myself"}`)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("self approve status = %d, want 403 body=%s", rr.Code, rr.Body.String())
-	}
-	var body map[string]any
-	decodeEdgeRouteJSON(t, rr, &body)
-	if body["code"] != "self_approval_denied" {
-		t.Fatalf("self approve code = %#v, want self_approval_denied body=%s", body["code"], rr.Body.String())
-	}
-	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, approval.ApprovalRef)
-	if err != nil || !ok {
-		t.Fatalf("GetApproval after self-denied = (%#v,%v,%v)", stored, ok, err)
-	}
-	if stored.Status != edgecore.ApprovalStatusPending {
-		t.Fatalf("self-denied status = %q, want pending", stored.Status)
+	for _, action := range []string{"approve", "reject"} {
+		t.Run(action, func(t *testing.T) {
+			approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-a", "self-"+action)
+			rr := edgeApprovalRoutePOSTAs(t, handler, edgeRouteTestAPIKey,
+				"/api/v1/edge/approvals/"+approval.ApprovalRef+"/"+action,
+				`{"reason":"resolve myself"}`)
+			if rr.Code != http.StatusForbidden {
+				t.Fatalf("self %s status = %d, want 403 body=%s", action, rr.Code, rr.Body.String())
+			}
+			var body map[string]any
+			decodeEdgeRouteJSON(t, rr, &body)
+			if body["code"] != "self_approval_denied" {
+				t.Fatalf("self %s code = %#v, want self_approval_denied body=%s", action, body["code"], rr.Body.String())
+			}
+			stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, approval.ApprovalRef)
+			if err != nil || !ok {
+				t.Fatalf("GetApproval after self-denied = (%#v,%v,%v)", stored, ok, err)
+			}
+			if stored.Status != edgecore.ApprovalStatusPending || stored.ResolvedAt != nil || stored.ConsumedAt != nil {
+				t.Fatalf("self-denied approval = status:%q resolved:%v consumed:%v, want pending unresolved unconsumed",
+					stored.Status, stored.ResolvedAt, stored.ConsumedAt)
+			}
+		})
 	}
 }
 
@@ -108,6 +115,41 @@ func TestGatewayEdgeApprovalStoresResolverOnApproval(t *testing.T) {
 	}
 	if approved.ResolutionReason != "reviewed and approved" || approved.ResolvedAt == nil {
 		t.Fatalf("resolution reason/at = %q/%v", approved.ResolutionReason, approved.ResolvedAt)
+	}
+}
+
+func TestGatewayEdgeApprovalTerminalMutationsReturnConflict(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-a", "terminal")
+
+	approve := edgeApprovalRoutePOSTAs(t, handler, edgeRouteReviewerAPIKey, "/api/v1/edge/approvals/"+approval.ApprovalRef+"/approve", `{"reason":"approved once"}`)
+	if approve.Code != http.StatusOK {
+		t.Fatalf("approve status = %d, want 200 body=%s", approve.Code, approve.Body.String())
+	}
+	var approved edgecore.EdgeApproval
+	decodeEdgeRouteJSON(t, approve, &approved)
+	if approved.Status != edgecore.ApprovalStatusApproved ||
+		approved.Decision != edgecore.ApprovalDecisionApprove ||
+		approved.ResolverID != "principal-reviewer" ||
+		!strings.Contains(approved.ResolvedBy, "principal:principal-reviewer") ||
+		approved.ResolvedAt == nil {
+		t.Fatalf("approved record = %#v, want approved/approve reviewer with resolved_at", approved)
+	}
+
+	secondApprove := edgeApprovalRoutePOSTAs(t, handler, edgeRouteReviewerAPIKey, "/api/v1/edge/approvals/"+approval.ApprovalRef+"/approve", `{"reason":"approve twice"}`)
+	assertEdgeErrorShape(t, secondApprove, http.StatusConflict, edgeErrCodeApprovalConflict)
+	secondReject := edgeApprovalRoutePOSTAs(t, handler, edgeRouteReviewerAPIKey, "/api/v1/edge/approvals/"+approval.ApprovalRef+"/reject", `{"reason":"reject after approve"}`)
+	assertEdgeErrorShape(t, secondReject, http.StatusConflict, edgeErrCodeApprovalConflict)
+
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, approval.ApprovalRef)
+	if err != nil || !ok || stored == nil {
+		t.Fatalf("GetApproval after terminal mutations = (%#v,%v,%v)", stored, ok, err)
+	}
+	if stored.Status != edgecore.ApprovalStatusApproved ||
+		stored.Decision != edgecore.ApprovalDecisionApprove ||
+		stored.ResolutionReason != "approved once" ||
+		stored.ConsumedAt != nil {
+		t.Fatalf("stored approval after terminal mutations = %#v, want original approved state without consume", stored)
 	}
 }
 
@@ -262,6 +304,81 @@ func TestGatewayEdgeApprovalWaitPrincipalBinding(t *testing.T) {
 	if sameElapsed > 500*time.Millisecond || crossElapsed > 500*time.Millisecond {
 		t.Fatalf("unauthorized wait 404s took same-tenant=%v cross-tenant=%v, want both below 500ms despite 1000ms body timeout",
 			sameElapsed, crossElapsed)
+	}
+}
+
+func TestGatewayEdgeApprovalRoutesRequireAuthAndTenant(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-a", "auth-tenant")
+
+	routes := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+		apiKey string
+	}{
+		{
+			name:   "list",
+			method: http.MethodGet,
+			path:   "/api/v1/edge/approvals?status=pending",
+			apiKey: edgeRouteTestAPIKey,
+		},
+		{
+			name:   "detail",
+			method: http.MethodGet,
+			path:   "/api/v1/edge/approvals/" + approval.ApprovalRef,
+			apiKey: edgeRouteTestAPIKey,
+		},
+		{
+			name:   "approve",
+			method: http.MethodPost,
+			path:   "/api/v1/edge/approvals/" + approval.ApprovalRef + "/approve",
+			body:   `{"reason":"auth gate"}`,
+			apiKey: edgeRouteReviewerAPIKey,
+		},
+		{
+			name:   "reject",
+			method: http.MethodPost,
+			path:   "/api/v1/edge/approvals/" + approval.ApprovalRef + "/reject",
+			body:   `{"reason":"auth gate"}`,
+			apiKey: edgeRouteReviewerAPIKey,
+		},
+		{
+			name:   "wait",
+			method: http.MethodPost,
+			path:   "/api/v1/edge/approvals/" + approval.ApprovalRef + "/wait",
+			body:   `{"timeout_ms":1}`,
+			apiKey: edgeRouteReviewerAPIKey,
+		},
+	}
+
+	for _, route := range routes {
+		t.Run(route.name+"/missing_auth", func(t *testing.T) {
+			req := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+			req.Header.Set("X-Tenant-ID", edgeRouteTenant)
+			if route.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != http.StatusUnauthorized {
+				t.Fatalf("%s missing auth status = %d, want 401 body=%s", route.name, rr.Code, rr.Body.String())
+			}
+		})
+
+		t.Run(route.name+"/missing_tenant", func(t *testing.T) {
+			req := httptest.NewRequest(route.method, route.path, strings.NewReader(route.body))
+			addEdgeRouteAuthFor(req, route.apiKey)
+			if route.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != http.StatusForbidden {
+				t.Fatalf("%s missing tenant status = %d, want 403 body=%s", route.name, rr.Code, rr.Body.String())
+			}
+		})
 	}
 }
 

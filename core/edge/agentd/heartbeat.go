@@ -27,12 +27,16 @@ type HeartbeatStatus struct {
 }
 
 type HeartbeatService struct {
-	cfg         HeartbeatConfig
-	inFlight    atomic.Bool
-	wg          sync.WaitGroup
-	mu          sync.Mutex
-	failures    int
-	lastDegrade HeartbeatStatus
+	cfg          HeartbeatConfig
+	inFlight     atomic.Bool
+	wg           sync.WaitGroup
+	mu           sync.Mutex
+	failures     int
+	lastDegrade  HeartbeatStatus
+	doneMu       sync.Mutex
+	inFlightDone chan struct{}
+	stopped      chan struct{}
+	stopOnce     sync.Once
 }
 
 func NewHeartbeatService(cfg HeartbeatConfig) *HeartbeatService {
@@ -42,13 +46,14 @@ func NewHeartbeatService(cfg HeartbeatConfig) *HeartbeatService {
 	if cfg.MaxConsecutiveFailures <= 0 {
 		cfg.MaxConsecutiveFailures = 3
 	}
-	return &HeartbeatService{cfg: cfg}
+	return &HeartbeatService{cfg: cfg, stopped: make(chan struct{})}
 }
 
 func (s *HeartbeatService) Run(ctx context.Context, ticks <-chan time.Time) {
 	if s == nil {
 		return
 	}
+	defer s.markStopped()
 	for {
 		select {
 		case <-ctx.Done():
@@ -60,10 +65,11 @@ func (s *HeartbeatService) Run(ctx context.Context, ticks <-chan time.Time) {
 			if !s.inFlight.CompareAndSwap(false, true) {
 				continue
 			}
+			done := make(chan struct{})
+			s.setInFlightDone(done)
 			s.wg.Add(1)
 			go func() {
-				defer s.wg.Done()
-				defer s.inFlight.Store(false)
+				defer s.finishInFlight(done)
 				callCtx := ctx
 				var cancel context.CancelFunc
 				if s.cfg.Timeout > 0 {
@@ -84,6 +90,33 @@ func (s *HeartbeatService) Wait() {
 		return
 	}
 	s.wg.Wait()
+}
+
+func (s *HeartbeatService) WaitContext(ctx context.Context) bool {
+	if s == nil {
+		return true
+	}
+	if ctx == nil {
+		s.Wait()
+		return true
+	}
+	if s.stopped != nil {
+		select {
+		case <-s.stopped:
+		case <-ctx.Done():
+			return false
+		}
+	}
+	done := s.currentInFlightDone()
+	if done == nil {
+		return true
+	}
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func (s *HeartbeatService) InFlight() bool {
@@ -114,4 +147,35 @@ func (s *HeartbeatService) recordResult(err error) {
 	if s.cfg.OnStatus != nil {
 		s.cfg.OnStatus(status)
 	}
+}
+
+func (s *HeartbeatService) setInFlightDone(done chan struct{}) {
+	s.doneMu.Lock()
+	defer s.doneMu.Unlock()
+	s.inFlightDone = done
+}
+
+func (s *HeartbeatService) finishInFlight(done chan struct{}) {
+	s.inFlight.Store(false)
+	s.doneMu.Lock()
+	if s.inFlightDone == done {
+		close(done)
+		s.inFlightDone = nil
+	}
+	s.doneMu.Unlock()
+	s.wg.Done()
+}
+
+func (s *HeartbeatService) currentInFlightDone() <-chan struct{} {
+	s.doneMu.Lock()
+	defer s.doneMu.Unlock()
+	return s.inFlightDone
+}
+
+func (s *HeartbeatService) markStopped() {
+	s.stopOnce.Do(func() {
+		if s.stopped != nil {
+			close(s.stopped)
+		}
+	})
 }

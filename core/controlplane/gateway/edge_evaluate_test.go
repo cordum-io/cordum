@@ -42,7 +42,7 @@ func TestGatewayEdgeEvaluateRouteRegisteredAndTenantScoped(t *testing.T) {
 }
 
 func TestGatewayEdgeEvaluateRequiresAuthTenantAndRejectsMalformedRequests(t *testing.T) {
-	_, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{})
+	s, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{})
 
 	missingAuth := httptest.NewRequest(http.MethodPost, "/api/v1/edge/evaluate", strings.NewReader(`{}`))
 	missingAuth.Header.Set("X-Tenant-ID", edgeRouteTenant)
@@ -60,6 +60,7 @@ func TestGatewayEdgeEvaluateRequiresAuthTenantAndRejectsMalformedRequests(t *tes
 		t.Fatalf("missing tenant status = %d, want 403 body=%s", rr.Code, rr.Body.String())
 	}
 
+	beforeBadJSON := edgeRedisKeySnapshot(t, s)
 	badJSON := httptest.NewRequest(http.MethodPost, "/api/v1/edge/evaluate", strings.NewReader(`{"session_id":`))
 	addEdgeRouteAuth(badJSON)
 	badJSON.Header.Set("X-Tenant-ID", edgeRouteTenant)
@@ -68,7 +69,9 @@ func TestGatewayEdgeEvaluateRequiresAuthTenantAndRejectsMalformedRequests(t *tes
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("bad JSON status = %d, want 400 body=%s", rr.Code, rr.Body.String())
 	}
+	assertEdgeErrorShape(t, rr, http.StatusBadRequest, edgeErrCodeInvalidJSON)
 	assertBodyOmits(t, rr.Body.String(), "enterprise_hook_token", "Bearer")
+	assertEdgeRedisKeysUnchanged(t, s, beforeBadJSON)
 
 	mismatch := httptest.NewRequest(http.MethodPost, "/api/v1/edge/evaluate", strings.NewReader(`{"tenant_id":"`+edgeRouteOtherTenant+`"}`))
 	addEdgeRouteAuth(mismatch)
@@ -1050,6 +1053,128 @@ func TestGatewayEdgeEvaluateSafetyUnavailableByPolicyMode(t *testing.T) {
 	}
 }
 
+// Gateway-side Safety Kernel outage behavior is intentionally duplicated only
+// for persisted event evidence. Agentd hook fail-mode contract coverage lives in
+// core/edge/agentd/fail_modes_test.go.
+func TestGatewayEdgeEvaluateSafetyUnavailableVariantsPersistNoFalseAllow(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		err                  error
+		policyMode           edgecore.PolicyMode
+		command              string
+		wantResponseDecision string
+		wantPermission       string
+		wantEventDecision    edgecore.EdgeDecision
+		forbidden            []string
+	}{
+		{
+			name:                 "timeout observe allows hook but records degraded not allow",
+			err:                  context.DeadlineExceeded,
+			policyMode:           edgecore.PolicyModeObserve,
+			command:              "npm test ./core/edge",
+			wantResponseDecision: string(edgecore.DecisionAllow),
+			wantPermission:       "allow",
+			wantEventDecision:    edgecore.DecisionRecorded,
+		},
+		{
+			name:                 "connection error enterprise strict fails closed",
+			err:                  errors.New("connect safety kernel: connection refused: Bearer fake.jwt.value"),
+			policyMode:           edgecore.PolicyModeEnterpriseStrict,
+			command:              "npm test ./core/edge",
+			wantResponseDecision: string(edgecore.DecisionDeny),
+			wantPermission:       "deny",
+			wantEventDecision:    edgecore.DecisionDeny,
+			forbidden:            []string{"Bearer fake.jwt.value"},
+		},
+		{
+			name:                 "malformed response enforce high risk fails closed",
+			err:                  errors.New("malformed safety response body: invalid character '<' near ghp_FAKETOKEN0000"),
+			policyMode:           edgecore.PolicyModeEnforce,
+			command:              "rm -rf ./tmp/edge-malformed-response",
+			wantResponseDecision: string(edgecore.DecisionDeny),
+			wantPermission:       "deny",
+			wantEventDecision:    edgecore.DecisionDeny,
+			forbidden:            []string{"ghp_FAKETOKEN0000"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{err: tc.err})
+			session := createEdgeEvaluateSessionWithPolicyMode(t, handler, tc.policyMode)
+			before := edgeRedisKeySnapshot(t, s)
+
+			rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": tc.command}))
+			if rr.Code != http.StatusOK {
+				t.Fatalf("evaluate status = %d, want hook-friendly 200 body=%s", rr.Code, rr.Body.String())
+			}
+			mustNotContain(t, rr.Body.String(), tc.forbidden...)
+			var resp edgeEvaluateResponseJSON
+			decodeEdgeRouteJSON(t, rr, &resp)
+			if resp.Decision != tc.wantResponseDecision || resp.PermissionDecision != tc.wantPermission || !resp.Degraded || resp.ErrorCode != "safety_unavailable" {
+				t.Fatalf("response = decision:%q permission:%q degraded:%v error:%q, want %q/%q/true/safety_unavailable body=%s",
+					resp.Decision, resp.PermissionDecision, resp.Degraded, resp.ErrorCode, tc.wantResponseDecision, tc.wantPermission, rr.Body.String())
+			}
+			if resp.EventID == "" {
+				t.Fatalf("response missing event_id body=%s", rr.Body.String())
+			}
+			if after := edgeRedisKeySnapshot(t, s); after == before {
+				t.Fatalf("edge Redis key snapshot did not change; want degraded event persisted")
+			}
+
+			events := listEdgeEvaluateEvents(t, s, session.SessionID, session.ExecutionID)
+			if len(events) != 1 {
+				t.Fatalf("persisted events = %d, want exactly one degraded event: %#v", len(events), events)
+			}
+			event := events[0]
+			if event.EventID != resp.EventID || event.Kind != edgecore.EventKindPolicyDegraded || event.Status != edgecore.ActionStatusDegraded {
+				t.Fatalf("event id/kind/status = %q/%q/%q, want response id %q/%q/degraded (event=%#v)",
+					event.EventID, event.Kind, event.Status, resp.EventID, edgecore.EventKindPolicyDegraded, event)
+			}
+			if event.Decision != tc.wantEventDecision || event.Decision == edgecore.DecisionAllow {
+				t.Fatalf("persisted degraded event decision = %q, want %q and never ALLOW", event.Decision, tc.wantEventDecision)
+			}
+			if event.ErrorCode != "safety_unavailable" || strings.Contains(event.ErrorMessage, "fake.jwt.value") || strings.Contains(event.ErrorMessage, "ghp_FAKETOKEN0000") {
+				t.Fatalf("event error fields = %q/%q, want sanitized safety_unavailable", event.ErrorCode, event.ErrorMessage)
+			}
+		})
+	}
+}
+
+func TestGatewayEdgeEvaluateUnknownDecisionEnumFailsClosedWithoutFalseAllow(t *testing.T) {
+	s, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:       pb.DecisionType(999),
+		Reason:         "future enum from Safety Kernel with sk-test-fake-secret-xyz",
+		RuleId:         "edge028.future-enum",
+		PolicySnapshot: "snap-edge028-future-enum",
+	}})
+	session := createEdgeRouteSession(t, handler)
+
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test ./core/edge"}))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("future enum evaluate status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	mustNotContain(t, rr.Body.String(), "sk-test-fake-secret-xyz")
+	var resp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &resp)
+	if resp.Decision != string(edgecore.DecisionDeny) || resp.PermissionDecision != "deny" || resp.Degraded {
+		t.Fatalf("future enum response = decision:%q permission:%q degraded:%v, want DENY/deny/not degraded body=%s", resp.Decision, resp.PermissionDecision, resp.Degraded, rr.Body.String())
+	}
+	if !bodyHasRedactionMarker(rr.Body.String()) {
+		t.Fatalf("future enum response missing redacted reason marker: %s", rr.Body.String())
+	}
+
+	events := listEdgeEvaluateEvents(t, s, session.SessionID, session.ExecutionID)
+	if len(events) != 1 {
+		t.Fatalf("future enum events = %d, want one deny event: %#v", len(events), events)
+	}
+	event := events[0]
+	if event.Decision != edgecore.DecisionDeny || event.Decision == edgecore.DecisionAllow || event.Status != edgecore.ActionStatusBlocked || event.Kind != edgecore.EventKindHookPolicyDecision {
+		t.Fatalf("future enum event decision/status/kind = %q/%q/%q, want DENY/blocked/policy_decision and never ALLOW", event.Decision, event.Status, event.Kind)
+	}
+	if event.DecisionReason != "<redacted>" || event.RuleID != "edge028.future-enum" || event.PolicySnapshot != "snap-edge028-future-enum" {
+		t.Fatalf("future enum event policy fields = reason:%q rule:%q snapshot:%q", event.DecisionReason, event.RuleID, event.PolicySnapshot)
+	}
+}
+
 func TestGatewayEdgeEvaluatePersistsDecisionEventWithRedactedInput(t *testing.T) {
 	s, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
 		Decision:       pb.DecisionType_DECISION_TYPE_DENY,
@@ -1202,6 +1327,7 @@ func TestGatewayEdgeEvaluatePersistsDegradedEventForSafetyUnavailable(t *testing
 func TestGatewayEdgeEvaluateRejectsRawAndOversizeInputWithoutPersistence(t *testing.T) {
 	s, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}})
 	session := createEdgeRouteSession(t, handler)
+	beforeRejects := edgeRedisKeySnapshot(t, s)
 
 	raw := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", `{
 		"tenant_id":"`+edgeRouteTenant+`",
@@ -1218,17 +1344,54 @@ func TestGatewayEdgeEvaluateRejectsRawAndOversizeInputWithoutPersistence(t *test
 		t.Fatalf("raw payload status = %d, want 400 body=%s", raw.Code, raw.Body.String())
 	}
 	assertBodyOmits(t, raw.Body.String(), "edge-raw-secret")
+	assertEdgeRedisKeysUnchanged(t, s, beforeRejects)
 	if events := listEdgeEvaluateEvents(t, s, session.SessionID, session.ExecutionID); len(events) != 0 {
 		t.Fatalf("raw payload persisted events = %#v, want none", events)
 	}
 
-	oversizeValue := strings.Repeat("x", edgecore.MaxInputRedactedBytes+1024)
+	oversizeSentinel := "edge028-evaluate-oversize-secret"
+	oversizeValue := oversizeSentinel + strings.Repeat("x", edgecore.MaxInputRedactedBytes+1024)
 	oversize := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": oversizeValue}))
 	if oversize.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversize input status = %d, want 413 body=%s", oversize.Code, oversize.Body.String())
 	}
+	assertBodyOmits(t, oversize.Body.String(), oversizeSentinel)
+	assertEdgeRedisKeysUnchanged(t, s, beforeRejects)
 	if events := listEdgeEvaluateEvents(t, s, session.SessionID, session.ExecutionID); len(events) != 0 {
 		t.Fatalf("oversize payload persisted events = %#v, want none", events)
+	}
+}
+
+func TestGatewayEdgeEvaluateRejectsBodyOverMaxBytesWithoutOrphanKeys(t *testing.T) {
+	s, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}})
+	session := createEdgeRouteSession(t, handler)
+	t.Setenv(envGatewayMaxJSONBodyBytes, "256")
+	beforeOversizeBody := edgeRedisKeySnapshot(t, s)
+
+	oversizeBodySentinel := "edge028-evaluate-max-body-secret"
+	body := edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{
+		"command": oversizeBodySentinel + strings.Repeat("x", 512),
+	})
+	if len(body) <= 256 {
+		t.Fatalf("oversize fixture length = %d, want > 256", len(body))
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/edge/evaluate", strings.NewReader(body))
+	addEdgeRouteAuth(req)
+	req.Header.Set("X-Tenant-ID", edgeRouteTenant)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("body over max bytes status = %d, want 403 tier-limit body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "tier_limit_exceeded") || !strings.Contains(rr.Body.String(), "max_body_bytes") {
+		t.Fatalf("body over max bytes response = %s, want tier_limit_exceeded/max_body_bytes", rr.Body.String())
+	}
+	assertBodyOmits(t, rr.Body.String(), oversizeBodySentinel)
+	assertEdgeRedisKeysUnchanged(t, s, beforeOversizeBody)
+	if events := listEdgeEvaluateEvents(t, s, session.SessionID, session.ExecutionID); len(events) != 0 {
+		t.Fatalf("body over max bytes persisted events = %#v, want none", events)
 	}
 }
 

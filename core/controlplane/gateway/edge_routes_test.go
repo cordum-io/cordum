@@ -9,9 +9,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/audit"
 	edgecore "github.com/cordum/cordum/core/edge"
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 const (
@@ -27,6 +29,463 @@ const (
 type edgeRouteExpectation struct {
 	method string
 	path   string
+}
+
+// EDGE-028 backend integration coverage inventory (existing tests reused):
+// A. E2E pieces: edge_routes_test.go:TestGatewayEdgeSessionLifecycleResponseContract,
+//
+//	edge_routes_test.go:TestGatewayEdgeExecutionLifecycleResponseContract,
+//	edge_evaluate_test.go:TestGatewayEdgeEvaluateMapsSafetyDecisionsToHookResponse,
+//	edge_evaluate_test.go:TestGatewayEdgeEvaluateRetryConsumesApprovedApprovalAndDeniesDuplicate,
+//	edge_events_test.go:TestGatewayEdgeEventSingleWriteStreamsPersistedEdgeEnvelope,
+//	handlers_edge_errors_test.go:TestGatewayEdgeExportEmitsAuditEventForSuccessAndMissing,
+//	core/edge/export_test.go:TestSessionExportAssemblerHappyPathContainsAllSessionEvidence.
+//	Gap filled below: one gateway sequence creates session+execution, evaluates ALLOW,
+//	writes/streams an event, requires approval, approves, consumes once, then exports.
+//
+// B. Auth/tenant/cross-tenant: edge_routes_test.go, edge_events_test.go,
+//
+//	edge_events_idempotency_test.go, edge_evaluate_test.go,
+//	handlers_edge_approvals_test.go, and edge_stream_test.go cover 6/7 gateway
+//	edge test files; export-specific gateway auth gaps are filled later.
+//
+// C. Bounds/malformed: session body limit, events/evaluate malformed and oversize
+//
+//	inline payloads, idempotency-key limits, and store oversize prevalidation exist.
+//	EdgeMaxNestingDepth is absent on HEAD, so no nested-depth assertion is added.
+//
+// D. Redaction/export: core redaction/model/artifact tests plus gateway session,
+//
+//	execution, event, evaluate, error, and export tests prove unit/path coverage;
+//	full synthetic-secret round-trip is filled later.
+//
+// E. Safety Kernel unavailable/unknown: edge_evaluate_test.go and
+//
+//	core/edge/agentd/fail_modes_test.go cover current fail-mode slices; explicit
+//	gateway timeout/connection/malformed/future-enum cases are filled later.
+//
+// F. Redis unavailable: nil-store/fake-append gateway paths exist; miniredis
+//
+//	Close()/SetError() store simulations are filled later.
+//
+// G. Stream: edge_stream_test.go plus event/evaluate stream tests cover in-memory
+//
+//	forwarding; subscribe/resume/heartbeat/cancel regressions are filled later.
+//
+// H. Approval: approval_store_redis_test.go, handlers_edge_approvals_test.go, and
+//
+//	edge_evaluate_test.go cover consume-once, rejected/expired/stale/self approval;
+//	export-after-approval is asserted below.
+func TestGatewayEdgeEndToEndEvaluateApprovalStreamAndExport(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:       pb.DecisionType_DECISION_TYPE_ALLOW,
+		Reason:         "safe read-only command",
+		RuleId:         "edge028.allow",
+		PolicySnapshot: "snap-edge028-allow",
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	drainGatewayEdgeStreamQueue(s.eventsCh)
+	streamQueue := &wsClient{ch: s.eventsCh}
+
+	session := createEdgeRouteSession(t, handler)
+	execution := createEdgeRouteExecution(t, handler, session.SessionID)
+	if execution.SessionID != session.SessionID {
+		t.Fatalf("created execution session_id = %q, want %q", execution.SessionID, session.SessionID)
+	}
+	if execution.TenantID != edgeRouteTenant {
+		t.Fatalf("created execution tenant_id = %q, want %q", execution.TenantID, edgeRouteTenant)
+	}
+
+	allowRR := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate",
+		edgeEvaluateBody(session.SessionID, execution.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test ./core/edge"}))
+	if allowRR.Code != http.StatusOK {
+		t.Fatalf("allow evaluate status = %d, want 200 body=%s", allowRR.Code, allowRR.Body.String())
+	}
+	var allowResp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, allowRR, &allowResp)
+	if allowResp.Decision != string(edgecore.DecisionAllow) ||
+		allowResp.PermissionDecision != "allow" ||
+		allowResp.RuleID != "edge028.allow" ||
+		allowResp.PolicySnapshot != "snap-edge028-allow" {
+		t.Fatalf("allow response = decision:%q permission:%q rule:%q snapshot:%q body=%s",
+			allowResp.Decision, allowResp.PermissionDecision, allowResp.RuleID, allowResp.PolicySnapshot, allowRR.Body.String())
+	}
+	if strings.TrimSpace(allowResp.EventID) == "" {
+		t.Fatalf("allow response missing event_id body=%s", allowRR.Body.String())
+	}
+	assertStreamedEdgeEvent(t, readGatewayEdgeStreamEvent(t, streamQueue, "allow evaluate event"), allowResp.EventID, edgecore.DecisionAllow, edgecore.EventKindHookPolicyDecision)
+
+	manualEventID := "evt-edge028-e2e-tool"
+	artifactURI := "artifact://edge/evt-edge028-e2e-tool/tool-input"
+	manualTimestamp := time.Now().UTC().Format(time.RFC3339Nano)
+	eventRR := edgeRoutePOST(t, handler, "/api/v1/edge/events", `{
+		"event_id":"`+manualEventID+`",
+		"session_id":"`+session.SessionID+`",
+		"execution_id":"`+execution.ExecutionID+`",
+		"tenant_id":"`+edgeRouteTenant+`",
+		"ts":"`+manualTimestamp+`",
+		"layer":"hook",
+		"kind":"hook.post_tool_use",
+		"tool_name":"Bash",
+		"input_redacted":{"summary":"test run completed"},
+		"artifact_ptrs":[{
+			"artifact_type":"edge.tool_input",
+			"session_id":"`+session.SessionID+`",
+			"execution_id":"`+execution.ExecutionID+`",
+			"event_id":"`+manualEventID+`",
+			"tenant_id":"`+edgeRouteTenant+`",
+			"retention_class":"short",
+			"redaction_level":"standard",
+			"sha256":"sha256:edge028artifact",
+			"uri":"`+artifactURI+`",
+			"created_at":"`+manualTimestamp+`"
+		}],
+		"decision":"ALLOW",
+		"status":"ok"
+	}`)
+	if eventRR.Code != http.StatusCreated {
+		t.Fatalf("manual event write status = %d, want 201 body=%s", eventRR.Code, eventRR.Body.String())
+	}
+	var manualEvent edgecore.AgentActionEvent
+	decodeEdgeRouteJSON(t, eventRR, &manualEvent)
+	if manualEvent.EventID != manualEventID || manualEvent.Seq != 2 || len(manualEvent.ArtifactPointers) != 1 || manualEvent.ArtifactPointers[0].URI != artifactURI {
+		t.Fatalf("manual event = id:%q seq:%d artifacts:%#v, want %q seq=2 one artifact %q",
+			manualEvent.EventID, manualEvent.Seq, manualEvent.ArtifactPointers, manualEventID, artifactURI)
+	}
+	assertStreamedEdgeEvent(t, readGatewayEdgeStreamEvent(t, streamQueue, "manual event write"), manualEventID, edgecore.DecisionAllow, edgecore.EventKindHookPostToolUse)
+
+	safety.mu.Lock()
+	safety.response = &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "production command requires approval",
+		RuleId:           "edge028.require-approval",
+		PolicySnapshot:   session.PolicySnapshot,
+		ApprovalRequired: true,
+	}
+	safety.mu.Unlock()
+	approvalCommand := map[string]any{"command": "rm -rf /tmp/edge028-e2e"}
+	approvalRR := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate",
+		edgeEvaluateBody(session.SessionID, execution.ExecutionID, edgeRouteTenant, "Bash", approvalCommand))
+	if approvalRR.Code != http.StatusOK {
+		t.Fatalf("approval evaluate status = %d, want 200 body=%s", approvalRR.Code, approvalRR.Body.String())
+	}
+	var approvalResp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, approvalRR, &approvalResp)
+	if approvalResp.Decision != string(edgecore.DecisionRequireApproval) ||
+		approvalResp.PermissionDecision != "deny" ||
+		approvalResp.RuleID != "edge028.require-approval" ||
+		approvalResp.PolicySnapshot != session.PolicySnapshot ||
+		!strings.HasPrefix(approvalResp.ApprovalRef, edgecore.ApprovalRefPrefix) {
+		t.Fatalf("approval response = decision:%q permission:%q rule:%q snapshot:%q ref:%q body=%s",
+			approvalResp.Decision, approvalResp.PermissionDecision, approvalResp.RuleID, approvalResp.PolicySnapshot, approvalResp.ApprovalRef, approvalRR.Body.String())
+	}
+	assertStreamedEdgeEvent(t, readGatewayEdgeStreamEvent(t, streamQueue, "approval required event"), approvalResp.EventID, edgecore.DecisionRequireApproval, edgecore.EventKindHookPolicyDecision)
+
+	detail := edgeApprovalRouteGETAs(t, handler, edgeRouteTestAPIKey, edgeRouteTenant, "/api/v1/edge/approvals/"+approvalResp.ApprovalRef)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("approval detail status = %d, want 200 body=%s", detail.Code, detail.Body.String())
+	}
+	var pending edgecore.EdgeApproval
+	decodeEdgeRouteJSON(t, detail, &pending)
+	if pending.Status != edgecore.ApprovalStatusPending ||
+		pending.EventID != approvalResp.EventID ||
+		pending.ActionHash != approvalResp.ActionHash ||
+		pending.PolicySnapshot != session.PolicySnapshot {
+		t.Fatalf("pending approval = status:%q event:%q action:%q snapshot:%q, want pending/%q/%q/%q",
+			pending.Status, pending.EventID, pending.ActionHash, pending.PolicySnapshot, approvalResp.EventID, approvalResp.ActionHash, session.PolicySnapshot)
+	}
+
+	approve := edgeApprovalRoutePOSTAs(t, handler, edgeRouteReviewerAPIKey, "/api/v1/edge/approvals/"+approvalResp.ApprovalRef+"/approve", `{"reason":"approved for e2e retry"}`)
+	if approve.Code != http.StatusOK {
+		t.Fatalf("approve status = %d, want 200 body=%s", approve.Code, approve.Body.String())
+	}
+	var approved edgecore.EdgeApproval
+	decodeEdgeRouteJSON(t, approve, &approved)
+	if approved.Status != edgecore.ApprovalStatusApproved ||
+		approved.Decision != edgecore.ApprovalDecisionApprove ||
+		approved.ResolutionReason != "approved for e2e retry" ||
+		approved.ResolvedAt == nil {
+		t.Fatalf("approved record = status:%q decision:%q reason:%q resolved:%v",
+			approved.Status, approved.Decision, approved.ResolutionReason, approved.ResolvedAt)
+	}
+
+	retryBody := edgeEvaluateBodyWithApprovalRef(session.SessionID, execution.ExecutionID, edgeRouteTenant, "Bash", approvalCommand, approvalResp.ApprovalRef)
+	retryRR := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", retryBody)
+	if retryRR.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200 body=%s", retryRR.Code, retryRR.Body.String())
+	}
+	var retryResp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, retryRR, &retryResp)
+	if retryResp.Decision != string(edgecore.DecisionAllow) ||
+		retryResp.PermissionDecision != "allow" ||
+		retryResp.ApprovalRef != approvalResp.ApprovalRef ||
+		retryResp.WaitAfter != "" ||
+		retryResp.ActionHash != approvalResp.ActionHash ||
+		retryResp.InputHash != approvalResp.InputHash {
+		t.Fatalf("retry response = decision:%q permission:%q ref:%q wait_after:%q action:%q input:%q, want allow consumed ref/action/input",
+			retryResp.Decision, retryResp.PermissionDecision, retryResp.ApprovalRef, retryResp.WaitAfter, retryResp.ActionHash, retryResp.InputHash)
+	}
+	assertStreamedEdgeEvent(t, readGatewayEdgeStreamEvent(t, streamQueue, "approval retry allow event"), retryResp.EventID, edgecore.DecisionAllow, edgecore.EventKindHookPolicyDecision)
+
+	duplicateRR := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", retryBody)
+	if duplicateRR.Code != http.StatusOK {
+		t.Fatalf("duplicate retry status = %d, want 200 body=%s", duplicateRR.Code, duplicateRR.Body.String())
+	}
+	var duplicateResp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, duplicateRR, &duplicateResp)
+	if duplicateResp.Decision != string(edgecore.DecisionDeny) ||
+		duplicateResp.PermissionDecision != "deny" ||
+		duplicateResp.ApprovalRef != approvalResp.ApprovalRef ||
+		duplicateResp.WaitAfter != "request_new_approval" {
+		t.Fatalf("duplicate retry response = decision:%q permission:%q ref:%q wait_after:%q, want deny consumed ref/new approval",
+			duplicateResp.Decision, duplicateResp.PermissionDecision, duplicateResp.ApprovalRef, duplicateResp.WaitAfter)
+	}
+	assertStreamedEdgeEvent(t, readGatewayEdgeStreamEvent(t, streamQueue, "duplicate retry deny event"), duplicateResp.EventID, edgecore.DecisionDeny, edgecore.EventKindHookPolicyDecision)
+
+	eventsRR := edgeRouteGET(t, handler, "/api/v1/edge/sessions/"+session.SessionID+"/events?limit=10")
+	if eventsRR.Code != http.StatusOK {
+		t.Fatalf("session events status = %d, want 200 body=%s", eventsRR.Code, eventsRR.Body.String())
+	}
+	var eventsPage edgeEventPageResponseJSON
+	decodeEdgeRouteJSON(t, eventsRR, &eventsPage)
+	assertEdgeEventIDs(t, eventsPage.Items, []string{allowResp.EventID, manualEventID, approvalResp.EventID, retryResp.EventID, duplicateResp.EventID})
+	if eventsPage.Items[0].Decision != edgecore.DecisionAllow ||
+		eventsPage.Items[2].Decision != edgecore.DecisionRequireApproval ||
+		eventsPage.Items[3].Decision != edgecore.DecisionAllow ||
+		eventsPage.Items[4].Decision != edgecore.DecisionDeny {
+		t.Fatalf("event decisions = [%q,%q,%q,%q,%q], want ALLOW,ALLOW,REQUIRE_APPROVAL,ALLOW,DENY",
+			eventsPage.Items[0].Decision, eventsPage.Items[1].Decision, eventsPage.Items[2].Decision, eventsPage.Items[3].Decision, eventsPage.Items[4].Decision)
+	}
+
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, approvalResp.ApprovalRef)
+	if err != nil || !ok || stored == nil || stored.ConsumedAt == nil {
+		t.Fatalf("stored approval after retry = (%#v,%v,%v), want consumed approval", stored, ok, err)
+	}
+	if stored.Status != edgecore.ApprovalStatusApproved ||
+		stored.Decision != edgecore.ApprovalDecisionApprove ||
+		stored.EventID != approvalResp.EventID ||
+		stored.ResolverID != approved.ResolverID ||
+		stored.ResolvedBy != approved.ResolvedBy ||
+		stored.ResolvedAt == nil ||
+		stored.ResolutionReason != "approved for e2e retry" {
+		t.Fatalf("stored approval evidence = status:%q decision:%q event:%q resolver:%q by:%q resolved:%v reason:%q",
+			stored.Status, stored.Decision, stored.EventID, stored.ResolverID, stored.ResolvedBy, stored.ResolvedAt, stored.ResolutionReason)
+	}
+
+	// Use local/dev export behavior with no artifact-store reader: the bundle
+	// must still include metadata-only missing-artifact manifests and must never
+	// inline or echo tool payload literals.
+	s.artifactStore = nil
+	exportRR := edgeRoutePOST(t, handler, "/api/v1/edge/sessions/"+session.SessionID+"/export", `{"max_events":10}`)
+	if exportRR.Code != http.StatusOK {
+		t.Fatalf("export status = %d, want 200 body=%s", exportRR.Code, exportRR.Body.String())
+	}
+	var bundle edgecore.SessionExportBundle
+	decodeEdgeRouteJSON(t, exportRR, &bundle)
+	if bundle.ManifestVersion != edgecore.ExportManifestVersion ||
+		bundle.TenantID != edgeRouteTenant ||
+		bundle.Session.SessionID != session.SessionID ||
+		len(bundle.Events) != 5 ||
+		len(bundle.Approvals) != 1 {
+		t.Fatalf("export bundle = manifest:%q tenant:%q session:%q events:%d approvals:%d firstApproval:%#v",
+			bundle.ManifestVersion, bundle.TenantID, bundle.Session.SessionID, len(bundle.Events), len(bundle.Approvals), bundle.Approvals)
+	}
+	exportedApproval := bundle.Approvals[0]
+	if exportedApproval.ApprovalRef != approvalResp.ApprovalRef ||
+		exportedApproval.EventID != approvalResp.EventID ||
+		exportedApproval.Status != edgecore.ApprovalStatusApproved ||
+		exportedApproval.Decision != edgecore.ApprovalDecisionApprove ||
+		exportedApproval.PrincipalID != "principal-edge-a" ||
+		exportedApproval.ResolverID != "principal-reviewer" ||
+		!strings.Contains(exportedApproval.ResolvedBy, "principal:principal-reviewer") ||
+		exportedApproval.ResolutionReason != "approved for e2e retry" ||
+		exportedApproval.ActionHash != approvalResp.ActionHash ||
+		exportedApproval.InputHash != approvalResp.InputHash ||
+		exportedApproval.CreatedAt.IsZero() ||
+		exportedApproval.ResolvedAt == nil ||
+		exportedApproval.ConsumedAt == nil {
+		t.Fatalf("exported approval = %#v, want issue+approve+consume evidence with requester, resolver, and timestamps", exportedApproval)
+	}
+	assertEdgeEventIDs(t, bundle.Events, []string{allowResp.EventID, manualEventID, approvalResp.EventID, retryResp.EventID, duplicateResp.EventID})
+	exportApprovalEvent := findEdgeEventByID(t, bundle.Events, approvalResp.EventID)
+	if exportApprovalEvent.Decision != edgecore.DecisionRequireApproval ||
+		exportApprovalEvent.PolicySnapshot != session.PolicySnapshot {
+		t.Fatalf("export approval event evidence = decision:%q snapshot:%q, want REQUIRE_APPROVAL/%q",
+			exportApprovalEvent.Decision, exportApprovalEvent.PolicySnapshot, session.PolicySnapshot)
+	}
+	if len(bundle.MissingArtifacts) != 1 ||
+		bundle.MissingArtifacts[0].URI != artifactURI ||
+		bundle.MissingArtifacts[0].EventID != manualEventID ||
+		bundle.MissingArtifacts[0].Reason != edgecore.MissingArtifactReasonNotFound {
+		t.Fatalf("missing artifacts = %#v, want one not_found manifest entry for %q", bundle.MissingArtifacts, artifactURI)
+	}
+}
+
+func TestGatewayEdgeRedactionRoundTripAcrossEventsApprovalsAndExport(t *testing.T) {
+	syntheticSecrets := []string{
+		"sk-test-fake-secret-xyz",
+		"ghp_FAKETOKEN0000",
+		"Bearer fake.jwt.value",
+		"aws-access-key-fake/AKIAFAKEONLY",
+	}
+	secretCommand := strings.Join([]string{
+		"curl https://example.invalid",
+		"--header Authorization: " + syntheticSecrets[2],
+		"--data api_key=" + syntheticSecrets[0],
+		"--data github_token=" + syntheticSecrets[1],
+		"AWS_ACCESS_KEY_ID=" + syntheticSecrets[3],
+	}, " ")
+
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "approval required for " + strings.Join(syntheticSecrets, " "),
+		RuleId:           "edge028.redaction.require-approval",
+		PolicySnapshot:   "",
+		ApprovalRequired: true,
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeRouteSession(t, handler)
+	safety.mu.Lock()
+	safety.response.PolicySnapshot = session.PolicySnapshot
+	safety.mu.Unlock()
+	execution := createEdgeRouteExecution(t, handler, session.SessionID)
+
+	artifactEventID := "evt-edge028-redaction-artifact"
+	artifactURI := "artifact://edge/redaction/tool-input"
+	artifactSHA := "sha256:edge028redactionartifact"
+	artifactTimestamp := time.Now().UTC().Format(time.RFC3339Nano)
+	manual := edgeRoutePOST(t, handler, "/api/v1/edge/events", `{
+		"event_id":"`+artifactEventID+`",
+		"session_id":"`+session.SessionID+`",
+		"execution_id":"`+execution.ExecutionID+`",
+		"tenant_id":"`+edgeRouteTenant+`",
+		"ts":"`+artifactTimestamp+`",
+		"layer":"hook",
+		"kind":"hook.pre_tool_use",
+		"tool_name":"Bash",
+		"input_redacted":{
+			"command":"`+secretCommand+`",
+			"token":"`+syntheticSecrets[1]+`",
+			"aws_access_key_id":"`+syntheticSecrets[3]+`"
+		},
+		"artifact_ptrs":[{
+			"artifact_type":"edge.tool_input",
+			"session_id":"`+session.SessionID+`",
+			"execution_id":"`+execution.ExecutionID+`",
+			"event_id":"`+artifactEventID+`",
+			"tenant_id":"`+edgeRouteTenant+`",
+			"retention_class":"short",
+			"redaction_level":"standard",
+			"sha256":"`+artifactSHA+`",
+			"uri":"`+artifactURI+`",
+			"created_at":"`+artifactTimestamp+`"
+		}],
+		"decision":"ALLOW",
+		"status":"ok"
+	}`)
+	if manual.Code != http.StatusCreated {
+		t.Fatalf("manual redaction event status = %d, want 201 body=%s", manual.Code, manual.Body.String())
+	}
+	mustNotContain(t, manual.Body.String(), syntheticSecrets...)
+	if !bodyHasRedactionMarker(manual.Body.String()) || !strings.Contains(manual.Body.String(), "sha256:") {
+		t.Fatalf("manual redaction event body missing marker/hash: %s", manual.Body.String())
+	}
+
+	approvalRR := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(
+		session.SessionID,
+		execution.ExecutionID,
+		edgeRouteTenant,
+		"Bash",
+		map[string]any{"command": secretCommand},
+	))
+	if approvalRR.Code != http.StatusOK {
+		t.Fatalf("redaction approval evaluate status = %d, want 200 body=%s", approvalRR.Code, approvalRR.Body.String())
+	}
+	mustNotContain(t, approvalRR.Body.String(), syntheticSecrets...)
+	if !bodyHasRedactionMarker(approvalRR.Body.String()) {
+		t.Fatalf("approval evaluate body missing redaction marker: %s", approvalRR.Body.String())
+	}
+	var approvalResp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, approvalRR, &approvalResp)
+	if approvalResp.Decision != string(edgecore.DecisionRequireApproval) || approvalResp.ApprovalRef == "" {
+		t.Fatalf("approval response decision/ref = %q/%q, want REQUIRE_APPROVAL with ref body=%s", approvalResp.Decision, approvalResp.ApprovalRef, approvalRR.Body.String())
+	}
+	if approvalResp.InputHash == "" || !strings.HasPrefix(approvalResp.InputHash, "sha256:") || approvalResp.ActionHash == "" || !strings.HasPrefix(approvalResp.ActionHash, "sha256:") {
+		t.Fatalf("approval hashes = input:%q action:%q, want sha256 hashes", approvalResp.InputHash, approvalResp.ActionHash)
+	}
+
+	eventsRR := edgeRouteGET(t, handler, "/api/v1/edge/sessions/"+session.SessionID+"/events?limit=10")
+	if eventsRR.Code != http.StatusOK {
+		t.Fatalf("redaction session events status = %d, want 200 body=%s", eventsRR.Code, eventsRR.Body.String())
+	}
+	mustNotContain(t, eventsRR.Body.String(), syntheticSecrets...)
+	if !bodyHasRedactionMarker(eventsRR.Body.String()) || !strings.Contains(eventsRR.Body.String(), "sha256:") {
+		t.Fatalf("session events body missing redaction marker/hash: %s", eventsRR.Body.String())
+	}
+	var eventsPage edgeEventPageResponseJSON
+	decodeEdgeRouteJSON(t, eventsRR, &eventsPage)
+	manualEvent := findEdgeEventByID(t, eventsPage.Items, artifactEventID)
+	approvalEvent := findEdgeEventByID(t, eventsPage.Items, approvalResp.EventID)
+	if manualEvent.InputHash == "" || !strings.HasPrefix(manualEvent.InputHash, "sha256:") || len(manualEvent.ArtifactPointers) != 1 {
+		t.Fatalf("manual event hash/artifacts = %q/%#v, want sha256 hash and one artifact pointer", manualEvent.InputHash, manualEvent.ArtifactPointers)
+	}
+	if manualEvent.InputRedacted["command"] != "<redacted>" || manualEvent.InputRedacted["token"] != "<redacted>" || manualEvent.InputRedacted["aws_access_key_id"] != "<redacted>" {
+		t.Fatalf("manual event input_redacted = %#v, want all synthetic secret fields redacted", manualEvent.InputRedacted)
+	}
+	if manualEvent.ArtifactPointers[0].URI != artifactURI || manualEvent.ArtifactPointers[0].SHA256 != artifactSHA {
+		t.Fatalf("manual artifact pointer = %#v, want uri %q sha %q", manualEvent.ArtifactPointers[0], artifactURI, artifactSHA)
+	}
+	if approvalEvent.Decision != edgecore.DecisionRequireApproval || approvalEvent.InputHash == "" || !strings.HasPrefix(approvalEvent.InputHash, "sha256:") || approvalEvent.InputRedacted["command"] != "<redacted>" {
+		t.Fatalf("approval event = decision:%q input_hash:%q input:%#v, want require-approval with redacted hashed input", approvalEvent.Decision, approvalEvent.InputHash, approvalEvent.InputRedacted)
+	}
+
+	detail := edgeApprovalRouteGETAs(t, handler, edgeRouteTestAPIKey, edgeRouteTenant, "/api/v1/edge/approvals/"+approvalResp.ApprovalRef)
+	if detail.Code != http.StatusOK {
+		t.Fatalf("redaction approval detail status = %d, want 200 body=%s", detail.Code, detail.Body.String())
+	}
+	mustNotContain(t, detail.Body.String(), syntheticSecrets...)
+	if !bodyHasRedactionMarker(detail.Body.String()) || !strings.Contains(detail.Body.String(), "sha256:") {
+		t.Fatalf("approval detail body missing marker/hash: %s", detail.Body.String())
+	}
+	var pending edgecore.EdgeApproval
+	decodeEdgeRouteJSON(t, detail, &pending)
+	if pending.Reason != "<redacted>" || pending.InputHash != approvalResp.InputHash || pending.ActionHash != approvalResp.ActionHash {
+		t.Fatalf("pending approval = reason:%q input:%q action:%q, want redacted reason and response hashes %q/%q",
+			pending.Reason, pending.InputHash, pending.ActionHash, approvalResp.InputHash, approvalResp.ActionHash)
+	}
+
+	// Use local/dev export behavior with no artifact-store reader: the bundle
+	// must still include metadata-only missing-artifact manifests and must never
+	// inline or echo tool payload literals.
+	s.artifactStore = nil
+	exportRR := edgeRoutePOST(t, handler, "/api/v1/edge/sessions/"+session.SessionID+"/export", `{"max_events":10}`)
+	if exportRR.Code != http.StatusOK {
+		t.Fatalf("redaction export status = %d, want 200 body=%s", exportRR.Code, exportRR.Body.String())
+	}
+	mustNotContain(t, exportRR.Body.String(), syntheticSecrets...)
+	if !bodyHasRedactionMarker(exportRR.Body.String()) || !strings.Contains(exportRR.Body.String(), "sha256:") {
+		t.Fatalf("export body missing redaction marker/hash: %s", exportRR.Body.String())
+	}
+	var bundle edgecore.SessionExportBundle
+	decodeEdgeRouteJSON(t, exportRR, &bundle)
+	if bundle.ManifestVersion != edgecore.ExportManifestVersion || bundle.TenantID != edgeRouteTenant || bundle.Session.SessionID != session.SessionID {
+		t.Fatalf("export identity = manifest:%q tenant:%q session:%q, want %q/%q/%q",
+			bundle.ManifestVersion, bundle.TenantID, bundle.Session.SessionID, edgecore.ExportManifestVersion, edgeRouteTenant, session.SessionID)
+	}
+	if len(bundle.Approvals) != 1 || bundle.Approvals[0].Reason != "<redacted>" || bundle.Approvals[0].InputHash != approvalResp.InputHash {
+		t.Fatalf("export approvals = %#v, want one redacted approval with input hash %q", bundle.Approvals, approvalResp.InputHash)
+	}
+	exportedManual := findEdgeEventByID(t, bundle.Events, artifactEventID)
+	exportedApproval := findEdgeEventByID(t, bundle.Events, approvalResp.EventID)
+	if exportedManual.InputRedacted["command"] != "<redacted>" || exportedApproval.InputRedacted["command"] != "<redacted>" {
+		t.Fatalf("exported event inputs = manual:%#v approval:%#v, want redacted commands", exportedManual.InputRedacted, exportedApproval.InputRedacted)
+	}
+	if len(bundle.Artifacts) != 0 {
+		t.Fatalf("export artifacts = %#v, want none when artifact store is not wired", bundle.Artifacts)
+	}
+	if len(bundle.MissingArtifacts) != 1 || bundle.MissingArtifacts[0].URI != artifactURI || bundle.MissingArtifacts[0].SHA256 != artifactSHA || bundle.MissingArtifacts[0].Reason != edgecore.MissingArtifactReasonNotFound {
+		t.Fatalf("export missing artifacts = %#v, want one metadata-only missing-artifact manifest %q/%q not_found", bundle.MissingArtifacts, artifactURI, artifactSHA)
+	}
 }
 
 func TestGatewayEdgeRoutesRegisteredAndTenantScoped(t *testing.T) {
@@ -80,6 +539,41 @@ func TestGatewayEdgeRoutesRequireAuthTenantAndReachHandlers(t *testing.T) {
 	if rr.Code == http.StatusUnauthorized || rr.Code == http.StatusForbidden {
 		t.Fatalf("authorized Edge sessions list was rejected by auth/tenant middleware: %d", rr.Code)
 	}
+}
+
+func TestGatewayEdgeExportRequiresAuthTenantAndDeniesCrossTenant(t *testing.T) {
+	_, handler := newEdgeRouteTestServer(t)
+	session := createEdgeRouteSession(t, handler)
+	path := "/api/v1/edge/sessions/" + session.SessionID + "/export"
+
+	missingAuth := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+	missingAuth.Header.Set("X-Tenant-ID", edgeRouteTenant)
+	missingAuth.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, missingAuth)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("export missing auth status = %d, want 401 body=%s", rr.Code, rr.Body.String())
+	}
+
+	missingTenant := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+	addEdgeRouteAuth(missingTenant)
+	missingTenant.Header.Set("Content-Type", "application/json")
+	rr = httptest.NewRecorder()
+	handler.ServeHTTP(rr, missingTenant)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("export missing tenant status = %d, want 403 body=%s", rr.Code, rr.Body.String())
+	}
+
+	authorized := edgeRoutePOST(t, handler, path, `{}`)
+	if authorized.Code != http.StatusOK {
+		t.Fatalf("authorized export status = %d, want 200 body=%s", authorized.Code, authorized.Body.String())
+	}
+
+	crossTenant := edgeRoutePOSTAsTenantWithIdempotencyKey(t, handler, edgeRouteOtherAPIKey, edgeRouteOtherTenant, path, `{}`, "")
+	if crossTenant.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant export status = %d, want 404 body=%s", crossTenant.Code, crossTenant.Body.String())
+	}
+	assertBodyOmits(t, crossTenant.Body.String(), session.SessionID, edgeRouteTenant)
 }
 
 func TestGatewayEdgeSessionCreateRejectsBadJSONAndTenantMismatch(t *testing.T) {
@@ -647,6 +1141,27 @@ func decodeEdgeRouteJSON(t *testing.T, rr *httptest.ResponseRecorder, dst any) {
 	}
 }
 
+func assertStreamedEdgeEvent(t *testing.T, event wsEvent, wantEventID string, wantDecision edgecore.EdgeDecision, wantKind edgecore.EventKind) {
+	t.Helper()
+	if event.tenant != edgeRouteTenant {
+		t.Fatalf("stream tenant = %q, want %q", event.tenant, edgeRouteTenant)
+	}
+	var envelope struct {
+		Type  string                    `json:"type"`
+		Event edgecore.AgentActionEvent `json:"event"`
+	}
+	if err := json.Unmarshal(event.data, &envelope); err != nil {
+		t.Fatalf("decode streamed edge.event: %v body=%s", err, string(event.data))
+	}
+	if envelope.Type != "edge.event" ||
+		envelope.Event.EventID != wantEventID ||
+		envelope.Event.Decision != wantDecision ||
+		envelope.Event.Kind != wantKind {
+		t.Fatalf("stream envelope = type:%q event:%q decision:%q kind:%q, want edge.event/%q/%q/%q body=%s",
+			envelope.Type, envelope.Event.EventID, envelope.Event.Decision, envelope.Event.Kind, wantEventID, wantDecision, wantKind, string(event.data))
+	}
+}
+
 func assertNoEdgeTokenLeak(t *testing.T, body string) {
 	t.Helper()
 	for _, forbidden := range []string{"hook_policy_token", "enterprise_hook_token", "api_key", "secret"} {
@@ -657,6 +1172,11 @@ func assertNoEdgeTokenLeak(t *testing.T, body string) {
 }
 
 func assertBodyOmits(t *testing.T, body string, forbidden ...string) {
+	t.Helper()
+	mustNotContain(t, body, forbidden...)
+}
+
+func mustNotContain(t *testing.T, body string, forbidden ...string) {
 	t.Helper()
 	for _, value := range forbidden {
 		if strings.TrimSpace(value) == "" {
@@ -670,6 +1190,17 @@ func assertBodyOmits(t *testing.T, body string, forbidden ...string) {
 
 func bodyHasRedactionMarker(body string) bool {
 	return strings.Contains(body, "<redacted>") || strings.Contains(body, `\u003credacted\u003e`)
+}
+
+func findEdgeEventByID(t *testing.T, events []edgecore.AgentActionEvent, eventID string) edgecore.AgentActionEvent {
+	t.Helper()
+	for _, event := range events {
+		if event.EventID == eventID {
+			return event
+		}
+	}
+	t.Fatalf("event %q not found in %#v", eventID, events)
+	return edgecore.AgentActionEvent{}
 }
 
 // assertEdgeErrorShape verifies that an /api/v1/edge/* error response uses
@@ -749,7 +1280,9 @@ func edgeRouteExpectations() []edgeRouteExpectation {
 		{method: http.MethodGet, path: "/api/v1/edge/approvals/{approval_ref}"},
 		{method: http.MethodPost, path: "/api/v1/edge/approvals/{approval_ref}/approve"},
 		{method: http.MethodPost, path: "/api/v1/edge/approvals/{approval_ref}/reject"},
+		{method: http.MethodPost, path: "/api/v1/edge/approvals/{approval_ref}/wait"},
 		{method: http.MethodPost, path: "/api/v1/edge/evaluate"},
+		{method: http.MethodPost, path: "/api/v1/edge/sessions/{session_id}/export"},
 	}
 }
 

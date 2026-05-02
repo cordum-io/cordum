@@ -87,6 +87,30 @@ func (c *GatewayClient) WriteEvent(ctx context.Context, event edgecore.AgentActi
 	return out, nil
 }
 
+func (c *GatewayClient) WriteEvents(ctx context.Context, events []edgecore.AgentActionEvent) ([]edgecore.AgentActionEvent, error) {
+	return c.WriteEventsWithIdempotency(ctx, events, "")
+}
+
+func (c *GatewayClient) WriteEventsWithIdempotency(ctx context.Context, events []edgecore.AgentActionEvent, idempotencyKey string) ([]edgecore.AgentActionEvent, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	var out struct {
+		Items []edgecore.AgentActionEvent `json:"items"`
+	}
+	req := struct {
+		Events []edgecore.AgentActionEvent `json:"events"`
+	}{Events: append([]edgecore.AgentActionEvent(nil), events...)}
+	headers := map[string]string{}
+	if key := strings.TrimSpace(idempotencyKey); key != "" {
+		headers["Idempotency-Key"] = key
+	}
+	if err := c.doJSONWithHeaders(ctx, http.MethodPost, "/api/v1/edge/events/batch", req, headers, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
 func (c *GatewayClient) MarkSessionDegraded(ctx context.Context, state SessionState, reason string) (edgecore.AgentActionEvent, error) {
 	cleanReason := boundMetadataString(redactSecretLike(reason))
 	event := edgecore.AgentActionEvent{
@@ -112,6 +136,10 @@ func (c *GatewayClient) MarkSessionDegraded(ctx context.Context, state SessionSt
 }
 
 func (c *GatewayClient) doJSON(ctx context.Context, method, path string, body any, out any) error {
+	return c.doJSONWithHeaders(ctx, method, path, body, nil, out)
+}
+
+func (c *GatewayClient) doJSONWithHeaders(ctx context.Context, method, path string, body any, headers map[string]string, out any) error {
 	if c == nil || c.client == nil {
 		return errors.New("gateway client not configured")
 	}
@@ -145,6 +173,11 @@ func (c *GatewayClient) doJSON(ctx context.Context, method, path string, body an
 	}
 	if c.tenant != "" {
 		httpReq.Header.Set("X-Tenant-ID", c.tenant)
+	}
+	for key, value := range headers {
+		if key = strings.TrimSpace(key); key != "" {
+			httpReq.Header.Set(key, strings.TrimSpace(value))
+		}
 	}
 	resp, err := c.client.Do(httpReq)
 	if err != nil {

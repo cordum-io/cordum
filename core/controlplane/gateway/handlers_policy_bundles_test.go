@@ -1079,7 +1079,7 @@ func TestListPolicyAudit_AgentIDFilter(t *testing.T) {
 		}
 		var result struct {
 			Items []policybundles.PolicyAuditEntry `json:"items"`
-			Total int64              `json:"total"`
+			Total int64                            `json:"total"`
 		}
 		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
 			t.Fatalf("decode response: %v", err)
@@ -1106,7 +1106,7 @@ func TestListPolicyAudit_AgentIDFilter(t *testing.T) {
 		}
 		var result struct {
 			Items []policybundles.PolicyAuditEntry `json:"items"`
-			Total int64              `json:"total"`
+			Total int64                            `json:"total"`
 		}
 		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
 			t.Fatalf("decode response: %v", err)
@@ -1131,7 +1131,7 @@ func TestListPolicyAudit_AgentIDFilter(t *testing.T) {
 		}
 		var result struct {
 			Items []policybundles.PolicyAuditEntry `json:"items"`
-			Total int64              `json:"total"`
+			Total int64                            `json:"total"`
 		}
 		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
 			t.Fatalf("decode response: %v", err)
@@ -1153,7 +1153,7 @@ func TestListPolicyAudit_AgentIDFilter(t *testing.T) {
 		}
 		var result struct {
 			Items []policybundles.PolicyAuditEntry `json:"items"`
-			Total int64              `json:"total"`
+			Total int64                            `json:"total"`
 		}
 		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
 			t.Fatalf("decode response: %v", err)
@@ -1175,7 +1175,7 @@ func TestListPolicyAudit_AgentIDFilter(t *testing.T) {
 		}
 		var result struct {
 			Items []policybundles.PolicyAuditEntry `json:"items"`
-			Total int64              `json:"total"`
+			Total int64                            `json:"total"`
 		}
 		if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
 			t.Fatalf("decode response: %v", err)

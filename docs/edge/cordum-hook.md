@@ -56,6 +56,9 @@ The request sent to agentd contains bounded hook metadata, session/execution IDs
 For the developer wrapper that starts agentd, generates temporary settings,
 and launches Claude Code, see [`cordumctl edge claude`](./cordumctl-edge-claude.md).
 
+See [`LOCAL_E2E.md` § Edge fake-hook E2E](../LOCAL_E2E.md#edge-fake-hook-e2e)
+for a CI-safe end-to-end exerciser of the Gateway side of this contract.
+
 ## Mapper contract
 
 Before calling local `cordum-agentd`, the hook runs the EDGE-016 Claude mapper

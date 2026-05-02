@@ -1,5 +1,12 @@
 package edge
 
+// Redis unavailable simulations in this file use miniredis.Close() for
+// connection-loss paths and miniredis.SetError() for command/pipeline
+// failures. miniredis cannot model every production Redis failure mode (for
+// example timeout-after-WATCH but before EXEC, kernel-level half-open TCP, or
+// cluster failover mid-pipeline), so those remain out of scope unless a fake
+// store is introduced explicitly in a targeted test.
+
 import (
 	"context"
 	"errors"
@@ -12,6 +19,110 @@ import (
 
 	"github.com/redis/go-redis/v9"
 )
+
+func TestRedisStoreApprovalEnqueueReturnsErrorWhenRedisClosed(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 1, 20, 0, 0, 0, time.UTC)
+	store, _, mr, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	createApprovalParents(t, ctx, store, "tenant-a", "sess-appr-redis-closed", "exec-appr-redis-closed", "event-appr-redis-closed", base)
+	req := validApprovalRequest("tenant-a", "sess-appr-redis-closed", "exec-appr-redis-closed", "event-appr-redis-closed", base)
+
+	mr.Close()
+	approval, err := store.EnqueueApproval(ctx, req)
+	assertRedisUnavailableError(t, err)
+	assertStoreErrorOmitsSyntheticSecrets(t, err)
+	if approval != nil {
+		t.Fatalf("EnqueueApproval after Redis Close returned approval %#v, want nil", approval)
+	}
+}
+
+func TestRedisStoreApprovalClaimReturnsErrorWhenRedisClosed(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 1, 20, 30, 0, 0, time.UTC)
+	store, _, mr, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	createApprovalParents(t, ctx, store, "tenant-a", "sess-appr-claim-closed", "exec-appr-claim-closed", "event-appr-claim-closed", base)
+	req := validApprovalRequest("tenant-a", "sess-appr-claim-closed", "exec-appr-claim-closed", "event-appr-claim-closed", base)
+	approval, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval: %v", err)
+	}
+	approved, err := store.ApproveApproval(ctx, ApprovalResolution{
+		TenantID:    req.TenantID,
+		ApprovalRef: approval.ApprovalRef,
+		ResolverID:  "principal-reviewer",
+		ResolvedBy:  "reviewer@example.invalid",
+		Reason:      "approved before redis closes",
+		ResolvedAt:  base.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("ApproveApproval: %v", err)
+	}
+	if approved.Status != ApprovalStatusApproved || approved.Decision != ApprovalDecisionApprove {
+		t.Fatalf("approved status/decision = %q/%q, want approved/approve", approved.Status, approved.Decision)
+	}
+
+	mr.Close()
+	claimed, ok, err := store.ClaimApproval(ctx, ApprovalClaimRequest{
+		TenantID:       req.TenantID,
+		ApprovalRef:    approval.ApprovalRef,
+		SessionID:      req.SessionID,
+		ExecutionID:    req.ExecutionID,
+		EventID:        req.EventID,
+		ActionHash:     req.ActionHash,
+		InputHash:      req.InputHash,
+		PolicySnapshot: req.PolicySnapshot,
+		ConsumedAt:     base.Add(2 * time.Minute),
+	})
+	assertRedisUnavailableError(t, err)
+	assertStoreErrorOmitsSyntheticSecrets(t, err)
+	if ok || claimed != nil {
+		t.Fatalf("ClaimApproval after Redis Close = (%#v,%v), want nil,false", claimed, ok)
+	}
+}
+
+func TestRedisStoreApprovalSetErrorLeavesNoPartialEnqueueIndexes(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 1, 21, 0, 0, 0, time.UTC)
+	store, client, mr, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	createApprovalParents(t, ctx, store, "tenant-a", "sess-appr-seterror", "exec-appr-seterror", "event-appr-seterror", base)
+	req := validApprovalRequest("tenant-a", "sess-appr-seterror", "exec-appr-seterror", "event-appr-seterror", base)
+
+	mr.SetError("edge redis unavailable")
+	approval, err := store.EnqueueApproval(ctx, req)
+	assertRedisUnavailableError(t, err)
+	assertStoreErrorOmitsSyntheticSecrets(t, err)
+	if approval != nil {
+		t.Fatalf("EnqueueApproval during Redis SetError returned approval %#v, want nil", approval)
+	}
+
+	mr.SetError("")
+	page, err := store.ListApprovals(ctx, ListApprovalsQuery{TenantID: req.TenantID, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListApprovals after clearing SetError: %v", err)
+	}
+	assertApprovalRefs(t, page.Items, []string{})
+	for _, key := range []string{
+		edgeApprovalTenantIndexKey(req.TenantID),
+		edgeApprovalStatusIndexKey(req.TenantID, ApprovalStatusPending),
+		edgeApprovalPrincipalIndexKey(req.TenantID, req.PrincipalID),
+		edgeApprovalPrincipalStatusIndexKey(req.TenantID, req.PrincipalID, ApprovalStatusPending),
+		edgeApprovalTupleIndexKey(req.TenantID, req.SessionID, req.ExecutionID, req.ActionHash),
+	} {
+		exists, err := client.Exists(ctx, key).Result()
+		if err != nil {
+			t.Fatalf("Exists(%s): %v", key, err)
+		}
+		if exists != 0 {
+			t.Fatalf("key %s exists after failed EnqueueApproval, want no partial approval index writes", key)
+		}
+	}
+}
 
 func TestRedisStoreApprovalLifecycleEnqueueResolveListAndConsume(t *testing.T) {
 	ctx := context.Background()
@@ -463,6 +574,79 @@ func TestRedisStoreApprovalExpireAndStaleParentsFailClosed(t *testing.T) {
 	}
 }
 
+func TestRedisStoreApprovalRejectedAndExpiredCannotBeClaimed(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 1, 16, 30, 0, 0, time.UTC)
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	createApprovalParents(t, ctx, store, "tenant-a", "sess-rejected-claim", "exec-rejected-claim", "event-rejected-claim", base)
+	rejectReq := validApprovalRequest("tenant-a", "sess-rejected-claim", "exec-rejected-claim", "event-rejected-claim", base)
+	rejectSeed, err := store.EnqueueApproval(ctx, rejectReq)
+	if err != nil {
+		t.Fatalf("EnqueueApproval rejected seed: %v", err)
+	}
+	rejected, err := store.RejectApproval(ctx, ApprovalResolution{
+		TenantID:    "tenant-a",
+		ApprovalRef: rejectSeed.ApprovalRef,
+		ResolverID:  "reviewer",
+		ResolvedBy:  "reviewer@example.invalid",
+		Reason:      "denied by reviewer",
+		ResolvedAt:  base.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("RejectApproval: %v", err)
+	}
+	assertRedisApprovalCannotBeClaimed(t, ctx, store, *rejected, rejectReq, base.Add(2*time.Minute))
+
+	createApprovalParents(t, ctx, store, "tenant-a", "sess-expired-claim", "exec-expired-claim", "event-expired-claim", base.Add(10*time.Minute))
+	expireReq := validApprovalRequest("tenant-a", "sess-expired-claim", "exec-expired-claim", "event-expired-claim", base.Add(10*time.Minute))
+	expiring, err := store.EnqueueApproval(ctx, expireReq)
+	if err != nil {
+		t.Fatalf("EnqueueApproval expired seed: %v", err)
+	}
+	if n, err := store.ExpireApprovals(ctx, "tenant-a", base.Add(16*time.Minute)); err != nil || n != 1 {
+		t.Fatalf("ExpireApprovals = %d,%v, want 1,nil", n, err)
+	}
+	expired, ok, err := store.GetApproval(ctx, "tenant-a", expiring.ApprovalRef)
+	if err != nil || !ok || expired == nil {
+		t.Fatalf("GetApproval expired = (%#v,%v,%v), want stored expired approval", expired, ok, err)
+	}
+	assertRedisApprovalCannotBeClaimed(t, ctx, store, *expired, expireReq, base.Add(17*time.Minute))
+
+	createApprovalParents(t, ctx, store, "tenant-a", "sess-approved-expired-claim", "exec-approved-expired-claim", "event-approved-expired-claim", base.Add(20*time.Minute))
+	approvedExpiredReq := validApprovalRequest("tenant-a", "sess-approved-expired-claim", "exec-approved-expired-claim", "event-approved-expired-claim", base.Add(20*time.Minute))
+	approvedExpiredReq.ExpiresAt = base.Add(21 * time.Minute)
+	approvedExpired, err := store.EnqueueApproval(ctx, approvedExpiredReq)
+	if err != nil {
+		t.Fatalf("EnqueueApproval approved-expired seed: %v", err)
+	}
+	if _, err := store.ApproveApproval(ctx, ApprovalResolution{
+		TenantID:    approvedExpiredReq.TenantID,
+		ApprovalRef: approvedExpired.ApprovalRef,
+		ResolverID:  "reviewer",
+		ResolvedBy:  "reviewer@example.invalid",
+		Reason:      "approved before expiry",
+		ResolvedAt:  base.Add(20*time.Minute + 30*time.Second),
+	}); err != nil {
+		t.Fatalf("ApproveApproval approved-expired seed: %v", err)
+	}
+	claimed, claimedOK, err := store.ClaimApproval(ctx, ApprovalClaimRequest{
+		TenantID:       approvedExpiredReq.TenantID,
+		ApprovalRef:    approvedExpired.ApprovalRef,
+		SessionID:      approvedExpiredReq.SessionID,
+		ExecutionID:    approvedExpiredReq.ExecutionID,
+		EventID:        approvedExpiredReq.EventID,
+		ActionHash:     approvedExpiredReq.ActionHash,
+		InputHash:      approvedExpiredReq.InputHash,
+		PolicySnapshot: approvedExpiredReq.PolicySnapshot,
+		ConsumedAt:     base.Add(22 * time.Minute),
+	})
+	if !errors.Is(err, ErrApprovalConflict) || claimedOK || claimed != nil {
+		t.Fatalf("ClaimApproval approved-after-expiry = (%#v,%v,%v), want ErrApprovalConflict nil,false", claimed, claimedOK, err)
+	}
+}
+
 func TestRedisStoreApprovalValidationAndTenantIsolation(t *testing.T) {
 	ctx := context.Background()
 	base := time.Date(2026, 5, 1, 17, 0, 0, 0, time.UTC)
@@ -847,6 +1031,34 @@ func assertApprovalRefs(t *testing.T, got []EdgeApproval, want []string) {
 	}
 	if !reflect.DeepEqual(refs, want) {
 		t.Fatalf("approval refs = %#v, want %#v", refs, want)
+	}
+}
+
+func assertRedisApprovalCannotBeClaimed(t *testing.T, ctx context.Context, store *RedisStore, approval EdgeApproval, req EdgeApprovalRequest, consumedAt time.Time) {
+	t.Helper()
+	claimed, ok, err := store.ClaimApproval(ctx, ApprovalClaimRequest{
+		TenantID:       req.TenantID,
+		ApprovalRef:    approval.ApprovalRef,
+		SessionID:      req.SessionID,
+		ExecutionID:    req.ExecutionID,
+		EventID:        req.EventID,
+		ActionHash:     req.ActionHash,
+		InputHash:      req.InputHash,
+		PolicySnapshot: req.PolicySnapshot,
+		ConsumedAt:     consumedAt,
+	})
+	if err != nil {
+		t.Fatalf("ClaimApproval terminal approval %q returned err=%v, want nil false result", approval.Status, err)
+	}
+	if ok || claimed != nil {
+		t.Fatalf("ClaimApproval terminal approval %q = (%#v,%v), want nil,false", approval.Status, claimed, ok)
+	}
+	stored, found, err := store.GetApproval(ctx, req.TenantID, approval.ApprovalRef)
+	if err != nil || !found || stored == nil {
+		t.Fatalf("GetApproval after terminal claim attempt = (%#v,%v,%v), want stored approval", stored, found, err)
+	}
+	if stored.Status != approval.Status || stored.ConsumedAt != nil {
+		t.Fatalf("terminal approval after claim = status:%q consumed:%v, want %q nil", stored.Status, stored.ConsumedAt, approval.Status)
 	}
 }
 

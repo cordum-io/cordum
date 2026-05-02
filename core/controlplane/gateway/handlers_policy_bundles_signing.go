@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cordum/cordum/core/policysign"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	"github.com/cordum/cordum/core/policysign"
 )
 
 // policyBundleSignatureKey is the map entry attached to a bundle when

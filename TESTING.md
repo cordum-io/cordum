@@ -224,6 +224,43 @@ func TestScheduler_FullFlow(t *testing.T) {
 }
 ```
 
+### Edge backend integration tests
+
+These are package-level P0 Edge regressions. They do **not** require Docker,
+real Redis, a real Safety Kernel binary, Claude Code, or external network:
+Gateway tests use `httptest` plus stubbed Safety Kernel clients, and store tests
+use `miniredis`.
+
+Run the standard Edge backend gates from the repo root:
+
+```bash
+# Core Edge models, Redis store, approval store, export, agentd, and hook clients.
+go test -count=1 ./core/edge/...
+
+# Gateway Edge routes/evaluate/events/approvals/export/stream regressions.
+go test -count=1 ./core/controlplane/gateway -run 'Test.*Edge'
+
+# Targeted repeat suite for auth/tenant/limits/redaction/outages/stream/approvals/export.
+go test -count=3 ./core/controlplane/gateway -run 'Test.*Edge.*(Auth|Tenant|Limit|Redact|Unavailable|Stream|Approval|Export)'
+```
+
+Expected local duration on the Windows/MSYS dev box is roughly 15-30 seconds
+for the first two commands and 10-20 seconds for the repeat suite. `go test
+-race` is not available when CGO is disabled on this platform; use `-count=3`
+as the flake-detection pass.
+
+Only tests that genuinely need a running stack should use integration tags:
+
+```bash
+CORDUM_INTEGRATION=1 go test -tags=integration -count=1 ./core/...
+```
+
+When `CORDUM_INTEGRATION` is unset, integration-tagged tests or scripts must
+skip cleanly with a documented reason. When it is `1`, missing prerequisites
+(`docker`, live Gateway/Safety Kernel, real Redis/NATS, etc.) are a hard fail.
+For script-level Edge coverage against a live stack, see
+[docs/LOCAL_E2E.md#edge-fake-hook-e2e](docs/LOCAL_E2E.md#edge-fake-hook-e2e).
+
 ### Contract Tests
 
 Verify CAP protocol compliance.

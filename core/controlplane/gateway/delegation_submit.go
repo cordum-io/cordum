@@ -10,9 +10,9 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/auth/delegation"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
-	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 )
 
 var errDelegationAgentRequired = errors.New("delegation token requires an authenticated agent identity")

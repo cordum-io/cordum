@@ -3,8 +3,8 @@ package gateway
 import (
 	"testing"
 
-	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	"github.com/cordum/cordum/core/infra/config"
 )
 
 func TestMergeTenantPolicies(t *testing.T) {

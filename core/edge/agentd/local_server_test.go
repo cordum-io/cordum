@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -236,8 +237,14 @@ func TestLocalServerAcceptedHookWritesBoundedEvidenceEvent(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%q, want 200", rr.Code, rr.Body.String())
 	}
-	if len(writer.events) != 1 {
-		t.Fatalf("events written = %d, want 1", len(writer.events))
+	if len(writer.events) != 2 {
+		t.Fatalf("events written = %d, want receipt+decision", len(writer.events))
+	}
+	if writer.batchWrites != 1 || writer.singleWrites != 0 {
+		t.Fatalf("event writes = batch:%d single:%d, want one batch and no singles", writer.batchWrites, writer.singleWrites)
+	}
+	if !strings.HasPrefix(writer.lastKey, "agentd-hook-") {
+		t.Fatalf("batch idempotency key = %q, want agentd-hook-*", writer.lastKey)
 	}
 	event := writer.events[0]
 	if event.TenantID != "tenant-a" || event.SessionID != "sess-1" || event.ExecutionID != "exec-1" || event.PolicySnapshot != "snap-1" {
@@ -255,6 +262,98 @@ func TestLocalServerAcceptedHookWritesBoundedEvidenceEvent(t *testing.T) {
 	}
 	if got := event.InputRedacted["command"]; got != "[REDACTED]" {
 		t.Fatalf("event input_redacted command = %#v", got)
+	}
+	decisionEvent := writer.events[1]
+	if decisionEvent.Kind != edgecore.EventKindHookPolicyDecision || decisionEvent.Decision != edgecore.DecisionDeny {
+		t.Fatalf("decision event kind/decision = %q/%q, want policy decision deny", decisionEvent.Kind, decisionEvent.Decision)
+	}
+	if decisionEvent.Status != edgecore.ActionStatusBlocked || decisionEvent.PolicySnapshot != "snap-1" {
+		t.Fatalf("decision event status/policy = %q/%q, want blocked/snap-1", decisionEvent.Status, decisionEvent.PolicySnapshot)
+	}
+}
+
+func TestHandleHookEventsAreBatchedAfterEvaluatorReturns(t *testing.T) {
+	t.Parallel()
+
+	writer := &stubEventWriter{}
+	state := atomicHookTestState()
+	evaluator := NewEvaluator(EvaluatorConfig{
+		Client: &stubEvaluateClient{resp: &EvaluateResponse{
+			Decision:                 string(edgecore.DecisionAllow),
+			Reason:                   "allowed by policy",
+			PolicySnapshot:           "snap-atomic",
+			EventID:                  "evt-atomic-decision",
+			InputHash:                "sha256:input-atomic",
+			PermissionDecision:       "allow",
+			PermissionDecisionReason: "allowed by policy",
+		}},
+		State:       state,
+		HookTimeout: time.Second,
+	})
+	server := newAtomicHookTestServer(t, state, evaluator, writer)
+	startedAt := time.Now().UTC()
+
+	rr := serveAtomicHook(t, server, context.Background(), atomicHookRequestBody(t), "nonce-123")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%q, want 200", rr.Code, rr.Body.String())
+	}
+	var decision claude.AgentdDecision
+	if err := json.Unmarshal(rr.Body.Bytes(), &decision); err != nil {
+		t.Fatalf("decode decision: %v", err)
+	}
+	if decision.Decision != claude.DecisionAllow {
+		t.Fatalf("decision = %q, want allow", decision.Decision)
+	}
+	assertAtomicHookEventPair(t, writer, startedAt, edgecore.DecisionAllow)
+}
+
+func TestHandleHookEventsAreAtomicAcrossShutdown(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	writer := &stubEventWriter{beforeBatch: func(context.Context) { cancel() }}
+	server := newAtomicHookTestServer(t, atomicHookTestState(), stubAgentdClientFunc(func(context.Context, claude.AgentdRequest) (claude.AgentdDecision, error) {
+		return claude.AgentdDecision{Decision: claude.DecisionAllow, Reason: "allowed after receipt"}, nil
+	}), writer)
+
+	rr := serveAtomicHook(t, server, ctx, atomicHookRequestBody(t), "nonce-123")
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%q, want 503", rr.Code, rr.Body.String())
+	}
+	if len(writer.events) != 0 {
+		t.Fatalf("events persisted after shutdown = %d, want 0; events=%#v", len(writer.events), writer.events)
+	}
+	if writer.batchWrites != 1 || writer.singleWrites != 0 {
+		t.Fatalf("event writes = batch:%d single:%d, want one failed batch and no singles", writer.batchWrites, writer.singleWrites)
+	}
+	if !strings.HasPrefix(writer.lastKey, "agentd-hook-") {
+		t.Fatalf("batch idempotency key = %q, want agentd-hook-*", writer.lastKey)
+	}
+}
+
+func TestHandleHookEventsAreAtomicAcrossBatchFailure(t *testing.T) {
+	t.Parallel()
+
+	writer := &stubEventWriter{err: errors.New("redis unavailable: sk-test-secret")}
+	server := newAtomicHookTestServer(t, atomicHookTestState(), stubAgentdClientFunc(func(context.Context, claude.AgentdRequest) (claude.AgentdDecision, error) {
+		return claude.AgentdDecision{Decision: claude.DecisionAllow, Reason: "allowed after receipt"}, nil
+	}), writer)
+
+	rr := serveAtomicHook(t, server, context.Background(), atomicHookRequestBody(t), "nonce-123")
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%q, want 503", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "sk-test-secret") || strings.Contains(rr.Body.String(), "redis unavailable") {
+		t.Fatalf("response leaked batch failure internals: %q", rr.Body.String())
+	}
+	if len(writer.events) != 0 {
+		t.Fatalf("events persisted after failed batch = %d, want 0; events=%#v", len(writer.events), writer.events)
+	}
+	if writer.batchWrites != 1 || writer.singleWrites != 0 {
+		t.Fatalf("event writes = batch:%d single:%d, want one failed batch and no singles", writer.batchWrites, writer.singleWrites)
+	}
+	if !strings.HasPrefix(writer.lastKey, "agentd-hook-") {
+		t.Fatalf("batch idempotency key = %q, want agentd-hook-*", writer.lastKey)
 	}
 }
 
@@ -286,12 +385,132 @@ func TestLocalServerRejectsMismatchedSessionIDsWithoutWritingEvent(t *testing.T)
 }
 
 type stubEventWriter struct {
-	events []edgecore.AgentActionEvent
+	events       []edgecore.AgentActionEvent
+	err          error
+	beforeBatch  func(context.Context)
+	singleWrites int
+	batchWrites  int
+	lastKey      string
 }
 
 func (w *stubEventWriter) WriteEvent(_ context.Context, event edgecore.AgentActionEvent) (edgecore.AgentActionEvent, error) {
+	w.singleWrites++
+	if w.err != nil {
+		return edgecore.AgentActionEvent{}, w.err
+	}
 	w.events = append(w.events, event)
 	return event, nil
+}
+
+func (w *stubEventWriter) WriteEvents(ctx context.Context, events []edgecore.AgentActionEvent) ([]edgecore.AgentActionEvent, error) {
+	return w.WriteEventsWithIdempotency(ctx, events, "")
+}
+
+func (w *stubEventWriter) WriteEventsWithIdempotency(ctx context.Context, events []edgecore.AgentActionEvent, key string) ([]edgecore.AgentActionEvent, error) {
+	w.batchWrites++
+	w.lastKey = key
+	if w.beforeBatch != nil {
+		w.beforeBatch(ctx)
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+	if w.err != nil {
+		return nil, w.err
+	}
+	written := append([]edgecore.AgentActionEvent(nil), events...)
+	w.events = append(w.events, written...)
+	return written, nil
+}
+
+func atomicHookTestState() SessionState {
+	return SessionState{
+		SessionID:      "sess-atomic",
+		ExecutionID:    "exec-atomic",
+		TenantID:       "tenant-atomic",
+		PrincipalID:    "principal-atomic",
+		TraceID:        "trace-atomic",
+		PolicySnapshot: "snap-atomic",
+		PolicyMode:     edgecore.PolicyModeEnforce,
+	}
+}
+
+func newAtomicHookTestServer(t *testing.T, state SessionState, evaluator claude.AgentdClient, writer *stubEventWriter) *LocalServer {
+	t.Helper()
+	server, err := NewLocalServer(LocalServerConfig{
+		BindURL:      "http://127.0.0.1:8765/v1/edge/hooks/claude",
+		Nonce:        "nonce-123",
+		MaxBodyBytes: 1 << 20,
+		State:        state,
+		Evaluator:    evaluator,
+		EventWriter:  writer,
+	})
+	if err != nil {
+		t.Fatalf("NewLocalServer: %v", err)
+	}
+	return server
+}
+
+func atomicHookRequestBody(t *testing.T) []byte {
+	t.Helper()
+	body, err := json.Marshal(claude.AgentdRequest{
+		EventName:     "PreToolUse",
+		SessionID:     "sess-atomic",
+		ExecutionID:   "exec-atomic",
+		ToolName:      "Bash",
+		ToolUseID:     "toolu-atomic",
+		Capability:    "exec.shell",
+		RiskTags:      []string{"shell"},
+		InputHash:     "sha256:input-atomic",
+		ActionHash:    "sha256:action-atomic",
+		InputRedacted: map[string]any{"command": "npm test"},
+		DurationMS:    17,
+	})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	return body
+}
+
+func serveAtomicHook(t *testing.T, server *LocalServer, ctx context.Context, body []byte, nonce string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/v1/edge/hooks/claude", bytes.NewReader(body)).WithContext(ctx)
+	req.Header.Set("X-Cordum-Agentd-Nonce", nonce)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	return rr
+}
+
+func assertAtomicHookEventPair(t *testing.T, writer *stubEventWriter, startedAt time.Time, wantDecision edgecore.EdgeDecision) {
+	t.Helper()
+	if len(writer.events) != 2 {
+		t.Fatalf("events written = %d, want receipt+decision; events=%#v", len(writer.events), writer.events)
+	}
+	if writer.batchWrites != 1 || writer.singleWrites != 0 {
+		t.Fatalf("event writes = batch:%d single:%d, want one batch and no singles", writer.batchWrites, writer.singleWrites)
+	}
+	if !strings.HasPrefix(writer.lastKey, "agentd-hook-") {
+		t.Fatalf("batch idempotency key = %q, want agentd-hook-*", writer.lastKey)
+	}
+	receipt := writer.events[0]
+	decision := writer.events[1]
+	if receipt.Kind != edgecore.EventKindHookPreToolUse || receipt.Decision != edgecore.DecisionRecorded {
+		t.Fatalf("receipt kind/decision = %q/%q, want PreToolUse/RECORDED", receipt.Kind, receipt.Decision)
+	}
+	if receipt.Timestamp.Before(startedAt) || receipt.Timestamp.After(time.Now().UTC().Add(time.Second)) {
+		t.Fatalf("receipt timestamp = %s, want actual request receipt time after %s", receipt.Timestamp, startedAt)
+	}
+	if decision.EventID != "evt-atomic-decision" || decision.Kind != edgecore.EventKindHookPolicyDecision {
+		t.Fatalf("decision event id/kind = %q/%q, want evt-atomic-decision/policy_decision", decision.EventID, decision.Kind)
+	}
+	if decision.Decision != wantDecision || decision.PolicySnapshot != "snap-atomic" || decision.Status != edgecore.ActionStatusOK {
+		t.Fatalf("decision event = decision:%q policy:%q status:%q, want %q/snap-atomic/ok", decision.Decision, decision.PolicySnapshot, decision.Status, wantDecision)
+	}
+	if decision.InputHash != "sha256:input-atomic" || decision.Labels["action_hash"] != "sha256:action-atomic" {
+		t.Fatalf("decision hashes = input:%q labels:%#v", decision.InputHash, decision.Labels)
+	}
 }
 
 func TestPrepareUnixSocketPathUsesUserOnlyDirectoryPermissions(t *testing.T) {

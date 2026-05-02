@@ -3,7 +3,9 @@ package agentd
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +46,18 @@ type LocalServer struct {
 
 type EventWriter interface {
 	WriteEvent(context.Context, edgecore.AgentActionEvent) (edgecore.AgentActionEvent, error)
+}
+
+type EventBatchWriter interface {
+	WriteEvents(context.Context, []edgecore.AgentActionEvent) ([]edgecore.AgentActionEvent, error)
+}
+
+type EventBatchIdempotencyWriter interface {
+	WriteEventsWithIdempotency(context.Context, []edgecore.AgentActionEvent, string) ([]edgecore.AgentActionEvent, error)
+}
+
+type bufferedHookEvaluator interface {
+	EvaluateHookWithEventWriter(context.Context, claude.AgentdRequest, EventWriter) (claude.AgentdDecision, error)
 }
 
 func NewLocalServer(cfg LocalServerConfig) (*LocalServer, error) {
@@ -141,22 +155,25 @@ func (s *LocalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 		writeLocalError(w, http.StatusConflict, "hook session does not match active agentd session")
 		return
 	}
-	if s.eventWriter != nil {
-		_, _ = s.eventWriter.WriteEvent(r.Context(), s.hookEvent(req))
-	}
+	buffer := newHookEventBuffer(s.hookEventAt(req, time.Now().UTC()))
 	decision := claude.AgentdDecision{
 		Decision: claude.DecisionDeny,
 		Reason:   "Cordum Edge agentd is not ready to evaluate hooks yet; denying by fail-closed local boundary",
 	}
 	if s.evaluator != nil {
-		evalCtx, cancel := context.WithTimeout(r.Context(), defaultHookTimeout)
-		defer cancel()
-		got, err := s.evaluator.EvaluateHook(evalCtx, req)
+		got, err := s.evaluateHookWithBuffer(r.Context(), req, buffer)
 		if err != nil {
 			writeLocalError(w, http.StatusServiceUnavailable, "agentd evaluator unavailable")
 			return
 		}
 		decision = got
+	} else if err := s.appendDecisionEvent(buffer, req, decision); err != nil {
+		writeLocalError(w, http.StatusServiceUnavailable, "agentd event evidence unavailable")
+		return
+	}
+	if err := s.flushHookEventBatch(r.Context(), buffer.Events(), s.hookBatchIdempotencyKey(req)); err != nil {
+		writeLocalError(w, http.StatusServiceUnavailable, "agentd event writer unavailable")
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -179,6 +196,13 @@ func (s *LocalServer) requestMatchesState(req claude.AgentdRequest) bool {
 }
 
 func (s *LocalServer) hookEvent(req claude.AgentdRequest) edgecore.AgentActionEvent {
+	return s.hookEventAt(req, time.Now().UTC())
+}
+
+func (s *LocalServer) hookEventAt(req claude.AgentdRequest, receivedAt time.Time) edgecore.AgentActionEvent {
+	if receivedAt.IsZero() {
+		receivedAt = time.Now().UTC()
+	}
 	labels := edgecore.Labels{
 		"source": "cordum-agentd",
 	}
@@ -206,7 +230,7 @@ func (s *LocalServer) hookEvent(req claude.AgentdRequest) edgecore.AgentActionEv
 		ExecutionID:    nonEmpty(req.ExecutionID, s.state.ExecutionID),
 		TenantID:       nonEmpty(req.TenantID, s.state.TenantID),
 		PrincipalID:    nonEmpty(req.PrincipalID, s.state.PrincipalID),
-		Timestamp:      time.Now().UTC(),
+		Timestamp:      receivedAt.UTC(),
 		Layer:          edgecore.LayerHook,
 		Kind:           hookEventKind(req.EventName),
 		AgentProduct:   "claude-code",
@@ -224,6 +248,126 @@ func (s *LocalServer) hookEvent(req claude.AgentdRequest) edgecore.AgentActionEv
 		Status:         edgecore.ActionStatusDegraded,
 		Labels:         labels,
 	}
+}
+
+func (s *LocalServer) evaluateHookWithBuffer(ctx context.Context, req claude.AgentdRequest, buffer *hookEventBuffer) (claude.AgentdDecision, error) {
+	evalCtx, cancel := context.WithTimeout(ctx, defaultHookTimeout)
+	defer cancel()
+	if evaluator, ok := s.evaluator.(bufferedHookEvaluator); ok {
+		before := buffer.Len()
+		decision, err := evaluator.EvaluateHookWithEventWriter(evalCtx, req, buffer)
+		if err != nil {
+			return decision, err
+		}
+		if buffer.Len() == before {
+			return decision, s.appendDecisionEvent(buffer, req, decision)
+		}
+		return decision, nil
+	}
+	decision, err := s.evaluator.EvaluateHook(evalCtx, req)
+	if err != nil {
+		return decision, err
+	}
+	return decision, s.appendDecisionEvent(buffer, req, decision)
+}
+
+func (s *LocalServer) appendDecisionEvent(buffer *hookEventBuffer, req claude.AgentdRequest, decision claude.AgentdDecision) error {
+	event, err := BuildDecisionEvidenceEvent(DecisionEvidence{
+		State:      s.state,
+		Request:    req,
+		Response:   s.evaluateResponseFromDecision(decision),
+		DurationMS: req.DurationMS,
+	})
+	if err != nil {
+		return fmt.Errorf("build decision evidence: %w", err)
+	}
+	_, err = buffer.WriteEvent(context.Background(), event)
+	return err
+}
+
+func (s *LocalServer) evaluateResponseFromDecision(decision claude.AgentdDecision) EvaluateResponse {
+	return EvaluateResponse{
+		Decision:                 string(edgeDecisionFromClaude(decision.Decision)),
+		Reason:                   decision.Reason,
+		PolicySnapshot:           s.state.PolicySnapshot,
+		ApprovalRef:              decision.ApprovalRef,
+		PermissionDecision:       string(decision.Decision),
+		PermissionDecisionReason: decision.Reason,
+		UpdatedInput:             decision.UpdatedInput,
+	}
+}
+
+func (s *LocalServer) flushHookEventBatch(ctx context.Context, events []edgecore.AgentActionEvent, idempotencyKey string) error {
+	if len(events) == 0 || s.eventWriter == nil {
+		return nil
+	}
+	var (
+		written []edgecore.AgentActionEvent
+		err     error
+	)
+	if writer, ok := s.eventWriter.(EventBatchIdempotencyWriter); ok {
+		written, err = writer.WriteEventsWithIdempotency(ctx, events, idempotencyKey)
+	} else if writer, ok := s.eventWriter.(EventBatchWriter); ok {
+		written, err = writer.WriteEvents(ctx, events)
+	} else {
+		return errors.New("agentd event writer does not support atomic event batches")
+	}
+	if err != nil {
+		return fmt.Errorf("write hook event batch: %w", err)
+	}
+	if len(written) != len(events) {
+		return fmt.Errorf("write hook event batch: wrote %d of %d events", len(written), len(events))
+	}
+	return nil
+}
+
+func (s *LocalServer) hookBatchIdempotencyKey(req claude.AgentdRequest) string {
+	h := sha256.New()
+	writeHashPart := func(value string) {
+		_, _ = h.Write([]byte(boundMetadataString(value)))
+		_, _ = h.Write([]byte{0})
+	}
+	writeHashPart("agentd-hook-events-v1")
+	writeHashPart(nonEmpty(req.SessionID, s.state.SessionID))
+	writeHashPart(nonEmpty(req.ExecutionID, s.state.ExecutionID))
+	writeHashPart(req.EventName)
+	writeHashPart(req.ToolUseID)
+	writeHashPart(req.ActionHash)
+	writeHashPart(req.InputHash)
+	if redacted := safeInputRedacted(req.InputRedacted); len(redacted) > 0 {
+		if encoded, err := json.Marshal(redacted); err == nil {
+			_, _ = h.Write(encoded)
+		}
+	}
+	sum := h.Sum(nil)
+	return "agentd-hook-" + hex.EncodeToString(sum[:16])
+}
+
+type hookEventBuffer struct {
+	events []edgecore.AgentActionEvent
+}
+
+func newHookEventBuffer(events ...edgecore.AgentActionEvent) *hookEventBuffer {
+	return &hookEventBuffer{events: append([]edgecore.AgentActionEvent(nil), events...)}
+}
+
+func (b *hookEventBuffer) WriteEvent(_ context.Context, event edgecore.AgentActionEvent) (edgecore.AgentActionEvent, error) {
+	b.events = append(b.events, event)
+	return event, nil
+}
+
+func (b *hookEventBuffer) Events() []edgecore.AgentActionEvent {
+	if b == nil {
+		return nil
+	}
+	return append([]edgecore.AgentActionEvent(nil), b.events...)
+}
+
+func (b *hookEventBuffer) Len() int {
+	if b == nil {
+		return 0
+	}
+	return len(b.events)
 }
 
 func hookEventKind(eventName string) edgecore.EventKind {
@@ -340,4 +484,3 @@ func statPathMode(path string) (os.FileMode, error) {
 	}
 	return info.Mode(), nil
 }
-

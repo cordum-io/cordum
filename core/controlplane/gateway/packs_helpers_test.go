@@ -7,9 +7,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/infra/buildinfo"
 	wf "github.com/cordum/cordum/core/workflow"
-	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 )
 
 // versionMu guards mutation of the global buildinfo.Version in tests.

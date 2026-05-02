@@ -19,7 +19,7 @@ var PrivateIPNets = auth.PrivateIPNets
 
 // PrivateHostnames are hostnames that always resolve to private/internal addresses.
 var PrivateHostnames = map[string]bool{
-	"localhost":                 true,
+	"localhost":                true,
 	"metadata.google.internal": true,
 }
 

@@ -45,6 +45,7 @@ Common options:
 | `CORDUM_AGENTD_INLINE_APPROVAL_WAIT` | Local/demo-only inline approval wait; default off |
 | `CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT` | Strict inline wait timeout; timeout/rejection denies and asks the user to retry |
 | `CORDUM_AGENTD_STATE_DIR` | Override state root |
+| `CORDUM_AGENTD_NONCE` | Trusted-launcher-only loopback nonce override; see [Trusted launcher override](#trusted-launcher-override-cordum_agentd_nonce) |
 
 ## Evaluate, cache, approvals, and fail modes
 
@@ -82,6 +83,17 @@ stores only minimal sanitized allow metadata. It never stores raw payloads,
 tokens, approval references, reviewer-updated inputs, degraded results, high-risk
 actions, unknown actions, or decisions from a different policy snapshot/mode.
 
+Concurrent identical hook requests are coalesced with singleflight using the
+same deterministic decision identity: tenant, policy mode, `policy_snapshot`,
+action hash, input hash, action kind/capability, normalized command labels, and
+sorted risk tags. For a fully identified logical action, only one Gateway
+evaluate call and one decision-evidence event row are produced even when many
+callers arrive at the same time; followers receive the leader's hook decision.
+Gateway error/degraded paths do not poison the singleflight slot: once the leader
+finishes, the next caller with the same key issues a fresh Gateway evaluate call.
+Requests missing stable tenant/policy/hash identity skip coalescing rather than
+sharing a decision too broadly.
+
 Gateway outage behavior follows the PRD modes:
 
 - `observe`: allow degraded and write evidence.
@@ -92,9 +104,14 @@ Gateway outage behavior follows the PRD modes:
   miss even if the session policy mode is observe.
 
 Agentd records hook/evaluate/decision/degraded evidence using Edge session/action
-events and the shared observability recorder when supplied. Evidence writes and
-metrics/audit emission are best-effort: failure to upload evidence is recorded as
-degraded but does not change a fresh Gateway decision.
+events and the shared observability recorder when supplied. Hook events are
+atomic: the receipt event and decision-evidence event are committed via a single
+Gateway `/api/v1/edge/events/batch` call after the evaluator returns. Either
+both events appear in the session log, or neither does; there is no half-written
+audit record across shutdown or transient errors. Receipt timestamps reflect
+actual hook receipt time, not batch commit time. Non-hook evidence writes and
+metrics/audit emission remain best-effort: upload failures are recorded as
+degraded where possible and do not rewrite a fresh Gateway decision.
 
 ## State persistence
 
@@ -106,9 +123,20 @@ By default, agentd stores session state under:
 
 `CORDUM_AGENTD_STATE_DIR` can override the root directory. The state file is
 written atomically with a temp file + rename. On Unix-like platforms, agentd
-creates the session directory with `0700` and the state file with `0600`. On
-Windows, agentd uses the best permissions exposed by the Go runtime and does
-not claim Unix mode semantics.
+creates the session directory with `0700` and the state file with `0600`; this
+is the correct Unix permission model.
+
+On Windows, agentd applies an explicit DACL granting Full Control to the file
+owner and `SYSTEM` only on the state root, per-session state directories, and
+`state.json` files. Startup verifies the state root DACL before hardening it:
+by default, a broader inherited ACL produces a single `slog` warning and agentd
+continues after applying the owner-only DACL. Set
+`CORDUM_AGENTD_STRICT_PERMS=1` to fail closed instead when the configured state
+directory's ACL is broader than owner-only. Recommended custom state-dir paths
+stay inside the user's profile, for example `%LOCALAPPDATA%\cordum\edge`
+(normally owner-only by default). Avoid shared roots such as
+`C:\ProgramData\...`, whose defaults often grant `Authenticated Users:Read`,
+unless strict-permissions startup checks pass.
 
 Persisted state is intentionally small:
 
@@ -149,6 +177,42 @@ local-dev loopback endpoint is local-only and nonce guarded. The nonce is
 process-local and must not be written into generated Claude settings or
 persisted state.
 
+### Trusted launcher override (`CORDUM_AGENTD_NONCE`)
+
+A trusted launcher may pre-seed the loopback nonce by generating at least 32
+bytes of entropy and exporting it as base64 in `CORDUM_AGENTD_NONCE` for the
+`cordum-agentd` subprocess:
+
+```bash
+export CORDUM_AGENTD_NONCE="$(openssl rand -base64 32)"
+```
+
+Equivalent `crypto/rand` generation is acceptable. Agentd validates that the
+value base64-decodes to at least 32 raw bytes and refuses to start on malformed
+or too-short values; it does not silently fall back to auto-generation. The
+trusted launcher then gives `cordum-hook` the matching value only through the
+runtime process environment as `CORDUM_AGENTD_HOOK_NONCE`; `CORDUM_AGENTD_URL`
+must remain the bare loopback endpoint without `?nonce=`.
+
+Security constraints:
+
+- agentd never logs the nonce value and never includes it in HTTP responses;
+- agentd never writes the nonce to `state.json`, the state directory, audit
+  events, metrics labels, or evidence exports;
+- the value MUST NOT appear in generated Claude settings files or any other
+  persistent user-editable location;
+- process-listing exposure (`ps`, `/proc/<pid>/environ`, platform process
+  inspectors) is a known local-development tradeoff and is covered by
+  [ADR-010's token-storage decision](../adr/010-edge-p0-architecture-decisions.md#security-token-storage-and-product-scope).
+
+This override is used by the EDGE-027 fake-hook E2E and the
+[`cordumctl edge claude`](./cordumctl-edge-claude.md) wrapper. It is not
+production enterprise enforcement without managed settings plus
+sealed-process/keychain/service-bootstrap protections.
+
+See [`LOCAL_E2E.md` § Edge fake-hook E2E](../LOCAL_E2E.md#edge-fake-hook-e2e)
+for a CI-safe end-to-end exerciser of the Gateway side of this contract.
+
 ## Heartbeat, degraded state, and shutdown
 
 After session registration, agentd heartbeats the EdgeSession at an interval no
@@ -170,6 +234,12 @@ On SIGINT/SIGTERM or context cancellation, agentd:
 3. sends execution end,
 4. sends session end,
 5. writes final local state.
+
+Shutdown drainage order: heartbeat goroutines are drained with a bounded
+`service.Wait()` before `SessionManager.Shutdown` writes the terminal state.
+`RecordHeartbeatStatus` checks the manager shutdown flag and returns early once
+shutdown begins, so heartbeat callbacks cannot overwrite the terminal session
+state. Final on-disk state is always the terminal status (`ended`/`failed`).
 
 If the Gateway is unreachable during shutdown, agentd records failed/degraded
 local state with `pending_gateway_end=true` so a future doctor/retry flow can

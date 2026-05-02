@@ -134,6 +134,7 @@ func (m *SessionManager) Shutdown(ctx context.Context, opts ShutdownOptions) err
 		return nil
 	}
 	state := *m.state
+	m.shutdown = true
 	m.mu.Unlock()
 
 	now := m.clock.Now()
@@ -204,12 +205,19 @@ func (m *SessionManager) RecordHeartbeatStatus(ctx context.Context, status Heart
 	if status.ConsecutiveFailures > 0 {
 		reason = fmt.Sprintf("%s (consecutive failures: %d)", reason, status.ConsecutiveFailures)
 	}
+	if ctx != nil && ctx.Err() != nil {
+		return m.State(), nil
+	}
 	m.mu.Lock()
 	if m.state == nil {
 		m.mu.Unlock()
 		return SessionState{}, nil
 	}
 	state := *m.state
+	if m.shutdown {
+		m.mu.Unlock()
+		return state, nil
+	}
 	if state.Status == edgecore.SessionStatusEnded || state.EndedAt != nil {
 		m.mu.Unlock()
 		return state, nil
@@ -223,6 +231,9 @@ func (m *SessionManager) RecordHeartbeatStatus(ctx context.Context, status Heart
 	}
 	m.mu.Unlock()
 
+	if ctx != nil && ctx.Err() != nil {
+		return state, nil
+	}
 	if err := m.store.Save(ctx, state); err != nil {
 		return state, fmt.Errorf("persist heartbeat session state: %w", err)
 	}

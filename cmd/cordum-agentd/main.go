@@ -89,6 +89,18 @@ func runCLI(ctx context.Context, opts cliOptions) int {
 }
 
 func defaultRun(ctx context.Context, cfg runConfig) error {
+	opts, err := defaultRunOptions(cfg)
+	if err != nil {
+		return err
+	}
+	return agentdcore.Run(ctx, opts)
+}
+
+func defaultRunOptions(cfg runConfig) (agentdcore.RunOptions, error) {
+	return defaultRunOptionsWithRecorder(cfg, nil)
+}
+
+func defaultRunOptionsWithRecorder(cfg runConfig, recorder edgecore.Recorder) (agentdcore.RunOptions, error) {
 	env := cloneEnv(cfg.Env)
 	if env == nil {
 		env = environMap(os.Environ())
@@ -107,14 +119,22 @@ func defaultRun(ctx context.Context, cfg runConfig) error {
 	}
 	loaded, err := agentdcore.LoadConfig(env)
 	if err != nil {
-		return err
+		return agentdcore.RunOptions{}, err
 	}
 	meta := agentdcore.GatherLocalMetadata(agentdcore.LocalMetadataOptions{Env: env})
-	return agentdcore.Run(ctx, agentdcore.RunOptions{
+	nonce, err := agentdcore.ValidateExternalNonce(envValue(env, "CORDUM_AGENTD_NONCE"))
+	if err != nil {
+		return agentdcore.RunOptions{}, err
+	}
+	if recorder == nil {
+		recorder = edgecore.NewPrometheusRecorder(prometheus.DefaultRegisterer)
+	}
+	return agentdcore.RunOptions{
 		Config:   loaded,
 		Metadata: meta,
-		Recorder: edgecore.NewPrometheusRecorder(prometheus.DefaultRegisterer),
-	})
+		Nonce:    nonce,
+		Recorder: recorder,
+	}, nil
 }
 
 func writeUsage(w io.Writer) {
@@ -132,7 +152,7 @@ Flags:
 Environment:
   CORDUM_GATEWAY, CORDUM_API_KEY, CORDUM_TENANT_ID, CORDUM_AGENTD_SOCKET,
   CORDUM_EDGE_POLICY_MODE, CORDUM_AGENTD_LOG_LEVEL, CORDUM_AGENTD_HOOK_TIMEOUT,
-  CORDUM_EDGE_HEARTBEAT_TTL, CORDUM_AGENTD_FAIL_CLOSED
+  CORDUM_EDGE_HEARTBEAT_TTL, CORDUM_AGENTD_FAIL_CLOSED, CORDUM_AGENTD_NONCE
 `)
 }
 
@@ -188,7 +208,7 @@ func redactForStderr(message string, env map[string]string) string {
 
 func isSensitiveEnvKey(key string) bool {
 	k := strings.ToLower(key)
-	for _, marker := range []string{"password", "passwd", "secret", "token", "api_key", "apikey", "credential", "auth"} {
+	for _, marker := range []string{"password", "passwd", "secret", "token", "nonce", "api_key", "apikey", "credential", "auth"} {
 		if strings.Contains(k, marker) {
 			return true
 		}

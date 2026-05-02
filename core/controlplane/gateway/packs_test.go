@@ -17,9 +17,9 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
+	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/infra/locks"
-	"github.com/cordum/cordum/core/controlplane/gateway/packs"
 )
 
 func installTestPack(t *testing.T, s *server) {

@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/redis/go-redis/v9"
-	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 )
 
 func velocityRulePayload(id string) map[string]any {
