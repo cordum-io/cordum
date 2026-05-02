@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordum/cordum/core/audit"
 	edgecore "github.com/cordum/cordum/core/edge"
 )
 
@@ -462,6 +463,92 @@ func TestGatewayEdgeErrorMappingAndTenantIsolation(t *testing.T) {
 	s.edgeStore = nil
 	unavailable := edgeRouteGET(t, handler, "/api/v1/edge/sessions")
 	assertEdgeErrorShape(t, unavailable, http.StatusServiceUnavailable, edgeErrCodeStoreUnavailable)
+}
+
+// TestGatewayEdgeSessionLifecycleEmitsAuditEvents pins EDGE-014 step-10
+// Gateway audit instrumentation for session/execution lifecycle. Each
+// successful create/end step must fire exactly one audit event of the
+// matching edge.* type with bounded TenantID and Extra fields. Audit
+// failures must not change the response (SendSIEMEvent is panic-safe).
+func TestGatewayEdgeSessionLifecycleEmitsAuditEvents(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	sink := &testAuditSender{}
+	s.auditExporter = sink
+
+	create := edgeRoutePOST(t, handler, "/api/v1/edge/sessions", `{
+		"agent_product":"claude-code",
+		"agent_version":"1.2.3",
+		"mode":"local-dev",
+		"policy_snapshot":"snap-edge-014-step-10"
+	}`)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create session status = %d body=%s", create.Code, create.Body.String())
+	}
+	var createResp edgeSessionCreateResponseJSON
+	decodeEdgeRouteJSON(t, create, &createResp)
+
+	// After create: session_started + execution_started.
+	if got := sink.Len(); got != 2 {
+		t.Fatalf("after create: audit events = %d, want 2 (session_started + execution_started)", got)
+	}
+	first, second := sink.Get(0), sink.Get(1)
+	if first.EventType != audit.EventEdgeSessionStarted {
+		t.Errorf("first event type = %q, want %q", first.EventType, audit.EventEdgeSessionStarted)
+	}
+	if second.EventType != audit.EventEdgeExecutionStarted {
+		t.Errorf("second event type = %q, want %q", second.EventType, audit.EventEdgeExecutionStarted)
+	}
+	if first.TenantID != edgeRouteTenant {
+		t.Errorf("first event TenantID = %q, want %q", first.TenantID, edgeRouteTenant)
+	}
+	if first.Severity != audit.SeverityInfo {
+		t.Errorf("first event Severity = %q, want info", first.Severity)
+	}
+	if got := first.Extra["session_id"]; got != createResp.SessionID {
+		t.Errorf("first event Extra[session_id] = %q, want %q", got, createResp.SessionID)
+	}
+
+	// End execution -> execution_ended.
+	endExec := edgeRoutePOST(t, handler, "/api/v1/edge/executions/"+createResp.ExecutionID+"/end", `{"status":"succeeded"}`)
+	if endExec.Code != http.StatusOK {
+		t.Fatalf("end execution status = %d body=%s", endExec.Code, endExec.Body.String())
+	}
+	if got := sink.Len(); got != 3 {
+		t.Fatalf("after end execution: audit events = %d, want 3", got)
+	}
+	if ev := sink.Get(2); ev.EventType != audit.EventEdgeExecutionEnded {
+		t.Errorf("third event type = %q, want %q", ev.EventType, audit.EventEdgeExecutionEnded)
+	}
+
+	// End session -> session_ended.
+	endSess := edgeRoutePOST(t, handler, "/api/v1/edge/sessions/"+createResp.SessionID+"/end", `{"status":"ended"}`)
+	if endSess.Code != http.StatusOK {
+		t.Fatalf("end session status = %d body=%s", endSess.Code, endSess.Body.String())
+	}
+	if got := sink.Len(); got != 4 {
+		t.Fatalf("after end session: audit events = %d, want 4", got)
+	}
+	if ev := sink.Get(3); ev.EventType != audit.EventEdgeSessionEnded {
+		t.Errorf("fourth event type = %q, want %q", ev.EventType, audit.EventEdgeSessionEnded)
+	}
+	if ev := sink.Get(3); ev.Severity != audit.SeverityInfo {
+		t.Errorf("session_ended Severity = %q, want info (clean ended)", ev.Severity)
+	}
+}
+
+// TestGatewayEdgeSessionLifecycleAuditNilSenderIsNoOp pins that nil
+// auditExporter is safe (no panic) — Edge handlers must not require
+// the audit pipeline to be configured.
+func TestGatewayEdgeSessionLifecycleAuditNilSenderIsNoOp(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	s.auditExporter = nil
+	create := edgeRoutePOST(t, handler, "/api/v1/edge/sessions", `{
+		"agent_product":"claude-code",
+		"mode":"local-dev"
+	}`)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create session with nil auditExporter status = %d body=%s", create.Code, create.Body.String())
+	}
 }
 
 func newEdgeRouteTestServer(t *testing.T) (*server, http.Handler) {

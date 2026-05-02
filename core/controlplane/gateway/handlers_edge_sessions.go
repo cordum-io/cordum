@@ -214,6 +214,12 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// EDGE-014 step-10: emit best-effort audit events for the session and
+	// initial execution lifecycle. SendSIEMEvent is nil-safe and panic-
+	// recovering — audit pipeline failures must not change the response.
+	edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForSessionStarted(session))
+	edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForExecutionStarted(execution))
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, edgeSessionCreateResponse{
@@ -365,6 +371,10 @@ func (s *server) handleEndEdgeSession(w http.ResponseWriter, r *http.Request) {
 		writeEdgeInternalError(w, r, "end edge session", err)
 		return
 	}
+	// EDGE-014 step-10: emit best-effort session_ended audit event.
+	if ended != nil {
+		edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForSessionEnded(*ended))
+	}
 	writeJSON(w, ended)
 }
 
@@ -457,6 +467,8 @@ func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Reques
 		writeEdgeInternalError(w, r, "create edge execution", err)
 		return
 	}
+	// EDGE-014 step-10: emit best-effort execution_started audit event.
+	edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForExecutionStarted(execution))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, execution)
@@ -537,6 +549,10 @@ func (s *server) handleEndEdgeExecution(w http.ResponseWriter, r *http.Request) 
 		}
 		writeEdgeInternalError(w, r, "end edge execution", err)
 		return
+	}
+	// EDGE-014 step-10: emit best-effort execution_ended audit event.
+	if ended != nil {
+		edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForExecutionEnded(*ended))
 	}
 	writeJSON(w, ended)
 }
