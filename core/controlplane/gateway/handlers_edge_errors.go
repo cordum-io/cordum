@@ -113,30 +113,10 @@ func writeEdgeForbidden(w http.ResponseWriter, r *http.Request, err error) {
 	writeEdgeError(w, r, http.StatusForbidden, edgeErrCodeAccessDenied, "access denied", nil)
 }
 
-// writeEdgeUnauthorized emits a sanitized 401 envelope for Edge routes whose
-// auth middleware did not run (defense in depth) or whose handler explicitly
-// rejects an unauthenticated caller.
-func writeEdgeUnauthorized(w http.ResponseWriter, r *http.Request) {
-	writeEdgeError(w, r, http.StatusUnauthorized, edgeErrCodeUnauthorized, "authentication required", nil)
-}
-
 // writeEdgeInternalError mirrors writeInternalError but emits the Edge envelope.
 func writeEdgeInternalError(w http.ResponseWriter, r *http.Request, operation string, err error) {
 	slog.Error(operation+" failed", "method", r.Method, "path", r.URL.Path, "error", err)
 	writeEdgeError(w, r, http.StatusInternalServerError, edgeErrCodeInternalError, "internal error", nil)
-}
-
-// writeEdgeServiceUnavailable mirrors writeServiceUnavailable but emits the
-// Edge envelope. Use for transient store/dependency outages.
-func writeEdgeServiceUnavailable(w http.ResponseWriter, r *http.Request, operation string, err error) {
-	slog.Error(operation+" unavailable", "method", r.Method, "path", r.URL.Path, "error", err)
-	writeEdgeError(w, r, http.StatusServiceUnavailable, edgeErrCodeServiceUnavailable, "service unavailable", nil)
-}
-
-// writeEdgeBadGateway mirrors writeBadGateway but emits the Edge envelope.
-func writeEdgeBadGateway(w http.ResponseWriter, r *http.Request, operation string, err error) {
-	slog.Error(operation+" upstream failed", "method", r.Method, "path", r.URL.Path, "error", err)
-	writeEdgeError(w, r, http.StatusBadGateway, edgeErrCodeUpstreamError, "upstream service error", nil)
 }
 
 // writeEdgeJSONDecodeError mirrors writeJSONDecodeError but emits the Edge envelope.

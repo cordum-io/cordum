@@ -189,8 +189,8 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	outcome.response.EventID = appended.EventID
-	switch {
-	case outcome.decision == edgecore.DecisionRequireApproval:
+	switch outcome.decision {
+	case edgecore.DecisionRequireApproval:
 		approval, err := s.enqueueEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, actionHash)
 		if err != nil {
 			writeEdgeApprovalStoreError(w, r, err, "enqueue edge evaluate approval")
