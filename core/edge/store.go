@@ -16,6 +16,15 @@ const (
 // instead, so API handlers can distinguish a clean miss from a Redis failure.
 var ErrNotFound = errors.New("edge store: not found")
 
+// ErrIdempotencyConflict is returned when an idempotency key was already used
+// for the same tenant/endpoint with a different normalized request hash.
+var ErrIdempotencyConflict = errors.New("edge idempotency: request hash conflict")
+
+// ErrIdempotencyPending is returned when a duplicate request observes an
+// in-flight reservation that has not yet been completed with a replayable
+// response.
+var ErrIdempotencyPending = errors.New("edge idempotency: request pending")
+
 // Store persists EdgeSession, AgentExecution, and AgentActionEvent evidence.
 // It is intentionally scoped to Edge records and must not mutate Scheduler Job
 // state or workflow run state.
@@ -36,6 +45,9 @@ type Store interface {
 	AppendEvent(ctx context.Context, event AgentActionEvent) (AgentActionEvent, error)
 	AppendEvents(ctx context.Context, events []AgentActionEvent) ([]AgentActionEvent, error)
 	ListEvents(ctx context.Context, query ListEventsQuery) (EventPage, error)
+	ReserveIdempotency(ctx context.Context, req EdgeIdempotencyRequest) (EdgeIdempotencyReservation, error)
+	CompleteIdempotency(ctx context.Context, req EdgeIdempotencyRequest, response EdgeIdempotencyResponse) (*EdgeIdempotencyRecord, error)
+	ReleaseIdempotency(ctx context.Context, req EdgeIdempotencyRequest) error
 
 	EnqueueApproval(ctx context.Context, req EdgeApprovalRequest) (*EdgeApproval, error)
 	GetApproval(ctx context.Context, tenantID, approvalRef string) (*EdgeApproval, bool, error)
@@ -100,6 +112,55 @@ type ListEventsQuery struct {
 type EventPage struct {
 	Items      []AgentActionEvent
 	NextCursor string
+}
+
+// EdgeIdempotencyRequest identifies a retry-safe Edge API write. RequestHash
+// must be computed from the normalized, redacted request shape and never from
+// raw unredacted payload bytes.
+type EdgeIdempotencyRequest struct {
+	TenantID    string
+	Endpoint    string
+	Key         string
+	RequestHash string
+}
+
+// EdgeIdempotencyState describes the result of reserving an idempotency key.
+type EdgeIdempotencyState string
+
+const (
+	EdgeIdempotencyReserved  EdgeIdempotencyState = "reserved"
+	EdgeIdempotencyReplay    EdgeIdempotencyState = "replay"
+	EdgeIdempotencyPending   EdgeIdempotencyState = "pending"
+	EdgeIdempotencyCompleted EdgeIdempotencyState = "completed"
+)
+
+// EdgeIdempotencyReservation is returned by ReserveIdempotency.
+type EdgeIdempotencyReservation struct {
+	State  EdgeIdempotencyState
+	Record *EdgeIdempotencyRecord
+}
+
+// EdgeIdempotencyResponse is the bounded response snapshot stored for future
+// same-key/same-request retries. ResponseBody must already be sanitized
+// response JSON, not a raw request body.
+type EdgeIdempotencyResponse struct {
+	StatusCode  int    `json:"status_code"`
+	ContentType string `json:"content_type,omitempty"`
+	Body        []byte `json:"body,omitempty"`
+}
+
+// EdgeIdempotencyRecord is persisted as the Edge-owned replay record. It stores
+// only identity metadata, the normalized request hash, state, and bounded
+// response metadata/body; it deliberately does not store the raw request body or
+// raw client-provided idempotency key.
+type EdgeIdempotencyRecord struct {
+	TenantID    string                  `json:"tenant_id,omitempty"`
+	Endpoint    string                  `json:"endpoint,omitempty"`
+	RequestHash string                  `json:"request_hash"`
+	Status      EdgeIdempotencyState    `json:"status"`
+	Response    EdgeIdempotencyResponse `json:"response,omitempty"`
+	CreatedAt   time.Time               `json:"created_at"`
+	CompletedAt *time.Time              `json:"completed_at,omitempty"`
 }
 
 func normalizeStoreLimit(limit int) int {

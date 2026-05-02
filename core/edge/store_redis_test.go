@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -795,6 +796,145 @@ func TestRedisStoreListExecutionsDeletedSameScoreCursorBeyondFirstWindow(t *test
 		if execution.ExecutionID == page2Cursor.ID {
 			t.Fatalf("ListExecutions page3 returned deleted cursor member %q", page2Cursor.ID)
 		}
+	}
+}
+
+func TestRedisStoreEdgeIdempotencyReserveCompleteReplayTTLConflictAndNoRawKey(t *testing.T) {
+	ctx := context.Background()
+	store, client, mr, cleanup := newRedisEdgeStore(t, WithIdempotencyTTL(time.Second))
+	defer cleanup()
+
+	req := EdgeIdempotencyRequest{
+		TenantID:    "tenant-a",
+		Endpoint:    "POST /api/v1/edge/events",
+		Key:         "raw-client-key-must-not-be-stored",
+		RequestHash: "sha256:request-a",
+	}
+	reserved, err := store.ReserveIdempotency(ctx, req)
+	if err != nil {
+		t.Fatalf("ReserveIdempotency first: %v", err)
+	}
+	if reserved.State != EdgeIdempotencyReserved {
+		t.Fatalf("first reserve state = %q, want reserved", reserved.State)
+	}
+	pending, err := store.ReserveIdempotency(ctx, req)
+	if err != nil {
+		t.Fatalf("ReserveIdempotency pending: %v", err)
+	}
+	if pending.State != EdgeIdempotencyPending {
+		t.Fatalf("second reserve before complete state = %q, want pending", pending.State)
+	}
+
+	response := EdgeIdempotencyResponse{
+		StatusCode:  201,
+		ContentType: "application/json",
+		Body:        []byte(`{"event_id":"evt-1"}`),
+	}
+	completed, err := store.CompleteIdempotency(ctx, req, response)
+	if err != nil {
+		t.Fatalf("CompleteIdempotency: %v", err)
+	}
+	if completed.Status != EdgeIdempotencyCompleted || string(completed.Response.Body) != string(response.Body) {
+		t.Fatalf("completed record = %#v, want completed replay body", completed)
+	}
+	replay, err := store.ReserveIdempotency(ctx, req)
+	if err != nil {
+		t.Fatalf("ReserveIdempotency replay: %v", err)
+	}
+	if replay.State != EdgeIdempotencyReplay || replay.Record == nil || string(replay.Record.Response.Body) != string(response.Body) {
+		t.Fatalf("replay = %#v, want cached response body", replay)
+	}
+
+	keys, err := client.Keys(ctx, "edge:idempotency:*").Result()
+	if err != nil {
+		t.Fatalf("list idempotency keys: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("idempotency key count = %d, want 1: %#v", len(keys), keys)
+	}
+	if strings.Contains(keys[0], req.Key) {
+		t.Fatalf("redis idempotency key leaked raw client key: %q", keys[0])
+	}
+	raw, err := client.Get(ctx, keys[0]).Result()
+	if err != nil {
+		t.Fatalf("read idempotency record: %v", err)
+	}
+	if strings.Contains(raw, req.Key) {
+		t.Fatalf("idempotency record leaked raw client key: %s", raw)
+	}
+
+	conflicting := req
+	conflicting.RequestHash = "sha256:request-b"
+	if _, err := store.ReserveIdempotency(ctx, conflicting); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("ReserveIdempotency conflict error = %v, want ErrIdempotencyConflict", err)
+	}
+
+	mr.FastForward(time.Second + time.Millisecond)
+	afterTTL, err := store.ReserveIdempotency(ctx, conflicting)
+	if err != nil {
+		t.Fatalf("ReserveIdempotency after TTL: %v", err)
+	}
+	if afterTTL.State != EdgeIdempotencyReserved {
+		t.Fatalf("reserve after TTL state = %q, want reserved", afterTTL.State)
+	}
+}
+
+func TestRedisStoreEdgeIdempotencyConcurrentReserveSingleWriter(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	req := EdgeIdempotencyRequest{
+		TenantID:    "tenant-a",
+		Endpoint:    "POST /api/v1/edge/events/batch",
+		Key:         "concurrent-edge-idempotency",
+		RequestHash: "sha256:batch",
+	}
+	const workers = 8
+	var wg sync.WaitGroup
+	states := make(chan EdgeIdempotencyState, workers)
+	errs := make(chan error, workers)
+	start := make(chan struct{})
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			reservation, err := store.ReserveIdempotency(ctx, req)
+			if err != nil {
+				errs <- err
+				return
+			}
+			states <- reservation.State
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(states)
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent ReserveIdempotency error: %v", err)
+	}
+	counts := map[EdgeIdempotencyState]int{}
+	for state := range states {
+		counts[state]++
+	}
+	if counts[EdgeIdempotencyReserved] != 1 {
+		t.Fatalf("reserved count = %d, want exactly 1 (all states=%#v)", counts[EdgeIdempotencyReserved], counts)
+	}
+	if counts[EdgeIdempotencyPending] != workers-1 {
+		t.Fatalf("pending count = %d, want %d (all states=%#v)", counts[EdgeIdempotencyPending], workers-1, counts)
+	}
+
+	if _, err := store.CompleteIdempotency(ctx, req, EdgeIdempotencyResponse{StatusCode: 201, Body: []byte(`{"items":[]}`)}); err != nil {
+		t.Fatalf("CompleteIdempotency after concurrent reserve: %v", err)
+	}
+	replay, err := store.ReserveIdempotency(ctx, req)
+	if err != nil {
+		t.Fatalf("ReserveIdempotency replay after concurrent reserve: %v", err)
+	}
+	if replay.State != EdgeIdempotencyReplay {
+		t.Fatalf("state after complete = %q, want replay", replay.State)
 	}
 }
 

@@ -88,6 +88,22 @@ Most handlers return:
 }
 ```
 
+All `/api/v1/edge/*` handlers return the Edge contract shape instead:
+
+```json
+{
+  "code": "invalid_request",
+  "message": "sanitized human-readable message",
+  "request_id": "req_...",
+  "details": {}
+}
+```
+
+Edge `details` is optional and sanitized; Edge errors must not echo raw tool payloads,
+API keys, signed URLs, or other secrets. Edge clients should switch on `code`
+(for example `idempotency_conflict`, `not_found`, or `request_too_large`) rather
+than parsing `message`.
+
 Common statuses:
 
 - `400` invalid request/body/params
@@ -109,7 +125,18 @@ Common statuses:
 
 ## Idempotency
 
-Used by job/workflow submission flows.
+Used by job/workflow submission flows and by Edge event ingestion:
+
+- `POST /api/v1/edge/events`
+- `POST /api/v1/edge/events/batch`
+
+For Edge event ingestion, keys are scoped by tenant and endpoint. A retry with
+the same key and the same normalized/redacted request hash replays the first
+response without appending duplicate events. Reusing the same key with a
+different normalized request returns `409` with Edge error code
+`idempotency_conflict`. Edge idempotency records store request hashes plus
+bounded response metadata/body only; they do not store raw request payloads,
+raw tool input, or raw client-provided idempotency keys.
 
 Accepted keys:
 

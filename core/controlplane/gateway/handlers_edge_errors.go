@@ -26,32 +26,32 @@ import (
 // Codes are deliberately scoped to the Edge surface; non-Edge handlers continue
 // to use the legacy `{error,status}` shape until a separate migration.
 const (
-	edgeErrCodeUnauthorized            = "unauthorized"
-	edgeErrCodeAccessDenied            = "access_denied"
-	edgeErrCodeTenantRequired          = "tenant_required"
-	edgeErrCodeTenantMismatch          = "tenant_mismatch"
-	edgeErrCodeTenantAccessDenied      = "tenant_access_denied"
-	edgeErrCodeMissingPathParam        = "missing_path_param"
-	edgeErrCodeInvalidRequest          = "invalid_request"
-	edgeErrCodeInvalidJSON             = "invalid_json"
-	edgeErrCodeMissingField            = "missing_required_field"
-	edgeErrCodeNotFound                = "not_found"
-	edgeErrCodeRequestTooLarge         = "request_too_large"
-	edgeErrCodeServiceUnavailable      = "service_unavailable"
-	edgeErrCodeStoreUnavailable        = "store_unavailable"
-	edgeErrCodeInternalError           = "internal_error"
-	edgeErrCodeUpstreamError           = "upstream_error"
-	edgeErrCodeConflict                = "conflict"
-	edgeErrCodeSessionTerminal         = "session_terminal"
-	edgeErrCodeExecutionTerminal       = "execution_terminal"
-	edgeErrCodeExecutionMismatch       = "execution_session_mismatch"
-	edgeErrCodeRawPayloadRejected      = "raw_payload_rejected"
-	edgeErrCodeArtifactPointerInvalid  = "artifact_pointer_invalid"
-	edgeErrCodeApprovalConflict        = "approval_conflict"
-	edgeErrCodeApprovalNotActionable   = "approval_not_actionable"
-	edgeErrCodeSelfApprovalDenied      = "self_approval_denied"
-	edgeErrCodeIdempotencyConflict     = "idempotency_conflict"
-	edgeErrCodeIdempotencyKeyTooLong   = "idempotency_key_invalid"
+	edgeErrCodeUnauthorized           = "unauthorized"
+	edgeErrCodeAccessDenied           = "access_denied"
+	edgeErrCodeTenantRequired         = "tenant_required"
+	edgeErrCodeTenantMismatch         = "tenant_mismatch"
+	edgeErrCodeTenantAccessDenied     = "tenant_access_denied"
+	edgeErrCodeMissingPathParam       = "missing_path_param"
+	edgeErrCodeInvalidRequest         = "invalid_request"
+	edgeErrCodeInvalidJSON            = "invalid_json"
+	edgeErrCodeMissingField           = "missing_required_field"
+	edgeErrCodeNotFound               = "not_found"
+	edgeErrCodeRequestTooLarge        = "request_too_large"
+	edgeErrCodeServiceUnavailable     = "service_unavailable"
+	edgeErrCodeStoreUnavailable       = "store_unavailable"
+	edgeErrCodeInternalError          = "internal_error"
+	edgeErrCodeUpstreamError          = "upstream_error"
+	edgeErrCodeConflict               = "conflict"
+	edgeErrCodeSessionTerminal        = "session_terminal"
+	edgeErrCodeExecutionTerminal      = "execution_terminal"
+	edgeErrCodeExecutionMismatch      = "execution_session_mismatch"
+	edgeErrCodeRawPayloadRejected     = "raw_payload_rejected"
+	edgeErrCodeArtifactPointerInvalid = "artifact_pointer_invalid"
+	edgeErrCodeApprovalConflict       = "approval_conflict"
+	edgeErrCodeApprovalNotActionable  = "approval_not_actionable"
+	edgeErrCodeSelfApprovalDenied     = "self_approval_denied"
+	edgeErrCodeIdempotencyConflict    = "idempotency_conflict"
+	edgeErrCodeIdempotencyKeyTooLong  = "idempotency_key_invalid"
 )
 
 // edgeErrorEnvelope is the on-the-wire shape of a /api/v1/edge/* error.
@@ -165,6 +165,19 @@ func (s *server) requireEdgePermissionOrRole(w http.ResponseWriter, r *http.Requ
 		return false
 	}
 	return true
+}
+
+// resolveEdgeAuthPrincipal returns the authenticated principal stamped by the
+// auth provider. Edge evidence is compliance evidence: clients may not spoof a
+// different principal_id inside the JSON body. If an auth provider does not
+// populate a principal, fall back to the provider's normal blank-request
+// resolution path (for local header-based test/dev modes), never to a
+// client-supplied body principal.
+func (s *server) resolveEdgeAuthPrincipal(r *http.Request) (string, error) {
+	if authn := auth.FromRequest(r); authn != nil && strings.TrimSpace(authn.PrincipalID) != "" {
+		return strings.TrimSpace(authn.PrincipalID), nil
+	}
+	return s.resolvePrincipal(r, "")
 }
 
 // requireEdgePathParam mirrors requirePathParam but emits the Edge envelope on

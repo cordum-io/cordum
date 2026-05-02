@@ -2,7 +2,9 @@ package edge
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,8 +16,10 @@ import (
 )
 
 const (
-	defaultHeartbeatTTL  = 30 * time.Second
-	defaultMaxEventBytes = 128 * 1024
+	defaultHeartbeatTTL             = 30 * time.Second
+	defaultMaxEventBytes            = 128 * 1024
+	defaultIdempotencyTTL           = 24 * time.Hour
+	defaultMaxIdempotencyReplayBody = 256 * 1024
 	// maxSessionEventScan is the legacy hard-stop threshold retained as a
 	// regression-test fixture. Production session event listing no longer
 	// truncates at this count; it stops per request after the cursor window has
@@ -47,20 +51,24 @@ type StoreOption func(*RedisStore)
 
 // RedisStore persists Edge evidence in Redis using the PRD edge:* keyspace.
 type RedisStore struct {
-	client        redis.UniversalClient
-	now           func() time.Time
-	heartbeatTTL  time.Duration
-	maxEventBytes int
+	client                   redis.UniversalClient
+	now                      func() time.Time
+	heartbeatTTL             time.Duration
+	maxEventBytes            int
+	idempotencyTTL           time.Duration
+	maxIdempotencyReplayBody int
 }
 
 // NewRedisStoreFromClient returns a Redis-backed Edge store using an existing
 // go-redis client. The caller owns closing the client.
 func NewRedisStoreFromClient(client redis.UniversalClient, opts ...StoreOption) *RedisStore {
 	s := &RedisStore{
-		client:        client,
-		now:           func() time.Time { return time.Now().UTC() },
-		heartbeatTTL:  defaultHeartbeatTTL,
-		maxEventBytes: defaultMaxEventBytes,
+		client:                   client,
+		now:                      func() time.Time { return time.Now().UTC() },
+		heartbeatTTL:             defaultHeartbeatTTL,
+		maxEventBytes:            defaultMaxEventBytes,
+		idempotencyTTL:           defaultIdempotencyTTL,
+		maxIdempotencyReplayBody: defaultMaxIdempotencyReplayBody,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -75,6 +83,12 @@ func NewRedisStoreFromClient(client redis.UniversalClient, opts ...StoreOption) 
 	}
 	if s.maxEventBytes <= 0 {
 		s.maxEventBytes = defaultMaxEventBytes
+	}
+	if s.idempotencyTTL <= 0 {
+		s.idempotencyTTL = defaultIdempotencyTTL
+	}
+	if s.maxIdempotencyReplayBody <= 0 {
+		s.maxIdempotencyReplayBody = defaultMaxIdempotencyReplayBody
 	}
 	return s
 }
@@ -97,6 +111,21 @@ func WithHeartbeatTTL(ttl time.Duration) StoreOption {
 func WithMaxEventBytes(max int) StoreOption {
 	return func(s *RedisStore) {
 		s.maxEventBytes = max
+	}
+}
+
+// WithIdempotencyTTL overrides the Edge API idempotency replay TTL.
+func WithIdempotencyTTL(ttl time.Duration) StoreOption {
+	return func(s *RedisStore) {
+		s.idempotencyTTL = ttl
+	}
+}
+
+// WithMaxIdempotencyReplayBody overrides the maximum cached Edge idempotency
+// response body size. It is primarily intended for tests.
+func WithMaxIdempotencyReplayBody(max int) StoreOption {
+	return func(s *RedisStore) {
+		s.maxIdempotencyReplayBody = max
 	}
 }
 
@@ -167,6 +196,11 @@ func edgeSessionExecutionsIndexKey(sessionID string) string {
 
 func edgeSessionHeartbeatKey(sessionID string) string {
 	return "edge:session:heartbeat:" + strings.TrimSpace(sessionID)
+}
+
+func edgeIdempotencyKey(tenantID, endpoint, key string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(tenantID) + "\x00" + strings.TrimSpace(endpoint) + "\x00" + strings.TrimSpace(key)))
+	return "edge:idempotency:" + hex.EncodeToString(sum[:])
 }
 
 func (s *RedisStore) CreateSession(ctx context.Context, session EdgeSession) error {
@@ -761,6 +795,213 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 		return nil, err
 	}
 	return appended, nil
+}
+
+func (s *RedisStore) ReserveIdempotency(ctx context.Context, req EdgeIdempotencyRequest) (EdgeIdempotencyReservation, error) {
+	if err := s.ensureReady(); err != nil {
+		return EdgeIdempotencyReservation{}, err
+	}
+	normalized, err := normalizeEdgeIdempotencyRequest(req)
+	if err != nil {
+		return EdgeIdempotencyReservation{}, err
+	}
+	key := edgeIdempotencyKey(normalized.TenantID, normalized.Endpoint, normalized.Key)
+	now := s.now().UTC()
+	pending := EdgeIdempotencyRecord{
+		TenantID:    normalized.TenantID,
+		Endpoint:    normalized.Endpoint,
+		RequestHash: normalized.RequestHash,
+		Status:      EdgeIdempotencyPending,
+		CreatedAt:   now,
+	}
+	payload, err := json.Marshal(pending)
+	if err != nil {
+		return EdgeIdempotencyReservation{}, fmt.Errorf("marshal edge idempotency reservation: %w", err)
+	}
+
+	var reservation EdgeIdempotencyReservation
+	for attempt := 0; attempt < 8; attempt++ {
+		err = s.client.Watch(ctx, func(tx *redis.Tx) error {
+			raw, err := tx.Get(ctx, key).Bytes()
+			if err == nil {
+				record, err := decodeEdgeIdempotencyRecord(raw)
+				if err != nil {
+					return err
+				}
+				if record.RequestHash != normalized.RequestHash {
+					return ErrIdempotencyConflict
+				}
+				if record.Status == EdgeIdempotencyCompleted && len(record.Response.Body) > 0 && record.Response.StatusCode > 0 {
+					reservation = EdgeIdempotencyReservation{State: EdgeIdempotencyReplay, Record: record}
+					return nil
+				}
+				reservation = EdgeIdempotencyReservation{State: EdgeIdempotencyPending, Record: record}
+				return nil
+			}
+			if !errors.Is(err, redis.Nil) {
+				return fmt.Errorf("read edge idempotency reservation: %w", err)
+			}
+			reservation = EdgeIdempotencyReservation{State: EdgeIdempotencyReserved, Record: &pending}
+			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+				pipe.Set(ctx, key, payload, s.idempotencyTTL)
+				return nil
+			})
+			if err != nil {
+				return fmt.Errorf("write edge idempotency reservation: %w", err)
+			}
+			return nil
+		}, key)
+		if errors.Is(err, redis.TxFailedErr) {
+			continue
+		}
+		if err != nil {
+			return EdgeIdempotencyReservation{}, err
+		}
+		return reservation, nil
+	}
+	return EdgeIdempotencyReservation{}, fmt.Errorf("edge idempotency reservation conflict: %w", redis.TxFailedErr)
+}
+
+func (s *RedisStore) CompleteIdempotency(ctx context.Context, req EdgeIdempotencyRequest, response EdgeIdempotencyResponse) (*EdgeIdempotencyRecord, error) {
+	if err := s.ensureReady(); err != nil {
+		return nil, err
+	}
+	normalized, err := normalizeEdgeIdempotencyRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	response = normalizeEdgeIdempotencyResponse(response)
+	if len(response.Body) > s.maxIdempotencyReplayBody {
+		return nil, fmt.Errorf("edge idempotency response body %d exceeds max %d bytes", len(response.Body), s.maxIdempotencyReplayBody)
+	}
+	key := edgeIdempotencyKey(normalized.TenantID, normalized.Endpoint, normalized.Key)
+	var completed *EdgeIdempotencyRecord
+	for attempt := 0; attempt < 8; attempt++ {
+		err = s.client.Watch(ctx, func(tx *redis.Tx) error {
+			raw, err := tx.Get(ctx, key).Bytes()
+			if errors.Is(err, redis.Nil) {
+				return ErrNotFound
+			}
+			if err != nil {
+				return fmt.Errorf("read edge idempotency reservation for complete: %w", err)
+			}
+			record, err := decodeEdgeIdempotencyRecord(raw)
+			if err != nil {
+				return err
+			}
+			if record.RequestHash != normalized.RequestHash {
+				return ErrIdempotencyConflict
+			}
+			if record.Status == EdgeIdempotencyCompleted && len(record.Response.Body) > 0 && record.Response.StatusCode > 0 {
+				completed = record
+				return nil
+			}
+			now := s.now().UTC()
+			record.TenantID = normalized.TenantID
+			record.Endpoint = normalized.Endpoint
+			record.RequestHash = normalized.RequestHash
+			record.Status = EdgeIdempotencyCompleted
+			record.Response = response
+			record.CompletedAt = &now
+			if record.CreatedAt.IsZero() {
+				record.CreatedAt = now
+			}
+			payload, err := json.Marshal(record)
+			if err != nil {
+				return fmt.Errorf("marshal completed edge idempotency record: %w", err)
+			}
+			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+				pipe.Set(ctx, key, payload, s.idempotencyTTL)
+				return nil
+			})
+			if err != nil {
+				return fmt.Errorf("write completed edge idempotency record: %w", err)
+			}
+			completed = record
+			return nil
+		}, key)
+		if errors.Is(err, redis.TxFailedErr) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return completed, nil
+	}
+	return nil, fmt.Errorf("edge idempotency completion conflict: %w", redis.TxFailedErr)
+}
+
+func (s *RedisStore) ReleaseIdempotency(ctx context.Context, req EdgeIdempotencyRequest) error {
+	if err := s.ensureReady(); err != nil {
+		return err
+	}
+	normalized, err := normalizeEdgeIdempotencyRequest(req)
+	if err != nil {
+		return err
+	}
+	key := edgeIdempotencyKey(normalized.TenantID, normalized.Endpoint, normalized.Key)
+	for attempt := 0; attempt < 8; attempt++ {
+		err = s.client.Watch(ctx, func(tx *redis.Tx) error {
+			raw, err := tx.Get(ctx, key).Bytes()
+			if errors.Is(err, redis.Nil) {
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("read edge idempotency reservation for release: %w", err)
+			}
+			record, err := decodeEdgeIdempotencyRecord(raw)
+			if err != nil {
+				return err
+			}
+			if record.RequestHash != normalized.RequestHash || record.Status == EdgeIdempotencyCompleted {
+				return nil
+			}
+			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+				pipe.Del(ctx, key)
+				return nil
+			})
+			if err != nil {
+				return fmt.Errorf("delete edge idempotency reservation: %w", err)
+			}
+			return nil
+		}, key)
+		if errors.Is(err, redis.TxFailedErr) {
+			continue
+		}
+		return err
+	}
+	return fmt.Errorf("edge idempotency release conflict: %w", redis.TxFailedErr)
+}
+
+func normalizeEdgeIdempotencyRequest(req EdgeIdempotencyRequest) (EdgeIdempotencyRequest, error) {
+	req.TenantID = strings.TrimSpace(req.TenantID)
+	req.Endpoint = strings.TrimSpace(req.Endpoint)
+	req.Key = strings.TrimSpace(req.Key)
+	req.RequestHash = strings.TrimSpace(req.RequestHash)
+	if req.TenantID == "" || req.Endpoint == "" || req.Key == "" || req.RequestHash == "" {
+		return EdgeIdempotencyRequest{}, fmt.Errorf("tenant_id, endpoint, idempotency key, and request_hash are required")
+	}
+	return req, nil
+}
+
+func normalizeEdgeIdempotencyResponse(response EdgeIdempotencyResponse) EdgeIdempotencyResponse {
+	if response.StatusCode == 0 {
+		response.StatusCode = 200
+	}
+	response.ContentType = strings.TrimSpace(response.ContentType)
+	if response.ContentType == "" {
+		response.ContentType = "application/json"
+	}
+	response.Body = append([]byte(nil), response.Body...)
+	return response
+}
+
+func decodeEdgeIdempotencyRecord(raw []byte) (*EdgeIdempotencyRecord, error) {
+	var record EdgeIdempotencyRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return nil, fmt.Errorf("unmarshal edge idempotency record: %w", err)
+	}
+	return &record, nil
 }
 
 func (s *RedisStore) ListEvents(ctx context.Context, query ListEventsQuery) (EventPage, error) {

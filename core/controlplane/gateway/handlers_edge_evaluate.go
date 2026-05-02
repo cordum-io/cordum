@@ -261,7 +261,7 @@ func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return edgeEvaluateContext{}, false
 	}
-	principalID, err := s.resolvePrincipal(r, req.PrincipalID)
+	principalID, err := s.resolveEdgeAuthPrincipal(r)
 	if err != nil {
 		writeEdgeForbidden(w, r, err)
 		return edgeEvaluateContext{}, false

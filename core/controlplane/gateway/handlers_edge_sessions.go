@@ -101,11 +101,10 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Resolve principal from auth context. resolvePrincipal returns the
-	// authenticated principal (or the requested one only if the auth provider
-	// allows the impersonation), so a user-role API key cannot create a
-	// session claiming any principal in its tenant.
-	principalID, err := s.resolvePrincipal(r, req.PrincipalID)
+	// Resolve principal from auth context. Edge evidence must not trust a
+	// client-supplied body principal, so a user-role API key cannot create a
+	// session claiming any other principal in its tenant.
+	principalID, err := s.resolveEdgeAuthPrincipal(r)
 	if err != nil {
 		writeEdgeForbidden(w, r, err)
 		return

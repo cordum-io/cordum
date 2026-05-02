@@ -499,17 +499,17 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeSessionCreateResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/EdgeBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '413':
-          $ref: '#/components/responses/PayloadTooLarge'
+          $ref: '#/components/responses/EdgePayloadTooLarge'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
     get:
       operationId: listEdgeSessions
       summary: List Edge sessions for a tenant
@@ -538,13 +538,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeSessionPageResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/sessions/{session_id}:
     get:
       operationId: getEdgeSession
@@ -566,15 +566,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeSession'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/sessions/{session_id}/heartbeat:
     post:
       operationId: heartbeatEdgeSession
@@ -596,15 +596,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeHeartbeatResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/sessions/{session_id}/end:
     post:
       operationId: endEdgeSession
@@ -632,17 +632,17 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeSession'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/EdgeBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/executions:
     post:
       operationId: createEdgeExecution
@@ -665,19 +665,19 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeAgentExecution'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/EdgeBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
         '413':
-          $ref: '#/components/responses/PayloadTooLarge'
+          $ref: '#/components/responses/EdgePayloadTooLarge'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/executions/{execution_id}:
     get:
       operationId: getEdgeExecution
@@ -699,15 +699,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeAgentExecution'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/executions/{execution_id}/end:
     post:
       operationId: endEdgeExecution
@@ -735,17 +735,17 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeAgentExecution'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/EdgeBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/approvals:
     get:
       operationId: listEdgeApprovals
@@ -794,15 +794,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeApprovalPageResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/EdgeBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/approvals/{approval_ref}:
     get:
       operationId: getEdgeApproval
@@ -826,15 +826,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeApproval'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/approvals/{approval_ref}/approve:
     post:
       operationId: approveEdgeApproval
@@ -864,25 +864,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeApproval'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/EdgeBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
           description: Approval permission denied or self-approval rejected (`code=self_approval_denied`).
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/EdgeError'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
         '409':
-          $ref: '#/components/responses/Conflict'
+          $ref: '#/components/responses/EdgeConflict'
         '413':
-          $ref: '#/components/responses/PayloadTooLarge'
+          $ref: '#/components/responses/EdgePayloadTooLarge'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/approvals/{approval_ref}/wait:
     post:
       operationId: waitEdgeApproval
@@ -917,19 +917,21 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeApproval'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/EdgeBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
         '413':
-          $ref: '#/components/responses/PayloadTooLarge'
+          $ref: '#/components/responses/EdgePayloadTooLarge'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/approvals/{approval_ref}/reject:
     post:
       operationId: rejectEdgeApproval
@@ -959,25 +961,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeApproval'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/EdgeBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
           description: Approval permission denied or self-approval rejected (`code=self_approval_denied`).
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/EdgeError'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
         '409':
-          $ref: '#/components/responses/Conflict'
+          $ref: '#/components/responses/EdgeConflict'
         '413':
-          $ref: '#/components/responses/PayloadTooLarge'
+          $ref: '#/components/responses/EdgePayloadTooLarge'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/evaluate:
     post:
       operationId: evaluateEdgeAction
@@ -1001,32 +1003,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeEvaluateResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/EdgeBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
         '409':
-          $ref: '#/components/responses/Conflict'
+          $ref: '#/components/responses/EdgeConflict'
         '413':
-          $ref: '#/components/responses/PayloadTooLarge'
+          $ref: '#/components/responses/EdgePayloadTooLarge'
         '502':
-          $ref: '#/components/responses/BadGateway'
+          $ref: '#/components/responses/EdgeBadGateway'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/events:
     post:
       operationId: createEdgeEvent
       summary: Append a single Edge agent action event
-      description: Writes a redacted AgentActionEvent for an existing Edge session/execution. Raw tool inputs, raw tool results, and transcripts must not be sent inline; send bounded `input_redacted` details and reference large evidence with `artifact_ptrs`.
+      description: >-
+        Writes a redacted AgentActionEvent for an existing Edge session/execution.
+        Raw tool inputs, raw tool results, and transcripts must not be sent inline;
+        send bounded `input_redacted` details and reference large evidence with
+        `artifact_ptrs`. Optional `Idempotency-Key` retries are scoped by tenant
+        and endpoint: the same normalized request replays the first 201 response
+        without appending a duplicate event, while the same key with a different
+        normalized request returns 409 `idempotency_conflict`.
       tags:
       - Edge
       parameters:
       - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -1041,28 +1051,39 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeAgentActionEvent'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/EdgeBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
         '413':
-          $ref: '#/components/responses/PayloadTooLarge'
+          $ref: '#/components/responses/EdgePayloadTooLarge'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/events/batch:
     post:
       operationId: createEdgeEventsBatch
       summary: Append a batch of Edge agent action events
-      description: Appends a fully prevalidated, ordered batch for existing Edge session/execution parents. Mixed-tenant or invalid items are rejected before append where possible. Large raw payloads must be stored separately and referenced by `artifact_ptrs`.
+      description: >-
+        Appends a fully prevalidated, ordered batch for existing Edge
+        session/execution parents. Mixed-tenant or invalid items are rejected
+        before append where possible. Large raw payloads must be stored separately
+        and referenced by `artifact_ptrs`. Optional `Idempotency-Key` retries are
+        scoped by tenant and endpoint: the same normalized batch replays the
+        first 201 response without partial append or duplicate events, while the
+        same key with a different normalized batch returns 409
+        `idempotency_conflict`.
       tags:
       - Edge
       parameters:
       - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -1077,19 +1098,21 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeAgentActionEventBatchResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/EdgeBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
         '413':
-          $ref: '#/components/responses/PayloadTooLarge'
+          $ref: '#/components/responses/EdgePayloadTooLarge'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/sessions/{session_id}/events:
     get:
       operationId: listEdgeSessionEvents
@@ -1145,17 +1168,17 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeAgentActionEventPageResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/EdgeBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/sessions/{session_id}/export:
     post:
       operationId: exportEdgeSession
@@ -1220,23 +1243,23 @@ paths:
                     type: string
                     enum: [standard, strict]
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/EdgeBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
         '413':
           description: Bundle exceeds `CORDUM_EDGE_EXPORT_MAX_BYTES`; reduce `max_events` and retry.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/EdgeError'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/edge/executions/{execution_id}/events:
     get:
       operationId: listEdgeExecutionEvents
@@ -1292,17 +1315,17 @@ paths:
               schema:
                 $ref: '#/components/schemas/EdgeAgentActionEventPageResponse'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          $ref: '#/components/responses/EdgeBadRequest'
         '401':
-          $ref: '#/components/responses/Unauthorized'
+          $ref: '#/components/responses/EdgeUnauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/EdgeNotFound'
         '503':
-          $ref: '#/components/responses/ServiceUnavailable'
+          $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
-          $ref: '#/components/responses/InternalServerError'
+          $ref: '#/components/responses/EdgeInternalServerError'
   /api/v1/jobs:
     post:
       operationId: submitJob
@@ -7065,10 +7088,10 @@ components:
       name: Idempotency-Key
       in: header
       required: false
-      description: Optional idempotency key for safe retries.
+      description: Optional idempotency key for safe retries. Edge event create/batch scopes keys by tenant and endpoint, replays the first response for the same normalized request, and returns 409 `idempotency_conflict` if the same key is reused with a different normalized request.
       schema:
         type: string
-        format: uuid
+        maxLength: 512
     JobID:
       name: id
       in: path
@@ -7225,6 +7248,60 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    EdgeBadRequest:
+      description: Edge bad request — invalid or missing parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeUnauthorized:
+      description: Edge unauthorized — missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeForbidden:
+      description: Edge forbidden — insufficient permissions or tenant access denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeNotFound:
+      description: Edge resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeConflict:
+      description: Edge conflict — resource state or idempotency conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgePayloadTooLarge:
+      description: Edge payload too large
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeInternalServerError:
+      description: Edge internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeBadGateway:
+      description: Edge bad gateway — upstream service error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeServiceUnavailable:
+      description: Edge service unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
     TierLimit:
       description: Forbidden by current license entitlements
       content:
@@ -8136,6 +8213,29 @@ components:
         next_cursor:
           type: string
           nullable: true
+    EdgeError:
+      type: object
+      description: Standard error envelope for all `/api/v1/edge/*` routes. Messages and details are sanitized and must not echo raw tool payloads, API keys, signed URLs, or secrets.
+      required:
+      - code
+      - message
+      - request_id
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable Edge error code.
+          example: idempotency_conflict
+        message:
+          type: string
+          description: Sanitized human-readable message.
+          example: idempotency key already used with a different request
+        request_id:
+          type: string
+          description: Request correlation id from `X-Request-Id`/middleware.
+        details:
+          type: object
+          additionalProperties: true
+          description: Optional sanitized structured details.
     Error:
       type: object
       properties:
