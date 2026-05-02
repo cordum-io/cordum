@@ -789,6 +789,191 @@ func TestSendSIEMEventDeliversToWorkingSender(t *testing.T) {
 // recorder accepts any input (it does nothing); the test pins the
 // invariant via the normalizers, which the step-7 Prometheus recorder
 // MUST call before forwarding to a CounterVec.WithLabelValues call.
+// TestSIEMEventForExecutionLifecycleMapsSeverity pins step-9 execution
+// audit builders. Started -> info; Ended succeeded -> info; Ended
+// failed/timeout/degraded -> high. Extra carries bounded execution_id/
+// adapter/mode/workflow_run_id/job_id only — Labels and raw fields are
+// NEVER promoted to Extra.
+func TestSIEMEventForExecutionLifecycleMapsSeverity(t *testing.T) {
+	endedAt := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name     string
+		exec     AgentExecution
+		ended    bool
+		wantType string
+		wantSev  string
+	}{
+		{
+			name: "started_is_info",
+			exec: AgentExecution{
+				ExecutionID: "edge_exec_a", SessionID: "edge_sess_a",
+				TenantID: "tenant-a", Adapter: "claude-code", Mode: "local-dev",
+				StartedAt: endedAt,
+			},
+			ended:    false,
+			wantType: audit.EventEdgeExecutionStarted,
+			wantSev:  audit.SeverityInfo,
+		},
+		{
+			name: "ended_succeeded_is_info",
+			exec: AgentExecution{
+				ExecutionID: "edge_exec_b", SessionID: "edge_sess_b",
+				TenantID: "tenant-a", Status: ExecutionStatusSucceeded,
+				EndedAt: &endedAt,
+			},
+			ended:    true,
+			wantType: audit.EventEdgeExecutionEnded,
+			wantSev:  audit.SeverityInfo,
+		},
+		{
+			name: "ended_failed_is_high",
+			exec: AgentExecution{
+				ExecutionID: "edge_exec_c", SessionID: "edge_sess_c",
+				TenantID: "tenant-a", Status: ExecutionStatusFailed,
+				EndedAt: &endedAt,
+			},
+			ended:    true,
+			wantType: audit.EventEdgeExecutionEnded,
+			wantSev:  audit.SeverityHigh,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var ev audit.SIEMEvent
+			if c.ended {
+				ev = SIEMEventForExecutionEnded(c.exec)
+			} else {
+				ev = SIEMEventForExecutionStarted(c.exec)
+			}
+			if ev.EventType != c.wantType {
+				t.Errorf("EventType = %q, want %q", ev.EventType, c.wantType)
+			}
+			if ev.Severity != c.wantSev {
+				t.Errorf("Severity = %q, want %q", ev.Severity, c.wantSev)
+			}
+			if ev.TenantID == "" {
+				t.Errorf("TenantID empty")
+			}
+			if ev.Extra["execution_id"] == "" {
+				t.Errorf("Extra missing execution_id")
+			}
+			// JobID must not be set unless the execution actually links
+			// to a real Cordum Job. AgentExecution.JobID is empty here.
+			if ev.JobID != "" {
+				t.Errorf("JobID = %q, want empty (no Cordum Job linked)", ev.JobID)
+			}
+		})
+	}
+}
+
+// TestSIEMEventForExecutionLinksRealJobIDOnly pins that JobID is only
+// promoted to SIEMEvent.JobID when AgentExecution.JobID is non-empty —
+// per ADR-010, Edge executions MUST NOT be modeled as Cordum Jobs by
+// default; the link only exists when an actual workflow/job run exists.
+func TestSIEMEventForExecutionLinksRealJobIDOnly(t *testing.T) {
+	exec := AgentExecution{
+		ExecutionID: "edge_exec_x", SessionID: "edge_sess_x",
+		TenantID: "tenant-a", JobID: "job-real-1234", WorkflowRunID: "wfrun-1",
+		Status: ExecutionStatusSucceeded,
+	}
+	ev := SIEMEventForExecutionEnded(exec)
+	if ev.JobID != "job-real-1234" {
+		t.Errorf("JobID = %q, want job-real-1234 (linked Cordum Job)", ev.JobID)
+	}
+	if ev.Extra["workflow_run_id"] == "" {
+		t.Errorf("Extra missing workflow_run_id")
+	}
+}
+
+// TestSIEMEventForArtifactExportedMapsResultToSeverity pins step-9
+// artifact-export audit builder: result=ok -> info, failed/oversize/
+// truncated/missing -> medium, unauthorized/tenant_mismatch -> high.
+// Extra carries artifact_type/sha256/redaction_level/retention_class
+// — never the raw URI/query string.
+func TestSIEMEventForArtifactExportedMapsResultToSeverity(t *testing.T) {
+	pointer := ArtifactPointer{
+		ArtifactType:   "edge.session_export",
+		TenantID:       "tenant-a",
+		SessionID:      "edge_sess_abc",
+		ExecutionID:    "edge_exec_def",
+		EventID:        "edge_evt_ghi",
+		RetentionClass: "standard",
+		RedactionLevel: "redacted",
+		SHA256:         "abc123",
+		URI:            "https://example.com/blob?token=Bearer-leaky-secret",
+	}
+	cases := []struct {
+		result  string
+		wantSev string
+	}{
+		{"ok", audit.SeverityInfo},
+		{"failed", audit.SeverityMedium},
+		{"truncated", audit.SeverityMedium},
+		{"oversize", audit.SeverityMedium},
+		{"missing", audit.SeverityMedium},
+		{"unauthorized", audit.SeverityHigh},
+		{"tenant_mismatch", audit.SeverityHigh},
+	}
+	for _, c := range cases {
+		t.Run(c.result, func(t *testing.T) {
+			ev := SIEMEventForArtifactExported(pointer, c.result)
+			if ev.EventType != audit.EventEdgeArtifactExported {
+				t.Errorf("EventType = %q, want %q", ev.EventType, audit.EventEdgeArtifactExported)
+			}
+			if ev.Severity != c.wantSev {
+				t.Errorf("result=%q Severity = %q, want %q", c.result, ev.Severity, c.wantSev)
+			}
+			if ev.Extra["artifact_type"] != "edge.session_export" {
+				t.Errorf("Extra artifact_type = %q", ev.Extra["artifact_type"])
+			}
+			for k, v := range ev.Extra {
+				if strings.Contains(v, "Bearer") || strings.Contains(v, "token=") {
+					t.Errorf("Extra[%q] leaked URL secret: %q", k, v)
+				}
+			}
+		})
+	}
+}
+
+// TestSIEMEventForApprovalRequestedHasMediumSeverity pins step-9
+// explicit approval-requested builder (currently approval requests
+// surface via SIEMEventForAction's REQUIRE_APPROVAL path, but step-9
+// asks for an explicit builder so policy-handler call sites can emit
+// the audit event without constructing a synthetic AgentActionEvent).
+func TestSIEMEventForApprovalRequestedHasMediumSeverity(t *testing.T) {
+	createdAt := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	apr := EdgeApproval{
+		ApprovalRef: "edge_apr_abc",
+		TenantID:    "tenant-a",
+		SessionID:   "edge_sess_def",
+		ExecutionID: "edge_exec_ghi",
+		EventID:     "edge_evt_jkl",
+		PrincipalID: "user@example.com",
+		RuleID:      "rule_abc",
+		Status:      "pending",
+		CreatedAt:   createdAt,
+		Reason:      "Authorization: Bearer leaky-reason",
+	}
+	ev := SIEMEventForApprovalRequested(apr)
+	if ev.EventType != audit.EventEdgeApprovalRequested {
+		t.Errorf("EventType = %q, want %q", ev.EventType, audit.EventEdgeApprovalRequested)
+	}
+	if ev.Severity != audit.SeverityMedium {
+		t.Errorf("Severity = %q, want medium", ev.Severity)
+	}
+	if ev.TenantID != "tenant-a" {
+		t.Errorf("TenantID = %q", ev.TenantID)
+	}
+	if ev.Extra["approval_ref"] != "edge_apr_abc" {
+		t.Errorf("Extra approval_ref = %q", ev.Extra["approval_ref"])
+	}
+	for k, v := range ev.Extra {
+		if strings.Contains(v, "Authorization") || strings.Contains(v, "Bearer") {
+			t.Errorf("Extra[%q] leaked secret: %q", k, v)
+		}
+	}
+}
+
 // TestExecutionLogAttrsEmitsOnlyBoundedFields pins step-8 ExecutionLogAttrs
 // behavior: tenant/session/execution/job/workflow/step IDs are bounded,
 // adapter/mode/status pass through Normalize* helpers, started_at/ended_at

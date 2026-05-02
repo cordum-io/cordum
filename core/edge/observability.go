@@ -642,6 +642,171 @@ func boundedCapabilities(capability string) []string {
 	return []string{boundedShortString(v, 32)}
 }
 
+// SIEMEventForExecutionStarted builds an audit event for an execution
+// that just transitioned to running. Severity info — execution start
+// is benign.
+func SIEMEventForExecutionStarted(exec AgentExecution) audit.SIEMEvent {
+	timestamp := exec.StartedAt
+	if timestamp.IsZero() {
+		timestamp = time.Now().UTC()
+	}
+	return audit.SIEMEvent{
+		Timestamp: timestamp,
+		EventType: audit.EventEdgeExecutionStarted,
+		Severity:  audit.SeverityInfo,
+		TenantID:  boundedID(exec.TenantID),
+		Action:    "edge_execution_start",
+		JobID:     boundedID(strings.TrimSpace(exec.JobID)),
+		Extra:     executionExtra(exec),
+	}
+}
+
+// SIEMEventForExecutionEnded builds an audit event for an execution that
+// has reached a terminal status. Severity info on succeeded; high on
+// failed/timeout/degraded; medium on cancelled.
+func SIEMEventForExecutionEnded(exec AgentExecution) audit.SIEMEvent {
+	severity := audit.SeverityInfo
+	switch exec.Status {
+	case ExecutionStatusFailed, ExecutionStatusTimeout, ExecutionStatusDegraded:
+		severity = audit.SeverityHigh
+	case ExecutionStatusCancelled:
+		severity = audit.SeverityMedium
+	}
+	timestamp := time.Now().UTC()
+	if exec.EndedAt != nil && !exec.EndedAt.IsZero() {
+		timestamp = *exec.EndedAt
+	}
+	return audit.SIEMEvent{
+		Timestamp: timestamp,
+		EventType: audit.EventEdgeExecutionEnded,
+		Severity:  severity,
+		TenantID:  boundedID(exec.TenantID),
+		Action:    "edge_execution_end",
+		JobID:     boundedID(strings.TrimSpace(exec.JobID)),
+		Extra:     executionExtra(exec),
+	}
+}
+
+// SIEMEventForArtifactExported builds an audit event for an artifact
+// export operation. Severity follows result: ok/info, failed/missing/
+// truncated/oversize/medium, unauthorized/tenant_mismatch/high.
+//
+// Extra carries artifact_type, sha256 (length-bounded), redaction_level,
+// retention_class — never the raw URI/query string.
+func SIEMEventForArtifactExported(pointer ArtifactPointer, result string) audit.SIEMEvent {
+	bounded := boundedResult(result)
+	severity := audit.SeverityInfo
+	switch bounded {
+	case "failed", "missing", "truncated", "oversize":
+		severity = audit.SeverityMedium
+	case "unauthorized", "tenant_mismatch":
+		severity = audit.SeverityHigh
+	}
+	timestamp := pointer.CreatedAt
+	if timestamp.IsZero() {
+		timestamp = time.Now().UTC()
+	}
+	extra := map[string]string{
+		"artifact_type": boundedArtifactType(string(pointer.ArtifactType)),
+		"result":        bounded,
+		"session_id":    boundedID(pointer.SessionID),
+		"execution_id":  boundedID(pointer.ExecutionID),
+		"event_id":      boundedID(pointer.EventID),
+	}
+	if v := strings.TrimSpace(pointer.SHA256); v != "" {
+		extra["sha256"] = boundedShortString(v, 80)
+	}
+	if v := strings.TrimSpace(string(pointer.RedactionLevel)); v != "" {
+		extra["redaction_level"] = boundedShortString(v, 32)
+	}
+	if v := strings.TrimSpace(string(pointer.RetentionClass)); v != "" {
+		extra["retention_class"] = boundedShortString(v, 32)
+	}
+	return audit.SIEMEvent{
+		Timestamp: timestamp,
+		EventType: audit.EventEdgeArtifactExported,
+		Severity:  severity,
+		TenantID:  boundedID(pointer.TenantID),
+		Action:    "edge_artifact_export",
+		Extra:     extra,
+	}
+}
+
+// SIEMEventForApprovalRequested builds an audit event for an approval
+// that was just requested. Severity is medium — the action was held
+// pending human review. Extra carries approval_ref/rule_id/policy_snapshot
+// and bounded session/execution/event IDs; raw Reason is NEVER promoted.
+func SIEMEventForApprovalRequested(apr EdgeApproval) audit.SIEMEvent {
+	timestamp := apr.CreatedAt
+	if timestamp.IsZero() {
+		timestamp = time.Now().UTC()
+	}
+	extra := map[string]string{
+		"approval_ref": boundedShortString(apr.ApprovalRef, 64),
+		"session_id":   boundedID(apr.SessionID),
+		"execution_id": boundedID(apr.ExecutionID),
+		"event_id":     boundedID(apr.EventID),
+	}
+	if v := strings.TrimSpace(apr.RuleID); v != "" {
+		extra["rule_id"] = boundedShortString(v, 80)
+	}
+	if v := strings.TrimSpace(apr.PolicySnapshot); v != "" {
+		extra["policy_snapshot"] = boundedShortString(v, 80)
+	}
+	return audit.SIEMEvent{
+		Timestamp:   timestamp,
+		EventType:   audit.EventEdgeApprovalRequested,
+		Severity:    audit.SeverityMedium,
+		TenantID:    boundedID(apr.TenantID),
+		Action:      "edge_approval_requested",
+		Decision:    "require_approval",
+		MatchedRule: boundedShortString(apr.RuleID, 80),
+		Identity:    boundedID(apr.PrincipalID),
+		Extra:       extra,
+	}
+}
+
+// executionExtra builds the safe Extra map for an AgentExecution
+// lifecycle event. Adapter/mode/workflow_run_id/step_id/attempt are
+// bounded; Labels are NEVER promoted because they can carry user input.
+func executionExtra(exec AgentExecution) map[string]string {
+	extra := map[string]string{
+		"execution_id": boundedID(exec.ExecutionID),
+		"session_id":   boundedID(exec.SessionID),
+		"adapter":      boundedShortString(string(exec.Adapter), 32),
+		"mode":         boundedShortString(string(exec.Mode), 32),
+		"status":       boundedShortString(string(exec.Status), 32),
+	}
+	if v := strings.TrimSpace(exec.WorkflowRunID); v != "" {
+		extra["workflow_run_id"] = boundedID(v)
+	}
+	if v := strings.TrimSpace(exec.StepID); v != "" {
+		extra["step_id"] = boundedShortString(v, 64)
+	}
+	if exec.Attempt > 0 {
+		extra["attempt"] = strconvItoa(exec.Attempt)
+	}
+	return extra
+}
+
+// strconvItoa is a tiny inline replacement for strconv.Itoa so we don't
+// introduce a strconv import for a single call site. Negative inputs
+// return "0" because Edge attempt counters are always non-negative.
+func strconvItoa(n int) string {
+	if n <= 0 {
+		return "0"
+	}
+	if n < 10 {
+		return string(rune('0' + n))
+	}
+	// For attempt counts up to 99 — Edge retries are tightly bounded;
+	// anything larger collapses to a sentinel.
+	if n >= 100 {
+		return "99+"
+	}
+	return string([]byte{byte('0' + n/10), byte('0' + n%10)})
+}
+
 // ExecutionLogAttrs builds the bounded slog.Attr slice the Edge handlers
 // and agentd should use when logging an AgentExecution lifecycle event.
 // Only safe, bounded fields are included: tenant/session/execution/job/
