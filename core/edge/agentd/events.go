@@ -58,7 +58,7 @@ func BuildDecisionEvidenceEvent(evidence DecisionEvidence) (edgecore.AgentAction
 	resp := evidence.Response
 	state := evidence.State
 
-	eventID := nonEmpty(resp.EventID, req.ActionHash)
+	eventID := strings.TrimSpace(resp.EventID)
 	if strings.TrimSpace(eventID) == "" {
 		eventID = "agentd-" + randomHex(16)
 	}

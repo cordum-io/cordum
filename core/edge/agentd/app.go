@@ -76,9 +76,22 @@ func Run(ctx context.Context, opts RunOptions) error {
 	if writer, ok := gateway.(EventWriter); ok {
 		eventWriter = writer
 	}
+	var evaluator *Evaluator
+	if evaluateClient, ok := gateway.(EvaluateClient); ok {
+		evaluator = NewEvaluator(EvaluatorConfig{
+			Client:      evaluateClient,
+			EventWriter: eventWriter,
+			State:       *state,
+			ApprovalConfig: ApprovalDecisionConfig{
+				PolicyMode: cfg.PolicyMode,
+			},
+			HookTimeout: cfg.HookTimeout,
+		})
+	}
 	local, err := NewLocalServer(LocalServerConfig{
 		BindURL:      cfg.BindURL,
 		MaxBodyBytes: defaultMaxHookBodyBytes,
+		Evaluator:    evaluator,
 		State:        *state,
 		EventWriter:  eventWriter,
 	})
