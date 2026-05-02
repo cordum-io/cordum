@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/infra/redisutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -20,6 +21,7 @@ const (
 	defaultMaxEventBytes            = 128 * 1024
 	defaultIdempotencyTTL           = 24 * time.Hour
 	defaultMaxIdempotencyReplayBody = 256 * 1024
+	edgeEventAppendCASMaxAttempts   = 5
 	// maxSessionEventScan is the legacy hard-stop threshold retained as a
 	// regression-test fixture. Production session event listing no longer
 	// truncates at this count; it stops per request after the cursor window has
@@ -731,7 +733,7 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 		watchKeys = append(watchKeys, edgeEventSeqKey(executionID), edgeEventsKey(executionID), edgeEventIDIndexKey(executionID), edgeExecutionKey(executionID))
 	}
 	appended := make([]AgentActionEvent, len(events))
-	err = s.client.Watch(ctx, func(tx *redis.Tx) error {
+	err = redisutil.Retry(ctx, s.client, func(tx *redis.Tx) error {
 		// Re-read each execution inside the watched transaction and reject
 		// the batch if it is missing, cross-tenant, or already terminal.
 		// Without this re-check, a TOCTOU window between the GetExecution
@@ -799,8 +801,8 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 			return fmt.Errorf("append agent action event batch: %w", err)
 		}
 		return nil
-	}, watchKeys...)
-	if errors.Is(err, redis.TxFailedErr) {
+	}, redisutil.WithKeys(watchKeys...), redisutil.WithMaxAttempts(edgeEventAppendCASMaxAttempts))
+	if errors.Is(err, redis.TxFailedErr) || errors.Is(err, redisutil.ErrMaxAttemptsExceeded) {
 		return nil, fmt.Errorf("append agent action event batch conflict: %w", err)
 	}
 	if err != nil {

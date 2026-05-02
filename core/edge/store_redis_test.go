@@ -1137,7 +1137,10 @@ func assertStoreErrorOmitsSyntheticSecrets(t *testing.T, err error) {
 func newRedisEdgeStore(t *testing.T, opts ...StoreOption) (*RedisStore, *redis.Client, *miniredis.Miniredis, func()) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	// Keep the miniredis-backed unit-test client single-connection so -race
+	// exercises our Redis CAS logic rather than go-redis lazy per-connection
+	// option initialization under concurrent first use.
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 1})
 	cleanup := func() {
 		_ = client.Close()
 		mr.Close()
