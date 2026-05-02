@@ -916,6 +916,13 @@ func (s *server) appendEdgeEvaluateOutcome(ctx context.Context, store edgecore.S
 		return edgecore.AgentActionEvent{}, err
 	}
 	s.forwardPersistedEdgeEvent(appended)
+	// EDGE-014 step-10: emit a single bounded audit event per persisted
+	// evaluate decision. SIEMEventForAction maps decision -> EventType
+	// (allow/recorded -> policy_decision, deny -> action_denied,
+	// require_approval -> approval_requested, throttle -> action_denied
+	// medium). Best-effort: nil-safe + panic-recovering, so audit
+	// failures never change the response.
+	edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForAction(appended))
 	return appended, nil
 }
 

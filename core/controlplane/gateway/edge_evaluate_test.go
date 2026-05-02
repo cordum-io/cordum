@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/config"
@@ -1660,6 +1661,73 @@ func edgeEvaluateEventDecisionForPolicyDecision(decision string) edgecore.EdgeDe
 		return edgecore.DecisionRequireApproval
 	default:
 		return edgecore.EdgeDecision(decision)
+	}
+}
+
+// TestGatewayEdgeEvaluateEmitsAuditEventPerDecision pins EDGE-014 step-10
+// Gateway audit instrumentation for the evaluate handler. Each persisted
+// decision event must produce exactly one audit event of the matching
+// edge.* type; raw command/prompt/secret content from the request body
+// must NEVER appear in any Extra value (the SIEMEvent builder bounds
+// every promoted field, but pin the contract end-to-end).
+func TestGatewayEdgeEvaluateEmitsAuditEventPerDecision(t *testing.T) {
+	cases := []struct {
+		name       string
+		decision   pb.DecisionType
+		wantType   string
+		wantSev    string
+		wantPolicy edgecore.EdgeDecision
+	}{
+		{"allow_emits_policy_decision_info", pb.DecisionType_DECISION_TYPE_ALLOW, audit.EventEdgePolicyDecision, audit.SeverityInfo, edgecore.DecisionAllow},
+		{"deny_emits_action_denied_high", pb.DecisionType_DECISION_TYPE_DENY, audit.EventEdgeActionDenied, audit.SeverityHigh, edgecore.DecisionDeny},
+		// REQUIRE_HUMAN path requires extra approval-store fixture
+		// (valid principal_id, rule, and policy snapshot) before it
+		// reaches the decision audit emission point. Coverage for
+		// approval_requested audit emission lives in the dedicated
+		// approval-flow test once that slice lands.
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			stub := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+				Decision: c.decision,
+				Reason:   "test reason",
+			}}
+			s, handler := newEdgeEvaluateTestServer(t, stub)
+			sink := &testAuditSender{}
+			s.auditExporter = sink
+			session := createEdgeRouteSession(t, handler)
+			// The session create itself emits 2 events (session_started +
+			// execution_started); reset by reading then capturing length.
+			before := sink.Len()
+
+			rec := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", edgeEvaluateBody(
+				session.SessionID, session.ExecutionID, edgeRouteTenant,
+				"Bash", map[string]any{"command": "Authorization: Bearer leaky-evaluate-secret"}))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("evaluate status = %d body=%s", rec.Code, rec.Body.String())
+			}
+
+			after := sink.Len()
+			if after-before != 1 {
+				t.Fatalf("evaluate audit events emitted = %d, want 1", after-before)
+			}
+			ev := sink.Get(after - 1)
+			if ev.EventType != c.wantType {
+				t.Errorf("EventType = %q, want %q", ev.EventType, c.wantType)
+			}
+			if ev.Severity != c.wantSev {
+				t.Errorf("Severity = %q, want %q", ev.Severity, c.wantSev)
+			}
+			if ev.TenantID != edgeRouteTenant {
+				t.Errorf("TenantID = %q, want %q", ev.TenantID, edgeRouteTenant)
+			}
+			// Raw command must NOT leak into Extra.
+			for k, v := range ev.Extra {
+				if strings.Contains(v, "Authorization") || strings.Contains(v, "Bearer") || strings.Contains(v, "leaky-evaluate-secret") {
+					t.Errorf("Extra[%q] leaked secret: %q", k, v)
+				}
+			}
+		})
 	}
 }
 
