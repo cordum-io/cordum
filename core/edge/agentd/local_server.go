@@ -139,7 +139,7 @@ func (s *LocalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 		maxBody = defaultMaxHookBodyBytes
 	}
 	body := http.MaxBytesReader(w, r.Body, maxBody)
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	var req claude.AgentdRequest
 	dec := json.NewDecoder(body)
 	if err := dec.Decode(&req); err != nil {
@@ -354,13 +354,3 @@ func statPathMode(path string) (os.FileMode, error) {
 	return info.Mode(), nil
 }
 
-func sleepContext(ctx context.Context, d time.Duration) error {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}

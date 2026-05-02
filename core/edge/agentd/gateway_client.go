@@ -150,7 +150,7 @@ func (c *GatewayClient) doJSON(ctx context.Context, method, path string, body an
 	if err != nil {
 		return c.wrapTransportError(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		msg := strings.TrimSpace(string(data))

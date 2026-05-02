@@ -67,7 +67,7 @@ func runCLI(ctx context.Context, opts cliOptions) int {
 	fs.BoolVar(&cfg.FailClosed, "fail-closed", cfg.FailClosed, "fail closed when local governance cannot start")
 	help := fs.Bool("help", false, "show help")
 	if err := fs.Parse(opts.Args); err != nil {
-		fmt.Fprintf(opts.Stderr, "cordum-agentd: %s\n", redactForStderr(err.Error(), env))
+		_, _ = fmt.Fprintf(opts.Stderr, "cordum-agentd: %s\n", redactForStderr(err.Error(), env))
 		writeUsage(opts.Stderr)
 		return 2
 	}
@@ -76,11 +76,11 @@ func runCLI(ctx context.Context, opts cliOptions) int {
 		return 0
 	}
 	if opts.Run == nil {
-		fmt.Fprintln(opts.Stderr, "cordum-agentd: runner not configured")
+		_, _ = fmt.Fprintln(opts.Stderr, "cordum-agentd: runner not configured")
 		return 1
 	}
 	if err := opts.Run(ctx, cfg); err != nil {
-		fmt.Fprintf(opts.Stderr, "cordum-agentd: %s\n", redactForStderr(err.Error(), env))
+		_, _ = fmt.Fprintf(opts.Stderr, "cordum-agentd: %s\n", redactForStderr(err.Error(), env))
 		return 1
 	}
 	return 0
