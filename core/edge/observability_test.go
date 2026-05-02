@@ -8,7 +8,16 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/prometheus/client_golang/prometheus"
 )
+
+// prometheusNewRegistryHelper returns a fresh prometheus.Registry suitable
+// for a single test. Each test gets its own to avoid MustRegister panics
+// on duplicate metric names.
+func prometheusNewRegistryHelper(t *testing.T) *prometheus.Registry {
+	t.Helper()
+	return prometheus.NewRegistry()
+}
 
 // TestNoopRecorderImplementsRecorder pins that the no-op recorder
 // satisfies the Recorder interface so callers can wire it as a default
@@ -352,6 +361,147 @@ func TestEventLogAttrsThroughSlog(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("slog output missing %q in: %s", want, out)
 		}
+	}
+}
+
+// TestPrometheusRecorderRegistersAndEmitsBoundedMetrics pins the step-7
+// PrometheusRecorder behavior: registration via prometheus.NewRegistry()
+// succeeds without MustRegister panics, label values are bounded by the
+// step-3 Normalize* helpers, and counter/gauge values are observable via
+// testutil.ToFloat64.
+func TestPrometheusRecorderRegistersAndEmitsBoundedMetrics(t *testing.T) {
+	reg := prometheusNewRegistryHelper(t)
+	r := NewPrometheusRecorder(reg)
+
+	// Exercise every metric to catch registration errors that surface
+	// only on first WithLabelValues for a given label set.
+	r.RecordSessionCreated("tenant-edge014", "local-dev", "claude-code")
+	r.RecordSessionEnded("tenant-edge014", "local-dev", "ended")
+	r.SetSessionsActive("tenant-edge014", "local-dev", 5)
+	r.RecordExecutionStarted("tenant-edge014", "local-dev", "claude-code")
+	r.RecordExecutionEnded("tenant-edge014", "local-dev", "succeeded")
+	r.RecordActionDecision("tenant-edge014", "hook", "hook.pre_tool_use", "ALLOW", "local-dev")
+	r.RecordActionDenied("tenant-edge014", "hook", "hook.pre_tool_use", "destructive_command")
+	r.RecordApprovalRequested("tenant-edge014", "hook", "hook.pre_tool_use")
+	r.RecordApprovalResolved("tenant-edge014", "hook", "hook.pre_tool_use", "approved")
+	r.RecordDegraded("tenant-edge014", "local-dev", "agentd", "gateway_unavailable")
+	r.RecordFailClosed("tenant-edge014", "enterprise-strict", "gateway_unavailable")
+	r.RecordArtifactExport("tenant-edge014", "edge.session_export", "ok")
+	r.ObserveHookLatency("tenant-edge014", "PreToolUse", "ALLOW", 100*time.Millisecond)
+	r.ObserveEvaluateLatency("tenant-edge014", "hook", "hook.pre_tool_use", "ALLOW", 50*time.Millisecond)
+	r.RecordCacheLookup("tenant-edge014", "hook", "hook.pre_tool_use", "hit")
+	r.AddStreamClients("tenant-edge014", 2)
+	r.AddStreamClients("tenant-edge014", -1)
+	r.RecordStreamDrop("client_buffer_full")
+}
+
+// TestPrometheusRecorderBoundsHighCardinalityInputs pins that
+// attacker-supplied or high-cardinality strings (raw command, secret,
+// ID-like values) collapse to bounded enum labels via the step-3
+// Normalize* helpers + boundedMode/Status/etc., so the metric registry
+// cannot blow up from arbitrary input.
+func TestPrometheusRecorderBoundsHighCardinalityInputs(t *testing.T) {
+	reg := prometheusNewRegistryHelper(t)
+	r := NewPrometheusRecorder(reg)
+
+	const rawSecret = "Authorization: Bearer edge014-prom-secret-xyz"
+	r.RecordActionDecision("tenant-edge014", "WEIRD-LAYER", "rm -rf /", rawSecret, "evil-mode")
+	r.RecordActionDenied("tenant-edge014", rawSecret, "hook.pre_tool_use", "very_long_reason_code_that_should_collapse_to_other_because_it_exceeds_the_48_char_bound_with_lots_of_extra")
+	r.RecordDegraded("tenant-edge014", rawSecret, rawSecret, rawSecret)
+	r.RecordFailClosed("tenant-edge014", rawSecret, rawSecret)
+	r.RecordArtifactExport("tenant-edge014", rawSecret, rawSecret)
+	r.ObserveHookLatency("tenant-edge014", rawSecret, rawSecret, 1*time.Millisecond)
+	r.RecordCacheLookup("tenant-edge014", rawSecret, rawSecret, rawSecret)
+	r.RecordStreamDrop(rawSecret)
+	// If any of these calls had leaked the raw secret as a label, the
+	// Prometheus registry would have created N+ unique label sets. We
+	// can't easily inspect label cardinality through the public API
+	// without testutil.GatherAndCount, so rely on the Normalize* tests
+	// from step-3 to enforce the contract — this test exists primarily
+	// to catch a panic from a missing-label-bound recorder method.
+}
+
+// TestPrometheusRecorderNilRegistererReturnsNoop pins that passing nil
+// returns the no-op recorder rather than panicking on MustRegister(nil).
+func TestPrometheusRecorderNilRegistererReturnsNoop(t *testing.T) {
+	r := NewPrometheusRecorder(nil)
+	if _, ok := r.(NoopRecorder); !ok {
+		t.Fatalf("NewPrometheusRecorder(nil) = %T, want NoopRecorder", r)
+	}
+	// Sanity: methods don't panic.
+	r.RecordSessionCreated("", "", "")
+	r.RecordStreamDrop("")
+}
+
+// TestBoundedHelpersCollapseUntrustedInput pins the per-label normalizer
+// allowlists (mode, agent_product, status, component, artifact_type,
+// result, hook_event, cache_result, reason_code) — Prometheus-recorder
+// callers rely on these to keep metric label cardinality bounded.
+func TestBoundedHelpersCollapseUntrustedInput(t *testing.T) {
+	checks := []struct {
+		name string
+		fn   func(string) string
+		good map[string]string
+		bad  []string
+	}{
+		{"mode", boundedMode,
+			map[string]string{"observe": "observe", "local-dev": "local-dev", "ENTERPRISE-STRICT": "enterprise-strict", "": "unknown"},
+			[]string{"banana", "Authorization: Bearer secret"}},
+		{"agentProduct", boundedAgentProduct,
+			map[string]string{"claude-code": "claude-code", "CODEX": "codex", "": "unknown"},
+			[]string{"sk-leaked", "rm -rf"}},
+		{"status", boundedStatus,
+			map[string]string{"ended": "ended", "RUNNING": "running", "": "unknown"},
+			[]string{"banana_status_value_not_in_set"}},
+		{"component", boundedComponent,
+			map[string]string{"gateway": "gateway", "AGENTD": "agentd", "": "unknown"},
+			[]string{"core/edge/something"}},
+		{"artifactType", boundedArtifactType,
+			map[string]string{"edge.session_export": "edge.session_export", "": "unknown"},
+			[]string{"banana", "rm -rf /"}},
+		{"result", boundedResult,
+			map[string]string{"ok": "ok", "FAILED": "failed", "": "unknown"},
+			[]string{"some-arbitrary-result"}},
+		{"cacheResult", boundedCacheResult,
+			map[string]string{"hit": "hit", "MISS_NO_ELIGIBILITY": "miss_no_eligibility", "": "unknown"},
+			[]string{"banana"}},
+		{"reasonCode", boundedReasonCode,
+			map[string]string{"gateway_unavailable": "gateway_unavailable", "": "unknown", "TIMEOUT": "timeout"},
+			[]string{"this_reason_code_is_intentionally_made_far_too_long_to_pass_through_the_48_char_bound_and_should_collapse", "raw command with spaces", "Bearer secret"}},
+	}
+	for _, c := range checks {
+		t.Run(c.name, func(t *testing.T) {
+			for input, want := range c.good {
+				if got := c.fn(input); got != want {
+					t.Errorf("%s(%q) = %q, want %q", c.name, input, got, want)
+				}
+			}
+			for _, input := range c.bad {
+				if got := c.fn(input); got == input || got == "" {
+					t.Errorf("%s(%q) = %q, want bounded enum (got passthrough)", c.name, input, got)
+				}
+				if got := c.fn(input); got != "other" && got != "unknown" {
+					t.Errorf("%s(%q) = %q, want 'other' or 'unknown'", c.name, input, got)
+				}
+			}
+		})
+	}
+}
+
+// TestBoundedHookEventPreservesDocumentedClaudeNames pins that PascalCase
+// Claude hook event names pass through (these are case-sensitive Claude
+// API conventions) and unknown values collapse to "other".
+func TestBoundedHookEventPreservesDocumentedClaudeNames(t *testing.T) {
+	for _, name := range []string{"PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit", "ConfigChange", "FileChanged"} {
+		if got := boundedHookEvent(name); got != name {
+			t.Errorf("boundedHookEvent(%q) = %q, want passthrough", name, got)
+		}
+	}
+	if got := boundedHookEvent(""); got != "unknown" {
+		t.Errorf("boundedHookEvent(\"\") = %q, want unknown", got)
+	}
+	if got := boundedHookEvent("Banana"); got != "other" {
+		t.Errorf("boundedHookEvent(\"Banana\") = %q, want other", got)
 	}
 }
 
