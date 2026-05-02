@@ -43,6 +43,14 @@ func (s *server) handleListEdgeApprovals(w http.ResponseWriter, r *http.Request)
 		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge approval query", nil)
 		return
 	}
+	if !s.edgeApprovalCallerCanListAll(r) {
+		principalID := edgeApprovalAuthenticatedPrincipal(r)
+		if principalID == "" {
+			writeJSON(w, edgeApprovalPageResponse{Items: []edgecore.EdgeApproval{}, NextCursor: ""})
+			return
+		}
+		query.PrincipalID = principalID
+	}
 	page, err := store.ListApprovals(r.Context(), query)
 	if err != nil {
 		writeEdgeApprovalStoreError(w, r, err, "list edge approvals")
@@ -259,12 +267,21 @@ func (s *server) edgeApprovalVisibleToCaller(r *http.Request, approval *edgecore
 	if approval == nil {
 		return false
 	}
-	if authCtx := auth.FromRequest(r); authCtx != nil {
-		if principal := strings.TrimSpace(authCtx.PrincipalID); principal != "" && principal == strings.TrimSpace(approval.PrincipalID) {
-			return true
-		}
+	if principal := edgeApprovalAuthenticatedPrincipal(r); principal != "" && principal == strings.TrimSpace(approval.PrincipalID) {
+		return true
 	}
+	return s.edgeApprovalCallerCanListAll(r)
+}
+
+func (s *server) edgeApprovalCallerCanListAll(r *http.Request) bool {
 	return s.requireRole(r, "admin", "operator") == nil
+}
+
+func edgeApprovalAuthenticatedPrincipal(r *http.Request) string {
+	if authCtx := auth.FromRequest(r); authCtx != nil {
+		return strings.TrimSpace(authCtx.PrincipalID)
+	}
+	return ""
 }
 
 func writeEdgeApprovalNotFound(w http.ResponseWriter, r *http.Request) {

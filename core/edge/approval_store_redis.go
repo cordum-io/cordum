@@ -28,6 +28,27 @@ func edgeApprovalStatusIndexKey(tenantID string, status ApprovalStatus) string {
 	return "edge:approvals:index:status:" + strings.TrimSpace(tenantID) + ":" + strings.TrimSpace(string(status))
 }
 
+func edgeApprovalPrincipalIndexKey(tenantID, principalID string) string {
+	return "edge:approvals:index:principal:" + strings.TrimSpace(tenantID) + ":" + strings.TrimSpace(principalID)
+}
+
+func edgeApprovalPrincipalStatusIndexKey(tenantID, principalID string, status ApprovalStatus) string {
+	return "edge:approvals:index:principal_status:" + strings.TrimSpace(tenantID) + ":" + strings.TrimSpace(principalID) + ":" + strings.TrimSpace(string(status))
+}
+
+func edgeApprovalListIndexKey(tenantID, principalID string, status ApprovalStatus) string {
+	switch {
+	case strings.TrimSpace(principalID) != "" && status != "":
+		return edgeApprovalPrincipalStatusIndexKey(tenantID, principalID, status)
+	case strings.TrimSpace(principalID) != "":
+		return edgeApprovalPrincipalIndexKey(tenantID, principalID)
+	case status != "":
+		return edgeApprovalStatusIndexKey(tenantID, status)
+	default:
+		return edgeApprovalTenantIndexKey(tenantID)
+	}
+}
+
 func edgeApprovalTupleIndexKey(tenantID, sessionID, executionID, actionHash string) string {
 	return "edge:approvals:index:tuple:" + strings.TrimSpace(tenantID) + ":" + strings.TrimSpace(sessionID) + ":" + strings.TrimSpace(executionID) + ":" + strings.TrimSpace(actionHash)
 }
@@ -107,6 +128,8 @@ func (s *RedisStore) EnqueueApproval(ctx context.Context, req EdgeApprovalReques
 			pipe.Set(ctx, edgeApprovalKey(ref), payload, 0)
 			pipe.ZAdd(ctx, edgeApprovalTenantIndexKey(req.TenantID), redis.Z{Score: score, Member: ref})
 			pipe.ZAdd(ctx, edgeApprovalStatusIndexKey(req.TenantID, ApprovalStatusPending), redis.Z{Score: score, Member: ref})
+			pipe.ZAdd(ctx, edgeApprovalPrincipalIndexKey(req.TenantID, req.PrincipalID), redis.Z{Score: score, Member: ref})
+			pipe.ZAdd(ctx, edgeApprovalPrincipalStatusIndexKey(req.TenantID, req.PrincipalID, ApprovalStatusPending), redis.Z{Score: score, Member: ref})
 			pipe.SAdd(ctx, tupleKey, ref)
 			return nil
 		})
@@ -147,6 +170,7 @@ func (s *RedisStore) ListApprovals(ctx context.Context, query ListApprovalsQuery
 	if tenantID == "" {
 		return ApprovalPage{}, fmt.Errorf("tenant_id is required")
 	}
+	principalID := strings.TrimSpace(query.PrincipalID)
 	start, err := parseApprovalOffsetCursor(query.Cursor)
 	if err != nil {
 		return ApprovalPage{}, err
@@ -160,10 +184,7 @@ func (s *RedisStore) ListApprovals(ctx context.Context, query ListApprovalsQuery
 			return ApprovalPage{}, fmt.Errorf("list edge approval tuple index: %w", err)
 		}
 	} else {
-		indexKey := edgeApprovalTenantIndexKey(tenantID)
-		if query.Status != "" {
-			indexKey = edgeApprovalStatusIndexKey(tenantID, query.Status)
-		}
+		indexKey := edgeApprovalListIndexKey(tenantID, principalID, query.Status)
 		refs, err = s.client.ZRevRange(ctx, indexKey, int64(start), int64(start+limit)).Result()
 		if err != nil {
 			return ApprovalPage{}, fmt.Errorf("list edge approvals index %s: %w", indexKey, err)
@@ -182,6 +203,9 @@ func (s *RedisStore) ListApprovals(ctx context.Context, query ListApprovalsQuery
 				continue
 			}
 			if query.Status != "" && approval.Status != query.Status {
+				continue
+			}
+			if principalID != "" && approval.PrincipalID != principalID {
 				continue
 			}
 			items = append(items, *approval)
@@ -209,6 +233,9 @@ func (s *RedisStore) ListApprovals(ctx context.Context, query ListApprovalsQuery
 			continue
 		}
 		if query.Status != "" && approval.Status != query.Status {
+			continue
+		}
+		if principalID != "" && approval.PrincipalID != principalID {
 			continue
 		}
 		if hasApprovalTupleQuery(query) && !approvalMatchesTuple(*approval, query.SessionID, query.ExecutionID, query.ActionHash) {
@@ -429,6 +456,8 @@ func (s *RedisStore) resolveApproval(ctx context.Context, req ApprovalResolution
 			pipe.Set(ctx, key, payload, preservedApprovalSetTTL(ttl))
 			pipe.ZRem(ctx, edgeApprovalStatusIndexKey(next.TenantID, ApprovalStatusPending), next.ApprovalRef)
 			pipe.ZAdd(ctx, edgeApprovalStatusIndexKey(next.TenantID, next.Status), redis.Z{Score: float64(next.CreatedAt.UnixMicro()), Member: next.ApprovalRef})
+			pipe.ZRem(ctx, edgeApprovalPrincipalStatusIndexKey(next.TenantID, next.PrincipalID, ApprovalStatusPending), next.ApprovalRef)
+			pipe.ZAdd(ctx, edgeApprovalPrincipalStatusIndexKey(next.TenantID, next.PrincipalID, next.Status), redis.Z{Score: float64(next.CreatedAt.UnixMicro()), Member: next.ApprovalRef})
 			if next.Status == ApprovalStatusRejected {
 				pipe.SRem(ctx, edgeApprovalTupleIndexKey(next.TenantID, next.SessionID, next.ExecutionID, next.ActionHash), next.ApprovalRef)
 			}
@@ -495,6 +524,8 @@ func (s *RedisStore) expireApproval(ctx context.Context, tenantID, approvalRef s
 			pipe.Set(ctx, key, payload, preservedApprovalSetTTL(ttl))
 			pipe.ZRem(ctx, edgeApprovalStatusIndexKey(next.TenantID, ApprovalStatusPending), next.ApprovalRef)
 			pipe.ZAdd(ctx, edgeApprovalStatusIndexKey(next.TenantID, ApprovalStatusExpired), redis.Z{Score: float64(next.CreatedAt.UnixMicro()), Member: next.ApprovalRef})
+			pipe.ZRem(ctx, edgeApprovalPrincipalStatusIndexKey(next.TenantID, next.PrincipalID, ApprovalStatusPending), next.ApprovalRef)
+			pipe.ZAdd(ctx, edgeApprovalPrincipalStatusIndexKey(next.TenantID, next.PrincipalID, ApprovalStatusExpired), redis.Z{Score: float64(next.CreatedAt.UnixMicro()), Member: next.ApprovalRef})
 			pipe.SRem(ctx, edgeApprovalTupleIndexKey(next.TenantID, next.SessionID, next.ExecutionID, next.ActionHash), next.ApprovalRef)
 			return nil
 		})

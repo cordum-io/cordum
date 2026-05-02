@@ -149,7 +149,7 @@ Use it with [demo.md](demo.md), [cordumctl edge doctor](cordumctl-edge-doctor.md
 
    ```bash
    curl -sS "$CORDUM_GATEWAY/api/v1/edge/sessions/<session-id>/events" \
-     -H "Authorization: Bearer $CORDUM_API_KEY" \
+     -H "X-API-Key: $CORDUM_API_KEY" \
      -H "X-Tenant-ID: $CORDUM_TENANT_ID"
    ```
 

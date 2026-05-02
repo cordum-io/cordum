@@ -231,7 +231,7 @@ From the dashboard, trigger session evidence export. API equivalent:
 
 ```bash
 curl -sS -X POST "$CORDUM_GATEWAY/api/v1/edge/sessions/<session-id>/export" \
-  -H "Authorization: Bearer $CORDUM_API_KEY" \
+  -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: $CORDUM_TENANT_ID" \
   -H "Content-Type: application/json" \
   -d '{}'

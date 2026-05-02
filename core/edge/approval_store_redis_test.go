@@ -248,6 +248,70 @@ func TestRedisStoreApprovalListPaginationIsBounded(t *testing.T) {
 	}
 }
 
+func TestRedisStoreApprovalListFiltersByPrincipalAndStatusIndexes(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 1, 15, 45, 0, 0, time.UTC)
+	now := base
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return now }))
+	defer cleanup()
+
+	ownOld := seedRedisApprovalForPrincipal(t, ctx, store, &now, base, "tenant-a", "principal-a", "principal-old")
+	other := seedRedisApprovalForPrincipal(t, ctx, store, &now, base.Add(time.Minute), "tenant-a", "principal-b", "principal-other")
+	ownApproved := seedRedisApprovalForPrincipal(t, ctx, store, &now, base.Add(2*time.Minute), "tenant-a", "principal-a", "principal-approved")
+	ownNew := seedRedisApprovalForPrincipal(t, ctx, store, &now, base.Add(3*time.Minute), "tenant-a", "principal-a", "principal-new")
+
+	approved, err := store.ApproveApproval(ctx, ApprovalResolution{
+		TenantID:    "tenant-a",
+		ApprovalRef: ownApproved.ApprovalRef,
+		ResolverID:  "principal-reviewer",
+		ResolvedBy:  "reviewer@example.invalid",
+		Reason:      "approved for scoped-list test",
+		ResolvedAt:  base.Add(4 * time.Minute),
+	})
+	if err != nil || approved.Status != ApprovalStatusApproved {
+		t.Fatalf("ApproveApproval = (%#v,%v), want approved record", approved, err)
+	}
+
+	ownPending, err := store.ListApprovals(ctx, ListApprovalsQuery{TenantID: "tenant-a", PrincipalID: "principal-a", Status: ApprovalStatusPending, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListApprovals own pending: %v", err)
+	}
+	assertApprovalRefs(t, ownPending.Items, []string{ownNew.ApprovalRef, ownOld.ApprovalRef})
+
+	ownAllFirst, err := store.ListApprovals(ctx, ListApprovalsQuery{TenantID: "tenant-a", PrincipalID: "principal-a", Limit: 2})
+	if err != nil {
+		t.Fatalf("ListApprovals own all first: %v", err)
+	}
+	assertApprovalRefs(t, ownAllFirst.Items, []string{ownNew.ApprovalRef, ownApproved.ApprovalRef})
+	if ownAllFirst.NextCursor != "2" {
+		t.Fatalf("own all first cursor = %q, want 2", ownAllFirst.NextCursor)
+	}
+	ownAllSecond, err := store.ListApprovals(ctx, ListApprovalsQuery{TenantID: "tenant-a", PrincipalID: "principal-a", Cursor: ownAllFirst.NextCursor, Limit: 2})
+	if err != nil {
+		t.Fatalf("ListApprovals own all second: %v", err)
+	}
+	assertApprovalRefs(t, ownAllSecond.Items, []string{ownOld.ApprovalRef})
+
+	otherPending, err := store.ListApprovals(ctx, ListApprovalsQuery{TenantID: "tenant-a", PrincipalID: "principal-b", Status: ApprovalStatusPending, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListApprovals other pending: %v", err)
+	}
+	assertApprovalRefs(t, otherPending.Items, []string{other.ApprovalRef})
+
+	tupleAsWrongPrincipal, err := store.ListApprovals(ctx, ListApprovalsQuery{
+		TenantID:    "tenant-a",
+		PrincipalID: "principal-a",
+		SessionID:   other.SessionID,
+		ExecutionID: other.ExecutionID,
+		ActionHash:  other.ActionHash,
+		Limit:       10,
+	})
+	if err != nil {
+		t.Fatalf("ListApprovals tuple wrong principal: %v", err)
+	}
+	assertApprovalRefs(t, tupleAsWrongPrincipal.Items, []string{})
+}
+
 func TestRedisStoreApprovalExpireAndStaleParentsFailClosed(t *testing.T) {
 	ctx := context.Background()
 	base := time.Date(2026, 5, 1, 16, 0, 0, 0, time.UTC)
@@ -747,6 +811,32 @@ func validApprovalRequest(tenantID, sessionID, executionID, eventID string, crea
 		Labels:         Labels{"env": "test"},
 		Metadata:       Metadata{"source": "redis-test"},
 	}
+}
+
+func seedRedisApprovalForPrincipal(
+	t *testing.T,
+	ctx context.Context,
+	store *RedisStore,
+	now *time.Time,
+	createdAt time.Time,
+	tenantID string,
+	principalID string,
+	suffix string,
+) EdgeApproval {
+	t.Helper()
+	*now = createdAt
+	sessionID := "sess-" + suffix
+	executionID := "exec-" + suffix
+	eventID := "event-" + suffix
+	createApprovalParents(t, ctx, store, tenantID, sessionID, executionID, eventID, createdAt)
+	req := validApprovalRequest(tenantID, sessionID, executionID, eventID, createdAt)
+	req.PrincipalID = principalID
+	req.Requester = principalID
+	approval, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval %s/%s: %v", principalID, suffix, err)
+	}
+	return *approval
 }
 
 func assertApprovalRefs(t *testing.T, got []EdgeApproval, want []string) {

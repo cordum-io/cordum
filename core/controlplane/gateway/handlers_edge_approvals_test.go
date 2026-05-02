@@ -160,6 +160,43 @@ func TestGatewayEdgeApprovalListDetailRejectAndTenantIsolation(t *testing.T) {
 	}
 }
 
+func TestGatewayEdgeApprovalListPrincipalBinding(t *testing.T) {
+	s, _ := newEdgeRouteTestServer(t)
+	ownOld := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-user", "list-principal-own-old")
+	otherPrincipal := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-other-member", "list-principal-other")
+	ownNew := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-user", "list-principal-own-new")
+	crossTenantOwn := seedGatewayEdgeApproval(t, s, edgeRouteOtherTenant, "principal-edge-user", "list-principal-cross")
+
+	first := decodeEdgeApprovalPage(t, edgeApprovalListDirectRequest(t, edgeRouteTenant, "user",
+		"principal-edge-user", "?status=pending&limit=1", s.handleListEdgeApprovals))
+	if len(first.Items) != 1 || first.NextCursor != "1" || first.Items[0].PrincipalID != "principal-edge-user" {
+		t.Fatalf("first requester page = len:%d cursor:%q items:%#v, want one own item and cursor 1",
+			len(first.Items), first.NextCursor, first.Items)
+	}
+	second := decodeEdgeApprovalPage(t, edgeApprovalListDirectRequest(t, edgeRouteTenant, "user",
+		"principal-edge-user", "?status=pending&limit=1&cursor="+first.NextCursor, s.handleListEdgeApprovals))
+	if second.NextCursor != "" {
+		t.Fatalf("second requester cursor = %q, want empty", second.NextCursor)
+	}
+	assertEdgeApprovalPageRefs(t, edgeApprovalPageResponse{Items: append(first.Items, second.Items...)}, ownOld.ApprovalRef, ownNew.ApprovalRef)
+
+	other := decodeEdgeApprovalPage(t, edgeApprovalListDirectRequest(t, edgeRouteTenant, "user",
+		"principal-other-member", "?status=pending&limit=10", s.handleListEdgeApprovals))
+	assertEdgeApprovalPageRefs(t, other, otherPrincipal.ApprovalRef)
+
+	admin := decodeEdgeApprovalPage(t, edgeApprovalListDirectRequest(t, edgeRouteTenant, "admin",
+		"principal-admin", "?status=pending&limit=10", s.handleListEdgeApprovals))
+	assertEdgeApprovalPageRefs(t, admin, ownOld.ApprovalRef, otherPrincipal.ApprovalRef, ownNew.ApprovalRef)
+
+	operator := decodeEdgeApprovalPage(t, edgeApprovalListDirectRequest(t, edgeRouteTenant, "operator",
+		"principal-operator", "?status=pending&limit=10", s.handleListEdgeApprovals))
+	assertEdgeApprovalPageRefs(t, operator, ownOld.ApprovalRef, otherPrincipal.ApprovalRef, ownNew.ApprovalRef)
+
+	cross := decodeEdgeApprovalPage(t, edgeApprovalListDirectRequest(t, edgeRouteOtherTenant, "user",
+		"principal-edge-user", "?status=pending&limit=10", s.handleListEdgeApprovals))
+	assertEdgeApprovalPageRefs(t, cross, crossTenantOwn.ApprovalRef)
+}
+
 func TestGatewayEdgeApprovalGetPrincipalBinding(t *testing.T) {
 	s, handler := newEdgeRouteTestServer(t)
 	approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-user", "get-principal")
@@ -383,6 +420,20 @@ func edgeApprovalRouteGETAs(t *testing.T, handler http.Handler, apiKey, tenantID
 	return rr
 }
 
+func edgeApprovalListDirectRequest(t *testing.T, tenantID, role, principalID, query string, handler http.HandlerFunc) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/approvals"+query, nil)
+	req.Header.Set("X-Tenant-ID", tenantID)
+	req.Header.Set("X-Request-Id", "edge-approval-list-principal")
+	req = withAuth(req, &auth.AuthContext{Tenant: tenantID, PrincipalID: principalID, Role: role})
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list approvals status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	return rr
+}
+
 func edgeApprovalDirectRequest(
 	t *testing.T,
 	method string,
@@ -407,6 +458,42 @@ func edgeApprovalDirectRequest(
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 	return rr
+}
+
+func decodeEdgeApprovalPage(t *testing.T, rr *httptest.ResponseRecorder) edgeApprovalPageResponse {
+	t.Helper()
+	var page edgeApprovalPageResponse
+	decodeEdgeRouteJSON(t, rr, &page)
+	return page
+}
+
+func assertEdgeApprovalPageRefs(t *testing.T, page edgeApprovalPageResponse, want ...string) {
+	t.Helper()
+	if len(page.Items) != len(want) {
+		t.Fatalf("approval page len = %d refs=%#v, want %d refs=%#v",
+			len(page.Items), edgeApprovalPageRefs(page.Items), len(want), want)
+	}
+	got := map[string]int{}
+	for _, item := range page.Items {
+		got[item.ApprovalRef]++
+	}
+	for _, ref := range want {
+		if got[ref] != 1 {
+			t.Fatalf("approval page refs=%#v, want exactly %#v", got, want)
+		}
+		delete(got, ref)
+	}
+	if len(got) != 0 {
+		t.Fatalf("approval page had unexpected refs=%#v, want exactly %#v", got, want)
+	}
+}
+
+func edgeApprovalPageRefs(items []edgecore.EdgeApproval) []string {
+	refs := make([]string, 0, len(items))
+	for _, item := range items {
+		refs = append(refs, item.ApprovalRef)
+	}
+	return refs
 }
 
 func assertEdgeApprovalResponseRef(t *testing.T, rr *httptest.ResponseRecorder, approvalRef string) {

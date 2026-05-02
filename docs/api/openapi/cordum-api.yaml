@@ -750,7 +750,15 @@ paths:
     get:
       operationId: listEdgeApprovals
       summary: List Edge action approvals
-      description: Lists tenant-scoped Edge approval records for action-level governance. Raw action payloads are never returned; actions are represented by `event_id`, `action_hash`, `input_hash`, and `policy_snapshot`.
+      description: >-
+        Lists tenant-scoped Edge approval records for action-level governance.
+        Non-admin/non-operator callers receive only approvals whose
+        `principal_id` matches the authenticated `auth.PrincipalID`; admin and
+        operator callers may list all approvals in the tenant for operations and
+        forensics. Status, tuple, cursor, and limit filters are applied within
+        that visibility scope so list pagination remains principal-stable. Raw
+        action payloads are never returned; actions are represented by
+        `event_id`, `action_hash`, `input_hash`, and `policy_snapshot`.
       tags:
       - Edge
       parameters:
@@ -788,7 +796,7 @@ paths:
           default: 50
       responses:
         '200':
-          description: Edge approval page
+          description: Edge approval page scoped to the caller's principal unless the caller has admin/operator visibility.
           content:
             application/json:
               schema:

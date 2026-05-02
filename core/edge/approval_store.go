@@ -43,11 +43,14 @@ type EdgeApprovalRequest struct {
 	Metadata       Metadata
 }
 
-// ListApprovalsQuery pages Edge approvals within one tenant. Status uses the
-// tenant/status index; the tuple fields use the action tuple index. If both are
-// provided, the implementation returns the intersection after bounded reads.
+// ListApprovalsQuery pages Edge approvals within one tenant. PrincipalID scopes
+// list visibility for non-operator callers. Status uses the tenant/status or
+// principal/status index; the tuple fields use the action tuple index. If tuple
+// filters and status/principal filters are combined, the implementation returns
+// the intersection after bounded reads.
 type ListApprovalsQuery struct {
 	TenantID    string
+	PrincipalID string
 	Status      ApprovalStatus
 	SessionID   string
 	ExecutionID string

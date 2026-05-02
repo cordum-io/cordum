@@ -7,7 +7,7 @@ operator-oriented map of routes, request/response shapes, auth, and errors.
 ## Global contract
 
 - **Authentication:** every Edge route uses the existing Gateway auth path
-  (`X-API-Key` or `Authorization: Bearer <token>`) plus `X-Tenant-ID`.
+  (`X-API-Key` or a bearer-token `Authorization` header) plus `X-Tenant-ID`.
 - **Tenant isolation:** route handlers reject missing or mismatched tenant data.
   Cross-tenant resources return the same not-found envelope as missing resources
   where needed to avoid enumeration.
