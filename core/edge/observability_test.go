@@ -789,6 +789,294 @@ func TestSendSIEMEventDeliversToWorkingSender(t *testing.T) {
 // recorder accepts any input (it does nothing); the test pins the
 // invariant via the normalizers, which the step-7 Prometheus recorder
 // MUST call before forwarding to a CounterVec.WithLabelValues call.
+// TestExecutionLogAttrsEmitsOnlyBoundedFields pins step-8 ExecutionLogAttrs
+// behavior: tenant/session/execution/job/workflow/step IDs are bounded,
+// adapter/mode/status pass through Normalize* helpers, started_at/ended_at
+// are emitted as time, and metrics counts are emitted as ints. Raw labels
+// are NEVER logged wholesale.
+func TestExecutionLogAttrsEmitsOnlyBoundedFields(t *testing.T) {
+	endedAt := time.Date(2026, 5, 1, 12, 30, 0, 0, time.UTC)
+	exec := AgentExecution{
+		ExecutionID:   "edge_exec_abc123",
+		SessionID:     "edge_sess_def456",
+		TenantID:      "tenant-a",
+		Adapter:       "claude-code",
+		Mode:          "local-dev",
+		WorkflowRunID: "wfrun_xyz",
+		StepID:        "step-1",
+		JobID:         "job-1",
+		Attempt:       2,
+		TraceID:       "trace-aaa",
+		WorkerID:      "worker-bbb",
+		Status:        "succeeded",
+		StartedAt:     endedAt.Add(-1 * time.Second),
+		EndedAt:       &endedAt,
+		Metrics: ExecutionMetrics{
+			Events:          7,
+			Allow:           5,
+			Deny:            1,
+			RequireApproval: 1,
+			Artifacts:       2,
+			LLMCostUSD:      0.0123,
+		},
+		Labels: Labels{"raw_secret": "Authorization: Bearer leaky"},
+	}
+	attrs := ExecutionLogAttrs(exec)
+	want := map[string]bool{
+		"tenant_id": true, "session_id": true, "execution_id": true,
+		"adapter": true, "mode": true, "workflow_run_id": true,
+		"step_id": true, "job_id": true, "attempt": true,
+		"trace_id": true, "worker_id": true, "status": true,
+		"started_at": true, "ended_at": true,
+		"events": true, "allow": true, "deny": true,
+		"require_approval": true, "artifacts": true, "llm_cost_usd": true,
+	}
+	got := map[string]slog.Attr{}
+	for _, a := range attrs {
+		got[a.Key] = a
+	}
+	for k := range want {
+		if _, ok := got[k]; !ok {
+			t.Errorf("ExecutionLogAttrs missing key %q (got keys: %v)", k, got)
+		}
+	}
+	for k, a := range got {
+		s := a.Value.String()
+		if strings.Contains(s, "Authorization") || strings.Contains(s, "Bearer") {
+			t.Errorf("ExecutionLogAttrs attr %q leaked secret: %q", k, s)
+		}
+		if k == "labels" || k == "raw_secret" {
+			t.Errorf("ExecutionLogAttrs emitted forbidden raw key %q", k)
+		}
+	}
+}
+
+// TestApprovalLogAttrsEmitsOnlyBoundedFields pins step-8 ApprovalLogAttrs
+// behavior: approval_ref/tenant/session/execution/event IDs bounded;
+// status/decision normalized; rule_id/policy_snapshot/action_hash/input_hash
+// length-bounded; created_at/expires_at/resolved_at as time when present;
+// raw Reason/ResolutionReason are NEVER logged wholesale (free-form text
+// can carry user input/PII; callers wanting to log a reason must redact
+// upstream).
+func TestApprovalLogAttrsEmitsOnlyBoundedFields(t *testing.T) {
+	createdAt := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	expiresAt := createdAt.Add(15 * time.Minute)
+	resolvedAt := createdAt.Add(2 * time.Minute)
+	const secret = "Authorization: Bearer leaky-approval-token"
+	apr := EdgeApproval{
+		ApprovalRef:      "edge_apr_abc",
+		TenantID:         "tenant-a",
+		SessionID:        "edge_sess_def",
+		ExecutionID:      "edge_exec_ghi",
+		EventID:          "edge_evt_jkl",
+		PrincipalID:      "user@example.com",
+		Requester:        "user@example.com",
+		ResolverID:       "approver@example.com",
+		Status:           "approved",
+		Decision:         "allow",
+		Reason:           secret + " — please run rm -rf /",
+		ResolutionReason: secret + " — approver said yes",
+		RuleID:           "rule_abc_xyz_long_id_value_should_be_bounded_to_eighty_characters_at_most_no_more",
+		PolicySnapshot:   "policy_snap_long",
+		ActionHash:       strings.Repeat("a", 200),
+		InputHash:        strings.Repeat("b", 200),
+		CreatedAt:        createdAt,
+		ExpiresAt:        &expiresAt,
+		ResolvedAt:       &resolvedAt,
+		Labels:           Labels{"raw_secret": secret},
+		Metadata:         Metadata{"raw_secret": secret},
+	}
+	attrs := ApprovalLogAttrs(apr)
+	got := map[string]slog.Attr{}
+	for _, a := range attrs {
+		got[a.Key] = a
+	}
+	for _, want := range []string{
+		"approval_ref", "tenant_id", "session_id", "execution_id", "event_id",
+		"status", "decision", "rule_id", "action_hash", "input_hash",
+		"created_at",
+	} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("ApprovalLogAttrs missing key %q", want)
+		}
+	}
+	for _, forbidden := range []string{"reason", "resolution_reason", "labels", "metadata", "raw_secret"} {
+		if _, ok := got[forbidden]; ok {
+			t.Errorf("ApprovalLogAttrs emitted forbidden raw key %q", forbidden)
+		}
+	}
+	for k, a := range got {
+		s := a.Value.String()
+		if strings.Contains(s, "Authorization") || strings.Contains(s, "Bearer") || strings.Contains(s, "rm -rf") {
+			t.Errorf("ApprovalLogAttrs attr %q leaked secret: %q", k, s)
+		}
+	}
+	if h, ok := got["action_hash"]; ok {
+		if len(h.Value.String()) > 90 {
+			t.Errorf("ApprovalLogAttrs action_hash not bounded: len=%d", len(h.Value.String()))
+		}
+	}
+}
+
+// TestExportResultLogAttrsEmitsOnlyBoundedFields pins step-8
+// ExportResultLogAttrs: artifact_type and result are normalized via the
+// step-7 bounded helpers; sha256 / uri are length-bounded; raw URI
+// query strings (which may carry signed-URL secrets) are NEVER logged
+// wholesale.
+func TestExportResultLogAttrsEmitsOnlyBoundedFields(t *testing.T) {
+	pointer := ArtifactPointer{
+		ArtifactType:   "edge.session_export",
+		SessionID:      "edge_sess_abc",
+		ExecutionID:    "edge_exec_def",
+		EventID:        "edge_evt_ghi",
+		TenantID:       "tenant-a",
+		RetentionClass: "standard",
+		RedactionLevel: "redacted",
+		SHA256:         "abc123def456" + strings.Repeat("z", 200),
+		URI:            "https://example.com/blob?token=Authorization:Bearer-secret",
+		CreatedAt:      time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC),
+	}
+	attrs := ExportResultLogAttrs(pointer, "ok")
+	got := map[string]slog.Attr{}
+	for _, a := range attrs {
+		got[a.Key] = a
+	}
+	for _, want := range []string{
+		"tenant_id", "session_id", "execution_id", "event_id",
+		"artifact_type", "result", "sha256", "created_at",
+	} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("ExportResultLogAttrs missing key %q", want)
+		}
+	}
+	if a, ok := got["artifact_type"]; ok && a.Value.String() != "edge.session_export" {
+		t.Errorf("artifact_type = %q, want edge.session_export", a.Value.String())
+	}
+	if a, ok := got["result"]; ok && a.Value.String() != "ok" {
+		t.Errorf("result = %q, want ok", a.Value.String())
+	}
+	if a, ok := got["sha256"]; ok && len(a.Value.String()) > 90 {
+		t.Errorf("sha256 not bounded: len=%d", len(a.Value.String()))
+	}
+	for k, a := range got {
+		s := a.Value.String()
+		if strings.Contains(s, "Authorization") || strings.Contains(s, "Bearer") || strings.Contains(s, "token=") {
+			t.Errorf("ExportResultLogAttrs attr %q leaked URL secret: %q", k, s)
+		}
+	}
+}
+
+// TestHookSummaryLogAttrsEmitsOnlyBoundedFields pins step-8
+// HookSummaryLogAttrs: bounded fields only, hook_event passes through
+// boundedHookEvent allowlist, decision normalized, latency emitted as
+// duration. Raw error strings/raw payloads are converted via ErrorLogAttrs.
+func TestHookSummaryLogAttrsEmitsOnlyBoundedFields(t *testing.T) {
+	attrs := HookSummaryLogAttrs(HookSummary{
+		TenantID:   "tenant-a",
+		SessionID:  "edge_sess_abc",
+		HookEvent:  "PreToolUse",
+		Decision:   "ALLOW",
+		ReasonCode: "policy_allow",
+		LatencyMS:  123,
+		Mode:       "local-dev",
+		Component:  "agentd",
+	})
+	got := map[string]slog.Attr{}
+	for _, a := range attrs {
+		got[a.Key] = a
+	}
+	for _, want := range []string{
+		"tenant_id", "session_id", "hook_event", "decision",
+		"reason_code", "latency_ms", "mode", "component",
+	} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("HookSummaryLogAttrs missing key %q", want)
+		}
+	}
+	if a, ok := got["hook_event"]; ok && a.Value.String() != "PreToolUse" {
+		t.Errorf("hook_event = %q, want PreToolUse passthrough", a.Value.String())
+	}
+	if a, ok := got["decision"]; ok && a.Value.String() != "allow" {
+		t.Errorf("decision = %q, want bounded 'allow'", a.Value.String())
+	}
+}
+
+// TestEvaluateSummaryLogAttrsEmitsOnlyBoundedFields pins step-8
+// EvaluateSummaryLogAttrs: layer/kind normalized via Normalize* helpers,
+// decision normalized, mode/component bounded.
+func TestEvaluateSummaryLogAttrsEmitsOnlyBoundedFields(t *testing.T) {
+	attrs := EvaluateSummaryLogAttrs(EvaluateSummary{
+		TenantID:    "tenant-a",
+		SessionID:   "edge_sess_abc",
+		ExecutionID: "edge_exec_def",
+		Layer:       "hook",
+		Kind:        "hook.pre_tool_use",
+		Decision:    "REQUIRE_APPROVAL",
+		ApprovalRef: "edge_apr_xyz",
+		LatencyMS:   45,
+		Mode:        "enterprise-strict",
+		Cached:      false,
+	})
+	got := map[string]slog.Attr{}
+	for _, a := range attrs {
+		got[a.Key] = a
+	}
+	for _, want := range []string{
+		"tenant_id", "session_id", "execution_id", "layer", "kind",
+		"decision", "approval_ref", "latency_ms", "mode", "cached",
+	} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("EvaluateSummaryLogAttrs missing key %q", want)
+		}
+	}
+	if a, ok := got["layer"]; ok && a.Value.String() != "hook" {
+		t.Errorf("layer = %q, want hook", a.Value.String())
+	}
+	if a, ok := got["decision"]; ok && a.Value.String() != "require_approval" {
+		t.Errorf("decision = %q, want require_approval", a.Value.String())
+	}
+}
+
+// TestErrorLogAttrsConvertsErrorToReasonCodeAndRedactedMessage pins
+// step-8 ErrorLogAttrs: a raw error becomes (a) a bounded reason_code
+// (snake_case-ish or "other"), (b) a length-bounded error_message, and
+// (c) NEVER leaks the raw value past 200 chars or as a non-bounded
+// attribute. Nil errors emit no attributes.
+func TestErrorLogAttrsConvertsErrorToReasonCodeAndRedactedMessage(t *testing.T) {
+	if attrs := ErrorLogAttrs(nil, ""); len(attrs) != 0 {
+		t.Errorf("ErrorLogAttrs(nil, \"\") = %v, want empty", attrs)
+	}
+	huge := strings.Repeat("Authorization: Bearer secret-", 200)
+	attrs := ErrorLogAttrs(stringError(huge), "gateway_unavailable")
+	got := map[string]slog.Attr{}
+	for _, a := range attrs {
+		got[a.Key] = a
+	}
+	if a, ok := got["reason_code"]; !ok || a.Value.String() != "gateway_unavailable" {
+		t.Errorf("reason_code = %v, want gateway_unavailable", a)
+	}
+	if a, ok := got["error_message"]; ok {
+		if len(a.Value.String()) > 256 {
+			t.Errorf("error_message not bounded: len=%d", len(a.Value.String()))
+		}
+	} else {
+		t.Errorf("ErrorLogAttrs missing error_message")
+	}
+	// Empty reason_code should default to "unknown".
+	attrs = ErrorLogAttrs(stringError("boom"), "")
+	for _, a := range attrs {
+		if a.Key == "reason_code" && a.Value.String() != "unknown" {
+			t.Errorf("reason_code with empty input = %q, want unknown", a.Value.String())
+		}
+	}
+}
+
+// stringError is a minimal error type for tests so we don't pull in
+// errors.New + fmt.Errorf for fixture data.
+type stringError string
+
+func (s stringError) Error() string { return string(s) }
+
 func TestRecorderInterfaceForbidsRawSecretLeak(t *testing.T) {
 	const rawSecret = "Authorization: Bearer edge014-test-secret-token-12345"
 	for _, value := range []string{

@@ -641,3 +641,285 @@ func boundedCapabilities(capability string) []string {
 	}
 	return []string{boundedShortString(v, 32)}
 }
+
+// ExecutionLogAttrs builds the bounded slog.Attr slice the Edge handlers
+// and agentd should use when logging an AgentExecution lifecycle event.
+// Only safe, bounded fields are included: tenant/session/execution/job/
+// workflow/step/trace/worker IDs, normalized adapter/mode/status,
+// started_at/ended_at when present, and the bounded ExecutionMetrics
+// counters. Raw Labels MUST NOT be emitted by this helper — they can
+// carry user-supplied values; callers wanting per-label attrs must
+// allowlist them upstream.
+func ExecutionLogAttrs(exec AgentExecution) []slog.Attr {
+	attrs := make([]slog.Attr, 0, 16)
+	if v := strings.TrimSpace(exec.TenantID); v != "" {
+		attrs = append(attrs, slog.String("tenant_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(exec.SessionID); v != "" {
+		attrs = append(attrs, slog.String("session_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(exec.ExecutionID); v != "" {
+		attrs = append(attrs, slog.String("execution_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(string(exec.Adapter)); v != "" {
+		attrs = append(attrs, slog.String("adapter", boundedShortString(v, 32)))
+	}
+	if v := strings.TrimSpace(string(exec.Mode)); v != "" {
+		attrs = append(attrs, slog.String("mode", boundedShortString(v, 32)))
+	}
+	if v := strings.TrimSpace(exec.WorkflowRunID); v != "" {
+		attrs = append(attrs, slog.String("workflow_run_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(exec.StepID); v != "" {
+		attrs = append(attrs, slog.String("step_id", boundedShortString(v, 64)))
+	}
+	if v := strings.TrimSpace(exec.JobID); v != "" {
+		attrs = append(attrs, slog.String("job_id", boundedID(v)))
+	}
+	if exec.Attempt != 0 {
+		attrs = append(attrs, slog.Int("attempt", exec.Attempt))
+	}
+	if v := strings.TrimSpace(exec.TraceID); v != "" {
+		attrs = append(attrs, slog.String("trace_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(exec.WorkerID); v != "" {
+		attrs = append(attrs, slog.String("worker_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(string(exec.Status)); v != "" {
+		attrs = append(attrs, slog.String("status", boundedShortString(v, 32)))
+	}
+	if !exec.StartedAt.IsZero() {
+		attrs = append(attrs, slog.Time("started_at", exec.StartedAt))
+	}
+	if exec.EndedAt != nil && !exec.EndedAt.IsZero() {
+		attrs = append(attrs, slog.Time("ended_at", *exec.EndedAt))
+	}
+	// Metrics counters — bounded by definition (int counts, single float
+	// for cost). Always include so a zero-valued execution still surfaces
+	// the contract; the structured-log consumer can filter zero counts.
+	attrs = append(attrs,
+		slog.Int("events", exec.Metrics.Events),
+		slog.Int("allow", exec.Metrics.Allow),
+		slog.Int("deny", exec.Metrics.Deny),
+		slog.Int("require_approval", exec.Metrics.RequireApproval),
+		slog.Int("artifacts", exec.Metrics.Artifacts),
+		slog.Float64("llm_cost_usd", exec.Metrics.LLMCostUSD),
+	)
+	return attrs
+}
+
+// ApprovalLogAttrs builds the bounded slog.Attr slice for an EdgeApproval
+// lifecycle event. Approval IDs/principal/resolver/rule/policy/hashes are
+// length-bounded; status/decision are normalized; created_at/expires_at/
+// resolved_at/consumed_at are emitted when present. Raw Reason and
+// ResolutionReason fields are NEVER logged here — they can carry
+// user-supplied prose with PII; callers wanting a reason in logs must
+// run EDGE-004 redaction first and pass the redacted value through a
+// separate slog.String.
+func ApprovalLogAttrs(apr EdgeApproval) []slog.Attr {
+	attrs := make([]slog.Attr, 0, 16)
+	if v := strings.TrimSpace(apr.ApprovalRef); v != "" {
+		attrs = append(attrs, slog.String("approval_ref", boundedShortString(v, 64)))
+	}
+	if v := strings.TrimSpace(apr.TenantID); v != "" {
+		attrs = append(attrs, slog.String("tenant_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(apr.SessionID); v != "" {
+		attrs = append(attrs, slog.String("session_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(apr.ExecutionID); v != "" {
+		attrs = append(attrs, slog.String("execution_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(apr.EventID); v != "" {
+		attrs = append(attrs, slog.String("event_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(apr.PrincipalID); v != "" {
+		attrs = append(attrs, slog.String("principal_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(apr.ResolverID); v != "" {
+		attrs = append(attrs, slog.String("resolver_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(string(apr.Status)); v != "" {
+		attrs = append(attrs, slog.String("status", boundedShortString(v, 32)))
+	}
+	if v := strings.TrimSpace(string(apr.Decision)); v != "" {
+		attrs = append(attrs, slog.String("decision", NormalizeApprovalOutcome(v)))
+	}
+	if v := strings.TrimSpace(apr.RuleID); v != "" {
+		attrs = append(attrs, slog.String("rule_id", boundedShortString(v, 80)))
+	}
+	if v := strings.TrimSpace(apr.PolicySnapshot); v != "" {
+		attrs = append(attrs, slog.String("policy_snapshot", boundedShortString(v, 80)))
+	}
+	if v := strings.TrimSpace(apr.ActionHash); v != "" {
+		attrs = append(attrs, slog.String("action_hash", boundedShortString(v, 80)))
+	}
+	if v := strings.TrimSpace(apr.InputHash); v != "" {
+		attrs = append(attrs, slog.String("input_hash", boundedShortString(v, 80)))
+	}
+	if !apr.CreatedAt.IsZero() {
+		attrs = append(attrs, slog.Time("created_at", apr.CreatedAt))
+	}
+	if apr.ExpiresAt != nil && !apr.ExpiresAt.IsZero() {
+		attrs = append(attrs, slog.Time("expires_at", *apr.ExpiresAt))
+	}
+	if apr.ResolvedAt != nil && !apr.ResolvedAt.IsZero() {
+		attrs = append(attrs, slog.Time("resolved_at", *apr.ResolvedAt))
+	}
+	if apr.ConsumedAt != nil && !apr.ConsumedAt.IsZero() {
+		attrs = append(attrs, slog.Time("consumed_at", *apr.ConsumedAt))
+	}
+	return attrs
+}
+
+// ExportResultLogAttrs builds the bounded slog.Attr slice for an artifact
+// export operation. Artifact_type and result are bounded via the step-7
+// helpers; sha256 is length-bounded; URI is NOT logged in full because it
+// commonly carries signed-URL query strings — only the host portion
+// (without query) is recorded if present, and even that is bounded.
+func ExportResultLogAttrs(pointer ArtifactPointer, result string) []slog.Attr {
+	attrs := make([]slog.Attr, 0, 10)
+	if v := strings.TrimSpace(pointer.TenantID); v != "" {
+		attrs = append(attrs, slog.String("tenant_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(pointer.SessionID); v != "" {
+		attrs = append(attrs, slog.String("session_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(pointer.ExecutionID); v != "" {
+		attrs = append(attrs, slog.String("execution_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(pointer.EventID); v != "" {
+		attrs = append(attrs, slog.String("event_id", boundedID(v)))
+	}
+	attrs = append(attrs,
+		slog.String("artifact_type", boundedArtifactType(string(pointer.ArtifactType))),
+		slog.String("result", boundedResult(result)),
+	)
+	if v := strings.TrimSpace(string(pointer.RetentionClass)); v != "" {
+		attrs = append(attrs, slog.String("retention_class", boundedShortString(v, 32)))
+	}
+	if v := strings.TrimSpace(string(pointer.RedactionLevel)); v != "" {
+		attrs = append(attrs, slog.String("redaction_level", boundedShortString(v, 32)))
+	}
+	if v := strings.TrimSpace(pointer.SHA256); v != "" {
+		attrs = append(attrs, slog.String("sha256", boundedShortString(v, 80)))
+	}
+	if !pointer.CreatedAt.IsZero() {
+		attrs = append(attrs, slog.Time("created_at", pointer.CreatedAt))
+	}
+	return attrs
+}
+
+// HookSummary captures a single Edge hook handler outcome for structured
+// logging. All free-form callers MUST populate fields here rather than
+// passing raw error strings or untrusted ToolName values into slog —
+// HookSummaryLogAttrs is the bounded contract.
+type HookSummary struct {
+	TenantID   string
+	SessionID  string
+	HookEvent  string // PreToolUse / PostToolUse / etc. (Claude PascalCase)
+	Decision   string
+	ReasonCode string
+	LatencyMS  int64
+	Mode       string
+	Component  string // gateway / agentd / hook / safety_kernel / etc.
+}
+
+// HookSummaryLogAttrs returns the bounded slog.Attr slice for a hook
+// outcome. Decision normalized via NormalizeDecision; hook_event passes
+// through the documented Claude PascalCase passthrough; reason_code/mode/
+// component bounded via step-7 helpers.
+func HookSummaryLogAttrs(s HookSummary) []slog.Attr {
+	attrs := make([]slog.Attr, 0, 8)
+	if v := strings.TrimSpace(s.TenantID); v != "" {
+		attrs = append(attrs, slog.String("tenant_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(s.SessionID); v != "" {
+		attrs = append(attrs, slog.String("session_id", boundedID(v)))
+	}
+	attrs = append(attrs,
+		slog.String("hook_event", boundedHookEvent(s.HookEvent)),
+		slog.String("decision", NormalizeDecision(s.Decision)),
+		slog.String("reason_code", boundedReasonCode(s.ReasonCode)),
+		slog.Int64("latency_ms", s.LatencyMS),
+		slog.String("mode", boundedMode(s.Mode)),
+		slog.String("component", boundedComponent(s.Component)),
+	)
+	return attrs
+}
+
+// EvaluateSummary captures a single Edge evaluate handler outcome for
+// structured logging. Same bounded-contract role as HookSummary.
+type EvaluateSummary struct {
+	TenantID    string
+	SessionID   string
+	ExecutionID string
+	Layer       string
+	Kind        string
+	Decision    string
+	ApprovalRef string
+	LatencyMS   int64
+	Mode        string
+	Cached      bool
+}
+
+// EvaluateSummaryLogAttrs returns the bounded slog.Attr slice for an
+// evaluate handler outcome. Layer/Kind/Decision/Mode normalized via the
+// step-3/step-7 helpers; approval_ref length-bounded; cached emitted as
+// bool.
+func EvaluateSummaryLogAttrs(s EvaluateSummary) []slog.Attr {
+	attrs := make([]slog.Attr, 0, 10)
+	if v := strings.TrimSpace(s.TenantID); v != "" {
+		attrs = append(attrs, slog.String("tenant_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(s.SessionID); v != "" {
+		attrs = append(attrs, slog.String("session_id", boundedID(v)))
+	}
+	if v := strings.TrimSpace(s.ExecutionID); v != "" {
+		attrs = append(attrs, slog.String("execution_id", boundedID(v)))
+	}
+	attrs = append(attrs,
+		slog.String("layer", NormalizeLayer(s.Layer)),
+		slog.String("kind", NormalizeKind(s.Kind)),
+		slog.String("decision", NormalizeDecision(s.Decision)),
+		slog.String("approval_ref", boundedShortString(s.ApprovalRef, 64)),
+		slog.Int64("latency_ms", s.LatencyMS),
+		slog.String("mode", boundedMode(s.Mode)),
+		slog.Bool("cached", s.Cached),
+	)
+	return attrs
+}
+
+// ErrorLogAttrs converts a raw Go error into a bounded slog.Attr pair:
+//
+//   - reason_code: a short, snake_case-ish code suitable as a metric
+//     label and as an audit reason. Empty input collapses to "unknown";
+//     anything that fails the boundedReasonCode allowlist collapses to
+//     "other".
+//   - error_message: a length-bounded redacted message. The raw error
+//     string is clamped to 256 chars; longer strings are truncated with
+//     a "…" suffix. This intentionally does NOT run EDGE-004 redaction
+//     (we don't have a redactor in this package); callers logging
+//     untrusted error chains MUST redact upstream and pass the redacted
+//     value via the reason_code path instead.
+//
+// Returns an empty slice when err is nil — safe to call unconditionally
+// in error paths.
+func ErrorLogAttrs(err error, reasonCode string) []slog.Attr {
+	if err == nil && strings.TrimSpace(reasonCode) == "" {
+		return nil
+	}
+	attrs := make([]slog.Attr, 0, 2)
+	attrs = append(attrs, slog.String("reason_code", boundedReasonCode(reasonCode)))
+	if err != nil {
+		msg := err.Error()
+		// 256-byte total cap including the 3-byte "…" suffix so callers
+		// can rely on the slog attr fitting in a single line buffer.
+		const maxBodyLen = 253
+		if len(msg) > maxBodyLen {
+			msg = msg[:maxBodyLen] + "…"
+		}
+		attrs = append(attrs, slog.String("error_message", msg))
+	}
+	return attrs
+}
