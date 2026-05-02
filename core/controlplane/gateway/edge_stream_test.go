@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -241,6 +242,94 @@ func TestMixedStreamKeepsBusPacketShapeAndDoesNotFloodJobStream(t *testing.T) {
 	assertGatewayEdgeStreamRawJSON(t, readGatewayEdgeStreamEvent(t, crossTenant, "cross-tenant heartbeat").data, wantHeartbeat)
 	assertNoGatewayEdgeStreamEvent(t, globalTenantA, "tenant-scoped global stream must not receive tenantless heartbeat")
 	assertNoGatewayEdgeStreamEvent(t, jobStream, "per-job stream must not receive tenantless heartbeat")
+}
+
+// recordingEdgeRecorder captures RecordStreamDrop / AddStreamClients
+// calls so EDGE-014 step-11 tests can pin the drop-reason contract
+// without depending on a real Prometheus registry.
+type recordingEdgeRecorder struct {
+	edgecore.NoopRecorder
+	mu     sync.Mutex
+	drops  []string
+	deltas []int
+}
+
+func (r *recordingEdgeRecorder) RecordStreamDrop(reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.drops = append(r.drops, reason)
+}
+
+func (r *recordingEdgeRecorder) AddStreamClients(_ string, delta int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.deltas = append(r.deltas, delta)
+}
+
+func (r *recordingEdgeRecorder) Drops() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.drops...)
+}
+
+// TestForwardPersistedEdgeEventRecordsMarshalErrorDrop pins step-11
+// behavior: when the persisted event fails normalization (e.g. empty
+// TenantID), forwardPersistedEdgeEvent classifies the drop as
+// marshal_error and records exactly one stream-drop metric with that
+// bounded reason.
+func TestForwardPersistedEdgeEventRecordsMarshalErrorDrop(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	rec := &recordingEdgeRecorder{}
+	s.edgeRecorder = rec
+
+	// An event missing TenantID fails Validate and trips the
+	// marshal_error path inside enqueueEdgeEvent.
+	bad := validGatewayEdgeStreamEvent()
+	bad.TenantID = ""
+	s.forwardPersistedEdgeEvent(bad)
+
+	drops := rec.Drops()
+	if len(drops) != 1 || drops[0] != "marshal_error" {
+		t.Errorf("drops = %v, want [marshal_error]", drops)
+	}
+}
+
+// TestForwardPersistedEdgeEventRecordsClientBufferFullDrop pins step-11
+// behavior: when the WS bridge's eventsCh is saturated and
+// enqueueWSEvent returns false, forwardPersistedEdgeEvent classifies
+// the drop as client_buffer_full.
+func TestForwardPersistedEdgeEventRecordsClientBufferFullDrop(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	rec := &recordingEdgeRecorder{}
+	s.edgeRecorder = rec
+
+	// Fill eventsCh to saturate enqueueWSEvent's non-blocking send.
+	// The eventsCh is buffered at 512 (per gateway.go newServer); we
+	// fill it directly with synthetic packets so the next enqueue
+	// fails with queued=false.
+	for i := 0; i < cap(s.eventsCh); i++ {
+		select {
+		case s.eventsCh <- wsEvent{}:
+		default:
+			t.Fatalf("could not pre-fill eventsCh at i=%d", i)
+		}
+	}
+
+	s.forwardPersistedEdgeEvent(validGatewayEdgeStreamEvent())
+
+	drops := rec.Drops()
+	if len(drops) != 1 || drops[0] != "client_buffer_full" {
+		t.Errorf("drops = %v, want [client_buffer_full]", drops)
+	}
+}
+
+// TestRecordEdgeStreamDropNilRecorderIsNoOp pins that recordEdgeStreamDrop
+// is safe to call on a server with no recorder configured (test code
+// that bypasses newServer).
+func TestRecordEdgeStreamDropNilRecorderIsNoOp(t *testing.T) {
+	s := &server{} // no edgeRecorder set
+	s.recordEdgeStreamDrop("client_buffer_full")
+	// No panic = pass.
 }
 
 func validGatewayEdgeStreamEvent() edgecore.AgentActionEvent {

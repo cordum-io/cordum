@@ -183,13 +183,21 @@ type server struct {
 	auditExporter       audit.AuditSender
 	auditChainer        *audit.Chainer
 	auditVerifyCoalesce singleflight.Group
-	legalHoldStore      *audit.LegalHoldStore
-	statusCacheObj      *statusCache
-	policyShadowStore   *policyshadow.Store
-	mcpDenyRing         *denyEventRing
-	sessionIssuer       *scheduler.SessionTokenIssuer
-	trustResolver       *scheduler.TrustResolver
-	heartbeatMode       scheduler.HeartbeatMode
+
+	// edgeRecorder is the EDGE-014 observability recorder used by Edge
+	// handlers to emit metrics. Defaults to NoopRecorder so a missing
+	// Prometheus registerer never panics on first metric emission;
+	// production wiring sets this to NewPrometheusRecorder via the
+	// metrics initializer.
+	edgeRecorder edgecore.Recorder
+
+	legalHoldStore    *audit.LegalHoldStore
+	statusCacheObj    *statusCache
+	policyShadowStore *policyshadow.Store
+	mcpDenyRing       *denyEventRing
+	sessionIssuer     *scheduler.SessionTokenIssuer
+	trustResolver     *scheduler.TrustResolver
+	heartbeatMode     scheduler.HeartbeatMode
 
 	apiRL    rateLimiter
 	publicRL rateLimiter
@@ -639,6 +647,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		permChecker:            permChecker,
 		auditExporter:          auditSender,
 		auditChainer:           auditChainer,
+		edgeRecorder:           edgecore.NewNoopRecorder(),
 		legalHoldStore:         initLegalHoldStore(cfg.RedisURL),
 		statusCacheObj:         newStatusCache(2 * time.Second),
 		policyShadowStore:      policyshadow.NewStore(configSvc),
