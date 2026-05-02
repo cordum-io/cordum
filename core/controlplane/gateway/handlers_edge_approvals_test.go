@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	edgecore "github.com/cordum/cordum/core/edge"
 )
 
@@ -156,6 +157,74 @@ func TestGatewayEdgeApprovalListDetailRejectAndTenantIsolation(t *testing.T) {
 	decodeEdgeRouteJSON(t, reject, &rejected)
 	if rejected.Status != edgecore.ApprovalStatusRejected || rejected.Decision != edgecore.ApprovalDecisionReject || rejected.ResolutionReason != "not safe" {
 		t.Fatalf("reject body status/decision/reason = %q/%q/%q", rejected.Status, rejected.Decision, rejected.ResolutionReason)
+	}
+}
+
+func TestGatewayEdgeApprovalGetPrincipalBinding(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-user", "get-principal")
+	path := "/api/v1/edge/approvals/" + approval.ApprovalRef
+
+	requester := edgeApprovalRouteGETAs(t, handler, edgeRouteUserAPIKey, edgeRouteTenant, path)
+	assertEdgeApprovalResponseRef(t, requester, approval.ApprovalRef)
+
+	sameTenant404 := edgeApprovalDirectRequest(t, http.MethodGet, edgeRouteTenant, "user",
+		"principal-other-member", approval.ApprovalRef, "", "", "edge-approval-get-404", s.handleGetEdgeApproval)
+	assertEdgeErrorShape(t, sameTenant404, http.StatusNotFound, edgeErrCodeNotFound)
+
+	admin := edgeApprovalRouteGETAs(t, handler, edgeRouteReviewerAPIKey, edgeRouteTenant, path)
+	assertEdgeApprovalResponseRef(t, admin, approval.ApprovalRef)
+
+	operator := edgeApprovalDirectRequest(t, http.MethodGet, edgeRouteTenant, "operator",
+		"principal-operator", approval.ApprovalRef, "", "", "edge-approval-get-operator", s.handleGetEdgeApproval)
+	assertEdgeApprovalResponseRef(t, operator, approval.ApprovalRef)
+
+	crossTenant404 := edgeApprovalDirectRequest(t, http.MethodGet, edgeRouteOtherTenant, "user",
+		"principal-other-tenant", approval.ApprovalRef, "", "", "edge-approval-get-404", s.handleGetEdgeApproval)
+	assertEdgeErrorShape(t, crossTenant404, http.StatusNotFound, edgeErrCodeNotFound)
+	if sameTenant404.Body.String() != crossTenant404.Body.String() {
+		t.Fatalf("same-tenant mismatch 404 body = %q, want byte-identical cross-tenant 404 body %q",
+			sameTenant404.Body.String(), crossTenant404.Body.String())
+	}
+}
+
+func TestGatewayEdgeApprovalWaitPrincipalBinding(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-user", "wait-principal")
+	path := "/api/v1/edge/approvals/" + approval.ApprovalRef + "/wait"
+	waitBody := `{"timeout_ms":1}`
+
+	requester := edgeApprovalRoutePOSTAs(t, handler, edgeRouteUserAPIKey, path, waitBody)
+	assertEdgeApprovalResponseRef(t, requester, approval.ApprovalRef)
+
+	sameStarted := time.Now()
+	sameTenant404 := edgeApprovalDirectRequest(t, http.MethodPost, edgeRouteTenant, "user",
+		"principal-other-member", approval.ApprovalRef, "/wait", `{"timeout_ms":1000}`,
+		"edge-approval-wait-404", s.handleWaitEdgeApproval)
+	sameElapsed := time.Since(sameStarted)
+	assertEdgeErrorShape(t, sameTenant404, http.StatusNotFound, edgeErrCodeNotFound)
+
+	admin := edgeApprovalRoutePOSTAs(t, handler, edgeRouteReviewerAPIKey, path, waitBody)
+	assertEdgeApprovalResponseRef(t, admin, approval.ApprovalRef)
+
+	operator := edgeApprovalDirectRequest(t, http.MethodPost, edgeRouteTenant, "operator",
+		"principal-operator", approval.ApprovalRef, "/wait", waitBody,
+		"edge-approval-wait-operator", s.handleWaitEdgeApproval)
+	assertEdgeApprovalResponseRef(t, operator, approval.ApprovalRef)
+
+	crossStarted := time.Now()
+	crossTenant404 := edgeApprovalDirectRequest(t, http.MethodPost, edgeRouteOtherTenant, "user",
+		"principal-other-tenant", approval.ApprovalRef, "/wait", `{"timeout_ms":1000}`,
+		"edge-approval-wait-404", s.handleWaitEdgeApproval)
+	crossElapsed := time.Since(crossStarted)
+	assertEdgeErrorShape(t, crossTenant404, http.StatusNotFound, edgeErrCodeNotFound)
+	if sameTenant404.Body.String() != crossTenant404.Body.String() {
+		t.Fatalf("same-tenant mismatch wait 404 body = %q, want byte-identical cross-tenant 404 body %q",
+			sameTenant404.Body.String(), crossTenant404.Body.String())
+	}
+	if sameElapsed > 500*time.Millisecond || crossElapsed > 500*time.Millisecond {
+		t.Fatalf("unauthorized wait 404s took same-tenant=%v cross-tenant=%v, want both below 500ms despite 1000ms body timeout",
+			sameElapsed, crossElapsed)
 	}
 }
 
@@ -312,6 +381,44 @@ func edgeApprovalRouteGETAs(t *testing.T, handler http.Handler, apiKey, tenantID
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 	return rr
+}
+
+func edgeApprovalDirectRequest(
+	t *testing.T,
+	method string,
+	tenantID string,
+	role string,
+	principalID string,
+	approvalRef string,
+	pathSuffix string,
+	body string,
+	requestID string,
+	handler http.HandlerFunc,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, "/api/v1/edge/approvals/"+approvalRef+pathSuffix, strings.NewReader(body))
+	req.Header.Set("X-Tenant-ID", tenantID)
+	req.Header.Set("X-Request-Id", requestID)
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.SetPathValue("approval_ref", approvalRef)
+	req = withAuth(req, &auth.AuthContext{Tenant: tenantID, PrincipalID: principalID, Role: role})
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	return rr
+}
+
+func assertEdgeApprovalResponseRef(t *testing.T, rr *httptest.ResponseRecorder, approvalRef string) {
+	t.Helper()
+	if rr.Code != http.StatusOK {
+		t.Fatalf("approval read status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	var approval edgecore.EdgeApproval
+	decodeEdgeRouteJSON(t, rr, &approval)
+	if approval.ApprovalRef != approvalRef {
+		t.Fatalf("approval_ref = %q, want %q body=%s", approval.ApprovalRef, approvalRef, rr.Body.String())
+	}
 }
 
 func TestGatewayEdgeApprovalWaitReturnsResolvedDuringWait(t *testing.T) {

@@ -807,7 +807,13 @@ paths:
     get:
       operationId: getEdgeApproval
       summary: Get an Edge action approval
-      description: Returns one tenant-scoped Edge approval record. Cross-tenant requests are reported as not found and no raw tool/action payload is exposed.
+      description: >-
+        Returns one tenant-scoped Edge approval record. Detail reads are
+        principal-bound: the caller must be the original requester principal
+        (`auth.PrincipalID` matches the approval `principal_id`) or hold an
+        admin/operator role. Cross-tenant requests and same-tenant callers that
+        fail this binding are reported as not found and no raw tool/action
+        payload is exposed.
       tags:
       - Edge
       parameters:
@@ -830,7 +836,11 @@ paths:
         '403':
           $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/EdgeNotFound'
+          description: Edge approval not found, cross-tenant, or caller is not the original requester principal and lacks admin/operator role. The same not_found envelope is used to prevent tenant-insider enumeration of approval timing or decisions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeError'
         '503':
           $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
@@ -887,7 +897,18 @@ paths:
     post:
       operationId: waitEdgeApproval
       summary: Bounded blocking wait for an Edge approval to leave Pending
-      description: Agentd/local-dev affordance that polls the Edge approval store until the approval is non-pending or the bounded timeout elapses, then returns the current EdgeApproval. The server clamps `timeout_ms` to a 5 minute maximum and uses a 30 second default when omitted or non-positive. Tenant isolation is enforced; cross-tenant references return 404 with no metadata leakage. This endpoint is not required by the dashboard approve/reject UX — callers there should use the standard list/detail/approve/reject flow.
+      description: >-
+        Agentd/local-dev affordance that polls the Edge approval store until the
+        approval is non-pending or the bounded timeout elapses, then returns the
+        current EdgeApproval. The wait is principal-bound: the caller must be the
+        original requester principal (`auth.PrincipalID` matches the approval
+        `principal_id`) or hold an admin/operator role. The server clamps
+        `timeout_ms` to a 5 minute maximum and uses a 30 second default when
+        omitted or non-positive. Tenant isolation is enforced; cross-tenant
+        references and same-tenant callers that fail the principal binding return
+        404 with no metadata leakage. This endpoint is not required by the
+        dashboard approve/reject UX — callers there should use the standard
+        list/detail/approve/reject flow.
       tags:
       - Edge
       parameters:
@@ -923,7 +944,11 @@ paths:
         '403':
           $ref: '#/components/responses/EdgeForbidden'
         '404':
-          $ref: '#/components/responses/EdgeNotFound'
+          description: Edge approval not found, cross-tenant, or caller is not the original requester principal and lacks admin/operator role. The same not_found envelope is used to prevent tenant-insider enumeration of approval timing or decisions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeError'
         '409':
           $ref: '#/components/responses/EdgeConflict'
         '413':

@@ -72,8 +72,8 @@ func (s *server) handleGetEdgeApproval(w http.ResponseWriter, r *http.Request) {
 		writeEdgeApprovalStoreError(w, r, err, "get edge approval")
 		return
 	}
-	if !found || approval == nil {
-		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge approval not found", nil)
+	if !found || approval == nil || !s.edgeApprovalVisibleToCaller(r, approval) {
+		writeEdgeApprovalNotFound(w, r)
 		return
 	}
 	writeJSON(w, approval)
@@ -223,8 +223,8 @@ func (s *server) handleWaitEdgeApproval(w http.ResponseWriter, r *http.Request) 
 		writeEdgeApprovalStoreError(w, r, err, "get edge approval for wait")
 		return
 	}
-	if !found || approval == nil {
-		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge approval not found", nil)
+	if !found || approval == nil || !s.edgeApprovalVisibleToCaller(r, approval) {
+		writeEdgeApprovalNotFound(w, r)
 		return
 	}
 
@@ -248,11 +248,27 @@ func (s *server) handleWaitEdgeApproval(w http.ResponseWriter, r *http.Request) 
 		writeEdgeApprovalStoreError(w, r, err, "get edge approval after wait")
 		return
 	}
-	if !found || final == nil {
-		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge approval not found", nil)
+	if !found || final == nil || !s.edgeApprovalVisibleToCaller(r, final) {
+		writeEdgeApprovalNotFound(w, r)
 		return
 	}
 	writeJSON(w, final)
+}
+
+func (s *server) edgeApprovalVisibleToCaller(r *http.Request, approval *edgecore.EdgeApproval) bool {
+	if approval == nil {
+		return false
+	}
+	if authCtx := auth.FromRequest(r); authCtx != nil {
+		if principal := strings.TrimSpace(authCtx.PrincipalID); principal != "" && principal == strings.TrimSpace(approval.PrincipalID) {
+			return true
+		}
+	}
+	return s.requireRole(r, "admin", "operator") == nil
+}
+
+func writeEdgeApprovalNotFound(w http.ResponseWriter, r *http.Request) {
+	writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge approval not found", nil)
 }
 
 func writeEdgeApprovalStoreError(w http.ResponseWriter, r *http.Request, err error, operation string) {

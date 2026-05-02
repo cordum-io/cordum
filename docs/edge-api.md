@@ -52,6 +52,13 @@ and `input_hash`. The explicit `input_hash` equality check is defense-in-depth:
 even if a future `action_hash` refactor changes which fields are folded into the
 hash, an approval cannot be replayed against different input bytes.
 
+Approval principal binding applies to `GET /api/v1/edge/approvals/{ref}` and
+`POST /api/v1/edge/approvals/{ref}/wait`: the caller must be either the original
+requester (`auth.PrincipalID` matches the approval `principal_id`) or an
+admin/operator role. Unauthorized callers see the same 404 envelope as
+cross-tenant or missing approvals, preventing tenant-insider enumeration of
+approval timing and decisions.
+
 ## Audit and metrics
 
 Gateway Edge handlers reuse `core/edge.Recorder` and the existing audit exporter:
