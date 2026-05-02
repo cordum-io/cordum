@@ -59,6 +59,7 @@ type EvaluateResponse struct {
 	ApprovalURL    string `json:"approval_url,omitempty"`
 	ActionHash     string `json:"action_hash,omitempty"`
 	InputHash      string `json:"input_hash,omitempty"`
+	CacheEligible   bool   `json:"cache_eligible,omitempty"`
 
 	Constraints  map[string]any `json:"constraints,omitempty"`
 	UpdatedInput map[string]any `json:"updated_input,omitempty"`
@@ -77,7 +78,6 @@ type EvaluateResponse struct {
 	WaitStrategy    string `json:"wait_strategy,omitempty"`
 	WaitAfter       string `json:"wait_after,omitempty"`
 	TimeoutMS       int    `json:"timeout_ms,omitempty"`
-	CacheEligible   bool   `json:"cache_eligible,omitempty"`
 }
 
 // EvaluateClient is the narrow boundary the agentd evaluator uses to talk to
