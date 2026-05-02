@@ -8,6 +8,7 @@ import (
 
 	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/edge/claude"
+	"golang.org/x/sync/singleflight"
 )
 
 const defaultHookResponseWriteBudget = 250 * time.Millisecond
@@ -42,6 +43,8 @@ type Evaluator struct {
 
 	hookTimeout         time.Duration
 	responseWriteBudget time.Duration
+	coalesce            singleflight.Group
+	coalesceWaitHook    func() // test hook; nil in production.
 }
 
 func NewEvaluator(cfg EvaluatorConfig) *Evaluator {
@@ -71,6 +74,14 @@ func NewEvaluator(cfg EvaluatorConfig) *Evaluator {
 }
 
 func (e *Evaluator) EvaluateHook(ctx context.Context, req claude.AgentdRequest) (claude.AgentdDecision, error) {
+	return e.evaluateHook(ctx, req, e.eventWriter, false)
+}
+
+func (e *Evaluator) EvaluateHookWithEventWriter(ctx context.Context, req claude.AgentdRequest, writer EventWriter) (claude.AgentdDecision, error) {
+	return e.evaluateHook(ctx, req, writer, true)
+}
+
+func (e *Evaluator) evaluateHook(ctx context.Context, req claude.AgentdRequest, writer EventWriter, requireEvidence bool) (claude.AgentdDecision, error) {
 	if e == nil || e.client == nil {
 		return claude.AgentdDecision{}, errors.New("agentd evaluator not configured")
 	}
@@ -88,41 +99,84 @@ func (e *Evaluator) EvaluateHook(ctx context.Context, req claude.AgentdRequest) 
 		cached.EventID = ""
 		decision := AgentdDecisionFromEvaluateResponse(evalCtx, cached, e.approvalConfig, e.approvalWaiter)
 		e.recordDecisionObservability(req, evalReq, cached, decision, startedAt)
-		if _, err := RecordDecisionEvidence(context.Background(), e.eventWriter, decision, DecisionEvidence{
+		if err := e.recordDecisionEvidence(writer, requireEvidence, decision, evalReq, DecisionEvidence{
 			State:      e.state,
 			Request:    req,
 			Response:   cached,
 			CacheHit:   true,
 			DurationMS: req.DurationMS,
 		}); err != nil {
-			e.recordEvidenceFailure(evalReq)
+			return decision, err
 		}
 		return decision, nil
 	}
 	if e.cache != nil {
 		e.recordCacheLookup(evalReq, "miss")
 	}
+	if key, ok := evaluatorCoalesceKey(cacheReq); ok {
+		return e.coalescedFreshDecision(ctx, evalCtx, key, req, evalReq, cacheReq, startedAt, writer, requireEvidence)
+	}
+	return e.evaluateFreshDecision(evalCtx, req, evalReq, cacheReq, startedAt, writer, requireEvidence)
+}
 
+func (e *Evaluator) coalescedFreshDecision(waitCtx, evalCtx context.Context, key string, req claude.AgentdRequest, evalReq EvaluateRequest, cacheReq SafeAllowCacheRequest, startedAt time.Time, writer EventWriter, requireEvidence bool) (claude.AgentdDecision, error) {
+	ch := e.coalesce.DoChan(key, func() (any, error) {
+		decision, err := e.evaluateFreshDecision(evalCtx, req, evalReq, cacheReq, startedAt, writer, requireEvidence)
+		return coalescedEvaluateResult{decision: decision}, err
+	})
+	if e.coalesceWaitHook != nil {
+		e.coalesceWaitHook()
+	}
+	select {
+	case <-waitCtx.Done():
+		return claude.AgentdDecision{}, waitCtx.Err()
+	case result := <-ch:
+		if result.Err != nil {
+			return claude.AgentdDecision{}, result.Err
+		}
+		out, ok := result.Val.(coalescedEvaluateResult)
+		if !ok {
+			return claude.AgentdDecision{}, errors.New("agentd evaluator coalesce returned unexpected result")
+		}
+		return out.decision, nil
+	}
+}
+
+type coalescedEvaluateResult struct {
+	decision claude.AgentdDecision
+}
+
+func (e *Evaluator) evaluateFreshDecision(evalCtx context.Context, req claude.AgentdRequest, evalReq EvaluateRequest, cacheReq SafeAllowCacheRequest, startedAt time.Time, writer EventWriter, requireEvidence bool) (claude.AgentdDecision, error) {
 	resp, err := e.client.Evaluate(evalCtx, evalReq)
 	if err != nil {
-		return e.degradedDecision(req, evalReq, err, cacheReq, startedAt), nil
+		return e.degradedDecision(req, evalReq, err, cacheReq, startedAt, writer, requireEvidence)
 	}
 	if resp == nil {
-		return e.degradedDecision(req, evalReq, ErrEvaluateResponseMalformed, cacheReq, startedAt), nil
+		return e.degradedDecision(req, evalReq, ErrEvaluateResponseMalformed, cacheReq, startedAt, writer, requireEvidence)
 	}
 	decision := AgentdDecisionFromEvaluateResponse(evalCtx, *resp, e.approvalConfig, e.approvalWaiter)
 	e.recordDecisionObservability(req, evalReq, *resp, decision, startedAt)
 	_ = e.cache.Put(cacheReq, *resp)
-	if _, err := RecordDecisionEvidence(context.Background(), e.eventWriter, decision, DecisionEvidence{
+	if err := e.recordDecisionEvidence(writer, requireEvidence, decision, evalReq, DecisionEvidence{
 		State:      e.state,
 		Request:    req,
 		Response:   *resp,
 		CacheMiss:  e.cache != nil,
 		DurationMS: req.DurationMS,
 	}); err != nil {
-		e.recordEvidenceFailure(evalReq)
+		return decision, err
 	}
 	return decision, nil
+}
+
+func evaluatorCoalesceKey(req SafeAllowCacheRequest) (string, bool) {
+	if strings.TrimSpace(req.TenantID) == "" ||
+		strings.TrimSpace(req.PolicySnapshot) == "" ||
+		strings.TrimSpace(req.ActionHash) == "" ||
+		strings.TrimSpace(req.InputHash) == "" {
+		return "", false
+	}
+	return "edge-evaluate:" + safeAllowCacheKey(req), true
 }
 
 func (e *Evaluator) evaluationContext(parent context.Context) (context.Context, context.CancelFunc) {
@@ -182,7 +236,7 @@ func (e *Evaluator) cacheRequest(req claude.AgentdRequest, evalReq EvaluateReque
 	}
 }
 
-func (e *Evaluator) degradedDecision(req claude.AgentdRequest, evalReq EvaluateRequest, err error, cacheReq SafeAllowCacheRequest, startedAt time.Time) claude.AgentdDecision {
+func (e *Evaluator) degradedDecision(req claude.AgentdRequest, evalReq EvaluateRequest, err error, cacheReq SafeAllowCacheRequest, startedAt time.Time, writer EventWriter, requireEvidence bool) (claude.AgentdDecision, error) {
 	category := ClassifyEvaluateError(err)
 	outcome := ApplyFailMode(FailModeContext{
 		PolicyMode:           nonEmptyPolicyMode(e.state.PolicyMode, edgecore.PolicyModeObserve),
@@ -209,7 +263,7 @@ func (e *Evaluator) degradedDecision(req claude.AgentdRequest, evalReq EvaluateR
 		PermissionDecision: string(outcome.Decision),
 		TerminalMessage:    outcome.TerminalCopy,
 	}
-	if _, err := RecordDecisionEvidence(context.Background(), e.eventWriter, decision, DecisionEvidence{
+	if err := e.recordDecisionEvidence(writer, requireEvidence, decision, evalReq, DecisionEvidence{
 		State:        e.state,
 		Request:      req,
 		Response:     resp,
@@ -219,9 +273,19 @@ func (e *Evaluator) degradedDecision(req claude.AgentdRequest, evalReq EvaluateR
 		ErrorMessage: outcome.Reason,
 		DurationMS:   req.DurationMS,
 	}); err != nil {
-		e.recordEvidenceFailure(evalReq)
+		return decision, err
 	}
-	return decision
+	return decision, nil
+}
+
+func (e *Evaluator) recordDecisionEvidence(writer EventWriter, requireEvidence bool, decision claude.AgentdDecision, evalReq EvaluateRequest, evidence DecisionEvidence) error {
+	if _, err := RecordDecisionEvidence(context.Background(), writer, decision, evidence); err != nil {
+		e.recordEvidenceFailure(evalReq)
+		if requireEvidence {
+			return err
+		}
+	}
+	return nil
 }
 
 func evaluatorActionName(req claude.AgentdRequest) string {

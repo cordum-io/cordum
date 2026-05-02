@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -85,6 +86,81 @@ func TestEvaluatorCallsGatewayAndRecordsDecisionEvidence(t *testing.T) {
 		if strings.Contains(string(payload), forbidden) {
 			t.Fatalf("decision event leaked %q: %s", forbidden, payload)
 		}
+	}
+}
+
+func TestEvaluatorCoalescesConcurrentIdenticalRequests(t *testing.T) {
+	t.Parallel()
+
+	client := newBlockingEvaluateClient(coalescedAllowResponse(), nil)
+	writer := &concurrentCaptureEventWriter{}
+	cache := NewSafeAllowCache(SafeAllowCacheConfig{Enabled: true, TTL: time.Minute, MaxEntries: 4}, fixedClock{now: time.Date(2026, 5, 2, 16, 30, 0, 0, time.UTC)})
+	evaluator := NewEvaluator(EvaluatorConfig{
+		Client:      client,
+		EventWriter: writer,
+		State:       evaluatorTestState(edgecore.PolicyModeEnforce),
+		Cache:       cache,
+		HookTimeout: time.Second,
+	})
+
+	decisions, errs := runConcurrentEvaluateHooks(t, evaluator, evaluatorCoalesceRequest(), 20, client.release)
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("caller %d EvaluateHook error = %v", i, err)
+		}
+		if decisions[i].Decision != claude.DecisionAllow {
+			t.Fatalf("caller %d decision = %#v, want allow", i, decisions[i])
+		}
+	}
+	if calls := client.callCount(); calls != 1 {
+		t.Fatalf("gateway evaluate calls = %d, want 1", calls)
+	}
+	if events := writer.snapshot(); len(events) != 1 || events[0].EventID != "evt-coalesced-allow" || events[0].Decision != edgecore.DecisionAllow {
+		t.Fatalf("decision evidence events = %#v, want exactly one coalesced allow event", events)
+	}
+	cache.mu.Lock()
+	recordCount := len(cache.records)
+	cache.mu.Unlock()
+	if recordCount != 1 {
+		t.Fatalf("cache records = %d, want 1 coalesced safe-allow record", recordCount)
+	}
+}
+
+func TestEvaluatorCoalesceErrorPathDoesNotPoisonSlot(t *testing.T) {
+	t.Parallel()
+
+	client := newBlockingEvaluateClient(nil, ErrGatewayTimeout)
+	writer := &concurrentCaptureEventWriter{}
+	evaluator := NewEvaluator(EvaluatorConfig{
+		Client:      client,
+		EventWriter: writer,
+		State:       evaluatorTestState(edgecore.PolicyModeEnterpriseStrict),
+		Cache:       NewSafeAllowCache(SafeAllowCacheConfig{Enabled: true, TTL: time.Minute, MaxEntries: 4}, fixedClock{now: time.Date(2026, 5, 2, 16, 45, 0, 0, time.UTC)}),
+		HookTimeout: time.Second,
+	})
+
+	decisions, errs := runConcurrentEvaluateHooks(t, evaluator, evaluatorCoalesceRequest(), 20, client.release)
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("caller %d EvaluateHook error = %v", i, err)
+		}
+		if decisions[i].Decision != claude.DecisionDeny {
+			t.Fatalf("caller %d decision = %#v, want fail-closed deny", i, decisions[i])
+		}
+	}
+	if calls := client.callCount(); calls != 1 {
+		t.Fatalf("gateway calls after coalesced error batch = %d, want 1", calls)
+	}
+	client.setResult(coalescedAllowResponse(), nil)
+	decision, err := evaluator.EvaluateHook(context.Background(), evaluatorCoalesceRequest())
+	if err != nil || decision.Decision != claude.DecisionAllow {
+		t.Fatalf("post-error EvaluateHook = %#v, %v; want fresh allow", decision, err)
+	}
+	if calls := client.callCount(); calls != 2 {
+		t.Fatalf("gateway calls after retry = %d, want 2 proving slot was not poisoned", calls)
+	}
+	if events := writer.snapshot(); len(events) != 2 || events[0].Status != edgecore.ActionStatusDegraded || events[1].EventID != "evt-coalesced-allow" {
+		t.Fatalf("evidence events after retry = %#v, want degraded then fresh allow", events)
 	}
 }
 
@@ -337,6 +413,144 @@ func (s *stubEvaluateClient) Evaluate(_ context.Context, req EvaluateRequest) (*
 	}
 	out := cloneEvaluateResponse(*s.resp)
 	return &out, nil
+}
+
+type blockingEvaluateClient struct {
+	mu       sync.Mutex
+	resp     *EvaluateResponse
+	err      error
+	calls    int
+	requests []EvaluateRequest
+
+	started      chan struct{}
+	release      chan struct{}
+	closeStarted sync.Once
+}
+
+func newBlockingEvaluateClient(resp *EvaluateResponse, err error) *blockingEvaluateClient {
+	return &blockingEvaluateClient{
+		resp:    resp,
+		err:     err,
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (c *blockingEvaluateClient) Evaluate(ctx context.Context, req EvaluateRequest) (*EvaluateResponse, error) {
+	c.mu.Lock()
+	c.calls++
+	c.requests = append(c.requests, req)
+	c.closeStarted.Do(func() { close(c.started) })
+	c.mu.Unlock()
+
+	select {
+	case <-c.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
+	c.mu.Lock()
+	resp, err := c.resp, c.err
+	c.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.New("missing test response")
+	}
+	out := cloneEvaluateResponse(*resp)
+	return &out, nil
+}
+
+func (c *blockingEvaluateClient) setResult(resp *EvaluateResponse, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.resp = resp
+	c.err = err
+}
+
+func (c *blockingEvaluateClient) callCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
+type concurrentCaptureEventWriter struct {
+	mu     sync.Mutex
+	events []edgecore.AgentActionEvent
+}
+
+func (w *concurrentCaptureEventWriter) WriteEvent(_ context.Context, event edgecore.AgentActionEvent) (edgecore.AgentActionEvent, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.events = append(w.events, event)
+	return event, nil
+}
+
+func (w *concurrentCaptureEventWriter) snapshot() []edgecore.AgentActionEvent {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]edgecore.AgentActionEvent(nil), w.events...)
+}
+
+func runConcurrentEvaluateHooks(t *testing.T, evaluator *Evaluator, req claude.AgentdRequest, n int, release chan<- struct{}) ([]claude.AgentdDecision, []error) {
+	t.Helper()
+	decisions := make([]claude.AgentdDecision, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	var waiters sync.WaitGroup
+	start := make(chan struct{})
+	waiters.Add(n)
+	evaluator.coalesceWaitHook = waiters.Done
+	defer func() { evaluator.coalesceWaitHook = nil }()
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			decisions[i], errs[i] = evaluator.EvaluateHook(context.Background(), req)
+		}(i)
+	}
+	close(start)
+	waitForCoalesceWaiters(t, &waiters)
+	close(release)
+	wg.Wait()
+	return decisions, errs
+}
+
+func waitForCoalesceWaiters(t *testing.T, wg *sync.WaitGroup) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("coalesced callers did not all register before timeout")
+	}
+}
+
+func evaluatorCoalesceRequest() claude.AgentdRequest {
+	req := evaluatorMetricsRequest()
+	req.ActionHash = "sha256:action-coalesce"
+	req.InputHash = "sha256:input-coalesce"
+	req.InputRedacted = map[string]any{"command": "npm test -- --runInBand"}
+	return req
+}
+
+func coalescedAllowResponse() *EvaluateResponse {
+	return &EvaluateResponse{
+		Decision:           string(edgecore.DecisionAllow),
+		Reason:             "coalesced safe allow",
+		PolicySnapshot:     "snap-eval",
+		EventID:            "evt-coalesced-allow",
+		ActionHash:         "sha256:action-coalesce",
+		InputHash:          "sha256:input-coalesce",
+		PermissionDecision: "allow",
+		CacheEligible:      true,
+	}
 }
 
 type stubAgentdClientFunc func(context.Context, claude.AgentdRequest) (claude.AgentdDecision, error)
