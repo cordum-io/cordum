@@ -712,6 +712,12 @@ scanners:
 
 Generated Claude settings and enterprise managed-settings templates must not contain long-lived `ANTHROPIC_API_KEY`, `CORDUM_API_KEY`, bearer tokens, raw prompts, or raw tool payloads. Enterprise deployments should use `cordum-agentd` memory/keychain/service bootstrap through Claude `apiKeyHelper` and MCP `headersHelper` placeholders. Claude tool actions are recorded as Edge sessions/executions/action events plus audit/artifact evidence; they are not Cordum Jobs unless linked to a real production workflow/job.
 
+Edge observability reuses the existing Gateway metrics endpoint and audit/SIEM
+pipeline. Metric labels are bounded (`layer`, `kind`, `decision`, `mode`,
+`component`, stable `reason_code`, artifact/export result, hook event, cache
+result, stream drop reason) and never include raw commands, prompts, paths,
+signed URLs, IDs, or token values. See [edge-observability.md](edge-observability.md).
+
 > **Prometheus pod label**: All Cordum metrics include a `pod` const label (`os.Hostname()` or `CORDUM_INSTANCE_ID`) so Prometheus can distinguish replicas in HA deployments. Use `sum by (pod) (cordum_scheduler_jobs_received_total)` for per-replica breakdown.
 
 ### Licensing
@@ -1132,6 +1138,7 @@ The consumer calls the configured SIEM exporter (`CORDUM_AUDIT_EXPORT_TYPE`) for
 
 - [configuration.md](configuration.md) — Quick-start config overview
 - [edge/cordum-hook.md](edge/cordum-hook.md) — Cordum Edge Claude command hook contract
+- [edge-observability.md](edge-observability.md) — Cordum Edge metrics, logs, audit, and redaction contract
 - [guides/tls-setup.md](guides/tls-setup.md) — TLS setup and troubleshooting
 - [safety-kernel.md](safety-kernel.md) — Safety kernel architecture and evaluation
 - [output-policy.md](output-policy.md) — Output scanning and quarantine system

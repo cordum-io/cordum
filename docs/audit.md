@@ -66,6 +66,38 @@ the gateway for narrative inspection in the dashboard. Both are
 exported, but downstream consumers should de-duplicate on `job_id` +
 `event_type` if they want raw decisions only.
 
+### Edge events (Cordum Edge P0)
+
+Cordum Edge reuses the same `SIEMEvent` export pipeline for local agent
+governance evidence. Edge events describe `EdgeSession -> AgentExecution ->
+AgentActionEvent` evidence; they are **not** Cordum Job lifecycle events unless
+the execution is linked to a real production `job_id` or workflow run.
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `EventEdgeSessionStarted` | `edge.session_started` | Edge session creation |
+| `EventEdgeSessionEnded` | `edge.session_ended` | Edge session terminal state |
+| `EventEdgeExecutionStarted` | `edge.execution_started` | Agent execution creation |
+| `EventEdgeExecutionEnded` | `edge.execution_ended` | Agent execution terminal state |
+| `EventEdgePolicyDecision` | `edge.policy_decision` | Allow/recorded Edge policy decision |
+| `EventEdgeActionDenied` | `edge.action_denied` | Deny/throttle outcome |
+| `EventEdgeApprovalRequested` | `edge.approval_requested` | Human approval required/requested |
+| `EventEdgeApprovalResolved` | `edge.approval_resolved` | Approval reached terminal outcome |
+| `EventEdgeApprovalRejected` | `edge.approval_rejected` | Approval explicitly rejected |
+| `EventEdgeApprovalExpired` | `edge.approval_expired` | Approval expired/timed out |
+| `EventEdgeArtifactExported` | `edge.artifact_exported` | Evidence/session export attempt |
+| `EventEdgeAgentdDegraded` | `edge.agentd_degraded` | Gateway/agentd/hook degraded mode |
+| `EventEdgeFailClosed` | `edge.fail_closed` | Enterprise/local fail-closed denial |
+
+Edge `extra` fields are bounded/redacted: session/execution/event IDs, layer,
+kind, tool name, hashes, policy snapshot, approval ref, artifact type/result,
+mode/component, and stable reason codes. Raw prompts, tool payloads, signed URLs,
+approval reason text, `InputRedacted` maps, arbitrary labels, bearer tokens, and
+API keys must never be placed in SIEM `extra`.
+
+See [Edge observability](edge-observability.md) for the full metric, log, and
+audit contract.
+
 Severity levels: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO`.
 
 <!-- TODO: document which actions map to which event types and severities -->
@@ -172,4 +204,5 @@ The audit log page (`/audit`) provides:
 ## See Also
 
 - [configuration-reference.md](configuration-reference.md) — Full env var reference
+- [edge-observability.md](edge-observability.md) — Edge metrics, structured logs, and SIEM event contract
 - [production.md](production.md) — Production hardening (audit export setup)
