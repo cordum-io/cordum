@@ -69,7 +69,7 @@ func runCordumctlAgentdHelper() int {
 	if err != nil {
 		return 5
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	if err := writeCordumctlState(); err != nil {
 		return 6
 	}

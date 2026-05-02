@@ -179,7 +179,7 @@ func runLauncherAgentdHelper() int {
 	if err != nil {
 		return 5
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	if err := writeLauncherState(); err != nil {
 		return 6
 	}
@@ -201,8 +201,8 @@ func runLauncherClaudeHelper() int {
 		"settings_json":                settings,
 	})
 	if os.Getenv("CORDUM_TEST_CLAUDE_SLEEP_MS") != "" {
-		sleepMS, _ := time.ParseDuration(os.Getenv("CORDUM_TEST_CLAUDE_SLEEP_MS") + "ms")
-		time.Sleep(sleepMS)
+		sleepDuration, _ := time.ParseDuration(os.Getenv("CORDUM_TEST_CLAUDE_SLEEP_MS") + "ms")
+		time.Sleep(sleepDuration)
 		return 0
 	}
 	if os.Getenv("CORDUM_TEST_CLAUDE_EXIT") == "7" {

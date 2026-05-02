@@ -12,7 +12,7 @@ import (
 )
 
 func TestDefaultHookTimeoutIsUnderClaudeDeadline(t *testing.T) {
-	if !(DefaultHookTimeout < ClaudeHookDeadline) {
+	if DefaultHookTimeout >= ClaudeHookDeadline {
 		t.Fatalf("DefaultHookTimeout = %s, want strictly less than %s", DefaultHookTimeout, ClaudeHookDeadline)
 	}
 }

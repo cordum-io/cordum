@@ -79,7 +79,7 @@ func runEdgeDoctorCmd(args []string, stdout, stderr io.Writer) int {
 		dashboardURL: *dashboardURL,
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "cordumctl edge doctor: %s\n", edgeDoctorRedact(err.Error(), *fs.apiKey))
+		_, _ = fmt.Fprintf(stderr, "cordumctl edge doctor: %s\n", edgeDoctorRedact(err.Error(), *fs.apiKey))
 		return 2
 	}
 

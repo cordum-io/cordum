@@ -69,18 +69,18 @@ func runEdgeClaudeCmd(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 		ClaudeArgs: claudeArgs, DryRun: *dryRun, NoLaunch: effectiveNoLaunch, Verbose: *verbose,
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "cordumctl edge claude: %s\n", redactEdgeClaudeError(err.Error(), *fs.apiKey))
+		_, _ = fmt.Fprintf(stderr, "cordumctl edge claude: %s\n", redactEdgeClaudeError(err.Error(), *fs.apiKey))
 		return 1
 	}
 	if *settingsOutput != "" {
 		if err := writeEdgeSettingsOutput(stdout, *settingsOutput, result.SettingsJSON); err != nil {
-			fmt.Fprintf(stderr, "cordumctl edge claude: %s\n", redactEdgeClaudeError(err.Error(), *fs.apiKey))
+			_, _ = fmt.Fprintf(stderr, "cordumctl edge claude: %s\n", redactEdgeClaudeError(err.Error(), *fs.apiKey))
 			return 1
 		}
 	}
 	if *dryRun && *settingsOutput != "-" {
 		if err := writeEdgeClaudeJSON(stdout, result); err != nil {
-			fmt.Fprintf(stderr, "cordumctl edge claude: %s\n", err)
+			_, _ = fmt.Fprintf(stderr, "cordumctl edge claude: %s\n", err)
 			return 1
 		}
 	}
