@@ -23,11 +23,13 @@ const (
 	maxEdgeIdempotencyKeyBytes        = 512
 	edgeIdempotencyReplayWait         = 2 * time.Second
 	edgeIdempotencyReplayPoll         = 10 * time.Millisecond
+	edgeIdempotencyCleanupTimeout     = 2 * time.Second
 	edgeArtifactPointerErrorMessage   = "invalid edge event artifact pointer"
 	edgeArtifactPointerSchemeArtifact = "artifact"
 	edgeArtifactPointerSchemeEdge     = "edge-artifact"
 	edgeEventCreateEndpoint           = "POST /api/v1/edge/events"
 	edgeEventBatchEndpoint            = "POST /api/v1/edge/events/batch"
+	edgePartialIdempotencyMessage     = "event persisted but idempotency completion failed; safe to retry, but the next retry MAY produce a duplicate event under auto-seq paths"
 )
 
 type edgeEventWriteRequest struct {
@@ -131,7 +133,7 @@ func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
 	appended, err := store.AppendEvent(r.Context(), event)
 	if err != nil {
 		if idempotent {
-			s.releaseEdgeEventIdempotency(r.Context(), store, idempotencyReq, "append edge event failed")
+			s.releaseEdgeEventIdempotencyDetached(store, idempotencyReq, "append edge event failed")
 		}
 		writeEdgeEventStoreError(w, r, err, "append edge event")
 		return
@@ -147,7 +149,7 @@ func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
 			ContentType: "application/json",
 			Body:        responseBody,
 		}); err != nil {
-			writeEdgeInternalError(w, r, "complete edge event idempotency", err)
+			s.writeEdgeEventPartialIdempotencyFailure(w, r, store, idempotencyReq, "complete edge event idempotency", err)
 			return
 		}
 	}
@@ -215,7 +217,7 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 	appended, err := store.AppendEvents(r.Context(), events)
 	if err != nil {
 		if idempotent {
-			s.releaseEdgeEventIdempotency(r.Context(), store, idempotencyReq, "append edge event batch failed")
+			s.releaseEdgeEventIdempotencyDetached(store, idempotencyReq, "append edge event batch failed")
 		}
 		writeEdgeEventStoreError(w, r, err, "append edge event batch")
 		return
@@ -231,7 +233,7 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 			ContentType: "application/json",
 			Body:        responseBody,
 		}); err != nil {
-			writeEdgeInternalError(w, r, "complete edge event batch idempotency", err)
+			s.writeEdgeEventPartialIdempotencyFailure(w, r, store, idempotencyReq, "complete edge event batch idempotency", err)
 			return
 		}
 	}
@@ -364,6 +366,38 @@ func (s *server) releaseEdgeEventIdempotency(ctx context.Context, store edgecore
 	if err := store.ReleaseIdempotency(ctx, req); err != nil {
 		slog.Warn("release edge event idempotency reservation failed", "reason", reason, "endpoint", req.Endpoint, "tenant_id", req.TenantID, "error", err)
 	}
+}
+
+func (s *server) releaseEdgeEventIdempotencyDetached(store edgecore.Store, req edgecore.EdgeIdempotencyRequest, reason string) {
+	ctx, cancel := context.WithTimeout(context.Background(), edgeIdempotencyCleanupTimeout)
+	defer cancel()
+	s.releaseEdgeEventIdempotency(ctx, store, req, reason)
+}
+
+func (s *server) writeEdgeEventPartialIdempotencyFailure(
+	w http.ResponseWriter,
+	r *http.Request,
+	store edgecore.Store,
+	req edgecore.EdgeIdempotencyRequest,
+	operation string,
+	err error,
+) {
+	s.releaseEdgeEventIdempotencyDetached(store, req, operation+" failed after append")
+	s.recordEdgeEventPartialIdempotencyFailure(req.TenantID)
+	slog.Warn("edge event idempotency completion failed after append",
+		"operation", operation,
+		"endpoint", req.Endpoint,
+		"tenant_id", req.TenantID,
+		"error", err,
+	)
+	writeEdgeError(w, r, http.StatusInternalServerError, edgeErrCodePartialIdempotencyFailure, edgePartialIdempotencyMessage, nil)
+}
+
+func (s *server) recordEdgeEventPartialIdempotencyFailure(tenantID string) {
+	if s == nil || s.edgeRecorder == nil {
+		return
+	}
+	s.edgeRecorder.RecordDegraded(tenantID, "observe", "event_store", edgeErrCodePartialIdempotencyFailure)
 }
 
 func (s *server) handleListEdgeSessionEvents(w http.ResponseWriter, r *http.Request) {

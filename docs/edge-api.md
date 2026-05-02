@@ -21,6 +21,26 @@ raw hook payloads, idempotency keys, Authorization headers, signed URLs, prompts
 commands, or tool output to error details. If a handler needs client-actionable
 context, use stable codes and bounded enum-like fields.
 
+## Event idempotency replay contract
+
+`POST /api/v1/edge/events` and `/api/v1/edge/events/batch` accept an optional
+`Idempotency-Key` scoped by tenant and endpoint. A retry with the same normalized
+request replays the first `201` response; the same key with a different normalized
+request returns `409` with `code="idempotency_conflict"`.
+
+CompleteIdempotency failure mode: if the event persists but the idempotency key
+fails to commit, the response uses `code="partial_idempotency_failure"` with a
+5xx status. The pending key is released; clients SHOULD dedupe at the application
+layer using `event_id` from the persisted log. Auto-seq clients MAY observe a
+duplicate event on retry under this code; explicit-seq clients are protected by
+the `seq=lastSeq+1` invariant.
+
+This is a forward-only fix. Existing orphaned pending markers from before this
+change are not backfilled; operators may manually delete those Redis
+`edge:idempotency:*` keys if needed after confirming the persisted event log.
+If the Gateway process crashes after append but before the cleanup attempt runs,
+the same pending-marker recovery procedure applies.
+
 ## Audit and metrics
 
 Gateway Edge handlers reuse `core/edge.Recorder` and the existing audit exporter:

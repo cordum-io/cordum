@@ -1031,7 +1031,11 @@ paths:
         `artifact_ptrs`. Optional `Idempotency-Key` retries are scoped by tenant
         and endpoint: the same normalized request replays the first 201 response
         without appending a duplicate event, while the same key with a different
-        normalized request returns 409 `idempotency_conflict`.
+        normalized request returns 409 `idempotency_conflict`. If the event is
+        persisted but the replay record fails to commit, the API returns 500
+        `partial_idempotency_failure`, releases the key, and clients SHOULD
+        dedupe retries by `event_id`; auto-seq retries MAY append a duplicate
+        event under that code.
       tags:
       - Edge
       parameters:
@@ -1078,7 +1082,11 @@ paths:
         scoped by tenant and endpoint: the same normalized batch replays the
         first 201 response without partial append or duplicate events, while the
         same key with a different normalized batch returns 409
-        `idempotency_conflict`.
+        `idempotency_conflict`. If the events are persisted but the replay
+        record fails to commit, the API returns 500
+        `partial_idempotency_failure`, releases the key, and clients SHOULD
+        dedupe retries by `event_id`; auto-seq retries MAY append duplicates
+        under that code.
       tags:
       - Edge
       parameters:
@@ -8225,6 +8233,34 @@ components:
         code:
           type: string
           description: Stable machine-readable Edge error code.
+          enum:
+          - unauthorized
+          - access_denied
+          - tenant_required
+          - tenant_mismatch
+          - tenant_access_denied
+          - missing_path_param
+          - invalid_request
+          - invalid_json
+          - missing_required_field
+          - not_found
+          - request_too_large
+          - service_unavailable
+          - store_unavailable
+          - internal_error
+          - upstream_error
+          - conflict
+          - session_terminal
+          - execution_terminal
+          - execution_session_mismatch
+          - raw_payload_rejected
+          - artifact_pointer_invalid
+          - approval_conflict
+          - approval_not_actionable
+          - self_approval_denied
+          - idempotency_conflict
+          - idempotency_key_invalid
+          - partial_idempotency_failure
           example: idempotency_conflict
         message:
           type: string
