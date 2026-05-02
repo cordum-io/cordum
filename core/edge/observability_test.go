@@ -1,6 +1,8 @@
 package edge
 
 import (
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -158,6 +160,194 @@ func TestNormalizeStreamDropReasonBoundsLabelCardinality(t *testing.T) {
 	} {
 		if got := NormalizeStreamDropReason(tc.input); got != tc.want {
 			t.Errorf("NormalizeStreamDropReason(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+// TestEventLogAttrsEmitsOnlyBoundedFields pins the EDGE-014 step-4 log
+// attribute contract: EventLogAttrs returns only safe Edge IDs, normalized
+// layer/kind, bounded tool_name/decision/status, and input_hash/duration.
+// No raw secret-shaped value injected anywhere in the source AgentActionEvent
+// (Decision, Status, Reason, Labels, InputRedacted, ToolName) may appear in
+// the resulting slog.Attr slice.
+func TestEventLogAttrsEmitsOnlyBoundedFields(t *testing.T) {
+	const rawSecret = "Authorization: Bearer edge014-log-attr-secret-xyz"
+	event := AgentActionEvent{
+		EventID:     "evt-edge014-attr-1",
+		SessionID:   "edge_sess_attr",
+		ExecutionID: "edge_exec_attr",
+		TenantID:    "tenant-edge014",
+		PrincipalID: "principal-edge014",
+		Timestamp:   time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC),
+		Layer:       LayerHook,
+		Kind:        EventKindHookPreToolUse,
+		ToolName:    "Bash",
+		ActionName:  "bash.exec",
+		Capability:  "exec.shell",
+		RiskTags:    []string{"exec"},
+		Labels:      Labels{"command.class": "safe", "raw": rawSecret},
+		InputRedacted: map[string]any{
+			"command": rawSecret,
+		},
+		Decision:   "ALLOW",
+		Status:     ActionStatusOK,
+		InputHash:  "sha256:abcdef0123456789",
+		DurationMS: 142,
+	}
+
+	attrs := EventLogAttrs(event)
+	gotKeys := make(map[string]any, len(attrs))
+	var rendered strings.Builder
+	for _, a := range attrs {
+		gotKeys[a.Key] = a.Value.Any()
+		rendered.WriteString(a.Key)
+		rendered.WriteString("=")
+		rendered.WriteString(a.Value.String())
+		rendered.WriteString(";")
+	}
+	out := rendered.String()
+
+	for _, want := range []string{"tenant_id", "session_id", "execution_id", "event_id", "layer", "kind", "tool_name", "decision", "status", "input_hash", "duration_ms"} {
+		if _, ok := gotKeys[want]; !ok {
+			t.Errorf("EventLogAttrs missing required key %q; rendered=%s", want, out)
+		}
+	}
+
+	for _, marker := range []string{rawSecret, "Authorization", "Bearer ", "command", "raw", "input_redacted", "labels", "principal_id", "risk_tags", "capability", "action_name"} {
+		if strings.Contains(out, marker) {
+			t.Errorf("EventLogAttrs leaked %q in attrs: %s", marker, out)
+		}
+	}
+
+	if got := gotKeys["decision"]; got != "allow" {
+		t.Errorf("decision attr = %v, want lowercase normalized 'allow'", got)
+	}
+	if got := gotKeys["layer"]; got != "hook" {
+		t.Errorf("layer attr = %v, want 'hook'", got)
+	}
+	if got := gotKeys["kind"]; got != "hook.pre_tool_use" {
+		t.Errorf("kind attr = %v, want 'hook.pre_tool_use'", got)
+	}
+}
+
+// TestEventLogAttrsBoundsHugeIDs proves EventLogAttrs clamps malicious /
+// pathological ID lengths so a single log line can't blow up.
+func TestEventLogAttrsBoundsHugeIDs(t *testing.T) {
+	hugeID := strings.Repeat("a", 4096)
+	event := AgentActionEvent{
+		TenantID:  hugeID,
+		SessionID: hugeID,
+		Layer:     LayerHook,
+		Kind:      EventKindHookPreToolUse,
+	}
+	attrs := EventLogAttrs(event)
+	for _, a := range attrs {
+		s := a.Value.String()
+		if len(s) > 200 {
+			t.Errorf("attr %q value len = %d > 200; bounded ID expected", a.Key, len(s))
+		}
+	}
+}
+
+// TestEventLogAttrsCollapsesUntrustedDecision proves a free-form
+// Decision value (e.g. an attacker-supplied "Authorization: Bearer ...")
+// collapses to "other" via NormalizeDecision and never reaches the log
+// attribute as a raw value.
+func TestEventLogAttrsCollapsesUntrustedDecision(t *testing.T) {
+	event := AgentActionEvent{
+		TenantID: "tenant-edge014",
+		Layer:    LayerHook,
+		Kind:     EventKindHookPreToolUse,
+		Decision: "Authorization: Bearer attacker-token-xyz",
+	}
+	attrs := EventLogAttrs(event)
+	for _, a := range attrs {
+		if a.Key != "decision" {
+			continue
+		}
+		got := a.Value.String()
+		if got == string(event.Decision) || strings.Contains(got, "Bearer") {
+			t.Fatalf("decision attr leaked raw input: %q", got)
+		}
+		if got != "other" {
+			t.Fatalf("decision attr = %q, want collapsed 'other'", got)
+		}
+	}
+}
+
+// TestSessionLogAttrsEmitsOnlyBoundedFields mirrors the AgentActionEvent
+// test for EdgeSession. Inject synthetic secrets into AgentVersion (a
+// free-form-ish field) and Mode and assert nothing leaks.
+func TestSessionLogAttrsEmitsOnlyBoundedFields(t *testing.T) {
+	const rawSecret = "ghp_edge014-session-attr-leak-token-abcdef"
+	session := EdgeSession{
+		TenantID:     "tenant-edge014",
+		SessionID:    "edge_sess_session_attr",
+		AgentProduct: "claude-code",
+		AgentVersion: rawSecret,
+		Mode:         "local-dev",
+		Status:       SessionStatusRunning,
+		StartedAt:    time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC),
+	}
+	attrs := SessionLogAttrs(session)
+	var rendered strings.Builder
+	for _, a := range attrs {
+		rendered.WriteString(a.Key)
+		rendered.WriteString("=")
+		rendered.WriteString(a.Value.String())
+		rendered.WriteString(";")
+	}
+	if strings.Contains(rendered.String(), rawSecret) {
+		t.Errorf("SessionLogAttrs included raw AgentVersion secret: %s", rendered.String())
+	}
+	if strings.Contains(rendered.String(), "ghp_") {
+		t.Errorf("SessionLogAttrs leaked github token marker: %s", rendered.String())
+	}
+}
+
+// emitAttrsToHandler is a tiny helper used by TestEventLogAttrsThroughSlog
+// to exercise the full slog pipeline (so any surprises in attribute
+// rendering surface in tests). It returns the rendered text.
+func emitAttrsToHandler(attrs []slog.Attr, msg string) string {
+	var buf strings.Builder
+	h := slog.NewTextHandler(&buf, nil)
+	logger := slog.New(h)
+	args := make([]any, 0, len(attrs)*2)
+	for _, a := range attrs {
+		args = append(args, a)
+	}
+	logger.Info(msg, args...)
+	return buf.String()
+}
+
+// TestEventLogAttrsThroughSlog runs EventLogAttrs through a real
+// slog.TextHandler and asserts the rendered line carries the bounded
+// keys and never the raw secret.
+func TestEventLogAttrsThroughSlog(t *testing.T) {
+	const rawSecret = "sk-edge014-slog-pipeline-secret"
+	event := AgentActionEvent{
+		EventID:     "evt-edge014-slog-1",
+		SessionID:   "edge_sess_slog",
+		ExecutionID: "edge_exec_slog",
+		TenantID:    "tenant-edge014",
+		Layer:       LayerHook,
+		Kind:        EventKindHookPreToolUse,
+		ToolName:    "Bash",
+		Decision:    DecisionAllow,
+		Status:      ActionStatusOK,
+		InputHash:   "sha256:" + strings.Repeat("a", 64),
+		Labels:      Labels{"command.class": "safe", "leak": rawSecret},
+		InputRedacted: map[string]any{
+			"command": rawSecret,
+		},
+	}
+	out := emitAttrsToHandler(EventLogAttrs(event), "edge action")
+	if strings.Contains(out, rawSecret) {
+		t.Fatalf("slog output leaked raw secret: %s", out)
+	}
+	for _, want := range []string{"tenant_id=", "session_id=", "execution_id=", "event_id=", "layer=hook", "kind=hook.pre_tool_use", "tool_name=Bash", "decision=allow", "status=ok", "input_hash=sha256:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("slog output missing %q in: %s", want, out)
 		}
 	}
 }
