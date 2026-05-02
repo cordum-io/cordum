@@ -2,6 +2,9 @@
 
 Comprehensive testing strategies for Cordum components.
 
+For the Edge P0 security closure list used by final acceptance, see
+[docs/security/edge-p0-threat-model.md#edge-032-acceptance-checklist](docs/security/edge-p0-threat-model.md#edge-032-acceptance-checklist).
+
 ## Testing Philosophy
 
 1. **Safety is paramount** - Safety Kernel requires 100% test coverage

@@ -1,0 +1,30 @@
+Edge P0 threat model evidence run
+Date: 2026-05-02
+Host note: TEMP/TMP/GOTMPDIR set to D:\Cordum\.go-tmp and GOMAXPROCS=2 for this Windows/MSYS workspace; commands below are otherwise the documented evidence gates.
+
+## E1 core edge redaction/secret/tenant/fail-mode tests
+Command: go test -count=1 ./core/edge/... -run 'Test.*(Redact|Secret|Tenant|FailMode)'
+Output:
+ok  	github.com/cordum/cordum/core/edge	0.119s
+ok  	github.com/cordum/cordum/core/edge/agentd	0.054s
+ok  	github.com/cordum/cordum/core/edge/claude	0.037s
+Exit code: 0
+
+## E2 gateway targeted Edge auth/tenant/limit/redact/unavailable/stream/approval/export tests
+Command: go test -count=3 ./core/controlplane/gateway -run 'Test.*Edge.*(Auth|Tenant|Limit|Redact|Unavailable|Stream|Approval|Export)'
+Output:
+ok  	github.com/cordum/cordum/core/controlplane/gateway	16.256s
+Exit code: 0
+
+## E3 fake hook E2E script
+Command: bash tools/scripts/edge_fake_hook_e2e.sh
+Output:
+[edge_fake_hook_e2e] API_BASE=https://localhost:8081
+SKIP edge_fake_hook_e2e: https://localhost:8081 reachable but CORDUM_INTEGRATION not set; default mode is non-destructive
+Exit code: 0
+
+## E4 no-secret log lint
+Command: bash tools/scripts/lint_no_secret_log.sh
+Output:
+OK: No raw secret logging found in scanned files
+Exit code: 0

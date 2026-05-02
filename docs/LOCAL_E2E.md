@@ -52,6 +52,8 @@ make edge-fake-hook-e2e                          # same, via Makefile target
 
 For package-level backend regression commands that do not require a running
 stack, see [Edge backend integration tests](../TESTING.md#edge-backend-integration-tests).
+For the security closure list used by final P0 acceptance, see
+[docs/security/edge-p0-threat-model.md § EDGE-032 acceptance checklist](security/edge-p0-threat-model.md#edge-032-acceptance-checklist).
 
 **Prerequisites**
 - A running Cordum stack at `CORDUM_GATEWAY` (default `https://localhost:8081`
