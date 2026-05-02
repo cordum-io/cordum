@@ -689,7 +689,7 @@ scanners:
 | `CORDUM_TENANT_ID` | — | No | Default tenant ID for SDK/MCP clients |
 | `CORDUM_INSTANCE_ID` | `os.Hostname()` | No | Override pod name used in Prometheus `pod` label. Defaults to hostname; falls back to `"unknown"` |
 | `CORDUM_HOOK_MAX_INPUT_BYTES` | `1048576` | No | Maximum stdin JSON payload size for `cordum-hook`; values above 8 MiB are ignored. |
-| `CORDUM_AGENTD_HOOK_TIMEOUT` | `10s` | No | Deadline for `cordum-hook` stdin read and local agentd decision calls. |
+| `CORDUM_AGENTD_HOOK_TIMEOUT` | `4.5s` | No | Total `cordum-hook` wall-clock budget for stdin read, local agentd decision, and response write. Values must stay strictly below Claude Code's 5s hook deadline; `>=5s` is rejected at startup. The default reserves `4s` for the agentd POST and `500ms` for response serialization/write; custom values shrink the agentd POST budget proportionally. |
 | `CORDUM_AGENTD_GATEWAY_TIMEOUT` | `5s` | No | Per-call timeout for `cordum-agentd` Gateway lifecycle/evaluate/approval/evidence requests. |
 | `CORDUM_AGENTD_URL` | `http://127.0.0.1:8765/v1/edge/hooks/claude` | No | Loopback-only local agentd decision endpoint used by `cordum-hook`; remote hosts are rejected. |
 | `CORDUM_AGENTD_SOCKET` | `http://127.0.0.1:8765/v1/edge/hooks/claude` | No | `cordum-agentd` local bind URL. P0 accepts loopback HTTP only; Unix socket / named-pipe paths fail fast instead of silently disabling enforcement. |

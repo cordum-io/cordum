@@ -16,8 +16,15 @@ import (
 )
 
 const (
-	DefaultMaxInputBytes int64         = 1 << 20
-	DefaultHookTimeout   time.Duration = 10 * time.Second
+	DefaultMaxInputBytes int64 = 1 << 20
+
+	// ClaudeHookDeadline is Claude Code's documented per-hook command deadline.
+	ClaudeHookDeadline time.Duration = 5 * time.Second
+	// DefaultHookTimeout MUST stay under Claude Code's 5s hook deadline
+	// (PRD §7.4); runner.go splits it into agentd-POST + response-write budgets.
+	DefaultHookTimeout      time.Duration = 4500 * time.Millisecond
+	DefaultAgentdPostBudget time.Duration = 4 * time.Second
+	ResponseWriteReserve    time.Duration = 500 * time.Millisecond
 )
 
 var (
@@ -40,6 +47,9 @@ type RunOptions struct {
 	Recorder      edgecore.Recorder
 	MaxInputBytes int64
 	Timeout       time.Duration
+	// AgentdPostBudget caps only the local agentd POST; it is clamped so the
+	// hook retains time to serialize and write Claude's response.
+	AgentdPostBudget time.Duration
 }
 
 // HookInput contains the Claude Code hook fields needed by EDGE-015. RawPayload
@@ -138,19 +148,33 @@ func maxInputBytes(opts RunOptions) int64 {
 	return DefaultMaxInputBytes
 }
 
-func hookTimeout(opts RunOptions) time.Duration {
+func hookTimeout(opts RunOptions) (time.Duration, error) {
 	if opts.Timeout > 0 {
-		return opts.Timeout
+		return validateHookTimeout("RunOptions.Timeout", opts.Timeout)
 	}
 	if raw := envValue(opts.Env, "CORDUM_AGENTD_HOOK_TIMEOUT"); raw != "" {
-		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
-			return d
-		}
-		if secs, err := strconv.ParseFloat(strings.TrimSpace(raw), 64); err == nil && secs > 0 {
-			return time.Duration(secs * float64(time.Second))
+		if d, ok := parseHookTimeout(raw); ok {
+			return validateHookTimeout("CORDUM_AGENTD_HOOK_TIMEOUT", d)
 		}
 	}
-	return DefaultHookTimeout
+	return DefaultHookTimeout, nil
+}
+
+func parseHookTimeout(raw string) (time.Duration, bool) {
+	if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+		return d, true
+	}
+	if secs, err := strconv.ParseFloat(strings.TrimSpace(raw), 64); err == nil && secs > 0 {
+		return time.Duration(secs * float64(time.Second)), true
+	}
+	return 0, false
+}
+
+func validateHookTimeout(source string, d time.Duration) (time.Duration, error) {
+	if d >= ClaudeHookDeadline {
+		return 0, fmt.Errorf("%s=%s must stay strictly below Claude Code's %s hook deadline", source, d, ClaudeHookDeadline)
+	}
+	return d, nil
 }
 
 func envValue(env map[string]string, key string) string {

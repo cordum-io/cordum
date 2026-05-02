@@ -24,7 +24,11 @@ The hook reads exactly one JSON object from stdin.
 | Setting | Default | Description |
 | --- | --- | --- |
 | `CORDUM_HOOK_MAX_INPUT_BYTES` | `1048576` | Maximum stdin payload size. Values above 8 MiB are ignored. |
-| `CORDUM_AGENTD_HOOK_TIMEOUT` | `10s` | Deadline for stdin read and local agentd decision calls. Duration strings such as `500ms`, `2s`, or numeric seconds are accepted. |
+| `CORDUM_AGENTD_HOOK_TIMEOUT` | `4.5s` | Total hook wall-clock budget for stdin read, local agentd decision, and response write. Duration strings such as `500ms`, `2s`, or numeric seconds are accepted; values `>=5s` are rejected. |
+
+Hook timeout MUST stay strictly below Claude Code's 5s hook deadline (PRD §7.4) or Claude treats the hook as unresponsive and may proceed without Cordum's governance decision for that tool call. The default `4.5s` budget is split into a `4s` local agentd POST budget plus a `500ms` response-write reserve. Custom `CORDUM_AGENTD_HOOK_TIMEOUT` values below `5s` shrink the agentd budget proportionally so response serialization still has reserved time.
+
+Migration note: if you previously customized this value to `8s` or relied on the old `10s` default, lower it below `5s` (prefer the new `4.5s` default) before rollout.
 
 Invalid, empty, non-object, multiple JSON values, oversize input, and stdin timeout all produce empty stdout, redacted stderr, and exit `2`.
 
@@ -131,7 +135,7 @@ Use command hooks. HTTP hooks are permitted only for the EDGE-000 spike.
           {
             "type": "command",
             "command": "cordum-hook claude pre-tool-use",
-            "timeout": 10
+            "timeout": 5
           }
         ]
       }
@@ -143,7 +147,7 @@ Use command hooks. HTTP hooks are permitted only for the EDGE-000 spike.
           {
             "type": "command",
             "command": "cordum-hook claude post-tool-use",
-            "timeout": 10
+            "timeout": 5
           }
         ]
       }
@@ -154,7 +158,7 @@ Use command hooks. HTTP hooks are permitted only for the EDGE-000 spike.
           {
             "type": "command",
             "command": "cordum-hook claude user-prompt-submit",
-            "timeout": 10
+            "timeout": 5
           }
         ]
       }
@@ -166,7 +170,7 @@ Use command hooks. HTTP hooks are permitted only for the EDGE-000 spike.
           {
             "type": "command",
             "command": "cordum-hook claude config-change",
-            "timeout": 10
+            "timeout": 5
           }
         ]
       }
@@ -178,7 +182,7 @@ Use command hooks. HTTP hooks are permitted only for the EDGE-000 spike.
           {
             "type": "command",
             "command": "cordum-hook claude file-changed",
-            "timeout": 10
+            "timeout": 5
           }
         ]
       }

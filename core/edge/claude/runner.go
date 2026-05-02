@@ -24,14 +24,17 @@ func Run(ctx context.Context, opts RunOptions) int {
 		stderr = io.Discard
 	}
 
-	// Single end-to-end timeout budget for the whole hook run. Previously we
-	// applied `timeout` separately to stdin parsing and to the agentd call,
-	// so the worst case was ~2×timeout — long enough to push past Claude's
-	// own deadline and undermine fail-closed behavior. One budget keeps the
-	// total wall clock <= timeout regardless of where time is spent.
-	timeout := hookTimeout(opts)
+	timeout, err := hookTimeout(opts)
+	if err != nil {
+		warnf(stderr, "invalid_hook_timeout error=%s", redactDiagnostic(err.Error()))
+		return 2
+	}
+	// One outer budget keeps the whole hook under Claude's 5s command-hook
+	// deadline. The agentd POST gets a shorter child budget below so a slow
+	// local daemon cannot consume the response-write reserve.
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	postBudget := agentdPostBudget(opts, timeout)
 
 	input, err := readHookInput(runCtx, opts.Stdin, maxInputBytes(opts))
 	if err != nil {
@@ -47,21 +50,33 @@ func Run(ctx context.Context, opts RunOptions) int {
 	}
 	req := agentdRequest(input, opts.Args, opts.Env)
 
-	agentd := opts.Agentd
-	if agentd == nil {
-		client, err := NewHTTPAgentdClient(envValue(opts.Env, "CORDUM_AGENTD_URL"), timeout)
-		if err != nil {
-			return handleAgentdError(stderr, stdout, input, req, err, opts, startedAt)
-		}
-		agentd = client
+	agentd, err := hookAgentdClient(opts, postBudget)
+	if err != nil {
+		return handleAgentdError(stderr, stdout, input, req, err, opts, startedAt)
 	}
-
-	decision, err := agentd.EvaluateHook(runCtx, req)
+	decision, err := evaluateAgentdHook(runCtx, agentd, req, postBudget)
 	if err != nil {
 		return handleAgentdError(stderr, stdout, input, req, err, opts, startedAt)
 	}
 	recordHookObservability(opts, req, decision.Decision, hookDenyReasonCode(req, ""), false, false, startedAt)
-	out := hookOutputForRun(input.HookEventName, decision, opts)
+	return writeRunOutput(stderr, stdout, input.HookEventName, decision, opts)
+}
+
+func hookAgentdClient(opts RunOptions, postBudget time.Duration) (AgentdClient, error) {
+	if opts.Agentd != nil {
+		return opts.Agentd, nil
+	}
+	return NewHTTPAgentdClient(envValue(opts.Env, "CORDUM_AGENTD_URL"), postBudget)
+}
+
+func evaluateAgentdHook(ctx context.Context, agentd AgentdClient, req AgentdRequest, postBudget time.Duration) (AgentdDecision, error) {
+	agentdCtx, agentdCancel := context.WithTimeout(ctx, postBudget)
+	defer agentdCancel()
+	return agentd.EvaluateHook(agentdCtx, req)
+}
+
+func writeRunOutput(stderr, stdout io.Writer, eventName string, decision AgentdDecision, opts RunOptions) int {
+	out := hookOutputForRun(eventName, decision, opts)
 	if isEmptyOutput(out) {
 		return 0
 	}
@@ -70,6 +85,21 @@ func Run(ctx context.Context, opts RunOptions) int {
 		return 2
 	}
 	return 0
+}
+
+func agentdPostBudget(opts RunOptions, hookBudget time.Duration) time.Duration {
+	maxPostBudget := hookBudget - ResponseWriteReserve
+	if maxPostBudget <= 0 {
+		maxPostBudget = hookBudget
+	}
+	budget := DefaultAgentdPostBudget
+	if opts.AgentdPostBudget > 0 {
+		budget = opts.AgentdPostBudget
+	}
+	if budget > maxPostBudget {
+		return maxPostBudget
+	}
+	return budget
 }
 
 func writeInputError(w io.Writer, err error) {

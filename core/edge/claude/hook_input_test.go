@@ -11,6 +11,30 @@ import (
 	"time"
 )
 
+func TestDefaultHookTimeoutIsUnderClaudeDeadline(t *testing.T) {
+	if !(DefaultHookTimeout < ClaudeHookDeadline) {
+		t.Fatalf("DefaultHookTimeout = %s, want strictly less than %s", DefaultHookTimeout, ClaudeHookDeadline)
+	}
+}
+
+func TestBudgetSplitInvariant(t *testing.T) {
+	total := DefaultAgentdPostBudget + ResponseWriteReserve
+	if total > DefaultHookTimeout {
+		t.Fatalf("agentd budget + write reserve = %s, exceeds hook timeout %s", total, DefaultHookTimeout)
+	}
+}
+
+func TestAgentdPostBudgetShrinksForCustomHookTimeout(t *testing.T) {
+	hookBudget, err := hookTimeout(RunOptions{Env: map[string]string{"CORDUM_AGENTD_HOOK_TIMEOUT": "3s"}})
+	if err != nil {
+		t.Fatalf("hookTimeout returned error: %v", err)
+	}
+	postBudget := agentdPostBudget(RunOptions{}, hookBudget)
+	if want := 2500 * time.Millisecond; postBudget != want {
+		t.Fatalf("agentdPostBudget = %s, want %s", postBudget, want)
+	}
+}
+
 func TestReadHookInputClosesBlockingReaderOnContextCancellation(t *testing.T) {
 	reader := newCloseAwareBlockingReader()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)

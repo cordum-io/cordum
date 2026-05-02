@@ -5,13 +5,12 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestGenerateManagedSettingsTemplateIncludesEnterpriseControls(t *testing.T) {
 	bundle, err := GenerateManagedSettingsTemplate(ManagedSettingsOptions{
 		HookCommand:                "/opt/cordum/bin/cordum-hook",
-		HookTimeout:                5 * time.Second,
+		HookTimeout:                DefaultHookTimeout,
 		AgentdURL:                  "http://127.0.0.1:8765/v1/edge/hooks/claude",
 		MCPGatewayURL:              "https://mcp.cordum.example/mcp",
 		LLMProxyBaseURL:            "https://llm-proxy.cordum.example",
@@ -52,6 +51,9 @@ func TestGenerateManagedSettingsTemplateIncludesEnterpriseControls(t *testing.T)
 	}
 	if got := env["CORDUM_AGENTD_URL"]; got != "http://127.0.0.1:8765/v1/edge/hooks/claude" {
 		t.Fatalf("CORDUM_AGENTD_URL = %v", got)
+	}
+	if got := env["CORDUM_AGENTD_HOOK_TIMEOUT"]; got != "4.5s" {
+		t.Fatalf("CORDUM_AGENTD_HOOK_TIMEOUT = %v, want 4.5s", got)
 	}
 	if got := env["ANTHROPIC_BASE_URL"]; got != "https://llm-proxy.cordum.example" {
 		t.Fatalf("ANTHROPIC_BASE_URL = %v", got)
@@ -125,7 +127,7 @@ func TestGenerateManagedSettingsTemplateIsParseableForPlatformPathVariants(t *te
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			tc.opts.HookTimeout = 5 * time.Second
+			tc.opts.HookTimeout = DefaultHookTimeout
 			tc.opts.MCPGatewayURL = "https://mcp.cordum.example/mcp"
 			tc.opts.LLMProxyBaseURL = "https://llm-proxy.cordum.example"
 			tc.opts.APIKeyHelperCommand = tc.opts.HookCommand + " agentd-key-helper"

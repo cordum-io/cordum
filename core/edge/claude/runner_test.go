@@ -376,8 +376,7 @@ func TestRunStrictModeDeniesWhenAgentdTimesOut(t *testing.T) {
 	// 50ms is enough for the in-memory hook input to parse, then the fake
 	// agentd waits for ctx.Done() so the timeout is consumed by the agentd
 	// call — the path this test is asserting. A nanosecond-scale timeout
-	// would now trip during stdin parsing because the run uses a single
-	// end-to-end budget instead of double-counting it across read + call.
+	// would trip during stdin parsing before reaching the agentd child budget.
 	code, stdout, stderr := runHook(t, RunOptions{
 		Args:    []string{"claude", "pre-tool-use"},
 		Stdin:   hookInput(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"npm test"}}`),
@@ -392,6 +391,68 @@ func TestRunStrictModeDeniesWhenAgentdTimesOut(t *testing.T) {
 	assertCompactJSON(t, stdout, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum Edge timeout; blocking by fail-closed policy"}}`)
 	if !strings.Contains(stderr, "agentd_timeout") {
 		t.Fatalf("stderr missing timeout code: %q", stderr)
+	}
+}
+
+func TestRunRejectsHookTimeoutAtClaudeDeadline(t *testing.T) {
+	agentd := &fakeAgentdClient{}
+	code, stdout, stderr := runHook(t, RunOptions{
+		Args:   []string{"claude", "pre-tool-use"},
+		Stdin:  hookInput(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"npm test"}}`),
+		Agentd: agentd,
+		Env: map[string]string{
+			"CORDUM_AGENTD_HOOK_TIMEOUT": "5s",
+			"CORDUM_AGENTD_FAIL_CLOSED":  "true",
+		},
+	})
+
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2; stderr=%q", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty", stdout)
+	}
+	if agentd.calls != 0 {
+		t.Fatalf("agentd calls = %d, want 0 before timeout config is fixed", agentd.calls)
+	}
+	if !strings.Contains(stderr, "invalid_hook_timeout") || !strings.Contains(stderr, "strictly below") {
+		t.Fatalf("stderr missing clear timeout validation error: %q", stderr)
+	}
+}
+
+func TestSlowAgentdDoesNotConsumeResponseWriteReserve(t *testing.T) {
+	var agentdElapsed time.Duration
+	agentd := &fakeAgentdClient{fn: func(ctx context.Context, req AgentdRequest) (AgentdDecision, error) {
+		started := time.Now()
+		<-ctx.Done()
+		agentdElapsed = time.Since(started)
+		return AgentdDecision{}, ctx.Err()
+	}}
+
+	started := time.Now()
+	code, stdout, stderr := runHook(t, RunOptions{
+		Args:   []string{"claude", "pre-tool-use"},
+		Stdin:  hookInput(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"npm test"}}`),
+		Agentd: agentd,
+		Env:    map[string]string{"CORDUM_AGENTD_FAIL_CLOSED": "true"},
+	})
+	elapsed := time.Since(started)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr=%q", code, stderr)
+	}
+	assertCompactJSON(t, stdout, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum Edge timeout; blocking by fail-closed policy"}}`)
+	if !strings.Contains(stderr, "agentd_timeout") {
+		t.Fatalf("stderr missing timeout code: %q", stderr)
+	}
+	if agentdElapsed < DefaultAgentdPostBudget-500*time.Millisecond {
+		t.Fatalf("agentd timeout fired too early after %s", agentdElapsed)
+	}
+	if agentdElapsed >= DefaultHookTimeout-(ResponseWriteReserve/4) {
+		t.Fatalf("agentd consumed response-write reserve: agentd=%s hook=%s reserve=%s", agentdElapsed, DefaultHookTimeout, ResponseWriteReserve)
+	}
+	if elapsed >= ClaudeHookDeadline {
+		t.Fatalf("hook elapsed = %s, want under Claude deadline %s", elapsed, ClaudeHookDeadline)
 	}
 }
 
