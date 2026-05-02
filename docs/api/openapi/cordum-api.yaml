@@ -7088,9 +7088,10 @@ components:
       name: Idempotency-Key
       in: header
       required: false
-      description: Optional idempotency key for safe retries. Edge event create/batch scopes keys by tenant and endpoint, replays the first response for the same normalized request, and returns 409 `idempotency_conflict` if the same key is reused with a different normalized request.
+      description: Optional idempotency key for safe retries. Edge event create/batch scopes keys by tenant and endpoint, replays the first response for the same normalized request, and returns 409 `idempotency_conflict` if the same key is reused with a different normalized request. Callers SHOULD send a UUID (per the original Job submit contract); the Edge runtime additionally accepts any non-empty string up to 512 bytes for backward-compatible local-dev keys.
       schema:
         type: string
+        format: uuid
         maxLength: 512
     JobID:
       name: id
