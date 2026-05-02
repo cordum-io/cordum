@@ -79,9 +79,11 @@ export function EdgeEventInspector({ event, open, onClose }: EdgeEventInspectorP
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge variant={decisionVariant(event.decision)} data-testid="edge-event-decision">
-              {String(event.decision)}
-            </StatusBadge>
+            <span data-testid="edge-event-decision">
+              <StatusBadge variant={decisionVariant(event.decision)}>
+                {String(event.decision)}
+              </StatusBadge>
+            </span>
             <CopyButton value={event.eventId} label="Copy event id" />
           </div>
         </header>
