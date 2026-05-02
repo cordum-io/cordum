@@ -8,9 +8,13 @@ import (
 	"io"
 	"maps"
 	"strings"
+	"time"
+
+	edgecore "github.com/cordum/cordum/core/edge"
 )
 
 func Run(ctx context.Context, opts RunOptions) int {
+	startedAt := time.Now()
 	stdout := opts.Stdout
 	if stdout == nil {
 		stdout = io.Discard
@@ -41,20 +45,22 @@ func Run(ctx context.Context, opts RunOptions) int {
 		}
 		return 0
 	}
+	req := agentdRequest(input, opts.Args, opts.Env)
 
 	agentd := opts.Agentd
 	if agentd == nil {
 		client, err := NewHTTPAgentdClient(envValue(opts.Env, "CORDUM_AGENTD_URL"), timeout)
 		if err != nil {
-			return handleAgentdError(stderr, stdout, input, err, opts)
+			return handleAgentdError(stderr, stdout, input, req, err, opts, startedAt)
 		}
 		agentd = client
 	}
 
-	decision, err := agentd.EvaluateHook(runCtx, agentdRequest(input, opts.Args, opts.Env))
+	decision, err := agentd.EvaluateHook(runCtx, req)
 	if err != nil {
-		return handleAgentdError(stderr, stdout, input, err, opts)
+		return handleAgentdError(stderr, stdout, input, req, err, opts, startedAt)
 	}
+	recordHookObservability(opts, req, decision.Decision, hookDenyReasonCode(req, ""), false, false, startedAt)
 	out := hookOutputForRun(input.HookEventName, decision, opts)
 	if isEmptyOutput(out) {
 		return 0
@@ -79,7 +85,7 @@ func writeInputError(w io.Writer, err error) {
 	}
 }
 
-func handleAgentdError(stderr, stdout io.Writer, input HookInput, err error, opts RunOptions) int {
+func handleAgentdError(stderr, stdout io.Writer, input HookInput, req AgentdRequest, err error, opts RunOptions, startedAt time.Time) int {
 	code := "agentd_unavailable"
 	reason := "Cordum Edge unavailable; blocking by fail-closed policy"
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -88,17 +94,21 @@ func handleAgentdError(stderr, stdout io.Writer, input HookInput, err error, opt
 	}
 	warnf(stderr, "%s error=%s", code, redactDiagnostic(err.Error()))
 	if input.HookEventName == "FileChanged" {
+		recordHookObservability(opts, req, DecisionAllow, code, true, false, startedAt)
 		return 0
 	}
 	if failClosed(opts) {
 		out := failClosedOutput(input.HookEventName, reason)
 		if isEmptyOutput(out) {
+			recordHookObservability(opts, req, DecisionDeny, code, true, true, startedAt)
 			return 2
 		}
 		if werr := writeJSON(stdout, out); werr != nil {
 			warnf(stderr, "hook_output_write_failed error=%s", redactDiagnostic(werr.Error()))
+			recordHookObservability(opts, req, DecisionDeny, "hook_output_write_failed", true, true, startedAt)
 			return 2
 		}
+		recordHookObservability(opts, req, DecisionDeny, code, true, true, startedAt)
 		return 0
 	}
 	if localDevEnforce(opts) && input.HookEventName == "PreToolUse" {
@@ -109,11 +119,86 @@ func handleAgentdError(stderr, stdout io.Writer, input HookInput, err error, opt
 		out := failClosedOutput(input.HookEventName, localReason)
 		if werr := writeJSON(stdout, out); werr != nil {
 			warnf(stderr, "hook_output_write_failed error=%s", redactDiagnostic(werr.Error()))
+			recordHookObservability(opts, req, DecisionDeny, "hook_output_write_failed", true, false, startedAt)
 			return 2
 		}
+		recordHookObservability(opts, req, DecisionDeny, code, true, false, startedAt)
 		return 0
 	}
+	recordHookObservability(opts, req, Decision("degraded"), code, true, false, startedAt)
 	return 0
+}
+
+func recordHookObservability(opts RunOptions, req AgentdRequest, decision Decision, reasonCode string, degraded, failClosed bool, startedAt time.Time) {
+	rec := opts.Recorder
+	if rec == nil {
+		return
+	}
+	tenant := req.TenantID
+	layer := strings.TrimSpace(req.Layer)
+	if layer == "" {
+		layer = string(edgecore.LayerHook)
+	}
+	kind := strings.TrimSpace(req.Kind)
+	if kind == "" {
+		if mappedKind, ok := mapHookEventToKind(req.EventName); ok {
+			kind = string(mappedKind)
+		}
+	}
+	decisionLabel := strings.TrimSpace(string(decision))
+	if decisionLabel == "" {
+		decisionLabel = "unknown"
+	}
+	mode := hookPolicyMode(opts)
+	rec.RecordActionDecision(tenant, layer, kind, decisionLabel, mode)
+	if decision == DecisionDeny {
+		rec.RecordActionDenied(tenant, layer, kind, hookDenyReasonCode(req, reasonCode))
+	}
+	if degraded {
+		rec.RecordDegraded(tenant, mode, "hook", hookStableReasonCode(reasonCode))
+	}
+	if failClosed {
+		rec.RecordFailClosed(tenant, mode, hookStableReasonCode(reasonCode))
+	}
+	rec.ObserveHookLatency(tenant, req.EventName, decisionLabel, observedHookDuration(startedAt))
+}
+
+func hookPolicyMode(opts RunOptions) string {
+	if mode := strings.TrimSpace(envValue(opts.Env, "CORDUM_EDGE_MODE")); mode != "" {
+		return mode
+	}
+	if parseBool(envValue(opts.Env, "CORDUM_AGENTD_FAIL_CLOSED")) {
+		return string(edgecore.PolicyModeEnterpriseStrict)
+	}
+	return string(edgecore.PolicyModeObserve)
+}
+
+func hookDenyReasonCode(req AgentdRequest, fallback string) string {
+	if reason := strings.TrimSpace(fallback); reason != "" {
+		return reason
+	}
+	if reason := strings.TrimSpace(req.ReasonCode); reason != "" {
+		return reason
+	}
+	return "policy_denied"
+}
+
+func hookStableReasonCode(reason string) string {
+	if trimmed := strings.TrimSpace(reason); trimmed != "" {
+		return trimmed
+	}
+	return "unknown"
+}
+
+func observedHookDuration(startedAt time.Time) time.Duration {
+	if startedAt.IsZero() {
+		return 0
+	}
+	elapsed := time.Since(startedAt)
+	if elapsed < 0 {
+		return 0
+	}
+	return elapsed
 }
 
 func failClosedOutput(eventName, reason string) ClaudeHookOutput {

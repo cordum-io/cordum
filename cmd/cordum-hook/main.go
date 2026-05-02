@@ -8,17 +8,19 @@ import (
 	"os/signal"
 	"syscall"
 
+	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/edge/claude"
 	"github.com/cordum/cordum/core/infra/logging"
 )
 
 type cliOptions struct {
-	Args   []string
-	Stdin  io.Reader
-	Stdout io.Writer
-	Stderr io.Writer
-	Env    map[string]string
-	Agentd claude.AgentdClient
+	Args     []string
+	Stdin    io.Reader
+	Stdout   io.Writer
+	Stderr   io.Writer
+	Env      map[string]string
+	Agentd   claude.AgentdClient
+	Recorder edgecore.Recorder
 }
 
 func main() {
@@ -54,12 +56,13 @@ func runCLI(ctx context.Context, opts cliOptions) int {
 	switch opts.Args[1] {
 	case "pre-tool-use", "post-tool-use", "post-tool-use-failure", "user-prompt-submit", "config-change", "file-changed":
 		return claude.Run(ctx, claude.RunOptions{
-			Args:   opts.Args,
-			Stdin:  opts.Stdin,
-			Stdout: opts.Stdout,
-			Stderr: opts.Stderr,
-			Env:    opts.Env,
-			Agentd: opts.Agentd,
+			Args:     opts.Args,
+			Stdin:    opts.Stdin,
+			Stdout:   opts.Stdout,
+			Stderr:   opts.Stderr,
+			Env:      opts.Env,
+			Agentd:   opts.Agentd,
+			Recorder: opts.Recorder,
 		})
 	default:
 		writeUsage(opts.Stderr)

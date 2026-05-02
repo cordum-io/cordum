@@ -10,8 +10,10 @@ import (
 	"strings"
 	"syscall"
 
+	edgecore "github.com/cordum/cordum/core/edge"
 	agentdcore "github.com/cordum/cordum/core/edge/agentd"
 	"github.com/cordum/cordum/core/infra/logging"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type cliOptions struct {
@@ -108,7 +110,11 @@ func defaultRun(ctx context.Context, cfg runConfig) error {
 		return err
 	}
 	meta := agentdcore.GatherLocalMetadata(agentdcore.LocalMetadataOptions{Env: env})
-	return agentdcore.Run(ctx, agentdcore.RunOptions{Config: loaded, Metadata: meta})
+	return agentdcore.Run(ctx, agentdcore.RunOptions{
+		Config:   loaded,
+		Metadata: meta,
+		Recorder: edgecore.NewPrometheusRecorder(prometheus.DefaultRegisterer),
+	})
 }
 
 func writeUsage(w io.Writer) {

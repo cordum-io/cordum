@@ -9,7 +9,55 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	edgecore "github.com/cordum/cordum/core/edge"
 )
+
+type hookRecordingRecorder struct {
+	edgecore.NoopRecorder
+	actionDecisions []hookActionDecisionCall
+	actionDenied    []hookActionDeniedCall
+	hookLatency     []hookLatencyCall
+	degraded        []hookReasonCall
+	failClosed      []hookReasonCall
+}
+
+type hookActionDecisionCall struct {
+	tenant, layer, kind, decision, mode string
+}
+
+type hookActionDeniedCall struct {
+	tenant, layer, kind, reason string
+}
+
+type hookLatencyCall struct {
+	tenant, hookEvent, decision string
+	duration                    time.Duration
+}
+
+type hookReasonCall struct {
+	tenant, mode, component, reason string
+}
+
+func (r *hookRecordingRecorder) RecordActionDecision(tenant, layer, kind, decision, mode string) {
+	r.actionDecisions = append(r.actionDecisions, hookActionDecisionCall{tenant: tenant, layer: layer, kind: kind, decision: decision, mode: mode})
+}
+
+func (r *hookRecordingRecorder) RecordActionDenied(tenant, layer, kind, reason string) {
+	r.actionDenied = append(r.actionDenied, hookActionDeniedCall{tenant: tenant, layer: layer, kind: kind, reason: reason})
+}
+
+func (r *hookRecordingRecorder) ObserveHookLatency(tenant, hookEvent, decision string, duration time.Duration) {
+	r.hookLatency = append(r.hookLatency, hookLatencyCall{tenant: tenant, hookEvent: hookEvent, decision: decision, duration: duration})
+}
+
+func (r *hookRecordingRecorder) RecordDegraded(tenant, mode, component, reason string) {
+	r.degraded = append(r.degraded, hookReasonCall{tenant: tenant, mode: mode, component: component, reason: reason})
+}
+
+func (r *hookRecordingRecorder) RecordFailClosed(tenant, mode, reason string) {
+	r.failClosed = append(r.failClosed, hookReasonCall{tenant: tenant, mode: mode, reason: reason})
+}
 
 type fakeAgentdClient struct {
 	calls int
@@ -59,6 +107,95 @@ func TestRunPreToolUseAllowWritesOnlyClaudeDecisionJSON(t *testing.T) {
 	}
 	if agentd.calls != 1 {
 		t.Fatalf("agentd calls = %d, want 1", agentd.calls)
+	}
+}
+
+func TestRunRecordsHookObservabilityForAgentdDecision(t *testing.T) {
+	recorder := &hookRecordingRecorder{}
+	agentd := &fakeAgentdClient{fn: func(context.Context, AgentdRequest) (AgentdDecision, error) {
+		return AgentdDecision{Decision: DecisionAllow, Reason: "allowed by policy"}, nil
+	}}
+
+	code, stdout, stderr := runHook(t, RunOptions{
+		Args:     []string{"claude", "pre-tool-use"},
+		Stdin:    hookInput(`{"hook_event_name":"PreToolUse","session_id":"sess-secret-should-not-be-label","tool_name":"Bash","tool_input":{"command":"npm test"}}`),
+		Agentd:   agentd,
+		Recorder: recorder,
+		Env: map[string]string{
+			"CORDUM_TENANT_ID":         "tenant-edge014",
+			"CORDUM_EDGE_SESSION_ID":   "edge_sess_hook_metrics",
+			"CORDUM_EDGE_EXECUTION_ID": "edge_exec_hook_metrics",
+			"CORDUM_EDGE_MODE":         "local-dev",
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr=%q", code, stderr)
+	}
+	assertCompactJSON(t, stdout, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"allowed by policy"}}`)
+	if stderr != "" {
+		t.Fatalf("stderr should stay empty for clean allow, got %q", stderr)
+	}
+	if len(recorder.actionDecisions) != 1 {
+		t.Fatalf("action decision calls = %#v, want one", recorder.actionDecisions)
+	}
+	if got := recorder.actionDecisions[0]; got != (hookActionDecisionCall{
+		tenant:   "tenant-edge014",
+		layer:    "hook",
+		kind:     "hook.pre_tool_use",
+		decision: "allow",
+		mode:     "local-dev",
+	}) {
+		t.Fatalf("action decision call = %#v", got)
+	}
+	if len(recorder.hookLatency) != 1 {
+		t.Fatalf("hook latency calls = %#v, want one", recorder.hookLatency)
+	}
+	if got := recorder.hookLatency[0]; got.tenant != "tenant-edge014" || got.hookEvent != "PreToolUse" || got.decision != "allow" || got.duration < 0 {
+		t.Fatalf("hook latency call = %#v", got)
+	}
+	if len(recorder.degraded) != 0 || len(recorder.failClosed) != 0 || len(recorder.actionDenied) != 0 {
+		t.Fatalf("unexpected error-path metrics denied=%#v degraded=%#v failClosed=%#v", recorder.actionDenied, recorder.degraded, recorder.failClosed)
+	}
+}
+
+func TestRunRecordsHookObservabilityForFailClosedAgentdOutage(t *testing.T) {
+	recorder := &hookRecordingRecorder{}
+	agentd := &fakeAgentdClient{fn: func(context.Context, AgentdRequest) (AgentdDecision, error) {
+		return AgentdDecision{}, errors.New("agentd unavailable with Bearer sk-test-secret")
+	}}
+
+	code, stdout, stderr := runHook(t, RunOptions{
+		Args:     []string{"claude", "pre-tool-use"},
+		Stdin:    hookInput(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/secret"}}`),
+		Agentd:   agentd,
+		Recorder: recorder,
+		Env: map[string]string{
+			"CORDUM_TENANT_ID":          "tenant-edge014",
+			"CORDUM_EDGE_MODE":          "enterprise-strict",
+			"CORDUM_AGENTD_FAIL_CLOSED": "true",
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr=%q", code, stderr)
+	}
+	assertCompactJSON(t, stdout, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum Edge unavailable; blocking by fail-closed policy"}}`)
+	assertNoSyntheticSecrets(t, stdout+stderr)
+	if len(recorder.actionDecisions) != 1 || recorder.actionDecisions[0].decision != "deny" || recorder.actionDecisions[0].kind != "hook.pre_tool_use" {
+		t.Fatalf("action decision calls = %#v, want deny hook.pre_tool_use", recorder.actionDecisions)
+	}
+	if len(recorder.actionDenied) != 1 || recorder.actionDenied[0].reason != "agentd_unavailable" {
+		t.Fatalf("action denied calls = %#v, want agentd_unavailable", recorder.actionDenied)
+	}
+	if len(recorder.degraded) != 1 || recorder.degraded[0].component != "hook" || recorder.degraded[0].reason != "agentd_unavailable" {
+		t.Fatalf("degraded calls = %#v, want hook/agentd_unavailable", recorder.degraded)
+	}
+	if len(recorder.failClosed) != 1 || recorder.failClosed[0].reason != "agentd_unavailable" {
+		t.Fatalf("fail-closed calls = %#v, want agentd_unavailable", recorder.failClosed)
+	}
+	if len(recorder.hookLatency) != 1 || recorder.hookLatency[0].decision != "deny" || recorder.hookLatency[0].hookEvent != "PreToolUse" {
+		t.Fatalf("hook latency calls = %#v, want PreToolUse deny", recorder.hookLatency)
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	edgecore "github.com/cordum/cordum/core/edge"
 )
 
 const (
@@ -35,6 +37,7 @@ type RunOptions struct {
 	Stderr        io.Writer
 	Env           map[string]string
 	Agentd        AgentdClient
+	Recorder      edgecore.Recorder
 	MaxInputBytes int64
 	Timeout       time.Duration
 }
