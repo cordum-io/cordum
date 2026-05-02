@@ -10,6 +10,9 @@ Cordum Jobs for Claude/tool actions.
 fail-mode, and managed-settings behavior. Agentd is the local session/evidence
 counterpart that the hook calls.
 
+For the developer wrapper that starts agentd, generates temporary settings,
+and launches Claude Code, see [`cordumctl edge claude`](./cordumctl-edge-claude.md).
+
 ## Build and run
 
 From the repository root:

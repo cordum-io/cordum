@@ -1,0 +1,218 @@
+package claude
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+const (
+	defaultAgentdExecutable       = "cordum-agentd"
+	defaultClaudeExecutable       = "claude"
+	defaultLaunchAgentdReadyWait  = 10 * time.Second
+	defaultLaunchSessionStateWait = 10 * time.Second
+)
+
+// LaunchOptions controls the local Cordum-governed Claude Code wrapper.
+type LaunchOptions struct {
+	Env                 []string
+	Stdin               io.Reader
+	Stdout              io.Writer
+	Stderr              io.Writer
+	Gateway             string
+	APIKey              string
+	TenantID            string
+	PrincipalID         string
+	CWD                 string
+	Repo                string
+	GitRemote           string
+	GitBranch           string
+	GitSHA              string
+	HostID              string
+	DeviceID            string
+	DashboardURL        string
+	PolicyMode          string
+	ApprovalWaitTimeout time.Duration
+	AgentdPath          string
+	AgentdURL           string
+	ClaudePath          string
+	HookCommand         string
+	StateDir            string
+	TempDir             string
+	ClaudeArgs          []string
+	DryRun              bool
+	NoLaunch            bool
+	Verbose             bool
+}
+
+// LaunchResult is safe to print in dry-run diagnostics. It intentionally omits
+// API keys and hook nonces.
+type LaunchResult struct {
+	Gateway             string            `json:"gateway"`
+	APIKeyConfigured    bool              `json:"api_key_configured"`
+	TenantID            string            `json:"tenant_id"`
+	PrincipalID         string            `json:"principal_id"`
+	CWD                 string            `json:"cwd"`
+	Repo                string            `json:"repo,omitempty"`
+	GitRemote           string            `json:"git_remote,omitempty"`
+	GitBranch           string            `json:"git_branch,omitempty"`
+	GitSHA              string            `json:"git_sha,omitempty"`
+	HostID              string            `json:"host_id,omitempty"`
+	DeviceID            string            `json:"device_id,omitempty"`
+	PolicyMode          string            `json:"policy_mode"`
+	ApprovalWaitTimeout string            `json:"approval_wait_timeout"`
+	AgentdPath          string            `json:"agentd_path"`
+	AgentdURL           string            `json:"agentd_url"`
+	ClaudePath          string            `json:"claude_path,omitempty"`
+	SettingsPath        string            `json:"settings_path"`
+	StateDir            string            `json:"state_dir"`
+	SessionID           string            `json:"session_id,omitempty"`
+	ExecutionID         string            `json:"execution_id,omitempty"`
+	DashboardURL        string            `json:"dashboard_url,omitempty"`
+	DryRun              bool              `json:"dry_run"`
+	NoLaunch            bool              `json:"no_launch"`
+	ExitCode            int               `json:"exit_code"`
+	Metadata            map[string]string `json:"metadata,omitempty"`
+	SettingsJSON        []byte            `json:"-"`
+}
+
+// LaunchEdgeClaude starts cordum-agentd, writes temporary Claude settings, and
+// optionally launches Claude Code with those settings.
+func LaunchEdgeClaude(ctx context.Context, opts LaunchOptions) (LaunchResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stdout, stderr := launchWriters(opts)
+	meta, err := ResolveLaunchMetadata(ctx, LaunchMetadataOptions{
+		Env: opts.Env, CWD: opts.CWD, PrincipalID: opts.PrincipalID, Repo: opts.Repo,
+		GitRemote: opts.GitRemote, GitBranch: opts.GitBranch, GitSHA: opts.GitSHA,
+		HostID: opts.HostID, DeviceID: opts.DeviceID,
+	})
+	if err != nil {
+		return LaunchResult{}, err
+	}
+	cfg, err := prepareLaunchConfig(opts, meta)
+	if err != nil {
+		return LaunchResult{}, err
+	}
+	claudePath, err := resolveClaudePath(opts)
+	if err != nil && !opts.DryRun && !opts.NoLaunch {
+		return LaunchResult{}, err
+	}
+	if err := rejectSettingsOverride(opts.ClaudeArgs); err != nil {
+		return LaunchResult{}, err
+	}
+	tempRoot, cleanup, err := prepareLaunchTempRoot(opts.TempDir)
+	if err != nil {
+		return LaunchResult{}, err
+	}
+	defer cleanup()
+	if cfg.StateDir == "" {
+		cfg.StateDir = filepath.Join(tempRoot, "agentd-state")
+	}
+	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
+		return LaunchResult{}, fmt.Errorf("create agentd state dir: %w", err)
+	}
+	_ = os.Chmod(cfg.StateDir, 0o700)
+	agentd, err := startLaunchAgentd(ctx, cfg, opts, meta, stderr)
+	if err != nil {
+		return LaunchResult{}, err
+	}
+	defer agentd.stop()
+	if err := waitForAgentdReady(ctx, cfg.AgentdURL, agentd.done); err != nil {
+		return LaunchResult{}, err
+	}
+	state, err := waitForLaunchState(ctx, cfg.StateDir, defaultLaunchSessionStateWait)
+	if err != nil {
+		return LaunchResult{}, err
+	}
+	settingsPath, settingsJSON, err := writeLaunchSettings(tempRoot, cfg, meta, state)
+	if err != nil {
+		return LaunchResult{}, err
+	}
+	result := cfg.result(meta, state, settingsPath, claudePath, opts)
+	result.SettingsJSON = settingsJSON
+	verboseLaunchResult(stderr, result, opts.Verbose)
+	if opts.DryRun || opts.NoLaunch {
+		_, _ = stdout.Write(nil)
+		return result, nil
+	}
+	exitCode, err := runClaudeProcess(ctx, cfg, opts, meta, state, settingsPath, claudePath)
+	result.ExitCode = exitCode
+	return result, err
+}
+
+type launchConfig struct {
+	Gateway             string
+	APIKey              string
+	TenantID            string
+	PolicyMode          string
+	ApprovalWaitTimeout time.Duration
+	AgentdPath          string
+	AgentdURL           string
+	HookNonce           string
+	HookCommand         string
+	StateDir            string
+	DashboardURL        string
+	Env                 []string
+}
+
+func prepareLaunchConfig(opts LaunchOptions, meta LaunchMetadata) (launchConfig, error) {
+	if err := validateLaunchRequired(opts, meta); err != nil {
+		return launchConfig{}, err
+	}
+	nonce, err := GenerateLauncherNonce()
+	if err != nil {
+		return launchConfig{}, err
+	}
+	agentdPath, err := resolveExecutable(opts.AgentdPath, defaultAgentdExecutable)
+	if err != nil {
+		return launchConfig{}, err
+	}
+	agentdURL := strings.TrimSpace(opts.AgentdURL)
+	if agentdURL == "" {
+		agentdURL, err = reserveLoopbackHookURL()
+		if err != nil {
+			return launchConfig{}, err
+		}
+	}
+	policy := strings.TrimSpace(opts.PolicyMode)
+	if policy == "" {
+		policy = "enforce"
+	}
+	wait := opts.ApprovalWaitTimeout
+	if wait <= 0 {
+		wait = 30 * time.Second
+	}
+	return launchConfig{
+		Gateway: strings.TrimRight(strings.TrimSpace(opts.Gateway), "/"), APIKey: strings.TrimSpace(opts.APIKey),
+		TenantID: strings.TrimSpace(opts.TenantID), PolicyMode: policy, ApprovalWaitTimeout: wait,
+		AgentdPath: agentdPath, AgentdURL: agentdURL, HookNonce: nonce,
+		HookCommand: hookCommandOrDefault(opts.HookCommand), StateDir: strings.TrimSpace(opts.StateDir),
+		DashboardURL: strings.TrimSpace(opts.DashboardURL), Env: opts.Env,
+	}, nil
+}
+
+func validateLaunchRequired(opts LaunchOptions, meta LaunchMetadata) error {
+	var missing []string
+	if strings.TrimSpace(opts.Gateway) == "" {
+		missing = append(missing, "gateway")
+	}
+	if strings.TrimSpace(opts.APIKey) == "" {
+		missing = append(missing, "api-key")
+	}
+	if strings.TrimSpace(opts.TenantID) == "" {
+		missing = append(missing, "tenant")
+	}
+	if strings.TrimSpace(meta.PrincipalID) == "" {
+		missing = append(missing, "principal")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing required edge claude metadata: %s", strings.Join(missing, ", "))
+	}
+	return nil
+}

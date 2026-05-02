@@ -54,6 +54,9 @@ deprecation warning.
 
 The request sent to agentd contains bounded hook metadata, session/execution IDs, tool metadata, and the bounded raw Claude payload only in memory. The hook does not persist or log raw payloads.
 
+For the developer wrapper that starts agentd, generates temporary settings,
+and launches Claude Code, see [`cordumctl edge claude`](./cordumctl-edge-claude.md).
+
 ## Mapper contract
 
 Before calling local `cordum-agentd`, the hook runs the EDGE-016 Claude mapper
