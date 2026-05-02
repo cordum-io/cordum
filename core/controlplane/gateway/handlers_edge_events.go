@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -21,15 +20,11 @@ const (
 	maxInlineRawEventPayloadBytes     = 1024
 	maxEdgeArtifactPointerURIBytes    = 2048
 	maxEdgeIdempotencyKeyBytes        = 512
-	edgeIdempotencyReplayWait         = 2 * time.Second
-	edgeIdempotencyReplayPoll         = 10 * time.Millisecond
-	edgeIdempotencyCleanupTimeout     = 2 * time.Second
 	edgeArtifactPointerErrorMessage   = "invalid edge event artifact pointer"
 	edgeArtifactPointerSchemeArtifact = "artifact"
 	edgeArtifactPointerSchemeEdge     = "edge-artifact"
 	edgeEventCreateEndpoint           = "POST /api/v1/edge/events"
 	edgeEventBatchEndpoint            = "POST /api/v1/edge/events/batch"
-	edgePartialIdempotencyMessage     = "event persisted but idempotency completion failed; safe to retry, but the next retry MAY produce a duplicate event under auto-seq paths"
 )
 
 type edgeEventWriteRequest struct {
@@ -126,15 +121,16 @@ func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
 		writeEdgeEventStoreError(w, r, err, "validate edge event parents")
 		return
 	}
-	idempotencyReq, idempotent, handled := s.prepareEdgeEventIdempotency(w, r, store, tenantID, edgeEventCreateEndpoint, event)
+	idempotencyReq, idempotent, handled := s.prepareEdgeEventIdempotencyRequest(w, r, tenantID, edgeEventCreateEndpoint, event)
 	if handled {
+		return
+	}
+	if idempotent {
+		s.appendEdgeEventWithIdempotency(w, r, store, idempotencyReq, event)
 		return
 	}
 	appended, err := store.AppendEvent(r.Context(), event)
 	if err != nil {
-		if idempotent {
-			s.releaseEdgeEventIdempotencyDetached(store, idempotencyReq, "append edge event failed")
-		}
 		writeEdgeEventStoreError(w, r, err, "append edge event")
 		return
 	}
@@ -142,16 +138,6 @@ func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeEdgeInternalError(w, r, "marshal edge event response", err)
 		return
-	}
-	if idempotent {
-		if _, err := store.CompleteIdempotency(r.Context(), idempotencyReq, edgecore.EdgeIdempotencyResponse{
-			StatusCode:  http.StatusCreated,
-			ContentType: "application/json",
-			Body:        responseBody,
-		}); err != nil {
-			s.writeEdgeEventPartialIdempotencyFailure(w, r, store, idempotencyReq, "complete edge event idempotency", err)
-			return
-		}
 	}
 	s.forwardPersistedEdgeEvent(appended)
 	w.Header().Set("Content-Type", "application/json")
@@ -206,8 +192,12 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 		}
 		events = append(events, event)
 	}
-	idempotencyReq, idempotent, handled := s.prepareEdgeEventIdempotency(w, r, store, tenantID, edgeEventBatchEndpoint, events)
+	idempotencyReq, idempotent, handled := s.prepareEdgeEventIdempotencyRequest(w, r, tenantID, edgeEventBatchEndpoint, events)
 	if handled {
+		return
+	}
+	if idempotent {
+		s.appendEdgeEventBatchWithIdempotency(w, r, store, idempotencyReq, events)
 		return
 	}
 	// RedisStore.AppendEvents appends the fully prevalidated batch in one
@@ -216,9 +206,6 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 	// conflict, which is surfaced as a safe 5xx by the shared store error mapper.
 	appended, err := store.AppendEvents(r.Context(), events)
 	if err != nil {
-		if idempotent {
-			s.releaseEdgeEventIdempotencyDetached(store, idempotencyReq, "append edge event batch failed")
-		}
 		writeEdgeEventStoreError(w, r, err, "append edge event batch")
 		return
 	}
@@ -226,16 +213,6 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		writeEdgeInternalError(w, r, "marshal edge event batch response", err)
 		return
-	}
-	if idempotent {
-		if _, err := store.CompleteIdempotency(r.Context(), idempotencyReq, edgecore.EdgeIdempotencyResponse{
-			StatusCode:  http.StatusCreated,
-			ContentType: "application/json",
-			Body:        responseBody,
-		}); err != nil {
-			s.writeEdgeEventPartialIdempotencyFailure(w, r, store, idempotencyReq, "complete edge event batch idempotency", err)
-			return
-		}
 	}
 	for _, event := range appended {
 		s.forwardPersistedEdgeEvent(event)
@@ -245,7 +222,7 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 	_, _ = w.Write(responseBody)
 }
 
-func (s *server) prepareEdgeEventIdempotency(w http.ResponseWriter, r *http.Request, store edgecore.Store, tenantID, endpoint string, normalized any) (edgecore.EdgeIdempotencyRequest, bool, bool) {
+func (s *server) prepareEdgeEventIdempotencyRequest(w http.ResponseWriter, r *http.Request, tenantID, endpoint string, normalized any) (edgecore.EdgeIdempotencyRequest, bool, bool) {
 	key := strings.TrimSpace(idempotencyKeyFromRequest(r))
 	if key == "" {
 		return edgecore.EdgeIdempotencyRequest{}, false, false
@@ -265,41 +242,7 @@ func (s *server) prepareEdgeEventIdempotency(w http.ResponseWriter, r *http.Requ
 		Key:         key,
 		RequestHash: requestHash,
 	}
-	reservation, err := store.ReserveIdempotency(r.Context(), idempotencyReq)
-	if err != nil {
-		if errors.Is(err, edgecore.ErrIdempotencyConflict) {
-			writeEdgeError(w, r, http.StatusConflict, edgeErrCodeIdempotencyConflict, "idempotency key already used with a different request", nil)
-			return edgecore.EdgeIdempotencyRequest{}, false, true
-		}
-		writeEdgeInternalError(w, r, "reserve edge event idempotency", err)
-		return edgecore.EdgeIdempotencyRequest{}, false, true
-	}
-	switch reservation.State {
-	case edgecore.EdgeIdempotencyReserved:
-		return idempotencyReq, true, false
-	case edgecore.EdgeIdempotencyReplay:
-		writeEdgeIdempotencyReplay(w, r, reservation.Record)
-		return edgecore.EdgeIdempotencyRequest{}, false, true
-	case edgecore.EdgeIdempotencyPending:
-		record, ok, err := waitForEdgeIdempotencyReplay(r.Context(), store, idempotencyReq)
-		if err != nil {
-			if errors.Is(err, edgecore.ErrIdempotencyConflict) {
-				writeEdgeError(w, r, http.StatusConflict, edgeErrCodeIdempotencyConflict, "idempotency key already used with a different request", nil)
-				return edgecore.EdgeIdempotencyRequest{}, false, true
-			}
-			writeEdgeInternalError(w, r, "wait edge event idempotency", err)
-			return edgecore.EdgeIdempotencyRequest{}, false, true
-		}
-		if ok {
-			writeEdgeIdempotencyReplay(w, r, record)
-			return edgecore.EdgeIdempotencyRequest{}, false, true
-		}
-		writeEdgeError(w, r, http.StatusConflict, edgeErrCodeIdempotencyConflict, "idempotency key is still processing", nil)
-		return edgecore.EdgeIdempotencyRequest{}, false, true
-	default:
-		writeEdgeInternalError(w, r, "reserve edge event idempotency", fmt.Errorf("unknown edge idempotency state %q", reservation.State))
-		return edgecore.EdgeIdempotencyRequest{}, false, true
-	}
+	return idempotencyReq, true, false
 }
 
 func edgeNormalizedRequestHash(normalized any) (string, error) {
@@ -309,39 +252,6 @@ func edgeNormalizedRequestHash(normalized any) (string, error) {
 	}
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
-}
-
-func waitForEdgeIdempotencyReplay(ctx context.Context, store edgecore.Store, req edgecore.EdgeIdempotencyRequest) (*edgecore.EdgeIdempotencyRecord, bool, error) {
-	timer := time.NewTimer(edgeIdempotencyReplayWait)
-	defer timer.Stop()
-	ticker := time.NewTicker(edgeIdempotencyReplayPoll)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, false, ctx.Err()
-		case <-timer.C:
-			return nil, false, nil
-		case <-ticker.C:
-			reservation, err := store.ReserveIdempotency(ctx, req)
-			if err != nil {
-				return nil, false, err
-			}
-			switch reservation.State {
-			case edgecore.EdgeIdempotencyReplay:
-				return reservation.Record, true, nil
-			case edgecore.EdgeIdempotencyReserved:
-				// The original request failed and released its pending marker.
-				// Do not leave a polling request's accidental reservation behind.
-				_ = store.ReleaseIdempotency(ctx, req)
-				return nil, false, nil
-			case edgecore.EdgeIdempotencyPending:
-				continue
-			default:
-				return nil, false, fmt.Errorf("unknown edge idempotency state %q", reservation.State)
-			}
-		}
-	}
 }
 
 func writeEdgeIdempotencyReplay(w http.ResponseWriter, r *http.Request, record *edgecore.EdgeIdempotencyRecord) {
@@ -362,42 +272,74 @@ func writeEdgeIdempotencyReplay(w http.ResponseWriter, r *http.Request, record *
 	_, _ = w.Write(record.Response.Body)
 }
 
-func (s *server) releaseEdgeEventIdempotency(ctx context.Context, store edgecore.Store, req edgecore.EdgeIdempotencyRequest, reason string) {
-	if err := store.ReleaseIdempotency(ctx, req); err != nil {
-		slog.Warn("release edge event idempotency reservation failed", "reason", reason, "endpoint", req.Endpoint, "tenant_id", req.TenantID, "error", err)
-	}
-}
-
-func (s *server) releaseEdgeEventIdempotencyDetached(store edgecore.Store, req edgecore.EdgeIdempotencyRequest, reason string) {
-	ctx, cancel := context.WithTimeout(context.Background(), edgeIdempotencyCleanupTimeout)
-	defer cancel()
-	s.releaseEdgeEventIdempotency(ctx, store, req, reason)
-}
-
-func (s *server) writeEdgeEventPartialIdempotencyFailure(
-	w http.ResponseWriter,
-	r *http.Request,
-	store edgecore.Store,
-	req edgecore.EdgeIdempotencyRequest,
-	operation string,
-	err error,
-) {
-	s.releaseEdgeEventIdempotencyDetached(store, req, operation+" failed after append")
-	s.recordEdgeEventPartialIdempotencyFailure(req.TenantID)
-	slog.Warn("edge event idempotency completion failed after append",
-		"operation", operation,
-		"endpoint", req.Endpoint,
-		"tenant_id", req.TenantID,
-		"error", err,
-	)
-	writeEdgeError(w, r, http.StatusInternalServerError, edgeErrCodePartialIdempotencyFailure, edgePartialIdempotencyMessage, nil)
-}
-
-func (s *server) recordEdgeEventPartialIdempotencyFailure(tenantID string) {
-	if s == nil || s.edgeRecorder == nil {
+func (s *server) appendEdgeEventWithIdempotency(w http.ResponseWriter, r *http.Request, store edgecore.Store, req edgecore.EdgeIdempotencyRequest, event edgecore.AgentActionEvent) {
+	result, err := store.AppendEventsWithIdempotency(r.Context(), req, []edgecore.AgentActionEvent{event}, edgeSingleEventIdempotencyResponse)
+	if err != nil {
+		writeEdgeEventIdempotencyError(w, r, err, "append edge event with idempotency")
 		return
 	}
-	s.edgeRecorder.RecordDegraded(tenantID, "observe", "event_store", edgeErrCodePartialIdempotencyFailure)
+	if result.State == edgecore.EdgeIdempotencyReplay {
+		writeEdgeIdempotencyReplay(w, r, result.Record)
+		return
+	}
+	if result.State != edgecore.EdgeIdempotencyCompleted || len(result.Events) != 1 {
+		writeEdgeInternalError(w, r, "append edge event with idempotency", fmt.Errorf("unexpected edge idempotency result %q with %d events", result.State, len(result.Events)))
+		return
+	}
+	s.forwardPersistedEdgeEvent(result.Events[0])
+	writeEdgeIdempotencyReplay(w, r, result.Record)
+}
+
+func (s *server) appendEdgeEventBatchWithIdempotency(w http.ResponseWriter, r *http.Request, store edgecore.Store, req edgecore.EdgeIdempotencyRequest, events []edgecore.AgentActionEvent) {
+	result, err := store.AppendEventsWithIdempotency(r.Context(), req, events, edgeBatchEventIdempotencyResponse)
+	if err != nil {
+		writeEdgeEventIdempotencyError(w, r, err, "append edge event batch with idempotency")
+		return
+	}
+	if result.State == edgecore.EdgeIdempotencyReplay {
+		writeEdgeIdempotencyReplay(w, r, result.Record)
+		return
+	}
+	if result.State != edgecore.EdgeIdempotencyCompleted || len(result.Events) != len(events) {
+		writeEdgeInternalError(w, r, "append edge event batch with idempotency", fmt.Errorf("unexpected edge idempotency result %q with %d events", result.State, len(result.Events)))
+		return
+	}
+	for _, event := range result.Events {
+		s.forwardPersistedEdgeEvent(event)
+	}
+	writeEdgeIdempotencyReplay(w, r, result.Record)
+}
+
+func edgeSingleEventIdempotencyResponse(events []edgecore.AgentActionEvent) (edgecore.EdgeIdempotencyResponse, error) {
+	if len(events) != 1 {
+		return edgecore.EdgeIdempotencyResponse{}, fmt.Errorf("single edge event response requires 1 event, got %d", len(events))
+	}
+	body, err := json.Marshal(events[0])
+	if err != nil {
+		return edgecore.EdgeIdempotencyResponse{}, fmt.Errorf("marshal edge event response: %w", err)
+	}
+	return edgecore.EdgeIdempotencyResponse{StatusCode: http.StatusCreated, ContentType: "application/json", Body: body}, nil
+}
+
+func edgeBatchEventIdempotencyResponse(events []edgecore.AgentActionEvent) (edgecore.EdgeIdempotencyResponse, error) {
+	body, err := json.Marshal(edgeEventBatchResponse{Items: events})
+	if err != nil {
+		return edgecore.EdgeIdempotencyResponse{}, fmt.Errorf("marshal edge event batch response: %w", err)
+	}
+	return edgecore.EdgeIdempotencyResponse{StatusCode: http.StatusCreated, ContentType: "application/json", Body: body}, nil
+}
+
+func writeEdgeEventIdempotencyError(w http.ResponseWriter, r *http.Request, err error, operation string) {
+	switch {
+	case errors.Is(err, edgecore.ErrIdempotencyConflict):
+		writeEdgeError(w, r, http.StatusConflict, edgeErrCodeIdempotencyConflict, "idempotency key already used with a different request", nil)
+	case errors.Is(err, edgecore.ErrIdempotencyPending):
+		writeEdgeError(w, r, http.StatusConflict, edgeErrCodeIdempotencyConflict, "idempotency key is still processing", nil)
+	case errors.Is(err, edgecore.ErrIdempotencyWindowExpired):
+		writeEdgeError(w, r, http.StatusConflict, edgeErrCodeIdempotencyWindowExpired, "idempotency replay window expired; event already exists and no duplicate was appended", nil)
+	default:
+		writeEdgeEventStoreError(w, r, err, operation)
+	}
 }
 
 func (s *server) handleListEdgeSessionEvents(w http.ResponseWriter, r *http.Request) {

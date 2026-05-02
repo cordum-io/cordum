@@ -28,18 +28,17 @@ context, use stable codes and bounded enum-like fields.
 request replays the first `201` response; the same key with a different normalized
 request returns `409` with `code="idempotency_conflict"`.
 
-CompleteIdempotency failure mode: if the event persists but the idempotency key
-fails to commit, the response uses `code="partial_idempotency_failure"` with a
-5xx status. The pending key is released; clients SHOULD dedupe at the application
-layer using `event_id` from the persisted log. Auto-seq clients MAY observe a
-duplicate event on retry under this code; explicit-seq clients are protected by
-the `seq=lastSeq+1` invariant.
+For idempotent event writes, event append and replay-record completion commit in
+the same Redis transaction. A client observes either a committed event with a
+replayable `201` response, or no committed event for that failed attempt. If the
+replay record expires before a retry and the same logical `event_id` is already
+present in the execution log, the API returns `409` with
+`code="idempotency_window_expired"` and does not append a duplicate event.
+Explicit-seq clients remain protected by the `seq=lastSeq+1` invariant.
 
 This is a forward-only fix. Existing orphaned pending markers from before this
 change are not backfilled; operators may manually delete those Redis
 `edge:idempotency:*` keys if needed after confirming the persisted event log.
-If the Gateway process crashes after append but before the cleanup attempt runs,
-the same pending-marker recovery procedure applies.
 
 ## Audit and metrics
 

@@ -173,90 +173,85 @@ func TestGatewayEdgeEventIdempotencyRejectsOversizeKeyWithoutAppend(t *testing.T
 	assertEdgeEventIDs(t, page.Items, nil)
 }
 
-func TestGatewayEdgeEventCompleteIdempotencyFailure_ReleasesKeyAndReturnsPartialFailureCode(t *testing.T) {
+func TestGatewayEdgeEventAppendAtomicWithIdempotency(t *testing.T) {
 	s, handler := newEdgeRouteTestServer(t)
 	store := &edgeCompleteIdempotencyFailureStore{Store: s.edgeStore, completeFailures: 1}
 	s.edgeStore = store
 	session := createEdgeRouteSession(t, handler)
-	key := "edge00871-single-complete-failure"
-	body := idempotentEdgeEventBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "evt-edge00871-complete-failure", "npm test")
-	idempotencyReq := singleEdgeEventIdempotencyRequestFromBody(t, body, key)
+	key := "edge00871-single-atomic"
+	body := idempotentEdgeEventBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "evt-edge00871-single-atomic", "npm test")
 
 	rr := edgeRoutePOSTWithIdempotencyKey(t, handler, "/api/v1/edge/events", body, key)
-	assertEdgeErrorShape(t, rr, http.StatusInternalServerError, edgeErrCodePartialIdempotencyFailure)
-	if !strings.Contains(rr.Body.String(), edgePartialIdempotencyMessage) {
-		t.Fatalf("partial failure response missing message %q body=%s", edgePartialIdempotencyMessage, rr.Body.String())
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("atomic idempotent append status = %d, want 201 body=%s", rr.Code, rr.Body.String())
 	}
-	if store.completeCalls != 1 {
-		t.Fatalf("CompleteIdempotency calls = %d, want 1", store.completeCalls)
+	var created edgecore.AgentActionEvent
+	decodeEdgeRouteJSON(t, rr, &created)
+	if created.EventID != "evt-edge00871-single-atomic" || created.Seq != 1 {
+		t.Fatalf("created event = %#v, want atomic event with seq 1", created)
 	}
-	if store.releaseCalls != 1 {
-		t.Fatalf("ReleaseIdempotency calls = %d, want handler release after complete failure", store.releaseCalls)
+	if store.completeCalls != 0 {
+		t.Fatalf("CompleteIdempotency calls = %d, want atomic path to skip separate completion", store.completeCalls)
 	}
-
-	page := readEdgeEventsFromStore(t, s, session.ExecutionID)
-	assertEdgeEventIDs(t, page.Items, []string{"evt-edge00871-complete-failure"})
-	assertEdgeIdempotencyReservationReleased(t, store.Store, idempotencyReq)
-}
-
-func TestGatewayEdgeEventCompleteIdempotencyFailure_ReleasesWithFreshContextWhenRequestCanceled(t *testing.T) {
-	s, handler := newEdgeRouteTestServer(t)
-	requestCtx, cancelRequest := context.WithCancel(context.Background())
-	store := &edgeCompleteIdempotencyFailureStore{
-		Store:                      s.edgeStore,
-		completeFailures:           1,
-		cancelBeforeCompleteReturn: cancelRequest,
-	}
-	s.edgeStore = store
-	session := createEdgeRouteSession(t, handler)
-	key := "edge00871-single-complete-failure-canceled"
-	body := idempotentEdgeEventBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "evt-edge00871-complete-failure-canceled", "npm test")
-	idempotencyReq := singleEdgeEventIdempotencyRequestFromBody(t, body, key)
-
-	rr := edgeRoutePOSTWithContextAndIdempotencyKey(t, handler, requestCtx, "/api/v1/edge/events", body, key)
-	assertEdgeErrorShape(t, rr, http.StatusInternalServerError, edgeErrCodePartialIdempotencyFailure)
-	if store.releaseCalls != 1 {
-		t.Fatalf("ReleaseIdempotency calls = %d, want handler release after complete failure", store.releaseCalls)
-	}
-	if store.releaseContextErr != nil {
-		t.Fatalf("ReleaseIdempotency context error = %v, want fresh cleanup context", store.releaseContextErr)
+	if store.releaseCalls != 0 {
+		t.Fatalf("ReleaseIdempotency calls = %d, want no partial cleanup path", store.releaseCalls)
 	}
 
 	page := readEdgeEventsFromStore(t, s, session.ExecutionID)
-	assertEdgeEventIDs(t, page.Items, []string{"evt-edge00871-complete-failure-canceled"})
-	assertEdgeIdempotencyReservationReleased(t, store.Store, idempotencyReq)
+	assertEdgeEventIDs(t, page.Items, []string{"evt-edge00871-single-atomic"})
+
+	replay := edgeRoutePOSTWithIdempotencyKey(t, handler, "/api/v1/edge/events", body, key)
+	if replay.Code != rr.Code || replay.Body.String() != rr.Body.String() {
+		t.Fatalf("replay response changed:\nfirst=%d %s\nreplay=%d %s", rr.Code, rr.Body.String(), replay.Code, replay.Body.String())
+	}
+	var replayed edgecore.AgentActionEvent
+	decodeEdgeRouteJSON(t, replay, &replayed)
+	if replayed.EventID != created.EventID || replayed.Seq != created.Seq {
+		t.Fatalf("replayed event = %#v, want created event %#v", replayed, created)
+	}
+	page = readEdgeEventsFromStore(t, s, session.ExecutionID)
+	assertEdgeEventIDs(t, page.Items, []string{"evt-edge00871-single-atomic"})
 }
 
-func TestGatewayEdgeEventBatchCompleteIdempotencyFailure_ReleasesKeyAndReturnsPartialFailureCode(t *testing.T) {
+func TestGatewayEdgeEventBatchAppendAtomicWithIdempotency(t *testing.T) {
 	s, handler := newEdgeRouteTestServer(t)
 	store := &edgeCompleteIdempotencyFailureStore{Store: s.edgeStore, completeFailures: 1}
 	s.edgeStore = store
 	session := createEdgeRouteSession(t, handler)
-	key := "edge00871-batch-complete-failure"
+	key := "edge00871-batch-atomic"
 	body := idempotentEdgeEventBatchBody(
-		idempotentEdgeEventMap(session.SessionID, session.ExecutionID, edgeRouteTenant, "evt-edge00871-batch-complete-failure-1", "npm test"),
-		idempotentEdgeEventMap(session.SessionID, session.ExecutionID, edgeRouteTenant, "evt-edge00871-batch-complete-failure-2", "go test ./core/edge"),
+		idempotentEdgeEventMap(session.SessionID, session.ExecutionID, edgeRouteTenant, "evt-edge00871-batch-atomic-1", "npm test"),
+		idempotentEdgeEventMap(session.SessionID, session.ExecutionID, edgeRouteTenant, "evt-edge00871-batch-atomic-2", "go test ./core/edge"),
 	)
-	idempotencyReq := batchEdgeEventIdempotencyRequestFromBody(t, body, key)
 
 	rr := edgeRoutePOSTWithIdempotencyKey(t, handler, "/api/v1/edge/events/batch", body, key)
-	assertEdgeErrorShape(t, rr, http.StatusInternalServerError, edgeErrCodePartialIdempotencyFailure)
-	if !strings.Contains(rr.Body.String(), edgePartialIdempotencyMessage) {
-		t.Fatalf("partial failure response missing message %q body=%s", edgePartialIdempotencyMessage, rr.Body.String())
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("atomic idempotent batch status = %d, want 201 body=%s", rr.Code, rr.Body.String())
 	}
-	if store.completeCalls != 1 {
-		t.Fatalf("CompleteIdempotency calls = %d, want 1", store.completeCalls)
+	var created edgeEventBatchResponse
+	decodeEdgeRouteJSON(t, rr, &created)
+	if len(created.Items) != 2 || created.Items[0].Seq != 1 || created.Items[1].Seq != 2 {
+		t.Fatalf("created batch = %#v, want 2 atomic events with seq 1,2", created)
 	}
-	if store.releaseCalls != 1 {
-		t.Fatalf("ReleaseIdempotency calls = %d, want handler release after complete failure", store.releaseCalls)
+	if store.completeCalls != 0 {
+		t.Fatalf("CompleteIdempotency calls = %d, want atomic path to skip separate completion", store.completeCalls)
+	}
+	if store.releaseCalls != 0 {
+		t.Fatalf("ReleaseIdempotency calls = %d, want no partial cleanup path", store.releaseCalls)
 	}
 
 	page := readEdgeEventsFromStore(t, s, session.ExecutionID)
-	assertEdgeEventIDs(t, page.Items, []string{"evt-edge00871-batch-complete-failure-1", "evt-edge00871-batch-complete-failure-2"})
-	assertEdgeIdempotencyReservationReleased(t, store.Store, idempotencyReq)
+	assertEdgeEventIDs(t, page.Items, []string{"evt-edge00871-batch-atomic-1", "evt-edge00871-batch-atomic-2"})
+
+	replay := edgeRoutePOSTWithIdempotencyKey(t, handler, "/api/v1/edge/events/batch", body, key)
+	if replay.Code != rr.Code || replay.Body.String() != rr.Body.String() {
+		t.Fatalf("batch replay response changed:\nfirst=%d %s\nreplay=%d %s", rr.Code, rr.Body.String(), replay.Code, replay.Body.String())
+	}
+	page = readEdgeEventsFromStore(t, s, session.ExecutionID)
+	assertEdgeEventIDs(t, page.Items, []string{"evt-edge00871-batch-atomic-1", "evt-edge00871-batch-atomic-2"})
 }
 
-func TestGatewayEdgeEventAutoSeqIdempotencyTTLRetryDocumentsDuplicateRisk(t *testing.T) {
+func TestGatewayEdgeEventAutoSeqIdempotencyTTLRetryDoesNotDuplicateEvent(t *testing.T) {
 	s, handler := newEdgeRouteTestServer(t)
 	session := createEdgeRouteSession(t, handler)
 	key := "edge00871-autoseq-ttl"
@@ -274,20 +269,10 @@ func TestGatewayEdgeEventAutoSeqIdempotencyTTLRetryDocumentsDuplicateRisk(t *tes
 
 	deleteGatewayEdgeIdempotencyKeys(t, s)
 	retry := edgeRoutePOSTWithIdempotencyKey(t, handler, "/api/v1/edge/events", body, key)
-	if retry.Code != http.StatusCreated {
-		t.Fatalf("retry after idempotency TTL status = %d, want 201 body=%s", retry.Code, retry.Body.String())
-	}
-	var retryEvent edgecore.AgentActionEvent
-	decodeEdgeRouteJSON(t, retry, &retryEvent)
-	if retryEvent.EventID != firstEvent.EventID {
-		t.Fatalf("retry event_id = %q, want duplicate logical event_id %q", retryEvent.EventID, firstEvent.EventID)
-	}
-	if retryEvent.Seq != 2 {
-		t.Fatalf("retry event seq = %d, want auto-assigned duplicate seq 2", retryEvent.Seq)
-	}
+	assertEdgeErrorShape(t, retry, http.StatusConflict, edgeErrCodeIdempotencyWindowExpired)
 
 	page := readEdgeEventsFromStore(t, s, session.ExecutionID)
-	assertEdgeEventIDs(t, page.Items, []string{"evt-edge00871-autoseq-ttl", "evt-edge00871-autoseq-ttl"})
+	assertEdgeEventIDs(t, page.Items, []string{"evt-edge00871-autoseq-ttl"})
 }
 
 func TestGatewayEdgeEventBatchIdempotencyReplaysWithoutDuplicate(t *testing.T) {
@@ -423,20 +408,6 @@ func edgeRoutePOSTWithIdempotencyKey(t *testing.T, handler http.Handler, path, b
 	return edgeRoutePOSTAsTenantWithIdempotencyKey(t, handler, edgeRouteTestAPIKey, edgeRouteTenant, path, body, key)
 }
 
-func edgeRoutePOSTWithContextAndIdempotencyKey(t *testing.T, handler http.Handler, ctx context.Context, path, body, key string) *httptest.ResponseRecorder {
-	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body)).WithContext(ctx)
-	addEdgeRouteAuth(req)
-	req.Header.Set("X-Tenant-ID", edgeRouteTenant)
-	req.Header.Set("Content-Type", "application/json")
-	if strings.TrimSpace(key) != "" {
-		req.Header.Set("Idempotency-Key", key)
-	}
-	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, req)
-	return rr
-}
-
 func edgeRoutePOSTAsTenantWithIdempotencyKey(t *testing.T, handler http.Handler, apiKey, tenantID, path, body, key string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
@@ -506,20 +477,15 @@ func mustJSON(data any) string {
 
 type edgeCompleteIdempotencyFailureStore struct {
 	edgecore.Store
-	completeFailures           int
-	completeCalls              int
-	releaseCalls               int
-	cancelBeforeCompleteReturn context.CancelFunc
-	releaseContextErr          error
+	completeFailures int
+	completeCalls    int
+	releaseCalls     int
 }
 
 func (s *edgeCompleteIdempotencyFailureStore) CompleteIdempotency(ctx context.Context, req edgecore.EdgeIdempotencyRequest, response edgecore.EdgeIdempotencyResponse) (*edgecore.EdgeIdempotencyRecord, error) {
 	s.completeCalls++
 	if s.completeFailures > 0 {
 		s.completeFailures--
-		if s.cancelBeforeCompleteReturn != nil {
-			s.cancelBeforeCompleteReturn()
-		}
 		return nil, errInjectedCompleteIdempotency
 	}
 	return s.Store.CompleteIdempotency(ctx, req, response)
@@ -527,68 +493,7 @@ func (s *edgeCompleteIdempotencyFailureStore) CompleteIdempotency(ctx context.Co
 
 func (s *edgeCompleteIdempotencyFailureStore) ReleaseIdempotency(ctx context.Context, req edgecore.EdgeIdempotencyRequest) error {
 	s.releaseCalls++
-	s.releaseContextErr = ctx.Err()
 	return s.Store.ReleaseIdempotency(ctx, req)
-}
-
-func singleEdgeEventIdempotencyRequestFromBody(t *testing.T, body, key string) edgecore.EdgeIdempotencyRequest {
-	t.Helper()
-	var req edgeEventWriteRequest
-	if err := json.Unmarshal([]byte(body), &req); err != nil {
-		t.Fatalf("decode edge event request: %v", err)
-	}
-	req.PrincipalID = "principal-edge-a"
-	event, err := normalizeEdgeEventRequest(req, edgeRouteTenant)
-	if err != nil {
-		t.Fatalf("normalize edge event request: %v", err)
-	}
-	return edgeEventIdempotencyRequestFor(t, edgeEventCreateEndpoint, key, event)
-}
-
-func batchEdgeEventIdempotencyRequestFromBody(t *testing.T, body, key string) edgecore.EdgeIdempotencyRequest {
-	t.Helper()
-	var req edgeEventBatchTenantProbeRequest
-	if err := json.Unmarshal([]byte(body), &req); err != nil {
-		t.Fatalf("decode edge event batch request: %v", err)
-	}
-	events := make([]edgecore.AgentActionEvent, 0, len(req.Events))
-	for _, item := range req.Events {
-		item.PrincipalID = "principal-edge-a"
-		event, err := normalizeEdgeEventRequest(item, edgeRouteTenant)
-		if err != nil {
-			t.Fatalf("normalize edge event batch request: %v", err)
-		}
-		events = append(events, event)
-	}
-	return edgeEventIdempotencyRequestFor(t, edgeEventBatchEndpoint, key, events)
-}
-
-func edgeEventIdempotencyRequestFor(t *testing.T, endpoint, key string, normalized any) edgecore.EdgeIdempotencyRequest {
-	t.Helper()
-	requestHash, err := edgeNormalizedRequestHash(normalized)
-	if err != nil {
-		t.Fatalf("hash edge event idempotency request: %v", err)
-	}
-	return edgecore.EdgeIdempotencyRequest{
-		TenantID:    edgeRouteTenant,
-		Endpoint:    endpoint,
-		Key:         key,
-		RequestHash: requestHash,
-	}
-}
-
-func assertEdgeIdempotencyReservationReleased(t *testing.T, store edgecore.Store, req edgecore.EdgeIdempotencyRequest) {
-	t.Helper()
-	reservation, err := store.ReserveIdempotency(context.Background(), req)
-	if err != nil {
-		t.Fatalf("ReserveIdempotency after complete failure: %v", err)
-	}
-	if reservation.State != edgecore.EdgeIdempotencyReserved {
-		t.Fatalf("ReserveIdempotency state after complete failure = %q, want %q", reservation.State, edgecore.EdgeIdempotencyReserved)
-	}
-	if err := store.ReleaseIdempotency(context.Background(), req); err != nil {
-		t.Fatalf("cleanup idempotency reservation: %v", err)
-	}
 }
 
 func deleteGatewayEdgeIdempotencyKeys(t *testing.T, s *server) {

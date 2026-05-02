@@ -59,6 +59,23 @@ type RedisStore struct {
 	maxIdempotencyReplayBody int
 }
 
+type redisEventGroup struct {
+	events    []int
+	execution *AgentExecution
+}
+
+type redisEventAppendPayload struct {
+	index   int
+	payload []byte
+}
+
+type redisIdempotentAppendPlan struct {
+	appended            []AgentActionEvent
+	payloadsByExecution map[string][]redisEventAppendPayload
+	record              *EdgeIdempotencyRecord
+	recordPayload       []byte
+}
+
 // NewRedisStoreFromClient returns a Redis-backed Edge store using an existing
 // go-redis client. The caller owns closing the client.
 func NewRedisStoreFromClient(client redis.UniversalClient, opts ...StoreOption) *RedisStore {
@@ -150,6 +167,10 @@ func edgeEventsKey(executionID string) string {
 
 func edgeEventSeqKey(executionID string) string {
 	return "edge:events:seq:" + strings.TrimSpace(executionID)
+}
+
+func edgeEventIDIndexKey(executionID string) string {
+	return "edge:index:event_id:" + strings.TrimSpace(executionID)
 }
 
 func edgeSessionEventsIndexKey(sessionID string) string {
@@ -415,7 +436,7 @@ func (s *RedisStore) DeleteSession(ctx context.Context, tenantID, sessionID stri
 			pipe.ZRem(ctx, edgeSessionRunIndexKey(session.WorkflowRunID), sessionID)
 		}
 		for _, execution := range executions {
-			pipe.Del(ctx, edgeExecutionKey(execution.ExecutionID), edgeEventsKey(execution.ExecutionID), edgeEventSeqKey(execution.ExecutionID))
+			pipe.Del(ctx, edgeExecutionKey(execution.ExecutionID), edgeEventsKey(execution.ExecutionID), edgeEventSeqKey(execution.ExecutionID), edgeEventIDIndexKey(execution.ExecutionID))
 			if strings.TrimSpace(execution.JobID) != "" {
 				pipe.ZRem(ctx, edgeJobIndexKey(execution.JobID), execution.ExecutionID)
 			}
@@ -660,19 +681,8 @@ func (s *RedisStore) AppendEvent(ctx context.Context, event AgentActionEvent) (A
 	return appended[0], nil
 }
 
-func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent) ([]AgentActionEvent, error) {
-	if err := s.ensureReady(); err != nil {
-		return nil, err
-	}
-	if len(events) == 0 {
-		return []AgentActionEvent{}, nil
-	}
-
-	type eventGroup struct {
-		events    []int
-		execution *AgentExecution
-	}
-	groups := make(map[string]*eventGroup)
+func (s *RedisStore) groupAppendEvents(ctx context.Context, events []AgentActionEvent) (map[string]*redisEventGroup, error) {
+	groups := make(map[string]*redisEventGroup)
 	for i, event := range events {
 		tenantID := strings.TrimSpace(event.TenantID)
 		executionID := strings.TrimSpace(event.ExecutionID)
@@ -691,22 +701,36 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 		}
 		group := groups[executionID]
 		if group == nil {
-			group = &eventGroup{execution: execution}
+			group = &redisEventGroup{execution: execution}
 			groups[executionID] = group
 		}
 		group.events = append(group.events, i)
 	}
+	return groups, nil
+}
 
-	watchKeys := make([]string, 0, len(groups)*3)
+func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent) ([]AgentActionEvent, error) {
+	if err := s.ensureReady(); err != nil {
+		return nil, err
+	}
+	if len(events) == 0 {
+		return []AgentActionEvent{}, nil
+	}
+
+	groups, err := s.groupAppendEvents(ctx, events)
+	if err != nil {
+		return nil, err
+	}
+
+	watchKeys := make([]string, 0, len(groups)*4)
 	for executionID := range groups {
 		// Watch the execution document too: a concurrent EndExecution must
 		// invalidate this transaction so we never append events past a
 		// terminal state. The seq key + list key alone do not catch a
 		// status-only mutation.
-		watchKeys = append(watchKeys, edgeEventSeqKey(executionID), edgeEventsKey(executionID), edgeExecutionKey(executionID))
+		watchKeys = append(watchKeys, edgeEventSeqKey(executionID), edgeEventsKey(executionID), edgeEventIDIndexKey(executionID), edgeExecutionKey(executionID))
 	}
 	appended := make([]AgentActionEvent, len(events))
-	var err error
 	err = s.client.Watch(ctx, func(tx *redis.Tx) error {
 		// Re-read each execution inside the watched transaction and reject
 		// the batch if it is missing, cross-tenant, or already terminal.
@@ -734,52 +758,40 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 			}
 			group.execution = &fresh
 		}
-		payloadsByExecution := make(map[string][][]byte, len(groups))
+		payloadsByExecution := make(map[string][]redisEventAppendPayload, len(groups))
 		for executionID, group := range groups {
-			lastSeq, err := tx.Get(ctx, edgeEventSeqKey(executionID)).Int()
-			if errors.Is(err, redis.Nil) {
-				lastSeq = 0
-			} else if err != nil {
-				return fmt.Errorf("read event seq for execution %s: %w", executionID, err)
+			lastSeq, err := readEventSeqInTx(ctx, tx, executionID)
+			if err != nil {
+				return err
 			}
-			payloads := make([][]byte, 0, len(group.events))
+			payloads := make([]redisEventAppendPayload, 0, len(group.events))
 			for _, index := range group.events {
-				next := events[index]
-				if next.Seq == 0 {
-					next.Seq = lastSeq + 1
-				}
-				if next.Seq != lastSeq+1 {
-					return fmt.Errorf("event seq %d must be next after %d", next.Seq, lastSeq)
-				}
-				if err := next.Validate(); err != nil {
-					return fmt.Errorf("validate agent action event %s: %w", next.EventID, err)
-				}
-				payload, err := json.Marshal(next)
+				payload, next, err := s.prepareAppendEventPayload(events[index], lastSeq)
 				if err != nil {
-					return fmt.Errorf("marshal agent action event %s: %w", next.EventID, err)
+					return err
 				}
-				if len(payload) > s.maxEventBytes {
-					return fmt.Errorf("agent action event %s JSON size %d exceeds max %d bytes", next.EventID, len(payload), s.maxEventBytes)
-				}
-				payloads = append(payloads, payload)
+				payloads = append(payloads, redisEventAppendPayload{index: index, payload: payload})
 				appended[index] = next
 				lastSeq = next.Seq
 			}
 			payloadsByExecution[executionID] = payloads
 		}
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-			for executionID, group := range groups {
+			for executionID := range groups {
 				payloads := payloadsByExecution[executionID]
-				for payloadIndex, payload := range payloads {
-					pipe.RPush(ctx, edgeEventsKey(executionID), payload)
-					event := appended[group.events[payloadIndex]]
+				for _, payload := range payloads {
+					pipe.RPush(ctx, edgeEventsKey(executionID), payload.payload)
+					event := appended[payload.index]
 					pipe.ZAdd(ctx, edgeSessionEventsIndexKey(event.SessionID), redis.Z{
 						Score:  float64(event.Timestamp.UTC().UnixMicro()),
 						Member: sessionEventIndexMember(event),
 					})
+					pipe.HSet(ctx, edgeEventIDIndexKey(event.ExecutionID), event.EventID, event.Seq)
 				}
-				last := appended[group.events[len(group.events)-1]]
-				pipe.Set(ctx, edgeEventSeqKey(executionID), last.Seq, 0)
+				if len(payloads) > 0 {
+					last := appended[payloads[len(payloads)-1].index]
+					pipe.Set(ctx, edgeEventSeqKey(executionID), last.Seq, 0)
+				}
 			}
 			return nil
 		})
@@ -795,6 +807,297 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 		return nil, err
 	}
 	return appended, nil
+}
+
+func (s *RedisStore) AppendEventsWithIdempotency(
+	ctx context.Context,
+	req EdgeIdempotencyRequest,
+	events []AgentActionEvent,
+	buildResponse EdgeIdempotencyResponseBuilder,
+) (EdgeIdempotentAppendResult, error) {
+	if err := s.ensureReady(); err != nil {
+		return EdgeIdempotentAppendResult{}, err
+	}
+	normalized, err := normalizeEdgeIdempotencyRequest(req)
+	if err != nil {
+		return EdgeIdempotentAppendResult{}, err
+	}
+	if len(events) == 0 {
+		return EdgeIdempotentAppendResult{}, fmt.Errorf("events are required")
+	}
+	if buildResponse == nil {
+		return EdgeIdempotentAppendResult{}, fmt.Errorf("idempotency response builder is required")
+	}
+
+	groups, err := s.groupAppendEvents(ctx, events)
+	if err != nil {
+		return EdgeIdempotentAppendResult{}, err
+	}
+	key := edgeIdempotencyKey(normalized.TenantID, normalized.Endpoint, normalized.Key)
+	watchKeys := []string{key}
+	for executionID := range groups {
+		watchKeys = append(watchKeys, edgeEventSeqKey(executionID), edgeEventsKey(executionID), edgeEventIDIndexKey(executionID), edgeExecutionKey(executionID))
+	}
+	return s.appendEventsWithIdempotencyTx(ctx, normalized, key, watchKeys, groups, events, buildResponse)
+}
+
+func (s *RedisStore) appendEventsWithIdempotencyTx(
+	ctx context.Context,
+	req EdgeIdempotencyRequest,
+	key string,
+	watchKeys []string,
+	groups map[string]*redisEventGroup,
+	events []AgentActionEvent,
+	buildResponse EdgeIdempotencyResponseBuilder,
+) (EdgeIdempotentAppendResult, error) {
+	var result EdgeIdempotentAppendResult
+	var err error
+	for attempt := 0; attempt < 8; attempt++ {
+		err = s.client.Watch(ctx, func(tx *redis.Tx) error {
+			replay, handled, err := loadExistingEdgeIdempotencyForAppend(ctx, tx, key, req)
+			if err != nil || handled {
+				result = replay
+				return err
+			}
+			if err := refreshAppendExecutionsInTx(ctx, tx, groups); err != nil {
+				return err
+			}
+			plan, err := s.planIdempotentAppend(ctx, tx, req, groups, events, buildResponse)
+			if err != nil {
+				return err
+			}
+			if err := s.commitIdempotentAppend(ctx, tx, key, groups, plan); err != nil {
+				return err
+			}
+			result = EdgeIdempotentAppendResult{
+				State:  EdgeIdempotencyCompleted,
+				Events: plan.appended,
+				Record: plan.record,
+			}
+			return nil
+		}, watchKeys...)
+		if errors.Is(err, redis.TxFailedErr) {
+			continue
+		}
+		if err != nil {
+			return EdgeIdempotentAppendResult{}, err
+		}
+		return result, nil
+	}
+	return EdgeIdempotentAppendResult{}, fmt.Errorf("edge idempotent append conflict: %w", redis.TxFailedErr)
+}
+
+func loadExistingEdgeIdempotencyForAppend(ctx context.Context, tx *redis.Tx, key string, req EdgeIdempotencyRequest) (EdgeIdempotentAppendResult, bool, error) {
+	raw, err := tx.Get(ctx, key).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return EdgeIdempotentAppendResult{}, false, nil
+	}
+	if err != nil {
+		return EdgeIdempotentAppendResult{}, false, fmt.Errorf("read edge idempotency record for append: %w", err)
+	}
+	record, err := decodeEdgeIdempotencyRecord(raw)
+	if err != nil {
+		return EdgeIdempotentAppendResult{}, false, err
+	}
+	if record.RequestHash != req.RequestHash {
+		return EdgeIdempotentAppendResult{}, true, ErrIdempotencyConflict
+	}
+	if record.Status == EdgeIdempotencyCompleted && len(record.Response.Body) > 0 && record.Response.StatusCode > 0 {
+		return EdgeIdempotentAppendResult{State: EdgeIdempotencyReplay, Record: record}, true, nil
+	}
+	return EdgeIdempotentAppendResult{}, true, ErrIdempotencyPending
+}
+
+func refreshAppendExecutionsInTx(ctx context.Context, tx *redis.Tx, groups map[string]*redisEventGroup) error {
+	for executionID, group := range groups {
+		raw, err := tx.Get(ctx, edgeExecutionKey(executionID)).Bytes()
+		if errors.Is(err, redis.Nil) {
+			return fmt.Errorf("%w: agent execution %s", ErrNotFound, executionID)
+		}
+		if err != nil {
+			return fmt.Errorf("re-read agent execution %s: %w", executionID, err)
+		}
+		var fresh AgentExecution
+		if err := json.Unmarshal(raw, &fresh); err != nil {
+			return fmt.Errorf("unmarshal agent execution %s: %w", executionID, err)
+		}
+		if fresh.TenantID != group.execution.TenantID {
+			return fmt.Errorf("%w: agent execution %s", ErrNotFound, executionID)
+		}
+		if fresh.EndedAt != nil || isTerminalExecutionStatus(fresh.Status) {
+			return fmt.Errorf("agent execution %s is terminal; cannot append events", executionID)
+		}
+		group.execution = &fresh
+	}
+	return nil
+}
+
+func (s *RedisStore) planIdempotentAppend(
+	ctx context.Context,
+	tx *redis.Tx,
+	req EdgeIdempotencyRequest,
+	groups map[string]*redisEventGroup,
+	events []AgentActionEvent,
+	buildResponse EdgeIdempotencyResponseBuilder,
+) (redisIdempotentAppendPlan, error) {
+	appended := make([]AgentActionEvent, len(events))
+	payloadsByExecution := make(map[string][]redisEventAppendPayload, len(groups))
+	for executionID, group := range groups {
+		payloads, err := s.planIdempotentExecutionAppend(ctx, tx, executionID, group, events, appended)
+		if err != nil {
+			return redisIdempotentAppendPlan{}, err
+		}
+		payloadsByExecution[executionID] = payloads
+	}
+	record, payload, err := s.buildIdempotentAppendRecord(req, appended, buildResponse)
+	if err != nil {
+		return redisIdempotentAppendPlan{}, err
+	}
+	return redisIdempotentAppendPlan{
+		appended:            appended,
+		payloadsByExecution: payloadsByExecution,
+		record:              record,
+		recordPayload:       payload,
+	}, nil
+}
+
+func (s *RedisStore) planIdempotentExecutionAppend(
+	ctx context.Context,
+	tx *redis.Tx,
+	executionID string,
+	group *redisEventGroup,
+	events []AgentActionEvent,
+	appended []AgentActionEvent,
+) ([]redisEventAppendPayload, error) {
+	lastSeq, err := readEventSeqInTx(ctx, tx, executionID)
+	if err != nil {
+		return nil, err
+	}
+	payloads := make([]redisEventAppendPayload, 0, len(group.events))
+	plannedEventIDs := make(map[string]struct{}, len(group.events))
+	for _, index := range group.events {
+		next := events[index]
+		eventID := strings.TrimSpace(next.EventID)
+		if eventID != "" {
+			if _, ok, err := loadEventByIDInTx(ctx, tx, executionID, eventID); err != nil {
+				return nil, err
+			} else if ok {
+				return nil, ErrIdempotencyWindowExpired
+			}
+			if _, ok := plannedEventIDs[eventID]; ok {
+				return nil, fmt.Errorf("duplicate event_id %s in append batch", eventID)
+			}
+		}
+		payload, planned, err := s.prepareAppendEventPayload(next, lastSeq)
+		if err != nil {
+			return nil, err
+		}
+		payloads = append(payloads, redisEventAppendPayload{index: index, payload: payload})
+		appended[index] = planned
+		if eventID != "" {
+			plannedEventIDs[eventID] = struct{}{}
+		}
+		lastSeq = planned.Seq
+	}
+	return payloads, nil
+}
+
+func readEventSeqInTx(ctx context.Context, tx *redis.Tx, executionID string) (int, error) {
+	lastSeq, err := tx.Get(ctx, edgeEventSeqKey(executionID)).Int()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read event seq for execution %s: %w", executionID, err)
+	}
+	return lastSeq, nil
+}
+
+func (s *RedisStore) prepareAppendEventPayload(event AgentActionEvent, lastSeq int) ([]byte, AgentActionEvent, error) {
+	if event.Seq == 0 {
+		event.Seq = lastSeq + 1
+	}
+	if event.Seq != lastSeq+1 {
+		return nil, AgentActionEvent{}, fmt.Errorf("event seq %d must be next after %d", event.Seq, lastSeq)
+	}
+	if err := event.Validate(); err != nil {
+		return nil, AgentActionEvent{}, fmt.Errorf("validate agent action event %s: %w", event.EventID, err)
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return nil, AgentActionEvent{}, fmt.Errorf("marshal agent action event %s: %w", event.EventID, err)
+	}
+	if len(payload) > s.maxEventBytes {
+		return nil, AgentActionEvent{}, fmt.Errorf("agent action event %s JSON size %d exceeds max %d bytes", event.EventID, len(payload), s.maxEventBytes)
+	}
+	return payload, event, nil
+}
+
+func (s *RedisStore) buildIdempotentAppendRecord(
+	req EdgeIdempotencyRequest,
+	appended []AgentActionEvent,
+	buildResponse EdgeIdempotencyResponseBuilder,
+) (*EdgeIdempotencyRecord, []byte, error) {
+	response, err := buildResponse(appended)
+	if err != nil {
+		return nil, nil, err
+	}
+	response = normalizeEdgeIdempotencyResponse(response)
+	if len(response.Body) > s.maxIdempotencyReplayBody {
+		return nil, nil, fmt.Errorf("edge idempotency response body %d exceeds max %d bytes", len(response.Body), s.maxIdempotencyReplayBody)
+	}
+	now := s.now().UTC()
+	record := &EdgeIdempotencyRecord{
+		TenantID:    req.TenantID,
+		Endpoint:    req.Endpoint,
+		RequestHash: req.RequestHash,
+		Status:      EdgeIdempotencyCompleted,
+		Response:    response,
+		CreatedAt:   now,
+		CompletedAt: &now,
+	}
+	payload, err := json.Marshal(record)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal completed edge idempotency record: %w", err)
+	}
+	return record, payload, nil
+}
+
+func (s *RedisStore) commitIdempotentAppend(
+	ctx context.Context,
+	tx *redis.Tx,
+	key string,
+	groups map[string]*redisEventGroup,
+	plan redisIdempotentAppendPlan,
+) error {
+	_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		for executionID := range groups {
+			s.queueEventAppendPipeline(ctx, pipe, executionID, plan)
+		}
+		pipe.Set(ctx, key, plan.recordPayload, s.idempotencyTTL)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("append edge events and complete idempotency: %w", err)
+	}
+	return nil
+}
+
+func (s *RedisStore) queueEventAppendPipeline(ctx context.Context, pipe redis.Pipeliner, executionID string, plan redisIdempotentAppendPlan) {
+	payloads := plan.payloadsByExecution[executionID]
+	for _, payload := range payloads {
+		pipe.RPush(ctx, edgeEventsKey(executionID), payload.payload)
+		event := plan.appended[payload.index]
+		pipe.ZAdd(ctx, edgeSessionEventsIndexKey(event.SessionID), redis.Z{
+			Score:  float64(event.Timestamp.UTC().UnixMicro()),
+			Member: sessionEventIndexMember(event),
+		})
+		pipe.HSet(ctx, edgeEventIDIndexKey(event.ExecutionID), event.EventID, event.Seq)
+	}
+	if len(payloads) > 0 {
+		last := plan.appended[payloads[len(payloads)-1].index]
+		pipe.Set(ctx, edgeEventSeqKey(executionID), last.Seq, 0)
+	}
 }
 
 func (s *RedisStore) ReserveIdempotency(ctx context.Context, req EdgeIdempotencyRequest) (EdgeIdempotencyReservation, error) {
@@ -1465,6 +1768,35 @@ func parseSessionEventIndexMember(member any) (sessionEventRef, error) {
 		Seq:         seq,
 		EventID:     parts[2],
 	}, nil
+}
+
+func loadEventByIDInTx(ctx context.Context, tx *redis.Tx, executionID, eventID string) (AgentActionEvent, bool, error) {
+	rawSeq, err := tx.HGet(ctx, edgeEventIDIndexKey(executionID), eventID).Result()
+	if errors.Is(err, redis.Nil) {
+		return AgentActionEvent{}, false, nil
+	}
+	if err != nil {
+		return AgentActionEvent{}, false, fmt.Errorf("load event_id index for execution %s: %w", executionID, err)
+	}
+	seq, err := strconv.Atoi(rawSeq)
+	if err != nil || seq <= 0 {
+		return AgentActionEvent{}, false, fmt.Errorf("invalid event_id index for execution %s event %s", executionID, eventID)
+	}
+	raw, err := tx.LIndex(ctx, edgeEventsKey(executionID), int64(seq-1)).Result()
+	if errors.Is(err, redis.Nil) {
+		return AgentActionEvent{}, false, fmt.Errorf("stale event_id index for execution %s event %s", executionID, eventID)
+	}
+	if err != nil {
+		return AgentActionEvent{}, false, fmt.Errorf("load indexed event %s[%d]: %w", executionID, seq-1, err)
+	}
+	event, err := decodeStoreEvent(raw, executionID, seq-1)
+	if err != nil {
+		return AgentActionEvent{}, false, err
+	}
+	if event.ExecutionID != executionID || event.EventID != eventID || event.Seq != seq {
+		return AgentActionEvent{}, false, fmt.Errorf("event_id index mismatch for execution %s event %s", executionID, eventID)
+	}
+	return event, true, nil
 }
 
 func (s *RedisStore) loadEventByRef(ctx context.Context, ref sessionEventRef) (AgentActionEvent, bool, error) {

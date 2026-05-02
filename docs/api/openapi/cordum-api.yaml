@@ -1031,11 +1031,11 @@ paths:
         `artifact_ptrs`. Optional `Idempotency-Key` retries are scoped by tenant
         and endpoint: the same normalized request replays the first 201 response
         without appending a duplicate event, while the same key with a different
-        normalized request returns 409 `idempotency_conflict`. If the event is
-        persisted but the replay record fails to commit, the API returns 500
-        `partial_idempotency_failure`, releases the key, and clients SHOULD
-        dedupe retries by `event_id`; auto-seq retries MAY append a duplicate
-        event under that code.
+        normalized request returns 409 `idempotency_conflict`. The append and
+        replay record commit in one Redis transaction. If the replay record has
+        expired and the same logical `event_id` is already present, the API
+        returns 409 `idempotency_window_expired` and does not append a duplicate
+        event.
       tags:
       - Edge
       parameters:
@@ -1082,11 +1082,10 @@ paths:
         scoped by tenant and endpoint: the same normalized batch replays the
         first 201 response without partial append or duplicate events, while the
         same key with a different normalized batch returns 409
-        `idempotency_conflict`. If the events are persisted but the replay
-        record fails to commit, the API returns 500
-        `partial_idempotency_failure`, releases the key, and clients SHOULD
-        dedupe retries by `event_id`; auto-seq retries MAY append duplicates
-        under that code.
+        `idempotency_conflict`. The append and replay record commit in one Redis
+        transaction. If the replay record has expired and any same logical
+        `event_id` is already present, the API returns 409
+        `idempotency_window_expired` and does not append duplicate events.
       tags:
       - Edge
       parameters:
@@ -8260,7 +8259,7 @@ components:
           - self_approval_denied
           - idempotency_conflict
           - idempotency_key_invalid
-          - partial_idempotency_failure
+          - idempotency_window_expired
           example: idempotency_conflict
         message:
           type: string

@@ -1,5 +1,12 @@
 package edge
 
+// Redis unavailable simulations in this file use miniredis.Close() for
+// connection-loss paths and miniredis.SetError() for command/pipeline
+// failures. miniredis cannot model every production Redis failure mode (for
+// example timeout-after-WATCH but before EXEC, kernel-level half-open TCP, or
+// cluster failover mid-pipeline), so those remain out of scope unless a fake
+// store is introduced explicitly in a targeted test.
+
 import (
 	"context"
 	"encoding/base64"
@@ -16,6 +23,64 @@ import (
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
+
+func TestRedisStoreCreateSessionReturnsErrorWhenRedisClosed(t *testing.T) {
+	ctx := context.Background()
+	store, _, mr, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	mr.Close()
+	err := store.CreateSession(ctx, validStoreSession("tenant-a", "sess-redis-closed", "principal-a", time.Now().UTC()))
+	assertRedisUnavailableError(t, err)
+	assertStoreErrorOmitsSyntheticSecrets(t, err)
+}
+
+func TestRedisStoreAppendEventsSetErrorLeavesNoPartialEventKeys(t *testing.T) {
+	ctx := context.Background()
+	store, client, mr, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Date(2026, 5, 1, 16, 0, 0, 0, time.UTC)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-redis-seterror", "exec-redis-seterror", base)
+
+	mr.SetError("edge redis unavailable")
+	_, err := store.AppendEvent(ctx, validStoreEvent("tenant-a", "sess-redis-seterror", "exec-redis-seterror", "evt-seterror-single", 0, base.Add(time.Second), EventKindHookPreToolUse, DecisionAllow))
+	assertRedisUnavailableError(t, err)
+	assertStoreErrorOmitsSyntheticSecrets(t, err)
+
+	_, err = store.AppendEvents(ctx, []AgentActionEvent{
+		validStoreEvent("tenant-a", "sess-redis-seterror", "exec-redis-seterror", "evt-seterror-batch-1", 0, base.Add(2*time.Second), EventKindHookPreToolUse, DecisionAllow),
+		validStoreEvent("tenant-a", "sess-redis-seterror", "exec-redis-seterror", "evt-seterror-batch-2", 0, base.Add(3*time.Second), EventKindHookPolicyDecision, DecisionDeny),
+	})
+	assertRedisUnavailableError(t, err)
+	assertStoreErrorOmitsSyntheticSecrets(t, err)
+
+	mr.SetError("")
+	page, err := store.ListEvents(ctx, ListEventsQuery{TenantID: "tenant-a", ExecutionID: "exec-redis-seterror", Limit: 10})
+	if err != nil {
+		t.Fatalf("ListEvents after clearing SetError: %v", err)
+	}
+	assertEventIDs(t, page.Items, []string{})
+	for _, key := range []string{edgeEventsKey("exec-redis-seterror"), edgeEventSeqKey("exec-redis-seterror"), edgeSessionEventsIndexKey("sess-redis-seterror")} {
+		exists, err := client.Exists(ctx, key).Result()
+		if err != nil {
+			t.Fatalf("Exists(%s): %v", key, err)
+		}
+		if exists != 0 {
+			t.Fatalf("key %s exists after failed AppendEvents, want no partial event/index writes", key)
+		}
+	}
+}
+
+func TestSessionExportAssemblerReturnsErrorWhenRedisClosed(t *testing.T) {
+	ctx := context.Background()
+	env := setupExportTestEnv(t)
+	env.mr.Close()
+
+	_, err := (&SessionExportAssembler{Store: env.store}).Assemble(ctx, ExportSessionQuery{TenantID: env.tenantID, SessionID: env.sessionID}, ExportOptions{MaxEvents: 10})
+	assertRedisUnavailableError(t, err)
+	assertStoreErrorOmitsSyntheticSecrets(t, err)
+}
 
 func TestRedisStoreSessionLifecycleIndexesPaginationAndTenantIsolation(t *testing.T) {
 	ctx := context.Background()
@@ -935,6 +1000,137 @@ func TestRedisStoreEdgeIdempotencyConcurrentReserveSingleWriter(t *testing.T) {
 	}
 	if replay.State != EdgeIdempotencyReplay {
 		t.Fatalf("state after complete = %q, want replay", replay.State)
+	}
+}
+
+func TestRedisStoreAppendEventsWithIdempotencyAtomicallyAppendsAndReplays(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+	base := time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-idem-atomic", "exec-idem-atomic", base)
+	req := EdgeIdempotencyRequest{
+		TenantID:    "tenant-a",
+		Endpoint:    "POST /api/v1/edge/events",
+		Key:         "atomic-key",
+		RequestHash: "sha256:atomic-body",
+	}
+	event := validStoreEvent("tenant-a", "sess-idem-atomic", "exec-idem-atomic", "event-idem-atomic", 0, base.Add(time.Minute), EventKindHookPreToolUse, DecisionAllow)
+
+	first, err := store.AppendEventsWithIdempotency(ctx, req, []AgentActionEvent{event}, storeSingleEventReplayResponse)
+	if err != nil {
+		t.Fatalf("AppendEventsWithIdempotency first: %v", err)
+	}
+	if first.State != EdgeIdempotencyCompleted || len(first.Events) != 1 || first.Events[0].Seq != 1 {
+		t.Fatalf("first result = %#v, want completed event with seq 1", first)
+	}
+	if first.Record == nil || first.Record.Status != EdgeIdempotencyCompleted || len(first.Record.Response.Body) == 0 {
+		t.Fatalf("first replay record = %#v, want completed response", first.Record)
+	}
+	replay, err := store.AppendEventsWithIdempotency(ctx, req, []AgentActionEvent{event}, storeSingleEventReplayResponse)
+	if err != nil {
+		t.Fatalf("AppendEventsWithIdempotency replay: %v", err)
+	}
+	if replay.State != EdgeIdempotencyReplay || replay.Record == nil || string(replay.Record.Response.Body) != string(first.Record.Response.Body) {
+		t.Fatalf("replay result = %#v, want first response body", replay)
+	}
+	page, err := store.ListEvents(ctx, ListEventsQuery{TenantID: "tenant-a", ExecutionID: "exec-idem-atomic"})
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	assertEventIDs(t, page.Items, []string{"event-idem-atomic"})
+}
+
+func TestRedisStoreAppendEventsWithIdempotencyRejectsDuplicateEventAfterReplayTTL(t *testing.T) {
+	ctx := context.Background()
+	store, _, mr, cleanup := newRedisEdgeStore(t, WithIdempotencyTTL(time.Second))
+	defer cleanup()
+	base := time.Date(2026, 5, 2, 12, 30, 0, 0, time.UTC)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-idem-ttl", "exec-idem-ttl", base)
+	req := EdgeIdempotencyRequest{
+		TenantID:    "tenant-a",
+		Endpoint:    "POST /api/v1/edge/events",
+		Key:         "ttl-key",
+		RequestHash: "sha256:ttl-body",
+	}
+	event := validStoreEvent("tenant-a", "sess-idem-ttl", "exec-idem-ttl", "event-idem-ttl", 0, base.Add(time.Minute), EventKindHookPreToolUse, DecisionAllow)
+
+	if _, err := store.AppendEventsWithIdempotency(ctx, req, []AgentActionEvent{event}, storeSingleEventReplayResponse); err != nil {
+		t.Fatalf("AppendEventsWithIdempotency first: %v", err)
+	}
+	mr.FastForward(time.Second + time.Millisecond)
+	if _, err := store.AppendEventsWithIdempotency(ctx, req, []AgentActionEvent{event}, storeSingleEventReplayResponse); !errors.Is(err, ErrIdempotencyWindowExpired) {
+		t.Fatalf("AppendEventsWithIdempotency after TTL error = %v, want ErrIdempotencyWindowExpired", err)
+	}
+	page, err := store.ListEvents(ctx, ListEventsQuery{TenantID: "tenant-a", ExecutionID: "exec-idem-ttl"})
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	assertEventIDs(t, page.Items, []string{"event-idem-ttl"})
+}
+
+func TestRedisStoreAppendEventsWithIdempotencyDoesNotAppendWhenReplayBuildFails(t *testing.T) {
+	ctx := context.Background()
+	store, client, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+	base := time.Date(2026, 5, 2, 13, 0, 0, 0, time.UTC)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-idem-build-fail", "exec-idem-build-fail", base)
+	req := EdgeIdempotencyRequest{
+		TenantID:    "tenant-a",
+		Endpoint:    "POST /api/v1/edge/events",
+		Key:         "build-failure-key",
+		RequestHash: "sha256:build-failure-body",
+	}
+	event := validStoreEvent("tenant-a", "sess-idem-build-fail", "exec-idem-build-fail", "event-idem-build-fail", 0, base.Add(time.Minute), EventKindHookPreToolUse, DecisionAllow)
+
+	_, err := store.AppendEventsWithIdempotency(ctx, req, []AgentActionEvent{event}, func([]AgentActionEvent) (EdgeIdempotencyResponse, error) {
+		return EdgeIdempotencyResponse{}, errors.New("injected replay build failure")
+	})
+	if err == nil {
+		t.Fatal("AppendEventsWithIdempotency returned nil error, want replay build failure")
+	}
+	page, err := store.ListEvents(ctx, ListEventsQuery{TenantID: "tenant-a", ExecutionID: "exec-idem-build-fail"})
+	if err != nil {
+		t.Fatalf("ListEvents: %v", err)
+	}
+	assertEventIDs(t, page.Items, []string{})
+	keys, err := client.Keys(ctx, "edge:idempotency:*").Result()
+	if err != nil {
+		t.Fatalf("list idempotency keys: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("idempotency key count after failed atomic append = %d, want 0 keys=%v", len(keys), keys)
+	}
+}
+
+func storeSingleEventReplayResponse(events []AgentActionEvent) (EdgeIdempotencyResponse, error) {
+	if len(events) != 1 {
+		return EdgeIdempotencyResponse{}, fmt.Errorf("expected one event, got %d", len(events))
+	}
+	body, err := json.Marshal(events[0])
+	if err != nil {
+		return EdgeIdempotencyResponse{}, err
+	}
+	return EdgeIdempotencyResponse{StatusCode: 201, ContentType: "application/json", Body: body}, nil
+}
+
+func assertRedisUnavailableError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("operation returned nil error after Redis was made unavailable")
+	}
+}
+
+func assertStoreErrorOmitsSyntheticSecrets(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	msg := err.Error()
+	for _, forbidden := range []string{"Bearer ", "ghp_", "sk-test", "redis://"} {
+		if strings.Contains(msg, forbidden) {
+			t.Fatalf("store error leaked forbidden marker %q: %v", forbidden, err)
+		}
 	}
 }
 

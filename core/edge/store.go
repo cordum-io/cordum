@@ -25,6 +25,11 @@ var ErrIdempotencyConflict = errors.New("edge idempotency: request hash conflict
 // response.
 var ErrIdempotencyPending = errors.New("edge idempotency: request pending")
 
+// ErrIdempotencyWindowExpired is returned when an auto-seq retry arrives after
+// the idempotency replay record expired but the logical event is already
+// persisted. Callers must not append a duplicate event in this case.
+var ErrIdempotencyWindowExpired = errors.New("edge idempotency: replay window expired")
+
 // Store persists EdgeSession, AgentExecution, and AgentActionEvent evidence.
 // It is intentionally scoped to Edge records and must not mutate Scheduler Job
 // state or workflow run state.
@@ -44,6 +49,7 @@ type Store interface {
 
 	AppendEvent(ctx context.Context, event AgentActionEvent) (AgentActionEvent, error)
 	AppendEvents(ctx context.Context, events []AgentActionEvent) ([]AgentActionEvent, error)
+	AppendEventsWithIdempotency(ctx context.Context, req EdgeIdempotencyRequest, events []AgentActionEvent, buildResponse EdgeIdempotencyResponseBuilder) (EdgeIdempotentAppendResult, error)
 	ListEvents(ctx context.Context, query ListEventsQuery) (EventPage, error)
 	ReserveIdempotency(ctx context.Context, req EdgeIdempotencyRequest) (EdgeIdempotencyReservation, error)
 	CompleteIdempotency(ctx context.Context, req EdgeIdempotencyRequest, response EdgeIdempotencyResponse) (*EdgeIdempotencyRecord, error)
@@ -161,6 +167,19 @@ type EdgeIdempotencyRecord struct {
 	Response    EdgeIdempotencyResponse `json:"response,omitempty"`
 	CreatedAt   time.Time               `json:"created_at"`
 	CompletedAt *time.Time              `json:"completed_at,omitempty"`
+}
+
+// EdgeIdempotencyResponseBuilder builds the replay response after the store has
+// assigned final event sequence numbers but before the atomic Redis write
+// commits.
+type EdgeIdempotencyResponseBuilder func([]AgentActionEvent) (EdgeIdempotencyResponse, error)
+
+// EdgeIdempotentAppendResult is returned by RedisStore's atomic idempotent
+// append primitive.
+type EdgeIdempotentAppendResult struct {
+	State  EdgeIdempotencyState
+	Events []AgentActionEvent
+	Record *EdgeIdempotencyRecord
 }
 
 func normalizeStoreLimit(limit int) int {
