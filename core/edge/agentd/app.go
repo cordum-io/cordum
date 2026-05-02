@@ -76,12 +76,17 @@ func Run(ctx context.Context, opts RunOptions) error {
 	if writer, ok := gateway.(EventWriter); ok {
 		eventWriter = writer
 	}
+	var safeAllowCache *SafeAllowCache
+	if cfg.SafeAllowCache.Enabled {
+		safeAllowCache = NewSafeAllowCache(cfg.SafeAllowCache, clock)
+	}
 	var evaluator *Evaluator
 	if evaluateClient, ok := gateway.(EvaluateClient); ok {
 		evaluator = NewEvaluator(EvaluatorConfig{
 			Client:      evaluateClient,
 			EventWriter: eventWriter,
 			State:       *state,
+			Cache:       safeAllowCache,
 			ApprovalConfig: ApprovalDecisionConfig{
 				PolicyMode: cfg.PolicyMode,
 			},

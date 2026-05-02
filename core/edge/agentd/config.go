@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ type Config struct {
 	HeartbeatTTL      time.Duration
 	HeartbeatInterval time.Duration
 	FailClosed        bool
+	SafeAllowCache    SafeAllowCacheConfig
 	StateDir          string
 }
 
@@ -44,7 +46,12 @@ func LoadConfig(env map[string]string) (Config, error) {
 		HeartbeatTTL:      defaultHeartbeatTTL,
 		HeartbeatInterval: defaultHeartbeatTTL / 2,
 		FailClosed:        parseBool(envString(env, "CORDUM_AGENTD_FAIL_CLOSED")),
-		StateDir:          defaultStateDir(),
+		SafeAllowCache: SafeAllowCacheConfig{
+			Enabled:    false,
+			TTL:        defaultSafeAllowCacheTTL,
+			MaxEntries: defaultSafeAllowCacheMaxEntries,
+		},
+		StateDir: defaultStateDir(),
 	}
 	if raw := strings.TrimSpace(envString(env, "CORDUM_EDGE_POLICY_MODE")); raw != "" {
 		cfg.PolicyMode = edgecore.PolicyMode(raw)
@@ -88,6 +95,23 @@ func LoadConfig(env map[string]string) (Config, error) {
 	}
 	if raw := strings.TrimSpace(envString(env, "CORDUM_AGENTD_STATE_DIR")); raw != "" {
 		cfg.StateDir = raw
+	}
+	if raw := strings.TrimSpace(envString(env, "CORDUM_AGENTD_SAFE_ALLOW_CACHE")); raw != "" {
+		cfg.SafeAllowCache.Enabled = parseBool(raw)
+	}
+	if raw := strings.TrimSpace(envString(env, "CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL")); raw != "" {
+		d, err := parseBoundedDuration("CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL", raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.SafeAllowCache.TTL = d
+	}
+	if raw := strings.TrimSpace(envString(env, "CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES invalid integer: %w", err)
+		}
+		cfg.SafeAllowCache.MaxEntries = n
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -135,6 +159,14 @@ func (c Config) Validate() error {
 	}
 	if c.HeartbeatInterval > c.HeartbeatTTL/2 {
 		return errors.New("CORDUM_EDGE_HEARTBEAT_INTERVAL must be <= TTL/2")
+	}
+	if c.SafeAllowCache.Enabled {
+		if c.SafeAllowCache.TTL <= 0 || c.SafeAllowCache.TTL > maxAgentdDuration {
+			return fmt.Errorf("CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL must be >0 and <= %s", maxAgentdDuration)
+		}
+		if c.SafeAllowCache.MaxEntries <= 0 || c.SafeAllowCache.MaxEntries > 10000 {
+			return errors.New("CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES must be >0 and <= 10000")
+		}
 	}
 	return nil
 }

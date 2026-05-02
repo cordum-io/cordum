@@ -12,16 +12,19 @@ func TestLoadConfigFromEnvAppliesDefaultsAndExplicitValues(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := LoadConfig(map[string]string{
-		"CORDUM_GATEWAY":                 "http://127.0.0.1:8081",
-		"CORDUM_API_KEY":                 "api-key-123",
-		"CORDUM_TENANT_ID":               "tenant-a",
-		"CORDUM_EDGE_POLICY_MODE":        "enforce",
-		"CORDUM_AGENTD_SOCKET":           "http://127.0.0.1:8765/v1/edge/hooks/claude",
-		"CORDUM_AGENTD_HOOK_TIMEOUT":     "3s",
-		"CORDUM_EDGE_HEARTBEAT_TTL":      "40s",
-		"CORDUM_EDGE_HEARTBEAT_INTERVAL": "10s",
-		"CORDUM_AGENTD_FAIL_CLOSED":      "true",
-		"CORDUM_AGENTD_STATE_DIR":        "D:/Cordum/.tmp/agentd-state",
+		"CORDUM_GATEWAY":                             "http://127.0.0.1:8081",
+		"CORDUM_API_KEY":                             "api-key-123",
+		"CORDUM_TENANT_ID":                           "tenant-a",
+		"CORDUM_EDGE_POLICY_MODE":                    "enforce",
+		"CORDUM_AGENTD_SOCKET":                       "http://127.0.0.1:8765/v1/edge/hooks/claude",
+		"CORDUM_AGENTD_HOOK_TIMEOUT":                 "3s",
+		"CORDUM_EDGE_HEARTBEAT_TTL":                  "40s",
+		"CORDUM_EDGE_HEARTBEAT_INTERVAL":             "10s",
+		"CORDUM_AGENTD_FAIL_CLOSED":                  "true",
+		"CORDUM_AGENTD_STATE_DIR":                    "D:/Cordum/.tmp/agentd-state",
+		"CORDUM_AGENTD_SAFE_ALLOW_CACHE":             "true",
+		"CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL":         "2m",
+		"CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES": "32",
 	})
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
@@ -40,6 +43,40 @@ func TestLoadConfigFromEnvAppliesDefaultsAndExplicitValues(t *testing.T) {
 	}
 	if !strings.Contains(cfg.StateDir, "agentd-state") {
 		t.Fatalf("state dir = %q", cfg.StateDir)
+	}
+	if !cfg.SafeAllowCache.Enabled || cfg.SafeAllowCache.TTL != 2*time.Minute || cfg.SafeAllowCache.MaxEntries != 32 {
+		t.Fatalf("safe allow cache config = %#v, want enabled ttl=2m max=32", cfg.SafeAllowCache)
+	}
+}
+
+func TestLoadConfigSafeAllowCacheDefaultsOffAndRejectsInvalidBounds(t *testing.T) {
+	t.Parallel()
+
+	base := map[string]string{
+		"CORDUM_GATEWAY":   "http://127.0.0.1:8081",
+		"CORDUM_API_KEY":   "api-key-123",
+		"CORDUM_TENANT_ID": "tenant-a",
+	}
+	cfg, err := LoadConfig(base)
+	if err != nil {
+		t.Fatalf("LoadConfig defaults: %v", err)
+	}
+	if cfg.SafeAllowCache.Enabled {
+		t.Fatalf("safe allow cache enabled by default: %#v", cfg.SafeAllowCache)
+	}
+
+	invalidTTL := cloneConfigEnv(base)
+	invalidTTL["CORDUM_AGENTD_SAFE_ALLOW_CACHE"] = "true"
+	invalidTTL["CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL"] = "0s"
+	if _, err := LoadConfig(invalidTTL); err == nil || !strings.Contains(err.Error(), "CORDUM_AGENTD_SAFE_ALLOW_CACHE_TTL") {
+		t.Fatalf("LoadConfig invalid cache TTL err = %v, want env var name", err)
+	}
+
+	invalidMax := cloneConfigEnv(base)
+	invalidMax["CORDUM_AGENTD_SAFE_ALLOW_CACHE"] = "true"
+	invalidMax["CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES"] = "0"
+	if _, err := LoadConfig(invalidMax); err == nil || !strings.Contains(err.Error(), "CORDUM_AGENTD_SAFE_ALLOW_CACHE_MAX_ENTRIES") {
+		t.Fatalf("LoadConfig invalid cache max err = %v, want env var name", err)
 	}
 }
 
@@ -124,4 +161,12 @@ func TestLoadConfigRejectsHeartbeatIntervalGreaterThanHalfTTL(t *testing.T) {
 	if !strings.Contains(err.Error(), "TTL/2") {
 		t.Fatalf("error = %q, want TTL/2 guidance", err.Error())
 	}
+}
+
+func cloneConfigEnv(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
