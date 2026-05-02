@@ -23,7 +23,7 @@ func prometheusNewRegistryHelper(t *testing.T) *prometheus.Registry {
 // satisfies the Recorder interface so callers can wire it as a default
 // without depending on the Prometheus implementation that lands in step-7.
 func TestNoopRecorderImplementsRecorder(t *testing.T) {
-	var r Recorder = NewNoopRecorder()
+	r := NewNoopRecorder()
 	// Exercise every method to catch interface drift early.
 	r.RecordSessionCreated("tenant-a", "local-dev", "claude-code")
 	r.RecordSessionEnded("tenant-a", "local-dev", "ended")

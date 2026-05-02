@@ -170,12 +170,10 @@ func (s *server) handleExportEdgeSession(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
-	if _, err := w.Write(payload); err != nil {
-		// Best-effort write; the headers are already flushed. The audit
-		// event still fires because the bundle was assembled and the
-		// response was begun — auditors prefer a slight false-positive
-		// over a missing record.
-	}
+	// Best-effort write; the headers may already be flushed. The audit
+	// event still fires because the bundle was assembled and the response
+	// was begun — auditors prefer a slight false-positive over a missing record.
+	_, _ = w.Write(payload)
 	emitEdgeExportAudit(s, tenantID, sessionID, "ok")
 }
 
