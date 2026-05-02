@@ -77,6 +77,7 @@ type EvaluateResponse struct {
 	WaitStrategy    string `json:"wait_strategy,omitempty"`
 	WaitAfter       string `json:"wait_after,omitempty"`
 	TimeoutMS       int    `json:"timeout_ms,omitempty"`
+	CacheEligible   bool   `json:"cache_eligible,omitempty"`
 }
 
 // EvaluateClient is the narrow boundary the agentd evaluator uses to talk to
