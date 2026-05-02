@@ -1041,6 +1041,36 @@ func TestRedisStoreAppendEventsWithIdempotencyAtomicallyAppendsAndReplays(t *tes
 	assertEventIDs(t, page.Items, []string{"event-idem-atomic"})
 }
 
+func TestRedisStoreLoadCompletedAppendReplayAfterDuplicateEvent(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+	base := time.Date(2026, 5, 2, 12, 15, 0, 0, time.UTC)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-idem-race", "exec-idem-race", base)
+	req := EdgeIdempotencyRequest{
+		TenantID:    "tenant-a",
+		Endpoint:    "POST /api/v1/edge/events/batch",
+		Key:         "race-replay-key",
+		RequestHash: "sha256:race-replay-body",
+	}
+	event := validStoreEvent("tenant-a", "sess-idem-race", "exec-idem-race", "event-idem-race", 0, base.Add(time.Minute), EventKindHookPreToolUse, DecisionAllow)
+	first, err := store.AppendEventsWithIdempotency(ctx, req, []AgentActionEvent{event}, storeSingleEventReplayResponse)
+	if err != nil {
+		t.Fatalf("AppendEventsWithIdempotency first: %v", err)
+	}
+	key := edgeIdempotencyKey(req.TenantID, req.Endpoint, req.Key)
+	replay, ok, err := store.loadCompletedAppendReplay(ctx, key, req)
+	if err != nil {
+		t.Fatalf("loadCompletedAppendReplay: %v", err)
+	}
+	if !ok || replay.State != EdgeIdempotencyReplay || replay.Record == nil {
+		t.Fatalf("replay result = %#v ok=%v, want replay record", replay, ok)
+	}
+	if string(replay.Record.Response.Body) != string(first.Record.Response.Body) {
+		t.Fatalf("replay body = %s, want %s", replay.Record.Response.Body, first.Record.Response.Body)
+	}
+}
+
 func TestRedisStoreAppendEventsWithIdempotencyRejectsDuplicateEventAfterReplayTTL(t *testing.T) {
 	ctx := context.Background()
 	store, _, mr, cleanup := newRedisEdgeStore(t, WithIdempotencyTTL(time.Second))

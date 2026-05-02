@@ -881,12 +881,42 @@ func (s *RedisStore) appendEventsWithIdempotencyTx(
 		if errors.Is(err, redis.TxFailedErr) {
 			continue
 		}
+		if errors.Is(err, ErrIdempotencyWindowExpired) {
+			replay, ok, replayErr := s.loadCompletedAppendReplay(ctx, key, req)
+			if replayErr != nil {
+				return EdgeIdempotentAppendResult{}, replayErr
+			}
+			if ok {
+				return replay, nil
+			}
+		}
 		if err != nil {
 			return EdgeIdempotentAppendResult{}, err
 		}
 		return result, nil
 	}
 	return EdgeIdempotentAppendResult{}, fmt.Errorf("edge idempotent append conflict: %w", redis.TxFailedErr)
+}
+
+func (s *RedisStore) loadCompletedAppendReplay(ctx context.Context, key string, req EdgeIdempotencyRequest) (EdgeIdempotentAppendResult, bool, error) {
+	raw, err := s.client.Get(ctx, key).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return EdgeIdempotentAppendResult{}, false, nil
+	}
+	if err != nil {
+		return EdgeIdempotentAppendResult{}, false, fmt.Errorf("read edge idempotency record after duplicate event: %w", err)
+	}
+	record, err := decodeEdgeIdempotencyRecord(raw)
+	if err != nil {
+		return EdgeIdempotentAppendResult{}, false, err
+	}
+	if record.RequestHash != req.RequestHash {
+		return EdgeIdempotentAppendResult{}, false, ErrIdempotencyConflict
+	}
+	if record.Status != EdgeIdempotencyCompleted || len(record.Response.Body) == 0 || record.Response.StatusCode == 0 {
+		return EdgeIdempotentAppendResult{}, false, nil
+	}
+	return EdgeIdempotentAppendResult{State: EdgeIdempotencyReplay, Record: record}, true, nil
 }
 
 func loadExistingEdgeIdempotencyForAppend(ctx context.Context, tx *redis.Tx, key string, req EdgeIdempotencyRequest) (EdgeIdempotentAppendResult, bool, error) {
