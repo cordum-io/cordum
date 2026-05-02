@@ -1289,3 +1289,170 @@ func TestRecorderInterfaceForbidsRawSecretLeak(t *testing.T) {
 		}
 	}
 }
+
+func TestEdgeObservabilitySecretLeakMatrix(t *testing.T) {
+	secrets := []string{
+		"Authorization: Bearer edge014-matrix-token",
+		"sk-edge014-matrix-secret-000000000",
+		"ghp_edge014matrixtoken000000000",
+		"AKIAIOSFODNN7EXAMPLE",
+	}
+	event := AgentActionEvent{
+		EventID:        "evt-edge014-matrix",
+		SessionID:      "edge_sess_matrix",
+		ExecutionID:    "edge_exec_matrix",
+		TenantID:       "tenant-edge014",
+		PrincipalID:    "principal-edge014",
+		Layer:          LayerHook,
+		Kind:           EventKindHookPreToolUse,
+		ToolName:       "Bash",
+		ActionName:     "claude.PreToolUse",
+		Capability:     "shell",
+		InputHash:      "sha256:input-matrix",
+		Decision:       DecisionDeny,
+		DecisionReason: strings.Join(secrets, " "),
+		RuleID:         "edge.rule.require_approval",
+		ApprovalRef:    "edge_appr_matrix",
+		Status:         ActionStatusBlocked,
+		ErrorCode:      "gateway_unavailable",
+		ErrorMessage:   strings.Join(secrets, " "),
+		InputRedacted:  map[string]any{"command": strings.Join(secrets, " && ")},
+		Labels:         Labels{"raw_secret": strings.Join(secrets, " ")},
+	}
+	approval := EdgeApproval{
+		ApprovalRef:      "edge_appr_matrix",
+		TenantID:         "tenant-edge014",
+		SessionID:        "edge_sess_matrix",
+		ExecutionID:      "edge_exec_matrix",
+		EventID:          "evt-edge014-matrix",
+		PrincipalID:      "principal-edge014",
+		ResolverID:       "principal-reviewer",
+		Status:           ApprovalStatusPending,
+		Reason:           strings.Join(secrets, " "),
+		ResolutionReason: strings.Join(secrets, " "),
+		RuleID:           "edge.rule.require_approval",
+		PolicySnapshot:   "snap-edge014",
+		ActionHash:       "sha256:action-matrix",
+		InputHash:        "sha256:input-matrix",
+		Labels:           Labels{"raw_secret": strings.Join(secrets, " ")},
+		Metadata:         Metadata{"raw_secret": strings.Join(secrets, " ")},
+		CreatedAt:        time.Date(2026, 5, 2, 12, 30, 0, 0, time.UTC),
+	}
+	pointer := ArtifactPointer{
+		ArtifactType:   ArtifactType("edge.session_export"),
+		SessionID:      "edge_sess_matrix",
+		ExecutionID:    "edge_exec_matrix",
+		EventID:        "evt-edge014-matrix",
+		TenantID:       "tenant-edge014",
+		RetentionClass: RetentionClassAudit,
+		RedactionLevel: RedactionLevelStrict,
+		SHA256:         "sha256:artifact-matrix",
+		URI:            "https://blob.example/edge?token=" + secrets[0],
+		CreatedAt:      time.Date(2026, 5, 2, 12, 31, 0, 0, time.UTC),
+	}
+
+	reg := prometheusNewRegistryHelper(t)
+	recorder := NewPrometheusRecorder(reg)
+	for _, secret := range secrets {
+		recorder.RecordActionDecision(secret, secret, secret, secret, secret)
+		recorder.RecordActionDenied(secret, secret, secret, secret)
+		recorder.RecordDegraded(secret, secret, secret, secret)
+		recorder.RecordFailClosed(secret, secret, secret)
+		recorder.RecordArtifactExport(secret, secret, secret)
+		recorder.ObserveHookLatency(secret, secret, secret, time.Millisecond)
+		recorder.ObserveEvaluateLatency(secret, secret, secret, secret, time.Millisecond)
+		recorder.RecordCacheLookup(secret, secret, secret, secret)
+		recorder.RecordStreamDrop(secret)
+	}
+	metricsFamilies, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	var metricsText strings.Builder
+	for _, family := range metricsFamilies {
+		metricsText.WriteString(family.String())
+	}
+
+	surfaces := map[string]string{
+		"event_log_attrs":        attrsToSearchText(EventLogAttrs(event)),
+		"approval_log_attrs":     attrsToSearchText(ApprovalLogAttrs(approval)),
+		"export_log_attrs":       attrsToSearchText(ExportResultLogAttrs(pointer, "ok")),
+		"hook_summary_attrs":     attrsToSearchText(HookSummaryLogAttrs(HookSummary{TenantID: "tenant-edge014", SessionID: "edge_sess_matrix", HookEvent: "PreToolUse", Decision: "deny", ReasonCode: strings.Join(secrets, " "), LatencyMS: 7, Mode: "enterprise-strict", Component: "hook"})),
+		"evaluate_summary_attrs": attrsToSearchText(EvaluateSummaryLogAttrs(EvaluateSummary{TenantID: "tenant-edge014", SessionID: "edge_sess_matrix", ExecutionID: "edge_exec_matrix", Layer: "hook", Kind: "hook.pre_tool_use", Decision: "deny", ApprovalRef: "edge_appr_matrix", LatencyMS: 8, Mode: "enterprise-strict"})),
+		"error_log_attrs":        attrsToSearchText(ErrorLogAttrs(stringError("gateway error: "+strings.Join(secrets, " ")), strings.Join(secrets, " "))),
+		"action_siem":            siemEventToSearchText(SIEMEventForAction(event)),
+		"approval_siem":          siemEventToSearchText(SIEMEventForApprovalRequested(approval)),
+		"artifact_siem":          siemEventToSearchText(SIEMEventForArtifactExported(pointer, "ok")),
+		"degraded_siem":          siemEventToSearchText(SIEMEventForDegraded("tenant-edge014", "enterprise-strict", "hook", strings.Join(secrets, " "), time.Time{})),
+		"fail_closed_siem":       siemEventToSearchText(SIEMEventForFailClosed("tenant-edge014", "enterprise-strict", "hook", strings.Join(secrets, " "), time.Time{})),
+		"prometheus_metrics":     metricsText.String(),
+	}
+	for name, text := range surfaces {
+		for _, secret := range secrets {
+			if strings.Contains(text, secret) {
+				t.Fatalf("%s leaked synthetic secret %q in %q", name, secret, text)
+			}
+		}
+		for _, marker := range []string{"Authorization: Bearer", "sk-edge014", "ghp_edge014", "AKIAIOSFODNN7EXAMPLE"} {
+			if strings.Contains(text, marker) {
+				t.Fatalf("%s leaked secret marker %q in %q", name, marker, text)
+			}
+		}
+	}
+}
+
+func attrsToSearchText(attrs []slog.Attr) string {
+	var out strings.Builder
+	for _, attr := range attrs {
+		out.WriteString(attr.Key)
+		out.WriteString("=")
+		out.WriteString(attr.Value.String())
+		out.WriteString(";")
+	}
+	return out.String()
+}
+
+func siemEventToSearchText(event audit.SIEMEvent) string {
+	var out strings.Builder
+	out.WriteString(event.EventType)
+	out.WriteString(";")
+	out.WriteString(event.Severity)
+	out.WriteString(";")
+	out.WriteString(event.TenantID)
+	out.WriteString(";")
+	out.WriteString(event.AgentID)
+	out.WriteString(";")
+	out.WriteString(event.AgentName)
+	out.WriteString(";")
+	out.WriteString(event.AgentRiskTier)
+	out.WriteString(";")
+	out.WriteString(event.JobID)
+	out.WriteString(";")
+	out.WriteString(event.Action)
+	out.WriteString(";")
+	out.WriteString(event.Decision)
+	out.WriteString(";")
+	out.WriteString(event.MatchedRule)
+	out.WriteString(";")
+	out.WriteString(event.Reason)
+	out.WriteString(";")
+	out.WriteString(event.PolicyVersion)
+	out.WriteString(";")
+	out.WriteString(event.Identity)
+	out.WriteString(";")
+	for _, value := range event.RiskTags {
+		out.WriteString(value)
+		out.WriteString(";")
+	}
+	for _, value := range event.Capabilities {
+		out.WriteString(value)
+		out.WriteString(";")
+	}
+	for key, value := range event.Extra {
+		out.WriteString(key)
+		out.WriteString("=")
+		out.WriteString(value)
+		out.WriteString(";")
+	}
+	return out.String()
+}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	edgecore "github.com/cordum/cordum/core/edge"
 )
 
 // Stable error codes for /api/v1/edge/* responses. These are part of the API
@@ -82,13 +83,34 @@ func writeEdgeError(w http.ResponseWriter, r *http.Request, status int, code, me
 		RequestID: edgeRequestID(r),
 	}
 	if len(details) > 0 {
-		envelope.Details = details
+		envelope.Details = sanitizeEdgeErrorDetails(details)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(envelope); err != nil {
 		slog.Warn("json encode edge error response failed", "error", err)
 	}
+}
+
+func sanitizeEdgeErrorDetails(details map[string]any) map[string]any {
+	if len(details) == 0 {
+		return nil
+	}
+	result, err := edgecore.RedactValue(details, edgecore.RedactionOptions{
+		HashMode:       edgecore.RedactionHashNone,
+		MaxDepth:       8,
+		MaxItems:       64,
+		MaxStringBytes: 256,
+		MaxTotalBytes:  8 << 10,
+	})
+	if err != nil {
+		return map[string]any{"redacted": true}
+	}
+	out, ok := result.Value.(map[string]any)
+	if !ok {
+		return map[string]any{"redacted": true}
+	}
+	return out
 }
 
 // edgeRequestID returns the request id middleware stamped onto the request

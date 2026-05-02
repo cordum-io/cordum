@@ -506,9 +506,9 @@ func SIEMEventForFailClosed(tenantID, mode, component, reasonCode string, at tim
 		Action:    "edge_fail_closed",
 		Decision:  "deny",
 		Extra: map[string]string{
-			"mode":        boundedShortString(mode, 32),
-			"component":   boundedShortString(component, 32),
-			"reason_code": boundedShortString(reasonCode, 64),
+			"mode":        boundedMode(mode),
+			"component":   boundedComponent(component),
+			"reason_code": boundedReasonCode(reasonCode),
 		},
 	}
 }
@@ -532,9 +532,9 @@ func SIEMEventForDegraded(tenantID, mode, component, reasonCode string, at time.
 		Action:    "edge_agentd_degraded",
 		Decision:  "degraded",
 		Extra: map[string]string{
-			"mode":        boundedShortString(mode, 32),
-			"component":   boundedShortString(component, 32),
-			"reason_code": boundedShortString(reasonCode, 64),
+			"mode":        boundedMode(mode),
+			"component":   boundedComponent(component),
+			"reason_code": boundedReasonCode(reasonCode),
 		},
 	}
 }
@@ -1077,7 +1077,7 @@ func ErrorLogAttrs(err error, reasonCode string) []slog.Attr {
 	attrs := make([]slog.Attr, 0, 2)
 	attrs = append(attrs, slog.String("reason_code", boundedReasonCode(reasonCode)))
 	if err != nil {
-		msg := err.Error()
+		msg := redactLogMessage(err.Error())
 		// 256-byte total cap including the 3-byte "…" suffix so callers
 		// can rely on the slog attr fitting in a single line buffer.
 		const maxBodyLen = 253
@@ -1087,4 +1087,19 @@ func ErrorLogAttrs(err error, reasonCode string) []slog.Attr {
 		attrs = append(attrs, slog.String("error_message", msg))
 	}
 	return attrs
+}
+
+func redactLogMessage(message string) string {
+	result, err := RedactValue(message, RedactionOptions{
+		HashMode:       RedactionHashNone,
+		MaxStringBytes: 512,
+		MaxTotalBytes:  512,
+	})
+	if err != nil {
+		return "<redacted:error>"
+	}
+	if out, ok := result.Value.(string); ok {
+		return out
+	}
+	return "<redacted>"
 }

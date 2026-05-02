@@ -192,3 +192,38 @@ func TestEdgeErrorShapeApprovalConflictHasCode(t *testing.T) {
 	rr := edgeApprovalRoutePOSTAs(t, handler, edgeRouteReviewerAPIKey, "/api/v1/edge/approvals/"+approval.ApprovalRef+"/approve", `{"reason":"again"}`)
 	assertEdgeErrorShape(t, rr, http.StatusConflict, edgeErrCodeApprovalConflict)
 }
+
+func TestWriteEdgeErrorRedactsSecretDetails(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/edge/events", nil)
+	req.Header.Set("X-Request-Id", "req-edge014-secret-details")
+	rr := httptest.NewRecorder()
+	writeEdgeError(rr, req, http.StatusConflict, edgeErrCodeIdempotencyConflict, "idempotency key already used with a different request", map[string]any{
+		"idempotency_key": "sk-edge014-error-detail-secret-000000",
+		"authorization":   "Authorization: Bearer edge014-error-detail-token",
+		"nested": map[string]any{
+			"signed_url": "https://blob.example/evidence?token=ghp_edge014errordetailtoken0000",
+			"aws_key":    "AKIAIOSFODNN7EXAMPLE",
+		},
+		"safe_code": "idempotency_conflict",
+	})
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	for _, forbidden := range []string{
+		"sk-edge014-error-detail-secret",
+		"Authorization: Bearer",
+		"edge014-error-detail-token",
+		"ghp_edge014errordetailtoken",
+		"AKIAIOSFODNN7EXAMPLE",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("edge error details leaked %q in %s", forbidden, body)
+		}
+	}
+	if !strings.Contains(body, `"safe_code":"idempotency_conflict"`) {
+		t.Fatalf("sanitized details dropped safe_code: %s", body)
+	}
+	assertEdgeErrorShape(t, rr, http.StatusConflict, edgeErrCodeIdempotencyConflict)
+}

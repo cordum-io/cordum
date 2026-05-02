@@ -285,6 +285,9 @@ func boundedComponent(value string) string {
 // from a small documented set per surface; unknown inputs collapse to
 // "other" rather than reaching a metric label.
 func boundedReasonCode(value string) string {
+	if _, ok := secretStringType(value); ok {
+		return "other"
+	}
 	// Reject inputs that contain internal whitespace or control characters
 	// before normalization — they indicate free-form prose ("raw command
 	// with spaces", "Bearer secret") that the lowerTrim helper would
