@@ -186,7 +186,7 @@ func (c *GatewayClient) wrapTransportError(err error) error {
 }
 
 func (c *GatewayClient) redactSecrets(message string) string {
-	out := message
+	out := redactSecretLike(message)
 	if c != nil && c.apiKey != "" {
 		out = strings.ReplaceAll(out, c.apiKey, "[REDACTED]")
 	}

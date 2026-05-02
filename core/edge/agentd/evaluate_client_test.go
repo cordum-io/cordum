@@ -176,12 +176,62 @@ func TestGatewayClientEvaluateRejectsSecretsInGatewayErrorBody(t *testing.T) {
 	if strings.Contains(msg, "leaked-token-abc") {
 		t.Fatalf("error message leaked Bearer token: %q", msg)
 	}
-	// The redaction is applied inside doJSON via redactSecrets which currently
-	// scrubs the configured api key only; secretLikePattern guards request-body
-	// echo. The error must not include any "Bearer <secret>" verbatim either —
-	// even if we stop short of pattern-redacting upstream messages, the test
-	// pins the public expectation so a future regression becomes visible.
-	_ = msg
+	if strings.Contains(msg, "sk-leaked-789") {
+		t.Fatalf("error message leaked sk-style token: %q", msg)
+	}
+	if !strings.Contains(msg, "Bearer [REDACTED]") || !strings.Contains(msg, "[REDACTED]") {
+		t.Fatalf("error message did not include sanitized token markers: %q", msg)
+	}
+}
+
+func TestGatewayClientEvaluateValidatesDecisionAndClassifiesMalformed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(EvaluateResponse{
+			Decision:     "ALLOW_BUT_NOT_REAL",
+			ErrorMessage: "malformed upstream body with Bearer malformed-secret",
+		})
+	}))
+	defer server.Close()
+	client, err := NewGatewayClient(GatewayClientConfig{BaseURL: server.URL, APIKey: "edge-api-key-not-in-leak", TenantID: "t"})
+	if err != nil {
+		t.Fatalf("NewGatewayClient: %v", err)
+	}
+	_, evalErr := client.Evaluate(context.Background(), EvaluateRequest{TenantID: "t", PrincipalID: "p", SessionID: "s", ExecutionID: "e"})
+	if evalErr == nil {
+		t.Fatal("Evaluate returned nil error for invalid decision; want malformed response error")
+	}
+	if !errors.Is(evalErr, ErrEvaluateResponseMalformed) {
+		t.Fatalf("Evaluate error = %v, want errors.Is(..., ErrEvaluateResponseMalformed)", evalErr)
+	}
+	if got := ClassifyEvaluateError(evalErr); got != GatewayErrorMalformed {
+		t.Fatalf("ClassifyEvaluateError = %q, want malformed", got)
+	}
+	if strings.Contains(evalErr.Error(), "malformed-secret") {
+		t.Fatalf("malformed response error leaked secret: %v", evalErr)
+	}
+}
+
+func TestClassifyEvaluateErrorMapsTimeoutPolicyUnavailableAndUnavailable(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want GatewayErrorCategory
+	}{
+		{name: "nil", err: nil, want: GatewayErrorNone},
+		{name: "timeout", err: ErrGatewayTimeout, want: GatewayErrorTimeout},
+		{name: "malformed", err: ErrEvaluateResponseMalformed, want: GatewayErrorMalformed},
+		{name: "policy unavailable body", err: errors.New(`gateway status 503: {"code":"policy_unavailable","message":"retry"}`), want: GatewayErrorPolicyUnavailable},
+		{name: "safety unavailable body", err: errors.New(`gateway status 503: {"error_code":"safety_unavailable"}`), want: GatewayErrorPolicyUnavailable},
+		{name: "generic transport", err: errors.New("gateway request failed: connection refused"), want: GatewayErrorUnavailable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ClassifyEvaluateError(tc.err); got != tc.want {
+				t.Fatalf("ClassifyEvaluateError(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestGatewayClientEvaluateTimesOutWithErrGatewayTimeout(t *testing.T) {

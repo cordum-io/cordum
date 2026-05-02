@@ -24,8 +24,9 @@ const (
 )
 
 var (
-	ErrGatewayTimeout = errors.New("agentd gateway timeout")
-	ErrFailClosed     = errors.New("agentd fail closed")
+	ErrGatewayTimeout            = errors.New("agentd gateway timeout")
+	ErrEvaluateResponseMalformed = errors.New("agentd evaluate response malformed")
+	ErrFailClosed                = errors.New("agentd fail closed")
 )
 
 type Clock interface {

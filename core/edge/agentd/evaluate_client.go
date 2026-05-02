@@ -59,7 +59,7 @@ type EvaluateResponse struct {
 	ApprovalURL    string `json:"approval_url,omitempty"`
 	ActionHash     string `json:"action_hash,omitempty"`
 	InputHash      string `json:"input_hash,omitempty"`
-	CacheEligible   bool   `json:"cache_eligible,omitempty"`
+	CacheEligible  bool   `json:"cache_eligible,omitempty"`
 
 	Constraints  map[string]any `json:"constraints,omitempty"`
 	UpdatedInput map[string]any `json:"updated_input,omitempty"`
@@ -95,6 +95,9 @@ func (c *GatewayClient) Evaluate(ctx context.Context, req EvaluateRequest) (*Eva
 	bounded := boundedEvaluateRequest(req)
 	var out EvaluateResponse
 	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/edge/evaluate", bounded, &out); err != nil {
+		return nil, err
+	}
+	if err := validateEvaluateResponse(out); err != nil {
 		return nil, err
 	}
 	return &out, nil
