@@ -84,6 +84,111 @@ boundary. Managed Claude settings, `cordum-agentd`, short-lived tokens,
 OS/tenant controls, audit retention, and tenant-specific policy review are
 still required for enterprise deployment.
 
+## Approval retry and optional inline wait contract
+
+EDGE-012 defines how an Edge action that requires human approval is run. The
+default UX is immediate `REQUIRE_APPROVAL` + retry coordinates; an opt-in
+inline wait is available for local/demo callers.
+
+### Default flow: immediate deny + approve-then-retry
+
+`POST /api/v1/edge/evaluate` for an action that the policy gates with
+`require_human` returns `decision=REQUIRE_APPROVAL` immediately along with
+the coordinates a caller needs to retry once a human approves:
+
+| Response field | Purpose |
+|---|---|
+| `approval_ref` | Server-generated ID with prefix `edge_appr_`. The caller passes this back in a retry request to consume the approval. |
+| `approval_url` | Dashboard path of the form `/edge/approvals/<approval_ref>` for human reviewers. |
+| `action_hash` | `sha256:<hex>` over the canonical action (tenant, session, execution, principal, layer, kind, tool, action_name, capability, risk_tags, labels, input_hash, policy_snapshot). Server-derived; client-supplied hashes are NOT trusted. |
+| `input_hash` | `sha256:<hex>` over the redacted input, set by the EDGE-004 redactor. |
+| `policy_snapshot` | The Safety Kernel snapshot identifier the approval is bound to. |
+| `wait_strategy` | `manual_approval` — caller blocks the action, surfaces the approval to a human. |
+| `wait_after` | `approve_then_retry` — once the human approves, the caller re-issues the same evaluate body with `approval_ref` populated. |
+| `terminal_message` | Concise hook/agentd terminal copy: "approval required. This action was not run. Approval: edge_appr_…. Approve it in Cordum, then retry the command." |
+
+The decision event for the request is persisted with the redacted input and
+hashes. The pending `EdgeApproval` is enqueued with the same
+`tenant/session/execution/action_hash/policy_snapshot` tuple, so repeated
+evaluates of the same action reuse the same approval rather than spamming new
+ones.
+
+### Retry: consume-once via the same evaluate endpoint
+
+Once the approval is approved (via the dashboard or API), the caller re-issues
+`POST /api/v1/edge/evaluate` with the same body plus an `approval_ref` field.
+The gateway:
+
+1. Recomputes `action_hash` against the **fresh** safety policy_snapshot.
+2. Loads the stored `EdgeApproval` and switches on its status:
+   - `approved` + matching `action_hash` + matching `policy_snapshot` →
+     `ALLOW` once. The store atomically marks `consumed_at` under WATCH/MULTI;
+     the response carries `decision=ALLOW`, `permission_decision=allow`,
+     `exit_code=0`, and the consumed approval's hashes for traceability.
+   - `approved` + mismatched action_hash or policy_snapshot →
+     `DENY` "approval action or policy snapshot mismatch; request a new approval".
+     The original approval is **not** consumed and may still be claimed by a
+     valid retry.
+   - `approved` + already consumed → `DENY` "approval already consumed; request
+     a new approval".
+   - `rejected` → `DENY` echoing `approval.resolution_reason`.
+   - `expired`/`invalidated` → `DENY` "approval expired; request a new approval".
+   - `pending` → `REQUIRE_APPROVAL` with the same `approval_ref` (still waiting).
+
+The CAS uses the **stored** `session_id`, `execution_id`, and `event_id` from
+the original approval — the retry's freshly-appended evidence event has a new
+`event_id` that the approval was never bound to. This is intentional: the
+binding to the original event is part of the action's identity.
+
+If the fresh safety decision is anything other than `REQUIRE_APPROVAL`
+(`ALLOW`, `DENY`, `THROTTLE`, `CONSTRAIN`), the approval is not consumed: a
+fresh `DENY` must win over a stale approval, and a fresh `ALLOW` does not
+need one. The approval's lifecycle continues until explicitly resolved or it
+expires.
+
+### Optional inline wait (opt-in, demo only)
+
+For local agentd or interactive demo callers that prefer a single blocking
+RPC to poll-and-retry, `/api/v1/edge/evaluate` and a standalone
+`POST /api/v1/edge/approvals/{approval_ref}/wait` endpoint accept opt-in
+inline-wait fields:
+
+- `wait_for_approval: true` (evaluate request only) — after enqueuing or
+  resolving the approval, the handler bound-waits for the approval to leave
+  Pending, then routes through the same consume-once CAS.
+- `approval_wait_timeout_ms` (evaluate or `/wait` body) — caller-requested
+  wait budget. Server clamps to a 5-minute maximum and uses 30 seconds when
+  omitted or non-positive. Non-positive values fall back to the default; values
+  larger than the cap are silently clamped.
+
+The wait helper polls the EDGE-011 store every 250 ms with `context.WithTimeout`
+and `time.NewTicker`, both released via `defer` so timeout, request cancellation,
+and store errors all exit without leaking goroutines or tickers. After the wait
+returns, the consume helper surfaces whatever state the approval ended in
+(approved → consume → ALLOW, rejected → DENY, expired → DENY, still pending →
+REQUIRE_APPROVAL with the same approval_ref).
+
+Inline wait is **not** required by browser/dashboard approval UX. Production
+hooks and agentd should default to `wait_for_approval: false` and treat the
+inline-wait affordance as a local-development convenience.
+
+### What this contract does not do
+
+- Approvals do **not** create Cordum Jobs. The action remains evidence in the
+  `EdgeSession → AgentExecution → AgentActionEvent` log; the approval is a
+  separate `EdgeApproval` record in the Edge approval store.
+- A consumed approval is single-use. There is no "approve a class of actions"
+  or "approve for the next 5 minutes" — each action retry computes a fresh
+  action_hash against the fresh policy_snapshot and consumes (at most) one
+  matching approved record.
+- Approvals do not bypass tenant isolation. `GetApproval`, `ApproveApproval`,
+  `RejectApproval`, `ClaimApproval`, and the wait helper are all
+  tenant-scoped; cross-tenant requests get 403/404 without metadata leakage.
+- The default deny + retry UX is the **production** path. Inline wait is a
+  local/demo convenience; production deployments should use the standard
+  approve-then-retry flow with the dashboard or `/api/v1/edge/approvals/...`
+  resolution endpoints.
+
 ## Test coverage
 
 The Edge policy examples are executable fixtures, not static samples:
