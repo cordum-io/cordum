@@ -75,6 +75,7 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
       { path: "/", label: "Dashboard", icon: LayoutGrid, end: true },
       { path: "/agents", label: "Agents", icon: Cpu },
       { path: "/jobs", label: "Jobs", icon: ListChecks },
+      { path: "/edge/sessions", label: "Edge Sessions", icon: ShieldCheck },
     ],
   },
   {

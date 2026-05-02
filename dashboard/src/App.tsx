@@ -71,6 +71,7 @@ const EvalDatasetDetailPage = lazy(() => import("./pages/EvalDatasetDetailPage")
 const EvalRunDetailPage = lazy(() => import("./pages/EvalRunDetailPage"));
 const CopilotSessionPage = lazy(() => import("./pages/CopilotSessionPage"));
 const EdgeSessionDetailPage = lazy(() => import("./pages/EdgeSessionDetailPage"));
+const EdgeSessionsPage = lazy(() => import("./pages/EdgeSessionsPage"));
 
 // Policy Studio tab redirects — canonical `/govern/<tab>` aliases land on
 // the tabbed overview with the right tab/mode pre-selected. These are not
@@ -128,6 +129,7 @@ function ProtectedRoutes() {
           )}
           <Route path="/jobs" element={<JobsPage />} />
           <Route path="/jobs/:id" element={<JobDetailPage />} />
+          <Route path="/edge/sessions" element={<EdgeSessionsPage />} />
           <Route path="/edge/sessions/:sessionId" element={<EdgeSessionDetailPage />} />
 
           {/* ORCHESTRATE */}
