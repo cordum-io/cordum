@@ -80,11 +80,16 @@ type AgentdDecision struct {
 }
 
 type HTTPAgentdClient struct {
-	endpoint string
-	client   *http.Client
+	endpoint  string
+	hookNonce string
+	client    *http.Client
 }
 
 func NewHTTPAgentdClient(rawURL string, timeout time.Duration) (*HTTPAgentdClient, error) {
+	return NewHTTPAgentdClientWithNonce(rawURL, timeout, "")
+}
+
+func NewHTTPAgentdClientWithNonce(rawURL string, timeout time.Duration, hookNonce string) (*HTTPAgentdClient, error) {
 	if strings.TrimSpace(rawURL) == "" {
 		rawURL = "http://127.0.0.1:8765/v1/edge/hooks/claude"
 	}
@@ -98,10 +103,15 @@ func NewHTTPAgentdClient(rawURL string, timeout time.Duration) (*HTTPAgentdClien
 	if !isLoopbackHost(u.Hostname()) {
 		return nil, fmt.Errorf("agentd url must be loopback/local")
 	}
+	endpoint, hadURLNonce := stripAgentdURLNonce(u.String())
+	nonce := strings.TrimSpace(hookNonce)
+	if hadURLNonce && nonce == "" {
+		return nil, errors.New("agentd nonce must be supplied via CORDUM_AGENTD_HOOK_NONCE, not embedded in CORDUM_AGENTD_URL")
+	}
 	if timeout <= 0 {
 		timeout = DefaultHookTimeout
 	}
-	return &HTTPAgentdClient{endpoint: u.String(), client: &http.Client{Timeout: timeout}}, nil
+	return &HTTPAgentdClient{endpoint: endpoint, hookNonce: nonce, client: &http.Client{Timeout: timeout}}, nil
 }
 
 func (c *HTTPAgentdClient) EvaluateHook(ctx context.Context, req AgentdRequest) (AgentdDecision, error) {
@@ -117,6 +127,9 @@ func (c *HTTPAgentdClient) EvaluateHook(ctx context.Context, req AgentdRequest) 
 		return AgentdDecision{}, fmt.Errorf("create agentd request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if c.hookNonce != "" {
+		httpReq.Header.Set("X-Cordum-Agentd-Nonce", c.hookNonce)
+	}
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
 		return AgentdDecision{}, err

@@ -2,10 +2,16 @@ package claude
 
 import (
 	"encoding/json"
+	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 )
+
+const syntheticAgentdHexNonce = "f00ddeadbeefcafe0123456789abcdef"
+
+var agentdURLNoncePattern = regexp.MustCompile(`http://127\.0\.0\.1:\d+/[^"\s?]*\?[^"\s]*nonce=[0-9a-fA-F]{32}`)
 
 func TestGenerateDevSettingsJSONIncludesCordumCommandHooks(t *testing.T) {
 	data, err := GenerateDevSettingsJSON(DevSettingsOptions{
@@ -64,6 +70,104 @@ func TestGenerateDevSettingsJSONIncludesCordumCommandHooks(t *testing.T) {
 		t.Fatalf("dev settings must not generate HTTP hook configuration: %s", compact)
 	}
 	assertNoSyntheticSecrets(t, compact)
+}
+
+func TestDevSettingsRendersNonceOutsideURL(t *testing.T) {
+	data, err := GenerateDevSettingsJSON(DevSettingsOptions{
+		SessionID:           "sess-123",
+		ExecutionID:         "exec-456",
+		AgentdURL:           "http://127.0.0.1:8765/v1/edge/hooks/claude?nonce=" + syntheticAgentdHexNonce,
+		AgentdHookNonce:     syntheticAgentdHexNonce,
+		HookCommand:         "cordum-hook",
+		HookTimeout:         DefaultHookTimeout,
+		PolicyMode:          "local-dev-enforce",
+		ApprovalWaitTimeout: 30 * time.Second,
+		Platform:            "linux",
+	})
+	if err != nil {
+		t.Fatalf("GenerateDevSettingsJSON returned error: %v", err)
+	}
+
+	settings := decodeJSONMap(t, data)
+	env := jsonObject(t, settings["env"])
+	if got := env["CORDUM_AGENTD_URL"]; got != "http://127.0.0.1:8765/v1/edge/hooks/claude" {
+		t.Fatalf("CORDUM_AGENTD_URL = %v, want bare loopback hook URL", got)
+	}
+	if _, ok := env["CORDUM_AGENTD_HOOK_NONCE"]; ok {
+		t.Fatalf("dev settings must not persist CORDUM_AGENTD_HOOK_NONCE: %#v", env)
+	}
+	assertRenderedSettingsOmitsAgentdNonce(t, data, syntheticAgentdHexNonce)
+}
+
+func TestDevSettingsOmitsAgentdNonceVariants(t *testing.T) {
+	encodedHex := url.QueryEscape(syntheticAgentdHexNonce)
+	cases := []struct {
+		name      string
+		urlNonce  string
+		forbidden []string
+	}{
+		{name: "lower_hex", urlNonce: syntheticAgentdHexNonce, forbidden: []string{syntheticAgentdHexNonce}},
+		{name: "upper_hex", urlNonce: strings.ToUpper(syntheticAgentdHexNonce), forbidden: []string{strings.ToUpper(syntheticAgentdHexNonce)}},
+		{name: "mixed_hex", urlNonce: "F00dDeadBeefCafe0123456789abcDEF", forbidden: []string{"F00dDeadBeefCafe0123456789abcDEF"}},
+		{name: "base64url", urlNonce: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ", forbidden: []string{"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"}},
+		{name: "url_encoded", urlNonce: encodedHex, forbidden: []string{syntheticAgentdHexNonce, encodedHex}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := GenerateDevSettingsJSON(DevSettingsOptions{
+				SessionID:           "sess-123",
+				ExecutionID:         "exec-456",
+				AgentdURL:           "http://127.0.0.1:8765/v1/edge/hooks/claude?nonce=" + tc.urlNonce,
+				AgentdHookNonce:     tc.urlNonce,
+				HookCommand:         "cordum-hook",
+				HookTimeout:         DefaultHookTimeout,
+				PolicyMode:          "local-dev-enforce",
+				ApprovalWaitTimeout: 30 * time.Second,
+				Platform:            "linux",
+			})
+			if err != nil {
+				t.Fatalf("GenerateDevSettingsJSON returned error: %v", err)
+			}
+			env := jsonObject(t, decodeJSONMap(t, data)["env"])
+			if got := env["CORDUM_AGENTD_URL"]; got != "http://127.0.0.1:8765/v1/edge/hooks/claude" {
+				t.Fatalf("CORDUM_AGENTD_URL = %v, want bare loopback hook URL", got)
+			}
+			if _, ok := env["CORDUM_AGENTD_HOOK_NONCE"]; ok {
+				t.Fatalf("dev settings must not persist CORDUM_AGENTD_HOOK_NONCE: %#v", env)
+			}
+			for _, forbidden := range tc.forbidden {
+				if strings.Contains(string(data), forbidden) {
+					t.Fatalf("rendered settings leaked nonce variant %q in %s", forbidden, data)
+				}
+			}
+			if strings.Contains(string(data), "nonce=") {
+				t.Fatalf("rendered settings kept nonce query: %s", data)
+			}
+		})
+	}
+}
+
+func TestDevSettingsRejectsPersistedNonceEnv(t *testing.T) {
+	_, err := GenerateDevSettingsJSON(DevSettingsOptions{
+		SessionID:           "sess-123",
+		ExecutionID:         "exec-456",
+		AgentdURL:           "http://127.0.0.1:8765/v1/edge/hooks/claude",
+		HookCommand:         "cordum-hook",
+		HookTimeout:         DefaultHookTimeout,
+		PolicyMode:          "local-dev-enforce",
+		ApprovalWaitTimeout: 30 * time.Second,
+		Platform:            "linux",
+		ExtraEnv:            map[string]string{"CORDUM_AGENTD_HOOK_NONCE": syntheticAgentdHexNonce},
+	})
+	if err == nil {
+		t.Fatalf("GenerateDevSettingsJSON accepted persisted CORDUM_AGENTD_HOOK_NONCE")
+	}
+	if strings.Contains(err.Error(), syntheticAgentdHexNonce) {
+		t.Fatalf("error leaked nonce value: %v", err)
+	}
+	if !isSensitiveEnvKey("CORDUM_AGENTD_HOOK_NONCE") {
+		t.Fatalf("CORDUM_AGENTD_HOOK_NONCE must remain classified as sensitive")
+	}
 }
 
 func TestGenerateDevSettingsJSONRejectsRawSecretEnv(t *testing.T) {
@@ -239,5 +343,16 @@ func assertCommandHook(t *testing.T, hooks map[string]any, eventName, matcher, c
 	}
 	if _, ok := hook["url"]; ok {
 		t.Fatalf("%s hook unexpectedly contains url: %#v", eventName, hook)
+	}
+}
+
+func assertRenderedSettingsOmitsAgentdNonce(t *testing.T, data []byte, nonce string) {
+	t.Helper()
+	text := string(data)
+	if strings.Contains(text, nonce) {
+		t.Fatalf("rendered settings leaked agentd nonce %q in %s", nonce, text)
+	}
+	if agentdURLNoncePattern.Match(data) {
+		t.Fatalf("rendered settings leaked nonce in CORDUM_AGENTD_URL: %s", text)
 	}
 }

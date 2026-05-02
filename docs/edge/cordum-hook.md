@@ -38,13 +38,19 @@ EDGE-015 supports a loopback HTTP endpoint for the local agentd contract:
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| `CORDUM_AGENTD_URL` | `http://127.0.0.1:8765/v1/edge/hooks/claude` | Local agentd decision endpoint. Host must be loopback (`localhost`, `127.0.0.1`, or `::1`). Remote Gateway URLs are rejected. |
+| `CORDUM_AGENTD_URL` | `http://127.0.0.1:8765/v1/edge/hooks/claude` | Local agentd decision endpoint. Host must be loopback (`localhost`, `127.0.0.1`, or `::1`). Remote Gateway URLs are rejected. Must be the bare URL without `?nonce=` in generated settings. |
+| `CORDUM_AGENTD_HOOK_NONCE` | empty | Runtime-only process env injected by the trusted launcher/agentd wrapper. `cordum-hook` sends it as `X-Cordum-Agentd-Nonce`; generated Claude settings and managed-settings JSON must never persist this value. |
 | `CORDUM_EDGE_EXECUTION_ID` | empty | Optional execution correlation ID forwarded to agentd. |
 | `CORDUM_EDGE_SESSION_ID` | empty | Optional generated settings/session correlation ID. Claude's hook payload `session_id` remains the primary runtime session ID. |
 | `CORDUM_EDGE_APPROVAL_WAIT_TIMEOUT` | empty | Optional generated settings value for future approval wait UX; EDGE-015 does not inline-wait. |
 | `CORDUM_EDGE_PLATFORM` | empty | Optional generated settings platform marker used for diagnostics and docs. |
 
-Future `cordum-agentd` work may add a user-only socket transport. Until then, the loopback URL is still a local-agentd boundary; do not configure the hook to call Gateway or any remote host.
+Future `cordum-agentd` work may add a user-only socket transport. Until then,
+the loopback URL is still a local-agentd boundary; do not configure the hook to
+call Gateway or any remote host. Existing `CORDUM_AGENTD_URL?...nonce=` settings
+fail closed with a migration error unless `CORDUM_AGENTD_HOOK_NONCE` is present;
+agentd accepts the query-param path only for one release transition and emits a
+deprecation warning.
 
 The request sent to agentd contains bounded hook metadata, session/execution IDs, tool metadata, and the bounded raw Claude payload only in memory. The hook does not persist or log raw payloads.
 

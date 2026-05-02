@@ -45,7 +45,7 @@ func GenerateManagedSettingsTemplate(opts ManagedSettingsOptions) (ManagedSettin
 	env := map[string]string{
 		"CORDUM_EDGE_MODE":           "enterprise-strict",
 		"CORDUM_AGENTD_FAIL_CLOSED":  "true",
-		"CORDUM_AGENTD_URL":          strings.TrimSpace(opts.AgentdURL),
+		"CORDUM_AGENTD_URL":          agentdURLForSettings(opts.AgentdURL),
 		"CORDUM_AGENTD_HOOK_TIMEOUT": durationForEnv(timeout),
 		"ANTHROPIC_BASE_URL":         strings.TrimSpace(opts.LLMProxyBaseURL),
 	}
@@ -98,7 +98,7 @@ func validateManagedSettingsOptions(opts ManagedSettingsOptions) error {
 	// happy path unreachable. The default is still validated for sensitive
 	// values via the loop below.
 	required := map[string]string{
-		"agentd_url":             opts.AgentdURL,
+		"agentd_url":             agentdURLForSettings(opts.AgentdURL),
 		"mcp_gateway_url":        opts.MCPGatewayURL,
 		"llm_proxy_base_url":     opts.LLMProxyBaseURL,
 		"api_key_helper_command": opts.APIKeyHelperCommand,

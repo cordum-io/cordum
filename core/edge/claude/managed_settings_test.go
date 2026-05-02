@@ -107,6 +107,36 @@ func TestGenerateManagedSettingsTemplateIncludesEnterpriseControls(t *testing.T)
 	}
 }
 
+func TestManagedSettingsRendersNonceOutsideURL(t *testing.T) {
+	bundle, err := GenerateManagedSettingsTemplate(ManagedSettingsOptions{
+		HookCommand:                "/opt/cordum/bin/cordum-hook",
+		HookTimeout:                DefaultHookTimeout,
+		AgentdURL:                  "http://127.0.0.1:8765/v1/edge/hooks/claude?nonce=" + syntheticAgentdHexNonce,
+		AgentdHookNonce:            syntheticAgentdHexNonce,
+		MCPGatewayURL:              "https://mcp.cordum.example/mcp",
+		LLMProxyBaseURL:            "https://llm-proxy.cordum.example",
+		APIKeyHelperCommand:        "/opt/cordum/bin/cordum-agentd claude api-key-helper",
+		ForceRemoteSettingsRefresh: true,
+		Platform:                   "linux",
+	})
+	if err != nil {
+		t.Fatalf("GenerateManagedSettingsTemplate returned error: %v", err)
+	}
+
+	settings := decodeJSONMap(t, bundle.ManagedSettingsJSON)
+	env := jsonObject(t, settings["env"])
+	if got := env["CORDUM_AGENTD_URL"]; got != "http://127.0.0.1:8765/v1/edge/hooks/claude" {
+		t.Fatalf("CORDUM_AGENTD_URL = %v, want bare loopback hook URL", got)
+	}
+	if _, ok := env["CORDUM_AGENTD_HOOK_NONCE"]; ok {
+		t.Fatalf("managed settings must not persist CORDUM_AGENTD_HOOK_NONCE: %#v", env)
+	}
+	assertRenderedSettingsOmitsAgentdNonce(t, bundle.ManagedSettingsJSON, syntheticAgentdHexNonce)
+	if combined := string(bundle.ManagedSettingsJSON) + string(bundle.ManagedMCPJSON) + bundle.Notes; strings.Contains(combined, syntheticAgentdHexNonce) {
+		t.Fatalf("managed bundle leaked agentd nonce: %s", combined)
+	}
+}
+
 func TestGenerateManagedSettingsTemplateIsParseableForPlatformPathVariants(t *testing.T) {
 	cases := []struct {
 		name string

@@ -128,10 +128,14 @@ The P0 implementation defaults to a local-only hook endpoint:
 http://127.0.0.1:8765/v1/edge/hooks/claude
 ```
 
-Loopback transport requires a high-entropy per-session nonce. Agentd accepts the
-nonce either in `X-Cordum-Agentd-Nonce` or as a `?nonce=` query parameter so the
-existing `cordum-hook` HTTP client can use a configured local URL without a
-shared-code change. Broad or remote binds such as `0.0.0.0` are rejected.
+Loopback transport requires a high-entropy per-session nonce. Hook-to-agentd
+authentication uses `CORDUM_AGENTD_HOOK_NONCE` in the `cordum-hook` process
+environment and sends it as the `X-Cordum-Agentd-Nonce` request header. The
+nonce is **never** embedded in `CORDUM_AGENTD_URL`, generated Claude settings,
+managed-settings JSON, or persisted agentd state. Agentd still accepts the
+legacy `?nonce=` query-parameter path for one release transition and logs a
+deprecation warning on each query-param hit; removal is tracked by
+`EDGE-017.4.1`. Broad or remote binds such as `0.0.0.0` are rejected.
 
 P0 does **not** start a Unix socket or Windows named-pipe listener. If
 `CORDUM_AGENTD_SOCKET` is set to a non-HTTP path such as

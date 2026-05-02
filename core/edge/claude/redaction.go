@@ -13,6 +13,8 @@ var redactionPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`sk-[A-Za-z0-9_-]+`),
 	regexp.MustCompile(`ghp_[A-Za-z0-9_]+`),
 	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
+	regexp.MustCompile(`(?i)\b[0-9a-f]{32}\b`),
+	regexp.MustCompile(`\b[A-Za-z0-9_-]{43}\b`),
 	regexp.MustCompile(`[A-Za-z0-9/+=]{40,}`),
 }
 

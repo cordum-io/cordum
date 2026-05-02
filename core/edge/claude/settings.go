@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ type DevSettingsOptions struct {
 	SessionID            string
 	ExecutionID          string
 	AgentdURL            string
+	AgentdHookNonce      string
 	AgentdSocket         string
 	HookCommand          string
 	HookTimeout          time.Duration
@@ -41,6 +43,7 @@ type ManagedSettingsOptions struct {
 	HookCommand                string
 	HookTimeout                time.Duration
 	AgentdURL                  string
+	AgentdHookNonce            string
 	MCPGatewayURL              string
 	LLMProxyBaseURL            string
 	APIKeyHelperCommand        string
@@ -91,7 +94,7 @@ func GenerateDevSettingsJSON(opts DevSettingsOptions) ([]byte, error) {
 		"CORDUM_EDGE_PLATFORM":              strings.TrimSpace(opts.Platform),
 	}
 	if strings.TrimSpace(opts.AgentdURL) != "" {
-		env["CORDUM_AGENTD_URL"] = strings.TrimSpace(opts.AgentdURL)
+		env["CORDUM_AGENTD_URL"] = agentdURLForSettings(opts.AgentdURL)
 	}
 	if strings.TrimSpace(opts.AgentdSocket) != "" {
 		env["CORDUM_AGENTD_SOCKET"] = strings.TrimSpace(opts.AgentdSocket)
@@ -164,12 +167,35 @@ func isSensitiveEnvKey(key string) bool {
 	if strings.Contains(k, "api_key") || strings.Contains(k, "apikey") {
 		return true
 	}
-	for _, marker := range []string{"password", "passwd", "secret", "token", "credential"} {
+	for _, marker := range []string{"password", "passwd", "secret", "token", "credential", "nonce"} {
 		if strings.Contains(k, marker) {
 			return true
 		}
 	}
 	return false
+}
+
+func agentdURLForSettings(raw string) string {
+	cleaned, _ := stripAgentdURLNonce(raw)
+	return cleaned
+}
+
+func stripAgentdURLNonce(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", false
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return trimmed, false
+	}
+	q := u.Query()
+	if _, ok := q["nonce"]; !ok {
+		return trimmed, false
+	}
+	q.Del("nonce")
+	u.RawQuery = q.Encode()
+	return u.String(), true
 }
 
 func commandHookSettings(hookCommand string, timeout time.Duration, watchList []string) map[string][]claudeHookSet {

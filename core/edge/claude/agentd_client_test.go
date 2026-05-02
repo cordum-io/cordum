@@ -66,6 +66,67 @@ func TestHTTPAgentdClientPostsBoundedRequestToLoopback(t *testing.T) {
 	}
 }
 
+func TestRunAuthenticatesViaHeaderFromEnv(t *testing.T) {
+	handlerErr := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Cordum-Agentd-Nonce"); got != syntheticAgentdHexNonce {
+			reportAgentdHandlerErr(handlerErr, fmt.Errorf("X-Cordum-Agentd-Nonce=%q, want synthetic env nonce", got))
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if strings.Contains(r.URL.RawQuery, "nonce=") {
+			reportAgentdHandlerErr(handlerErr, fmt.Errorf("request URL leaked nonce query: %s", r.URL.String()))
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		reportAgentdHandlerErr(handlerErr, nil)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"decision":"allow","reason":"header nonce ok"}`))
+	}))
+	defer server.Close()
+
+	code, stdout, stderr := runHook(t, RunOptions{
+		Args:  []string{"claude", "pre-tool-use"},
+		Stdin: hookInput(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"npm test"}}`),
+		Env: map[string]string{
+			"CORDUM_AGENTD_URL":        server.URL,
+			"CORDUM_AGENTD_HOOK_NONCE": syntheticAgentdHexNonce,
+		},
+	})
+	assertAgentdHandlerErr(t, handlerErr)
+	if code != 0 {
+		t.Fatalf("exit code=%d stderr=%q", code, stderr)
+	}
+	if stderr != "" {
+		t.Fatalf("stderr should be empty for header-auth allow, got %q", stderr)
+	}
+	assertCompactJSON(t, stdout, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"header nonce ok"}}`)
+	if strings.Contains(stdout+stderr, syntheticAgentdHexNonce) {
+		t.Fatalf("hook output leaked nonce: stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestRunLegacyNonceURLWithoutEnvFailsClosedClearly(t *testing.T) {
+	code, stdout, stderr := runHook(t, RunOptions{
+		Args:  []string{"claude", "pre-tool-use"},
+		Stdin: hookInput(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"npm test"}}`),
+		Env: map[string]string{
+			"CORDUM_AGENTD_URL":         "http://127.0.0.1:8765/v1/edge/hooks/claude?nonce=" + syntheticAgentdHexNonce,
+			"CORDUM_AGENTD_FAIL_CLOSED": "true",
+		},
+	})
+	if code != 0 {
+		t.Fatalf("exit code=%d stderr=%q", code, stderr)
+	}
+	assertCompactJSON(t, stdout, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cordum Edge unavailable; blocking by fail-closed policy"}}`)
+	if !strings.Contains(stderr, "CORDUM_AGENTD_HOOK_NONCE") || !strings.Contains(stderr, "not embedded in CORDUM_AGENTD_URL") {
+		t.Fatalf("stderr missing clear nonce migration error: %q", stderr)
+	}
+	if strings.Contains(stdout+stderr, syntheticAgentdHexNonce) {
+		t.Fatalf("fail-closed output leaked nonce: stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
 func reportAgentdHandlerErr(ch chan<- error, err error) {
 	select {
 	case ch <- err:

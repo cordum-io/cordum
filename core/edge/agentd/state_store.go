@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,7 +51,8 @@ func (s *MemoryStateStore) Load(_ context.Context, sessionID string) (SessionSta
 }
 
 type FileStateStore struct {
-	root string
+	root        string
+	strictPerms bool
 }
 
 func NewFileStateStore(root string) (*FileStateStore, error) {
@@ -62,7 +64,17 @@ func NewFileStateStore(root string) (*FileStateStore, error) {
 		return nil, fmt.Errorf("create state root: %w", err)
 	}
 	_ = os.Chmod(root, 0o700)
-	return &FileStateStore{root: root}, nil
+	store := &FileStateStore{root: root, strictPerms: stateStoreStrictPermsEnabled()}
+	if err := store.verifyRootPermissions(); err != nil {
+		return nil, err
+	}
+	if err := store.hardenPath(root); err != nil {
+		return nil, err
+	}
+	if err := store.verifyRootPermissions(); err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 func (s *FileStateStore) StatePath(sessionID string) string {
@@ -82,6 +94,9 @@ func (s *FileStateStore) Save(_ context.Context, state SessionState) error {
 		return fmt.Errorf("create session state dir: %w", err)
 	}
 	_ = os.Chmod(dir, 0o700)
+	if err := s.hardenPath(dir); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal session state: %w", err)
@@ -107,7 +122,48 @@ func (s *FileStateStore) Save(_ context.Context, state SessionState) error {
 		return fmt.Errorf("rename state file: %w", err)
 	}
 	_ = os.Chmod(s.StatePath(state.SessionID), 0o600)
+	if err := s.hardenPath(s.StatePath(state.SessionID)); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *FileStateStore) hardenPath(path string) error {
+	if err := applyStatePathPermissions(path); err != nil {
+		return handleStatePermissionError(s.strictPerms, path, err)
+	}
+	return nil
+}
+
+func (s *FileStateStore) verifyRootPermissions() error {
+	if err := verifyStateDirPermissions(s.root); err != nil {
+		return handleStatePermissionError(s.strictPerms, s.root, err)
+	}
+	return nil
+}
+
+func stateStoreStrictPermsEnabled() bool {
+	return parseBool(os.Getenv("CORDUM_AGENTD_STRICT_PERMS"))
+}
+
+func handleStatePermissionError(strict bool, path string, err error) error {
+	if strict {
+		return fmt.Errorf("state permissions strict check failed for %s: %w", path, err)
+	}
+	warnStatePermissionOnce(path, err)
+	return nil
+}
+
+var statePermissionsWarnOnce sync.Once
+
+func warnStatePermissionOnce(path string, err error) {
+	statePermissionsWarnOnce.Do(func() {
+		slog.Warn(
+			"agentd state permissions are broader than owner-only; continuing because CORDUM_AGENTD_STRICT_PERMS is not set",
+			"path", path,
+			"error", err,
+		)
+	})
 }
 
 func (s *FileStateStore) Load(_ context.Context, sessionID string) (SessionState, bool, error) {
@@ -160,7 +216,7 @@ func sanitizeMetadata(in map[string]string) map[string]string {
 func isSensitiveMetadataKey(key string) bool {
 	k := strings.ToLower(key)
 	for _, marker := range []string{
-		"password", "passwd", "secret", "token", "api_key", "apikey", "credential", "auth", "raw_hook_payload", "raw_payload",
+		"password", "passwd", "secret", "token", "nonce", "api_key", "apikey", "credential", "auth", "raw_hook_payload", "raw_payload",
 	} {
 		if strings.Contains(k, marker) {
 			return true

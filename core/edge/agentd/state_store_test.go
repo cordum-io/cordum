@@ -73,6 +73,7 @@ func TestFileStateStoreDropsSecretLikeMetadataKeys(t *testing.T) {
 	t.Parallel()
 
 	const apiKey = "super-secret-api-key-1234"
+	const hookNonce = "f00ddeadbeefcafe0123456789abcdef"
 	const providerToken = "provider-token-5678"
 	store, err := NewFileStateStore(t.TempDir())
 	if err != nil {
@@ -89,6 +90,7 @@ func TestFileStateStoreDropsSecretLikeMetadataKeys(t *testing.T) {
 		Metadata: map[string]string{
 			"cwd":                  "D:/Cordum/cordum",
 			"cordum_api_key":       apiKey,
+			"agentd_hook_nonce":    hookNonce,
 			"model_provider_token": providerToken,
 			"raw_hook_payload":     `{"authorization":"Bearer ` + providerToken + `"}`,
 		},
@@ -101,7 +103,7 @@ func TestFileStateStoreDropsSecretLikeMetadataKeys(t *testing.T) {
 		t.Fatalf("ReadFile: %v", err)
 	}
 	text := string(data)
-	if strings.Contains(text, apiKey) || strings.Contains(text, providerToken) || strings.Contains(text, "raw_hook_payload") {
+	if strings.Contains(text, apiKey) || strings.Contains(text, hookNonce) || strings.Contains(text, providerToken) || strings.Contains(text, "raw_hook_payload") {
 		t.Fatalf("state persisted secret-like metadata: %s", text)
 	}
 	loaded, ok, err := store.Load(context.Background(), state.SessionID)
@@ -113,5 +115,8 @@ func TestFileStateStoreDropsSecretLikeMetadataKeys(t *testing.T) {
 	}
 	if _, ok := loaded.Metadata["cordum_api_key"]; ok {
 		t.Fatalf("secret metadata key survived load: %#v", loaded.Metadata)
+	}
+	if _, ok := loaded.Metadata["agentd_hook_nonce"]; ok {
+		t.Fatalf("nonce metadata key survived load: %#v", loaded.Metadata)
 	}
 }

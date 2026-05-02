@@ -66,7 +66,11 @@ func hookAgentdClient(opts RunOptions, postBudget time.Duration) (AgentdClient, 
 	if opts.Agentd != nil {
 		return opts.Agentd, nil
 	}
-	return NewHTTPAgentdClient(envValue(opts.Env, "CORDUM_AGENTD_URL"), postBudget)
+	return NewHTTPAgentdClientWithNonce(
+		envValue(opts.Env, "CORDUM_AGENTD_URL"),
+		postBudget,
+		envValue(opts.Env, "CORDUM_AGENTD_HOOK_NONCE"),
+	)
 }
 
 func evaluateAgentdHook(ctx context.Context, agentd AgentdClient, req AgentdRequest, postBudget time.Duration) (AgentdDecision, error) {

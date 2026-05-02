@@ -77,6 +77,7 @@ Token storage decisions:
 
 - Do not put long-lived Cordum API keys, tenant admin tokens, or model provider secrets in Claude settings.
 - Prefer the loopback-only `cordum-agentd` HTTP endpoint (default `http://127.0.0.1:8765/v1/edge/hooks/claude`) for hook-to-agentd communication. Remote Gateway URLs are rejected by the hook client, so the trust boundary stays on the same machine. A future user-only Unix-domain-socket or named-pipe transport remains a hardening option but is not required for P0.
+- Treat the loopback agentd nonce as a token-class secret. `EDGE-017.4` resolves the settings-leak finding by keeping `CORDUM_AGENTD_URL` bare, injecting `CORDUM_AGENTD_HOOK_NONCE` only into the runtime hook process environment, and sending it as `X-Cordum-Agentd-Nonce`; the nonce must not appear in generated Claude settings, managed-settings JSON, persisted state, logs, metrics, or evidence exports.
 - Use short-lived scoped session tokens only where a hook or wrapper must authenticate across a process boundary.
 - Redact token-like values before logs, events, artifacts, dashboard state, or evidence exports.
 - Enterprise deployments should use managed settings plus OS keychain, service bootstrap, or agentd-held credentials rather than user-editable secrets.

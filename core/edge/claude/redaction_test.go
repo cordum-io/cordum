@@ -13,13 +13,15 @@ func TestRedactDiagnosticMasksSyntheticSecretsByValue(t *testing.T) {
 		"github=ghp_testtoken",
 		"aws_access=AKIAIOSFODNN7EXAMPLE",
 		"aws_secret=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		"legacy_nonce=f00ddeadbeefcafe0123456789abcdef",
+		"agentd_nonce=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ",
 		"header=Authorization: Bearer sk-test-secret",
 		`json={"password":"hunter2","note":"token ghp_testtoken inside neutral field"}`,
 	}, " ")
 
 	got := redactDiagnostic(input)
 	assertNoSyntheticSecrets(t, got)
-	for _, mustRedact := range []string{"hunter2", "Authorization: Bearer"} {
+	for _, mustRedact := range []string{"hunter2", "Authorization: Bearer", "f00ddeadbeefcafe0123456789abcdef", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ"} {
 		if strings.Contains(got, mustRedact) {
 			t.Fatalf("redaction missed %q in %q", mustRedact, got)
 		}
