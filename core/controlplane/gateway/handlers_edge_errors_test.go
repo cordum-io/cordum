@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	edgecore "github.com/cordum/cordum/core/edge"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -111,6 +112,57 @@ func TestEdgeErrorShapeExportSessionMissing(t *testing.T) {
 	_, handler := newEdgeRouteTestServer(t)
 	rr := edgeRoutePOST(t, handler, "/api/v1/edge/sessions/sess-missing/export", `{}`)
 	assertEdgeErrorShape(t, rr, http.StatusNotFound, edgeErrCodeNotFound)
+}
+
+// TestGatewayEdgeExportEmitsAuditEventForSuccessAndMissing pins
+// EDGE-014 step-10 audit instrumentation for the export handler.
+// Successful export emits result=ok with severity info; missing-session
+// 404 emits result=missing with severity medium.
+func TestGatewayEdgeExportEmitsAuditEventForSuccessAndMissing(t *testing.T) {
+	s, handler := newEdgeRouteTestServer(t)
+	sink := &testAuditSender{}
+	s.auditExporter = sink
+	session := createEdgeRouteSession(t, handler)
+	before := sink.Len()
+
+	// Successful export.
+	ok := edgeRoutePOST(t, handler, "/api/v1/edge/sessions/"+session.SessionID+"/export", `{}`)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("export status = %d body=%s", ok.Code, ok.Body.String())
+	}
+	if sink.Len()-before != 1 {
+		t.Fatalf("after export ok: emitted = %d, want 1", sink.Len()-before)
+	}
+	ev := sink.Get(sink.Len() - 1)
+	if ev.EventType != audit.EventEdgeArtifactExported {
+		t.Errorf("EventType = %q, want %q", ev.EventType, audit.EventEdgeArtifactExported)
+	}
+	if ev.Severity != audit.SeverityInfo {
+		t.Errorf("Severity = %q, want info", ev.Severity)
+	}
+	if ev.Extra["result"] != "ok" {
+		t.Errorf("Extra[result] = %q, want ok", ev.Extra["result"])
+	}
+	if ev.Extra["artifact_type"] != "edge.session_export" {
+		t.Errorf("Extra[artifact_type] = %q, want edge.session_export", ev.Extra["artifact_type"])
+	}
+
+	// Missing session -> 404 + audit result=missing.
+	beforeMissing := sink.Len()
+	miss := edgeRoutePOST(t, handler, "/api/v1/edge/sessions/sess-missing-audit/export", `{}`)
+	if miss.Code != http.StatusNotFound {
+		t.Fatalf("missing export status = %d body=%s", miss.Code, miss.Body.String())
+	}
+	if sink.Len()-beforeMissing != 1 {
+		t.Fatalf("after missing export: emitted = %d, want 1", sink.Len()-beforeMissing)
+	}
+	ev = sink.Get(sink.Len() - 1)
+	if ev.Extra["result"] != "missing" {
+		t.Errorf("missing Extra[result] = %q, want missing", ev.Extra["result"])
+	}
+	if ev.Severity != audit.SeverityMedium {
+		t.Errorf("missing Severity = %q, want medium", ev.Severity)
+	}
 }
 
 func TestEdgeErrorShapeRequestIdFieldAlwaysPresent(t *testing.T) {

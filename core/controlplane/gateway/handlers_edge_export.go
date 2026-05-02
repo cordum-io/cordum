@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	edgecore "github.com/cordum/cordum/core/edge"
@@ -137,9 +138,11 @@ func (s *server) handleExportEdgeSession(w http.ResponseWriter, r *http.Request)
 		// Cross-tenant and missing-session both map to 404 by design so
 		// the existence of a session in another tenant cannot be probed.
 		if errors.Is(err, edgecore.ErrNotFound) {
+			emitEdgeExportAudit(s, tenantID, sessionID, "missing")
 			writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
 			return
 		}
+		emitEdgeExportAudit(s, tenantID, sessionID, "failed")
 		writeEdgeInternalError(w, r, "assemble edge session export", err)
 		return
 	}
@@ -153,11 +156,13 @@ func (s *server) handleExportEdgeSession(w http.ResponseWriter, r *http.Request)
 	// signal in the response status code.
 	payload, marshalErr := json.Marshal(bundle)
 	if marshalErr != nil {
+		emitEdgeExportAudit(s, tenantID, sessionID, "failed")
 		writeEdgeInternalError(w, r, "marshal edge session export", marshalErr)
 		return
 	}
 	maxBytes := edgeExportMaxBytes()
 	if int64(len(payload)) > maxBytes {
+		emitEdgeExportAudit(s, tenantID, sessionID, "oversize")
 		writeEdgeError(w, r, http.StatusRequestEntityTooLarge, edgeErrCodeRequestTooLarge,
 			fmt.Sprintf("edge export bundle is %d bytes, exceeds cap of %d bytes; reduce max_events", len(payload), maxBytes), nil)
 		return
@@ -166,7 +171,29 @@ func (s *server) handleExportEdgeSession(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
 	if _, err := w.Write(payload); err != nil {
-		// Best-effort write; the headers are already flushed.
+		// Best-effort write; the headers are already flushed. The audit
+		// event still fires because the bundle was assembled and the
+		// response was begun — auditors prefer a slight false-positive
+		// over a missing record.
+	}
+	emitEdgeExportAudit(s, tenantID, sessionID, "ok")
+}
+
+// emitEdgeExportAudit fires a best-effort edge.artifact_exported audit
+// event for the session-export operation. Result follows the
+// boundedResult allowlist: ok / failed / missing / oversize. The
+// function is nil-safe (returns immediately if s.auditExporter is nil)
+// and panic-safe (SendSIEMEvent recovers from any panic in the audit
+// pipeline). EDGE-014 step-10.
+func emitEdgeExportAudit(s *server, tenantID, sessionID, result string) {
+	if s == nil {
 		return
 	}
+	pointer := edgecore.ArtifactPointer{
+		ArtifactType: "edge.session_export",
+		TenantID:     tenantID,
+		SessionID:    sessionID,
+		CreatedAt:    time.Now().UTC(),
+	}
+	edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForArtifactExported(pointer, result))
 }
