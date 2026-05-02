@@ -142,6 +142,28 @@ func (s *server) handleResolveEdgeApproval(w http.ResponseWriter, r *http.Reques
 		writeEdgeApprovalStoreError(w, r, err, "resolve edge approval")
 		return
 	}
+	// EDGE-014 step-10: emit best-effort approval-resolved audit event.
+	// Severity follows decision: approved -> info, rejected -> high
+	// (handled by SIEMEventForApprovalResolved).
+	if approval != nil {
+		outcome := "approved"
+		if decision != edgecore.ApprovalDecisionApprove {
+			outcome = "rejected"
+		}
+		resolvedAt := resolution.ResolvedAt
+		if approval.ResolvedAt != nil && !approval.ResolvedAt.IsZero() {
+			resolvedAt = *approval.ResolvedAt
+		}
+		edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForApprovalResolved(
+			tenantID,
+			approval.ApprovalRef,
+			approval.RuleID,
+			outcome,
+			resolution.ResolverID,
+			resolvedAt,
+			nil,
+		))
+	}
 	writeJSON(w, approval)
 }
 

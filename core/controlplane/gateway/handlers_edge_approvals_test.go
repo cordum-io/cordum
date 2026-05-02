@@ -8,8 +8,64 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	edgecore "github.com/cordum/cordum/core/edge"
 )
+
+// TestGatewayEdgeApprovalResolveEmitsAuditEvent pins EDGE-014 step-10
+// audit instrumentation for the approve/reject handlers. Approve emits
+// edge.approval_resolved (info severity); reject emits
+// edge.approval_rejected (high severity).
+func TestGatewayEdgeApprovalResolveEmitsAuditEvent(t *testing.T) {
+	cases := []struct {
+		name     string
+		path     string
+		wantType string
+		wantSev  string
+	}{
+		{"approve_emits_resolved_info", "/approve", audit.EventEdgeApprovalResolved, audit.SeverityInfo},
+		{"reject_emits_rejected_high", "/reject", audit.EventEdgeApprovalRejected, audit.SeverityHigh},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, handler := newEdgeRouteTestServer(t)
+			sink := &testAuditSender{}
+			s.auditExporter = sink
+			approval := seedGatewayEdgeApproval(t, s, edgeRouteTenant, "principal-edge-a", "audit-"+c.name)
+
+			before := sink.Len()
+			rr := edgeApprovalRoutePOSTAs(t, handler, edgeRouteReviewerAPIKey,
+				"/api/v1/edge/approvals/"+approval.ApprovalRef+c.path,
+				`{"reason":"audit-test reason with Authorization: Bearer secret"}`)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("%s status = %d body=%s", c.path, rr.Code, rr.Body.String())
+			}
+			after := sink.Len()
+			if after-before != 1 {
+				t.Fatalf("audit events emitted = %d, want 1", after-before)
+			}
+			ev := sink.Get(after - 1)
+			if ev.EventType != c.wantType {
+				t.Errorf("EventType = %q, want %q", ev.EventType, c.wantType)
+			}
+			if ev.Severity != c.wantSev {
+				t.Errorf("Severity = %q, want %q", ev.Severity, c.wantSev)
+			}
+			if ev.TenantID != edgeRouteTenant {
+				t.Errorf("TenantID = %q, want %q", ev.TenantID, edgeRouteTenant)
+			}
+			if ev.Extra["approval_ref"] != approval.ApprovalRef {
+				t.Errorf("Extra[approval_ref] = %q, want %q", ev.Extra["approval_ref"], approval.ApprovalRef)
+			}
+			// Raw resolution Reason (with Bearer secret) must NEVER reach Extra.
+			for k, v := range ev.Extra {
+				if strings.Contains(v, "Authorization") || strings.Contains(v, "Bearer") {
+					t.Errorf("Extra[%q] leaked secret: %q", k, v)
+				}
+			}
+		})
+	}
+}
 
 func TestGatewayEdgeApprovalRejectsSelfApproval(t *testing.T) {
 	s, handler := newEdgeRouteTestServer(t)
