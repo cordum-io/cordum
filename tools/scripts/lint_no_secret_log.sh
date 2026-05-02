@@ -13,9 +13,15 @@ SECRET_PATTERN='(echo|info|warn|log|printf).*\$\{?(CORDUM_)?(API_KEY|ADMIN_PASSW
 # Patterns that indicate safe usage (masking, retrieval commands, suppression).
 SAFE_PATTERN='masked|:0:[0-9]+|base64|kubectl.*secret|no-secret-lint|\\\$CORDUM_API_KEY|\\\$API_KEY'
 
-for f in "$REPO_ROOT"/tools/scripts/*.sh; do
+# Files scanned: every shell script under tools/scripts and docs/LOCAL_E2E.md
+# (the latter carries example commands; per EDGE-027 it must not embed real
+# secret values).
+SCAN_TARGETS=("$REPO_ROOT"/tools/scripts/*.sh "$REPO_ROOT"/docs/LOCAL_E2E.md)
+
+for f in "${SCAN_TARGETS[@]}"; do
   # Skip this lint script itself.
   [[ "$f" == *lint_no_secret_log* ]] && continue
+  [[ -f "$f" ]] || continue
 
   matches=$(grep -nE "$SECRET_PATTERN" "$f" | grep -vE "$SAFE_PATTERN" || true)
   if [[ -n "$matches" ]]; then
@@ -26,6 +32,6 @@ for f in "$REPO_ROOT"/tools/scripts/*.sh; do
 done
 
 if [[ "$FAILED" -eq 0 ]]; then
-  echo "OK: No raw secret logging found in tools/scripts/*.sh"
+  echo "OK: No raw secret logging found in scanned files"
 fi
 exit $FAILED

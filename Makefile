@@ -67,6 +67,9 @@ docker:
 smoke:
 	./tools/scripts/platform_smoke.sh
 
+edge-fake-hook-e2e:
+	bash tools/scripts/edge_fake_hook_e2e.sh
+
 verify-images:
 	CORDUM_VERIFY_IMAGES=1 ./tools/scripts/verify_published_images.sh
 
@@ -100,6 +103,7 @@ help:
 	@echo "  make openapi            Validate cordum-api.yaml (Redocly lint)"
 	@echo "  make docker SERVICE=X   Build Docker image for a service"
 	@echo "  make smoke              Run platform smoke tests"
+	@echo "  make edge-fake-hook-e2e Run Edge fake-hook E2E (CI-safe; SKIP without CORDUM_INTEGRATION=1)"
 	@echo "  make verify-images      Verify published GHCR images (pull + cosign + multi-arch)"
 	@echo "  make demo-quickstart-test  End-to-end test for the demo-quickstart pack"
 	@echo "  make demo-mock-bank-test   End-to-end test for the demo-mock-bank pack (all three verdicts)"

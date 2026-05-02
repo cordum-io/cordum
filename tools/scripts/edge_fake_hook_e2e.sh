@@ -1,0 +1,1621 @@
+#!/usr/bin/env bash
+# edge_fake_hook_e2e.sh — CI-safe Edge P0 end-to-end exerciser.
+#
+# Drives the full Edge P0 backend path with synthetic Claude hook payloads:
+#   cordum-hook (stdin JSON) -> cordum-agentd (HTTP loopback)
+#     -> Gateway /api/v1/edge/* -> Safety Kernel evaluate -> approvals
+#     -> session events -> evidence export bundle.
+#
+# Default (hook) mode: pipes synthetic Claude hook JSON through
+# ./bin/cordum-hook against a locally-spawned ./bin/cordum-agentd that the
+# script launches with a process-local CORDUM_AGENTD_NONCE. Exercises the
+# full EDGE-027 acceptance path that QA validates.
+#
+# Bypass mode (CORDUM_EDGE_E2E_BYPASS_HOOK=1): drives each gate via
+# Gateway-direct /api/v1/edge/* requests, bypassing cordum-hook + agentd.
+# Useful in CI hosts without a Go toolchain or hook/agentd binaries.
+#
+# Requires no real Claude Code binary. Uses synthetic file-path strings only;
+# never reads or stats a real .env. All payload bodies are fake markers.
+#
+# Reachability mode: SKIP cleanly when API_BASE is unreachable or docker is
+# missing in default-mode runs. Strict mode (CORDUM_INTEGRATION=1) treats
+# every missing prerequisite as a FAIL.
+#
+# Contract owners: Cordum Edge (epic-545b186e), task EDGE-027.
+# Style template: tools/scripts/platform_smoke.sh.
+# EDGE-017.4 forward-compat: when nonce moves out of CORDUM_AGENTD_URL into
+# CORDUM_AGENTD_HOOK_NONCE env + X-Cordum-Agentd-Nonce header, switch the
+# URL composition + header injection in compose_agentd_url accordingly.
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Exit codes
+# ---------------------------------------------------------------------------
+# 0   — all gates PASS, or SKIP path taken in non-integration mode
+# 1   — gate assertion FAIL (script reached a gate and the assertion failed)
+# 2   — usage error or missing prerequisite in CORDUM_INTEGRATION=1 mode
+# 124 — bounded wait timed out (matches Unix `timeout(1)` convention)
+
+readonly EXIT_OK=0
+readonly EXIT_FAIL=1
+readonly EXIT_PREREQ=2
+readonly EXIT_TIMEOUT=124
+
+# ---------------------------------------------------------------------------
+# PASS/FAIL/SKIP line shapes (one line per gate, single-line stable)
+# ---------------------------------------------------------------------------
+# Gate name                  Emitted by
+# -----------------------    ------------------------------------------------
+# edge_session_setup         step 7  (agentd ready + session/execution created)
+# edge_pretooluse_deny       step 8  (PreToolUse Read .env -> deny + DENY event)
+# edge_approval_flow         step 9  (Edit -> approval -> retry -> consume)
+# edge_posttooluse_artifact  step 10 (PostToolUse + artifact pointer recorded)
+# edge_evidence_export       step 11 (export bundle has expected entries)
+#
+# PASS line shape: `PASS <gate>`
+# FAIL line shape: `FAIL <gate>: <reason>`
+# SKIP line shape: `SKIP edge_fake_hook_e2e: <reason>` (whole-script skip)
+
+readonly SCRIPT_NAME="edge_fake_hook_e2e"
+
+# ---------------------------------------------------------------------------
+# Defaults (env-overridable)
+# ---------------------------------------------------------------------------
+: "${CORDUM_API_KEY:=}"
+: "${CORDUM_TENANT_ID:=default}"
+: "${CORDUM_GATEWAY:=}"
+: "${CORDUM_INTEGRATION:=}"
+: "${CORDUM_EDGE_E2E_START_STACK:=}"
+: "${CORDUM_EDGE_E2E_TIMEOUT:=10}"
+: "${CORDUM_EDGE_E2E_KEEP_TMP:=}"
+: "${CORDUM_TLS_CA:=}"
+# Bypass mode: drive each gate via Gateway-direct /api/v1/edge/* requests
+# instead of piping synthetic Claude hook JSON through cordum-hook ->
+# cordum-agentd. Useful in CI environments without a Go toolchain or
+# cordum-hook/cordum-agentd binaries. Default mode (unset) exercises the
+# real EDGE-027 acceptance path. See docs/LOCAL_E2E.md.
+: "${CORDUM_EDGE_E2E_BYPASS_HOOK:=}"
+# Pin the cordum-agentd loopback port. Defaults to 0 = pick a free port.
+# Override only when a specific port is required (e.g. firewalled CI host).
+: "${CORDUM_EDGE_E2E_AGENTD_PORT:=0}"
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+log() {
+  printf '[%s] %s\n' "${SCRIPT_NAME}" "$*" >&2
+}
+
+pass() {
+  printf 'PASS %s\n' "$1"
+}
+
+fail() {
+  local gate=$1
+  shift
+  printf 'FAIL %s: %s\n' "${gate}" "$*" >&2
+  exit "${EXIT_FAIL}"
+}
+
+skip() {
+  printf 'SKIP %s: %s\n' "${SCRIPT_NAME}" "$*"
+  exit "${EXIT_OK}"
+}
+
+# ---------------------------------------------------------------------------
+# Help
+# ---------------------------------------------------------------------------
+print_help() {
+  cat <<'HELP'
+edge_fake_hook_e2e.sh — CI-safe Edge P0 end-to-end exerciser
+
+USAGE
+  bash tools/scripts/edge_fake_hook_e2e.sh [--help]
+
+MODES
+  Default (CORDUM_INTEGRATION unset):
+    Probes API_BASE. If unreachable or docker is missing, prints
+    `SKIP edge_fake_hook_e2e: <reason>` and exits 0. Useful for
+    non-Edge developers and CI runs that haven't started the stack.
+
+  Strict (CORDUM_INTEGRATION=1):
+    Treats every missing prerequisite as a FAIL (non-zero exit).
+    Required when the gate must run.
+
+  Stack-bring-up (CORDUM_EDGE_E2E_START_STACK=1):
+    Runs `make dev-up` before probing. Does not download anything
+    beyond what `make dev-up` already pulls. Combine with
+    CORDUM_INTEGRATION=1 to enforce a green run.
+
+  Hook (default; CORDUM_EDGE_E2E_BYPASS_HOOK unset):
+    Spawns a process-local cordum-agentd and pipes synthetic Claude
+    hook JSON through cordum-hook. Exercises the full
+    cordum-hook -> cordum-agentd -> Gateway path. Requires
+    ./bin/cordum-hook + ./bin/cordum-agentd (built from cmd/ if a Go
+    toolchain is available) and `openssl` on PATH for nonce generation.
+
+  Bypass (CORDUM_EDGE_E2E_BYPASS_HOOK=1):
+    Drives each gate via direct /api/v1/edge/evaluate +
+    /api/v1/edge/events requests. Skips the agentd subprocess and the
+    cordum-hook binary requirement. Use only on CI hosts where the Go
+    toolchain or hook/agentd binaries are unavailable.
+
+ENVIRONMENT
+  CORDUM_API_KEY                 Required in strict mode. API key for the
+                                 Gateway and for cordum-agentd.
+  CORDUM_TENANT_ID               Tenant for /api/v1/edge/* requests
+                                 (default `default`).
+  CORDUM_GATEWAY                 Gateway base URL. If unset, derived from
+                                 ./certs/ca/ca.crt presence: present ->
+                                 https://localhost:8081, otherwise
+                                 http://localhost:8081.
+  CORDUM_TLS_CA                  PEM CA cert for Gateway TLS. Auto-detected
+                                 from ./certs/ca/ca.crt when present.
+  CORDUM_INTEGRATION             Set to 1 to make missing prerequisites
+                                 a FAIL instead of a SKIP.
+  CORDUM_EDGE_E2E_START_STACK    Set to 1 to run `make dev-up` first.
+  CORDUM_EDGE_E2E_TIMEOUT        Bounded wait seconds for HTTP requests
+                                 and approval transitions (default 10).
+  CORDUM_EDGE_E2E_KEEP_TMP       Set to 1 to skip temp-dir cleanup
+                                 (debug only).
+  CORDUM_EDGE_E2E_BYPASS_HOOK    Set to 1 to skip cordum-hook + agentd and
+                                 drive gates via Gateway-direct requests.
+                                 Default (unset) runs the full hook path.
+  CORDUM_EDGE_E2E_AGENTD_PORT    Pin agentd loopback port. Default 0 picks
+                                 a free port; override only when the host
+                                 forbids ephemeral binds.
+
+PASS LINE SHAPES (one per gate)
+  PASS edge_session_setup
+  PASS edge_pretooluse_deny
+  PASS edge_approval_flow
+  PASS edge_posttooluse_artifact
+  PASS edge_evidence_export
+
+FAIL / SKIP LINE SHAPES
+  FAIL <gate>: <reason>
+  SKIP edge_fake_hook_e2e: <reason>
+
+EXIT CODES
+  0    all gates PASS, or SKIP taken in non-integration mode
+  1    gate assertion FAIL
+  2    usage error or missing prerequisite in CORDUM_INTEGRATION=1 mode
+  124  bounded wait timed out
+
+SECURITY
+  Uses synthetic file-path strings only (e.g. `<tmpdir>/fixture/.env`)
+  and never reads or stats a real .env. No secret values in payloads,
+  logs, or evidence assertions.
+
+REAL CLAUDE
+  This script is the CI-safe variant. The manual real-Claude demo
+  flow lives separately in docs/edge/ and is not exercised here.
+HELP
+}
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        print_help
+        exit "${EXIT_OK}"
+        ;;
+      *)
+        printf 'unknown argument: %s\n\n' "$1" >&2
+        print_help >&2
+        exit "${EXIT_PREREQ}"
+        ;;
+    esac
+  done
+}
+
+# ---------------------------------------------------------------------------
+# Mode predicates
+# ---------------------------------------------------------------------------
+is_integration_mode() {
+  case "${CORDUM_INTEGRATION,,}" in
+    1|true|yes|on) return 0 ;;
+    *)             return 1 ;;
+  esac
+}
+
+want_start_stack() {
+  case "${CORDUM_EDGE_E2E_START_STACK,,}" in
+    1|true|yes|on) return 0 ;;
+    *)             return 1 ;;
+  esac
+}
+
+want_keep_tmp() {
+  case "${CORDUM_EDGE_E2E_KEEP_TMP,,}" in
+    1|true|yes|on) return 0 ;;
+    *)             return 1 ;;
+  esac
+}
+
+want_bypass_hook() {
+  case "${CORDUM_EDGE_E2E_BYPASS_HOOK,,}" in
+    1|true|yes|on) return 0 ;;
+    *)             return 1 ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Tool detection (jq, curl, optional Windows fallbacks)
+# ---------------------------------------------------------------------------
+have_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+JQ_BIN=""
+detect_jq() {
+  if [[ -n "${CORDUM_JQ:-}" && -x "${CORDUM_JQ}" ]]; then
+    JQ_BIN="${CORDUM_JQ}"
+    return 0
+  fi
+  if have_cmd jq; then
+    JQ_BIN="jq"
+    return 0
+  fi
+  # Windows/MSYS fallback: tools/scripts/jq.exe is a documented hook in the
+  # plan but is not committed to the repo. If a developer drops one in,
+  # we'll find it; otherwise rely on system jq.
+  if [[ -x "tools/scripts/jq.exe" ]]; then
+    JQ_BIN="tools/scripts/jq.exe"
+    return 0
+  fi
+  return 1
+}
+
+require_tools() {
+  for cmd in curl; do
+    if ! have_cmd "${cmd}"; then
+      if is_integration_mode; then
+        printf 'FAIL %s: required command not found: %s\n' "${SCRIPT_NAME}" "${cmd}" >&2
+        exit "${EXIT_PREREQ}"
+      fi
+      skip "required command not found: ${cmd}"
+    fi
+  done
+  if ! detect_jq; then
+    if is_integration_mode; then
+      printf 'FAIL %s: jq not found (set CORDUM_JQ or install jq)\n' "${SCRIPT_NAME}" >&2
+      exit "${EXIT_PREREQ}"
+    fi
+    skip 'jq not found (set CORDUM_JQ or install jq)'
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Curl wrapper — auth + TLS + bounded timeout, body to file, code on stdout.
+# CURL_OPTS / AUTH_HEADERS are populated by `init_curl_opts` once API_BASE
+# and CORDUM_API_KEY are known.
+# ---------------------------------------------------------------------------
+CURL_OPTS=()
+AUTH_HEADERS=()
+init_curl_opts() {
+  CURL_OPTS=(--silent --show-error --max-time "${CORDUM_EDGE_E2E_TIMEOUT}")
+  local ca=""
+  if [[ -n "${CORDUM_TLS_CA}" ]]; then
+    ca="${CORDUM_TLS_CA}"
+  elif [[ -f "./certs/ca/ca.crt" ]]; then
+    ca="./certs/ca/ca.crt"
+  fi
+  if [[ -n "${ca}" ]]; then
+    CURL_OPTS+=(--cacert "${ca}")
+  fi
+  if curl --version 2>/dev/null | grep -qi schannel; then
+    CURL_OPTS+=(--ssl-no-revoke)
+  fi
+  AUTH_HEADERS=(
+    -H "X-API-Key: ${CORDUM_API_KEY}"
+    -H "X-Tenant-ID: ${CORDUM_TENANT_ID}"
+  )
+}
+
+# Issue an HTTP request and capture body + http_code.
+#
+# Usage: curl_request <method> <url> [<json_body>]
+# - On return: HTTP status code is printed on stdout (or "000" on connect
+#   failure), and CURL_LAST_BODY_FILE is set to the path of the response
+#   body file. Caller must read/clean it; cleanup is also caught by trap.
+CURL_LAST_BODY_FILE=""
+curl_request() {
+  local method=$1 url=$2 body=${3:-}
+  local body_file
+  body_file=$(mktemp -p "${TMP_ROOT:-/tmp}" curl_body.XXXXXX)
+  CURL_LAST_BODY_FILE="${body_file}"
+  local code
+  if [[ -n "${body}" ]]; then
+    code=$(curl "${CURL_OPTS[@]}" "${AUTH_HEADERS[@]}" \
+      -H 'Content-Type: application/json' \
+      -X "${method}" -d "${body}" \
+      -o "${body_file}" -w '%{http_code}' \
+      "${url}" 2>/dev/null) || code="000"
+  else
+    code=$(curl "${CURL_OPTS[@]}" "${AUTH_HEADERS[@]}" \
+      -X "${method}" \
+      -o "${body_file}" -w '%{http_code}' \
+      "${url}" 2>/dev/null) || code="000"
+  fi
+  printf '%s' "${code}"
+}
+
+# Assert HTTP status. Emits FAIL with single-line context on miss.
+# Usage: assert_http_status <gate> <actual_code> <expected_csv> <description>
+assert_http_status() {
+  local gate=$1 actual=$2 expected_csv=$3 desc=$4
+  local IFS=','
+  local exp
+  for exp in ${expected_csv}; do
+    if [[ "${actual}" == "${exp}" ]]; then
+      return 0
+    fi
+  done
+  fail "${gate}" "${desc} returned HTTP ${actual}; want ${expected_csv}"
+}
+
+# JSON field assertion via `jq -e`. Reads body file from
+# `CURL_LAST_BODY_FILE` unless the caller passes a different path.
+# Usage: assert_json <gate> <jq_expression> <description> [<body_file>]
+assert_json() {
+  local gate=$1 expr=$2 desc=$3
+  local body_file=${4:-${CURL_LAST_BODY_FILE}}
+  if [[ -z "${body_file}" || ! -f "${body_file}" ]]; then
+    fail "${gate}" "no JSON body to assert (${desc})"
+  fi
+  if ! "${JQ_BIN}" -e "${expr}" "${body_file}" >/dev/null 2>&1; then
+    fail "${gate}" "${desc} (jq expr: ${expr})"
+  fi
+}
+
+# JSON field extraction via `jq -r`. Returns empty string on miss; caller
+# decides whether to FAIL.
+# Usage: extract_json <jq_expression> [<body_file>]
+extract_json() {
+  local expr=$1
+  local body_file=${2:-${CURL_LAST_BODY_FILE}}
+  if [[ -z "${body_file}" || ! -f "${body_file}" ]]; then
+    printf ''
+    return 0
+  fi
+  "${JQ_BIN}" -r "${expr}" "${body_file}" 2>/dev/null || printf ''
+}
+
+# Negative assertion — body MUST NOT contain the given byte sequence.
+# Used for redaction sanity checks (e.g., no raw secrets in event payloads).
+# Usage: assert_body_does_not_contain <gate> <needle> <description> [<body_file>]
+assert_body_does_not_contain() {
+  local gate=$1 needle=$2 desc=$3
+  local body_file=${4:-${CURL_LAST_BODY_FILE}}
+  if [[ -z "${body_file}" || ! -f "${body_file}" ]]; then
+    return 0
+  fi
+  if grep -F -q -- "${needle}" "${body_file}" 2>/dev/null; then
+    fail "${gate}" "${desc}: response unexpectedly contained literal: ${needle}"
+  fi
+}
+
+# Bounded retry loop. Exits with EXIT_TIMEOUT on miss.
+#
+# Usage: retry_until <max_iterations> <sleep_seconds> <gate_for_timeout> \
+#                    <description> <command...>
+retry_until() {
+  local max=$1 sleep_sec=$2 gate=$3 desc=$4
+  shift 4
+  local i
+  for ((i=0; i<max; i++)); do
+    if "$@"; then
+      return 0
+    fi
+    sleep "${sleep_sec}"
+  done
+  printf 'FAIL %s: timed out after %d attempts: %s\n' "${gate}" "${max}" "${desc}" >&2
+  exit "${EXIT_TIMEOUT}"
+}
+
+# ---------------------------------------------------------------------------
+# Redaction-safe logging helpers.
+#
+# NEVER pass tool_input bodies, file contents, .env path values that resolve
+# to a real file, or anything from a curl response body to these helpers.
+# Callers must restrict log content to:
+#   - synthetic markers (script-generated identifiers)
+#   - decision labels (allow/deny/ask)
+#   - HTTP codes
+#   - gate names from this script
+# These helpers exist so future readers see exactly which data points are
+# safe to log; everything else stays in the body file.
+# ---------------------------------------------------------------------------
+log_decision() {
+  local gate=$1 decision=$2
+  printf '[%s] %s decision=%s\n' "${SCRIPT_NAME}" "${gate}" "${decision}" >&2
+}
+
+log_http() {
+  local gate=$1 method=$2 path=$3 code=$4
+  printf '[%s] %s %s %s -> HTTP %s\n' "${SCRIPT_NAME}" "${gate}" "${method}" "${path}" "${code}" >&2
+}
+
+# ---------------------------------------------------------------------------
+# Temp state + cleanup. init_tempdir creates a per-run scratch dir under
+# the OS tempdir and registers an EXIT trap. cleanup_on_exit is idempotent
+# so the trap is safe on every exit path (success, FAIL, SIGINT, parent
+# kill). Hook-mode also uses the same trap to terminate the agentd
+# subprocess; trap_kill_agentd is best-effort and never raises errors.
+# ---------------------------------------------------------------------------
+TMP_ROOT=""
+AGENTD_PID=""
+AGENTD_PORT=""
+AGENTD_NONCE=""
+AGENTD_URL=""
+AGENTD_STATE_DIR=""
+HOOK_BIN=""
+AGENTD_BIN=""
+
+trap_kill_agentd() {
+  if [[ -z "${AGENTD_PID}" ]]; then
+    return 0
+  fi
+  if kill -0 "${AGENTD_PID}" 2>/dev/null; then
+    kill -TERM "${AGENTD_PID}" 2>/dev/null || true
+    local i
+    for ((i=0; i<20; i++)); do
+      kill -0 "${AGENTD_PID}" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -KILL "${AGENTD_PID}" 2>/dev/null || true
+  fi
+  AGENTD_PID=""
+}
+
+cleanup_on_exit() {
+  local rc=$?
+  trap - EXIT
+  set +e
+  trap_kill_agentd
+  if want_keep_tmp; then
+    [[ -n "${TMP_ROOT}" && -d "${TMP_ROOT}" ]] && log "preserving temp dir: ${TMP_ROOT}"
+  else
+    if [[ -n "${TMP_ROOT}" && -d "${TMP_ROOT}" ]]; then
+      rm -rf "${TMP_ROOT}"
+    fi
+  fi
+  return "${rc}"
+}
+
+init_tempdir() {
+  TMP_ROOT=$(mktemp -d -t edge_fake_hook_e2e.XXXXXX)
+  trap cleanup_on_exit EXIT
+}
+
+# ---------------------------------------------------------------------------
+# Hook-mode lifecycle helpers (default mode; bypassed when
+# CORDUM_EDGE_E2E_BYPASS_HOOK=1).
+#
+# locate_or_build_binaries: prefer existing ./bin/cordum-hook +
+# ./bin/cordum-agentd; otherwise build via `go build` if a toolchain is on
+# PATH. Never downloads from the network. Sets HOOK_BIN + AGENTD_BIN.
+#
+# pick_agentd_port: chooses a free TCP port on 127.0.0.1 unless
+# CORDUM_EDGE_E2E_AGENTD_PORT is non-zero, in which case it uses that.
+# Uses Python or `bash + /dev/tcp` probing; falls back to the documented
+# default 8765 when no probe tool is available. Does NOT collide-check
+# the override; operators set it deliberately.
+#
+# generate_agentd_nonce: 32 bytes of crypto/rand encoded base64. Matches
+# the validator at core/edge/agentd/app.go ValidateExternalNonce. Never
+# echoes the value; only logs `nonce_bytes=<count>` for visibility.
+#
+# start_agentd: spawns ./bin/cordum-agentd as a child process bound to
+# 127.0.0.1:<AGENTD_PORT> with CORDUM_AGENTD_NONCE set. Writes stderr
+# to a temp file under TMP_ROOT for post-mortem if the wait loop fails;
+# never echoed to the script's stdout in normal flow. Sets AGENTD_PID.
+#
+# wait_agentd_ready: bounded loop polling the agentd hook URL with a
+# short POST. Server-up signal is HTTP 401 (the nonce in the probe is
+# either absent or wrong, but the server answers — proves bind + handler
+# are wired). Other 4xx are also accepted as "server up". Connection
+# refused or timeouts loop until budget expires.
+#
+# compose_agentd_url: assembles `http://127.0.0.1:<port>/v1/edge/hooks/
+# claude?nonce=<nonce>`. EDGE-017.4 forward-compat note: when EDGE-017.4
+# moves nonce out of the URL into a CORDUM_AGENTD_HOOK_NONCE env +
+# X-Cordum-Agentd-Nonce header, drop the query-param suffix here and
+# pass the nonce to run_hook via env instead.
+#
+# run_hook: pipes a synthetic Claude hook JSON to ./bin/cordum-hook with
+# the verified env (CORDUM_AGENTD_URL, CORDUM_EDGE_SESSION_ID,
+# CORDUM_EDGE_EXECUTION_ID, optional CORDUM_AGENTD_FAIL_CLOSED). Captures
+# stdout into a callee-supplied file, stderr into a separate file. The
+# caller then `assert_json` against the stdout file the same way it
+# already does against curl response bodies.
+# ---------------------------------------------------------------------------
+locate_or_build_binaries() {
+  local gate=${1:-edge_fake_hook_e2e}
+  HOOK_BIN="./bin/cordum-hook"
+  AGENTD_BIN="./bin/cordum-agentd"
+  if [[ ! -x "${HOOK_BIN}" || ! -x "${AGENTD_BIN}" ]]; then
+    if ! have_cmd go; then
+      if is_integration_mode; then
+        printf 'FAIL %s: cordum-hook/cordum-agentd binaries missing and `go` not on PATH (build them or set CORDUM_EDGE_E2E_BYPASS_HOOK=1)\n' "${gate}" >&2
+        exit "${EXIT_PREREQ}"
+      fi
+      skip 'cordum-hook/cordum-agentd binaries missing and `go` not on PATH'
+    fi
+    log 'building ./bin/cordum-hook + ./bin/cordum-agentd via `go build`'
+    if ! go build -o "${HOOK_BIN}" ./cmd/cordum-hook >&2; then
+      fail "${gate}" 'go build ./cmd/cordum-hook failed'
+    fi
+    if ! go build -o "${AGENTD_BIN}" ./cmd/cordum-agentd >&2; then
+      fail "${gate}" 'go build ./cmd/cordum-agentd failed'
+    fi
+  fi
+  log "hook binary: ${HOOK_BIN}"
+  log "agentd binary: ${AGENTD_BIN}"
+}
+
+pick_agentd_port() {
+  if [[ -n "${CORDUM_EDGE_E2E_AGENTD_PORT}" && "${CORDUM_EDGE_E2E_AGENTD_PORT}" != "0" ]]; then
+    AGENTD_PORT="${CORDUM_EDGE_E2E_AGENTD_PORT}"
+    return 0
+  fi
+  if have_cmd python; then
+    AGENTD_PORT=$(python -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()' 2>/dev/null || true)
+  fi
+  if [[ -z "${AGENTD_PORT}" ]] && have_cmd python3; then
+    AGENTD_PORT=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()' 2>/dev/null || true)
+  fi
+  if [[ -z "${AGENTD_PORT}" ]]; then
+    # Fallback: try the documented default. Operator can override via env.
+    AGENTD_PORT="8765"
+    log "warning: no python on PATH; falling back to default agentd port ${AGENTD_PORT}"
+  fi
+}
+
+generate_agentd_nonce() {
+  local gate=${1:-edge_fake_hook_e2e}
+  if ! have_cmd openssl; then
+    if is_integration_mode; then
+      printf 'FAIL %s: openssl not on PATH (required for CORDUM_AGENTD_NONCE generation; install openssl or set CORDUM_EDGE_E2E_BYPASS_HOOK=1)\n' "${gate}" >&2
+      exit "${EXIT_PREREQ}"
+    fi
+    skip 'openssl not on PATH; required for nonce generation in hook mode'
+  fi
+  AGENTD_NONCE=$(openssl rand -base64 32 2>/dev/null | tr -d '\r\n')
+  if [[ -z "${AGENTD_NONCE}" ]]; then
+    fail "${gate}" 'openssl rand returned empty nonce'
+  fi
+  # Length tells us bytes-after-decode without echoing the value itself.
+  log "agentd nonce generated (${#AGENTD_NONCE} chars base64; >=32 bytes raw)"
+}
+
+compose_agentd_url() {
+  AGENTD_URL="http://127.0.0.1:${AGENTD_PORT}/v1/edge/hooks/claude?nonce=${AGENTD_NONCE}"
+}
+
+start_agentd() {
+  local gate=${1:-edge_fake_hook_e2e}
+  AGENTD_STATE_DIR="${TMP_ROOT}/agentd_state"
+  mkdir -p "${AGENTD_STATE_DIR}"
+  local agentd_socket="http://127.0.0.1:${AGENTD_PORT}/v1/edge/hooks/claude"
+  local agentd_stderr="${TMP_ROOT}/agentd.stderr"
+  log "starting cordum-agentd on 127.0.0.1:${AGENTD_PORT} (state-dir=${AGENTD_STATE_DIR})"
+  CORDUM_AGENTD_NONCE="${AGENTD_NONCE}" \
+    CORDUM_GATEWAY="${API_BASE}" \
+    CORDUM_API_KEY="${CORDUM_API_KEY}" \
+    CORDUM_TENANT_ID="${CORDUM_TENANT_ID}" \
+    CORDUM_AGENTD_SOCKET="${agentd_socket}" \
+    CORDUM_AGENTD_STATE_DIR="${AGENTD_STATE_DIR}" \
+    "${AGENTD_BIN}" >/dev/null 2>"${agentd_stderr}" &
+  AGENTD_PID=$!
+  log "agentd PID=${AGENTD_PID}"
+}
+
+wait_agentd_ready() {
+  local gate=${1:-edge_fake_hook_e2e}
+  local probe_url="http://127.0.0.1:${AGENTD_PORT}/v1/edge/hooks/claude"
+  local deadline=$((CORDUM_EDGE_E2E_TIMEOUT * 10))
+  local i code
+  for ((i=0; i<deadline; i++)); do
+    if [[ -n "${AGENTD_PID}" ]] && ! kill -0 "${AGENTD_PID}" 2>/dev/null; then
+      log "agentd subprocess exited prematurely; stderr (truncated):"
+      head -c 4096 "${TMP_ROOT}/agentd.stderr" >&2 2>/dev/null || true
+      fail "${gate}" "agentd subprocess (PID ${AGENTD_PID}) exited before becoming ready"
+    fi
+    code=$(curl --silent --show-error --max-time 1 \
+      -X POST -H 'Content-Type: application/json' -d '{}' \
+      -o /dev/null -w '%{http_code}' \
+      "${probe_url}" 2>/dev/null || printf '000')
+    case "${code}" in
+      401|400|405|413) return 0 ;;  # server is up; auth/body error proves handler reachable
+    esac
+    sleep 0.1
+  done
+  log "agentd readiness probe timed out; stderr (truncated):"
+  head -c 4096 "${TMP_ROOT}/agentd.stderr" >&2 2>/dev/null || true
+  fail "${gate}" "agentd did not become ready within ${CORDUM_EDGE_E2E_TIMEOUT}s"
+}
+
+# Pipe synthetic Claude hook JSON to cordum-hook. Stdout (Claude-compatible
+# JSON) goes to the caller-supplied file; stderr goes to a sibling file.
+# Returns the hook's exit code.
+#
+# Usage: run_hook <event_subcommand> <stdin_json> <stdout_file>
+#   event_subcommand: pre-tool-use | post-tool-use | post-tool-use-failure |
+#                     user-prompt-submit | config-change | file-changed
+HOOK_LAST_STDERR_FILE=""
+run_hook() {
+  local event=$1 stdin_json=$2 stdout_file=$3
+  local stderr_file
+  stderr_file=$(mktemp -p "${TMP_ROOT}" hook_stderr.XXXXXX)
+  HOOK_LAST_STDERR_FILE="${stderr_file}"
+  local rc=0
+  CORDUM_AGENTD_URL="${AGENTD_URL}" \
+    CORDUM_EDGE_SESSION_ID="${EDGE_SESSION_ID}" \
+    CORDUM_EDGE_EXECUTION_ID="${EDGE_EXECUTION_ID}" \
+    CORDUM_TENANT_ID="${CORDUM_TENANT_ID}" \
+    "${HOOK_BIN}" claude "${event}" \
+    >"${stdout_file}" 2>"${stderr_file}" \
+    <<<"${stdin_json}" || rc=$?
+  printf '%s' "${rc}"
+}
+
+# JSON assertion against a file (analog of assert_json which assumes the
+# CURL_LAST_BODY_FILE global). Used after run_hook.
+# Usage: assert_json_file <gate> <file> <jq_expr> <description>
+assert_json_file() {
+  local gate=$1 file=$2 expr=$3 desc=$4
+  if [[ -z "${file}" || ! -f "${file}" ]]; then
+    fail "${gate}" "no JSON body to assert (${desc})"
+  fi
+  if ! "${JQ_BIN}" -e "${expr}" "${file}" >/dev/null 2>&1; then
+    local hint=""
+    if [[ -n "${HOOK_LAST_STDERR_FILE}" && -f "${HOOK_LAST_STDERR_FILE}" ]]; then
+      hint=$(head -c 240 "${HOOK_LAST_STDERR_FILE}" | tr '\n' ' ')
+    fi
+    fail "${gate}" "${desc} (jq expr: ${expr}; hook stderr head: ${hint})"
+  fi
+}
+
+extract_json_file() {
+  local file=$1 expr=$2
+  if [[ -z "${file}" || ! -f "${file}" ]]; then
+    printf ''
+    return 0
+  fi
+  "${JQ_BIN}" -r "${expr}" "${file}" 2>/dev/null || printf ''
+}
+
+# ---------------------------------------------------------------------------
+# Demo policy fixture seed/verify (EDGE-010 runtime overlay).
+#
+# Determinism contract (verified against HEAD):
+#   - core/edge/classifier.go:492 does `strings.Contains(padded, "/.env")`,
+#     so any path containing `/.env` classifies as path.class=secret +
+#     risk_tags=secrets. The runtime overlay rule
+#     `claude-code.deny-secret-reads` matches that exact label/risk shape
+#     and produces decision=deny. Thus FIXTURE_DENY_PATH below DENIES
+#     deterministically without uploading a tenant-pinned policy.
+#   - The runtime overlay rule `claude-code.require-approval-for-edits`
+#     matches capability=file.write + risk_tags=write — i.e. ANY Edit/Write
+#     tool action — and produces decision=require_approval. The hook then
+#     translates that to permissionDecision=deny + approval_ref in the
+#     reason text (hook_output.go:46-53).
+#
+# We use only synthetic path STRINGS — never read or stat a real .env or
+# protected.txt. The fixture directory is created so the strings resolve
+# under TMP_ROOT for log clarity, but the files themselves are never
+# written. lint_no_secret_log.sh + step-15 grep enforce that.
+# ---------------------------------------------------------------------------
+DEMO_POLICY_OVERLAY="examples/cordum-edge-pack/overlays/policy.fragment.yaml"
+FIXTURE_DIR=""
+FIXTURE_DENY_PATH=""
+FIXTURE_APPROVE_PATH=""
+
+verify_demo_policy_overlay() {
+  local gate=${1:-edge_fake_hook_e2e}
+  if [[ ! -f "${DEMO_POLICY_OVERLAY}" ]]; then
+    if is_integration_mode; then
+      printf 'FAIL %s: demo policy overlay missing: %s\n' "${gate}" "${DEMO_POLICY_OVERLAY}" >&2
+      exit "${EXIT_PREREQ}"
+    fi
+    skip "demo policy overlay missing: ${DEMO_POLICY_OVERLAY}"
+  fi
+  # The overlay carries `version: edge-policy-demo-v0` — log the version
+  # for transparency without echoing rule contents.
+  local version
+  version=$(grep -E '^version:' "${DEMO_POLICY_OVERLAY}" | head -1 | awk '{print $2}')
+  log "demo policy overlay: ${DEMO_POLICY_OVERLAY} (${version:-unknown-version})"
+  log "policy assumption: agentd loads cordum-edge-pack overlay for tenant ${CORDUM_TENANT_ID}"
+}
+
+setup_fixture_paths() {
+  if [[ -z "${TMP_ROOT}" ]]; then
+    fail edge_fake_hook_e2e 'setup_fixture_paths called before init_tempdir'
+  fi
+  FIXTURE_DIR="${TMP_ROOT}/fixture"
+  mkdir -p "${FIXTURE_DIR}"
+  # Path containment match -> classifier path.class=secret + risk_tags=secrets
+  # -> deny-secret-reads rule. Path string only; file never created/read.
+  FIXTURE_DENY_PATH="${FIXTURE_DIR}/.env"
+  # Any path is sufficient for the require-approval-for-edits rule (matches
+  # by capability=file.write + risk_tags=write, not path). Path string only.
+  FIXTURE_APPROVE_PATH="${FIXTURE_DIR}/protected.txt"
+  log "fixture deny path (synthetic, never read): ${FIXTURE_DENY_PATH}"
+  log "fixture approve path (synthetic, never read): ${FIXTURE_APPROVE_PATH}"
+}
+
+# ---------------------------------------------------------------------------
+# Reachability probe — used to drive SKIP vs FAIL in default vs strict mode.
+# Runs before init_curl_opts because the probe is unauthenticated and must
+# work even when CORDUM_API_KEY is unset (default-mode SKIP path).
+# ---------------------------------------------------------------------------
+detect_api_base() {
+  if [[ -n "${CORDUM_GATEWAY}" ]]; then
+    printf '%s' "${CORDUM_GATEWAY}"
+    return 0
+  fi
+  if [[ -z "${CORDUM_TLS_CA}" && -f "./certs/ca/ca.crt" ]]; then
+    printf 'https://localhost:8081'
+  elif [[ -n "${CORDUM_TLS_CA}" ]]; then
+    printf 'https://localhost:8081'
+  else
+    printf 'http://localhost:8081'
+  fi
+}
+
+probe_api_base_reachable() {
+  local api_base=$1
+  command -v curl >/dev/null 2>&1 || return 1
+  local curl_opts=(--silent --show-error --max-time 3 --output /dev/null --write-out '%{http_code}')
+  if [[ -n "${CORDUM_TLS_CA}" ]] || [[ -f "./certs/ca/ca.crt" ]]; then
+    local ca=${CORDUM_TLS_CA:-./certs/ca/ca.crt}
+    curl_opts+=(--cacert "${ca}")
+  fi
+  local code
+  if ! code=$(curl "${curl_opts[@]}" "${api_base}/api/v1/health" 2>/dev/null); then
+    return 1
+  fi
+  # Any 2xx/3xx/4xx means the Gateway answered; only network failure -> SKIP.
+  case "${code}" in
+    2*|3*|4*) return 0 ;;
+    *)        return 1 ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Module-global state populated by gate_session_setup and consumed by
+# subsequent gates (PreToolUse deny, approval flow, PostToolUse, export).
+# ---------------------------------------------------------------------------
+API_BASE=""
+EDGE_SESSION_ID=""
+EDGE_EXECUTION_ID=""
+EDGE_PRINCIPAL_ID=""
+
+# ---------------------------------------------------------------------------
+# Gate routing — default is hook mode (EDGE-027 acceptance path); bypass
+# mode (CORDUM_EDGE_E2E_BYPASS_HOOK=1) keeps the original Gateway-direct
+# semantics for CI hosts without hook/agentd binaries.
+#
+# Hook mode flow:
+#   gate_session_setup            -> Gateway-direct create + round-trip GETs
+#                                    (also exports CORDUM_EDGE_SESSION_ID +
+#                                    CORDUM_EDGE_EXECUTION_ID for the hook
+#                                    subprocess via run_hook helper).
+#   gate_pretooluse_deny          -> stdin Claude hook JSON to cordum-hook
+#                                    (event=pre-tool-use); assert
+#                                    permissionDecision == "deny" + verify
+#                                    Gateway events listing recorded the DENY.
+#   gate_approval_flow            -> 3 sequential cordum-hook invocations
+#                                    (initial REQUIRE_APPROVAL, retry ALLOW
+#                                    after Gateway-direct approve, terminal
+#                                    DENY); approve still hits Gateway
+#                                    /api/v1/edge/approvals/{ref}/approve.
+#   gate_posttooluse_artifact     -> stdin Claude hook JSON to cordum-hook
+#                                    (event=post-tool-use). Direct /events
+#                                    POST stays available in bypass mode.
+#   gate_evidence_export          -> Gateway-direct POST in BOTH modes;
+#                                    export is admin-side and never flows
+#                                    through agentd.
+#
+# EDGE-017.4 forward-compat: when nonce moves out of the URL into an env
+# var consumed by cordum-hook + a header sent by agentd, update
+# compose_agentd_url to drop the ?nonce= suffix and inject the value via
+# run_hook's CORDUM_AGENTD_HOOK_NONCE env instead. PASS line shapes stay
+# stable so QA evidence does not churn across that migration.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Gate: edge_session_setup (step 7).
+#
+# Creates an EdgeSession + initial AgentExecution via the Gateway directly,
+# captures the IDs, and round-trips GET /sessions/{id} + /executions/{id} to
+# confirm tenant isolation.
+# ---------------------------------------------------------------------------
+gate_session_setup() {
+  local gate=edge_session_setup
+
+  EDGE_PRINCIPAL_ID="edge-fake-hook-e2e-$$"
+  local body
+  body=$(cat <<JSON
+{
+  "principal_id": "${EDGE_PRINCIPAL_ID}",
+  "principal_type": "service",
+  "agent_product": "cordum-edge-fake-hook-e2e",
+  "agent_version": "0.1.0",
+  "mode": "ci",
+  "cwd": "${TMP_ROOT}",
+  "host_id": "edge-e2e-host",
+  "device_id": "edge-e2e-device",
+  "policy_mode": "enforce"
+}
+JSON
+)
+  local code
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/sessions" "${body}")
+  log_http "${gate}" POST "/api/v1/edge/sessions" "${code}"
+  assert_http_status "${gate}" "${code}" "201" "create edge session"
+  EDGE_SESSION_ID=$(extract_json '.session_id // empty')
+  if [[ -z "${EDGE_SESSION_ID}" ]]; then
+    fail "${gate}" 'create-session response missing session_id'
+  fi
+  log "edge session_id=${EDGE_SESSION_ID}"
+
+  body=$(cat <<JSON
+{
+  "session_id": "${EDGE_SESSION_ID}",
+  "adapter": "claude-code-hook",
+  "mode": "ci",
+  "attempt": 0
+}
+JSON
+)
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/executions" "${body}")
+  log_http "${gate}" POST "/api/v1/edge/executions" "${code}"
+  assert_http_status "${gate}" "${code}" "201" "create edge execution"
+  EDGE_EXECUTION_ID=$(extract_json '.execution_id // empty')
+  if [[ -z "${EDGE_EXECUTION_ID}" ]]; then
+    fail "${gate}" 'create-execution response missing execution_id'
+  fi
+  log "edge execution_id=${EDGE_EXECUTION_ID}"
+
+  # Round-trip GETs confirm tenant isolation: 200 + matching IDs.
+  code=$(curl_request GET "${API_BASE}/api/v1/edge/sessions/${EDGE_SESSION_ID}")
+  log_http "${gate}" GET "/api/v1/edge/sessions/${EDGE_SESSION_ID}" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "GET edge session"
+  assert_json "${gate}" '.session_id == "'"${EDGE_SESSION_ID}"'"' 'session_id round-trip mismatch'
+  assert_json "${gate}" '.tenant_id == "'"${CORDUM_TENANT_ID}"'"' "session.tenant_id != ${CORDUM_TENANT_ID}"
+
+  code=$(curl_request GET "${API_BASE}/api/v1/edge/executions/${EDGE_EXECUTION_ID}")
+  log_http "${gate}" GET "/api/v1/edge/executions/${EDGE_EXECUTION_ID}" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "GET edge execution"
+  assert_json "${gate}" '.execution_id == "'"${EDGE_EXECUTION_ID}"'"' 'execution_id round-trip mismatch'
+  assert_json "${gate}" '.session_id == "'"${EDGE_SESSION_ID}"'"' 'execution.session_id != session.session_id'
+
+  pass "${gate}"
+}
+
+# ---------------------------------------------------------------------------
+# Gate: edge_pretooluse_deny (step 8).
+#
+# Default (hook) mode: pipes synthetic Claude PreToolUse JSON through
+# cordum-hook against the locally-spawned cordum-agentd. Asserts the hook
+# stdout carries permissionDecision == "deny" + a non-empty reason, then
+# verifies the Gateway recorded the DENY decision in the session events
+# log. The classifier (core/edge/classifier.go:492 strings.Contains
+# "/.env") tags `<tmpdir>/fixture/.env` reads as path.class=secret +
+# risk_tags=secrets, which the EDGE-010 demo overlay rule
+# `claude-code.deny-secret-reads` denies.
+#
+# Bypass mode (CORDUM_EDGE_E2E_BYPASS_HOOK=1): POSTs the equivalent
+# evaluate request directly to /api/v1/edge/evaluate. PASS line shape
+# stays identical so QA evidence does not churn between modes.
+# ---------------------------------------------------------------------------
+gate_pretooluse_deny() {
+  if want_bypass_hook; then
+    gate_pretooluse_deny_bypass
+  else
+    gate_pretooluse_deny_hook
+  fi
+}
+
+gate_pretooluse_deny_hook() {
+  local gate=edge_pretooluse_deny
+
+  local hook_input
+  hook_input=$(cat <<JSON
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "${EDGE_SESSION_ID}",
+  "tool_name": "Read",
+  "tool_input": {
+    "file_path": "${FIXTURE_DENY_PATH}"
+  },
+  "cwd": "${TMP_ROOT}"
+}
+JSON
+)
+
+  local stdout_file
+  stdout_file=$(mktemp -p "${TMP_ROOT}" hook_stdout.XXXXXX)
+  local rc
+  rc=$(run_hook pre-tool-use "${hook_input}" "${stdout_file}")
+  log "cordum-hook claude pre-tool-use exit=${rc}"
+  if [[ "${rc}" != "0" ]]; then
+    fail "${gate}" "cordum-hook exit ${rc} on PreToolUse Read .env"
+  fi
+
+  # PreToolUse deny shape per core/edge/claude/hook_output.go preToolUseOutput:
+  # decision "DENY" -> hookSpecificOutput.permissionDecision = "deny" with
+  # a non-empty permissionDecisionReason.
+  assert_json_file "${gate}" "${stdout_file}" \
+    '.hookSpecificOutput.hookEventName == "PreToolUse"' \
+    'hook stdout missing PreToolUse hookSpecificOutput'
+  assert_json_file "${gate}" "${stdout_file}" \
+    '.hookSpecificOutput.permissionDecision == "deny"' \
+    'hook stdout permissionDecision != deny'
+  assert_json_file "${gate}" "${stdout_file}" \
+    '(.hookSpecificOutput.permissionDecisionReason | type == "string") and (.hookSpecificOutput.permissionDecisionReason | length > 0)' \
+    'hook stdout permissionDecisionReason empty'
+
+  local decision reason
+  decision=$(extract_json_file "${stdout_file}" '.hookSpecificOutput.permissionDecision')
+  reason=$(extract_json_file "${stdout_file}" '.hookSpecificOutput.permissionDecisionReason' | head -c 120)
+  log_decision "${gate}" "${decision}"
+  log "deny reason (truncated): ${reason}"
+
+  # Confirm the DENY decision was persisted as an event under this execution
+  # via the agentd -> Gateway path. Same Gateway listing as bypass mode.
+  local code
+  code=$(curl_request GET \
+    "${API_BASE}/api/v1/edge/sessions/${EDGE_SESSION_ID}/events?decision=DENY&limit=200")
+  log_http "${gate}" GET "/api/v1/edge/sessions/${EDGE_SESSION_ID}/events?decision=DENY" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "list DENY events"
+  assert_json "${gate}" \
+    '[.items[]? | select(.execution_id == "'"${EDGE_EXECUTION_ID}"'" and .decision == "DENY")] | length >= 1' \
+    "no DENY event recorded for execution ${EDGE_EXECUTION_ID}"
+
+  # Negative redaction sanity on hook stdout AND Gateway events response —
+  # neither must echo secret-shaped tokens we never wrote.
+  assert_body_does_not_contain "${gate}" "OPENAI_API_KEY" 'events listing contains a real-secret marker'
+  assert_body_does_not_contain "${gate}" "AWS_SECRET_ACCESS_KEY" 'events listing contains a real-secret marker'
+  if grep -F -q -- "OPENAI_API_KEY" "${stdout_file}" 2>/dev/null; then
+    fail "${gate}" 'hook stdout unexpectedly contained OPENAI_API_KEY marker'
+  fi
+  if grep -F -q -- "AWS_SECRET_ACCESS_KEY" "${stdout_file}" 2>/dev/null; then
+    fail "${gate}" 'hook stdout unexpectedly contained AWS_SECRET_ACCESS_KEY marker'
+  fi
+
+  pass "${gate}"
+}
+
+gate_pretooluse_deny_bypass() {
+  local gate=edge_pretooluse_deny
+
+  local body
+  body=$(cat <<JSON
+{
+  "session_id": "${EDGE_SESSION_ID}",
+  "execution_id": "${EDGE_EXECUTION_ID}",
+  "principal_id": "${EDGE_PRINCIPAL_ID}",
+  "agent_product": "cordum-edge-fake-hook-e2e",
+  "layer": "hook",
+  "kind": "hook.pre_tool_use",
+  "tool_name": "Read",
+  "input_redacted": {
+    "file_path": "${FIXTURE_DENY_PATH}"
+  },
+  "cwd": "${TMP_ROOT}"
+}
+JSON
+)
+  local code
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/evaluate" "${body}")
+  log_http "${gate}" POST "/api/v1/edge/evaluate" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "evaluate Read .env"
+
+  # Server-side decision must be DENY with a non-empty reason and the
+  # hook-friendly translation `permission_decision == "deny"`.
+  assert_json "${gate}" '.decision == "DENY"' "evaluate decision != DENY"
+  assert_json "${gate}" '(.reason | type == "string") and (.reason | length > 0)' 'evaluate reason empty'
+  assert_json "${gate}" '.permission_decision == "deny"' 'permission_decision != deny'
+
+  local decision reason
+  decision=$(extract_json '.decision')
+  reason=$(extract_json '.reason' | head -c 120)
+  log_decision "${gate}" "${decision}"
+  log "deny reason (truncated): ${reason}"
+
+  # Confirm the DENY decision was persisted as an event under this execution.
+  # Bound the read to events for the right execution and decision filter.
+  code=$(curl_request GET \
+    "${API_BASE}/api/v1/edge/sessions/${EDGE_SESSION_ID}/events?decision=DENY&limit=200")
+  log_http "${gate}" GET "/api/v1/edge/sessions/${EDGE_SESSION_ID}/events?decision=DENY" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "list DENY events"
+  assert_json "${gate}" \
+    '[.items[]? | select(.execution_id == "'"${EDGE_EXECUTION_ID}"'" and .decision == "DENY")] | length >= 1' \
+    "no DENY event recorded for execution ${EDGE_EXECUTION_ID}"
+
+  # Negative redaction sanity: agentd/Gateway must NOT echo file body bytes.
+  # Since the script never writes a real .env, common secret-shaped tokens
+  # cannot legitimately appear in the response — if they do, evidence
+  # redaction has regressed.
+  assert_body_does_not_contain "${gate}" "OPENAI_API_KEY" 'evaluate response contains a real-secret marker'
+  assert_body_does_not_contain "${gate}" "AWS_SECRET_ACCESS_KEY" 'evaluate response contains a real-secret marker'
+
+  pass "${gate}"
+}
+
+# ---------------------------------------------------------------------------
+# Gate: edge_approval_flow (step 9).
+#
+# Default (hook) mode: three sequential cordum-hook invocations against the
+# locally-spawned cordum-agentd. Identical synthetic Edit hook JSON each
+# time; agentd computes a stable action_hash so the second call consumes
+# the approval and the third hits the terminal-after-consume path.
+#
+#   1. cordum-hook claude pre-tool-use (Edit on protected.txt)
+#       -> permissionDecision == "deny" with reason containing
+#          "approval_ref=<ref>; approve then retry the tool call"
+#          (per core/edge/claude/hook_output.go preToolUseOutput
+#          REQUIRE_APPROVAL branch).
+#   2. GET  /api/v1/edge/approvals/{ref}            -> status=pending
+#   3. POST /api/v1/edge/approvals/{ref}/approve    -> status=approved
+#   4. cordum-hook claude pre-tool-use (same input) -> permissionDecision = "allow"
+#   5. cordum-hook claude pre-tool-use (same input) -> permissionDecision = "deny"
+#                                                       reason contains "already consumed"
+#
+# Bypass mode (CORDUM_EDGE_E2E_BYPASS_HOOK=1): exercises the same four-step
+# Edge approval contract via Gateway-direct /api/v1/edge/evaluate calls.
+#
+# The terminal-on-third-retry shape is verified at
+# `core/controlplane/gateway/handlers_edge_evaluate.go:768-769` —
+# `edgeEvaluateRetryDeny(..., "approval already consumed; request a new approval")`.
+# ---------------------------------------------------------------------------
+gate_approval_flow() {
+  if want_bypass_hook; then
+    gate_approval_flow_bypass
+  else
+    gate_approval_flow_hook
+  fi
+}
+
+gate_approval_flow_hook() {
+  local gate=edge_approval_flow
+
+  local hook_input
+  hook_input=$(cat <<JSON
+{
+  "hook_event_name": "PreToolUse",
+  "session_id": "${EDGE_SESSION_ID}",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "${FIXTURE_APPROVE_PATH}"
+  },
+  "cwd": "${TMP_ROOT}"
+}
+JSON
+)
+
+  # 1. First hook call — REQUIRE_APPROVAL surfaces as permissionDecision=deny
+  # with approval_ref embedded in permissionDecisionReason.
+  local stdout_initial stdout_consume stdout_terminal rc
+  stdout_initial=$(mktemp -p "${TMP_ROOT}" hook_initial.XXXXXX)
+  rc=$(run_hook pre-tool-use "${hook_input}" "${stdout_initial}")
+  log "cordum-hook claude pre-tool-use (initial) exit=${rc}"
+  if [[ "${rc}" != "0" ]]; then
+    fail "${gate}" "cordum-hook initial call exit ${rc}"
+  fi
+  assert_json_file "${gate}" "${stdout_initial}" \
+    '.hookSpecificOutput.permissionDecision == "deny"' \
+    'initial hook permissionDecision != deny (REQUIRE_APPROVAL surfaces as deny+reason)'
+  assert_json_file "${gate}" "${stdout_initial}" \
+    '(.hookSpecificOutput.permissionDecisionReason | type == "string") and (.hookSpecificOutput.permissionDecisionReason | test("approval_ref="; "i"))' \
+    'initial hook reason missing approval_ref= marker'
+
+  local reason approval_ref
+  reason=$(extract_json_file "${stdout_initial}" '.hookSpecificOutput.permissionDecisionReason')
+  # Pattern matches the formatter at hook_output.go:53:
+  #   "<base reason>; approval_ref=<edge_appr_...>; approve then retry the tool call"
+  approval_ref=$(printf '%s' "${reason}" | sed -n 's/.*approval_ref=\(edge_appr_[A-Za-z0-9_-]\{1,\}\).*/\1/p' | head -1)
+  if [[ -z "${approval_ref}" ]]; then
+    fail "${gate}" 'could not extract approval_ref from hook reason'
+  fi
+  if [[ ! "${approval_ref}" =~ ^edge_appr_[A-Za-z0-9_-]+$ ]]; then
+    fail "${gate}" "approval_ref does not match required pattern: ${approval_ref}"
+  fi
+  log "approval_ref=${approval_ref}"
+
+  # 2. Approval is pending in the store (Gateway-direct read).
+  local code
+  code=$(curl_request GET "${API_BASE}/api/v1/edge/approvals/${approval_ref}")
+  log_http "${gate}" GET "/api/v1/edge/approvals/${approval_ref}" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "GET approval"
+  assert_json "${gate}" '.status == "pending"' 'pre-approve status != pending'
+  assert_json "${gate}" '.session_id == "'"${EDGE_SESSION_ID}"'"' 'approval bound to wrong session'
+
+  # 3. Resolve as approved (Gateway-direct in both modes — approver is
+  # human-side and never flows through cordum-hook).
+  local approve_body='{"reason":"edge_fake_hook_e2e synthetic approval"}'
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/approvals/${approval_ref}/approve" "${approve_body}")
+  log_http "${gate}" POST "/api/v1/edge/approvals/${approval_ref}/approve" "${code}"
+  if [[ "${code}" == "403" ]]; then
+    fail "${gate}" 'approve returned 403 (likely self_approval_denied — set CORDUM_API_KEY to a different principal than the requester)'
+  fi
+  assert_http_status "${gate}" "${code}" "200" "POST approval approve"
+  assert_json "${gate}" '.status == "approved"' 'post-approve status != approved'
+
+  # 4. Retry hook with same synthetic input — agentd matches the action_hash
+  # against the approved record and consumes the claim. permissionDecision
+  # transitions to "allow".
+  stdout_consume=$(mktemp -p "${TMP_ROOT}" hook_consume.XXXXXX)
+  rc=$(run_hook pre-tool-use "${hook_input}" "${stdout_consume}")
+  log "cordum-hook claude pre-tool-use (consume) exit=${rc}"
+  if [[ "${rc}" != "0" ]]; then
+    fail "${gate}" "cordum-hook consume call exit ${rc}"
+  fi
+  assert_json_file "${gate}" "${stdout_consume}" \
+    '.hookSpecificOutput.permissionDecision == "allow"' \
+    'consume retry permissionDecision != allow'
+
+  # 5. Third call — terminal "already consumed" path. permissionDecision
+  # returns to "deny" with reason containing "already consumed".
+  stdout_terminal=$(mktemp -p "${TMP_ROOT}" hook_terminal.XXXXXX)
+  rc=$(run_hook pre-tool-use "${hook_input}" "${stdout_terminal}")
+  log "cordum-hook claude pre-tool-use (terminal) exit=${rc}"
+  if [[ "${rc}" != "0" ]]; then
+    fail "${gate}" "cordum-hook terminal call exit ${rc}"
+  fi
+  assert_json_file "${gate}" "${stdout_terminal}" \
+    '.hookSpecificOutput.permissionDecision == "deny"' \
+    'terminal retry permissionDecision != deny'
+  assert_json_file "${gate}" "${stdout_terminal}" \
+    '(.hookSpecificOutput.permissionDecisionReason | tostring | test("already consumed"; "i"))' \
+    "terminal retry reason missing 'already consumed' marker"
+
+  # Negative redaction sanity on each hook stdout file — secret tokens we
+  # never wrote must not appear.
+  local f
+  for f in "${stdout_initial}" "${stdout_consume}" "${stdout_terminal}"; do
+    if grep -F -q -- "OPENAI_API_KEY" "${f}" 2>/dev/null; then
+      fail "${gate}" "hook stdout (${f}) leaked OPENAI_API_KEY marker"
+    fi
+    if grep -F -q -- "AWS_SECRET_ACCESS_KEY" "${f}" 2>/dev/null; then
+      fail "${gate}" "hook stdout (${f}) leaked AWS_SECRET_ACCESS_KEY marker"
+    fi
+  done
+
+  pass "${gate}"
+}
+
+gate_approval_flow_bypass() {
+  local gate=edge_approval_flow
+
+  # 1. First evaluate — REQUIRE_APPROVAL.
+  local req
+  req=$(cat <<JSON
+{
+  "session_id": "${EDGE_SESSION_ID}",
+  "execution_id": "${EDGE_EXECUTION_ID}",
+  "principal_id": "${EDGE_PRINCIPAL_ID}",
+  "agent_product": "cordum-edge-fake-hook-e2e",
+  "layer": "hook",
+  "kind": "hook.pre_tool_use",
+  "tool_name": "Edit",
+  "input_redacted": {
+    "file_path": "${FIXTURE_APPROVE_PATH}"
+  },
+  "cwd": "${TMP_ROOT}"
+}
+JSON
+)
+  local code
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/evaluate" "${req}")
+  log_http "${gate}" POST "/api/v1/edge/evaluate (initial)" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "evaluate Edit (initial)"
+  assert_json "${gate}" '.decision == "REQUIRE_APPROVAL"' 'initial evaluate did not require approval'
+  local approval_ref
+  approval_ref=$(extract_json '.approval_ref // empty')
+  if [[ -z "${approval_ref}" ]]; then
+    fail "${gate}" 'evaluate response missing approval_ref'
+  fi
+  if [[ ! "${approval_ref}" =~ ^edge_appr_[A-Za-z0-9_-]+$ ]]; then
+    fail "${gate}" "approval_ref does not match required pattern: ${approval_ref}"
+  fi
+  log "approval_ref=${approval_ref}"
+
+  # 2. Approval is pending in the store.
+  code=$(curl_request GET "${API_BASE}/api/v1/edge/approvals/${approval_ref}")
+  log_http "${gate}" GET "/api/v1/edge/approvals/${approval_ref}" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "GET approval"
+  assert_json "${gate}" '.status == "pending"' 'pre-approve status != pending'
+  assert_json "${gate}" '.session_id == "'"${EDGE_SESSION_ID}"'"' 'approval bound to wrong session'
+
+  # 3. Resolve as approved. EdgeApprovalDecisionRequest body is optional;
+  # supply a synthetic resolver reason so the audit record carries it.
+  local approve_body='{"reason":"edge_fake_hook_e2e synthetic approval"}'
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/approvals/${approval_ref}/approve" "${approve_body}")
+  log_http "${gate}" POST "/api/v1/edge/approvals/${approval_ref}/approve" "${code}"
+  # 200 = approved; 403 self_approval_denied is possible when API key principal
+  # matches the requester. Surface a directed error if that hits.
+  if [[ "${code}" == "403" ]]; then
+    fail "${gate}" 'approve returned 403 (likely self_approval_denied — set CORDUM_API_KEY to a different principal than the requester)'
+  fi
+  assert_http_status "${gate}" "${code}" "200" "POST approval approve"
+  assert_json "${gate}" '.status == "approved"' 'post-approve status != approved'
+
+  # 4. Retry evaluate with approval_ref — claim/consume — ALLOW.
+  local retry_req
+  retry_req=$(cat <<JSON
+{
+  "session_id": "${EDGE_SESSION_ID}",
+  "execution_id": "${EDGE_EXECUTION_ID}",
+  "principal_id": "${EDGE_PRINCIPAL_ID}",
+  "agent_product": "cordum-edge-fake-hook-e2e",
+  "layer": "hook",
+  "kind": "hook.pre_tool_use",
+  "tool_name": "Edit",
+  "input_redacted": {
+    "file_path": "${FIXTURE_APPROVE_PATH}"
+  },
+  "cwd": "${TMP_ROOT}",
+  "approval_ref": "${approval_ref}"
+}
+JSON
+)
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/evaluate" "${retry_req}")
+  log_http "${gate}" POST "/api/v1/edge/evaluate (retry consume)" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "evaluate Edit (retry consume)"
+  assert_json "${gate}" '.decision == "ALLOW"' 'consume retry did not return ALLOW'
+  assert_json "${gate}" '.permission_decision == "allow"' 'consume retry permission_decision != allow'
+
+  # 5. Third retry — same payload + approval_ref — must hit terminal "approval
+  # already consumed" path (handlers_edge_evaluate.go:768-769).
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/evaluate" "${retry_req}")
+  log_http "${gate}" POST "/api/v1/edge/evaluate (terminal)" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "evaluate Edit (third retry)"
+  assert_json "${gate}" '.decision == "DENY"' 'third retry should be terminal DENY'
+  assert_json "${gate}" '.permission_decision == "deny"' 'third retry permission_decision != deny'
+  assert_json "${gate}" '(.reason | tostring | test("already consumed"; "i"))' \
+    "third retry reason missing 'already consumed' marker"
+  assert_json "${gate}" '.wait_after == "request_new_approval"' 'third retry wait_after != request_new_approval'
+
+  # Negative redaction sanity (mirrors gate_pretooluse_deny).
+  assert_body_does_not_contain "${gate}" "OPENAI_API_KEY" 'evaluate response contains a real-secret marker'
+  assert_body_does_not_contain "${gate}" "AWS_SECRET_ACCESS_KEY" 'evaluate response contains a real-secret marker'
+
+  pass "${gate}"
+}
+
+# ---------------------------------------------------------------------------
+# Gate: edge_posttooluse_artifact (step 10).
+#
+# Default (hook) mode: pipes synthetic Claude PostToolUse JSON through
+# cordum-hook. The hook → agentd → Gateway path records a
+# `hook.post_tool_use` event for the active execution. Verification is
+# against the Gateway session-events listing (artifact_ptr presence
+# depends on agentd's evaluator decision and is asserted in bypass mode
+# where the script controls the pointer shape directly).
+#
+# Bypass mode (CORDUM_EDGE_E2E_BYPASS_HOOK=1): POSTs /api/v1/edge/events
+# directly with a hand-crafted PostToolUse event carrying a single
+# artifact pointer. The payload contains a synthetic bounded summary
+# ("wrote 64 bytes") — no raw file body bytes — and the pointer's `uri`
+# uses the internal `artifact://...` scheme that the Edge artifact
+# validator accepts (per EdgeArtifactPointer schema at OpenAPI L7969-7998).
+# ---------------------------------------------------------------------------
+gate_posttooluse_artifact() {
+  if want_bypass_hook; then
+    gate_posttooluse_artifact_bypass
+  else
+    gate_posttooluse_artifact_hook
+  fi
+}
+
+gate_posttooluse_artifact_hook() {
+  local gate=edge_posttooluse_artifact
+
+  local hook_input
+  hook_input=$(cat <<JSON
+{
+  "hook_event_name": "PostToolUse",
+  "session_id": "${EDGE_SESSION_ID}",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "${FIXTURE_APPROVE_PATH}"
+  },
+  "tool_response": {
+    "summary": "wrote 64 bytes",
+    "file_path": "${FIXTURE_APPROVE_PATH}"
+  },
+  "duration_ms": 12,
+  "cwd": "${TMP_ROOT}"
+}
+JSON
+)
+
+  local stdout_file
+  stdout_file=$(mktemp -p "${TMP_ROOT}" hook_post.XXXXXX)
+  local rc
+  rc=$(run_hook post-tool-use "${hook_input}" "${stdout_file}")
+  log "cordum-hook claude post-tool-use exit=${rc}"
+  if [[ "${rc}" != "0" ]]; then
+    fail "${gate}" "cordum-hook PostToolUse exit ${rc}"
+  fi
+  # PostToolUse output may legitimately be empty for ALLOW per
+  # core/edge/claude/hook_output.go postToolUseOutput (only DENY/REQUIRE
+  # produce a body). Don't assert on stdout shape; verify event recording
+  # via the Gateway listing instead.
+
+  # Confirm the event was persisted via the agentd → Gateway path. Filter
+  # by kind=hook.post_tool_use and our execution.
+  local code
+  code=$(curl_request GET \
+    "${API_BASE}/api/v1/edge/sessions/${EDGE_SESSION_ID}/events?kind=hook.post_tool_use&limit=200")
+  log_http "${gate}" GET "/api/v1/edge/sessions/${EDGE_SESSION_ID}/events?kind=hook.post_tool_use" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "list PostToolUse events"
+  assert_json "${gate}" \
+    '[.items[]? | select(.execution_id == "'"${EDGE_EXECUTION_ID}"'" and .kind == "hook.post_tool_use")] | length >= 1' \
+    "no hook.post_tool_use event recorded for execution ${EDGE_EXECUTION_ID}"
+  assert_json "${gate}" \
+    '[.items[]? | select(.execution_id == "'"${EDGE_EXECUTION_ID}"'" and .kind == "hook.post_tool_use" and .tool_name == "Edit")] | length >= 1' \
+    "no hook.post_tool_use Edit event recorded for execution ${EDGE_EXECUTION_ID}"
+
+  # Negative redaction sanity on hook stdout AND Gateway listing.
+  assert_body_does_not_contain "${gate}" "OPENAI_API_KEY" 'events listing contains a real-secret marker'
+  assert_body_does_not_contain "${gate}" "AWS_SECRET_ACCESS_KEY" 'events listing contains a real-secret marker'
+  if grep -F -q -- "OPENAI_API_KEY" "${stdout_file}" 2>/dev/null; then
+    fail "${gate}" 'hook stdout unexpectedly contained OPENAI_API_KEY marker'
+  fi
+  if grep -F -q -- "AWS_SECRET_ACCESS_KEY" "${stdout_file}" 2>/dev/null; then
+    fail "${gate}" 'hook stdout unexpectedly contained AWS_SECRET_ACCESS_KEY marker'
+  fi
+
+  pass "${gate}"
+}
+
+gate_posttooluse_artifact_bypass() {
+  local gate=edge_posttooluse_artifact
+
+  # Synthetic deterministic-but-fake event id + sha256.
+  local event_id="evt-edge-e2e-$(date +%s)-$$"
+  local artifact_sha="sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  local now_iso
+  now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  local artifact_uri="artifact://edge/${EDGE_SESSION_ID}/${EDGE_EXECUTION_ID}/${event_id}/tool_result"
+
+  local body
+  body=$(cat <<JSON
+{
+  "event_id": "${event_id}",
+  "session_id": "${EDGE_SESSION_ID}",
+  "execution_id": "${EDGE_EXECUTION_ID}",
+  "principal_id": "${EDGE_PRINCIPAL_ID}",
+  "ts": "${now_iso}",
+  "layer": "hook",
+  "kind": "hook.post_tool_use",
+  "agent_product": "cordum-edge-fake-hook-e2e",
+  "tool_name": "Edit",
+  "input_redacted": {
+    "summary": "wrote 64 bytes",
+    "file_path": "${FIXTURE_APPROVE_PATH}"
+  },
+  "decision": "RECORDED",
+  "status": "ok",
+  "duration_ms": 12,
+  "artifact_ptrs": [
+    {
+      "artifact_type": "edge.tool_result",
+      "session_id": "${EDGE_SESSION_ID}",
+      "execution_id": "${EDGE_EXECUTION_ID}",
+      "event_id": "${event_id}",
+      "tenant_id": "${CORDUM_TENANT_ID}",
+      "retention_class": "standard",
+      "redaction_level": "standard",
+      "sha256": "${artifact_sha}",
+      "uri": "${artifact_uri}",
+      "created_at": "${now_iso}"
+    }
+  ]
+}
+JSON
+)
+  local code
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/events" "${body}")
+  log_http "${gate}" POST "/api/v1/edge/events" "${code}"
+  # Single-event POST returns 201 (created) per the gateway implementation.
+  assert_http_status "${gate}" "${code}" "201,200" "POST PostToolUse event"
+  # The response body is the persisted EdgeAgentActionEvent — confirm the
+  # artifact pointer survived round-trip and matches what we sent.
+  assert_json "${gate}" '.event_id == "'"${event_id}"'"' 'event_id mismatch'
+  assert_json "${gate}" '.kind == "hook.post_tool_use"' 'kind != hook.post_tool_use'
+  assert_json "${gate}" '.decision == "RECORDED"' 'decision != RECORDED'
+  assert_json "${gate}" '(.artifact_ptrs | length) == 1' 'artifact_ptrs length != 1'
+  assert_json "${gate}" '.artifact_ptrs[0].sha256 == "'"${artifact_sha}"'"' 'artifact pointer sha256 mismatch'
+  assert_json "${gate}" '.artifact_ptrs[0].artifact_type == "edge.tool_result"' 'artifact_type != edge.tool_result'
+  assert_json "${gate}" '.artifact_ptrs[0].uri == "'"${artifact_uri}"'"' 'artifact_uri mismatch'
+
+  # Negative redaction sanity: response (and persisted event) MUST NOT echo
+  # raw tool body bytes. Since we never sent any, common secret tokens
+  # cannot legitimately appear; if they do, the redaction layer regressed.
+  assert_body_does_not_contain "${gate}" "OPENAI_API_KEY" 'event response contains a real-secret marker'
+  assert_body_does_not_contain "${gate}" "AWS_SECRET_ACCESS_KEY" 'event response contains a real-secret marker'
+
+  # Confirm the event is reachable through the session events listing
+  # (tenant-isolated read path) with a kind filter.
+  code=$(curl_request GET \
+    "${API_BASE}/api/v1/edge/sessions/${EDGE_SESSION_ID}/events?kind=hook.post_tool_use&limit=200")
+  log_http "${gate}" GET "/api/v1/edge/sessions/${EDGE_SESSION_ID}/events?kind=hook.post_tool_use" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "list PostToolUse events"
+  assert_json "${gate}" \
+    '[.items[]? | select(.event_id == "'"${event_id}"'")] | length == 1' \
+    "PostToolUse event ${event_id} not found via session-events listing"
+  assert_json "${gate}" \
+    '[.items[]? | select(.event_id == "'"${event_id}"'")][0].artifact_ptrs[0].sha256 == "'"${artifact_sha}"'"' \
+    'listed event artifact pointer sha256 mismatch'
+
+  pass "${gate}"
+}
+
+# ---------------------------------------------------------------------------
+# Gate: edge_evidence_export (step 11).
+#
+# Mode-agnostic: export is admin-side and never flows through
+# cordum-hook/agentd in either default or bypass mode. Bundle content
+# differs slightly between modes (bypass crafts an explicit artifact
+# pointer; hook mode relies on agentd to produce one if applicable), so
+# the artifact_ptr assertion is gated on bypass mode below.
+#
+# Calls POST /api/v1/edge/sessions/{id}/export (verified at OpenAPI
+# L1183 — POST, NOT GET as the original plan said) and verifies the
+# returned `SessionExportBundle` contains:
+#   - session/execution metadata for IDs from gate_session_setup
+#   - the DENY decision from gate_pretooluse_deny
+#   - the approval issue + consume from gate_approval_flow
+#   - the PostToolUse event + artifact pointer from gate_posttooluse_artifact
+#
+# Negative checks: bundle MUST NOT contain real-secret literal tokens;
+# since the script never wrote any, their presence would mean redaction
+# regressed.
+# ---------------------------------------------------------------------------
+gate_evidence_export() {
+  local gate=edge_evidence_export
+
+  local code
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/sessions/${EDGE_SESSION_ID}/export" '{}')
+  log_http "${gate}" POST "/api/v1/edge/sessions/${EDGE_SESSION_ID}/export" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "POST session export"
+
+  # Required top-level manifest fields per OpenAPI L1228-1244 + Go
+  # SessionExportBundle at core/edge/export.go:106-119.
+  assert_json "${gate}" '(.manifest_version | type == "string") and (.manifest_version | length > 0)' \
+    'export bundle missing manifest_version'
+  assert_json "${gate}" '.tenant_id == "'"${CORDUM_TENANT_ID}"'"' 'export tenant_id mismatch'
+  assert_json "${gate}" '.session.session_id == "'"${EDGE_SESSION_ID}"'"' 'export session_id mismatch'
+  assert_json "${gate}" \
+    '[.executions[]? | select(.execution_id == "'"${EDGE_EXECUTION_ID}"'")] | length >= 1' \
+    'export executions[] missing our execution'
+
+  # Step-8 deny event present.
+  assert_json "${gate}" \
+    '[.events[]? | select(.execution_id == "'"${EDGE_EXECUTION_ID}"'" and .decision == "DENY")] | length >= 1' \
+    'export events[] missing the DENY decision from gate_pretooluse_deny'
+
+  # Step-9 approval present and consumed.
+  assert_json "${gate}" \
+    '[.approvals[]? | select(.session_id == "'"${EDGE_SESSION_ID}"'" and .status == "approved")] | length >= 1' \
+    'export approvals[] missing the approved record from gate_approval_flow'
+
+  # Step-10 PostToolUse event present. Bypass mode hand-crafts an
+  # artifact_ptr so we additionally assert it round-tripped into the
+  # export bundle; hook mode relies on agentd's evaluator to decide
+  # whether to attach a pointer based on the synthetic tool_response we
+  # send, so we only require event presence in that mode.
+  if want_bypass_hook; then
+    assert_json "${gate}" \
+      '[.events[]? | select(.kind == "hook.post_tool_use" and (.artifact_ptrs | length) >= 1)] | length >= 1' \
+      'export events[] missing PostToolUse with artifact pointer'
+    assert_json "${gate}" \
+      '[.artifacts[]? | select(.session_id == "'"${EDGE_SESSION_ID}"'")] | length >= 1' \
+      'export artifacts[] missing entries for our session'
+  else
+    assert_json "${gate}" \
+      '[.events[]? | select(.kind == "hook.post_tool_use" and .execution_id == "'"${EDGE_EXECUTION_ID}"'")] | length >= 1' \
+      'export events[] missing PostToolUse from gate_posttooluse_artifact'
+  fi
+
+  # Negative redaction sanity. If any of these literal tokens appear in the
+  # bundle, redaction is broken (we never wrote them).
+  assert_body_does_not_contain "${gate}" "OPENAI_API_KEY" \
+    'export bundle leaked literal OPENAI_API_KEY'
+  assert_body_does_not_contain "${gate}" "AWS_SECRET_ACCESS_KEY" \
+    'export bundle leaked literal AWS_SECRET_ACCESS_KEY'
+  assert_body_does_not_contain "${gate}" "BEGIN PRIVATE KEY" \
+    'export bundle leaked PEM private key marker'
+
+  pass "${gate}"
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+main() {
+  parse_args "$@"
+
+  API_BASE=$(detect_api_base)
+  log "API_BASE=${API_BASE}"
+
+  if want_start_stack; then
+    if ! command -v docker >/dev/null 2>&1; then
+      if is_integration_mode; then
+        printf 'FAIL edge_fake_hook_e2e: CORDUM_EDGE_E2E_START_STACK=1 requires docker on PATH\n' >&2
+        exit "${EXIT_PREREQ}"
+      fi
+      skip "CORDUM_EDGE_E2E_START_STACK=1 set but docker missing"
+    fi
+    log "starting local stack via 'make dev-up' (CORDUM_EDGE_E2E_START_STACK=1)"
+    if ! make dev-up >&2; then
+      fail edge_fake_hook_e2e "'make dev-up' failed"
+    fi
+  fi
+
+  if ! probe_api_base_reachable "${API_BASE}"; then
+    if is_integration_mode; then
+      printf 'FAIL edge_fake_hook_e2e: %s unreachable in strict mode\n' "${API_BASE}" >&2
+      exit "${EXIT_PREREQ}"
+    fi
+    skip "${API_BASE} unreachable; set CORDUM_INTEGRATION=1 with a running stack"
+  fi
+
+  if is_integration_mode && [[ -z "${CORDUM_API_KEY}" ]]; then
+    printf 'FAIL edge_fake_hook_e2e: CORDUM_API_KEY required in strict mode\n' >&2
+    exit "${EXIT_PREREQ}"
+  fi
+
+  if ! is_integration_mode; then
+    skip "${API_BASE} reachable but CORDUM_INTEGRATION not set; default mode is non-destructive"
+  fi
+
+  # Strict-mode gate execution begins here.
+  require_tools
+  init_curl_opts
+  init_tempdir
+  setup_fixture_paths
+  verify_demo_policy_overlay edge_session_setup
+
+  if ! want_bypass_hook; then
+    locate_or_build_binaries edge_session_setup
+    pick_agentd_port
+    generate_agentd_nonce edge_session_setup
+    compose_agentd_url
+    log "agentd loopback URL composed (host=127.0.0.1 port=${AGENTD_PORT} path=/v1/edge/hooks/claude)"
+  fi
+
+  gate_session_setup
+
+  if ! want_bypass_hook; then
+    # Start agentd AFTER gate_session_setup so the agentd inherits the
+    # already-created EdgeSession via CORDUM_EDGE_SESSION_ID/EXECUTION_ID
+    # in the per-call run_hook env, rather than spawning its own. This
+    # keeps assertions deterministic against the IDs the script already
+    # logged.
+    start_agentd edge_session_setup
+    wait_agentd_ready edge_session_setup
+    log 'cordum-agentd ready; subsequent gates use cordum-hook -> agentd path'
+  else
+    log 'CORDUM_EDGE_E2E_BYPASS_HOOK=1; subsequent gates use Gateway-direct paths'
+  fi
+
+  gate_pretooluse_deny
+  gate_approval_flow
+  gate_posttooluse_artifact
+  gate_evidence_export
+}
+
+main "$@"
