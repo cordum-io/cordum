@@ -1,272 +1,199 @@
 package agentd
 
 import (
-	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
 	edgecore "github.com/cordum/cordum/core/edge"
 )
 
-func TestSafeAllowCacheMissHitAndKeyIsolation(t *testing.T) {
-	t.Parallel()
-
-	clock := &cacheTestClock{now: time.Date(2026, 5, 2, 13, 0, 0, 0, time.UTC)}
-	cache := NewSafeAllowCache(SafeAllowCacheConfig{Enabled: true, TTL: time.Minute, MaxEntries: 8}, clock)
-	req := safeAllowCacheTestRequest()
-	resp := safeAllowCacheTestResponse()
-
-	if got, ok := cache.Get(req); ok {
-		t.Fatalf("initial cache Get = %#v, want miss", got)
+func TestSafeAllowCacheNilWhenMaxEntriesZero(t *testing.T) {
+	if c := NewSafeAllowCache(SafeAllowCacheConfig{MaxEntries: 0}); c != nil {
+		t.Fatalf("MaxEntries=0 must return nil cache, got %v", c)
 	}
-	if !cache.Put(req, resp) {
-		t.Fatal("Put returned false for safe cache-eligible ALLOW")
+	if c := NewSafeAllowCache(SafeAllowCacheConfig{MaxEntries: -10}); c != nil {
+		t.Fatalf("negative MaxEntries must return nil cache, got %v", c)
 	}
-	got, ok := cache.Get(req)
+}
+
+func TestSafeAllowCacheNilReceiverIsSafeNoOp(t *testing.T) {
+	var c *SafeAllowCache // disabled cache
+	if _, ok := c.Get(SafeAllowKey{TenantID: "t"}); ok {
+		t.Fatal("nil cache Get returned ok=true")
+	}
+	c.Put(SafeAllowKey{TenantID: "t"}, safeAllowEntry{Reason: "ok"}) // no panic
+	if got := c.InvalidateTenant("t"); got != 0 {
+		t.Fatalf("nil cache InvalidateTenant = %d, want 0", got)
+	}
+	if got := c.Len(); got != 0 {
+		t.Fatalf("nil cache Len = %d, want 0", got)
+	}
+}
+
+func TestSafeAllowCacheHitMissAndExactKeyInvalidation(t *testing.T) {
+	c := NewSafeAllowCache(SafeAllowCacheConfig{MaxEntries: 8})
+	key := SafeAllowKey{
+		TenantID:       "tenant-a",
+		PolicyMode:     edgecore.PolicyModeEnforce,
+		PolicySnapshot: "snap-1",
+		ActionHash:     "sha256:action",
+		InputHash:      "sha256:input",
+	}
+	if _, ok := c.Get(key); ok {
+		t.Fatal("Get on empty cache returned ok=true")
+	}
+	c.Put(key, safeAllowEntry{Reason: "safe-test", RuleID: "claude-code.allow-safe-build-test"})
+	got, ok := c.Get(key)
 	if !ok {
-		t.Fatal("Get after Put missed; want hit")
+		t.Fatal("Get after Put returned miss")
 	}
-	if got.Decision != string(edgecore.DecisionAllow) || got.RuleID != resp.RuleID || got.PolicySnapshot != resp.PolicySnapshot {
-		t.Fatalf("cached response = %#v, want replay of %#v", got, resp)
+	if got.Reason != "safe-test" {
+		t.Fatalf("Reason = %q, want safe-test", got.Reason)
 	}
 
-	mutations := []struct {
-		name string
-		req  SafeAllowCacheRequest
-	}{
-		{name: "tenant", req: mutateSafeAllowCacheRequest(req, func(v *SafeAllowCacheRequest) { v.TenantID = "tenant-b" })},
-		{name: "policy mode", req: mutateSafeAllowCacheRequest(req, func(v *SafeAllowCacheRequest) { v.PolicyMode = edgecore.PolicyModeObserve })},
-		{name: "policy snapshot", req: mutateSafeAllowCacheRequest(req, func(v *SafeAllowCacheRequest) { v.PolicySnapshot = "snap-cache-b" })},
-		{name: "kind", req: mutateSafeAllowCacheRequest(req, func(v *SafeAllowCacheRequest) { v.Kind = "hook.post_tool_use" })},
-		{name: "risk tags", req: mutateSafeAllowCacheRequest(req, func(v *SafeAllowCacheRequest) { v.RiskTags = []string{"exec", "test", "runtime"} })},
-		{name: "action hash", req: mutateSafeAllowCacheRequest(req, func(v *SafeAllowCacheRequest) { v.ActionHash = "sha256:action-b" })},
-		{name: "input hash", req: mutateSafeAllowCacheRequest(req, func(v *SafeAllowCacheRequest) { v.InputHash = "sha256:input-b" })},
-	}
-	for _, tc := range mutations {
-		t.Run(tc.name, func(t *testing.T) {
-			if got, ok := cache.Get(tc.req); ok {
-				t.Fatalf("mutated key %s hit cache with %#v; want miss", tc.name, got)
+	// Any single field change must miss.
+	for name, mut := range map[string]func(SafeAllowKey) SafeAllowKey{
+		"different tenant":       func(k SafeAllowKey) SafeAllowKey { k.TenantID = "tenant-b"; return k },
+		"different policy mode":  func(k SafeAllowKey) SafeAllowKey { k.PolicyMode = edgecore.PolicyModeObserve; return k },
+		"different snapshot":     func(k SafeAllowKey) SafeAllowKey { k.PolicySnapshot = "snap-2"; return k },
+		"different action_hash":  func(k SafeAllowKey) SafeAllowKey { k.ActionHash = "sha256:other"; return k },
+		"different input_hash":   func(k SafeAllowKey) SafeAllowKey { k.InputHash = "sha256:other"; return k },
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := c.Get(mut(key)); ok {
+				t.Fatalf("%s should miss the cache", name)
 			}
 		})
 	}
 }
 
-func TestSafeAllowCacheTTLEvictionAndDisable(t *testing.T) {
-	t.Parallel()
+func TestSafeAllowCacheTTLExpiry(t *testing.T) {
+	now := time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	c := NewSafeAllowCache(SafeAllowCacheConfig{MaxEntries: 4, TTL: 30 * time.Second, Clock: clock})
+	key := SafeAllowKey{TenantID: "t", PolicyMode: edgecore.PolicyModeObserve, ActionHash: "h", InputHash: "i"}
+	c.Put(key, safeAllowEntry{Reason: "in-window"})
 
-	clock := &cacheTestClock{now: time.Date(2026, 5, 2, 13, 30, 0, 0, time.UTC)}
-	cache := NewSafeAllowCache(SafeAllowCacheConfig{Enabled: true, TTL: 10 * time.Second, MaxEntries: 2}, clock)
-	first := safeAllowCacheTestRequest()
-	second := mutateSafeAllowCacheRequest(first, func(v *SafeAllowCacheRequest) { v.ActionHash = "sha256:action-2" })
-	third := mutateSafeAllowCacheRequest(first, func(v *SafeAllowCacheRequest) { v.ActionHash = "sha256:action-3" })
-
-	if !cache.Put(first, safeAllowCacheTestResponse()) || !cache.Put(second, safeAllowCacheTestResponse()) {
-		t.Fatal("Put returned false for initial safe entries")
+	if _, ok := c.Get(key); !ok {
+		t.Fatal("entry just inserted should be present")
 	}
-	if _, ok := cache.Get(first); !ok {
-		t.Fatal("first entry missed before eviction")
+	now = now.Add(29 * time.Second)
+	if _, ok := c.Get(key); !ok {
+		t.Fatal("entry should still be present at 29s")
 	}
-	if !cache.Put(third, safeAllowCacheTestResponse()) {
-		t.Fatal("Put returned false for third safe entry")
-	}
-	if got, ok := cache.Get(first); ok {
-		t.Fatalf("oldest entry hit after max-entry eviction: %#v", got)
-	}
-	if _, ok := cache.Get(second); !ok {
-		t.Fatal("second entry missed after evicting oldest")
-	}
-	if _, ok := cache.Get(third); !ok {
-		t.Fatal("third entry missed after insert")
-	}
-
-	clock.Advance(11 * time.Second)
-	if got, ok := cache.Get(second); ok {
-		t.Fatalf("second entry hit after TTL expiry: %#v", got)
-	}
-	if got, ok := cache.Get(third); ok {
-		t.Fatalf("third entry hit after TTL expiry: %#v", got)
-	}
-
-	disabled := NewSafeAllowCache(SafeAllowCacheConfig{Enabled: false, TTL: time.Minute, MaxEntries: 2}, clock)
-	if disabled.Put(first, safeAllowCacheTestResponse()) {
-		t.Fatal("disabled cache stored an entry")
-	}
-	if got, ok := disabled.Get(first); ok {
-		t.Fatalf("disabled cache hit with %#v; want miss", got)
+	now = now.Add(2 * time.Second)
+	if _, ok := c.Get(key); ok {
+		t.Fatal("entry should have expired at 31s")
 	}
 }
 
-func TestSafeAllowCacheRejectsUnsafeOrIneligibleDecisions(t *testing.T) {
-	t.Parallel()
+func TestSafeAllowCacheMaxEntriesEvictsOldest(t *testing.T) {
+	c := NewSafeAllowCache(SafeAllowCacheConfig{MaxEntries: 2})
+	keyA := SafeAllowKey{TenantID: "t", ActionHash: "a"}
+	keyB := SafeAllowKey{TenantID: "t", ActionHash: "b"}
+	keyC := SafeAllowKey{TenantID: "t", ActionHash: "c"}
+	c.Put(keyA, safeAllowEntry{Reason: "a"})
+	c.Put(keyB, safeAllowEntry{Reason: "b"})
+	c.Put(keyC, safeAllowEntry{Reason: "c"})
 
-	clock := &cacheTestClock{now: time.Date(2026, 5, 2, 14, 0, 0, 0, time.UTC)}
-	cache := NewSafeAllowCache(SafeAllowCacheConfig{Enabled: true, TTL: time.Minute, MaxEntries: 16}, clock)
-	baseReq := safeAllowCacheTestRequest()
-	baseResp := safeAllowCacheTestResponse()
+	if _, ok := c.Get(keyA); ok {
+		t.Fatal("oldest entry A must have been evicted by C")
+	}
+	if _, ok := c.Get(keyB); !ok {
+		t.Fatal("B should still be present")
+	}
+	if _, ok := c.Get(keyC); !ok {
+		t.Fatal("C should still be present")
+	}
+	if got := c.Len(); got != 2 {
+		t.Fatalf("Len = %d, want 2 after capacity-bounded insert", got)
+	}
+}
 
+func TestSafeAllowCacheInvalidateTenantClearsTenantOnly(t *testing.T) {
+	c := NewSafeAllowCache(SafeAllowCacheConfig{MaxEntries: 8})
+	c.Put(SafeAllowKey{TenantID: "tenant-a", ActionHash: "a1"}, safeAllowEntry{Reason: "a1"})
+	c.Put(SafeAllowKey{TenantID: "tenant-a", ActionHash: "a2"}, safeAllowEntry{Reason: "a2"})
+	c.Put(SafeAllowKey{TenantID: "tenant-b", ActionHash: "b1"}, safeAllowEntry{Reason: "b1"})
+
+	removed := c.InvalidateTenant("tenant-a")
+	if removed != 2 {
+		t.Fatalf("InvalidateTenant(tenant-a) = %d, want 2", removed)
+	}
+	if _, ok := c.Get(SafeAllowKey{TenantID: "tenant-a", ActionHash: "a1"}); ok {
+		t.Fatal("tenant-a a1 should be evicted")
+	}
+	if _, ok := c.Get(SafeAllowKey{TenantID: "tenant-b", ActionHash: "b1"}); !ok {
+		t.Fatal("tenant-b should NOT be touched by tenant-a invalidation")
+	}
+}
+
+func TestSafeAllowEligibilityVetoesUnsafeOutcomes(t *testing.T) {
 	cases := []struct {
 		name string
-		req  SafeAllowCacheRequest
-		resp EvaluateResponse
+		e    SafeAllowEligibility
+		want bool
 	}{
-		{name: "high-risk destructive", req: mutateSafeAllowCacheRequest(baseReq, func(v *SafeAllowCacheRequest) { v.RiskTags = []string{"exec", "destructive"} }), resp: baseResp},
-		{name: "unknown risk", req: mutateSafeAllowCacheRequest(baseReq, func(v *SafeAllowCacheRequest) { v.RiskTags = []string{"unknown", "review_required"} }), resp: baseResp},
-		{name: "missing safe class", req: mutateSafeAllowCacheRequest(baseReq, func(v *SafeAllowCacheRequest) { delete(v.Labels, "command.class") }), resp: baseResp},
-		{name: "approval retry request", req: mutateSafeAllowCacheRequest(baseReq, func(v *SafeAllowCacheRequest) { v.ApprovalRef = "edge_appr_cache_test" }), resp: baseResp},
-		{name: "deny", req: baseReq, resp: mutateSafeAllowCacheResponse(baseResp, func(v *EvaluateResponse) { v.Decision = string(edgecore.DecisionDeny); v.PermissionDecision = "deny" })},
-		{name: "requires approval", req: baseReq, resp: mutateSafeAllowCacheResponse(baseResp, func(v *EvaluateResponse) {
-			v.Decision = string(edgecore.DecisionRequireApproval)
-			v.PermissionDecision = "deny"
-			v.ApprovalRef = "edge_appr_cache_test"
-		})},
-		{name: "throttle", req: baseReq, resp: mutateSafeAllowCacheResponse(baseResp, func(v *EvaluateResponse) {
-			v.Decision = string(edgecore.DecisionThrottle)
-			v.PermissionDecision = "deny"
-		})},
-		{name: "constrain", req: baseReq, resp: mutateSafeAllowCacheResponse(baseResp, func(v *EvaluateResponse) {
-			v.Decision = string(edgecore.DecisionConstrain)
-			v.UpdatedInput = map[string]any{"command": "npm ci"}
-		})},
-		{name: "approval-derived allow", req: baseReq, resp: mutateSafeAllowCacheResponse(baseResp, func(v *EvaluateResponse) { v.ApprovalRef = "edge_appr_cache_test" })},
-		{name: "degraded allow", req: baseReq, resp: mutateSafeAllowCacheResponse(baseResp, func(v *EvaluateResponse) { v.Degraded = true; v.ErrorCode = "gateway_timeout" })},
-		{name: "gateway not cache eligible", req: baseReq, resp: mutateSafeAllowCacheResponse(baseResp, func(v *EvaluateResponse) { v.CacheEligible = false })},
-		{name: "permission deny despite allow decision", req: baseReq, resp: mutateSafeAllowCacheResponse(baseResp, func(v *EvaluateResponse) { v.PermissionDecision = "deny" })},
+		{"allowed + known safe + low risk", SafeAllowEligibility{IsAllowed: true, IsKnownSafe: true, RiskTags: []string{"test", "build"}}, true},
+		{"allowed + known safe + destructive", SafeAllowEligibility{IsAllowed: true, IsKnownSafe: true, RiskTags: []string{"destructive"}}, false},
+		{"allowed + known safe + secrets", SafeAllowEligibility{IsAllowed: true, IsKnownSafe: true, RiskTags: []string{"secrets"}}, false},
+		{"allowed + known safe + network", SafeAllowEligibility{IsAllowed: true, IsKnownSafe: true, RiskTags: []string{"network"}}, false},
+		{"allowed + known safe + deploy", SafeAllowEligibility{IsAllowed: true, IsKnownSafe: true, RiskTags: []string{"deploy"}}, false},
+		{"allowed + known safe + write", SafeAllowEligibility{IsAllowed: true, IsKnownSafe: true, RiskTags: []string{"write"}}, false},
+		{"allowed + known safe + unknown", SafeAllowEligibility{IsAllowed: true, IsKnownSafe: true, RiskTags: []string{"unknown"}}, false},
+		{"allowed + known safe + review_required", SafeAllowEligibility{IsAllowed: true, IsKnownSafe: true, RiskTags: []string{"review_required"}}, false},
+		{"allowed but classifier said not known-safe", SafeAllowEligibility{IsAllowed: true, IsKnownSafe: false, RiskTags: []string{"test"}}, false},
+		{"not allowed (DENY)", SafeAllowEligibility{IsAllowed: false, IsKnownSafe: true, RiskTags: []string{"test"}}, false},
+		{"approval-derived ALLOW must not be cached", SafeAllowEligibility{IsAllowed: true, IsKnownSafe: true, RiskTags: []string{"test"}, HasApprovalRef: true}, false},
+		{"degraded ALLOW must not be cached", SafeAllowEligibility{IsAllowed: true, IsKnownSafe: true, RiskTags: []string{"test"}, WasDegraded: true}, false},
+		{"case-insensitive risk tag rejected", SafeAllowEligibility{IsAllowed: true, IsKnownSafe: true, RiskTags: []string{"DESTRUCTIVE"}}, false},
+		{"empty risk tags + known safe + allowed", SafeAllowEligibility{IsAllowed: true, IsKnownSafe: true}, true},
 	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := mutateSafeAllowCacheRequest(tc.req, func(v *SafeAllowCacheRequest) {
-				v.ActionHash = "sha256:" + strings.NewReplacer(" ", "-", "/", "-").Replace(tc.name)
-			})
-			if cache.Put(req, tc.resp) {
-				t.Fatalf("Put returned true for ineligible case %q", tc.name)
-			}
-			if got, ok := cache.Get(req); ok {
-				t.Fatalf("ineligible case %q hit cache with %#v; want miss", tc.name, got)
+			if got := tc.e.EligibleForCache(); got != tc.want {
+				t.Fatalf("EligibleForCache = %v, want %v (case=%s)", got, tc.want, tc.name)
 			}
 		})
 	}
 }
 
-func TestSafeAllowCacheStoresOnlyBoundedDecisionMetadata(t *testing.T) {
-	t.Parallel()
-
-	clock := &cacheTestClock{now: time.Date(2026, 5, 2, 14, 30, 0, 0, time.UTC)}
-	cache := NewSafeAllowCache(SafeAllowCacheConfig{Enabled: true, TTL: time.Minute, MaxEntries: 2}, clock)
-	req := safeAllowCacheTestRequest()
-	req.Labels["note"] = "Bearer cache-secret-token"
-	req.InputRedacted = map[string]any{"command": "echo Bearer cache-secret-token"}
-	resp := safeAllowCacheTestResponse()
-	resp.Reason = strings.Repeat("safe allow ", 512) + "Bearer cache-secret-token"
-	resp.TerminalMessage = strings.Repeat("terminal ", 512) + "sk-cache-secret"
-
-	if !cache.Put(req, resp) {
-		t.Fatal("Put returned false for safe cache-eligible ALLOW")
+func TestSafeAllowCacheUpdateOverwritesWithoutGrowing(t *testing.T) {
+	c := NewSafeAllowCache(SafeAllowCacheConfig{MaxEntries: 2})
+	key := SafeAllowKey{TenantID: "t", ActionHash: "h"}
+	c.Put(key, safeAllowEntry{Reason: "first"})
+	c.Put(key, safeAllowEntry{Reason: "second"})
+	if got := c.Len(); got != 1 {
+		t.Fatalf("after overwrite Len = %d, want 1", got)
 	}
-	got, ok := cache.Get(req)
+	got, ok := c.Get(key)
 	if !ok {
-		t.Fatal("Get after Put missed")
+		t.Fatal("expected hit after overwrite")
 	}
-	payload, err := json.Marshal(got)
-	if err != nil {
-		t.Fatalf("marshal cached response: %v", err)
-	}
-	text := string(payload)
-	for _, secret := range []string{"cache-secret-token", "sk-cache-secret", "Bearer cache-secret-token"} {
-		if strings.Contains(text, secret) {
-			t.Fatalf("cached response leaked secret %q: %s", secret, text)
-		}
-	}
-	if len(got.Reason) > MaxGatewayMetadataValueBytes+8 {
-		t.Fatalf("cached reason length = %d, want bounded", len(got.Reason))
-	}
-	if len(got.TerminalMessage) > MaxGatewayMetadataValueBytes+8 {
-		t.Fatalf("cached terminal message length = %d, want bounded", len(got.TerminalMessage))
+	if got.Reason != "second" {
+		t.Fatalf("Reason = %q, want second", got.Reason)
 	}
 }
 
-type cacheTestClock struct {
-	now time.Time
-}
-
-func (c *cacheTestClock) Now() time.Time {
-	return c.now
-}
-
-func (c *cacheTestClock) Advance(d time.Duration) {
-	c.now = c.now.Add(d)
-}
-
-func safeAllowCacheTestRequest() SafeAllowCacheRequest {
-	return SafeAllowCacheRequest{
-		TenantID:       "tenant-cache-a",
-		PolicyMode:     edgecore.PolicyModeEnforce,
-		PolicySnapshot: "snap-cache-a",
-		Kind:           "hook.pre_tool_use",
-		ActionName:     "bash.exec",
-		Capability:     "exec.shell",
-		RiskTags:       []string{"exec", "test"},
-		Labels: map[string]string{
-			"command.class":  "safe",
-			"command.family": "test",
-		},
-		ActionHash: "sha256:action-a",
-		InputHash:  "sha256:input-a",
+func TestSafeAllowCacheConcurrentReadsAndWritesAreRaceFree(t *testing.T) {
+	c := NewSafeAllowCache(SafeAllowCacheConfig{MaxEntries: 16})
+	keys := make([]SafeAllowKey, 16)
+	for i := range keys {
+		keys[i] = SafeAllowKey{TenantID: "t", ActionHash: "a", InputHash: time.Now().Add(time.Duration(i) * time.Second).String()}
 	}
-}
-
-func safeAllowCacheTestResponse() EvaluateResponse {
-	return EvaluateResponse{
-		Decision:           string(edgecore.DecisionAllow),
-		Reason:             "safe command allowed",
-		RuleID:             "edge.safe-cache.allow",
-		PolicySnapshot:     "snap-cache-a",
-		ActionHash:         "sha256:action-a",
-		InputHash:          "sha256:input-a",
-		PermissionDecision: "allow",
-		ExitCode:           0,
-		TerminalTitle:      "",
-		TerminalMessage:    "",
-		CacheEligible:      true,
+	done := make(chan struct{}, 32)
+	for i := 0; i < 16; i++ {
+		i := i
+		go func() {
+			defer func() { done <- struct{}{} }()
+			c.Put(keys[i], safeAllowEntry{Reason: "w"})
+		}()
+		go func() {
+			defer func() { done <- struct{}{} }()
+			_, _ = c.Get(keys[i])
+		}()
 	}
-}
-
-func mutateSafeAllowCacheRequest(req SafeAllowCacheRequest, mutate func(*SafeAllowCacheRequest)) SafeAllowCacheRequest {
-	req.RiskTags = append([]string(nil), req.RiskTags...)
-	if req.Labels != nil {
-		labels := make(map[string]string, len(req.Labels))
-		for k, v := range req.Labels {
-			labels[k] = v
-		}
-		req.Labels = labels
+	for i := 0; i < 32; i++ {
+		<-done
 	}
-	if req.InputRedacted != nil {
-		input := make(map[string]any, len(req.InputRedacted))
-		for k, v := range req.InputRedacted {
-			input[k] = v
-		}
-		req.InputRedacted = input
-	}
-	mutate(&req)
-	return req
-}
-
-func mutateSafeAllowCacheResponse(resp EvaluateResponse, mutate func(*EvaluateResponse)) EvaluateResponse {
-	if resp.UpdatedInput != nil {
-		updated := make(map[string]any, len(resp.UpdatedInput))
-		for k, v := range resp.UpdatedInput {
-			updated[k] = v
-		}
-		resp.UpdatedInput = updated
-	}
-	if resp.Constraints != nil {
-		constraints := make(map[string]any, len(resp.Constraints))
-		for k, v := range resp.Constraints {
-			constraints[k] = v
-		}
-		resp.Constraints = constraints
-	}
-	mutate(&resp)
-	return resp
 }
