@@ -49,28 +49,28 @@ func runEdgeInitCmd(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	if strings.TrimSpace(*apiKeyPlaintext) != "" {
-		fmt.Fprintln(stderr, "edge init: --api-key plaintext is rejected; use --api-key-env <NAME> so the YAML stores ${NAME} and resolves at runtime")
+		_, _ = fmt.Fprintln(stderr, "edge init: --api-key plaintext is rejected; use --api-key-env <NAME> so the YAML stores ${NAME} and resolves at runtime")
 		return 2
 	}
 
 	resolvedCwd, err := resolveInitCwd(*cwd)
 	if err != nil {
-		fmt.Fprintf(stderr, "edge init: %s\n", err)
+		_, _ = fmt.Fprintf(stderr, "edge init: %s\n", err)
 		return 1
 	}
 	yamlPath := filepath.Join(resolvedCwd, "cordum.yaml")
 	if !*force {
 		if _, err := os.Stat(yamlPath); err == nil {
-			fmt.Fprintf(stderr, "edge init: %s already exists — re-run with --force to overwrite\n", yamlPath)
+			_, _ = fmt.Fprintf(stderr, "edge init: %s already exists — re-run with --force to overwrite\n", yamlPath)
 			return 1
 		} else if !os.IsNotExist(err) {
-			fmt.Fprintf(stderr, "edge init: stat %s: %s\n", yamlPath, err)
+			_, _ = fmt.Fprintf(stderr, "edge init: stat %s: %s\n", yamlPath, err)
 			return 1
 		}
 	}
 
 	if strings.TrimSpace(*principal) == "" && *nonInteractive {
-		fmt.Fprintln(stderr, "edge init: --principal required in non-interactive mode")
+		_, _ = fmt.Fprintln(stderr, "edge init: --principal required in non-interactive mode")
 		return 1
 	}
 
@@ -91,19 +91,19 @@ func runEdgeInitCmd(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	if err := writeInitYAML(yamlPath, scaffold); err != nil {
-		fmt.Fprintf(stderr, "edge init: %s\n", err)
+		_, _ = fmt.Fprintf(stderr, "edge init: %s\n", err)
 		return 1
 	}
 
 	if !*noWrapper {
 		wrapperPath, err := writeInitWrapper(resolvedCwd, scaffold)
 		if err != nil {
-			fmt.Fprintf(stderr, "edge init: wrapper script: %s\n", err)
+			_, _ = fmt.Fprintf(stderr, "edge init: wrapper script: %s\n", err)
 			return 1
 		}
-		fmt.Fprintf(stdout, "wrote %s\n", wrapperPath)
+		_, _ = fmt.Fprintf(stdout, "wrote %s\n", wrapperPath)
 	}
-	fmt.Fprintf(stdout, "wrote %s\n", yamlPath)
+	_, _ = fmt.Fprintf(stdout, "wrote %s\n", yamlPath)
 	emitInitNextSteps(stdout, scaffold)
 	return 0
 }
@@ -244,14 +244,14 @@ exit $LASTEXITCODE
 }
 
 func emitInitNextSteps(stdout io.Writer, s edgeInitScaffold) {
-	fmt.Fprintln(stdout, "")
-	fmt.Fprintln(stdout, "Next:")
-	fmt.Fprintf(stdout, "  1. Export your API key:    export %s=<your-key>\n", s.APIKeyEnvVar)
-	fmt.Fprintln(stdout, "  2. Verify resolved config: cordumctl edge claude --print-config")
-	fmt.Fprintln(stdout, "  3. Launch governed Claude: cordumctl edge claude")
+	_, _ = fmt.Fprintln(stdout, "")
+	_, _ = fmt.Fprintln(stdout, "Next:")
+	_, _ = fmt.Fprintf(stdout, "  1. Export your API key:    export %s=<your-key>\n", s.APIKeyEnvVar)
+	_, _ = fmt.Fprintln(stdout, "  2. Verify resolved config: cordumctl edge claude --print-config")
+	_, _ = fmt.Fprintln(stdout, "  3. Launch governed Claude: cordumctl edge claude")
 	if runtime.GOOS == "windows" {
-		fmt.Fprintln(stdout, "     or via wrapper:        .\\cordum-claude.ps1")
+		_, _ = fmt.Fprintln(stdout, "     or via wrapper:        .\\cordum-claude.ps1")
 	} else {
-		fmt.Fprintln(stdout, "     or via wrapper:        ./cordum-claude.sh")
+		_, _ = fmt.Fprintln(stdout, "     or via wrapper:        ./cordum-claude.sh")
 	}
 }
