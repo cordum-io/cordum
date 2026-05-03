@@ -226,6 +226,60 @@ func TestSessionManagerStartCreatesNewWhenRestoredStateEnded(t *testing.T) {
 	}
 }
 
+func TestSessionManagerStartUsesBoundInitialStateWithoutCallingGateway(t *testing.T) {
+	t.Parallel()
+
+	createCalls := 0
+	gateway := stubGatewayLifecycleClient{
+		createSession: func(context.Context, CreateSessionRequest) (CreateSessionResponse, error) {
+			createCalls++
+			return CreateSessionResponse{SessionID: "sess-from-gateway"}, nil
+		},
+	}
+	store := NewMemoryStateStore()
+	manager := NewSessionManager(SessionManagerConfig{
+		Gateway:    gateway,
+		StateStore: store,
+		Metadata: LocalSessionMetadata{
+			TenantID:    "tenant-bind",
+			PrincipalID: "principal-bind",
+			CWD:         "D:/Cordum/cordum",
+		},
+		PolicyMode: edgecore.PolicyModeObserve,
+		Clock:      fixedClock{now: time.Date(2026, 5, 3, 6, 35, 0, 0, time.UTC)},
+		InitialState: &SessionState{
+			SessionID:   "sess-bound-by-script",
+			ExecutionID: "exec-bound-by-script",
+			TenantID:    "tenant-bind",
+			PrincipalID: "principal-bind",
+			PolicyMode:  edgecore.PolicyModeObserve,
+			Status:      edgecore.SessionStatusRunning,
+			StartedAt:   time.Date(2026, 5, 3, 6, 34, 0, 0, time.UTC),
+		},
+	})
+
+	state, err := manager.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start with bound InitialState: %v", err)
+	}
+	if state == nil {
+		t.Fatal("Start returned nil state for bound InitialState")
+	}
+	if state.SessionID != "sess-bound-by-script" || state.ExecutionID != "exec-bound-by-script" {
+		t.Fatalf("state ids = %q/%q, want bound IDs", state.SessionID, state.ExecutionID)
+	}
+	if createCalls != 0 {
+		t.Fatalf("CreateSession called %d times, want 0 (bound state must skip Gateway create)", createCalls)
+	}
+	loaded, ok, err := store.Load(context.Background(), "sess-bound-by-script")
+	if err != nil || !ok {
+		t.Fatalf("seeded state was not persisted to store: ok=%v err=%v", ok, err)
+	}
+	if loaded.ExecutionID != "exec-bound-by-script" {
+		t.Fatalf("persisted state execution = %q, want exec-bound-by-script", loaded.ExecutionID)
+	}
+}
+
 func TestGatherLocalMetadataUsesEnvAndCWDWithoutShelling(t *testing.T) {
 	t.Parallel()
 

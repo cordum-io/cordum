@@ -78,7 +78,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 	if meta.TenantID == "" {
 		meta.TenantID = cfg.TenantID
 	}
-	manager := NewSessionManager(SessionManagerConfig{
+	managerCfg := SessionManagerConfig{
 		Gateway:    gateway,
 		StateStore: store,
 		Metadata:   meta,
@@ -86,7 +86,23 @@ func Run(ctx context.Context, opts RunOptions) error {
 		FailClosed: cfg.FailClosed,
 		GatewayURL: cfg.GatewayURL,
 		Clock:      clock,
-	})
+	}
+	if strings.TrimSpace(cfg.BindSessionID) != "" && strings.TrimSpace(cfg.BindExecutionID) != "" {
+		// External owner pre-created an EdgeSession+AgentExecution via the
+		// Gateway and is asking agentd to bind to those IDs instead of
+		// spawning new ones. Seed InitialState; SessionManager.Start will
+		// skip Gateway CreateSession and write hook events under these IDs.
+		managerCfg.InitialState = &SessionState{
+			SessionID:   strings.TrimSpace(cfg.BindSessionID),
+			ExecutionID: strings.TrimSpace(cfg.BindExecutionID),
+			TenantID:    meta.TenantID,
+			PrincipalID: meta.PrincipalID,
+			PolicyMode:  cfg.PolicyMode,
+			Status:      edgecore.SessionStatusRunning,
+			StartedAt:   clock.Now(),
+		}
+	}
+	manager := NewSessionManager(managerCfg)
 	state, err := manager.Start(ctx)
 	if err != nil {
 		return err

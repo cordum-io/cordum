@@ -639,6 +639,8 @@ start_agentd() {
     CORDUM_TENANT_ID="${CORDUM_TENANT_ID}" \
     CORDUM_AGENTD_SOCKET="${agentd_socket}" \
     CORDUM_AGENTD_STATE_DIR="${AGENTD_STATE_DIR}" \
+    CORDUM_EDGE_SESSION_ID="${EDGE_SESSION_ID}" \
+    CORDUM_EDGE_EXECUTION_ID="${EDGE_EXECUTION_ID}" \
     CORDUM_TLS_CA="${agentd_ssl_cert_file}" \
     SSL_CERT_FILE="${agentd_ssl_cert_file}" \
     SSL_CERT_DIR="$(dirname "${agentd_ssl_cert_file}")" \

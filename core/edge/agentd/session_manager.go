@@ -76,6 +76,20 @@ func (m *SessionManager) Start(ctx context.Context) (*SessionState, error) {
 	if restored, ok := m.restore(ctx); ok {
 		return restored, nil
 	}
+	m.mu.Lock()
+	if m.state != nil && strings.TrimSpace(m.state.SessionID) != "" {
+		// External owner (cordumctl wrapper, integration script) pre-bound
+		// an EdgeSession+AgentExecution via InitialState; skip CreateSession
+		// and write hook events under those IDs. The Gateway records are
+		// expected to exist already.
+		seeded := *m.state
+		m.mu.Unlock()
+		if err := m.store.Save(ctx, seeded); err != nil {
+			return nil, fmt.Errorf("persist bound session state: %w", err)
+		}
+		return &seeded, nil
+	}
+	m.mu.Unlock()
 	req := createSessionRequestFromMetadata(m.metadata, m.policyMode)
 	resp, err := m.gateway.CreateSession(ctx, req)
 	if err != nil {

@@ -37,6 +37,14 @@ type Config struct {
 	// on Windows when Go's default trust store doesn't include the local CA.
 	// Read from CORDUM_TLS_CA env var.
 	TLSCAFile string
+	// BindSessionID + BindExecutionID, when both non-empty, instruct agentd
+	// to skip Gateway CreateSession at startup and bind to an EdgeSession +
+	// AgentExecution that an external owner (cordumctl wrapper, integration
+	// test) already created. The Gateway records must exist; agentd writes
+	// hook events under those IDs. Read from CORDUM_EDGE_SESSION_ID and
+	// CORDUM_EDGE_EXECUTION_ID env vars; both are required when binding.
+	BindSessionID   string
+	BindExecutionID string
 }
 
 func LoadConfig(env map[string]string) (Config, error) {
@@ -62,6 +70,8 @@ func LoadConfig(env map[string]string) (Config, error) {
 		InlineApprovalWaitTimeout: defaultInlineApprovalWaitTimeout,
 		StateDir:                  defaultStateDir(),
 		TLSCAFile:                 strings.TrimSpace(envString(env, "CORDUM_TLS_CA")),
+		BindSessionID:             strings.TrimSpace(envString(env, "CORDUM_EDGE_SESSION_ID")),
+		BindExecutionID:           strings.TrimSpace(envString(env, "CORDUM_EDGE_EXECUTION_ID")),
 	}
 	if raw := strings.TrimSpace(envString(env, "CORDUM_EDGE_POLICY_MODE")); raw != "" {
 		cfg.PolicyMode = edgecore.PolicyMode(raw)
@@ -157,6 +167,11 @@ func (c Config) Validate() error {
 	case "", edgecore.PolicyModeObserve, edgecore.PolicyModeEnforce, edgecore.PolicyModeEnterpriseStrict:
 	default:
 		return fmt.Errorf("invalid CORDUM_EDGE_POLICY_MODE %q", c.PolicyMode)
+	}
+	hasBindSession := strings.TrimSpace(c.BindSessionID) != ""
+	hasBindExecution := strings.TrimSpace(c.BindExecutionID) != ""
+	if hasBindSession != hasBindExecution {
+		return errors.New("CORDUM_EDGE_SESSION_ID and CORDUM_EDGE_EXECUTION_ID must be set together")
 	}
 	if strings.TrimSpace(c.SocketPath) != "" {
 		return fmt.Errorf("CORDUM_AGENTD_SOCKET socket paths are not supported in this P0 build; use a local http loopback URL such as %s", defaultAgentdBindURL)
