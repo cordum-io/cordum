@@ -16,9 +16,11 @@ deployment-controlled keychain — see
 
 You will:
 
-1. Build and start the full Cordum stack (Gateway, Safety Kernel, Scheduler,
-   Workflow Engine, Context Engine, MCP Server, dashboard, NATS, Redis) in
-   Docker.
+1. Build and start the Cordum stack via Docker Compose: five core services
+   (API Gateway, Scheduler, Safety Kernel, Workflow Engine, Context Engine),
+   the dashboard, NATS, Redis, and two demo workers
+   (`demo-quickstart-worker`, `mock-bank-worker`). The standalone MCP server
+   (`cmd/cordum-mcp`) builds from source but is not part of `make dev-up`.
 2. Run the fake-hook E2E to confirm the `cordum-hook -> cordum-agentd ->
    Gateway -> Safety Kernel` path is wired correctly. This is the same
    acceptance script CI uses; it produces five `PASS edge_*` lines.
@@ -35,6 +37,7 @@ If you want the architecture story before commands, read
 | Tool | Version | Notes |
 | --- | --- | --- |
 | Docker | Compose v2 plugin | Docker Desktop on macOS/Windows; native engine on Linux. |
+| GNU Make | any | Drives `make dev-up`/`make build`. macOS/Linux ship it; on Windows/MSYS install via `pacman -S make` or substitute the raw `docker compose ...` and `go build ...` commands shown below. |
 | Go | 1.24+ | For local binary builds. |
 | Node.js | 18+ | For dashboard build/test. |
 | `openssl` | any recent | Used to mint a local API key. |
@@ -43,7 +46,8 @@ If you want the architecture story before commands, read
 
 > Windows/MSYS users: use Git Bash or WSL. The fake-hook script and several
 > targets assume POSIX shell semantics. PowerShell is not supported for the
-> E2E script itself.
+> E2E script itself. If `make` is unavailable, every `make` line in this
+> guide has a raw-command fallback in the same code block.
 
 ---
 
@@ -54,13 +58,23 @@ If you want the architecture story before commands, read
 git clone https://github.com/cordum-io/cordum.git
 cd cordum
 
-# 2. Mint a local API key
+# 2. Seed local config and an API key. The Compose stack reads CORDUM_API_KEY
+#    from .env at startup, so the same value must be in .env *and* exported in
+#    your shell. Generate once:
+[ -f .env ] || cp .env.example .env   # only seed if you don't already have one
 export CORDUM_API_KEY=$(openssl rand -hex 32)
+sed -i.bak "s|^CORDUM_API_KEY=.*|CORDUM_API_KEY=${CORDUM_API_KEY}|" .env
+rm -f .env.bak
+
 export CORDUM_TENANT_ID=default
-export CORDUM_GATEWAY=http://localhost:8081
+# Gateway uses self-issued TLS in dev (cert minted into ./certs by the stack).
+export CORDUM_GATEWAY=https://localhost:8081
+export CORDUM_GATEWAY_TLS_CA="$(pwd)/certs/ca/ca.crt"  # consumed by cordum-agentd
 
 # 3. Bring up the full stack (~2-3 minutes first time)
 make dev-up
+# Equivalent without make:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 # 4. Wait for services to be healthy. The quickstart script polls for you:
 ./tools/scripts/quickstart.sh --skip-build --skip-smoke
@@ -69,6 +83,11 @@ make dev-up
 make build SERVICE=cordum-hook
 make build SERVICE=cordum-agentd
 make build SERVICE=cordumctl
+# Equivalent without make (Windows/MSYS or no GNU Make):
+#   go build -o bin/cordum-hook   ./cmd/cordum-hook
+#   go build -o bin/cordum-agentd ./cmd/cordum-agentd
+#   go build -o bin/cordumctl     ./cmd/cordumctl
+# (On Windows append .exe to each output path.)
 
 # 6. Run the fake-hook E2E in strict mode
 CORDUM_INTEGRATION=1 bash tools/scripts/edge_fake_hook_e2e.sh
@@ -96,8 +115,13 @@ end-to-end against your local stack.
 ## 4. Open the dashboard
 
 ```text
-http://localhost:5173
+http://localhost:8082
 ```
+
+> The dashboard image listens on container port `8080` and is published to
+> host port `8082` (see `docker-compose.yml`). The `5173` port is only used
+> when running the dashboard via `npm run dev` directly, which is not part
+> of `make dev-up`.
 
 Navigate to **Edge Sessions** (left nav). You should see one session row from
 the fake-hook script — `complete` status, with PreToolUse deny, an
@@ -146,12 +170,19 @@ Claude (`Ctrl-D`) and the wrapper tears down agentd + the temp settings dir.
 ## 6. Cleanup
 
 ```bash
-# Stop the stack
+# Stop the stack (containers only; volumes preserved)
 make dev-down
+# Equivalent without make:
+#   docker compose down
 
-# Or full reset (drops Redis volume, removes all evidence)
-make dev-down -v
+# Full reset (drops Redis + all named volumes; wipes evidence/audit chain)
+docker compose down -v
 ```
+
+> Note: the `make dev-down` target only invokes `docker compose down`; the
+> `-v` flag must be passed to `docker compose` directly, not appended to
+> `make dev-down`. `make dev-down -v` runs Make in verbose mode without
+> dropping volumes.
 
 ---
 
@@ -191,11 +222,15 @@ All of the above should be green on `feature/cordum-edge-p0` HEAD.
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | Script prints `SKIP edge_fake_hook_e2e` | `CORDUM_INTEGRATION` not set | `export CORDUM_INTEGRATION=1` then re-run. |
-| `POST /api/v1/edge/sessions -> HTTP 404` | Gateway image pre-dates Edge work | `make dev-down -v && make dev-up` to rebuild from current source. |
+| `FAIL edge_fake_hook_e2e: CORDUM_API_KEY required in strict mode` | API key not exported, or doesn't match Gateway's `.env` value | Export the same key the stack was started with (`grep ^CORDUM_API_KEY= .env`). |
+| `POST /api/v1/edge/sessions -> HTTP 401` | Wrong/missing API key in script env | As above; the value in `.env` is loaded by the Gateway container at start time. |
+| `POST /api/v1/edge/sessions -> HTTP 404` | Gateway image pre-dates Edge work | `docker compose down -v && make dev-up` to rebuild from current source. |
+| `curl: (60) SSL certificate problem` | Self-signed dev cert not trusted | Use `--cacert ./certs/ca/ca.crt` (preferred) or `-k` (insecure, dev only). |
 | `make dev-up` hangs at "waiting for Redis" | Docker daemon not responsive | Restart Docker Desktop / `systemctl restart docker`; on Windows the `com.docker.service` Windows service must be running. |
-| Dashboard at `:5173` shows blank Edge Sessions list | Stack started before script ran; refresh the page or run the script first. | Refresh after the fake-hook E2E completes. |
+| Dashboard at `:8082` shows blank Edge Sessions list | Stack started before script ran; refresh the page or run the script first. | Refresh after the fake-hook E2E completes. |
 | `cordumctl edge claude` fails with `claude: command not found` | Claude Code not on PATH | `--claude-path /path/to/claude` or install Claude Code. |
 | Fake-hook script complains about `jq` | `jq` missing from PATH | Install `jq`; on Windows `tools/scripts/jq.exe` is shipped as fallback. |
+| `make: command not found` (Windows/MSYS) | GNU Make not installed | Use the `docker compose` / `go build` raw-command equivalents shown above, or install Make via `pacman -S make` in MSYS2. |
 
 For deeper diagnostics:
 
