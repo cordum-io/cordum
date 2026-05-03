@@ -81,4 +81,4 @@ trust, and service-bootstrap/keychain secret handling.
 - [CLI reference](edge/cli.md)
 - [Configuration](edge/configuration.md)
 - [Managed settings template](edge/managed-settings-template.md)
-- [Threat model](security/edge-p0-threat-model.md)
+- Edge P0 threat model: internal Cordum engineering.

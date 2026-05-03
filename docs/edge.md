@@ -106,4 +106,4 @@ long-retention policies, and org-wide enforcement reporting.
 - [Manual demo](demo-edge-claude.md)
 - [Edge API reference](edge/api.md)
 - [Edge configuration](edge/configuration.md)
-- [Edge P0 threat model](security/edge-p0-threat-model.md)
+- Edge P0 threat model: internal Cordum engineering.

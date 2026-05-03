@@ -116,4 +116,4 @@ enterprise shape, but do not treat the developer wrapper as fleet enforcement.
 - **Configuration:** [configuration.md](configuration.md).
 - **API reference:** [api.md](api.md) plus the canonical
   [OpenAPI spec](../api/openapi/cordum-api.yaml).
-- **Threat model:** [Edge P0 threat model](../security/edge-p0-threat-model.md).
+- **Threat model:** Edge P0 threat model is internal Cordum engineering.

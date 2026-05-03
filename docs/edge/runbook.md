@@ -8,8 +8,9 @@ cordumctl edge claude -> cordum-agentd -> cordum-hook -> Gateway Edge APIs
 ```
 
 Use it with [demo.md](demo.md), [cordumctl edge doctor](cordumctl-edge-doctor.md),
-[configuration.md](configuration.md), and the
-[Edge P0 threat model](../security/edge-p0-threat-model.md#edge-032-acceptance-checklist).
+and [configuration.md](configuration.md). The EDGE-032 acceptance checklist
+in the internal Edge P0 threat model is the production sign-off reference
+(Cordum engineering).
 
 ## Operating rules
 
@@ -60,7 +61,7 @@ Use it with [demo.md](demo.md), [cordumctl edge doctor](cordumctl-edge-doctor.md
 4. **Check the security boundary before applying a workaround.** If the proposed
    fix would persist a nonce, bypass tenant auth, disable redaction, store raw
    tool payloads, or claim wrapper-only enterprise enforcement, stop and consult
-   the [threat model](../security/edge-p0-threat-model.md#edge-032-acceptance-checklist).
+   the internal Edge P0 threat model (Cordum engineering).
 
 ## Common failures and recovery
 
@@ -167,9 +168,8 @@ appears in a screenshot, log, event, export, or chat handoff.
 2. Rotate any exposed credential or ask the credential owner to rotate it.
 3. Preserve only sanitized metadata: timestamp, tenant, session ID, event ID,
    route, and request ID.
-4. Compare the incident to the
-   [threat mapping](../security/edge-p0-threat-model.md#threat-mapping) and
-   [known gaps catalog](../security/edge-p0-threat-model.md#known-gaps-catalog).
+4. Compare the incident to the threat mapping and known gaps catalog in
+   the internal Edge P0 threat model (Cordum engineering).
 5. File a follow-up bug with sanitized reproduction steps. Do not attach raw
    payloads.
 
