@@ -147,6 +147,10 @@ func Run(ctx context.Context, opts RunOptions) error {
 		Evaluator:    evaluator,
 		State:        *state,
 		EventWriter:  eventWriter,
+		// EDGE-059 — share the recorder so the local hook handler can emit
+		// agentd_response_write_aborted_total via the same registry as the
+		// rest of agentd's metrics.
+		Recorder: opts.Recorder,
 	})
 	if err != nil {
 		return err
@@ -300,6 +304,19 @@ func newHTTPServer(cfg Config, local *LocalServer) (*http.Server, net.Listener, 
 	srv := &http.Server{
 		Handler:           local.Handler(),
 		ReadHeaderTimeout: cfg.HookTimeout,
+		// EDGE-059 — slow-loris guard. WriteTimeout caps the connection-write
+		// phase so a hanging Claude-hook client cannot pin a handler goroutine
+		// indefinitely (pre-fix: 0 == infinite → goroutine pool exhaustion DoS
+		// → every subsequent Claude tool call hangs/denies under enforce
+		// mode). 2s is documented at types.go: 8x the per-evaluation write
+		// budget (250ms) and 2.5x under the hook outer budget (5s) so agentd
+		// writes finish inside the hook deadline.
+		WriteTimeout: defaultLocalServerWriteTimeout,
+		// IdleTimeout caps lurking-but-idle Keep-Alive connections so a
+		// malicious client cannot reserve TCP slots without sending traffic.
+		// agentd's hook is request/response — no streaming/long-poll — so
+		// 30s is comfortably above any legitimate inter-request gap.
+		IdleTimeout: defaultLocalServerIdleTimeout,
 	}
 	return srv, ln, nil
 }

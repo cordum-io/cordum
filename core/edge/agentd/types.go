@@ -21,6 +21,24 @@ const (
 	defaultHeartbeatTTL   = 30 * time.Second
 	defaultGatewayTimeout = 10 * time.Second
 	maxAgentdDuration     = 5 * time.Minute
+
+	// defaultLocalServerWriteTimeout caps the agentd local HTTP server's
+	// connection-write phase so a slow-reading or hanging Claude-hook client
+	// cannot pin a handler goroutine indefinitely. EDGE-059 closed an
+	// unbounded-write DoS vector at app.go:300-303 (only ReadHeaderTimeout
+	// was set; WriteTimeout==0 == infinite). 2s gives ~8x margin over
+	// defaultHookResponseWriteBudget (250ms) for loopback CPU-pressure
+	// spikes while staying 2.5x under defaultHookTimeout (5s) so the agentd
+	// write completes inside the hook's outer budget. Decision payloads are
+	// small (bounded reason ~500B; total response < 4KB) — 2s is generous.
+	defaultLocalServerWriteTimeout = 2 * time.Second
+
+	// defaultLocalServerIdleTimeout caps lurking-but-idle Keep-Alive
+	// connections so a malicious client cannot reserve hundreds of TCP
+	// slots without sending traffic. agentd's hook is request/response —
+	// no streaming or long-poll — so 30s is comfortably above any
+	// legitimate inter-request gap on a developer laptop.
+	defaultLocalServerIdleTimeout = 30 * time.Second
 )
 
 var (

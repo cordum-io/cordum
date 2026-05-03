@@ -75,6 +75,13 @@ type Recorder interface {
 	RecordDegraded(tenant, mode, component, reasonCode string)
 	RecordFailClosed(tenant, mode, reasonCode string)
 
+	// RecordAgentdResponseWriteAborted emits a metric counter when the agentd
+	// local-server hook handler observes a write error from the JSON encoder
+	// after `http.Server.WriteTimeout` fires (EDGE-059 slow-loris guard).
+	// `reason` collapses to {"write_timeout", "write_error", "other",
+	// "unknown"} via the bounded-label helper. Bounded cardinality.
+	RecordAgentdResponseWriteAborted(reason string)
+
 	// Artifact / export observability.
 	RecordArtifactExport(tenant, artifactType, result string)
 
@@ -112,6 +119,7 @@ func (NoopRecorder) RecordApprovalResolved(string, string, string, string)      
 func (NoopRecorder) RecordApprovalEnqueueAborted(string)                         {}
 func (NoopRecorder) RecordDegraded(string, string, string, string)               {}
 func (NoopRecorder) RecordFailClosed(string, string, string)                     {}
+func (NoopRecorder) RecordAgentdResponseWriteAborted(string)                     {}
 func (NoopRecorder) RecordArtifactExport(string, string, string)                 {}
 func (NoopRecorder) ObserveHookLatency(string, string, string, time.Duration)    {}
 func (NoopRecorder) ObserveEvaluateLatency(string, string, string, string, time.Duration) {

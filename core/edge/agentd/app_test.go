@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -90,6 +91,88 @@ func waitForHookStatus(t *testing.T, done <-chan error, bindURL, nonce, body str
 	}
 	t.Fatalf("hook status %d not observed within 2s; last=%s", want, last)
 }
+
+// EDGE-059 — agentd's local HTTP server MUST set WriteTimeout (and
+// IdleTimeout) so a slow-reading or hanging client cannot pin a handler
+// goroutine indefinitely. Pre-fix, app.go:300 set only ReadHeaderTimeout
+// — WriteTimeout==0 means no deadline → goroutine pool exhaustion DoS
+// where every subsequent Claude tool call hangs (or fails closed under
+// enforce mode). This test asserts the contract bytes match the
+// documented constants.
+func TestNewHTTPServerSetsBoundedWriteAndIdleTimeouts(t *testing.T) {
+	bindURL := "http://" + freeLoopbackAddr(t) + "/v1/edge/hooks/claude"
+	cfg := testRunConfig(t, bindURL)
+	local, err := NewLocalServer(LocalServerConfig{
+		BindURL: bindURL,
+		Nonce:   base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
+	})
+	if err != nil {
+		t.Fatalf("NewLocalServer: %v", err)
+	}
+	srv, ln, err := newHTTPServer(cfg, local)
+	if err != nil {
+		t.Fatalf("newHTTPServer: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	if srv.WriteTimeout <= 0 {
+		t.Fatalf("WriteTimeout = %v, want > 0 (EDGE-059 slow-loris guard); pre-fix value was the Go default 0 (infinite)", srv.WriteTimeout)
+	}
+	if srv.WriteTimeout != defaultLocalServerWriteTimeout {
+		t.Fatalf("WriteTimeout = %v, want %v (defaultLocalServerWriteTimeout); EDGE-059 fix must use the documented constant so operators can grep the rationale", srv.WriteTimeout, defaultLocalServerWriteTimeout)
+	}
+	// Must be ≤ defaultHookTimeout (5s) so the agentd write completes inside
+	// the hook's outer budget — otherwise the hook gives up first and the
+	// developer sees a generic "hook timeout" instead of the agentd-driven
+	// permission decision.
+	if srv.WriteTimeout > defaultHookTimeout {
+		t.Fatalf("WriteTimeout = %v, must be ≤ defaultHookTimeout %v (hook outer budget)", srv.WriteTimeout, defaultHookTimeout)
+	}
+	if srv.IdleTimeout <= 0 {
+		t.Fatalf("IdleTimeout = %v, want > 0 (defense-in-depth lurker guard); pre-fix value was 0 (infinite)", srv.IdleTimeout)
+	}
+}
+
+// EDGE-059 — verify isWriteTimeoutError correctly classifies the errors
+// the JSON encoder will surface on a real http.Server.WriteTimeout firing
+// versus a normal write error. Used to drive the bounded "reason" label
+// on the new agentd_response_write_aborted_total counter — getting this
+// classification wrong would muddy the metric's signal.
+func TestIsWriteTimeoutErrorClassifiesNetTimeoutAndDeadlineExceeded(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "plain error", err: errors.New("some unrelated error"), want: false},
+		{name: "deadline exceeded sentinel", err: os.ErrDeadlineExceeded, want: true},
+		{name: "wrapped deadline", err: fmt.Errorf("write: %w", os.ErrDeadlineExceeded), want: true},
+		{name: "net.Error timeout", err: &net.OpError{Op: "write", Err: timeoutNetError{}}, want: true},
+		{name: "net.Error non-timeout", err: &net.OpError{Op: "write", Err: nonTimeoutNetError{}}, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isWriteTimeoutError(tc.err); got != tc.want {
+				t.Fatalf("isWriteTimeoutError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// timeoutNetError satisfies net.Error with Timeout() == true.
+type timeoutNetError struct{}
+
+func (timeoutNetError) Error() string   { return "i/o timeout" }
+func (timeoutNetError) Timeout() bool   { return true }
+func (timeoutNetError) Temporary() bool { return false }
+
+// nonTimeoutNetError satisfies net.Error with Timeout() == false.
+type nonTimeoutNetError struct{}
+
+func (nonTimeoutNetError) Error() string   { return "connection reset" }
+func (nonTimeoutNetError) Timeout() bool   { return false }
+func (nonTimeoutNetError) Temporary() bool { return false }
 
 func TestRunRejectsInvalidExternalNonceBeforeStarting(t *testing.T) {
 	for _, tc := range []struct {

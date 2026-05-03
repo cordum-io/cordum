@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -32,6 +33,10 @@ type LocalServerConfig struct {
 	Evaluator    claude.AgentdClient
 	State        SessionState
 	EventWriter  EventWriter
+	// Recorder captures EDGE-014-style metrics emitted by the local hook
+	// handler (currently only the EDGE-059 response-write-abort counter).
+	// Defaults to NoopRecorder when nil so existing callers are unaffected.
+	Recorder edgecore.Recorder
 }
 
 type LocalServer struct {
@@ -42,6 +47,7 @@ type LocalServer struct {
 	evaluator    claude.AgentdClient
 	state        SessionState
 	eventWriter  EventWriter
+	recorder     edgecore.Recorder
 }
 
 type EventWriter interface {
@@ -84,6 +90,10 @@ func NewLocalServer(cfg LocalServerConfig) (*LocalServer, error) {
 	if maxBody <= 0 {
 		maxBody = defaultMaxHookBodyBytes
 	}
+	recorder := cfg.Recorder
+	if recorder == nil {
+		recorder = edgecore.NewNoopRecorder()
+	}
 	return &LocalServer{
 		bindURL:      bindURL,
 		path:         u.Path,
@@ -92,6 +102,7 @@ func NewLocalServer(cfg LocalServerConfig) (*LocalServer, error) {
 		evaluator:    cfg.Evaluator,
 		state:        cfg.State,
 		eventWriter:  cfg.EventWriter,
+		recorder:     recorder,
 	}, nil
 }
 
@@ -180,7 +191,37 @@ func (s *LocalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	_ = enc.Encode(decision)
+	if err := enc.Encode(decision); err != nil {
+		// EDGE-059 — surface response-write aborts (slow-loris guard) as a
+		// bounded metric so operators can detect goroutine-pool DoS attempts.
+		// http.Server.WriteTimeout firing is the headline case (manifests as
+		// a network-write deadline exceeded error from the encoder); other
+		// write errors (client disconnect, RST) are also captured but
+		// distinguished via the bounded reason label.
+		reason := "write_error"
+		if isWriteTimeoutError(err) {
+			reason = "write_timeout"
+		}
+		s.recorder.RecordAgentdResponseWriteAborted(reason)
+	}
+}
+
+// isWriteTimeoutError reports whether err is the net/http
+// "i/o timeout" error that http.Server.WriteTimeout produces when a slow-
+// reading client triggers the connection-write deadline. Distinguishing
+// this from generic write errors lets the operator tell a slow-loris from
+// a normal client disconnect in the bounded metric.
+func isWriteTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	// net/http wraps the deadline error as os.ErrDeadlineExceeded under
+	// some Go versions; check both for portability across the support window.
+	return errors.Is(err, os.ErrDeadlineExceeded)
 }
 
 func (s *LocalServer) requestMatchesState(req claude.AgentdRequest) bool {

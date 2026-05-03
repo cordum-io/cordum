@@ -32,8 +32,9 @@ type PrometheusRecorder struct {
 	approvalRequested      *prometheus.CounterVec
 	approvalResolved       *prometheus.CounterVec
 	approvalEnqueueAborts  *prometheus.CounterVec
-	degraded          *prometheus.CounterVec
-	failClosed        *prometheus.CounterVec
+	degraded             *prometheus.CounterVec
+	failClosed           *prometheus.CounterVec
+	agentdResponseWriteAborts *prometheus.CounterVec
 	artifactExports   *prometheus.CounterVec
 	hookLatency       *prometheus.HistogramVec
 	evaluateLatency   *prometheus.HistogramVec
@@ -113,6 +114,13 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 			Namespace: ns, Name: "fail_closed_total",
 			Help: "Edge fail-closed outcomes, labeled by mode and reason_code.",
 		}, []string{"mode", "reason_code"}),
+		// EDGE-059 — counter for agentd local-server response-write aborts.
+		// Fires when the JSON encoder reports a write error (typically due to
+		// http.Server.WriteTimeout firing on a slow-reading client).
+		agentdResponseWriteAborts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns, Name: "agentd_response_write_aborted_total",
+			Help: "agentd local-server response-write aborts (slow-loris guard), labeled by bounded reason.",
+		}, []string{"reason"}),
 		artifactExports: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: ns, Name: "artifact_exports_total",
 			Help: "Edge artifact exports, labeled by artifact_type and result.",
@@ -145,7 +153,7 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 		r.executionsStarted, r.executionsEnded, r.executionAborts,
 		r.actionDecisions, r.actionsDenied,
 		r.approvalRequested, r.approvalResolved, r.approvalEnqueueAborts,
-		r.degraded, r.failClosed,
+		r.degraded, r.failClosed, r.agentdResponseWriteAborts,
 		r.artifactExports,
 		r.hookLatency, r.evaluateLatency,
 		r.cacheLookups,
@@ -192,6 +200,9 @@ func (r *PrometheusRecorder) RecordDegraded(_ /*tenant*/, mode, component, reaso
 }
 func (r *PrometheusRecorder) RecordFailClosed(_ /*tenant*/, mode, reasonCode string) {
 	r.failClosed.WithLabelValues(boundedMode(mode), boundedReasonCode(reasonCode)).Inc()
+}
+func (r *PrometheusRecorder) RecordAgentdResponseWriteAborted(reason string) {
+	r.agentdResponseWriteAborts.WithLabelValues(boundedAgentdResponseWriteAbortReason(reason)).Inc()
 }
 func (r *PrometheusRecorder) RecordArtifactExport(_ /*tenant*/, artifactType, result string) {
 	r.artifactExports.WithLabelValues(boundedArtifactType(artifactType), boundedResult(result)).Inc()
@@ -456,6 +467,26 @@ func boundedCacheResult(value string) string {
 		return "unknown"
 	}
 	if _, ok := allowedCacheResults[v]; ok {
+		return v
+	}
+	return "other"
+}
+
+// allowedAgentdResponseWriteAbortReasons is the bounded set of `reason`
+// label values for the EDGE-059 agentd_response_write_aborted_total counter.
+//   - write_timeout: net/http server WriteTimeout fired (the slow-loris case).
+//   - write_error:   any other write error from the JSON encoder.
+var allowedAgentdResponseWriteAbortReasons = map[string]struct{}{
+	"write_timeout": {},
+	"write_error":   {},
+}
+
+func boundedAgentdResponseWriteAbortReason(value string) string {
+	v := lowerTrim(value)
+	if v == "" {
+		return "unknown"
+	}
+	if _, ok := allowedAgentdResponseWriteAbortReasons[v]; ok {
 		return v
 	}
 	return "other"
