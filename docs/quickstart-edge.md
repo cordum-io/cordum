@@ -89,7 +89,15 @@ make build SERVICE=cordumctl
 #   go build -o bin/cordumctl     ./cmd/cordumctl
 # (On Windows append .exe to each output path.)
 
-# 6. Run the fake-hook E2E in strict mode
+# 6. Install the demo Edge policy pack so the deny / approval rules fire.
+#    Without this, /api/v1/edge/evaluate runs against a default-allow policy
+#    and the PreToolUse deny gate of the fake-hook E2E will not match.
+#    The pack ships only policy overlays (no pool overlay), so it registers
+#    as INACTIVE — that is expected; the policy fragments are still applied.
+export CORDUM_TLS_CA="$(pwd)/certs/ca/ca.crt"
+./bin/cordumctl pack install ./examples/cordum-edge-pack
+
+# 7. Run the fake-hook E2E in strict mode
 CORDUM_INTEGRATION=1 bash tools/scripts/edge_fake_hook_e2e.sh
 ```
 
@@ -223,6 +231,7 @@ All of the above should be green on `feature/cordum-edge-p0` HEAD.
 | --- | --- | --- |
 | Script prints `SKIP edge_fake_hook_e2e` | `CORDUM_INTEGRATION` not set | `export CORDUM_INTEGRATION=1` then re-run. |
 | `FAIL edge_fake_hook_e2e: CORDUM_API_KEY required in strict mode` | API key not exported, or doesn't match Gateway's `.env` value | Export the same key the stack was started with (`grep ^CORDUM_API_KEY= .env`). |
+| `FAIL edge_pretooluse_deny: hook stdout permissionDecision != deny` | Demo Edge policy pack not installed → `default-allow` policy in effect | Run step 6 above: `./bin/cordumctl pack install ./examples/cordum-edge-pack` (with `CORDUM_TLS_CA` set to the dev CA cert). |
 | `POST /api/v1/edge/sessions -> HTTP 401` | Wrong/missing API key in script env | As above; the value in `.env` is loaded by the Gateway container at start time. |
 | `POST /api/v1/edge/sessions -> HTTP 404` | Gateway image pre-dates Edge work | `docker compose down -v && make dev-up` to rebuild from current source. |
 | `curl: (60) SSL certificate problem` | Self-signed dev cert not trusted | Use `--cacert ./certs/ca/ca.crt` (preferred) or `-k` (insecure, dev only). |
