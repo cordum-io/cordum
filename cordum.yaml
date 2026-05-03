@@ -1,0 +1,14 @@
+# Cordum Edge — managed by `cordumctl edge init`.
+# api_key MUST be empty or a ${ENV_VAR} reference; plaintext is rejected at load time.
+# Override any field via the matching env var (CORDUM_GATEWAY, CORDUM_TENANT_ID, …) or CLI flag.
+
+gateway: https://localhost:8081
+api_key: ${CORDUM_API_KEY}
+tenant: default
+# principal: # not set; falls back to env or built-in default
+policy_mode: enforce
+cacert: ./certs/ca/ca.crt
+# dashboard_url: # not set; falls back to env or built-in default
+# agentd_path: # not set; falls back to env or built-in default
+# hook_command: # not set; falls back to env or built-in default
+approval_wait_timeout: 30s
