@@ -391,6 +391,29 @@ assert_json() {
   fi
 }
 
+# Assert that the response body's `.reason` field is a non-empty string and
+# contains the given substring (case-insensitive). EDGE-056 introduced this
+# helper so reject/expired/consumed terminal states get tightened reason-
+# substring assertions without each gate hand-rolling the jq filter. Body file
+# defaults to the same fallback chain as `assert_json` (caller-supplied →
+# CURL_LAST_BODY_FILE → CURL_LAST_BODY_SENTINEL).
+# Usage: assert_reason_contains <gate> <substring> [<body_file>]
+assert_reason_contains() {
+  local gate=$1 substr=$2
+  local body_file=${3:-${CURL_LAST_BODY_FILE}}
+  if [[ -z "${body_file}" && -n "${CURL_LAST_BODY_SENTINEL:-}" && -f "${CURL_LAST_BODY_SENTINEL}" ]]; then
+    body_file=$(cat "${CURL_LAST_BODY_SENTINEL}" 2>/dev/null)
+  fi
+  if [[ -z "${body_file}" || ! -f "${body_file}" ]]; then
+    fail "${gate}" "no JSON body to assert (.reason contains '${substr}')"
+  fi
+  if ! "${JQ_BIN}" -e --arg s "${substr}" \
+    '(.reason | type == "string") and (.reason | test($s; "i"))' \
+    "${body_file}" >/dev/null 2>&1; then
+    fail "${gate}" ".reason field missing or does not contain '${substr}' (case-insensitive)"
+  fi
+}
+
 # JSON field extraction via `jq -r`. Returns empty string on miss; caller
 # decides whether to FAIL.
 # Usage: extract_json <jq_expression> [<body_file>]
@@ -1244,9 +1267,14 @@ JSON
   assert_json_file "${gate}" "${stdout_terminal}" \
     '.hookSpecificOutput.permissionDecision == "deny"' \
     'terminal retry permissionDecision != deny'
+  # EDGE-056 — retroactive use of assert_reason_contains is gated to the
+  # body-file overload because hook-mode payloads carry the "already
+  # consumed" marker under .hookSpecificOutput.permissionDecisionReason
+  # (NOT .reason — that's the bypass-mode field). assert_reason_contains
+  # only handles the .reason path, so the inline jq filter stays here.
   assert_json_file "${gate}" "${stdout_terminal}" \
     '(.hookSpecificOutput.permissionDecisionReason | tostring | test("already consumed"; "i"))' \
-    "terminal retry reason missing 'already consumed' marker"
+    "terminal retry hookSpecificOutput.permissionDecisionReason missing 'already consumed' marker"
 
   # Negative redaction sanity on each hook stdout file — secret tokens we
   # never wrote must not appear.
@@ -1351,11 +1379,139 @@ JSON
   assert_http_status "${gate}" "${code}" "200" "evaluate Edit (third retry)"
   assert_json "${gate}" '.decision == "DENY"' 'third retry should be terminal DENY'
   assert_json "${gate}" '.permission_decision == "deny"' 'third retry permission_decision != deny'
-  assert_json "${gate}" '(.reason | tostring | test("already consumed"; "i"))' \
-    "third retry reason missing 'already consumed' marker"
+  assert_reason_contains "${gate}" "already consumed"
   assert_json "${gate}" '.wait_after == "request_new_approval"' 'third retry wait_after != request_new_approval'
 
   # Negative redaction sanity (mirrors gate_pretooluse_deny).
+  assert_body_does_not_contain "${gate}" "OPENAI_API_KEY" 'evaluate response contains a real-secret marker'
+  assert_body_does_not_contain "${gate}" "AWS_SECRET_ACCESS_KEY" 'evaluate response contains a real-secret marker'
+
+  pass "${gate}"
+}
+
+# ---------------------------------------------------------------------------
+# Gate: edge_approval_rejected (EDGE-056 step 3).
+#
+# Mirrors gate_approval_flow_bypass but exercises the rejection terminal
+# state instead of approve+consume. POSTs an Edit action that requires
+# approval, captures the approval_ref, rejects via
+# /api/v1/edge/approvals/{ref}/reject (with a synthetic resolver to dodge
+# self_approval_denied), retries the same action, and asserts:
+#   - retry decision = DENY
+#   - retry .reason contains 'rejected' (case-insensitive)
+#   - second reject attempt is non-2xx (rejection is terminal — same
+#     approval_ref cannot be re-resolved)
+# This closes the EDGE-039 / EDGE-042 class of bug at integration time:
+# rejection's `permissionDecisionReason` (handlers_edge_evaluate.go:807)
+# differs from the policy-deny copy, and full coverage prevents the two
+# from accidentally diverging without anyone noticing.
+#
+# Bypass-mode-only by design: the server-side rejection lifecycle is
+# identical regardless of whether the action arrives via cordum-hook or
+# direct curl. The hook-mode counterpart would mostly duplicate
+# gate_approval_flow_hook scaffolding for diminishing return; if a hook-
+# specific bug surfaces, file as a follow-up.
+# ---------------------------------------------------------------------------
+gate_approval_rejected() {
+  local gate=edge_approval_rejected
+
+  # 1. First evaluate — REQUIRE_APPROVAL.
+  local req
+  req=$(cat <<JSON
+{
+  "session_id": "${EDGE_SESSION_ID}",
+  "execution_id": "${EDGE_EXECUTION_ID}",
+  "principal_id": "${EDGE_PRINCIPAL_ID}",
+  "agent_product": "cordum-edge-fake-hook-e2e",
+  "layer": "hook",
+  "kind": "hook.pre_tool_use",
+  "tool_name": "Edit",
+  "input_redacted": {
+    "file_path": "${FIXTURE_APPROVE_PATH}"
+  },
+  "cwd": "${TMP_ROOT}"
+}
+JSON
+)
+  local code
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/evaluate" "${req}")
+  log_http "${gate}" POST "/api/v1/edge/evaluate (initial)" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "evaluate Edit (initial)"
+  assert_json "${gate}" '.decision == "REQUIRE_APPROVAL"' 'initial evaluate did not require approval'
+  local approval_ref
+  approval_ref=$(extract_json '.approval_ref // empty')
+  if [[ -z "${approval_ref}" ]]; then
+    fail "${gate}" 'evaluate response missing approval_ref'
+  fi
+  if [[ ! "${approval_ref}" =~ ^edge_appr_[A-Za-z0-9_-]+$ ]]; then
+    fail "${gate}" "approval_ref does not match required pattern: ${approval_ref}"
+  fi
+  log "approval_ref=${approval_ref}"
+
+  # 2. Approval is pending in the store.
+  code=$(curl_request GET "${API_BASE}/api/v1/edge/approvals/${approval_ref}")
+  log_http "${gate}" GET "/api/v1/edge/approvals/${approval_ref}" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "GET approval"
+  assert_json "${gate}" '.status == "pending"' 'pre-reject status != pending'
+  assert_json "${gate}" '.session_id == "'"${EDGE_SESSION_ID}"'"' 'approval bound to wrong session'
+
+  # 3. Resolve as rejected. Use a separate synthetic resolver principal so
+  # the requester != resolver check at handlers_edge_approvals.go:335 does
+  # not 403 the call as self_approval_denied (mirrors the approve gate's
+  # dance at gate_approval_flow_bypass:L1207-1213, but here we override
+  # AUTH_HEADERS in-place since the bypass gate already showed it works
+  # without saving/restoring around a single call).
+  local reject_body='{"reason":"edge_fake_hook_e2e synthetic rejection"}'
+  local saved_headers=("${AUTH_HEADERS[@]}")
+  AUTH_HEADERS=(
+    -H "X-API-Key: ${CORDUM_API_KEY}"
+    -H "X-Tenant-ID: ${CORDUM_TENANT_ID}"
+    -H "X-Principal-Id: edge-fake-hook-e2e-approver-$$"
+  )
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/approvals/${approval_ref}/reject" "${reject_body}")
+  log_http "${gate}" POST "/api/v1/edge/approvals/${approval_ref}/reject" "${code}"
+  if [[ "${code}" == "403" ]]; then
+    AUTH_HEADERS=("${saved_headers[@]}")
+    fail "${gate}" 'reject returned 403 (likely self_approval_denied — script approver principal collided with requester)'
+  fi
+  assert_http_status "${gate}" "${code}" "200" "POST approval reject"
+  assert_json "${gate}" '.status == "rejected"' 'post-reject status != rejected'
+  AUTH_HEADERS=("${saved_headers[@]}")
+
+  # 4. Retry evaluate with the SAME action body — the gateway's auto-consume
+  # path matches by action_hash (handlers_edge_evaluate.go:200 area) and finds
+  # the rejected approval. Decision = DENY, reason = 'approval rejected' (or
+  # the resolver's free-text reason if non-empty per
+  # handlers_edge_evaluate.go:807).
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/evaluate" "${req}")
+  log_http "${gate}" POST "/api/v1/edge/evaluate (retry post-reject)" "${code}"
+  assert_http_status "${gate}" "${code}" "200" "evaluate Edit (retry post-reject)"
+  assert_json "${gate}" '.decision == "DENY"' 'retry post-reject did not return DENY'
+  assert_json "${gate}" '.permission_decision == "deny"' 'retry post-reject permission_decision != deny'
+  assert_reason_contains "${gate}" "rejected"
+
+  # 5. Negative — second reject of the same approval_ref must be non-2xx
+  # (rejection is terminal; the approval is no longer in pending state and
+  # cannot be re-resolved). This guards the "no approval re-issue happens"
+  # half of DoD #1.
+  saved_headers=("${AUTH_HEADERS[@]}")
+  AUTH_HEADERS=(
+    -H "X-API-Key: ${CORDUM_API_KEY}"
+    -H "X-Tenant-ID: ${CORDUM_TENANT_ID}"
+    -H "X-Principal-Id: edge-fake-hook-e2e-approver-$$"
+  )
+  code=$(curl_request POST "${API_BASE}/api/v1/edge/approvals/${approval_ref}/reject" "${reject_body}")
+  AUTH_HEADERS=("${saved_headers[@]}")
+  log_http "${gate}" POST "/api/v1/edge/approvals/${approval_ref}/reject (terminal)" "${code}"
+  if [[ "${code}" == "200" ]]; then
+    fail "${gate}" "second reject of terminal approval returned 200; rejection must be non-replayable"
+  fi
+  case "${code}" in
+    409|422|404) ;;  # any 4xx terminal-state rejection is acceptable
+    *) fail "${gate}" "second reject expected 4xx terminal-state error; got HTTP ${code}" ;;
+  esac
+
+  # Negative redaction sanity (mirrors gate_pretooluse_deny + flow_bypass).
   assert_body_does_not_contain "${gate}" "OPENAI_API_KEY" 'evaluate response contains a real-secret marker'
   assert_body_does_not_contain "${gate}" "AWS_SECRET_ACCESS_KEY" 'evaluate response contains a real-secret marker'
 
@@ -1683,6 +1839,7 @@ main() {
 
   gate_pretooluse_deny
   gate_approval_flow
+  gate_approval_rejected
   gate_posttooluse_artifact
   gate_evidence_export
 }

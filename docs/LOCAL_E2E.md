@@ -105,12 +105,35 @@ internal Edge P0 threat model (Cordum engineering).
 | `CORDUM_EDGE_E2E_BYPASS_HOOK` | _empty_ | Set to `1` to skip the cordum-hook + agentd subprocess and drive every gate via direct Gateway requests. Use only when the host cannot build/run the hook + agentd binaries. |
 | `CORDUM_EDGE_E2E_AGENTD_PORT` | `0` | Pin the agentd loopback port. `0` picks a free port; override only when the host forbids ephemeral binds. |
 
+**Gate coverage matrix**
+
+| # | Gate | Asserts |
+| --- | --- | --- |
+| 1 | `edge_session_setup` | session/execution Gateway-direct create + round-trip GETs |
+| 2 | `edge_pretooluse_deny` | classifier + evaluate fresh-deny path (`hook.pre_tool_use` against `claude-code.deny-secret-reads`) |
+| 3 | `edge_approval_flow` | enqueue → approve → retry consumes via approval_ref AND auto-consumes via action_hash; third call hits the terminal "already consumed" path |
+| 4 | `edge_approval_rejected` (EDGE-056) | enqueue → reject (separate resolver principal to dodge self_approval_denied) → retry asserts `decision=DENY` and `.reason` contains "rejected" (case-insensitive); second reject of the terminal approval is non-2xx |
+| 5 | `edge_posttooluse_artifact` | hook.post_tool_use event with synthetic artifact pointer round-trips into the Gateway session-events listing |
+| 6 | `edge_evidence_export` | session-export endpoint returns the recorded events with bounded redaction |
+
+**Deferred (filed as EDGE-059)**: `gate_approval_expired` is NOT yet covered. The blocker is
+`enqueueEdgeEvaluateApproval` at `core/controlplane/gateway/handlers_edge_evaluate.go:1058`
+hardcoding `TTL: 5 * time.Minute` with no per-request `expires_at` override path and no env-var
+knob. EDGE-059 lands the override (request body field `approval_ttl_seconds`) and unblocks the
+2-second-TTL bounded-sleep gate that DoD #2 of EDGE-056 demands. Until then, expiration is only
+exercised by the Go-test internal time-mocking pattern in `edge_evaluate_test.go`.
+
+**Why this matters**: full 6-state coverage would have caught EDGE-039 (gateway/agentd EventID
+collision) and EDGE-042 (action_hash auto-consume) at integration time instead of in the final
+review sweep. EDGE-056 ships 5/6 today; EDGE-059 + the EDGE-056 follow-up close the last cell.
+
 **Expected output (strict mode)**
 
 ```text
 PASS edge_session_setup
 PASS edge_pretooluse_deny
 PASS edge_approval_flow
+PASS edge_approval_rejected
 PASS edge_posttooluse_artifact
 PASS edge_evidence_export
 ```
