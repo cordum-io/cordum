@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -18,6 +19,18 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/encoding/protojson"
 )
+
+// edgeApprovalLookupMaxPages caps how many ListApprovals pages the per-action
+// reusable-approval lookup will scan before giving up. With page Limit=50 and
+// 20 pages, the function tolerates principals that have accumulated up to
+// 1000 approvals in this session before silently missing matches. Above the
+// cap we log a slog.Warn so an oncall operator notices the gap rather than
+// having the lookup return nil and the handler enqueue a redundant approval.
+//
+// Sized for the long-tail of agent sessions (default ~10s of approvals) plus
+// a 100x headroom; raise via const if a tenant pattern emerges that legitimately
+// exceeds 1000 approvals per (session, principal).
+const edgeApprovalLookupMaxPages = 20
 
 type edgeEvaluateRequest struct {
 	EventID     string `json:"event_id"`
@@ -916,13 +929,26 @@ func (s *server) findReusableEdgeApprovalForAction(ctx context.Context, store ed
 	if tenantID == "" || actionHash == "" || sessionID == "" || executionID == "" {
 		return nil, nil
 	}
+	// EDGE-043: track all five approval statuses so consumeEdgeEvaluateApproval
+	// can emit the correct explicit deny shape for rejected/expired/invalidated
+	// approvals. Pre-EDGE-043, only Approved/Pending were tracked here, so
+	// admin's explicit reject decisions silently fell through to the
+	// enqueueEdgeEvaluateApproval path and the agent was given a fresh
+	// approval cycle — equivalent to ignoring the admin's reject. Returning
+	// the rejected/expired/invalidated approval routes the retry through
+	// consumeEdgeEvaluateApproval (handlers_edge_evaluate.go:775) which has
+	// the correct enum coverage for those terminal statuses.
 	var (
-		consumed *edgecore.EdgeApproval
-		approved *edgecore.EdgeApproval
-		pending  *edgecore.EdgeApproval
+		consumed    *edgecore.EdgeApproval
+		approved    *edgecore.EdgeApproval
+		pending     *edgecore.EdgeApproval
+		rejected    *edgecore.EdgeApproval
+		expired     *edgecore.EdgeApproval
+		invalidated *edgecore.EdgeApproval
 	)
 	cursor := ""
-	for pageNum := 0; pageNum < 4; pageNum++ {
+	pagesScanned := 0
+	for pagesScanned < edgeApprovalLookupMaxPages {
 		page, err := store.ListApprovals(ctx, edgecore.ListApprovalsQuery{
 			TenantID:    tenantID,
 			PrincipalID: principalID,
@@ -932,6 +958,7 @@ func (s *server) findReusableEdgeApprovalForAction(ctx context.Context, store ed
 		if err != nil {
 			return nil, err
 		}
+		pagesScanned++
 		for i := range page.Items {
 			item := &page.Items[i]
 			if item.SessionID != sessionID || item.ExecutionID != executionID || item.ActionHash != actionHash {
@@ -950,6 +977,18 @@ func (s *server) findReusableEdgeApprovalForAction(ctx context.Context, store ed
 				if pending == nil || pending.CreatedAt.Before(item.CreatedAt) {
 					pending = item
 				}
+			case edgecore.ApprovalStatusRejected:
+				if rejected == nil || rejected.CreatedAt.Before(item.CreatedAt) {
+					rejected = item
+				}
+			case edgecore.ApprovalStatusExpired:
+				if expired == nil || expired.CreatedAt.Before(item.CreatedAt) {
+					expired = item
+				}
+			case edgecore.ApprovalStatusInvalidated:
+				if invalidated == nil || invalidated.CreatedAt.Before(item.CreatedAt) {
+					invalidated = item
+				}
 			}
 		}
 		if page.NextCursor == "" {
@@ -957,6 +996,31 @@ func (s *server) findReusableEdgeApprovalForAction(ctx context.Context, store ed
 		}
 		cursor = page.NextCursor
 	}
+	// EDGE-043 Gap 2: when the bounded scan exhausts edgeApprovalLookupMaxPages
+	// without exhausting the cursor AND has not found any matching approval,
+	// log loud so the silent miss is observable. The handler still falls
+	// through to enqueueEdgeEvaluateApproval, but the operator can see in
+	// logs that pagination is now the bottleneck for a particular tenant.
+	if pagesScanned >= edgeApprovalLookupMaxPages && cursor != "" &&
+		approved == nil && pending == nil && consumed == nil &&
+		rejected == nil && expired == nil && invalidated == nil {
+		slog.Warn("edge approval lookup exceeded pagination cap without match",
+			"component", "edge-evaluate",
+			"tenant", tenantID,
+			"session_id", sessionID,
+			"execution_id", executionID,
+			"action_hash", actionHash,
+			"pages_scanned", pagesScanned,
+			"page_limit", 50,
+			"max_pages", edgeApprovalLookupMaxPages,
+		)
+	}
+	// Priority: live approvals (approved, pending) > terminal-but-actionable
+	// (consumed → "already consumed" deny) > terminal-from-admin (rejected →
+	// admin's deny reason) > expired/invalidated (request-new). Approved and
+	// pending win so a fresh approval always supersedes a stale terminal
+	// status; rejected/expired/invalidated fall through to consume's
+	// status-specific deny shapes when no live alternative exists.
 	switch {
 	case approved != nil:
 		return approved, nil
@@ -964,6 +1028,12 @@ func (s *server) findReusableEdgeApprovalForAction(ctx context.Context, store ed
 		return pending, nil
 	case consumed != nil:
 		return consumed, nil
+	case rejected != nil:
+		return rejected, nil
+	case expired != nil:
+		return expired, nil
+	case invalidated != nil:
+		return invalidated, nil
 	}
 	return nil, nil
 }

