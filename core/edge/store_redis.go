@@ -461,25 +461,44 @@ func (s *RedisStore) TouchHeartbeat(ctx context.Context, tenantID, sessionID str
 	if err := s.ensureReady(); err != nil {
 		return err
 	}
-	session, ok, err := s.GetSession(ctx, tenantID, sessionID)
-	if err != nil {
+	tenantID = strings.TrimSpace(tenantID)
+	sessionID = strings.TrimSpace(sessionID)
+	key := edgeSessionKey(sessionID)
+	value := s.now().UTC().Format(time.RFC3339Nano)
+	for attempt := 0; attempt < 8; attempt++ {
+		err := s.client.Watch(ctx, func(tx *redis.Tx) error {
+			raw, err := tx.Get(ctx, key).Bytes()
+			if errors.Is(err, redis.Nil) {
+				return fmt.Errorf("%w: edge session %s", ErrNotFound, sessionID)
+			}
+			if err != nil {
+				return fmt.Errorf("load edge session %s: %w", sessionID, err)
+			}
+			var session EdgeSession
+			if err := json.Unmarshal(raw, &session); err != nil {
+				return fmt.Errorf("unmarshal edge session %s: %w", sessionID, err)
+			}
+			if session.TenantID != tenantID {
+				return fmt.Errorf("%w: edge session %s", ErrNotFound, sessionID)
+			}
+			if session.EndedAt != nil || isTerminalSessionStatus(session.Status) {
+				return fmt.Errorf("edge session %s is terminal; cannot touch heartbeat", session.SessionID)
+			}
+			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+				pipe.Set(ctx, edgeSessionHeartbeatKey(session.SessionID), value, s.heartbeatTTL)
+				return nil
+			})
+			if err != nil {
+				return fmt.Errorf("touch edge session heartbeat %s: %w", session.SessionID, err)
+			}
+			return nil
+		}, key)
+		if errors.Is(err, redis.TxFailedErr) {
+			continue
+		}
 		return err
 	}
-	if !ok || session == nil {
-		return fmt.Errorf("%w: edge session %s", ErrNotFound, strings.TrimSpace(sessionID))
-	}
-	// Reject heartbeats for sessions that are already terminal. EndSession
-	// drops the heartbeat key in the same transaction (see above), but a
-	// stray client/loop could still recreate it via TouchHeartbeat and make
-	// HeartbeatAlive lie about an ended session. Refuse the write here.
-	if session.EndedAt != nil || isTerminalSessionStatus(session.Status) {
-		return fmt.Errorf("edge session %s is terminal; cannot touch heartbeat", session.SessionID)
-	}
-	value := s.now().UTC().Format(time.RFC3339Nano)
-	if err := s.client.Set(ctx, edgeSessionHeartbeatKey(session.SessionID), value, s.heartbeatTTL).Err(); err != nil {
-		return fmt.Errorf("touch edge session heartbeat %s: %w", session.SessionID, err)
-	}
-	return nil
+	return fmt.Errorf("touch edge session heartbeat %s conflict: %w", sessionID, redis.TxFailedErr)
 }
 
 func (s *RedisStore) HeartbeatAlive(ctx context.Context, tenantID, sessionID string) (bool, error) {

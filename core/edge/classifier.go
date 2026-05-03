@@ -235,9 +235,9 @@ func classifyFileMove(sourcePath, destinationPath string, out *ActionClassificat
 }
 
 func classifyMCPEvent(event AgentActionEvent, out *ActionClassification) {
-	server := firstNonEmpty(inputStringAny(event.InputRedacted, "mcp_server", "server"), event.Labels["mcp.server"])
-	tool := firstNonEmpty(inputStringAny(event.InputRedacted, "mcp_tool", "tool"), event.ToolName, event.Labels["mcp.tool"])
-	action := firstNonEmpty(inputStringAny(event.InputRedacted, "mcp_action", "action"), event.Labels["mcp.action"])
+	server := inputStringAny(event.InputRedacted, "mcp_server", "server")
+	tool := firstNonEmpty(inputStringAny(event.InputRedacted, "mcp_tool", "tool"), event.ToolName)
+	action := inputStringAny(event.InputRedacted, "mcp_action", "action")
 	if server != "" {
 		out.Labels["mcp.server"] = safeLabelValue(server, "unknown")
 	}

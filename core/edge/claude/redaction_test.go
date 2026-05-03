@@ -34,6 +34,30 @@ func TestRedactDiagnosticMasksSyntheticSecretsByValue(t *testing.T) {
 	}
 }
 
+func TestRedactDiagnosticAvoidsBenignHashFalsePositives(t *testing.T) {
+	commit := "0123456789abcdef0123456789abcdef01234567"
+	sha256 := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	got := redactDiagnostic("commit=" + commit + " sha256=" + sha256)
+	if !strings.Contains(got, commit) || !strings.Contains(got, sha256) {
+		t.Fatalf("benign hash diagnostic was over-redacted: %q", got)
+	}
+	if strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("benign hash diagnostic contained redaction marker: %q", got)
+	}
+}
+
+func TestRedactDiagnosticMasksHighEntropyStandardBase64(t *testing.T) {
+	secret := "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+	got := redactDiagnostic("blob=" + secret)
+	if strings.Contains(got, secret) {
+		t.Fatalf("high-entropy base64 diagnostic leaked: %q", got)
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("expected base64 diagnostic redaction marker, got %q", got)
+	}
+}
+
 func TestRunRedactsSecretsFromPayloadEnvAndAgentdErrors(t *testing.T) {
 	agentd := &fakeAgentdClient{fn: func(context.Context, AgentdRequest) (AgentdDecision, error) {
 		return AgentdDecision{}, errors.New("upstream saw ghp_testtoken and Authorization: Bearer sk-test-secret")

@@ -493,20 +493,16 @@ func TestClassifyEventFutureLayerGenericClassifications(t *testing.T) {
 		labels     map[string]string
 	}{
 		{
-			name: "mcp read tool from labels",
+			name: "mcp read tool ignores client labels",
 			event: func() AgentActionEvent {
 				event := classifierEvent(base, LayerMCP, EventKindMCPToolPre, "mcp-client", "", nil)
 				event.Labels = Labels{"mcp.server": "github", "mcp.tool": "issues.list", "mcp.action": "list"}
 				return event
 			}(),
-			actionName: "mcp.issues.list",
+			actionName: "mcp.tool",
 			capability: "mcp.read",
 			riskTags:   []string{"mcp", "read"},
-			labels: map[string]string{
-				"mcp.action": "list",
-				"mcp.server": "github",
-				"mcp.tool":   "issues.list",
-			},
+			labels:     map[string]string{},
 		},
 		{
 			name: "llm request provider model with data and cost",
@@ -579,6 +575,32 @@ func TestClassifyEventFutureLayerGenericClassifications(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestClassifyMCPEventIgnoresClientSuppliedReservedLabels(t *testing.T) {
+	base := time.Date(2026, 5, 2, 11, 0, 0, 0, time.UTC)
+	event := classifierEvent(base, LayerMCP, EventKindMCPToolPre, "mcp-client", "", nil)
+	event.Labels = Labels{
+		"mcp.server": "github",
+		"mcp.tool":   "repos.delete",
+		"mcp.action": "delete",
+	}
+
+	got, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent returned error: %v", err)
+	}
+	if got.ActionName != "mcp.tool" {
+		t.Fatalf("ActionName = %q, want fallback mcp.tool", got.ActionName)
+	}
+	if got.Capability != "mcp.read" || !reflect.DeepEqual(got.RiskTags, []string{"mcp", "read"}) {
+		t.Fatalf("classification trusted reserved labels: capability=%q risk=%#v labels=%#v", got.Capability, got.RiskTags, got.Labels)
+	}
+	for _, key := range []string{"mcp.server", "mcp.tool", "mcp.action"} {
+		if value := got.Labels[key]; value != "" {
+			t.Fatalf("reserved client label %q propagated as %q in %#v", key, value, got.Labels)
+		}
 	}
 }
 

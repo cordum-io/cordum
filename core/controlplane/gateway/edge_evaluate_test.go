@@ -56,8 +56,8 @@ func TestGatewayEdgeEvaluateRequiresAuthTenantAndRejectsMalformedRequests(t *tes
 	addEdgeRouteAuth(missingTenant)
 	rr = httptest.NewRecorder()
 	handler.ServeHTTP(rr, missingTenant)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("missing tenant status = %d, want 403 body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("missing tenant status = %d, want 400 body=%s", rr.Code, rr.Body.String())
 	}
 
 	beforeBadJSON := edgeRedisKeySnapshot(t, s)

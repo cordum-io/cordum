@@ -310,15 +310,13 @@ func redactStringAnyMap(values map[string]any, path string, depth int, opts norm
 	for key := range values {
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
 
-	limit := len(keys)
-	if limit > opts.maxItems {
-		limit = opts.maxItems
+	selectedKeys, truncated := redactionMapKeys(keys, opts.maxItems)
+	if truncated {
 		state.record(joinPath(path, "_truncated"), "too_large", true, true)
 		out["_truncated"] = tooLargeRedactionPlaceholder
 	}
-	for _, key := range keys[:limit] {
+	for _, key := range selectedKeys {
 		childPath := joinPath(path, key)
 		if _, ok := sensitiveKeyType(key); ok {
 			state.record(childPath, "sensitive_key", true, false)
@@ -340,15 +338,13 @@ func redactReflectMap(values reflect.Value, path string, depth int, opts normali
 		stringKeys = append(stringKeys, stringKey)
 		keyLookup[stringKey] = key
 	}
-	sort.Strings(stringKeys)
 
-	limit := len(stringKeys)
-	if limit > opts.maxItems {
-		limit = opts.maxItems
+	selectedKeys, truncated := redactionMapKeys(stringKeys, opts.maxItems)
+	if truncated {
 		state.record(joinPath(path, "_truncated"), "too_large", true, true)
 		out["_truncated"] = tooLargeRedactionPlaceholder
 	}
-	for _, stringKey := range stringKeys[:limit] {
+	for _, stringKey := range selectedKeys {
 		childPath := joinPath(path, stringKey)
 		if _, ok := sensitiveKeyType(stringKey); ok {
 			state.record(childPath, "sensitive_key", true, false)
@@ -358,6 +354,37 @@ func redactReflectMap(values reflect.Value, path string, depth int, opts normali
 		out[stringKey] = redactAny(values.MapIndex(keyLookup[stringKey]).Interface(), childPath, depth+1, opts, state)
 	}
 	return out
+}
+
+func redactionMapKeys(keys []string, maxItems int) ([]string, bool) {
+	sort.Strings(keys)
+	if len(keys) <= maxItems {
+		return keys, false
+	}
+	sensitive := make([]string, 0)
+	regular := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if _, ok := sensitiveKeyType(key); ok {
+			sensitive = append(sensitive, key)
+			continue
+		}
+		regular = append(regular, key)
+	}
+	selected := make([]string, 0, maxItems)
+	selected = appendRedactionMapKeys(selected, sensitive, maxItems)
+	selected = appendRedactionMapKeys(selected, regular, maxItems)
+	sort.Strings(selected)
+	return selected, true
+}
+
+func appendRedactionMapKeys(dst, src []string, maxItems int) []string {
+	for _, key := range src {
+		if len(dst) >= maxItems {
+			return dst
+		}
+		dst = append(dst, key)
+	}
+	return dst
 }
 
 func redactSlice(values []any, path string, depth int, opts normalizedRedactionOptions, state *redactionState) []any {
@@ -416,8 +443,12 @@ func sensitiveKeyType(key string) (string, bool) {
 	default:
 		if strings.HasSuffix(normalized, "_token") ||
 			strings.HasSuffix(normalized, "_secret") ||
+			strings.Contains(normalized, "_secret_") ||
 			strings.HasSuffix(normalized, "_password") ||
 			strings.HasSuffix(normalized, "_api_key") ||
+			strings.Contains(normalized, "_api_key_") ||
+			strings.HasSuffix(normalized, "_access_key") ||
+			strings.Contains(normalized, "_access_key_") ||
 			strings.HasSuffix(normalized, "_private_key") {
 			return "sensitive_key", true
 		}

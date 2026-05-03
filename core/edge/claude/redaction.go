@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"math"
 	"regexp"
 	"strings"
 )
@@ -15,8 +16,9 @@ var redactionPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
 	regexp.MustCompile(`(?i)\b[0-9a-f]{32}\b`),
 	regexp.MustCompile(`\b[A-Za-z0-9_-]{43}\b`),
-	regexp.MustCompile(`[A-Za-z0-9/+=]{40,}`),
 }
+
+var base64DiagnosticPattern = regexp.MustCompile(`\b[A-Za-z0-9/+=]{40,}\b`)
 
 func redactDiagnostic(input string) string {
 	out := strings.ReplaceAll(input, "\r", " ")
@@ -25,11 +27,51 @@ func redactDiagnostic(input string) string {
 	for _, re := range redactionPatterns {
 		out = re.ReplaceAllString(out, "[REDACTED]")
 	}
+	out = redactHighEntropyBase64Diagnostics(out)
 	out = strings.Join(strings.Fields(out), " ")
 	if len(out) > maxDiagnosticLen {
 		out = out[:maxDiagnosticLen] + "..."
 	}
 	return out
+}
+
+func redactHighEntropyBase64Diagnostics(input string) string {
+	return base64DiagnosticPattern.ReplaceAllStringFunc(input, func(token string) string {
+		trimmed := strings.TrimRight(token, "=")
+		if trimmed == "" || !strings.ContainsAny(token, "/+=") {
+			return token
+		}
+		if isHexDiagnosticToken(trimmed) || diagnosticEntropy(trimmed) < 4.5 {
+			return token
+		}
+		return "[REDACTED]"
+	})
+}
+
+func isHexDiagnosticToken(token string) bool {
+	for _, ch := range token {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", ch) {
+			return false
+		}
+	}
+	return true
+}
+
+func diagnosticEntropy(token string) float64 {
+	if token == "" {
+		return 0
+	}
+	counts := map[rune]int{}
+	for _, ch := range token {
+		counts[ch]++
+	}
+	var entropy float64
+	total := float64(len([]rune(token)))
+	for _, count := range counts {
+		p := float64(count) / total
+		entropy -= p * math.Log2(p)
+	}
+	return entropy
 }
 
 func safeID(id string) string {

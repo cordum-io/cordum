@@ -524,8 +524,8 @@ func TestGatewayEdgeRoutesRequireAuthTenantAndReachHandlers(t *testing.T) {
 	addEdgeRouteAuth(missingTenant)
 	rr = httptest.NewRecorder()
 	handler.ServeHTTP(rr, missingTenant)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("missing tenant status = %d, want 403", rr.Code)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("missing tenant status = %d, want 400", rr.Code)
 	}
 
 	authorized := httptest.NewRequest(http.MethodGet, "/api/v1/edge/sessions", nil)
@@ -560,8 +560,8 @@ func TestGatewayEdgeExportRequiresAuthTenantAndDeniesCrossTenant(t *testing.T) {
 	missingTenant.Header.Set("Content-Type", "application/json")
 	rr = httptest.NewRecorder()
 	handler.ServeHTTP(rr, missingTenant)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("export missing tenant status = %d, want 403 body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("export missing tenant status = %d, want 400 body=%s", rr.Code, rr.Body.String())
 	}
 
 	authorized := edgeRoutePOST(t, handler, path, `{}`)

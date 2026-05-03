@@ -141,13 +141,26 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session request", nil)
 		return
 	}
-	traceID = redacted.String(traceID)
-	policySnapshot = redacted.String(policySnapshot)
+	traceID, err = redacted.String(traceID)
+	if err != nil {
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session request", nil)
+		return
+	}
+	policySnapshot, err = redacted.String(policySnapshot)
+	if err != nil {
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session request", nil)
+		return
+	}
+	redactedPrincipalID, err := redacted.String(principalID)
+	if err != nil {
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session request", nil)
+		return
+	}
 
 	session := edgecore.EdgeSession{
 		SessionID:         sessionID,
 		TenantID:          tenantID,
-		PrincipalID:       redacted.String(principalID),
+		PrincipalID:       redactedPrincipalID,
 		PrincipalType:     principalType,
 		AgentProduct:      redacted.AgentProduct,
 		AgentVersion:      redacted.AgentVersion,
@@ -162,7 +175,7 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 		TraceID:           traceID,
 		WorkflowRunID:     redacted.WorkflowRunID,
 		JobID:             redacted.JobID,
-		PolicySnapshot:    redacted.String(policySnapshot),
+		PolicySnapshot:    policySnapshot,
 		EnforcementLayers: redacted.EnforcementLayers,
 		PolicyMode:        policyMode,
 		Status:            edgecore.SessionStatusRunning,
@@ -436,8 +449,16 @@ func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Reques
 		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
 		return
 	}
-	traceID = redacted.String(traceID)
-	policySnapshot = redacted.String(policySnapshot)
+	traceID, err = redacted.String(traceID)
+	if err != nil {
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
+		return
+	}
+	policySnapshot, err = redacted.String(policySnapshot)
+	if err != nil {
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
+		return
+	}
 
 	execution := edgecore.AgentExecution{
 		ExecutionID:    uuid.NewString(),
@@ -599,7 +620,7 @@ func (s *server) edgeStoreOrUnavailable(w http.ResponseWriter, r *http.Request) 
 func (s *server) edgeTenantFromRequest(w http.ResponseWriter, r *http.Request, requested string) (string, bool) {
 	headerTenant := strings.TrimSpace(auth.HeaderValue(r, "X-Tenant-ID"))
 	if headerTenant == "" {
-		writeEdgeError(w, r, http.StatusForbidden, edgeErrCodeTenantRequired, "X-Tenant-ID header is required", nil)
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeTenantRequired, "X-Tenant-ID header is required", nil)
 		return "", false
 	}
 	if strings.TrimSpace(requested) != "" && strings.TrimSpace(requested) != headerTenant {
@@ -662,12 +683,8 @@ type redactedEdgeSessionCreateRequest struct {
 	Labels            edgecore.Labels
 }
 
-func (r redactedEdgeSessionCreateRequest) String(value string) string {
-	redacted, err := redactEdgeString(value)
-	if err != nil {
-		return ""
-	}
-	return redacted
+func (r redactedEdgeSessionCreateRequest) String(value string) (string, error) {
+	return redactEdgeString(value)
 }
 
 type redactedEdgeExecutionCreateRequest struct {
@@ -680,12 +697,8 @@ type redactedEdgeExecutionCreateRequest struct {
 	Labels         edgecore.Labels
 }
 
-func (r redactedEdgeExecutionCreateRequest) String(value string) string {
-	redacted, err := redactEdgeString(value)
-	if err != nil {
-		return ""
-	}
-	return redacted
+func (r redactedEdgeExecutionCreateRequest) String(value string) (string, error) {
+	return redactEdgeString(value)
 }
 
 func redactEdgeSessionCreateRequest(req edgeSessionCreateRequest) (redactedEdgeSessionCreateRequest, error) {

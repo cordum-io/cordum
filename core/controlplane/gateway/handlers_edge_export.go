@@ -69,7 +69,7 @@ type edgeExportRequest struct {
 //
 // Error mapping:
 //   - 400 invalid path param / malformed body
-//   - 401/403 enforced by requirePermissionOrRole and edgeTenantFromRequest
+//   - 401/400/403 enforced by requirePermissionOrRole and edgeTenantFromRequest
 //   - 404 session not found OR cross-tenant access (same response so
 //     existence does not leak)
 //   - 503 edge store unavailable

@@ -27,7 +27,7 @@ func TestEdgeErrorShapeSessionsMissingTenantHeader(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
-	assertEdgeErrorShape(t, rr, http.StatusForbidden, edgeErrCodeTenantRequired)
+	assertEdgeErrorShape(t, rr, http.StatusBadRequest, edgeErrCodeTenantRequired)
 }
 
 func TestEdgeErrorShapeSessionsBadJSON(t *testing.T) {

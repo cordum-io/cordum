@@ -375,8 +375,8 @@ func TestGatewayEdgeApprovalRoutesRequireAuthAndTenant(t *testing.T) {
 			}
 			rr := httptest.NewRecorder()
 			handler.ServeHTTP(rr, req)
-			if rr.Code != http.StatusForbidden {
-				t.Fatalf("%s missing tenant status = %d, want 403 body=%s", route.name, rr.Code, rr.Body.String())
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("%s missing tenant status = %d, want 400 body=%s", route.name, rr.Code, rr.Body.String())
 			}
 		})
 	}

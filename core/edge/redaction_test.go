@@ -446,6 +446,31 @@ func TestRedactValueBoundsHostilePayloadsWithoutRawBytes(t *testing.T) {
 	}
 }
 
+func TestRedactValueChecksSensitiveMapKeysBeforeTruncating(t *testing.T) {
+	const secret = "cordum_fake_map_cutoff_secret_12345"
+	payload := map[string]any{
+		"aaa":                       "safe-a",
+		"bbb":                       "safe-b",
+		"zzz_aws_secret_access_key": secret,
+	}
+
+	result, err := RedactValue(payload, RedactionOptions{MaxItems: 2})
+	if err != nil {
+		t.Fatalf("redact map cutoff payload: %v", err)
+	}
+	got, ok := result.Value.(map[string]any)
+	if !ok {
+		t.Fatalf("redacted value type = %T, want map[string]any", result.Value)
+	}
+	if got["zzz_aws_secret_access_key"] != defaultRedactionMarker {
+		t.Fatalf("sensitive key past lexical cutoff = %#v, want marker in %#v", got["zzz_aws_secret_access_key"], got)
+	}
+	assertNoSentinelLeaks(t, result.Value, map[string]string{"cutoff": secret})
+	if !result.Truncated {
+		t.Fatalf("expected truncation metadata for over-limit map")
+	}
+}
+
 func TestRedactValueNonFiniteNumbersUseSafePlaceholder(t *testing.T) {
 	payload := map[string]any{
 		"nan":  math.NaN(),
