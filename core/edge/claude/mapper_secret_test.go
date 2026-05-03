@@ -170,6 +170,14 @@ func mustJSON(t *testing.T, v any) string {
 func assertNoStep12Secrets(t *testing.T, text string) {
 	t.Helper()
 	assertNoSyntheticSecrets(t, text)
+	// EDGE-046: step12SecretPath ("secret-worktree") used to be in this list
+	// because the legacy redactHookBoundaryString (mapper.go:594) wholesale-
+	// replaced any string containing the substring "secret". EDGE-046
+	// narrowed the guard to actual leak markers only, so a path component
+	// named "secret-worktree" now correctly passes through to public agentd
+	// request fields like cwd / transcript_path. Real-secret leak detection
+	// (bearer tokens, AWS keys, GitHub tokens, password assignments, the
+	// literal "Authorization: Bearer" prefix) is unchanged.
 	for _, secret := range []string{
 		step12BearerToken,
 		step12GitHubToken,
@@ -177,7 +185,6 @@ func assertNoStep12Secrets(t *testing.T, text string) {
 		step12AWSSecret,
 		step12Password,
 		"Authorization: Bearer",
-		step12SecretPath,
 	} {
 		if strings.Contains(text, secret) {
 			t.Fatalf("step-12 synthetic secret %q leaked in %q", secret, text)

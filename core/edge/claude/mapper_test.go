@@ -500,3 +500,93 @@ func TestAgentdRequestCarriesMappedActionFields(t *testing.T) {
 		t.Errorf("AgentdRequest.ToolInput[command] = %q", cmd)
 	}
 }
+
+// EDGE-046 regression tests: redactHookBoundaryString must NOT wholesale
+// replace strings that mention "secret" as a normal English word, file path,
+// or CLI flag. The previous final guard `strings.Contains(... "secret")` was
+// over-broad and confused CONTEXT (the user is talking about secrets) with
+// CONTENT (an actual secret value). The other 4 guards (`result.Redacted`,
+// `result.Truncated`, `diagnostic != candidate`, and the `[REDACTED]` marker
+// substring) cover real-leak detection precisely.
+
+func TestRedactHookBoundaryStringPreservesPlainEnglishWithSecretsWord(t *testing.T) {
+	// Common in agent prompts: user describes a workflow that touches secret
+	// material without including any actual secret value. The whole prompt
+	// must round-trip unchanged.
+	prompt := "Please read the file /tmp/secrets/.env and then create a new file at ./hello.go with a hello-world Go program."
+	got := redactHookBoundaryString(prompt)
+	if got != prompt {
+		t.Fatalf("redactHookBoundaryString(plain English mentioning 'secrets') = %q, want %q (input round-trips unchanged)", got, prompt)
+	}
+}
+
+func TestRedactHookBoundaryStringPreservesFilePathWithSecretsDir(t *testing.T) {
+	// Standard secret-mount paths on POSIX systems are everywhere in
+	// production runbooks; the file_path field carrying one is not itself a
+	// secret leak, just a reference to where one lives.
+	for _, path := range []string{
+		"/etc/secrets/credentials.json",
+		"/var/run/secrets/kubernetes.io/serviceaccount/token",
+		"~/.aws/credentials",
+		"C:/Users/ops/secret-store/policy.yaml",
+	} {
+		got := redactHookBoundaryString(path)
+		if got != path {
+			t.Errorf("redactHookBoundaryString(%q) = %q, want unchanged", path, got)
+		}
+	}
+}
+
+func TestRedactHookBoundaryStringPreservesCliFlagWithSecretWord(t *testing.T) {
+	// CLI flag names like --secret-name=my-vault use "secret" as a domain
+	// keyword, not as a secret value. The whole command line should pass
+	// through untouched.
+	cmd := "kubectl get secret my-vault --namespace=prod --output=name"
+	got := redactHookBoundaryString(cmd)
+	if got != cmd {
+		t.Fatalf("redactHookBoundaryString(%q) = %q, want unchanged", cmd, got)
+	}
+}
+
+func TestRedactHookBoundaryStringStillRedactsActualBearer(t *testing.T) {
+	// EDGE-004's bearerPattern is the real leak vector here. Defense-in-depth
+	// guards (`result.Redacted` / `[REDACTED]` substring) must continue to
+	// fire for these.
+	leak := "Authorization: Bearer abc123def456ghi789jkl012mno345pqr678"
+	got := redactHookBoundaryString(leak)
+	if got != "<redacted>" {
+		t.Fatalf("redactHookBoundaryString(actual Bearer) = %q, want <redacted>", got)
+	}
+}
+
+func TestRedactHookBoundaryStringStillRedactsAPIKey(t *testing.T) {
+	// envSecretPattern catches assignments of API keys.
+	leak := "API_KEY=sk-proj-abc1234567890supersecretvalue"
+	got := redactHookBoundaryString(leak)
+	if got != "<redacted>" {
+		t.Fatalf("redactHookBoundaryString(API_KEY=...) = %q, want <redacted>", got)
+	}
+}
+
+func TestRedactHookBoundaryStringStillRedactsAWSKey(t *testing.T) {
+	// awsKeyPattern catches AKIA... access keys.
+	leak := "AKIAIOSFODNN7EXAMPLE"
+	got := redactHookBoundaryString(leak)
+	if got != "<redacted>" {
+		t.Fatalf("redactHookBoundaryString(AKIA...) = %q, want <redacted>", got)
+	}
+}
+
+func TestRedactHookBoundaryStringStillRedactsEnvSecretAssignment(t *testing.T) {
+	// envSecretPattern catches CLIENT_SECRET / PASSWORD / etc. assignments.
+	for _, leak := range []string{
+		"CLIENT_SECRET=abcdef0123456789",
+		"PASSWORD=hunter2-but-really-long-version",
+		"PRIVATE_KEY=verysecretkeyvaluelongenoughtomatch",
+	} {
+		got := redactHookBoundaryString(leak)
+		if got != "<redacted>" {
+			t.Errorf("redactHookBoundaryString(%q) = %q, want <redacted>", leak, got)
+		}
+	}
+}

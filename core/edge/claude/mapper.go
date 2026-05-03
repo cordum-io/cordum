@@ -591,7 +591,18 @@ func redactHookBoundaryString(value string) string {
 		}
 	}
 	diagnostic := redactDiagnostic(candidate)
-	if result.Redacted || result.Truncated || diagnostic != candidate || strings.Contains(diagnostic, "[REDACTED]") || strings.Contains(strings.ToLower(diagnostic), "secret") {
+	// EDGE-046: do not add a broad substring check on the word "secret" here.
+	// The four guards below cover real leak detection:
+	//   - result.Redacted: edge.RedactValue's precise regex patterns fired
+	//     (bearer/sk-/AKIA/env-secret-assignment/private-key/etc.).
+	//   - result.Truncated: value exceeded the size cap.
+	//   - diagnostic != candidate: redactDiagnostic transformed the value.
+	//   - "[REDACTED]" substring: agentd's secretLikePattern marker.
+	// A bare strings.Contains(..., "secret") confuses CONTEXT (the user is
+	// talking about secrets) with CONTENT (an actual secret value) and wipes
+	// every prompt mentioning /etc/secrets, --secret-name=foo, or "secrets
+	// management" wholesale. That regression is filed as EDGE-046.
+	if result.Redacted || result.Truncated || diagnostic != candidate || strings.Contains(diagnostic, "[REDACTED]") {
 		return "<redacted>"
 	}
 	return diagnostic
