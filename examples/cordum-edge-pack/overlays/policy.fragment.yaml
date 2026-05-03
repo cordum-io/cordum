@@ -1,5 +1,13 @@
 version: edge-policy-demo-v0
-default_decision: deny
+# Default-allow for the DEMO pack. Production deployments MUST override this
+# to default_decision: deny and write explicit allow rules per tool/path.
+# The demo's value-prop is showing the 3 verdicts (allow / deny /
+# require_approval) on common Claude actions; default-deny would block every
+# unmapped tool (Glob, Grep, generic Read, generic Bash) and bury the actual
+# governance story under "no matching rule" denials. The explicit deny rules
+# below still fire first via first-match evaluation, so secret reads,
+# destructive shell, and unknown high-risk actions remain blocked.
+default_decision: allow
 
 rules:
   # EDGE-008/009 mapping: Claude Read/Edit/Bash actions are classified into
