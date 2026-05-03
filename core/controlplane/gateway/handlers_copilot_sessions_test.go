@@ -154,7 +154,15 @@ func TestHandleGetCopilotSession_HappyPathAggregatesSessionJobsAndDecisions(t *t
 func TestCollectCopilotSessionDecisionsPaginatesPastUnrelatedTenantDecisions(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	ctx := context.Background()
-	now := time.Date(2026, time.April, 26, 8, 0, 0, 0, time.UTC)
+	// `now` must track the test-run wall clock: collectCopilotSessionDecisions
+	// uses `time.Now().UTC()` to compute a 7-day sliding window when the
+	// caller passes a zero `sessionStartedAt` (handlers_copilot_sessions.go:258-269).
+	// A hardcoded fixture date would silently fall outside that window 7 days
+	// after the test was authored, producing the BUG-001 false negative
+	// (len(decisions)=0). Anchoring `now` to time.Now keeps the seeded
+	// timestamps inside the window for every future test run while preserving
+	// the deterministic relative ordering target<unrelated_0<...<unrelated_499.
+	now := time.Now().UTC()
 	for i := 0; i < copilotSessionAggregateLimit; i++ {
 		if err := s.decisionLogStore.AppendDecision(ctx, model.DecisionLogRecord{
 			JobID:     "unrelated-job-" + strconv.Itoa(i),
