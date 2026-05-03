@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +14,23 @@ import (
 	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/google/uuid"
 )
+
+// edgeMaxExecutionsPerSession resolves the per-session AgentExecution cap.
+// Reads CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION as int64; falls back to
+// edgecore.DefaultMaxExecutionsPerSession when missing/invalid/<=0. The
+// cap protects DeleteSession + dashboard timelines from unbounded
+// per-session fanout (PR #243 senior review finding; EDGE-037).
+func edgeMaxExecutionsPerSession() int64 {
+	raw := strings.TrimSpace(os.Getenv("CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION"))
+	if raw == "" {
+		return int64(edgecore.DefaultMaxExecutionsPerSession)
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n <= 0 {
+		return int64(edgecore.DefaultMaxExecutionsPerSession)
+	}
+	return n
+}
 
 type edgeSessionCreateRequest struct {
 	TenantID          string                     `json:"tenant_id"`
@@ -425,6 +443,25 @@ func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Reques
 	}
 	if !found || parent == nil {
 		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
+		return
+	}
+
+	// Per-session execution cap (EDGE-037). Reject before redaction/validate so
+	// pathological retry storms don't burn CPU on payload work that would never
+	// land. ZCard is O(1) on the session->executions index. The cap is exclusive
+	// (count >= maxExecutions rejects); this matches the count-current-then-
+	// create-one semantics, so the cap is the maximum number of stored
+	// executions.
+	maxExecutions := edgeMaxExecutionsPerSession()
+	executionCount, err := store.CountSessionExecutions(r.Context(), tenantID, sessionID)
+	if err != nil {
+		writeEdgeInternalError(w, r, "count edge session executions", err)
+		return
+	}
+	if executionCount >= maxExecutions {
+		writeEdgeError(w, r, http.StatusTooManyRequests, edgeErrCodeMaxExecutionsExceeded,
+			fmt.Sprintf("session has reached the maximum of %d executions; end the session or start a new one", maxExecutions),
+			map[string]any{"limit": maxExecutions, "current": executionCount})
 		return
 	}
 
@@ -857,9 +894,22 @@ func isTerminalEdgeExecutionStatus(status edgecore.ExecutionStatus) bool {
 	}
 }
 
+// isEdgeValidationError reports whether the error originated from an Edge
+// model/store validation failure that the gateway should map to
+// 400 edge_invalid_request.
+//
+// EDGE-038: prefer the typed sentinel `edgecore.ErrValidation` set by
+// validation.go's requireString/requireTime/validateOptionalEnd. The
+// substring fallback covers producers that have not yet been wrapped with
+// the sentinel; the wire shape is identical either way. Producers added
+// after EDGE-038 should wrap with the sentinel so the substring fallback
+// can eventually be deleted.
 func isEdgeValidationError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, edgecore.ErrValidation) {
+		return true
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "validate ") ||

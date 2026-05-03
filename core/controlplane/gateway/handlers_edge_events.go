@@ -722,6 +722,15 @@ func writeEdgeEventRequestError(w http.ResponseWriter, r *http.Request, err erro
 	writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, fallback, nil)
 }
 
+// writeEdgeEventStoreError maps store/request failures from the Edge events
+// pipeline to the standard Edge error envelope.
+//
+// EDGE-038: typed sentinels (edgecore.ErrValidation / ErrInvalidCursor /
+// ErrRequestTooLarge / ErrNotFound) are checked via errors.Is before the
+// substring fallbacks. Producers wrapped with the sentinels short-circuit
+// via the typed path; legacy producers still match via the substring path
+// during the EDGE-038 transition. Wire codes/statuses are byte-identical
+// across both paths.
 func writeEdgeEventStoreError(w http.ResponseWriter, r *http.Request, err error, operation string) {
 	var requestErr edgeEventRequestError
 	if errors.As(err, &requestErr) {
@@ -732,13 +741,21 @@ func writeEdgeEventStoreError(w http.ResponseWriter, r *http.Request, err error,
 		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge event parent not found", nil)
 		return
 	}
-	errStr := err.Error()
-	if strings.Contains(errStr, "invalid cursor") {
+	if errors.Is(err, edgecore.ErrInvalidCursor) {
 		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge event query", nil)
+		return
+	}
+	if errors.Is(err, edgecore.ErrRequestTooLarge) {
+		writeEdgeError(w, r, http.StatusRequestEntityTooLarge, edgeErrCodeRequestTooLarge, "edge event too large; use artifact_ptrs", nil)
 		return
 	}
 	if isEdgeValidationError(err) {
 		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge event request", nil)
+		return
+	}
+	errStr := err.Error()
+	if strings.Contains(errStr, "invalid cursor") {
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge event query", nil)
 		return
 	}
 	if strings.Contains(errStr, "exceeds max") || strings.Contains(errStr, "too large") {

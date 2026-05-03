@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -226,4 +228,52 @@ func TestWriteEdgeErrorRedactsSecretDetails(t *testing.T) {
 		t.Fatalf("sanitized details dropped safe_code: %s", body)
 	}
 	assertEdgeErrorShape(t, rr, http.StatusConflict, edgeErrCodeIdempotencyConflict)
+}
+
+// EDGE-038: typed-error sentinels at the gateway/store boundary should drive
+// `isEdgeValidationError` via errors.Is instead of substring matching. A
+// validation error wrapped with `edgecore.ErrValidation` MUST be detected
+// regardless of its message text — including a message that the legacy
+// substring fallback would not match.
+func TestIsEdgeValidationErrorRecognizesErrValidationSentinel(t *testing.T) {
+	wrapped := fmt.Errorf("%w: tenant_id is required", edgecore.ErrValidation)
+	if !isEdgeValidationError(wrapped) {
+		t.Fatalf("isEdgeValidationError did not recognize ErrValidation-wrapped error: %v", wrapped)
+	}
+	// A message that the legacy substring fallback would NOT catch must still
+	// be detected when the sentinel is present. This proves the typed path
+	// runs first, not the substring fallback.
+	wrappedExoticMsg := fmt.Errorf("%w: arbitrary downstream copy", edgecore.ErrValidation)
+	if !isEdgeValidationError(wrappedExoticMsg) {
+		t.Fatalf("isEdgeValidationError must detect ErrValidation regardless of message text: %v", wrappedExoticMsg)
+	}
+	// nil and unrelated errors must remain unmatched.
+	if isEdgeValidationError(nil) {
+		t.Fatal("isEdgeValidationError(nil) = true, want false")
+	}
+	if isEdgeValidationError(errors.New("redis unavailable")) {
+		t.Fatal("isEdgeValidationError matched an unrelated infra error")
+	}
+}
+
+// EDGE-038: ErrInvalidCursor short-circuits writeEdgeEventStoreError before
+// the substring fallback. An error wrapped with the sentinel that does NOT
+// contain the literal "invalid cursor" string must still produce 400
+// edge_invalid_request via the typed path.
+func TestWriteEdgeEventStoreErrorRoutesErrInvalidCursorSentinel(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/edge/sessions/x/events?cursor=garbage", nil)
+	wrapped := fmt.Errorf("%w: opaque downstream message", edgecore.ErrInvalidCursor)
+	writeEdgeEventStoreError(rr, req, wrapped, "list events")
+	assertEdgeErrorShape(t, rr, http.StatusBadRequest, edgeErrCodeInvalidRequest)
+}
+
+// EDGE-038: ErrRequestTooLarge short-circuits writeEdgeEventStoreError to
+// 413 edge_request_too_large via the typed path, irrespective of message.
+func TestWriteEdgeEventStoreErrorRoutesErrRequestTooLargeSentinel(t *testing.T) {
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/edge/events", nil)
+	wrapped := fmt.Errorf("%w: payload bound", edgecore.ErrRequestTooLarge)
+	writeEdgeEventStoreError(rr, req, wrapped, "append event")
+	assertEdgeErrorShape(t, rr, http.StatusRequestEntityTooLarge, edgeErrCodeRequestTooLarge)
 }

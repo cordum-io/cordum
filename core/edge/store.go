@@ -9,7 +9,21 @@ import (
 const (
 	defaultStorePageLimit = 50
 	maxStorePageLimit     = 200
+
+	// DefaultMaxExecutionsPerSession bounds the number of AgentExecution rows
+	// any single EdgeSession may accumulate. Edge sessions are evidence
+	// streams: they grow monotonically until SessionEnd. Without a cap, a
+	// pathological agent loop or buggy retry storm can fan a single session
+	// out to thousands of executions, blowing up cleanup memory and dashboard
+	// timelines. Operators can tune via CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION.
+	DefaultMaxExecutionsPerSession = 100
 )
+
+// ErrSessionExecutionFanoutExceeded is returned by store / handler code when a
+// CreateExecution call would push the session over its configured execution
+// cap. Wrap with fmt.Errorf("%w: <human message>", Err...) so gateway handlers
+// map it to 429 edge_max_executions_exceeded via errors.Is.
+var ErrSessionExecutionFanoutExceeded = errors.New("edge session execution fanout exceeded")
 
 // ErrNotFound is returned by mutating store operations when the target record
 // does not exist for the requested tenant. Read operations return ok=false
@@ -30,6 +44,43 @@ var ErrIdempotencyPending = errors.New("edge idempotency: request pending")
 // persisted. Callers must not append a duplicate event in this case.
 var ErrIdempotencyWindowExpired = errors.New("edge idempotency: replay window expired")
 
+// EDGE-038 — Edge gateway/store error taxonomy.
+//
+// Sentinels at this boundary let gateway handlers map store/model failures to
+// stable Edge wire envelopes via errors.Is/errors.As instead of substring-
+// matching err.Error(). Concrete store and model code wraps its existing
+// human-readable message via fmt.Errorf("%w: <message>", Err...) so:
+//   - existing tests asserting strings.Contains(err.Error(), "...") keep
+//     working (the wrapped message is preserved by %w),
+//   - log lines stay byte-identical, and
+//   - errors.Is(err, edge.ErrValidation) becomes the authoritative detector.
+//
+// Wire mapping (handlers_edge_*.go):
+//   ErrValidation       → 400 edge_invalid_request
+//   ErrInvalidCursor    → 400 edge_invalid_request
+//   ErrRequestTooLarge  → 413 edge_request_too_large
+//   ErrNotFound         → 404 edge_not_found (already wired)
+//   ErrIdempotencyConflict       → 409 edge_idempotency_conflict
+//   ErrIdempotencyPending        → 409 edge_idempotency_pending
+//   ErrIdempotencyWindowExpired  → 409 edge_idempotency_window_expired
+
+// ErrValidation is the sentinel for shape/required-field/range violations
+// returned by Validate() implementations on Edge models, store-level argument
+// checks, and any precondition failure that should map to 400 edge_invalid_request
+// at the gateway. Wrap with fmt.Errorf("%w: <human message>", ErrValidation).
+var ErrValidation = errors.New("edge validation")
+
+// ErrInvalidCursor is the sentinel for cursor-format failures during paginated
+// list operations. Distinct from ErrValidation because gateway handlers used to
+// emit a slightly different copy ("invalid edge event query"); kept as its own
+// sentinel so wire copy can stay distinct without string-matching.
+var ErrInvalidCursor = errors.New("edge invalid cursor")
+
+// ErrRequestTooLarge is the sentinel for size-cap violations on request bodies,
+// JSON payloads, label/metadata maps, etc. Wrap with fmt.Errorf("%w: ...", ErrRequestTooLarge)
+// so gateway handlers map to 413 edge_request_too_large via errors.Is.
+var ErrRequestTooLarge = errors.New("edge request too large")
+
 // Store persists EdgeSession, AgentExecution, and AgentActionEvent evidence.
 // It is intentionally scoped to Edge records and must not mutate Scheduler Job
 // state or workflow run state.
@@ -45,6 +96,11 @@ type Store interface {
 	CreateExecution(ctx context.Context, execution AgentExecution) error
 	GetExecution(ctx context.Context, tenantID, executionID string) (*AgentExecution, bool, error)
 	ListExecutions(ctx context.Context, query ListExecutionsQuery) (ExecutionPage, error)
+	// CountSessionExecutions returns the number of executions currently
+	// recorded under (tenantID, sessionID). Used by gateway handlers to
+	// enforce per-session execution caps without paginating the full list.
+	// Returns 0 (not an error) when the session has no executions yet.
+	CountSessionExecutions(ctx context.Context, tenantID, sessionID string) (int64, error)
 	EndExecution(ctx context.Context, tenantID, executionID string, endedAt time.Time, status ExecutionStatus) (*AgentExecution, error)
 
 	// AppendEvent appends a single event atomically and returns the persisted

@@ -268,14 +268,18 @@ func (a ArtifactPointer) Validate() error {
 
 func requireString(field, value string) error {
 	if strings.TrimSpace(value) == "" {
-		return fmt.Errorf("%s is required", field)
+		// EDGE-038: wrap with ErrValidation so gateway handlers can route via
+		// errors.Is instead of substring-matching err.Error(). The wrapped
+		// message is preserved by %w so existing tests asserting
+		// strings.Contains(err.Error(), "is required") keep working.
+		return fmt.Errorf("%w: %s is required", ErrValidation, field)
 	}
 	return nil
 }
 
 func requireTime(field string, value time.Time) error {
 	if value.IsZero() {
-		return fmt.Errorf("%s is required", field)
+		return fmt.Errorf("%w: %s is required", ErrValidation, field)
 	}
 	return nil
 }
@@ -285,10 +289,10 @@ func validateOptionalEnd(field string, started time.Time, ended *time.Time) erro
 		return nil
 	}
 	if ended.IsZero() {
-		return fmt.Errorf("%s is required when set", field)
+		return fmt.Errorf("%w: %s is required when set", ErrValidation, field)
 	}
 	if !started.IsZero() && ended.Before(started) {
-		return fmt.Errorf("%s must be >= started_at", field)
+		return fmt.Errorf("%w: %s must be >= started_at", ErrValidation, field)
 	}
 	return nil
 }

@@ -630,6 +630,29 @@ func (s *RedisStore) ListExecutions(ctx context.Context, query ListExecutionsQue
 	return ExecutionPage{Items: items, NextCursor: nextCursor}, nil
 }
 
+// CountSessionExecutions returns the number of AgentExecution rows currently
+// indexed under sessionID for tenantID. The implementation uses ZCARD on the
+// session->executions sorted-set index, which is O(1) — no full scan, no
+// per-execution loadExecution call. Cross-tenant isolation is preserved by
+// the caller resolving sessionID against tenantID before invoking this; the
+// session->executions index is only populated by CreateExecution after that
+// validation runs.
+func (s *RedisStore) CountSessionExecutions(ctx context.Context, tenantID, sessionID string) (int64, error) {
+	if err := s.ensureReady(); err != nil {
+		return 0, err
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	sessionID = strings.TrimSpace(sessionID)
+	if tenantID == "" || sessionID == "" {
+		return 0, fmt.Errorf("%w: tenant_id and session_id are required", ErrValidation)
+	}
+	count, err := s.client.ZCard(ctx, edgeSessionExecutionsIndexKey(sessionID)).Result()
+	if err != nil {
+		return 0, fmt.Errorf("count edge session executions %s: %w", sessionID, err)
+	}
+	return count, nil
+}
+
 func (s *RedisStore) EndExecution(ctx context.Context, tenantID, executionID string, endedAt time.Time, status ExecutionStatus) (*AgentExecution, error) {
 	if err := s.ensureReady(); err != nil {
 		return nil, err
@@ -1444,7 +1467,7 @@ func (s *RedisStore) listEventsForExecutionPage(ctx context.Context, query ListE
 	if hasCursor {
 		start = int64(cursor.Score)
 		if start < 0 {
-			return EventPage{}, fmt.Errorf("invalid cursor")
+			return EventPage{}, fmt.Errorf("%w: invalid cursor", ErrInvalidCursor)
 		}
 	}
 	items := make([]AgentActionEvent, 0, limit+1)
@@ -1718,7 +1741,7 @@ func parseZSetStoreCursor(raw, kind string) (storeCursor, bool, error) {
 		return cursor, false, nil
 	}
 	if cursor.ID == "" {
-		return storeCursor{}, false, fmt.Errorf("invalid cursor")
+		return storeCursor{}, false, fmt.Errorf("%w: invalid cursor", ErrInvalidCursor)
 	}
 	return cursor, true, nil
 }
@@ -1732,7 +1755,7 @@ func parseExecutionEventCursor(raw, executionID string) (storeCursor, bool, erro
 		return cursor, false, nil
 	}
 	if cursor.Scope != "execution" || cursor.ExecutionID != executionID || cursor.ID == "" || cursor.Score < 0 {
-		return storeCursor{}, false, fmt.Errorf("invalid cursor")
+		return storeCursor{}, false, fmt.Errorf("%w: invalid cursor", ErrInvalidCursor)
 	}
 	return cursor, true, nil
 }
@@ -1746,7 +1769,7 @@ func parseSessionIndexEventCursor(raw string) (storeCursor, bool, error) {
 		return cursor, false, nil
 	}
 	if cursor.Scope != "session_index" || cursor.ID == "" || cursor.Score < 0 {
-		return storeCursor{}, false, fmt.Errorf("invalid cursor")
+		return storeCursor{}, false, fmt.Errorf("%w: invalid cursor", ErrInvalidCursor)
 	}
 	return cursor, true, nil
 }
@@ -1758,14 +1781,14 @@ func parseOpaqueStoreCursor(raw, kind string) (storeCursor, error) {
 	}
 	data, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil {
-		return storeCursor{}, fmt.Errorf("invalid cursor")
+		return storeCursor{}, fmt.Errorf("%w: invalid cursor", ErrInvalidCursor)
 	}
 	var cursor storeCursor
 	if err := json.Unmarshal(data, &cursor); err != nil {
-		return storeCursor{}, fmt.Errorf("invalid cursor")
+		return storeCursor{}, fmt.Errorf("%w: invalid cursor", ErrInvalidCursor)
 	}
 	if cursor.Version != storeCursorVersion || cursor.Kind != kind {
-		return storeCursor{}, fmt.Errorf("invalid cursor")
+		return storeCursor{}, fmt.Errorf("%w: invalid cursor", ErrInvalidCursor)
 	}
 	return cursor, nil
 }
@@ -1777,7 +1800,7 @@ func parseApprovalOffsetCursor(raw string) (int, error) {
 	}
 	offset, err := strconv.Atoi(raw)
 	if err != nil || offset < 0 {
-		return 0, fmt.Errorf("invalid cursor")
+		return 0, fmt.Errorf("%w: invalid cursor", ErrInvalidCursor)
 	}
 	return offset, nil
 }
