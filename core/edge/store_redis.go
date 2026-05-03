@@ -59,6 +59,11 @@ type RedisStore struct {
 	maxEventBytes            int
 	idempotencyTTL           time.Duration
 	maxIdempotencyReplayBody int
+	// recorder captures Edge store-level metrics. Defaults to NoopRecorder so
+	// existing callers and tests keep working without wiring observability.
+	// EDGE-054 added the create_execution_aborted_total counter; future store
+	// metrics route through the same field.
+	recorder Recorder
 }
 
 type redisEventGroup struct {
@@ -88,6 +93,7 @@ func NewRedisStoreFromClient(client redis.UniversalClient, opts ...StoreOption) 
 		maxEventBytes:            defaultMaxEventBytes,
 		idempotencyTTL:           defaultIdempotencyTTL,
 		maxIdempotencyReplayBody: defaultMaxIdempotencyReplayBody,
+		recorder:                 NewNoopRecorder(),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -108,6 +114,9 @@ func NewRedisStoreFromClient(client redis.UniversalClient, opts ...StoreOption) 
 	}
 	if s.maxIdempotencyReplayBody <= 0 {
 		s.maxIdempotencyReplayBody = defaultMaxIdempotencyReplayBody
+	}
+	if s.recorder == nil {
+		s.recorder = NewNoopRecorder()
 	}
 	return s
 }
@@ -145,6 +154,18 @@ func WithIdempotencyTTL(ttl time.Duration) StoreOption {
 func WithMaxIdempotencyReplayBody(max int) StoreOption {
 	return func(s *RedisStore) {
 		s.maxIdempotencyReplayBody = max
+	}
+}
+
+// WithRecorder wires an observability Recorder so the store can emit
+// EDGE-014-style counters/gauges from store-level paths (currently the
+// EDGE-054 create_execution_aborted_total counter). nil collapses to the
+// NoopRecorder default at construction time.
+func WithRecorder(r Recorder) StoreOption {
+	return func(s *RedisStore) {
+		if r != nil {
+			s.recorder = r
+		}
 	}
 }
 
@@ -588,12 +609,27 @@ func (s *RedisStore) CreateExecution(ctx context.Context, execution AgentExecuti
 	if !ok || parent == nil {
 		return fmt.Errorf("%w: parent edge session %s", ErrNotFound, execution.SessionID)
 	}
+	if isTerminalSessionStatus(parent.Status) {
+		// Fast-path: parent is already terminal at L584. Refuse before WATCH so
+		// we record the abort and avoid a needless TX round-trip. The inside-TX
+		// re-check below catches the racier case where EndSession lands between
+		// L584 and the WATCH commit.
+		s.recorder.RecordCreateExecutionAborted("parent_terminal")
+		return fmt.Errorf("%w: parent edge session %s status=%s", ErrParentSessionTerminal, execution.SessionID, parent.Status)
+	}
 	payload, err := json.Marshal(execution)
 	if err != nil {
 		return fmt.Errorf("marshal agent execution %s: %w", execution.ExecutionID, err)
 	}
 	key := edgeExecutionKey(execution.ExecutionID)
+	parentKey := edgeSessionKey(execution.SessionID)
 	score := float64(execution.StartedAt.UTC().UnixMicro())
+	// EDGE-054 — WATCH set includes both the new execution key (existence
+	// guard) AND the parent session key (terminal/missing guard). Before
+	// MULTI/EXEC, re-load the parent under the same TX so any concurrent
+	// EndSession or DeleteSession that landed between the L584 GetSession and
+	// here forces a TxFailedErr retry where the inside-TX validation refuses.
+	abortReason := ""
 	err = s.client.Watch(ctx, func(tx *redis.Tx) error {
 		exists, err := tx.Exists(ctx, key).Result()
 		if err != nil {
@@ -601,6 +637,22 @@ func (s *RedisStore) CreateExecution(ctx context.Context, execution AgentExecuti
 		}
 		if exists > 0 {
 			return fmt.Errorf("agent execution %s already exists", execution.ExecutionID)
+		}
+		parentRaw, err := tx.Get(ctx, parentKey).Bytes()
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				abortReason = "parent_missing"
+				return fmt.Errorf("%w: parent edge session %s", ErrNotFound, execution.SessionID)
+			}
+			return fmt.Errorf("re-load parent edge session %s: %w", execution.SessionID, err)
+		}
+		var parentInTx EdgeSession
+		if err := json.Unmarshal(parentRaw, &parentInTx); err != nil {
+			return fmt.Errorf("decode parent edge session %s under tx: %w", execution.SessionID, err)
+		}
+		if isTerminalSessionStatus(parentInTx.Status) {
+			abortReason = "parent_terminal"
+			return fmt.Errorf("%w: parent edge session %s status=%s", ErrParentSessionTerminal, execution.SessionID, parentInTx.Status)
 		}
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.Set(ctx, key, payload, 0)
@@ -620,7 +672,10 @@ func (s *RedisStore) CreateExecution(ctx context.Context, execution AgentExecuti
 			return fmt.Errorf("write agent execution %s: %w", execution.ExecutionID, err)
 		}
 		return nil
-	}, key)
+	}, key, parentKey)
+	if abortReason != "" {
+		s.recorder.RecordCreateExecutionAborted(abortReason)
+	}
 	if errors.Is(err, redis.TxFailedErr) {
 		return fmt.Errorf("create agent execution %s conflict: %w", execution.ExecutionID, err)
 	}

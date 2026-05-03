@@ -26,6 +26,7 @@ type PrometheusRecorder struct {
 	sessionsActive    *prometheus.GaugeVec
 	executionsStarted *prometheus.CounterVec
 	executionsEnded   *prometheus.CounterVec
+	executionAborts   *prometheus.CounterVec
 	actionDecisions   *prometheus.CounterVec
 	actionsDenied     *prometheus.CounterVec
 	approvalRequested *prometheus.CounterVec
@@ -73,6 +74,13 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 			Namespace: ns, Name: "executions_ended_total",
 			Help: "Edge agent executions ended, labeled by mode and terminal status.",
 		}, []string{"mode", "status"}),
+		// EDGE-054 — counter for orphan-prevention aborts in CreateExecution.
+		// `reason` collapses to {"parent_terminal", "parent_missing", "other",
+		// "unknown"} via boundedCreateExecutionAbortReason. Bounded cardinality.
+		executionAborts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns, Name: "create_execution_aborted_total",
+			Help: "Edge CreateExecution aborts due to parent session terminal or missing, labeled by bounded reason.",
+		}, []string{"reason"}),
 		actionDecisions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: ns, Name: "action_decisions_total",
 			Help: "Edge action policy decisions by layer, kind, decision, and mode.",
@@ -126,7 +134,7 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 	}
 	reg.MustRegister(
 		r.sessionsCreated, r.sessionsEnded, r.sessionsActive,
-		r.executionsStarted, r.executionsEnded,
+		r.executionsStarted, r.executionsEnded, r.executionAborts,
 		r.actionDecisions, r.actionsDenied,
 		r.approvalRequested, r.approvalResolved,
 		r.degraded, r.failClosed,
@@ -152,6 +160,9 @@ func (r *PrometheusRecorder) RecordExecutionStarted(_ /*tenant*/, mode, agentPro
 }
 func (r *PrometheusRecorder) RecordExecutionEnded(_ /*tenant*/, mode, status string) {
 	r.executionsEnded.WithLabelValues(boundedMode(mode), boundedStatus(status)).Inc()
+}
+func (r *PrometheusRecorder) RecordCreateExecutionAborted(reason string) {
+	r.executionAborts.WithLabelValues(boundedCreateExecutionAbortReason(reason)).Inc()
 }
 func (r *PrometheusRecorder) RecordActionDecision(_ /*tenant*/, layer, kind, decision, mode string) {
 	r.actionDecisions.WithLabelValues(NormalizeLayer(layer), NormalizeKind(kind), NormalizeDecision(decision), boundedMode(mode)).Inc()
@@ -434,6 +445,28 @@ func boundedCacheResult(value string) string {
 		return "unknown"
 	}
 	if _, ok := allowedCacheResults[v]; ok {
+		return v
+	}
+	return "other"
+}
+
+// allowedCreateExecutionAbortReasons is the bounded set of `reason` label
+// values for the EDGE-054 create_execution_aborted_total counter.
+//   - parent_terminal: parent EdgeSession was Ended/Failed at the moment
+//     CreateExecution's WATCH/MULTI/EXEC ran (the original race target).
+//   - parent_missing: parent EdgeSession was deleted between the initial
+//     GetSession read and the WATCH commit.
+var allowedCreateExecutionAbortReasons = map[string]struct{}{
+	"parent_terminal": {},
+	"parent_missing":  {},
+}
+
+func boundedCreateExecutionAbortReason(value string) string {
+	v := lowerTrim(value)
+	if v == "" {
+		return "unknown"
+	}
+	if _, ok := allowedCreateExecutionAbortReasons[v]; ok {
 		return v
 	}
 	return "other"

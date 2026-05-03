@@ -44,6 +44,15 @@ var ErrIdempotencyPending = errors.New("edge idempotency: request pending")
 // persisted. Callers must not append a duplicate event in this case.
 var ErrIdempotencyWindowExpired = errors.New("edge idempotency: replay window expired")
 
+// ErrParentSessionTerminal is returned by CreateExecution when the parent
+// EdgeSession has transitioned to a terminal status (Ended/Failed) by the
+// time the WATCH/MULTI/EXEC pipeline executes. EDGE-054 closed the TOCTOU
+// window where EndSession could race ahead of CreateExecution between the
+// initial GetSession read and the WATCH commit; the inside-TX re-validation
+// returns this sentinel so callers can map it to a stable wire envelope
+// (gateway handlers map to 409 edge_parent_session_terminal via errors.Is).
+var ErrParentSessionTerminal = errors.New("edge store: parent session is terminal")
+
 // EDGE-038 — Edge gateway/store error taxonomy.
 //
 // Sentinels at this boundary let gateway handlers map store/model failures to

@@ -224,6 +224,262 @@ func TestRedisStoreExecutionLifecycleAndSecondaryIndexes(t *testing.T) {
 	}
 }
 
+// EDGE-054 — CreateExecution must refuse to attach a child execution to a
+// parent session that has already transitioned to a terminal status. The
+// pre-fix code only checked parent existence at L584-590; the inside-TX
+// re-validation introduced by this task closes the TOCTOU window where
+// EndSession lands between the GetSession read and the WATCH commit.
+//
+// This test pre-flips the parent to SessionStatusEnded BEFORE calling
+// CreateExecution, which is logically equivalent to "EndSession won the
+// race." The unfixed code creates an orphan; the fixed code returns
+// ErrParentSessionTerminal and leaves no execution rows behind.
+func TestRedisStoreCreateExecutionRefusesOrphanWhenParentAlreadyTerminal(t *testing.T) {
+	ctx := context.Background()
+	store, client, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Date(2026, 5, 1, 11, 30, 0, 0, time.UTC)
+	if err := store.CreateSession(ctx, validStoreSession("tenant-a", "sess-orphan-end", "principal-a", base)); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, err := store.EndSession(ctx, "tenant-a", "sess-orphan-end", base.Add(time.Minute), SessionStatusEnded); err != nil {
+		t.Fatalf("EndSession: %v", err)
+	}
+
+	execution := validStoreExecution("tenant-a", "sess-orphan-end", "exec-orphan-end", base.Add(2*time.Minute), nil)
+	err := store.CreateExecution(ctx, execution)
+	if err == nil {
+		t.Fatalf("CreateExecution succeeded on terminal parent — orphan was created (the EDGE-054 bug)")
+	}
+	if !errors.Is(err, ErrParentSessionTerminal) {
+		t.Fatalf("CreateExecution error = %v, want ErrParentSessionTerminal", err)
+	}
+
+	// No execution key, no per-session execution-index entry, no by-job/trace/run
+	// index entries. A leaked write would mean the WATCH-set widening missed a key.
+	for _, key := range []string{
+		edgeExecutionKey("exec-orphan-end"),
+		edgeSessionExecutionsIndexKey("sess-orphan-end"),
+		edgeJobIndexKey(execution.JobID),
+		edgeExecutionTraceIndexKey(execution.TraceID),
+		edgeExecutionRunIndexKey(execution.WorkflowRunID),
+	} {
+		exists, err := client.Exists(ctx, key).Result()
+		if err != nil {
+			t.Fatalf("Exists(%s): %v", key, err)
+		}
+		if exists != 0 {
+			t.Fatalf("key %s exists after CreateExecution rejected — partial write of an orphan execution", key)
+		}
+	}
+
+	if got, ok, err := store.GetExecution(ctx, "tenant-a", "exec-orphan-end"); err != nil || ok || got != nil {
+		t.Fatalf("GetExecution after orphan rejection = (%#v,%v,%v), want clean miss", got, ok, err)
+	}
+}
+
+// EDGE-054 — CreateExecution must refuse when the parent session has been
+// deleted (DeleteSession). The pre-fix code's L584 GetSession would catch
+// this, but the inside-TX re-validation also re-checks under WATCH so a
+// concurrent DeleteSession after L584 is still rejected.
+func TestRedisStoreCreateExecutionRefusesOrphanWhenParentDeleted(t *testing.T) {
+	ctx := context.Background()
+	store, client, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Date(2026, 5, 1, 11, 45, 0, 0, time.UTC)
+	if err := store.CreateSession(ctx, validStoreSession("tenant-a", "sess-orphan-del", "principal-a", base)); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if err := store.DeleteSession(ctx, "tenant-a", "sess-orphan-del"); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+
+	execution := validStoreExecution("tenant-a", "sess-orphan-del", "exec-orphan-del", base.Add(2*time.Minute), nil)
+	err := store.CreateExecution(ctx, execution)
+	if err == nil {
+		t.Fatalf("CreateExecution succeeded on deleted parent — orphan was created")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CreateExecution error = %v, want ErrNotFound (parent deleted)", err)
+	}
+
+	for _, key := range []string{
+		edgeExecutionKey("exec-orphan-del"),
+		edgeSessionExecutionsIndexKey("sess-orphan-del"),
+	} {
+		exists, err := client.Exists(ctx, key).Result()
+		if err != nil {
+			t.Fatalf("Exists(%s): %v", key, err)
+		}
+		if exists != 0 {
+			t.Fatalf("key %s exists after CreateExecution rejected — partial write", key)
+		}
+	}
+}
+
+// EDGE-054 — Positive control. Parent active → CreateExecution succeeds.
+// Confirms the inside-TX re-validation does not introduce a regression on
+// the happy path that all existing tests already exercise indirectly.
+func TestRedisStoreCreateExecutionSucceedsWhenParentActive(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	if err := store.CreateSession(ctx, validStoreSession("tenant-a", "sess-active", "principal-a", base)); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	execution := validStoreExecution("tenant-a", "sess-active", "exec-active", base.Add(time.Minute), nil)
+	if err := store.CreateExecution(ctx, execution); err != nil {
+		t.Fatalf("CreateExecution on active parent: %v", err)
+	}
+	got, ok, err := store.GetExecution(ctx, "tenant-a", "exec-active")
+	if err != nil || !ok || got == nil || got.ExecutionID != "exec-active" {
+		t.Fatalf("GetExecution after happy-path create = (%#v,%v,%v), want exec-active", got, ok, err)
+	}
+}
+
+// EDGE-054 — Concurrent invariant: under simultaneous CreateExecution +
+// EndSession bursts on the same parent, every CreateExecution outcome
+// must either (a) succeed while parent is active, or (b) refuse with
+// ErrParentSessionTerminal/ErrNotFound. The invariant we assert is the
+// negative one: no execution row may exist whose parent is in a terminal
+// status at the moment the test inspects state. This exercises the WATCH
+// set widening on the redis-CAS path (executions and parent session keys
+// are now both watched, so EndSession bumping the parent key forces a
+// CreateExecution retry where the inside-TX re-validation refuses).
+//
+// miniredis serializes commands so the race may not manifest on every
+// run; the test runs many iterations to make the orphan-leak case
+// statistically observable on UNFIXED code while staying deterministic
+// on fixed code (the WATCH+revalidate pair makes orphan creation
+// impossible regardless of interleaving).
+func TestRedisStoreCreateExecutionRefusesOrphanWhenParentEndedConcurrently(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Date(2026, 5, 1, 13, 0, 0, 0, time.UTC)
+	const iterations = 16
+	for i := 0; i < iterations; i++ {
+		sessionID := fmt.Sprintf("sess-race-%d", i)
+		executionID := fmt.Sprintf("exec-race-%d", i)
+		if err := store.CreateSession(ctx, validStoreSession("tenant-a", sessionID, "principal-a", base.Add(time.Duration(i)*time.Second))); err != nil {
+			t.Fatalf("iter %d CreateSession: %v", i, err)
+		}
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		var createErr error
+		execution := validStoreExecution("tenant-a", sessionID, executionID, base.Add(time.Duration(i)*time.Second).Add(time.Second), nil)
+
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			createErr = store.CreateExecution(ctx, execution)
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_, _ = store.EndSession(ctx, "tenant-a", sessionID, base.Add(time.Duration(i)*time.Second).Add(2*time.Second), SessionStatusEnded)
+		}()
+		close(start)
+		wg.Wait()
+
+		// Final-state invariant: parent terminal AND child exists is impossible
+		// under the fix (both happy-path success-then-end and rejection are OK).
+		parent, ok, err := store.GetSession(ctx, "tenant-a", sessionID)
+		if err != nil || !ok || parent == nil {
+			t.Fatalf("iter %d GetSession: (%#v,%v,%v)", i, parent, ok, err)
+		}
+		_, childExists, err := store.GetExecution(ctx, "tenant-a", executionID)
+		if err != nil {
+			t.Fatalf("iter %d GetExecution: %v", i, err)
+		}
+		if isTerminalSessionStatus(parent.Status) && childExists {
+			t.Fatalf("iter %d ORPHAN: parent status=%s + child execution %s exists (createErr=%v)",
+				i, parent.Status, executionID, createErr)
+		}
+		if createErr != nil && !errors.Is(createErr, ErrParentSessionTerminal) && !errors.Is(createErr, ErrNotFound) {
+			// Any other error suggests an unrelated bug — surface it loudly.
+			t.Fatalf("iter %d CreateExecution returned unexpected error: %v", i, createErr)
+		}
+	}
+}
+
+// EDGE-054 — verify the create_execution_aborted_total metric fires with the
+// correct bounded reason on each abort path. Uses a stub Recorder embedded in
+// NoopRecorder so unrelated method calls (RecordExecutionStarted etc.) are no-ops.
+type abortRecorder struct {
+	NoopRecorder
+	mu      sync.Mutex
+	reasons []string
+}
+
+func (r *abortRecorder) RecordCreateExecutionAborted(reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reasons = append(r.reasons, reason)
+}
+
+func (r *abortRecorder) Snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.reasons...)
+}
+
+func TestRedisStoreCreateExecutionAbortedMetricFiresWithBoundedReason(t *testing.T) {
+	t.Run("parent_terminal", func(t *testing.T) {
+		ctx := context.Background()
+		mr := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 1})
+		t.Cleanup(func() { _ = client.Close(); mr.Close() })
+		rec := &abortRecorder{}
+		store := NewRedisStoreFromClient(client, WithRecorder(rec))
+
+		base := time.Date(2026, 5, 1, 12, 30, 0, 0, time.UTC)
+		if err := store.CreateSession(ctx, validStoreSession("tenant-a", "sess-metric-term", "principal-a", base)); err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
+		if _, err := store.EndSession(ctx, "tenant-a", "sess-metric-term", base.Add(time.Minute), SessionStatusEnded); err != nil {
+			t.Fatalf("EndSession: %v", err)
+		}
+		execution := validStoreExecution("tenant-a", "sess-metric-term", "exec-metric-term", base.Add(2*time.Minute), nil)
+		err := store.CreateExecution(ctx, execution)
+		if !errors.Is(err, ErrParentSessionTerminal) {
+			t.Fatalf("CreateExecution = %v, want ErrParentSessionTerminal", err)
+		}
+		got := rec.Snapshot()
+		if len(got) != 1 || got[0] != "parent_terminal" {
+			t.Fatalf("recorder reasons = %#v, want [parent_terminal]", got)
+		}
+	})
+
+	t.Run("happy_path_emits_no_abort", func(t *testing.T) {
+		ctx := context.Background()
+		mr := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 1})
+		t.Cleanup(func() { _ = client.Close(); mr.Close() })
+		rec := &abortRecorder{}
+		store := NewRedisStoreFromClient(client, WithRecorder(rec))
+
+		base := time.Date(2026, 5, 1, 12, 45, 0, 0, time.UTC)
+		if err := store.CreateSession(ctx, validStoreSession("tenant-a", "sess-metric-ok", "principal-a", base)); err != nil {
+			t.Fatalf("CreateSession: %v", err)
+		}
+		execution := validStoreExecution("tenant-a", "sess-metric-ok", "exec-metric-ok", base.Add(time.Minute), nil)
+		if err := store.CreateExecution(ctx, execution); err != nil {
+			t.Fatalf("CreateExecution: %v", err)
+		}
+		if got := rec.Snapshot(); len(got) != 0 {
+			t.Fatalf("recorder reasons = %#v, want empty (happy path)", got)
+		}
+	})
+}
+
 func TestRedisStoreEventAppendListOrderingPaginationAndFilters(t *testing.T) {
 	ctx := context.Background()
 	store, _, _, cleanup := newRedisEdgeStore(t)

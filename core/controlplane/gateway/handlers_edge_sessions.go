@@ -237,6 +237,13 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 	}
 	if err := store.CreateExecution(r.Context(), execution); err != nil {
 		s.cleanupFailedEdgeSessionCreate(r, tenantID, sessionID)
+		if errors.Is(err, edgecore.ErrParentSessionTerminal) {
+			// EDGE-054 — parent session transitioned to terminal between the
+			// initial GetSession read and the WATCH commit. Map to 409 so
+			// callers can distinguish "session ended" from a 400 shape error.
+			writeEdgeError(w, r, http.StatusConflict, edgeErrCodeSessionTerminal, "parent edge session is terminal", nil)
+			return
+		}
 		if errors.Is(err, edgecore.ErrNotFound) || isEdgeValidationError(err) {
 			writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
 			return
@@ -519,6 +526,12 @@ func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := store.CreateExecution(r.Context(), execution); err != nil {
+		if errors.Is(err, edgecore.ErrParentSessionTerminal) {
+			// EDGE-054 — parent session is terminal; map to 409 so callers
+			// can distinguish lifecycle violations from validation failures.
+			writeEdgeError(w, r, http.StatusConflict, edgeErrCodeSessionTerminal, "parent edge session is terminal", nil)
+			return
+		}
 		if errors.Is(err, edgecore.ErrNotFound) {
 			writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
 			return

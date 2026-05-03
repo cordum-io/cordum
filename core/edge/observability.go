@@ -46,6 +46,16 @@ type Recorder interface {
 	RecordExecutionStarted(tenant, mode, agentProduct string)
 	RecordExecutionEnded(tenant, mode, status string)
 
+	// RecordCreateExecutionAborted emits a metric counter when the store-level
+	// CreateExecution path refuses to attach a child execution to a parent
+	// session that has transitioned to terminal status (or vanished) between
+	// the GetSession read and the WATCH commit. EDGE-054 widened the WATCH
+	// set to include the parent session key and re-validates inside the TX,
+	// so this counter quantifies how often the orphan-prevention path fires.
+	// `reason` is a bounded label collapsed via the Normalize* helpers to
+	// {"parent_terminal", "parent_missing", "other", "unknown"}.
+	RecordCreateExecutionAborted(reason string)
+
 	// Action decisions.
 	RecordActionDecision(tenant, layer, kind, decision, mode string)
 	RecordActionDenied(tenant, layer, kind, reasonCode string)
@@ -87,6 +97,7 @@ func (NoopRecorder) RecordSessionEnded(string, string, string)                  
 func (NoopRecorder) SetSessionsActive(string, string, int)                       {}
 func (NoopRecorder) RecordExecutionStarted(string, string, string)               {}
 func (NoopRecorder) RecordExecutionEnded(string, string, string)                 {}
+func (NoopRecorder) RecordCreateExecutionAborted(string)                         {}
 func (NoopRecorder) RecordActionDecision(string, string, string, string, string) {}
 func (NoopRecorder) RecordActionDenied(string, string, string, string)           {}
 func (NoopRecorder) RecordApprovalRequested(string, string, string)              {}

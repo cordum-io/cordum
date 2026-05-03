@@ -605,10 +605,13 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		return fmt.Errorf("init audit exporter: %w", err)
 	}
 
+	// Hoist edgeRecorder before edgeStore so the store and handlers share the
+	// same Recorder instance. EDGE-054 store-level metrics flow through this.
+	edgeRecorder := edgecore.NewNoopRecorder()
 	s := &server{
 		memStore:               memStore,
 		jobStore:               jobStore,
-		edgeStore:              edgecore.NewRedisStoreFromClient(jobStore.Client()),
+		edgeStore:              edgecore.NewRedisStoreFromClient(jobStore.Client(), edgecore.WithRecorder(edgeRecorder)),
 		decisionLogStore:       decisionLogStore,
 		copilotStore:           copilot.NotImplementedStore{},
 		governanceHealthCache:  governance.NewCache(60 * time.Second),
@@ -647,7 +650,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		permChecker:            permChecker,
 		auditExporter:          auditSender,
 		auditChainer:           auditChainer,
-		edgeRecorder:           edgecore.NewNoopRecorder(),
+		edgeRecorder:           edgeRecorder,
 		legalHoldStore:         initLegalHoldStore(cfg.RedisURL),
 		statusCacheObj:         newStatusCache(2 * time.Second),
 		policyShadowStore:      policyshadow.NewStore(configSvc),
@@ -1359,6 +1362,12 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "POST /api/v1/policy/velocity-rules", s.instrumented("/api/v1/policy/velocity-rules", s.handleCreateVelocityRule))
 	s.registerRoute(mux, "PUT /api/v1/policy/velocity-rules/{id}", s.instrumented("/api/v1/policy/velocity-rules/{id}", s.handlePutVelocityRule))
 	s.registerRoute(mux, "DELETE /api/v1/policy/velocity-rules/{id}", s.instrumented("/api/v1/policy/velocity-rules/{id}", s.handleDeleteVelocityRule))
+	// EDGE-052 — unified Global policy authority. /api/v1/policy/global
+	// surfaces the five-section view (input, output, edge_action,
+	// mcp_tool, invariants) consumed by the four evaluators. The
+	// per-bundle endpoints below remain as backward-compat aliases.
+	s.registerRoute(mux, "GET /api/v1/policy/global", s.instrumented("/api/v1/policy/global", s.handleGetPolicyGlobal))
+	s.registerRoute(mux, "PUT /api/v1/policy/global", s.instrumented("/api/v1/policy/global", s.handlePutPolicyGlobal))
 	s.registerRoute(mux, "GET /api/v1/policy/bundles", s.instrumented("/api/v1/policy/bundles", s.handlePolicyBundles))
 	s.registerRoute(mux, "GET /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleGetPolicyBundle))
 	s.registerRoute(mux, "PUT /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handlePutPolicyBundle))
