@@ -74,6 +74,21 @@ internal Edge P0 threat model (Cordum engineering).
   `CORDUM_EDGE_E2E_BYPASS_HOOK=1` to skip the hook subprocess and drive
   gates via Gateway-direct requests instead (CI hosts without a Go
   toolchain or `openssl`).
+- **Mandatory rebuild before strict mode** (`CORDUM_INTEGRATION=1`): if any
+  code under `core/edge/`, `core/controlplane/gateway/`, `cmd/cordum-hook/`,
+  or `cmd/cordum-agentd/` has changed since the running stack was started,
+  rebuild BOTH the local Edge binaries AND the `api-gateway` image before
+  running the script:
+  ```bash
+  make edge-rebuild-e2e    # rebuilds bin/cordum-{hook,agentd,ctl} + api-gateway image, recreates the gateway container
+  ```
+  Skipping this step is the EDGE-044 trap: a fresh `cordum-hook` /
+  `cordum-agentd` produces post-EDGE-041 `_redacted`-keyed events, but a
+  stale `api-gateway:dev` image runs the pre-EDGE-041 classifier that
+  reads bare keys only — every PreToolUse silently falls through to
+  default-deny and the e2e gates 2-5 fail with `no matching rule`. The
+  `make edge-rebuild-e2e` target is the single source of truth that keeps
+  binaries and image in lockstep.
 
 **Environment variables**
 

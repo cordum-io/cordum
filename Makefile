@@ -88,6 +88,23 @@ dev-down:
 dev-logs:
 	docker compose logs -f
 
+# edge-rebuild-e2e rebuilds the local Edge binaries AND the api-gateway image
+# in lockstep, then recreates the api-gateway container. Run BEFORE every
+# `CORDUM_INTEGRATION=1 bash tools/scripts/edge_fake_hook_e2e.sh` invocation
+# whenever cordum-hook, cordum-agentd, or any code under core/edge/* /
+# core/controlplane/gateway/* has changed since the running stack was last
+# built. EDGE-044 root cause: the gateway-side classifier lives in the
+# api-gateway image; rebuilding only ./bin/cordum-hook + ./bin/cordum-agentd
+# produces fresh agentd talking to a stale gateway, and the post-EDGE-041
+# `_redacted` keys silently miss the bare-key classifier in the old image,
+# which falls through to default-deny and breaks every rule match.
+edge-rebuild-e2e:
+	go build -o ./bin/cordum-hook ./cmd/cordum-hook
+	go build -o ./bin/cordum-agentd ./cmd/cordum-agentd
+	go build -o ./bin/cordumctl ./cmd/cordumctl
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml build api-gateway
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --no-deps api-gateway
+
 help:
 	@echo ""
 	@echo "Cordum Makefile targets:"
@@ -127,4 +144,4 @@ soak-ws-full:
 	@echo "Running 2-hour full WebSocket soak test..."
 	./tools/scripts/ws_soak_test.sh full
 
-.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi openapi-validate docker smoke verify-images demo-quickstart-test demo-mock-bank-test dev-up dev-down dev-logs soak-ws soak-ws-quick soak-ws-full
+.PHONY: help proto build build-all $(SERVICES:%=build-%) test test-integration coverage coverage-core openapi openapi-validate docker smoke verify-images demo-quickstart-test demo-mock-bank-test dev-up dev-down dev-logs edge-rebuild-e2e soak-ws soak-ws-quick soak-ws-full

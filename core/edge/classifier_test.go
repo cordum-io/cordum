@@ -978,3 +978,136 @@ func TestIsSecretPathDoesNotFlagBenignPaths(t *testing.T) {
 		})
 	}
 }
+
+// EDGE-044 regression tests: classifier must produce correct labels/risk_tags
+// for hook events when InputRedacted carries ONLY EDGE-041 renamed keys
+// (e.g. file_path_redacted, command_redacted, tool_response_redacted) — not
+// bare keys. This is the wire shape cordum-hook produces post-EDGE-041; if
+// classifier alias coverage regresses for any tool, every cordum-edge-pack
+// rule that consumes path.class / command.class / capability falls through to
+// default-deny and the live e2e gates 2-5 silently fail. These tests use
+// renamed-keys-only fixtures so a missing _redacted alias surfaces as a
+// classifier output mismatch rather than waiting for the live policy match.
+
+func TestClassifierAcceptsRenamedRedactedKeys_ReadEnv(t *testing.T) {
+	event := AgentActionEvent{
+		Layer:    LayerHook,
+		Kind:     EventKindHookPreToolUse,
+		ToolName: "Read",
+		InputRedacted: map[string]any{
+			"file_path_redacted": "/tmp/fixture/.env",
+		},
+	}
+	cls, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	if cls.Capability != "file.read" {
+		t.Fatalf("Capability = %q, want %q", cls.Capability, "file.read")
+	}
+	if cls.Labels["path.class"] != "secret" {
+		t.Fatalf("Labels[path.class] = %q, want %q (full labels=%v)", cls.Labels["path.class"], "secret", cls.Labels)
+	}
+	for _, want := range []string{"filesystem", "read", "secrets"} {
+		if !containsString(cls.RiskTags, want) {
+			t.Fatalf("RiskTags = %v, missing %q", cls.RiskTags, want)
+		}
+	}
+}
+
+func TestClassifierAcceptsRenamedRedactedKeys_EditSourceCode(t *testing.T) {
+	event := AgentActionEvent{
+		Layer:    LayerHook,
+		Kind:     EventKindHookPreToolUse,
+		ToolName: "Edit",
+		InputRedacted: map[string]any{
+			"file_path_redacted": "/tmp/fixture/src/protected.go",
+		},
+	}
+	cls, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	if cls.Capability != "file.write" {
+		t.Fatalf("Capability = %q, want %q", cls.Capability, "file.write")
+	}
+	if cls.Labels["path.class"] != "source_code" {
+		t.Fatalf("Labels[path.class] = %q, want %q (full labels=%v)", cls.Labels["path.class"], "source_code", cls.Labels)
+	}
+	for _, want := range []string{"filesystem", "write", "source_code"} {
+		if !containsString(cls.RiskTags, want) {
+			t.Fatalf("RiskTags = %v, missing %q", cls.RiskTags, want)
+		}
+	}
+}
+
+func TestClassifierAcceptsRenamedRedactedKeys_BashDestructive(t *testing.T) {
+	event := AgentActionEvent{
+		Layer:    LayerHook,
+		Kind:     EventKindHookPreToolUse,
+		ToolName: "Bash",
+		InputRedacted: map[string]any{
+			"command_redacted": "rm -rf /tmp/fixture",
+		},
+	}
+	cls, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	if cls.Capability != "exec.shell" {
+		t.Fatalf("Capability = %q, want %q", cls.Capability, "exec.shell")
+	}
+	if cls.Labels["command.class"] != "destructive" {
+		t.Fatalf("Labels[command.class] = %q, want %q (full labels=%v)", cls.Labels["command.class"], "destructive", cls.Labels)
+	}
+	for _, want := range []string{"exec", "destructive"} {
+		if !containsString(cls.RiskTags, want) {
+			t.Fatalf("RiskTags = %v, missing %q", cls.RiskTags, want)
+		}
+	}
+}
+
+func TestClassifierAcceptsRenamedRedactedKeys_BashSafeBuild(t *testing.T) {
+	event := AgentActionEvent{
+		Layer:    LayerHook,
+		Kind:     EventKindHookPreToolUse,
+		ToolName: "Bash",
+		InputRedacted: map[string]any{
+			"command_redacted": "go build ./...",
+		},
+	}
+	cls, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	if cls.Labels["command.class"] != "safe" {
+		t.Fatalf("Labels[command.class] = %q, want %q (full labels=%v)", cls.Labels["command.class"], "safe", cls.Labels)
+	}
+	if cls.Labels["command.family"] != "build" {
+		t.Fatalf("Labels[command.family] = %q, want %q", cls.Labels["command.family"], "build")
+	}
+}
+
+func TestClassifierRejectsBareKeysWhenRenamedAreAlsoMissing(t *testing.T) {
+	// Sanity: with no recognizable input keys, classifier still produces a
+	// well-formed classification (capability/path.class set to safe defaults)
+	// rather than panicking. Bare-key acceptance is preserved via multi-alias
+	// for backwards compatibility, but absence of both keys is the no-input
+	// path which addPathLabels reports as path.class=unknown.
+	event := AgentActionEvent{
+		Layer:         LayerHook,
+		Kind:          EventKindHookPreToolUse,
+		ToolName:      "Read",
+		InputRedacted: map[string]any{},
+	}
+	cls, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	if cls.Capability != "file.read" {
+		t.Fatalf("Capability = %q, want %q (capability is dispatched by tool name; path.class is the empty-input signal)", cls.Capability, "file.read")
+	}
+	if cls.Labels["path.class"] != "unknown" {
+		t.Fatalf("Labels[path.class] = %q, want %q (empty-input sentinel)", cls.Labels["path.class"], "unknown")
+	}
+}
