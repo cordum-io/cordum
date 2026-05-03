@@ -2,8 +2,6 @@ package gateway
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -121,7 +119,7 @@ func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
 		writeEdgeEventStoreError(w, r, err, "validate edge event parents")
 		return
 	}
-	idempotencyReq, idempotent, handled := s.prepareEdgeEventIdempotencyRequest(w, r, tenantID, edgeEventCreateEndpoint, event)
+	idempotencyReq, idempotent, handled := s.prepareEdgeIdempotencyRequest(w, r, tenantID, edgeEventCreateEndpoint, event)
 	if handled {
 		return
 	}
@@ -192,7 +190,7 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 		}
 		events = append(events, event)
 	}
-	idempotencyReq, idempotent, handled := s.prepareEdgeEventIdempotencyRequest(w, r, tenantID, edgeEventBatchEndpoint, events)
+	idempotencyReq, idempotent, handled := s.prepareEdgeIdempotencyRequest(w, r, tenantID, edgeEventBatchEndpoint, events)
 	if handled {
 		return
 	}
@@ -222,55 +220,11 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 	_, _ = w.Write(responseBody)
 }
 
-func (s *server) prepareEdgeEventIdempotencyRequest(w http.ResponseWriter, r *http.Request, tenantID, endpoint string, normalized any) (edgecore.EdgeIdempotencyRequest, bool, bool) {
-	key := strings.TrimSpace(idempotencyKeyFromRequest(r))
-	if key == "" {
-		return edgecore.EdgeIdempotencyRequest{}, false, false
-	}
-	if len([]byte(key)) > maxEdgeIdempotencyKeyBytes {
-		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeIdempotencyKeyTooLong, "idempotency key is too long", nil)
-		return edgecore.EdgeIdempotencyRequest{}, false, true
-	}
-	requestHash, err := edgeNormalizedRequestHash(normalized)
-	if err != nil {
-		writeEdgeInternalError(w, r, "hash edge idempotency request", err)
-		return edgecore.EdgeIdempotencyRequest{}, false, true
-	}
-	idempotencyReq := edgecore.EdgeIdempotencyRequest{
-		TenantID:    tenantID,
-		Endpoint:    endpoint,
-		Key:         key,
-		RequestHash: requestHash,
-	}
-	return idempotencyReq, true, false
-}
-
-func edgeNormalizedRequestHash(normalized any) (string, error) {
-	payload, err := json.Marshal(normalized)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:]), nil
-}
-
-func writeEdgeIdempotencyReplay(w http.ResponseWriter, r *http.Request, record *edgecore.EdgeIdempotencyRecord) {
-	if record == nil {
-		writeEdgeError(w, r, http.StatusInternalServerError, edgeErrCodeInternalError, "internal error", nil)
-		return
-	}
-	status := record.Response.StatusCode
-	if status == 0 {
-		status = http.StatusOK
-	}
-	contentType := strings.TrimSpace(record.Response.ContentType)
-	if contentType == "" {
-		contentType = "application/json"
-	}
-	w.Header().Set("Content-Type", contentType)
-	w.WriteHeader(status)
-	_, _ = w.Write(record.Response.Body)
-}
+// prepareEdgeEventIdempotencyRequest, edgeNormalizedRequestHash, and
+// writeEdgeIdempotencyReplay were moved to handlers_edge_idempotency.go in
+// EDGE-060 so non-event endpoints (sessions/executions/approvals) can
+// reuse the same hash + replay scaffold. Event-specific call sites now
+// use s.prepareEdgeIdempotencyRequest (the renamed generic helper).
 
 func (s *server) appendEdgeEventWithIdempotency(w http.ResponseWriter, r *http.Request, store edgecore.Store, req edgecore.EdgeIdempotencyRequest, event edgecore.AgentActionEvent) {
 	result, err := store.AppendEventsWithIdempotency(r.Context(), req, []edgecore.AgentActionEvent{event}, edgeSingleEventIdempotencyResponse)
