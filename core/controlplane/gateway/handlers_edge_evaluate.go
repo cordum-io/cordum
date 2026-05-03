@@ -184,6 +184,37 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// EDGE-039: when the agent retries an action with the same action_hash and
+	// no explicit approval_ref, look up an existing approval for this
+	// (tenant, session, action_hash). cordum-hook cannot carry an approval_ref
+	// across Claude tool retries, so the gateway routes the retry through the
+	// existing consume CAS — APPROVED approvals get consumed (ALLOW), CONSUMED
+	// approvals surface "already consumed" deny, PENDING approvals echo the
+	// existing reference. If no approval exists, fall through to the normal
+	// enqueue path.
+	if outcome.decision == edgecore.DecisionRequireApproval {
+		existing, lookupErr := s.findReusableEdgeApprovalForAction(r.Context(), evalCtx.store, evalCtx.tenantID, policyInput.event, actionHash)
+		if lookupErr != nil {
+			writeEdgeApprovalStoreError(w, r, lookupErr, "look up reusable edge approval")
+			return
+		}
+		if existing != nil {
+			retryOutcome, retryErr := s.consumeEdgeEvaluateApproval(r.Context(), evalCtx.store, policyInput.event, outcome, existing.ApprovalRef, actionHash)
+			if retryErr != nil {
+				writeEdgeApprovalStoreError(w, r, retryErr, "consume reusable edge approval")
+				return
+			}
+			appendedFinal, appendErr := s.appendEdgeEvaluateOutcome(r.Context(), evalCtx.store, policyInput.event, retryOutcome, edgeEvaluateDurationMS(started))
+			if appendErr != nil {
+				writeEdgeEventStoreError(w, r, appendErr, "append edge evaluate auto-consume outcome event")
+				return
+			}
+			retryOutcome.response.EventID = appendedFinal.EventID
+			writeJSON(w, retryOutcome.response)
+			return
+		}
+	}
+
 	appended, err := s.appendEdgeEvaluateOutcome(r.Context(), evalCtx.store, policyInput.event, outcome, edgeEvaluateDurationMS(started))
 	if err != nil {
 		writeEdgeEventStoreError(w, r, err, "append edge evaluate decision event")
@@ -855,6 +886,86 @@ func (outcome edgeEvaluateDecisionOutcome) edgeEvaluateRetryAllow(approval edgec
 	outcome.response.ActionHash = strings.TrimSpace(approval.ActionHash)
 	outcome.response.InputHash = strings.TrimSpace(approval.InputHash)
 	return outcome
+}
+
+// findReusableEdgeApprovalForAction returns the most recent approval bound to
+// the action_hash within the same (tenant, session, execution). Callers route
+// the result through consumeEdgeEvaluateApproval which handles each
+// ApprovalStatus (pending → echo, approved → CAS consume, consumed → "already
+// consumed", rejected/expired → corresponding deny). Returns (nil, nil) when
+// no approval exists, which is the signal to fall through to the normal
+// enqueue path.
+//
+// Scoping by session+execution avoids cross-session/cross-execution approval
+// reuse — two unrelated agent runs doing the same kind of action must each
+// obtain their own approval. action_hash already incorporates the policy
+// snapshot, so policy changes invalidate prior approvals automatically.
+//
+// We deliberately bypass the (session, execution, action_hash) tuple index
+// because ClaimApproval SRems the consumed approval from that index — a
+// terminal "already consumed" retry would fall through to enqueue a new
+// approval otherwise. Instead the lookup paginates the principal-status index
+// and post-filters by (session, execution, action_hash); the agent's own
+// approval list per session is bounded so the scan stays cheap.
+func (s *server) findReusableEdgeApprovalForAction(ctx context.Context, store edgecore.Store, tenantID string, event edgecore.AgentActionEvent, actionHash string) (*edgecore.EdgeApproval, error) {
+	tenantID = strings.TrimSpace(tenantID)
+	actionHash = strings.TrimSpace(actionHash)
+	sessionID := strings.TrimSpace(event.SessionID)
+	executionID := strings.TrimSpace(event.ExecutionID)
+	principalID := strings.TrimSpace(event.PrincipalID)
+	if tenantID == "" || actionHash == "" || sessionID == "" || executionID == "" {
+		return nil, nil
+	}
+	var (
+		consumed *edgecore.EdgeApproval
+		approved *edgecore.EdgeApproval
+		pending  *edgecore.EdgeApproval
+	)
+	cursor := ""
+	for pageNum := 0; pageNum < 4; pageNum++ {
+		page, err := store.ListApprovals(ctx, edgecore.ListApprovalsQuery{
+			TenantID:    tenantID,
+			PrincipalID: principalID,
+			Cursor:      cursor,
+			Limit:       50,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for i := range page.Items {
+			item := &page.Items[i]
+			if item.SessionID != sessionID || item.ExecutionID != executionID || item.ActionHash != actionHash {
+				continue
+			}
+			switch item.Status {
+			case edgecore.ApprovalStatusApproved:
+				if item.ConsumedAt != nil {
+					if consumed == nil || consumed.ConsumedAt.Before(*item.ConsumedAt) {
+						consumed = item
+					}
+				} else if approved == nil || approved.CreatedAt.Before(item.CreatedAt) {
+					approved = item
+				}
+			case edgecore.ApprovalStatusPending:
+				if pending == nil || pending.CreatedAt.Before(item.CreatedAt) {
+					pending = item
+				}
+			}
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	switch {
+	case approved != nil:
+		return approved, nil
+	case pending != nil:
+		return pending, nil
+	case consumed != nil:
+		return consumed, nil
+	}
+	return nil, nil
 }
 
 func (s *server) enqueueEdgeEvaluateApproval(ctx context.Context, store edgecore.Store, event edgecore.AgentActionEvent, outcome edgeEvaluateDecisionOutcome, actionHash string) (*edgecore.EdgeApproval, error) {
