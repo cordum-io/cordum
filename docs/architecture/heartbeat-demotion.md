@@ -80,7 +80,7 @@ What heartbeats are **not** allowed to do, anywhere in the codebase:
 - Gate dispatch eligibility.
 - Trigger oncall alerts ("worker offline").
 
-Every call site that previously did one of these is catalogued in [`docs/internal/heartbeat-demotion-audit.md`](../internal/heartbeat-demotion-audit.md).
+Every call site that previously did one of these is catalogued in the internal heartbeat-demotion audit (Cordum engineering).
 
 ## 4. Rollout plan
 
@@ -184,7 +184,7 @@ This is the ergonomic rollback we deliberately kept: if a fleet-wide regression 
 
 ## 9. Further reading
 
-- [`docs/internal/heartbeat-demotion-audit.md`](../internal/heartbeat-demotion-audit.md) — call-site audit.
+- Internal heartbeat-demotion audit — call-site catalog (Cordum engineering).
 - [`docs/operations/runbook-worker-health.md`](../operations/runbook-worker-health.md) — operator alert migration.
 - [`core/controlplane/scheduler/trust_state.go`](../../core/controlplane/scheduler/trust_state.go) — trust resolver source.
 - [`core/controlplane/scheduler/dispatch.go`](../../core/controlplane/scheduler/dispatch.go) — dispatch gate source.

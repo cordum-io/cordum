@@ -2,8 +2,8 @@
 
 Comprehensive testing strategies for Cordum components.
 
-For the Edge P0 security closure list used by final acceptance, see
-[docs/security/edge-p0-threat-model.md#edge-032-acceptance-checklist](docs/security/edge-p0-threat-model.md#edge-032-acceptance-checklist).
+The Edge P0 security closure checklist used for final acceptance lives in
+the internal Edge P0 threat model (Cordum engineering).
 
 ## Testing Philosophy
 

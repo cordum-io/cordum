@@ -284,7 +284,6 @@ managed Claude settings and signed binaries before fleet rollout.
 - CLI reference: [`docs/edge/cli.md`](edge/cli.md)
 - Demo walkthrough: [`docs/edge/demo.md`](edge/demo.md)
 - Operator runbook: [`docs/edge/runbook.md`](edge/runbook.md)
-- Security model: [`docs/security/edge-p0-threat-model.md`](security/edge-p0-threat-model.md)
 - Architecture decisions: [`docs/adr/010-edge-p0-architecture-decisions.md`](adr/010-edge-p0-architecture-decisions.md)
 - Doctor diagnostics: [`docs/edge/cordumctl-edge-doctor.md`](edge/cordumctl-edge-doctor.md)
-- Acceptance evidence: [`docs/edge/p0-acceptance-evidence.md`](edge/p0-acceptance-evidence.md)
+- Edge P0 threat model and acceptance evidence: internal Cordum engineering docs.

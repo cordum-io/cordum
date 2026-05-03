@@ -234,9 +234,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   only that canonical spec. Also removed the legacy prefixed MCP transport
   aliases `/api/v1/mcp/{sse,message,status}`; MCP transport is now exposed
   only at `/mcp/{sse,message,status}` while MCP governance REST endpoints
-  remain under `/api/v1/mcp/*`. See
-  [`docs/cleanup/openapi-legacy-audit.md`](docs/cleanup/openapi-legacy-audit.md)
-  `Audit re-verification 2026-04-23` for the ground-truth timeline.
+  remain under `/api/v1/mcp/*`. The internal OpenAPI legacy audit
+  (`Audit re-verification 2026-04-23`) holds the ground-truth timeline
+  (Cordum engineering).
 
 ### Security
 - **WebSocket quarantine-redaction fail-closed (task-1d4e6b4c bug #1)** — the filter that strips `ResultPtr` + `ArtifactPtrs` from DENIED `JobResult` packets before broadcasting to WebSocket subscribers previously FAILED OPEN on `proto.Clone` type-assertion failure AND on the defensive `cloned.GetJobResult() == nil` branch, returning the original unredacted packet. Redis-stored result payloads may contain PII, user prompts, secrets, or model outputs; the filter now fails CLOSED: returns nil on any failure, `enqueueBusPacket` drops the broadcast, `cordum_gateway_ws_quarantine_redaction_drops_total` increments, and an error is logged with `job_id` + `trace_id`. The next state-change event arrives in the normal stream cadence.

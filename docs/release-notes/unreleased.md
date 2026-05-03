@@ -98,10 +98,9 @@ these entries into a versioned release note and reset this file.
   the in-memory proto. New regression test
   `TestGetJobRequest_DiscardsUnknownJSONFields` pins the invariant at
   the store boundary. Redis WATCH/MULTI atomic store-and-hash was
-  evaluated and explicitly rejected for this release; see
-  [`docs/decisions/2026-04-atomic-store-and-hash.md`](../decisions/2026-04-atomic-store-and-hash.md)
-  for the trade-off analysis and re-visit triggers. Closes
-  task-090ab6af.
+  evaluated and explicitly rejected for this release; the trade-off
+  analysis and re-visit triggers live in the internal decisions log
+  (Cordum engineering). Closes task-090ab6af.
 
 ## Security
 
@@ -371,15 +370,15 @@ these entries into a versioned release note and reset this file.
   `cordum/docs-site/versioned_docs/` — the version was never
   released publicly (no matching git tag) and no cross-repo caller
   referenced it. Docs now track a single current branch until the
-  next public release is cut. Audit at
-  [`docs/cleanup/versioned-docs-audit.md`](../cleanup/versioned-docs-audit.md).
+  next public release is cut. Internal versioned-docs audit captures
+  the full evidence (Cordum engineering).
 - Cross-cutting comment sweep: removed residual `backward / legacy /
   deprecated` framing across `cordum/core`, the dashboard, and the
   operator docs where the word was inaccurate prose rather than a
   live architectural constraint. No runtime behavior change (no
   SIEMEvent or slog emissions altered; no handler, store, or RBAC
-  surface touched). The durable classification is at
-  [`docs/cleanup/backward-legacy-sweep-20260420.md`](../cleanup/backward-legacy-sweep-20260420.md)
+  surface touched). The durable classification is captured in the
+  internal backward-legacy sweep audit (Cordum engineering)
   — every remaining hit in the tree maps to either `CONTEXTUAL`
   (architectural invariant still applies), `DOMAIN_VOCAB` (enum
   value or wire contract still in active use), or
@@ -469,9 +468,9 @@ these entries into a versioned release note and reset this file.
   only that canonical spec. Also removed the legacy prefixed MCP transport
   aliases `/api/v1/mcp/{sse,message,status}`; MCP transport is now exposed
   only at `/mcp/{sse,message,status}` while MCP governance REST endpoints
-  remain under `/api/v1/mcp/*`. See
-  [`docs/cleanup/openapi-legacy-audit.md`](../cleanup/openapi-legacy-audit.md)
-  `Audit re-verification 2026-04-23` for the ground-truth timeline.
+  remain under `/api/v1/mcp/*`. The internal OpenAPI legacy audit
+  (`Audit re-verification 2026-04-23`) holds the ground-truth timeline
+  (Cordum engineering).
 - Removed the pre-GA compat shims `core/licensing/compat.go` and
   `core/controlplane/gateway/auth_compat.go`. License envelopes in the
   legacy top-level `features` + `limits` shape are now hard-rejected
@@ -485,15 +484,15 @@ these entries into a versioned release note and reset this file.
   (`core/audit.EventLicenseLegacyRejected`) is available for audit
   exporters that want to monitor the brownout. Gateway callers now
   import `core/controlplane/gateway/auth` directly instead of using the
-  old alias shim. Audit trail at
-  [`docs/cleanup/auth-license-compat-audit.md`](../cleanup/auth-license-compat-audit.md).
+  old alias shim. Audit trail in the internal auth-license compat
+  audit (Cordum engineering).
 - Removed `sdk/client.BuildTLSTransport` — the error-swallowing wrapper
   that logged CA-read failures to stderr and returned `nil`. Use
   [`sdk/client.BuildTLSTransportErr`](../../sdk/client/client.go)
   instead, which returns explicit errors. No external callers existed
   (pre-GA). Migration is a straightforward `(tr, err) := ...` swap —
-  see `sdk/client/client_test.go` for the pattern. Audit trail at
-  [`docs/cleanup/deprecated-symbols-audit.md`](../cleanup/deprecated-symbols-audit.md).
+  see `sdk/client/client_test.go` for the pattern. Audit trail in
+  the internal deprecated-symbols audit (Cordum engineering).
 
 ## Added
 

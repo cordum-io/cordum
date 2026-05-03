@@ -5,7 +5,7 @@ process-local `cordum-agentd`, renders temporary Claude command-hook settings,
 and then launches the `claude` binary with those settings. It is the developer
 /demo adoption path for Cordum Edge P0; it is **not** an enterprise enforcement
 boundary. Fleet enforcement still requires managed Claude settings plus
-endpoint controls (see `docs/security/edge-p0-threat-model.md`).
+endpoint controls (the full Edge P0 threat model is internal Cordum engineering).
 
 ## Usage
 

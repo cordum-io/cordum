@@ -114,6 +114,6 @@ Operators should stay in `warn` for at least one release, review the `heartbeat_
 ## References
 
 - `docs/architecture/heartbeat-demotion.md` — strategic context.
-- `docs/internal/heartbeat-demotion-audit.md` — call-site audit used to plan the rewire.
+- Internal heartbeat-demotion call-site audit used to plan the rewire (Cordum engineering).
 - `core/controlplane/scheduler/trust_state.go` — trust resolver source.
 - `core/controlplane/scheduler/metrics.go` — gauge registration.
