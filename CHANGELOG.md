@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 
+#### Docs visibility split (EDGE-036)
+- Split `cordum/docs/` into PUBLIC (root) + PRIVATE (`docs/internal/`)
+  subtrees per `docs/visibility-policy.md`. 26 internal-only audit /
+  threat-model / SEC-issue-draft / cleanup-sweep / decision-log /
+  acceptance-evidence files moved under `docs/internal/` via `git mv`
+  (history preserved). PUBLIC docs cite only PUBLIC docs; verification
+  gates documented in `docs/visibility-policy.md`. Banner at
+  `docs/internal/INTERNAL.md`.
+
 #### Cordum Edge P0 documentation and Claude Code launcher
 - Added Edge product, API, configuration, CLI, and demo documentation for the P0
   Compliance Firewall surface (`docs/edge.md`, `docs/edge-claude-code.md`,
