@@ -94,7 +94,29 @@ func resolveExecutable(explicit, fallback string) (string, error) {
 		if info.IsDir() {
 			return "", fmt.Errorf("%s binary path is a directory: %s", fallback, candidate)
 		}
+		// Always return absolute. Settings.json hook commands are exec'd by
+		// Claude Code's bash sub-shell which has whatever PATH it inherited;
+		// a relative candidate (e.g. "cordum-hook.exe" found in CWD) becomes
+		// "command not found" once bash chdir's elsewhere. filepath.Abs is
+		// idempotent on already-absolute paths.
+		if abs, absErr := filepath.Abs(candidate); absErr == nil {
+			return abs, nil
+		}
 		return candidate, nil
+	}
+	// Bare-name with no path separator: try PATH then sibling-of-self before
+	// giving up. Lets cordum.yaml say `hook_command: cordum-hook` and have
+	// the wrapper resolve it from ./bin/ next to cordumctl automatically.
+	if !strings.ContainsAny(explicit, `/\`) {
+		if path, err := exec.LookPath(explicit); err == nil {
+			if abs, absErr := filepath.Abs(path); absErr == nil {
+				return abs, nil
+			}
+			return path, nil
+		}
+		if sibling, ok := siblingExecutable(explicit); ok {
+			return sibling, nil
+		}
 	}
 	return "", fmt.Errorf("%s binary not found at %s (also tried %s extension)", fallback, explicit, runtime.GOOS+"-default")
 }
