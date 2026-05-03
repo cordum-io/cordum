@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -49,14 +50,52 @@ func resolveExecutable(explicit, fallback string) (string, error) {
 		}
 		return path, nil
 	}
-	info, err := os.Stat(explicit)
-	if err != nil {
-		return "", fmt.Errorf("%s binary not found at %s: %w", fallback, explicit, err)
+	candidates := executableCandidates(explicit)
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", fmt.Errorf("%s binary not found at %s: %w", fallback, explicit, err)
+		}
+		if info.IsDir() {
+			return "", fmt.Errorf("%s binary path is a directory: %s", fallback, candidate)
+		}
+		return candidate, nil
 	}
-	if info.IsDir() {
-		return "", fmt.Errorf("%s binary path is a directory: %s", fallback, explicit)
+	return "", fmt.Errorf("%s binary not found at %s (also tried %s extension)", fallback, explicit, runtime.GOOS+"-default")
+}
+
+// executableCandidates returns the explicit path plus, on Windows, the path
+// with `.exe` appended if it is missing. Windows users often invoke
+// `cordumctl edge claude --hook-command .\bin\cordum-hook`; the actual
+// binary on disk is `.\bin\cordum-hook.exe`. Pre-EDGE-045, `os.Stat` failed
+// on the no-extension form and the launcher errored out. Post-fix, we try
+// the no-extension path first (in case the user really does have a
+// no-extension binary), then fall back to `.exe`. Non-Windows hosts return
+// just the explicit path.
+func executableCandidates(explicit string) []string {
+	out := []string{explicit}
+	if runtime.GOOS != "windows" {
+		return out
 	}
-	return explicit, nil
+	if strings.EqualFold(filepathExt(explicit), ".exe") {
+		return out
+	}
+	return append(out, explicit+".exe")
+}
+
+// filepathExt returns the lowercase extension of path including the leading
+// dot, or empty string if there is no extension. Avoids importing path/filepath
+// just for Ext to keep the dep surface flat.
+func filepathExt(path string) string {
+	for i := len(path) - 1; i >= 0 && path[i] != '/' && path[i] != '\\'; i-- {
+		if path[i] == '.' {
+			return path[i:]
+		}
+	}
+	return ""
 }
 
 func endpointHost(raw string) (string, error) {

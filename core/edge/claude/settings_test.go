@@ -196,17 +196,26 @@ func TestGenerateDevSettingsJSONNormalizesHookCommandPaths(t *testing.T) {
 		hookCommand string
 		want        string
 	}{
+		// EDGE-045 — switched from double-quote to POSIX single-quote wrapping
+		// so Windows backslash paths don't get \b/\c/etc. interpreted as bash
+		// escape sequences inside Claude's hook one-liner.
 		{
 			name:        "windows program files",
 			platform:    "windows",
 			hookCommand: `C:\Program Files\Cordum\cordum-hook.exe`,
-			want:        `"C:\Program Files\Cordum\cordum-hook.exe" claude pre-tool-use`,
+			want:        `'C:\Program Files\Cordum\cordum-hook.exe' claude pre-tool-use`,
+		},
+		{
+			name:        "windows backslash no spaces (EDGE-045 regression)",
+			platform:    "windows",
+			hookCommand: `.\bin\cordum-hook.exe`,
+			want:        `'.\bin\cordum-hook.exe' claude pre-tool-use`,
 		},
 		{
 			name:        "msys path with spaces",
 			platform:    "msys",
 			hookCommand: `/c/Program Files/Cordum/cordum-hook.exe`,
-			want:        `"/c/Program Files/Cordum/cordum-hook.exe" claude pre-tool-use`,
+			want:        `'/c/Program Files/Cordum/cordum-hook.exe' claude pre-tool-use`,
 		},
 		{
 			name:        "wsl linux path",
@@ -218,7 +227,7 @@ func TestGenerateDevSettingsJSONNormalizesHookCommandPaths(t *testing.T) {
 			name:        "macos path with spaces",
 			platform:    "darwin",
 			hookCommand: `/Applications/Cordum Edge/cordum-hook`,
-			want:        `"/Applications/Cordum Edge/cordum-hook" claude pre-tool-use`,
+			want:        `'/Applications/Cordum Edge/cordum-hook' claude pre-tool-use`,
 		},
 		{
 			name:        "relative dev path",
@@ -366,10 +375,24 @@ func TestQuoteCommandPathHandlesQuotesAndSpaces(t *testing.T) {
 		{"plain", "/usr/local/bin/cordum-hook", "/usr/local/bin/cordum-hook"},
 		{"already double-quoted", `"/path with space/cordum-hook"`, `"/path with space/cordum-hook"`},
 		{"already single-quoted", `'/path with space/cordum-hook'`, `'/path with space/cordum-hook'`},
-		{"contains space", `/Program Files/cordum/cordum-hook.exe`, `"/Program Files/cordum/cordum-hook.exe"`},
-		{"contains tab", "/path\twith\ttab/cordum-hook", "\"/path\twith\ttab/cordum-hook\""},
-		{"embedded quote no space", `/odd"path/cordum-hook`, `"/odd\"path/cordum-hook"`},
-		{"embedded quote with space", `/Program Files/odd"path/cordum-hook`, `"/Program Files/odd\"path/cordum-hook"`},
+		// EDGE-045: switched to POSIX single-quote wrapping. Bash treats
+		// single-quoted content verbatim, so `\b`/`\c`/etc. don't become
+		// escape sequences. Double-quote wrapping (the old behavior) still
+		// left `\b` interpretable, which is the EDGE-045 failure mode.
+		{"contains space", `/Program Files/cordum/cordum-hook.exe`, `'/Program Files/cordum/cordum-hook.exe'`},
+		{"contains tab", "/path\twith\ttab/cordum-hook", "'/path\twith\ttab/cordum-hook'"},
+		{"embedded double quote no space", `/odd"path/cordum-hook`, `'/odd"path/cordum-hook'`},
+		{"embedded double quote with space", `/Program Files/odd"path/cordum-hook`, `'/Program Files/odd"path/cordum-hook'`},
+		// EDGE-045 primary regression case: Windows backslash path. Pre-fix
+		// `quoteCommandPath` did NOT include `\` in its trigger set, so the
+		// path returned unwrapped and bash collapsed `.\bin\cordum-hook` to
+		// `.bincordum-hook` (`\b` parsed as backspace). Post-fix the path is
+		// wrapped in single-quotes so backslashes are literal.
+		{"windows backslash path", `.\bin\cordum-hook`, `'.\bin\cordum-hook'`},
+		{"windows absolute backslash path", `D:\Cordum\cordum\bin\cordum-hook.exe`, `'D:\Cordum\cordum\bin\cordum-hook.exe'`},
+		{"backslash with space", `D:\Program Files\cordum\cordum-hook.exe`, `'D:\Program Files\cordum\cordum-hook.exe'`},
+		// Embedded single quote — POSIX `'\''` close/escape/reopen idiom.
+		{"embedded single quote", `/path/with'apostrophe/cordum-hook`, `'/path/with'\''apostrophe/cordum-hook'`},
 		{"empty", "", ""},
 		{"whitespace-only", "   ", ""},
 	} {

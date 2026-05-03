@@ -238,8 +238,16 @@ func quoteCommandPath(command string) string {
 		(strings.HasPrefix(trimmed, `'`) && strings.HasSuffix(trimmed, `'`)) {
 		return trimmed
 	}
-	if strings.ContainsAny(trimmed, " \t\"") {
-		return `"` + strings.ReplaceAll(trimmed, `"`, `\"`) + `"`
+	// Wrap in POSIX single-quotes when the path contains anything bash would
+	// interpret unquoted: whitespace, double-quote, single-quote, or
+	// backslash. Single-quote wrapping makes bash treat the contents
+	// literally, so Windows paths like `.\bin\cordum-hook` don't get \b
+	// interpreted as a backspace escape (the EDGE-045 failure mode that
+	// collapsed `.\bin\cordum-hook` to `.bincordum-hook` inside Claude's
+	// bash one-liner). Embedded single quotes are escaped via the standard
+	// POSIX `'\''` close/escape/reopen idiom.
+	if strings.ContainsAny(trimmed, " \t\"'\\") {
+		return `'` + strings.ReplaceAll(trimmed, `'`, `'\''`) + `'`
 	}
 	return trimmed
 }
