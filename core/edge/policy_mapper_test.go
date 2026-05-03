@@ -55,7 +55,7 @@ func TestMapEventToPolicyCheckRequestUsesClassifierOutputAndTrustedMetadata(t *t
 		t.Fatalf("MapEventToPolicyCheckRequest returned error: %v", err)
 	}
 
-	if req.GetTopic() != EdgePolicyTopic || req.GetTopic() != "job.edge.action" {
+	if req.GetTopic() != EdgePolicyTopic {
 		t.Fatalf("Topic = %q, want %q", req.GetTopic(), EdgePolicyTopic)
 	}
 	if req.GetTenant() != "tenant-map" {

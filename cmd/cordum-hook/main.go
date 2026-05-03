@@ -49,7 +49,7 @@ func runCLI(ctx context.Context, opts cliOptions) int {
 	if opts.Stderr == nil {
 		opts.Stderr = os.Stderr
 	}
-	if len(opts.Args) < 2 || opts.Args[0] != "claude" {
+	if len(opts.Args) != 2 || opts.Args[0] != "claude" {
 		writeUsage(opts.Stderr)
 		return 2
 	}

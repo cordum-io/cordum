@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -122,7 +123,7 @@ func (c *HTTPAgentdClient) EvaluateHook(ctx context.Context, req AgentdRequest) 
 	if err != nil {
 		return AgentdDecision{}, fmt.Errorf("marshal agentd request: %w", err)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, strings.NewReader(string(body)))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return AgentdDecision{}, fmt.Errorf("create agentd request: %w", err)
 	}

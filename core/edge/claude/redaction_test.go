@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestRedactDiagnosticMasksSyntheticSecretsByValue(t *testing.T) {
@@ -55,6 +56,23 @@ func TestRedactDiagnosticMasksHighEntropyStandardBase64(t *testing.T) {
 	}
 	if !strings.Contains(got, "[REDACTED]") {
 		t.Fatalf("expected base64 diagnostic redaction marker, got %q", got)
+	}
+}
+
+func TestRedactDiagnosticTruncatesAtUTF8RuneBoundary(t *testing.T) {
+	// "日" is 3 bytes in UTF-8 (0xE6 0x97 0xA5). If the diagnostic exceeds
+	// maxDiagnosticLen, naive byte slicing can leave a partial multi-byte
+	// rune at the cut point and emit invalid UTF-8 into structured logs.
+	const target = "日"
+	prefix := strings.Repeat("a", maxDiagnosticLen-2) // forces the cut to land mid-rune
+	got := redactDiagnostic(prefix + target + strings.Repeat("b", 32))
+	// The trailing rune may or may not survive truncation, but the result
+	// must always be valid UTF-8 — never a partial rune.
+	if !utf8.ValidString(got) {
+		t.Fatalf("redactDiagnostic returned invalid UTF-8: %q (% x)", got, []byte(got))
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("expected truncation marker, got %q", got)
 	}
 }
 

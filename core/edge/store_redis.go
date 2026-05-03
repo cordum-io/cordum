@@ -710,20 +710,23 @@ func (s *RedisStore) groupAppendEvents(ctx context.Context, events []AgentAction
 		if tenantID == "" || executionID == "" {
 			return nil, fmt.Errorf("tenant_id and execution_id are required")
 		}
-		execution, ok, err := s.GetExecution(ctx, tenantID, executionID)
-		if err != nil {
-			return nil, fmt.Errorf("load event execution %s: %w", executionID, err)
-		}
-		if !ok || execution == nil {
-			return nil, fmt.Errorf("%w: agent execution %s", ErrNotFound, executionID)
-		}
-		if execution.SessionID != strings.TrimSpace(event.SessionID) {
-			return nil, fmt.Errorf("event session_id %s does not match execution session_id %s", event.SessionID, execution.SessionID)
-		}
-		group := groups[executionID]
-		if group == nil {
+		group, exists := groups[executionID]
+		if !exists {
+			execution, ok, err := s.GetExecution(ctx, tenantID, executionID)
+			if err != nil {
+				return nil, fmt.Errorf("load event execution %s: %w", executionID, err)
+			}
+			if !ok || execution == nil {
+				return nil, fmt.Errorf("%w: agent execution %s", ErrNotFound, executionID)
+			}
 			group = &redisEventGroup{execution: execution}
 			groups[executionID] = group
+		}
+		if group.execution.TenantID != tenantID {
+			return nil, fmt.Errorf("%w: agent execution %s", ErrNotFound, executionID)
+		}
+		if group.execution.SessionID != strings.TrimSpace(event.SessionID) {
+			return nil, fmt.Errorf("event session_id %s does not match execution session_id %s", event.SessionID, group.execution.SessionID)
 		}
 		group.events = append(group.events, i)
 	}

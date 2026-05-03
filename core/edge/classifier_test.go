@@ -923,3 +923,58 @@ func assertClassifierSafe(t *testing.T, base time.Time, command, family string) 
 		t.Fatalf("safe command %q got family=%q; want %q", command, got.Labels["command.family"], family)
 	}
 }
+
+func TestIsSecretPathRecognizesCommonCredentialFiles(t *testing.T) {
+	// Each entry is a path that real-world workloads expose; if any of these
+	// regress to a non-secret classification, an attacker tool can read or
+	// write the credential without triggering require-approval.
+	for _, path := range []string{
+		// Existing coverage — keep these green so the expansion does not
+		// silently rely on overlapping substrings.
+		"/home/alice/.env",
+		"/repo/secrets/db.json",
+		"/home/alice/.ssh/id_rsa",
+		"/home/alice/.aws/credentials",
+		"/home/alice/.ssh/id_ed25519",
+		"/home/alice/.ssh/id_ecdsa",
+		"/etc/ssl/private/server.pem",
+		"/etc/letsencrypt/keys/live.key",
+		"/var/cordum/cert.crt",
+		// New coverage (EDGE-035 PR #243 body-only nitpick expansion).
+		"/home/alice/.kube/config",
+		"/home/alice/.docker/config.json",
+		"/home/alice/.dockercfg",
+		"/home/alice/.config/gcloud/application_default_credentials.json",
+		"/home/alice/.netrc",
+		"/home/alice/.npmrc",
+		"/home/alice/.pypirc",
+		"/etc/nginx/.htpasswd",
+		"/srv/keystore/wallet.kdbx",
+		"/opt/svc/service-account-key.json",
+		"/opt/svc/service_account_key.json",
+		"/opt/pkcs/keys/identity.p12",
+		"/opt/pkcs/keys/identity.pfx",
+	} {
+		t.Run(path, func(t *testing.T) {
+			if !isSecretPath(strings.ToLower(path)) {
+				t.Fatalf("isSecretPath(%q) = false; want true", path)
+			}
+		})
+	}
+}
+
+func TestIsSecretPathDoesNotFlagBenignPaths(t *testing.T) {
+	for _, path := range []string{
+		"/home/alice/code/main.go",
+		"/var/log/app.log",
+		"/etc/hosts",
+		"/usr/local/bin/cordum-hook",
+		"/repo/README.md",
+	} {
+		t.Run(path, func(t *testing.T) {
+			if isSecretPath(strings.ToLower(path)) {
+				t.Fatalf("isSecretPath(%q) = true; want false (benign path misclassified as secret)", path)
+			}
+		})
+	}
+}

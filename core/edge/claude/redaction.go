@@ -4,6 +4,7 @@ import (
 	"math"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 const maxDiagnosticLen = 240
@@ -30,7 +31,12 @@ func redactDiagnostic(input string) string {
 	out = redactHighEntropyBase64Diagnostics(out)
 	out = strings.Join(strings.Fields(out), " ")
 	if len(out) > maxDiagnosticLen {
-		out = out[:maxDiagnosticLen] + "..."
+		// Round down to a UTF-8 rune boundary so multi-byte runes are never split.
+		cutoff := maxDiagnosticLen
+		for cutoff > 0 && !utf8.RuneStart(out[cutoff]) {
+			cutoff--
+		}
+		out = out[:cutoff] + "..."
 	}
 	return out
 }

@@ -147,3 +147,24 @@ func TestRunCLIRejectsUnsupportedClaudeSubcommand(t *testing.T) {
 		t.Fatalf("stderr missing usage for unsupported subcommand: %q", stderr.String())
 	}
 }
+
+func TestRunCLIRejectsExtraPositionalArgs(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runCLI(context.Background(), cliOptions{
+		// A correctly formed first two args, but a stray third arg that the
+		// previous CLI loop would have silently forwarded into claude.Run.
+		Args:   []string{"claude", "pre-tool-use", "unexpected"},
+		Stdin:  strings.NewReader(`{"hook_event_name":"PreToolUse"}`),
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+	if code != 2 {
+		t.Fatalf("exit code=%d want 2", code)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("stdout=%q, want empty (stdout is reserved for hook JSON)", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "usage:") {
+		t.Fatalf("stderr missing usage for extra positional args: %q", stderr.String())
+	}
+}

@@ -47,7 +47,15 @@ type Store interface {
 	ListExecutions(ctx context.Context, query ListExecutionsQuery) (ExecutionPage, error)
 	EndExecution(ctx context.Context, tenantID, executionID string, endedAt time.Time, status ExecutionStatus) (*AgentExecution, error)
 
+	// AppendEvent appends a single event atomically and returns the persisted
+	// event with its assigned monotonic Seq. Equivalent to AppendEvents with a
+	// one-element slice; ordering and atomicity guarantees are identical.
 	AppendEvent(ctx context.Context, event AgentActionEvent) (AgentActionEvent, error)
+	// AppendEvents appends a batch of events atomically: either every event in
+	// the batch is persisted or none. Events are committed in slice order and
+	// receive contiguous monotonically increasing Seq values per execution.
+	// The implementation must reject the entire batch if any execution is
+	// missing, cross-tenant, or already in a terminal state.
 	AppendEvents(ctx context.Context, events []AgentActionEvent) ([]AgentActionEvent, error)
 	AppendEventsWithIdempotency(ctx context.Context, req EdgeIdempotencyRequest, events []AgentActionEvent, buildResponse EdgeIdempotencyResponseBuilder) (EdgeIdempotentAppendResult, error)
 	ListEvents(ctx context.Context, query ListEventsQuery) (EventPage, error)

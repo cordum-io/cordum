@@ -238,7 +238,7 @@ func quoteCommandPath(command string) string {
 		(strings.HasPrefix(trimmed, `'`) && strings.HasSuffix(trimmed, `'`)) {
 		return trimmed
 	}
-	if strings.ContainsAny(trimmed, " \t") {
+	if strings.ContainsAny(trimmed, " \t\"") {
 		return `"` + strings.ReplaceAll(trimmed, `"`, `\"`) + `"`
 	}
 	return trimmed

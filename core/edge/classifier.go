@@ -493,13 +493,29 @@ func isSecretPath(path string) bool {
 		strings.Contains(padded, "/secrets/") ||
 		strings.Contains(padded, "/.ssh/") ||
 		strings.Contains(padded, "/.aws/") ||
+		strings.Contains(padded, "/.kube/") ||
+		strings.Contains(padded, "/.docker/") ||
+		strings.Contains(padded, "/.config/gcloud/") ||
+		strings.Contains(padded, "/.netrc") ||
+		strings.Contains(padded, "/.npmrc") ||
+		strings.Contains(padded, "/.pypirc") ||
+		strings.Contains(padded, "/.dockercfg") ||
+		strings.Contains(padded, "/.htpasswd") ||
+		strings.Contains(padded, "/application_default_credentials") ||
 		strings.Contains(path, "id_rsa") ||
+		strings.Contains(path, "id_ed25519") ||
+		strings.Contains(path, "id_ecdsa") ||
 		strings.Contains(path, "credential") ||
 		strings.Contains(path, "token") ||
 		strings.Contains(path, "password") ||
+		strings.Contains(path, "service-account") ||
+		strings.Contains(path, "service_account") ||
 		strings.HasSuffix(path, ".pem") ||
 		strings.HasSuffix(path, ".key") ||
-		strings.HasSuffix(path, ".crt")
+		strings.HasSuffix(path, ".crt") ||
+		strings.HasSuffix(path, ".p12") ||
+		strings.HasSuffix(path, ".pfx") ||
+		strings.HasSuffix(path, ".kdbx")
 }
 
 func isSourceCodePath(path string) bool {

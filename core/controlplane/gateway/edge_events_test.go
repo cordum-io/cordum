@@ -54,11 +54,8 @@ func TestGatewayEdgeEventRoutesRequireAuthTenantAndReachHandlers(t *testing.T) {
 	}
 
 	authorized := edgeRouteGET(t, handler, "/api/v1/edge/executions/"+session.ExecutionID+"/events")
-	if authorized.Code == http.StatusNotFound {
-		t.Fatalf("authorized Edge execution events returned 404; route is not wired")
-	}
-	if authorized.Code == http.StatusUnauthorized || authorized.Code == http.StatusForbidden {
-		t.Fatalf("authorized Edge execution events rejected by auth/tenant middleware: %d", authorized.Code)
+	if authorized.Code != http.StatusOK {
+		t.Fatalf("authorized Edge execution events status = %d, want 200 body=%s", authorized.Code, authorized.Body.String())
 	}
 }
 

@@ -356,3 +356,27 @@ func assertRenderedSettingsOmitsAgentdNonce(t *testing.T, data []byte, nonce str
 		t.Fatalf("rendered settings leaked nonce in CORDUM_AGENTD_URL: %s", text)
 	}
 }
+
+func TestQuoteCommandPathHandlesQuotesAndSpaces(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain", "/usr/local/bin/cordum-hook", "/usr/local/bin/cordum-hook"},
+		{"already double-quoted", `"/path with space/cordum-hook"`, `"/path with space/cordum-hook"`},
+		{"already single-quoted", `'/path with space/cordum-hook'`, `'/path with space/cordum-hook'`},
+		{"contains space", `/Program Files/cordum/cordum-hook.exe`, `"/Program Files/cordum/cordum-hook.exe"`},
+		{"contains tab", "/path\twith\ttab/cordum-hook", "\"/path\twith\ttab/cordum-hook\""},
+		{"embedded quote no space", `/odd"path/cordum-hook`, `"/odd\"path/cordum-hook"`},
+		{"embedded quote with space", `/Program Files/odd"path/cordum-hook`, `"/Program Files/odd\"path/cordum-hook"`},
+		{"empty", "", ""},
+		{"whitespace-only", "   ", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := quoteCommandPath(tc.in); got != tc.want {
+				t.Fatalf("quoteCommandPath(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
