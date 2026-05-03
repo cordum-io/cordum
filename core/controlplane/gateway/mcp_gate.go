@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/cordum/cordum/core/mcp"
 )
@@ -63,6 +64,7 @@ type PreapprovalLookup interface {
 type gatewayApprovalGate struct {
 	store       *MCPApprovalStore
 	preapproval PreapprovalLookup
+	invariants  MCPInvariantLookup
 }
 
 // NewGatewayApprovalGate returns a gate backed by the given store.
@@ -85,6 +87,20 @@ func NewGatewayApprovalGate(store *MCPApprovalStore) mcp.ApprovalGate {
 func (g *gatewayApprovalGate) WithPreapproval(lookup PreapprovalLookup) *gatewayApprovalGate {
 	if g != nil {
 		g.preapproval = lookup
+	}
+	return g
+}
+
+// WithInvariantLookup attaches an MCP invariant lookup. The gate consults
+// the lookup BEFORE the existing approval flow — if any invariant DENY
+// rule's MCP matchers cover the tool/server/resource, the gate returns
+// ErrMCPInvariantDeny instead of enqueuing an approval. This codifies the
+// "Invariants are SECURITY FLOOR — never let a pack-contributed rule
+// override an Invariants DENY" task rail. A nil lookup is permissive —
+// the gate skips invariant consultation and proceeds to approval flow.
+func (g *gatewayApprovalGate) WithInvariantLookup(lookup MCPInvariantLookup) *gatewayApprovalGate {
+	if g != nil {
+		g.invariants = lookup
 	}
 	return g
 }
@@ -127,6 +143,22 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 	canonical, argsHash, err := canonicalizeArgs(params)
 	if err != nil {
 		return nil, fmt.Errorf("mcp gate: args hash: %w", err)
+	}
+
+	// Invariants consultation (EDGE-052). Invariant DENY rules are the
+	// SECURITY FLOOR — they fire before any approval flow so a pack
+	// rule that allows a tool cannot override a SecOps invariant DENY.
+	// Lookup is optional; nil lookup proceeds to existing flow.
+	if g.invariants != nil {
+		rules := g.invariants.InvariantsForMCPTool(ctx)
+		if rule, denied := matchMCPInvariantDeny(rules, tool, meta); denied {
+			reason := strings.TrimSpace(rule.Reason)
+			if reason == "" {
+				reason = "denied by SecOps invariant"
+			}
+			return nil, fmt.Errorf("%w: tool %q denied by invariant %q: %s",
+				ErrMCPInvariantDeny, tool.Name, rule.ID, reason)
+		}
 	}
 
 	// Scope-preapproval bypass (task-2d989055). If the agent

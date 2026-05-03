@@ -99,7 +99,7 @@ rules:
 		configKey:    "bundles",
 		entitlements: newSafetyEntitlementResolver(t, licensing.PlanCommunity, nil),
 	}
-	policy, snapshot, customCount, err := loader.loadFragments(context.Background())
+	policy, _, snapshot, customCount, err := loader.loadFragments(context.Background())
 	if err != nil {
 		t.Fatalf("load fragments: %v", err)
 	}

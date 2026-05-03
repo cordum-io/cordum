@@ -292,7 +292,7 @@ rules:
 		configID:    "policy",
 		configKey:   "bundles",
 	}
-	policy, snapshot, _, err := loader.loadFragments(context.Background())
+	policy, _, snapshot, _, err := loader.loadFragments(context.Background())
 	if err != nil {
 		t.Fatalf("load fragments: %v", err)
 	}
@@ -351,7 +351,7 @@ default_decision: maybe
 		configID:    "policy",
 		configKey:   "bundles",
 	}
-	policy, snapshot, _, err := loader.loadFragments(context.Background())
+	policy, _, snapshot, _, err := loader.loadFragments(context.Background())
 	// Malformed fragments are now skipped instead of failing all
 	if err != nil {
 		t.Fatalf("expected no error (malformed fragments should be skipped): %v", err)
@@ -438,7 +438,7 @@ func TestPolicyLoaderFromSource(t *testing.T) {
 	}
 
 	loader := &policyLoader{source: path}
-	policy, snapshot, _, err := loader.Load(context.Background())
+	policy, _, snapshot, _, err := loader.Load(context.Background())
 	if err != nil {
 		t.Fatalf("load policy: %v", err)
 	}
