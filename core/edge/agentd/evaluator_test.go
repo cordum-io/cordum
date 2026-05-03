@@ -78,7 +78,17 @@ func TestEvaluatorCallsGatewayAndRecordsDecisionEvidence(t *testing.T) {
 		t.Fatalf("decision events written = %d, want 1", len(writer.events))
 	}
 	event := writer.events[0]
-	if event.EventID != "evt-eval-decision" || event.Kind != edgecore.EventKindHookPolicyDecision || event.Decision != edgecore.DecisionAllow {
+	// EDGE-039: evaluator must NOT reuse Gateway's resp.EventID for the agentd
+	// evidence event. Reusing it caused events/batch flush to fail with 409
+	// IdempotencyWindowExpired because Gateway evaluate already persisted that
+	// event_id. The agentd evidence event must have a fresh "agentd-" id.
+	if event.EventID == "evt-eval-decision" {
+		t.Fatalf("agentd evidence event reused Gateway resp.EventID; want fresh agentd-* id, got %q", event.EventID)
+	}
+	if !strings.HasPrefix(event.EventID, "agentd-") {
+		t.Fatalf("agentd evidence event id = %q, want agentd- prefix", event.EventID)
+	}
+	if event.Kind != edgecore.EventKindHookPolicyDecision || event.Decision != edgecore.DecisionAllow {
 		t.Fatalf("decision event = %#v", event)
 	}
 	payload, _ := json.Marshal(event)
@@ -115,8 +125,8 @@ func TestEvaluatorCoalescesConcurrentIdenticalRequests(t *testing.T) {
 	if calls := client.callCount(); calls != 1 {
 		t.Fatalf("gateway evaluate calls = %d, want 1", calls)
 	}
-	if events := writer.snapshot(); len(events) != 1 || events[0].EventID != "evt-coalesced-allow" || events[0].Decision != edgecore.DecisionAllow {
-		t.Fatalf("decision evidence events = %#v, want exactly one coalesced allow event", events)
+	if events := writer.snapshot(); len(events) != 1 || !strings.HasPrefix(events[0].EventID, "agentd-") || events[0].Decision != edgecore.DecisionAllow {
+		t.Fatalf("decision evidence events = %#v, want exactly one coalesced allow event with fresh agentd-* id", events)
 	}
 	cache.mu.Lock()
 	recordCount := len(cache.records)
@@ -159,8 +169,8 @@ func TestEvaluatorCoalesceErrorPathDoesNotPoisonSlot(t *testing.T) {
 	if calls := client.callCount(); calls != 2 {
 		t.Fatalf("gateway calls after retry = %d, want 2 proving slot was not poisoned", calls)
 	}
-	if events := writer.snapshot(); len(events) != 2 || events[0].Status != edgecore.ActionStatusDegraded || events[1].EventID != "evt-coalesced-allow" {
-		t.Fatalf("evidence events after retry = %#v, want degraded then fresh allow", events)
+	if events := writer.snapshot(); len(events) != 2 || events[0].Status != edgecore.ActionStatusDegraded || !strings.HasPrefix(events[1].EventID, "agentd-") {
+		t.Fatalf("evidence events after retry = %#v, want degraded then fresh allow with agentd-* id", events)
 	}
 }
 

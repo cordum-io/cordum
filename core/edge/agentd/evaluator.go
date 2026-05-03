@@ -157,10 +157,17 @@ func (e *Evaluator) evaluateFreshDecision(evalCtx context.Context, req claude.Ag
 	decision := AgentdDecisionFromEvaluateResponse(evalCtx, *resp, e.approvalConfig, e.approvalWaiter)
 	e.recordDecisionObservability(req, evalReq, *resp, decision, startedAt)
 	_ = e.cache.Put(cacheReq, *resp)
+	// Gateway evaluate already persisted a hook.policy_decision event under
+	// resp.EventID. The agentd-side evidence event captures separate local
+	// metadata (cache lookup, fail-mode, agentd timing) and must be a distinct
+	// record — reusing resp.EventID would collide with the gateway-written
+	// event when the events/batch flush hits loadEventByIDInTx.
+	freshResp := *resp
+	freshResp.EventID = ""
 	if err := e.recordDecisionEvidence(writer, requireEvidence, decision, evalReq, DecisionEvidence{
 		State:      e.state,
 		Request:    req,
-		Response:   *resp,
+		Response:   freshResp,
 		CacheMiss:  e.cache != nil,
 		DurationMS: req.DurationMS,
 	}); err != nil {

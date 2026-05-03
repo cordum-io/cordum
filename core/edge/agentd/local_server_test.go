@@ -502,8 +502,13 @@ func assertAtomicHookEventPair(t *testing.T, writer *stubEventWriter, startedAt 
 	if receipt.Timestamp.Before(startedAt) || receipt.Timestamp.After(time.Now().UTC().Add(time.Second)) {
 		t.Fatalf("receipt timestamp = %s, want actual request receipt time after %s", receipt.Timestamp, startedAt)
 	}
-	if decision.EventID != "evt-atomic-decision" || decision.Kind != edgecore.EventKindHookPolicyDecision {
-		t.Fatalf("decision event id/kind = %q/%q, want evt-atomic-decision/policy_decision", decision.EventID, decision.Kind)
+	// EDGE-039: agentd evidence event must NOT reuse Gateway's resp.EventID
+	// (would collide with the Gateway-written event on events/batch flush).
+	if decision.EventID == "evt-atomic-decision" {
+		t.Fatalf("agentd evidence event reused Gateway resp.EventID; want fresh agentd-* id, got %q", decision.EventID)
+	}
+	if !strings.HasPrefix(decision.EventID, "agentd-") || decision.Kind != edgecore.EventKindHookPolicyDecision {
+		t.Fatalf("decision event id/kind = %q/%q, want agentd-*/policy_decision", decision.EventID, decision.Kind)
 	}
 	if decision.Decision != wantDecision || decision.PolicySnapshot != "snap-atomic" || decision.Status != edgecore.ActionStatusOK {
 		t.Fatalf("decision event = decision:%q policy:%q status:%q, want %q/snap-atomic/ok", decision.Decision, decision.PolicySnapshot, decision.Status, wantDecision)
