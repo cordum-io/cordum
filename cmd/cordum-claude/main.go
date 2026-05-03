@@ -19,6 +19,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 )
 
 const cordumctlBinName = "cordumctl"
@@ -34,9 +36,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if stderr == nil {
 		stderr = os.Stderr
 	}
-	bin := os.Getenv("CORDUM_CLAUDE_CORDUMCTL_BIN")
-	if bin == "" {
-		bin = cordumctlBinName
+	bin, err := resolveCordumctlPath()
+	if err != nil {
+		fmt.Fprintf(stderr, "cordum-claude: %s\n", err)
+		return 1
 	}
 	full := append([]string{"edge", "claude"}, args...)
 	cmd := exec.Command(bin, full...)
@@ -53,4 +56,46 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// resolveCordumctlPath returns an absolute path to the cordumctl binary.
+// Resolution order: (1) CORDUM_CLAUDE_CORDUMCTL_BIN env override, (2) sibling
+// binary in the same directory as cord-claude itself, (3) PATH lookup. Always
+// returns an absolute path so exec.Command does not trip Go 1.19+'s refusal to
+// run executables resolved via the current directory.
+func resolveCordumctlPath() (string, error) {
+	if env := os.Getenv("CORDUM_CLAUDE_CORDUMCTL_BIN"); env != "" {
+		abs, err := filepath.Abs(env)
+		if err == nil {
+			env = abs
+		}
+		if _, err := os.Stat(env); err != nil {
+			return "", fmt.Errorf("cordumctl binary from CORDUM_CLAUDE_CORDUMCTL_BIN not usable: %w", err)
+		}
+		return env, nil
+	}
+	if self, err := os.Executable(); err == nil {
+		dir := filepath.Dir(self)
+		for _, name := range cordumctlCandidateNames() {
+			candidate := filepath.Join(dir, name)
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				return candidate, nil
+			}
+		}
+	}
+	if path, err := exec.LookPath(cordumctlBinName); err == nil {
+		abs, absErr := filepath.Abs(path)
+		if absErr != nil {
+			return path, nil
+		}
+		return abs, nil
+	}
+	return "", fmt.Errorf("cordumctl binary not found: set CORDUM_CLAUDE_CORDUMCTL_BIN, place cordumctl beside cordum-claude, or add cordumctl to PATH")
+}
+
+func cordumctlCandidateNames() []string {
+	if runtime.GOOS == "windows" {
+		return []string{cordumctlBinName + ".exe", cordumctlBinName}
+	}
+	return []string{cordumctlBinName}
 }
