@@ -97,8 +97,15 @@ func TestMapHookInputBashTest(t *testing.T) {
 	if got.ReasonCode != "" {
 		t.Errorf("ReasonCode = %q, want empty for normal mapping", got.ReasonCode)
 	}
-	if cmd, _ := got.InputRedacted["command"].(string); cmd != "go test ./core/edge" {
-		t.Errorf("InputRedacted[command] = %q, want go test ./core/edge", cmd)
+	// EDGE-041: tool_input.command renamed to command_redacted on the wire so
+	// the dashboard sanitizer renders the value (bare `command` is not on the
+	// dashboard's strip list, but renaming consistently keeps the contract
+	// uniform across all tool_input fields). Bare key MUST NOT survive.
+	if cmd, _ := got.InputRedacted["command_redacted"].(string); cmd != "go test ./core/edge" {
+		t.Errorf("InputRedacted[command_redacted] = %q, want go test ./core/edge", cmd)
+	}
+	if _, present := got.InputRedacted["command"]; present {
+		t.Errorf("InputRedacted retains bare command key; want only command_redacted (got %v)", got.InputRedacted)
 	}
 	if len(got.RawPayload) == 0 {
 		t.Errorf("RawPayload empty, want verbatim hook stdin bytes for agentd forward")
@@ -213,6 +220,88 @@ func TestMapHookInputPostToolUseFailure(t *testing.T) {
 	}
 }
 
+// TestMapHookInputPreToolUseEditEmitsRedactedSuffix asserts the EDGE-041
+// per-field rename for Edit's tool_input fields. file_path/old_string/
+// new_string are renamed with a `_redacted` suffix on the wire so the
+// dashboard sanitizer accepts them; bare keys must NOT survive.
+func TestMapHookInputPreToolUseEditEmitsRedactedSuffix(t *testing.T) {
+	input := loadHookFixture(t, "pre_tool_use_edit.json")
+	got, err := MapHookInput(input, newTestMappingContext())
+	if err != nil {
+		t.Fatalf("MapHookInput: %v", err)
+	}
+	want := map[string]string{
+		"file_path_redacted":  "core/edge/claude/mapper.go",
+		"old_string_redacted": "redacted-old",
+		"new_string_redacted": "redacted-new",
+	}
+	for key, expected := range want {
+		actual, _ := got.InputRedacted[key].(string)
+		if actual != expected {
+			t.Errorf("InputRedacted[%q] = %q, want %q", key, actual, expected)
+		}
+	}
+	for _, bareKey := range []string{"file_path", "old_string", "new_string"} {
+		if _, present := got.InputRedacted[bareKey]; present {
+			t.Errorf("InputRedacted retains bare key %q after rename; want only the *_redacted variant (got %v)", bareKey, got.InputRedacted)
+		}
+	}
+}
+
+// TestMapHookInputPostToolUseSuccessEmitsToolResponseRedacted asserts the
+// EDGE-041 PostToolUse rename: tool_response is wrapped under a
+// `tool_response_redacted` key. Bare `tool_response` must NOT survive — the
+// dashboard's transform.ts isUnsafeEdgeKey lists it explicitly.
+func TestMapHookInputPostToolUseSuccessEmitsToolResponseRedacted(t *testing.T) {
+	input := loadHookFixture(t, "post_tool_use_success.json")
+	got, err := MapHookInput(input, newTestMappingContext())
+	if err != nil {
+		t.Fatalf("MapHookInput: %v", err)
+	}
+	resp, ok := got.InputRedacted["tool_response_redacted"].(map[string]any)
+	if !ok {
+		t.Fatalf("InputRedacted[tool_response_redacted] missing or wrong type; got %v", got.InputRedacted)
+	}
+	if stdout, _ := resp["stdout"].(string); stdout != "redacted-stdout" {
+		t.Errorf("tool_response_redacted.stdout = %q, want redacted-stdout", stdout)
+	}
+	if _, present := got.InputRedacted["tool_response"]; present {
+		t.Errorf("InputRedacted retains bare tool_response key; want only tool_response_redacted (got %v)", got.InputRedacted)
+	}
+}
+
+// TestMapHookInputPreToolUseUnknownFieldsBucketed asserts that Claude
+// tool_input fields the mapper does not know about (version drift, new
+// tools) fall through into a `tool_input_redacted` bucket so evidence does
+// not silently drop unknown content.
+func TestMapHookInputPreToolUseUnknownFieldsBucketed(t *testing.T) {
+	got, err := MapHookInput(HookInput{
+		HookEventName: "PreToolUse",
+		ToolName:      "Bash",
+		ToolInput: map[string]any{
+			"command":           "npm test",
+			"unrecognized_flag": true,
+			"future_field":      "some-value",
+		},
+	}, newTestMappingContext())
+	if err != nil {
+		t.Fatalf("MapHookInput: %v", err)
+	}
+	if cmd, _ := got.InputRedacted["command_redacted"].(string); cmd != "npm test" {
+		t.Errorf("InputRedacted[command_redacted] = %q, want npm test", cmd)
+	}
+	bucket, ok := got.InputRedacted["tool_input_redacted"].(map[string]any)
+	if !ok {
+		t.Fatalf("InputRedacted[tool_input_redacted] missing or wrong type; got %v", got.InputRedacted)
+	}
+	if v, _ := bucket["unrecognized_flag"].(bool); !v {
+		t.Errorf("tool_input_redacted[unrecognized_flag] = %v, want true", bucket["unrecognized_flag"])
+	}
+	if v, _ := bucket["future_field"].(string); v != "some-value" {
+		t.Errorf("tool_input_redacted[future_field] = %q, want some-value", v)
+	}
+}
+
 func TestMapHookInputMissingToolNameDegrades(t *testing.T) {
 	input := loadHookFixture(t, "missing_tool_name.json")
 	got, err := MapHookInput(input, newTestMappingContext())
@@ -318,8 +407,9 @@ func TestMapHookInputDoesNotEchoRawSecretIntoLabels(t *testing.T) {
 			t.Errorf("Labels leaked raw secret: %q=%q", k, v)
 		}
 	}
-	if cmd, _ := got.InputRedacted["command"].(string); strings.Contains(cmd, rawSecret) {
-		t.Errorf("InputRedacted[command] leaked raw secret: %q", cmd)
+	// EDGE-041: command renamed to command_redacted on the wire.
+	if cmd, _ := got.InputRedacted["command_redacted"].(string); strings.Contains(cmd, rawSecret) {
+		t.Errorf("InputRedacted[command_redacted] leaked raw secret: %q", cmd)
 	}
 	// Reason code stays empty for normal flow even with secrets.
 	if got.ReasonCode != "" {

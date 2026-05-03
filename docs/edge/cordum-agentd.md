@@ -57,6 +57,17 @@ kind, tool name, action/input hashes, classifier labels/risk tags, and
 transcripts, authorization headers, local transcript paths, or model-provider
 secrets.
 
+`input_redacted` field-name convention (EDGE-041): every Claude `tool_input`
+field name is renamed with a `_redacted` suffix on the wire — `command` →
+`command_redacted`, `file_path` → `file_path_redacted`, `old_string` →
+`old_string_redacted`, etc. PostToolUse adds `tool_response_redacted` and
+`error_redacted`; UserPromptSubmit emits `prompt_redacted`. Unknown / version-
+drifted Claude tool fields are bucketed under `tool_input_redacted` so
+evidence never silently drops content. The suffix is the wire signal that
+`edge.RedactValue` (EDGE-004) has already scrubbed each value; the dashboard
+sanitizer (`dashboard/src/api/transform.ts isUnsafeEdgeKey`) trusts only
+suffixed keys and strips bare ones as defense-in-depth.
+
 Gateway decisions map to the hook result as follows:
 
 - `ALLOW` returns a quiet allow so safe actions are not noisy.

@@ -96,19 +96,24 @@ func ClassifyEvent(event AgentActionEvent) (ActionClassification, error) {
 
 func classifyHookEvent(event AgentActionEvent, out *ActionClassification) {
 	toolFold := strings.ToLower(strings.TrimSpace(event.ToolName))
+	// EDGE-041: cordum-hook's mapper renames Claude tool_input fields with a
+	// `_redacted` suffix so the dashboard sanitizer renders them. Classifier
+	// reads accept BOTH the renamed and bare keys so historical events stored
+	// before the rename and gateway tests that POST events directly with bare
+	// keys keep working.
 	switch toolFold {
 	case "bash":
-		classifyBashCommand(inputString(event.InputRedacted, "command"), out)
+		classifyBashCommand(inputStringAny(event.InputRedacted, "command_redacted", "command"), out)
 	case "read":
-		classifyFilePath(inputStringAny(event.InputRedacted, "file_path", "path"), false, out)
+		classifyFilePath(inputStringAny(event.InputRedacted, "file_path_redacted", "file_path", "path_redacted", "path"), false, out)
 	case "edit", "write", "multiedit":
-		classifyFilePath(inputStringAny(event.InputRedacted, "file_path", "path"), true, out)
+		classifyFilePath(inputStringAny(event.InputRedacted, "file_path_redacted", "file_path", "path_redacted", "path"), true, out)
 	case "delete", "remove":
-		classifyFileDelete(inputStringAny(event.InputRedacted, "file_path", "path"), out)
+		classifyFileDelete(inputStringAny(event.InputRedacted, "file_path_redacted", "file_path", "path_redacted", "path"), out)
 	case "move", "rename":
 		classifyFileMove(
-			inputStringAny(event.InputRedacted, "file_path", "path", "source", "old_path", "from"),
-			inputStringAny(event.InputRedacted, "destination", "dest", "dest_path", "target", "new_path", "to"),
+			inputStringAny(event.InputRedacted, "file_path_redacted", "file_path", "path_redacted", "path", "source_redacted", "source", "old_path_redacted", "old_path", "from_redacted", "from"),
+			inputStringAny(event.InputRedacted, "destination_redacted", "destination", "dest_redacted", "dest", "dest_path", "target", "new_path_redacted", "new_path", "to_redacted", "to"),
 			out,
 		)
 	default:

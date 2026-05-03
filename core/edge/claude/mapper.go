@@ -314,17 +314,17 @@ func redactHookActionInput(input HookInput, kind edge.EventKind) (map[string]any
 	source := map[string]any{}
 	switch kind {
 	case edge.EventKindHookPreToolUse:
-		maps.Copy(source, input.ToolInput)
+		copyToolInputRedacted(source, input.ToolInput)
 	case edge.EventKindHookPostToolUse, edge.EventKindHookPostToolUseFailure:
-		maps.Copy(source, input.ToolInput)
+		copyToolInputRedacted(source, input.ToolInput)
 		if len(input.ToolResponse) > 0 {
-			source["tool_response"] = input.ToolResponse
+			source["tool_response_redacted"] = input.ToolResponse
 		}
 		if input.DurationMS > 0 {
 			source["duration_ms"] = input.DurationMS
 		}
 		if input.Error != "" {
-			source["error"] = input.Error
+			source["error_redacted"] = input.Error
 		}
 	case edge.EventKindHookUserPromptSubmit:
 		if input.Prompt != "" {
@@ -365,6 +365,81 @@ func redactHookActionInput(input HookInput, kind edge.EventKind) (map[string]any
 		return map[string]any{"_redacted": result.Value}, nil
 	}
 	return sanitizeHookBoundaryMap(redacted), nil
+}
+
+// copyToolInputRedacted flattens Claude's tool_input map into the action source
+// map under `_redacted`-suffixed keys so the dashboard sanitizer accepts them.
+// Bare keys like `command`, `file_path`, `tool_input` are stripped by
+// `dashboard/src/api/transform.ts isUnsafeEdgeKey` as defense-in-depth; only
+// keys ending in `_redacted` (or containing `redacted`) are trusted because the
+// suffix is the wire signal that the value already passed through
+// edge.RedactValue (EDGE-004 secret stripper). Known Claude tool_input field
+// names are renamed individually so classifier.go can still find them via
+// inputStringAny multi-alias lookups; unknown fields fall through into a
+// `tool_input_redacted` bucket so we never silently drop content from
+// version-drifted Claude payloads.
+func copyToolInputRedacted(dest, src map[string]any) {
+	if len(src) == 0 {
+		return
+	}
+	var extras map[string]any
+	for key, value := range src {
+		renamed, known := claudeToolInputFieldRedactedName(key)
+		if known {
+			dest[renamed] = value
+			continue
+		}
+		if extras == nil {
+			extras = map[string]any{}
+		}
+		extras[key] = value
+	}
+	if len(extras) > 0 {
+		dest["tool_input_redacted"] = extras
+	}
+}
+
+// claudeToolInputFieldRedactedName maps every Claude built-in tool_input field
+// name to its `_redacted`-suffixed counterpart. The known set covers the
+// Read/Edit/Write/MultiEdit/Bash/Glob/Grep/Move tools listed in
+// classifier.go's classifyHookEvent dispatch plus the alias keys
+// classifier.go's classifyFileMove already accepts (source/destination/dest/
+// old_path/new_path/from/to). Any field NOT in this set is bucketed by the
+// caller into `tool_input_redacted` so unknown content reaches evidence intact.
+func claudeToolInputFieldRedactedName(key string) (string, bool) {
+	switch key {
+	case "file_path":
+		return "file_path_redacted", true
+	case "path":
+		return "path_redacted", true
+	case "command":
+		return "command_redacted", true
+	case "content":
+		return "content_redacted", true
+	case "old_string":
+		return "old_string_redacted", true
+	case "new_string":
+		return "new_string_redacted", true
+	case "source":
+		return "source_redacted", true
+	case "destination":
+		return "destination_redacted", true
+	case "dest":
+		return "dest_redacted", true
+	case "old_path":
+		return "old_path_redacted", true
+	case "new_path":
+		return "new_path_redacted", true
+	case "from":
+		return "from_redacted", true
+	case "to":
+		return "to_redacted", true
+	case "pattern":
+		return "pattern_redacted", true
+	case "url":
+		return "url_redacted", true
+	}
+	return "", false
 }
 
 // baseHookLabels builds the labels every Claude hook event carries before
