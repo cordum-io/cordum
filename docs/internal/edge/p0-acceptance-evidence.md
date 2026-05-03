@@ -238,7 +238,7 @@ Step-5 gate rows:
 
 | Gate evidence row | Result | Status |
 | --- | --- | --- |
-| EDGE-027 fake-hook E2E live-stack | SKIP: Docker/current live stack unavailable; `https://localhost:8081` was reachable but served a stale Gateway image without `/api/v1/edge/*`, and Docker server checks timed out. This follows the EDGE-027 SKIP-mode contract for non-integration environments. | Pass |
+| EDGE-027 fake-hook E2E live-stack | PASS: 5/5 live `make dev-up` PASS lines captured 2026-05-03 from `D:\Cordum\cordum`. Captured under EDGE-039 (task-c7fc618f) following the EDGE-039 / b8afac82 / EDGE-042 fix chain. See "Live-stack PASS lines (2026-05-03)" below for the verbatim run. | Pass |
 | EDGE-028 backend integration suite | PASS: miniredis + httptest Gateway suite covers the same acceptance semantics without Docker or external network. | Pass |
 
 Default-mode script probe, rerun after returning the script to HEAD behavior:
@@ -329,11 +329,40 @@ ok  	github.com/cordum/cordum/core/controlplane/gateway	17.261s
 ```
 
 First failing test in step 5: none in the EDGE-028 gate-equivalent suite.
-Required strict live-stack PASS lines were not observed because the live stack
-was stale; per architect decision they are optional follow-up evidence once
-Docker/current Gateway is available, not a P0 ship blocker. No real `.env` file
-was read by the E2E fixture; only synthetic fixture paths were used, and no API
-key value was printed.
+
+Live-stack PASS lines (2026-05-03):
+
+After EDGE-039 (task-c7fc618f) landed the agentd binding, principal-id
+propagation, evidence-event-id, and Gateway approval-auto-consume fixes (commits
+`be748127`, `1760c2c2`, `67bc82d5`, `b8afac82`, plus this task's evaluator and
+approval-consume changes), the strict live-stack run from `D:\Cordum\cordum`
+against a fresh `make dev-up` stack with `cordum-edge-pack` installed under
+`tenant=default` produced all 5 required PASS lines verbatim and in order:
+
+```text
+PASS edge_session_setup
+PASS edge_pretooluse_deny
+PASS edge_approval_flow
+PASS edge_posttooluse_artifact
+PASS edge_evidence_export
+```
+
+Run command (`CORDUM_API_KEY` loaded from `.env`, never printed; synthetic
+fixture paths only — no real `.env` file is ever read):
+
+```powershell
+CORDUM_INTEGRATION=1 bash tools/scripts/edge_fake_hook_e2e.sh
+```
+
+Run-specific identifiers from this capture (other runs will have fresh UUIDs):
+session_id `91f6e885-f071-4ba3-8eec-a52f60bee5fd`, execution_id
+`80ca7825-510a-4a90-abaa-758ad1153d90`, approval_ref
+`edge_appr_al4e3TxNFNKOX4WRITmiHYnZ`. Gateway events listing returned the DENY
+event for `edge_pretooluse_deny`, the export endpoint
+`POST /api/v1/edge/sessions/{id}/export` returned `HTTP 200` with the bundle,
+and negative redaction sanity checks (no literal `OPENAI_API_KEY`,
+`AWS_SECRET_ACCESS_KEY`, or `BEGIN PRIVATE KEY` markers anywhere in events,
+hook stdout, or export bundle) all passed.
 
 ### Step 6 — Dashboard rail and Edge smoke
 
