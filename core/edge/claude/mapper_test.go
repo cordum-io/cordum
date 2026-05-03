@@ -183,8 +183,8 @@ func TestMapHookInputUserPromptSubmit(t *testing.T) {
 	if got.ToolName != "" {
 		t.Errorf("ToolName = %q, want empty for UserPromptSubmit", got.ToolName)
 	}
-	if _, ok := got.InputRedacted["prompt"]; !ok {
-		t.Errorf("InputRedacted missing prompt key; got %v", got.InputRedacted)
+	if _, ok := got.InputRedacted["prompt_redacted"]; !ok {
+		t.Errorf("InputRedacted missing prompt_redacted key; got %v", got.InputRedacted)
 	}
 }
 

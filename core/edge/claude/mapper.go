@@ -328,7 +328,11 @@ func redactHookActionInput(input HookInput, kind edge.EventKind) (map[string]any
 		}
 	case edge.EventKindHookUserPromptSubmit:
 		if input.Prompt != "" {
-			source["prompt"] = input.Prompt
+			// Suffix `_redacted` signals to the dashboard sanitizer that this
+			// content has already passed through edge.RedactValue and is safe
+			// to render. Bare `prompt` would be stripped by the dashboard's
+			// defense-in-depth (see dashboard/src/api/transform.ts isUnsafeEdgeKey).
+			source["prompt_redacted"] = input.Prompt
 		}
 	case edge.EventKindHookConfigChange:
 		if input.Source != "" {
