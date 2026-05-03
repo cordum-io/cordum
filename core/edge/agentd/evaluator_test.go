@@ -569,6 +569,67 @@ func (f stubAgentdClientFunc) EvaluateHook(ctx context.Context, req claude.Agent
 	return f(ctx, req)
 }
 
+// TestEvaluatorUserPromptSubmitEnforceCallsGateway is the EDGE-049 regression
+// guard. Yaron's `cordum-claude` real-Claude session (policy_mode=enforce)
+// returned "Cordum Edge enforce mode failed closed because governance is
+// unavailable" for every UserPromptSubmit hook. The wrapper-spawned agentd
+// emitted no /api/v1/edge/evaluate outgoing diagnostic, proving Evaluate was
+// never called — the path bailed inside evaluateHook before reaching
+// client.Evaluate. This test asserts the production-path: a fresh enforce-
+// mode UserPromptSubmit hook MUST invoke client.Evaluate exactly once and
+// MUST return the gateway's actual decision (not a fail-mode fallback).
+func TestEvaluatorUserPromptSubmitEnforceCallsGateway(t *testing.T) {
+	t.Parallel()
+
+	evaluate := &stubEvaluateClient{resp: &EvaluateResponse{
+		Decision:           string(edgecore.DecisionAllow),
+		Reason:             "user prompt allowed",
+		PolicySnapshot:     "snap-eval",
+		EventID:            "evt-userprompt",
+		ActionHash:         "sha256:action-userprompt",
+		InputHash:          "sha256:input-userprompt",
+		PermissionDecision: "allow",
+	}}
+	writer := &captureEventWriter{}
+	evaluator := NewEvaluator(EvaluatorConfig{
+		Client:      evaluate,
+		EventWriter: writer,
+		State:       evaluatorTestState(edgecore.PolicyModeEnforce),
+		HookTimeout: time.Second,
+	})
+
+	decision, err := evaluator.EvaluateHook(context.Background(), claude.AgentdRequest{
+		EventName:     "UserPromptSubmit",
+		SessionID:     "edge_sess_eval",
+		ExecutionID:   "edge_exec_eval",
+		TenantID:      "tenant-eval",
+		PrincipalID:   "principal-eval",
+		Prompt:        "Hi",
+		InputRedacted: map[string]any{"prompt_redacted": "Hi"},
+		InputHash:     "sha256:input-userprompt",
+		ActionHash:    "sha256:action-userprompt",
+		Capability:    "edge.unknown",
+		RiskTags:      []string{"review_required", "unknown"},
+		Labels:        map[string]string{"command.class": "unknown"},
+	})
+	if err != nil {
+		t.Fatalf("EvaluateHook returned error: %v", err)
+	}
+	if decision.Decision != claude.DecisionAllow {
+		t.Fatalf("decision = %q, want allow (gateway responded ALLOW); fail-mode fallback would indicate the bug", decision.Decision)
+	}
+	if len(evaluate.requests) != 1 {
+		t.Fatalf("client.Evaluate called %d times, want 1; zero means evaluateHook short-circuited (the EDGE-049 bug)", len(evaluate.requests))
+	}
+	got := evaluate.requests[0]
+	if got.Kind != string(edgecore.EventKindHookUserPromptSubmit) {
+		t.Errorf("forwarded kind = %q, want %q", got.Kind, edgecore.EventKindHookUserPromptSubmit)
+	}
+	if got.SessionID != "edge_sess_eval" || got.ExecutionID != "edge_exec_eval" || got.PrincipalID != "principal-eval" {
+		t.Errorf("forwarded identity = %#v, want session/execution/principal eval", got)
+	}
+}
+
 func evaluatorTestState(mode edgecore.PolicyMode) SessionState {
 	return SessionState{
 		SessionID:      "edge_sess_eval",
