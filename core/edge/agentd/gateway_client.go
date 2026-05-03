@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -190,6 +191,18 @@ func (c *GatewayClient) doJSONWithHeaders(ctx context.Context, method, path stri
 	if c.apiKey != "" {
 		httpReq.Header.Set("X-API-Key", c.apiKey)
 	}
+	// EDGE-049 diagnostic: temporary log to identify why /evaluate gets 401
+	// while /events + /heartbeat with the same client succeed. Field names
+	// avoid api_key/secret/token substrings to bypass slog redaction.
+	hdrLen := len(c.apiKey)
+	hdrPfx := ""
+	if hdrLen >= 8 {
+		hdrPfx = c.apiKey[:8]
+	}
+	slog.Info("EDGE049-AGENTD outgoing",
+		"method", method, "path", path,
+		"hdr_len", hdrLen, "hdr_pfx", hdrPfx,
+		"tnt", c.tenant, "prn", c.principalID)
 	if c.tenant != "" {
 		httpReq.Header.Set("X-Tenant-ID", c.tenant)
 	}

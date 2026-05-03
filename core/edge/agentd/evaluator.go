@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -82,6 +83,7 @@ func (e *Evaluator) EvaluateHookWithEventWriter(ctx context.Context, req claude.
 }
 
 func (e *Evaluator) evaluateHook(ctx context.Context, req claude.AgentdRequest, writer EventWriter, requireEvidence bool) (claude.AgentdDecision, error) {
+	slog.Info("EDGE049-EVAL entry", "kind", req.Kind, "tool", req.ToolName, "session", req.SessionID, "exec", req.ExecutionID, "client_nil", e == nil || e.client == nil)
 	if e == nil || e.client == nil {
 		return claude.AgentdDecision{}, errors.New("agentd evaluator not configured")
 	}
@@ -94,7 +96,10 @@ func (e *Evaluator) evaluateHook(ctx context.Context, req claude.AgentdRequest, 
 
 	evalReq := e.evaluateRequest(req)
 	cacheReq := e.cacheRequest(req, evalReq)
-	if cached, ok := e.cache.Get(cacheReq); ok {
+	cacheHit, cacheOk := e.cache.Get(cacheReq)
+	slog.Info("EDGE049-EVAL post-cache", "cache_hit", cacheOk, "cache_nil", e.cache == nil)
+	if cacheOk {
+		cached := cacheHit
 		e.recordCacheLookup(evalReq, "hit")
 		cached.EventID = ""
 		decision := AgentdDecisionFromEvaluateResponse(evalCtx, cached, e.approvalConfig, e.approvalWaiter)
@@ -147,7 +152,9 @@ type coalescedEvaluateResult struct {
 }
 
 func (e *Evaluator) evaluateFreshDecision(evalCtx context.Context, req claude.AgentdRequest, evalReq EvaluateRequest, cacheReq SafeAllowCacheRequest, startedAt time.Time, writer EventWriter, requireEvidence bool) (claude.AgentdDecision, error) {
+	slog.Info("EDGE049-EVAL pre-Evaluate-call", "ctx_err", evalCtx.Err())
 	resp, err := e.client.Evaluate(evalCtx, evalReq)
+	slog.Info("EDGE049-EVAL post-Evaluate-call", "err", err)
 	if err != nil {
 		return e.degradedDecision(req, evalReq, err, cacheReq, startedAt, writer, requireEvidence)
 	}
