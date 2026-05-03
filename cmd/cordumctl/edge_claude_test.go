@@ -30,6 +30,7 @@ func TestEdgeClaudeDryRunSettingsOutputRedactsSecrets(t *testing.T) {
 		"--dry-run",
 		"--settings-output", "-",
 		"--agentd-path", os.Args[0],
+		"--hook-command", os.Args[0],
 		"--claude-path", os.Args[0],
 		"--cwd", t.TempDir(),
 	}, nil, &stdout, &stderr)

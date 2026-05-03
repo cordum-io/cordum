@@ -20,7 +20,7 @@ func TestLaunchEdgeClaudeDryRunStartsAgentdAndOmitsNonceFromSettings(t *testing.
 	result, err := LaunchEdgeClaude(context.Background(), LaunchOptions{
 		Env:     envWith("CORDUM_TEST_HELPER_PROCESS", "1", "CORDUM_TEST_AGENTD_ENV_PATH", capture),
 		Gateway: "http://gateway.local", APIKey: "secret-token", TenantID: "tenant-a",
-		PrincipalID: "user-a", CWD: t.TempDir(), AgentdPath: helperPath,
+		PrincipalID: "user-a", CWD: t.TempDir(), AgentdPath: helperPath, HookCommand: helperPath,
 		ClaudePath: helperPath, PolicyMode: "enforce", DryRun: true,
 	})
 	if err != nil {
@@ -48,7 +48,7 @@ func TestLaunchEdgeClaudeRunsClaudeAndPropagatesExitCode(t *testing.T) {
 	result, err := LaunchEdgeClaude(context.Background(), LaunchOptions{
 		Env:     envWith("CORDUM_TEST_HELPER_PROCESS", "1", "CORDUM_TEST_CLAUDE_CAPTURE", capture, "CORDUM_TEST_CLAUDE_EXIT", "7"),
 		Gateway: "http://gateway.local", APIKey: "secret-token", TenantID: "tenant-a",
-		PrincipalID: "user-a", CWD: t.TempDir(), AgentdPath: helperPath,
+		PrincipalID: "user-a", CWD: t.TempDir(), AgentdPath: helperPath, HookCommand: helperPath,
 		ClaudePath: helperPath, PolicyMode: "enforce", ClaudeArgs: []string{"--print", "hello"},
 	})
 	if err != nil {
@@ -78,7 +78,7 @@ func TestLaunchEdgeClaudeMissingClaudeBinaryReturnsClearError(t *testing.T) {
 	_, err := LaunchEdgeClaude(context.Background(), LaunchOptions{
 		Env:     envWith("CORDUM_TEST_HELPER_PROCESS", "1", "CORDUM_TEST_AGENTD_ENV_PATH", capture),
 		Gateway: "http://gateway.local", APIKey: "secret-token", TenantID: "tenant-a",
-		PrincipalID: "user-a", CWD: t.TempDir(), AgentdPath: helperPath,
+		PrincipalID: "user-a", CWD: t.TempDir(), AgentdPath: helperPath, HookCommand: helperPath,
 		ClaudePath: missingClaude,
 	})
 	if err == nil || !strings.Contains(err.Error(), "claude binary not found") {
@@ -98,7 +98,7 @@ func TestKillAgentdOnContextCancel(t *testing.T) {
 	result, _ := LaunchEdgeClaude(ctx, LaunchOptions{
 		Env:     envWith("CORDUM_TEST_HELPER_PROCESS", "1", "CORDUM_TEST_CLAUDE_SLEEP_MS", "5000"),
 		Gateway: "http://gateway.local", APIKey: "secret-token", TenantID: "tenant-a",
-		PrincipalID: "user-a", CWD: t.TempDir(), AgentdPath: helperPath,
+		PrincipalID: "user-a", CWD: t.TempDir(), AgentdPath: helperPath, HookCommand: helperPath,
 		ClaudePath: helperPath, PolicyMode: "enforce",
 	})
 	if time.Since(start) > 3*time.Second {
@@ -120,7 +120,8 @@ func TestLaunchEdgeClaudeAgentdEarlyExitDoesNotHang(t *testing.T) {
 			Env:     envWith("CORDUM_TEST_HELPER_PROCESS", "1", "CORDUM_TEST_AGENTD_EXIT_EARLY", "1"),
 			Gateway: "http://gateway.local", APIKey: "secret-token", TenantID: "tenant-a",
 			PrincipalID: "user-a", CWD: cwd, AgentdPath: helperPath,
-			ClaudePath: helperPath, PolicyMode: "enforce", DryRun: true,
+			HookCommand: helperPath,
+			ClaudePath:  helperPath, PolicyMode: "enforce", DryRun: true,
 		})
 		done <- err
 	}()

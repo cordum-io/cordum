@@ -13,6 +13,7 @@ import (
 const (
 	defaultAgentdExecutable       = "cordum-agentd"
 	defaultClaudeExecutable       = "claude"
+	defaultHookExecutable         = "cordum-hook"
 	defaultLaunchAgentdReadyWait  = 10 * time.Second
 	defaultLaunchSessionStateWait = 10 * time.Second
 )
@@ -179,6 +180,16 @@ func prepareLaunchConfig(opts LaunchOptions, meta LaunchMetadata) (launchConfig,
 	if err != nil {
 		return launchConfig{}, err
 	}
+	// Resolve hook command to an absolute path so Claude Code's bash hook
+	// runner can exec it without consulting $PATH (Claude spawns hooks via
+	// /usr/bin/bash -c "<command> claude pre-tool-use", and bash's PATH at
+	// that point is whatever Claude inherited — typically does NOT include
+	// our ./bin/. Bare-name hook command produces "command not found"). The
+	// resolver checks PATH first, then siblings of cordumctl.
+	hookCommand, err := resolveExecutable(opts.HookCommand, defaultHookExecutable)
+	if err != nil {
+		return launchConfig{}, fmt.Errorf("hook command: %w", err)
+	}
 	agentdURL := strings.TrimSpace(opts.AgentdURL)
 	if agentdURL == "" {
 		agentdURL, err = reserveLoopbackHookURL()
@@ -198,7 +209,7 @@ func prepareLaunchConfig(opts LaunchOptions, meta LaunchMetadata) (launchConfig,
 		Gateway: strings.TrimRight(strings.TrimSpace(opts.Gateway), "/"), APIKey: strings.TrimSpace(opts.APIKey),
 		TenantID: strings.TrimSpace(opts.TenantID), PolicyMode: policy, ApprovalWaitTimeout: wait,
 		AgentdPath: agentdPath, AgentdURL: agentdURL, HookNonce: nonce,
-		HookCommand: hookCommandOrDefault(opts.HookCommand), StateDir: strings.TrimSpace(opts.StateDir),
+		HookCommand: hookCommand, StateDir: strings.TrimSpace(opts.StateDir),
 		DashboardURL: strings.TrimSpace(opts.DashboardURL), Env: opts.Env,
 		CACertPath: strings.TrimSpace(opts.CACertPath),
 	}, nil
