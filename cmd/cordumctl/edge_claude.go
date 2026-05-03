@@ -40,7 +40,7 @@ func runEdgeClaudeCmd(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	// Flags layer on top below via FlagSet defaults that fall back to cfg.X.
 	cfg, sources, err := loadEdgeClaudeConfigForRun()
 	if err != nil {
-		fmt.Fprintf(stderr, "cordumctl edge claude: %s\n", err)
+		_, _ = fmt.Fprintf(stderr, "cordumctl edge claude: %s\n", err)
 		return 1
 	}
 
@@ -191,19 +191,19 @@ func edgeClaudeFlagToConfigField(name string) string {
 // a comment block that names the precedence layer responsible for each
 // field. Output is stable and ordered so it is greppable from doctor scripts.
 func emitPrintConfig(stdout io.Writer, cfg EdgeClaudeConfig, sources map[string]configSource) {
-	fmt.Fprintln(stdout, "# Cordum Edge Claude — resolved config (api_key redacted).")
-	fmt.Fprintln(stdout, "# Source comments below record which precedence layer produced each field.")
-	fmt.Fprintln(stdout, "#")
-	fmt.Fprint(stdout, cfg.RenderRedactedYAML())
-	fmt.Fprintln(stdout, "")
+	_, _ = fmt.Fprintln(stdout, "# Cordum Edge Claude — resolved config (api_key redacted).")
+	_, _ = fmt.Fprintln(stdout, "# Source comments below record which precedence layer produced each field.")
+	_, _ = fmt.Fprintln(stdout, "#")
+	_, _ = fmt.Fprint(stdout, cfg.RenderRedactedYAML())
+	_, _ = fmt.Fprintln(stdout, "")
 	keys := make([]string, 0, len(sources))
 	for k := range sources {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	fmt.Fprintln(stdout, "# sources:")
+	_, _ = fmt.Fprintln(stdout, "# sources:")
 	for _, k := range keys {
-		fmt.Fprintf(stdout, "#   %s source: %s\n", k, sources[k])
+		_, _ = fmt.Fprintf(stdout, "#   %s source: %s\n", k, sources[k])
 	}
 }
 

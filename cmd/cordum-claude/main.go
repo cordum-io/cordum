@@ -38,7 +38,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	bin, err := resolveCordumctlPath()
 	if err != nil {
-		fmt.Fprintf(stderr, "cordum-claude: %s\n", err)
+		_, _ = fmt.Fprintf(stderr, "cordum-claude: %s\n", err)
 		return 1
 	}
 	full := append([]string{"edge", "claude"}, args...)
@@ -52,7 +52,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if errors.As(err, &exitErr) {
 			return exitErr.ExitCode()
 		}
-		fmt.Fprintf(stderr, "cordum-claude: launch %s: %s\n", bin, err)
+		_, _ = fmt.Fprintf(stderr, "cordum-claude: launch %s: %s\n", bin, err)
 		return 1
 	}
 	return 0
