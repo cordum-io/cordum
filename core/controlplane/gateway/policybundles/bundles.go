@@ -130,6 +130,11 @@ func CloneBundleMap(bundles map[string]any) map[string]any {
 }
 
 // BuildPolicyFromBundles merges all enabled bundles into a single SafetyPolicy.
+// The invariants bundle (PolicyInvariantsBundleKey) is held aside during the
+// merge loop and applied last via ApplyInvariants so its rules land at the
+// front (DENY) or back (ALLOW) of merged.Rules with security-floor precedence.
+// The bundle's content is still folded into the snapshot hash so any change
+// to invariants invalidates downstream caches (e.g. EDGE-018 safe-allow cache).
 func BuildPolicyFromBundles(bundles map[string]any) (*config.SafetyPolicy, string, error) {
 	if len(bundles) == 0 {
 		return nil, "", nil
@@ -141,6 +146,7 @@ func BuildPolicyFromBundles(bundles map[string]any) (*config.SafetyPolicy, strin
 	sort.Strings(keys)
 	hasher := sha256.New()
 	var merged *config.SafetyPolicy
+	var invariants *config.SafetyPolicy
 	for _, key := range keys {
 		content, ok := PolicyBundleContent(bundles[key])
 		if !ok || strings.TrimSpace(content) == "" {
@@ -154,7 +160,17 @@ func BuildPolicyFromBundles(bundles map[string]any) (*config.SafetyPolicy, strin
 		if err != nil {
 			return nil, "", fmt.Errorf("parse policy bundle %q: %w", key, err)
 		}
+		if key == PolicyInvariantsBundleKey {
+			// Defer invariants — applied with precedence after the
+			// rest of the merge so DENYs land at the front and ALLOWs
+			// land at the back regardless of bundle key sort order.
+			invariants = policy
+			continue
+		}
 		merged = MergeSafetyPolicies(merged, policy)
+	}
+	if invariants != nil {
+		merged = ApplyInvariants(merged, invariants)
 	}
 	if merged == nil {
 		return nil, "", nil
