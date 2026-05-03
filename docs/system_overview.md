@@ -79,6 +79,37 @@ NATS bus (sys.* + job.* + worker.<id>.jobs)
   - Use the CAP runtime in `sdk/runtime` for typed handlers + pointer hydration; use CAP worker helpers for heartbeats/progress/cancel when needed.
   - MCP integration lives in `cordum-packs/packs/mcp-bridge`, which exposes MCP tools/resources over stdio and submits MCP tool calls as Cordum jobs.
 
+- Cordum Edge — Compliance Firewall for local AI-agent actions
+  (`cmd/cordum-hook`, `cmd/cordum-agentd`, `cmd/cordumctl/edge_claude.go`, `core/edge`,
+  `core/controlplane/gateway/handlers_edge_*.go`)
+  - Parallel runtime to the Job pipeline above, NOT a feature within it.
+    Edge governs what an AI agent (Claude Code today) is about to do BEFORE
+    its tool call runs; Jobs govern what a worker IS doing.
+  - Per-tool-call data path: Claude Code spawns `cordum-hook` per tool call →
+    hook redacts the action and POSTs to local `cordum-agentd` (one-shot
+    nonce, loopback only) → agentd forwards to Gateway
+    `POST /api/v1/edge/evaluate` → Safety Kernel evaluates the action
+    against tenant policy → response is `ALLOW`, `DENY`, or
+    `REQUIRE_APPROVAL` (with optional `approval_ref`) → hook prints the
+    Claude-Code-shaped permissionDecision JSON → Claude Code blocks/runs
+    accordingly. Decision evidence + redacted input + artifact pointers
+    persist as `AgentActionEvent` rows under an `EdgeSession` /
+    `AgentExecution` parent.
+  - Approvals: `POST /api/v1/edge/approvals/{ref}/approve` resolves a
+    REQUIRE_APPROVAL; the next evaluate with the same action_hash is
+    auto-consumed via the approval CAS path so Claude Code's natural
+    "retry the same tool call" UX completes the loop without the agent
+    needing to carry an approval_ref.
+  - Evidence export: `POST /api/v1/edge/sessions/{id}/export` returns the
+    full session bundle (events + approvals + artifacts), redaction
+    enforced server-side.
+  - Dashboard surfaces under `/edge/sessions` (list) and the per-session
+    timeline + approvals drawer.
+  - Wrapper-vs-enterprise: `cordumctl edge claude` is the developer/demo
+    launcher; enterprise enforcement requires Claude Code managed settings
+    plus endpoint controls — see `docs/edge/managed-settings-template.md`.
+    Reference: `docs/edge/README.md`.
+
 ## Job lifecycle (single job)
 
 1) Client or gateway writes input JSON to Redis at `ctx:<job_id>`.

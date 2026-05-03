@@ -117,3 +117,10 @@ Operators should stay in `warn` for at least one release, review the `heartbeat_
 - Internal heartbeat-demotion call-site audit used to plan the rewire (Cordum engineering).
 - `core/controlplane/scheduler/trust_state.go` — trust resolver source.
 - `core/controlplane/scheduler/metrics.go` — gauge registration.
+
+## See also
+
+- [Cordum Edge runbook](../edge/runbook.md) — operator runbook for the
+  Edge surface (sessions, agentd, approvals, artifact pointers, evidence
+  export). Edge is parallel to the worker/job pipeline this runbook
+  documents; failure modes and triage steps are distinct.

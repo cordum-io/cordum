@@ -238,3 +238,13 @@ The DLQ list can be paginated via:
 ## Kubernetes
 
 `deploy/k8s/base.yaml` and `deploy/k8s/ingress.yaml` include the dashboard deployment and routing. The ingress maps `/` to the dashboard service and `/api/v1` to the gateway.
+
+## Edge Sessions
+
+The dashboard surfaces Cordum Edge sessions (per-Claude-Code-session
+governance evidence) at `/edge/sessions` (list view) and
+`/edge/sessions/:id` (timeline + event inspector + approvals drawer +
+artifacts panel). The list page calls `GET /api/v1/edge/sessions`; the
+detail page subscribes to `/api/v1/stream` for live `edge.event` updates.
+See [Cordum Edge reference](../edge/README.md) and
+[Edge API](../edge/api.md).

@@ -7,6 +7,87 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Cordum Edge P0 (2026-04-30)
+
+EDGE epic shipped 32 P0 tasks for the Compliance Firewall surface — local
+hook + agentd + Gateway Edge APIs + Safety Kernel evaluate + approvals +
+artifact pointers + dashboard Edge Sessions. P0 final acceptance signed off
+under EDGE-032 on 2026-04-30; product, API, CLI, and demo docs are at
+[docs/edge/README.md](docs/edge/README.md) with the new-engineer
+30-minute walkthrough at [docs/quickstart-edge.md](docs/quickstart-edge.md).
+
+- EDGE-001: P0 architecture decisions and acceptance gate lock
+- EDGE-002: Edge data model contracts and JSON schemas
+- EDGE-003: Redis Edge store for sessions, executions, events, and indexes
+- EDGE-004: Edge redaction and stable input hashing helpers
+- EDGE-005: Gateway Edge session and execution APIs
+- EDGE-006: Gateway Edge event write, batch, and read APIs
+- EDGE-007: edge.event WebSocket stream envelope
+- EDGE-008: Deterministic edge action classifier and policy input mapper
+- EDGE-008.5: Post-review hardening from PR #243 senior review
+- EDGE-008.6: Classifier shell allowlist inversion and adversarial safety tests
+- EDGE-008.7: Edge API error shape, event idempotency, and OpenAPI contract
+- EDGE-008.7.1: atomic event append + idempotency completion
+- EDGE-008.7.2: action_hash determinism — sort RiskTags + add InputHash to approval CAS match
+- EDGE-008.8: ADR-010 agentd transport reconciliation
+- EDGE-009: Gateway edge evaluate API with Safety Kernel integration
+- EDGE-010: Edge policy templates and simulation fixtures
+- EDGE-011: Edge approval lifecycle store and Gateway APIs
+- EDGE-012: Approval retry and optional inline wait contract
+- EDGE-012.1: bind /api/v1/edge/approvals/{ref}/wait to original requester principal
+- EDGE-012.2: bind /api/v1/edge/approvals list results to requester principal
+- EDGE-013: Edge artifact pointers and evidence export bundle
+- EDGE-014: Edge audit events, metrics, and structured logging
+- EDGE-015: cordum-hook binary core contract
+- EDGE-015.1: cordum-hook DefaultHookTimeout (10s) exceeds Claude's documented 5s deadline
+- EDGE-016: Claude Code hook input/output mapper
+- EDGE-017: cordum-agentd session manager, heartbeat, and local socket
+- EDGE-017.1: cordum-agentd nonce externalization for trusted launchers
+- EDGE-017.2: heartbeat OnStatus persists detached from shutdown — final state can be overwritten
+- EDGE-017.3: hook receipt event split from decision event on shutdown — half-written audit record
+- EDGE-017.4: agentd loopback nonce written to settings.json plaintext — same-user impersonation
+- EDGE-017.4.1: Remove deprecated agentd ?nonce= query-param accept after one release
+- EDGE-017.5: agentd state-store Windows ACL hardening
+- EDGE-018: agentd evaluate client, caching, approvals, and fail modes
+- EDGE-018.1: agentd evaluator request coalescing for concurrent identical hooks
+- EDGE-019: cordumctl edge claude launch wrapper
+- EDGE-020: Claude settings and enterprise managed-settings generators
+- EDGE-021: cordumctl edge doctor and local diagnostics
+- EDGE-022: Dashboard Edge API types, hooks, and stream invalidation
+- EDGE-023: Dashboard Edge Sessions list page
+- EDGE-024: Dashboard Edge Session detail timeline and event inspector
+- EDGE-025: Dashboard Edge approvals drawer and artifacts panel
+- EDGE-026: Dashboard Agent Executions panels on Job and Workflow Run detail
+- EDGE-027: Local fake-hook E2E for P0 acceptance
+- EDGE-028: Backend integration tests and regression suite
+- EDGE-029: Edge docs — product, API, config, CLI, and demo
+- EDGE-030: Demo polish and operator runbook
+- EDGE-031: Security review and threat-model closure for P0
+- EDGE-032: P0 final acceptance, demo signoff, and release readiness
+
+#### Cordum Edge P0 cleanup (2026-05-03)
+
+Post-acceptance cleanup batch on top of P0 ship — Docker stack reproducibility,
+PRD/roadmap freshness, docs visibility split (public + private subtrees),
+PR #243 reviewer follow-ups, fanout bounds, typed-error refactor, hook output
+parser alignment, dashboard inspector visibility, gateway approval auto-consume,
+and a Windows-specific settings rendering bug.
+
+- EDGE-029.1: PRD.md and PRD_ROADMAP.md freshness sweep for post-2026-04-30 P0 progress
+- EDGE-033: Full Docker stack build + end-to-end validation + user-facing run instructions
+- EDGE-034: Fix all PR #243 workflow failures (feature/cordum-edge-p0)
+- EDGE-035: Address all open reviewer comments on PR #243
+- EDGE-036: Split cordum/docs into public + private subtrees with explicit visibility policy
+- EDGE-037: Bound Edge execution fanout and large-session deletion cleanup
+- EDGE-038: Replace Edge gateway string-matched validation errors with typed errors
+- EDGE-039: cordum-hook output parser alignment + EDGE-033 fake-hook E2E continuation to 5/5 PASS
+- EDGE-040: Edge session shows 0 events in dashboard timeline despite running status — investigate hook→agentd→Gateway event write-back gap
+- EDGE-041: user_prompt_submit + PreToolUse content invisible in dashboard inspector — align hook mapper output with dashboard `_redacted` suffix convention
+- EDGE-042: Gateway evaluate does not match freshly-approved approval to new evaluate request — consume retry returns DENY+approval_ref instead of ALLOW
+- EDGE-043: EDGE-042 design gaps — rejected/expired approvals silently re-enqueue, 4-page scan limit, no auto-consume unit test
+- EDGE-044: EDGE-041 _redacted suffix rename broke Safety Kernel policy matching — every PreToolUse defaults to DENY post-rename
+- EDGE-045: cordumctl edge claude renders hook command path with stripped backslashes on Windows — settings.json gets `.bincordum-hook` instead of `./bin/cordum-hook.exe`
+- BUG-001: TestCollectCopilotSessionDecisionsPaginatesPastUnrelatedTenantDecisions returns len(decisions)=0 want 1 — pre-existing fail in core/controlplane/gateway from PR #233
 
 #### Docs visibility split (EDGE-036)
 - Split `cordum/docs/` into PUBLIC (root) + PRIVATE (`docs/internal/`)

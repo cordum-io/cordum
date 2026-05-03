@@ -192,3 +192,11 @@ Operationally:
 
 If operators need longer windows, prefer paging by time or rule/topic
 rather than forcing a single unbounded request.
+
+## See also
+
+- [Cordum Edge](../edge/README.md) — local AI-agent action governance
+  surface (Compliance Firewall for Claude Code today). Edge decisions
+  emit `hook.policy_decision` events under per-session `EdgeSession` /
+  `AgentExecution` parents; the Edge audit/export bundle complements
+  the platform-wide governance decision log this doc describes.
