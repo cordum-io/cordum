@@ -493,8 +493,30 @@ export function createDefaultGlobalPolicyDocument(): GlobalPolicyDocument {
     rules: [],
     outputPolicy: { ...DEFAULT_OUTPUT_POLICY },
     outputRules: [],
+    edgeActionRules: [],
+    mcpToolRules: [],
+    invariants: [],
     sourceRoot: {},
   };
+}
+
+// Helper: parse an array-typed top-level YAML field with an issue
+// message that names which section was malformed. Returns a tuple of
+// the parsed rule list and whether the field was present-but-malformed.
+function parseOptionalRuleArray(
+  raw: unknown,
+  fieldName: string,
+  issues: GlobalPolicyParseIssue[],
+): GlobalPolicyInputRule[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) {
+    pushIssue(issues, {
+      path: fieldName,
+      message: `Expected ${fieldName} to be an array. Ignoring invalid value.`,
+    });
+    return [];
+  }
+  return raw.map(parseInputRule);
 }
 
 export function parseGlobalPolicyYaml(yaml: string): ParseGlobalPolicyResult {
@@ -557,12 +579,22 @@ export function parseGlobalPolicyYaml(yaml: string): ParseGlobalPolicyResult {
   }
   const outputRules = outputRulesRaw.map(parseOutputRule);
 
+  // EDGE-052 — three new top-level sections. Each is OPTIONAL with an
+  // empty-array default so legacy two-section YAML continues to parse
+  // without errors (backward-compat per dashboard/CLAUDE.md rail).
+  const edgeActionRules = parseOptionalRuleArray(root.edge_action_rules, "edge_action_rules", issues);
+  const mcpToolRules = parseOptionalRuleArray(root.mcp_tool_rules, "mcp_tool_rules", issues);
+  const invariants = parseOptionalRuleArray(root.invariants, "invariants", issues);
+
   return {
     policy: {
       defaultDecision,
       rules,
       outputPolicy,
       outputRules,
+      edgeActionRules,
+      mcpToolRules,
+      invariants,
       sourceRoot: root,
     },
     issues,
@@ -576,6 +608,29 @@ export function serializeGlobalPolicyYaml(policy: GlobalPolicyDocument): string 
   root.rules = policy.rules.map(serializeInputRule);
   root.output_policy = serializeOutputPolicy(policy.outputPolicy, root.output_policy);
   root.output_rules = policy.outputRules.map(serializeOutputRule);
+
+  // EDGE-052 — emit new sections only when non-empty. Backward-compat:
+  // a legacy 2-section document round-trips without sprouting empty
+  // edge_action_rules / mcp_tool_rules / invariants keys it never had.
+  const edgeActionRules = policy.edgeActionRules ?? [];
+  if (edgeActionRules.length > 0) {
+    root.edge_action_rules = edgeActionRules.map(serializeInputRule);
+  } else {
+    delete root.edge_action_rules;
+  }
+  const mcpToolRules = policy.mcpToolRules ?? [];
+  if (mcpToolRules.length > 0) {
+    root.mcp_tool_rules = mcpToolRules.map(serializeInputRule);
+  } else {
+    delete root.mcp_tool_rules;
+  }
+  const invariants = policy.invariants ?? [];
+  if (invariants.length > 0) {
+    root.invariants = invariants.map(serializeInputRule);
+  } else {
+    delete root.invariants;
+  }
+
   return stringifyPolicyYaml(root);
 }
 

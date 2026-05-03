@@ -167,6 +167,24 @@ export interface GlobalPolicyDocument {
   rules: GlobalPolicyInputRule[];
   outputPolicy: GlobalPolicyOutputPolicy;
   outputRules: GlobalPolicyOutputRule[];
+  /**
+   * EDGE-052 — Edge action rules (topic=job.edge.action). Optional with
+   * empty-array default; legacy 2-section YAML omits this key and must
+   * round-trip without errors.
+   */
+  edgeActionRules?: GlobalPolicyInputRule[];
+  /**
+   * EDGE-052 — MCP tool gate rules. Optional with empty-array default.
+   * Match.MCP fields apply (allow/deny servers/tools/resources/actions).
+   */
+  mcpToolRules?: GlobalPolicyInputRule[];
+  /**
+   * EDGE-052 — Invariants (security floor). Authored by SecOps and
+   * enforced uniformly across input/edge/mcp/output evaluators with
+   * DENY-uncrossable precedence (see core/controlplane/safetykernel
+   * applyKernelInvariants + policybundles ApplyInvariants).
+   */
+  invariants?: GlobalPolicyInputRule[];
   sourceRoot: Record<string, unknown>;
 }
 
