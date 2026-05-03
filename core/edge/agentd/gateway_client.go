@@ -23,11 +23,12 @@ import (
 )
 
 type GatewayClient struct {
-	baseURL string
-	apiKey  string
-	tenant  string
-	timeout time.Duration
-	client  httpDoer
+	baseURL     string
+	apiKey      string
+	tenant      string
+	principalID string
+	timeout     time.Duration
+	client      httpDoer
 }
 
 var secretLikePattern = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+|sk-[A-Za-z0-9._~+/=-]+`)
@@ -63,11 +64,12 @@ func NewGatewayClient(cfg GatewayClientConfig) (*GatewayClient, error) {
 		client = httpClient
 	}
 	return &GatewayClient{
-		baseURL: base,
-		apiKey:  strings.TrimSpace(cfg.APIKey),
-		tenant:  strings.TrimSpace(cfg.TenantID),
-		timeout: timeout,
-		client:  client,
+		baseURL:     base,
+		apiKey:      strings.TrimSpace(cfg.APIKey),
+		tenant:      strings.TrimSpace(cfg.TenantID),
+		principalID: strings.TrimSpace(cfg.PrincipalID),
+		timeout:     timeout,
+		client:      client,
 	}, nil
 }
 
@@ -190,6 +192,9 @@ func (c *GatewayClient) doJSONWithHeaders(ctx context.Context, method, path stri
 	}
 	if c.tenant != "" {
 		httpReq.Header.Set("X-Tenant-ID", c.tenant)
+	}
+	if c.principalID != "" {
+		httpReq.Header.Set("X-Principal-Id", c.principalID)
 	}
 	for key, value := range headers {
 		if key = strings.TrimSpace(key); key != "" {

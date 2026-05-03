@@ -312,9 +312,16 @@ init_curl_opts() {
   if curl --version 2>/dev/null | grep -qi schannel; then
     CURL_OPTS+=(--ssl-no-revoke)
   fi
+  # X-Principal-Id is the dev-mode principal binding that
+  # core/controlplane/gateway/auth/basic.go reads when API-key auth alone
+  # would leave the principal blank. EDGE-008.7 hardening on
+  # resolveEdgeAuthPrincipal refuses to read principal_id from JSON body,
+  # so this header is required for every Edge call (sessions, executions,
+  # events, evaluate, approvals).
   AUTH_HEADERS=(
     -H "X-API-Key: ${CORDUM_API_KEY}"
     -H "X-Tenant-ID: ${CORDUM_TENANT_ID}"
+    -H "X-Principal-Id: ${EDGE_PRINCIPAL_ID:-${CORDUM_EDGE_PRINCIPAL_ID:-demo-principal}}"
   )
 }
 
@@ -838,7 +845,12 @@ probe_api_base_reachable() {
 API_BASE=""
 EDGE_SESSION_ID=""
 EDGE_EXECUTION_ID=""
-EDGE_PRINCIPAL_ID=""
+# Set EDGE_PRINCIPAL_ID at script init (uses $$ once) so init_curl_opts can
+# bake the X-Principal-Id header before any Edge call fires. The basic auth
+# provider reads X-Principal-Id when API-key auth alone leaves the principal
+# blank (core/controlplane/gateway/auth/basic.go:HeaderValue) — required by
+# EDGE-008.7 hardening on resolveEdgeAuthPrincipal which refuses body fields.
+EDGE_PRINCIPAL_ID="edge-fake-hook-e2e-$$"
 
 # ---------------------------------------------------------------------------
 # Gate routing — default is hook mode (EDGE-027 acceptance path); bypass
@@ -880,7 +892,6 @@ EDGE_PRINCIPAL_ID=""
 gate_session_setup() {
   local gate=edge_session_setup
 
-  EDGE_PRINCIPAL_ID="edge-fake-hook-e2e-$$"
   local body
   body=$(cat <<JSON
 {

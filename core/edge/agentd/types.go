@@ -38,11 +38,19 @@ type realClock struct{}
 func (realClock) Now() time.Time { return time.Now().UTC() }
 
 type GatewayClientConfig struct {
-	BaseURL    string
-	APIKey     string
-	TenantID   string
-	Timeout    time.Duration
-	HTTPClient httpDoer
+	BaseURL  string
+	APIKey   string
+	TenantID string
+	// PrincipalID is the principal identifier this agentd instance binds
+	// outbound Gateway requests to. The Gateway's basic auth provider reads
+	// X-Principal-Id when API-key auth alone leaves the principal blank
+	// (core/controlplane/gateway/auth/basic.go HeaderValue), and EDGE-008.7
+	// hardening on resolveEdgeAuthPrincipal refuses to read principal_id
+	// from the JSON body. Empty means agentd will not send the header,
+	// matching pre-EDGE-039 behavior.
+	PrincipalID string
+	Timeout     time.Duration
+	HTTPClient  httpDoer
 	// TLSCAFile, when non-empty, points to a PEM-encoded CA bundle that
 	// will be used to validate the Gateway's TLS certificate. Required on
 	// Windows when the Gateway uses a locally-issued CA: Go's HTTP client
