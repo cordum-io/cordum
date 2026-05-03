@@ -9,7 +9,9 @@ when it protects them, their team, and production: when an action needs a
 policy decision, an approval, a retry after approval, or an audit trail.
 
 This page is the Edge P0 index and product overview. For the root product page,
-see [docs/edge.md](../edge.md).
+see [docs/edge.md](../edge.md). For the **30-minute new-engineer quickstart**
+that walks from clean clone to a live governed Claude session, jump to
+[docs/quickstart-edge.md](../quickstart-edge.md).
 
 ## What Edge governs
 

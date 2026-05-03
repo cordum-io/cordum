@@ -390,6 +390,8 @@ cordum/
 | [MCP Server](docs/mcp-server.md) | MCP stdio + HTTP/SSE integration |
 | [Pack Format](docs/pack.md) | How to package agent capabilities |
 | [Local E2E](docs/LOCAL_E2E.md) | Full local walkthrough |
+| [Edge Quickstart](docs/quickstart-edge.md) | New-engineer 30-min path: clone → live stack → governed Claude session |
+| [Edge Reference](docs/edge/README.md) | Cordum Edge product, API, CLI, demo, runbook |
 | [Production Guide](docs/production.md) | TLS, HA, backups, incident runbooks |
 
 ## Protocol: CAP — The Open Standard for Agent Governance

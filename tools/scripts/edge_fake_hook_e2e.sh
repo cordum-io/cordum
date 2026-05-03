@@ -325,11 +325,18 @@ init_curl_opts() {
 #   failure), and CURL_LAST_BODY_FILE is set to the path of the response
 #   body file. Caller must read/clean it; cleanup is also caught by trap.
 CURL_LAST_BODY_FILE=""
+# Sentinel file for cross-subshell body-file path passing.
+# `code=$(curl_request ...)` runs the function in a subshell, so any
+# CURL_LAST_BODY_FILE assignment inside is lost when the subshell exits.
+# We persist the path to disk so extract_json/assert_json in the parent
+# shell can recover it.
+CURL_LAST_BODY_SENTINEL="${CURL_LAST_BODY_SENTINEL:-${TMP_ROOT:-/tmp}/.edge_e2e_last_body}"
 curl_request() {
   local method=$1 url=$2 body=${3:-}
   local body_file
   body_file=$(mktemp -p "${TMP_ROOT:-/tmp}" curl_body.XXXXXX)
   CURL_LAST_BODY_FILE="${body_file}"
+  printf '%s' "${body_file}" > "${CURL_LAST_BODY_SENTINEL}"
   local code
   if [[ -n "${body}" ]]; then
     code=$(curl "${CURL_OPTS[@]}" "${AUTH_HEADERS[@]}" \
@@ -366,6 +373,9 @@ assert_http_status() {
 assert_json() {
   local gate=$1 expr=$2 desc=$3
   local body_file=${4:-${CURL_LAST_BODY_FILE}}
+  if [[ -z "${body_file}" && -n "${CURL_LAST_BODY_SENTINEL:-}" && -f "${CURL_LAST_BODY_SENTINEL}" ]]; then
+    body_file=$(cat "${CURL_LAST_BODY_SENTINEL}" 2>/dev/null)
+  fi
   if [[ -z "${body_file}" || ! -f "${body_file}" ]]; then
     fail "${gate}" "no JSON body to assert (${desc})"
   fi
@@ -380,6 +390,12 @@ assert_json() {
 extract_json() {
   local expr=$1
   local body_file=${2:-${CURL_LAST_BODY_FILE}}
+  # Fallback to sentinel: when curl_request was called via `code=$(...)`,
+  # the parent shell's CURL_LAST_BODY_FILE is stale. The sentinel file
+  # holds the most recent body path written by curl_request itself.
+  if [[ -z "${body_file}" && -n "${CURL_LAST_BODY_SENTINEL:-}" && -f "${CURL_LAST_BODY_SENTINEL}" ]]; then
+    body_file=$(cat "${CURL_LAST_BODY_SENTINEL}" 2>/dev/null)
+  fi
   if [[ -z "${body_file}" || ! -f "${body_file}" ]]; then
     printf ''
     return 0
@@ -604,12 +620,28 @@ start_agentd() {
   local agentd_socket="http://127.0.0.1:${AGENTD_PORT}/v1/edge/hooks/claude"
   local agentd_stderr="${TMP_ROOT}/agentd.stderr"
   log "starting cordum-agentd on 127.0.0.1:${AGENTD_PORT} (state-dir=${AGENTD_STATE_DIR})"
+  # Go's HTTP client uses the system trust store. When the Gateway uses a
+  # locally-issued CA (./certs/ca/ca.crt or $CORDUM_TLS_CA), inject
+  # SSL_CERT_FILE so the agentd subprocess can validate the TLS chain.
+  local agentd_ssl_cert_file=""
+  if [[ -n "${CORDUM_TLS_CA}" ]]; then
+    agentd_ssl_cert_file="${CORDUM_TLS_CA}"
+  elif [[ -f "./certs/ca/ca.crt" ]]; then
+    agentd_ssl_cert_file="$(pwd)/certs/ca/ca.crt"
+  fi
+  # GODEBUG x509usefallbackroots=1 forces Go's TLS layer to honor
+  # SSL_CERT_FILE / SSL_CERT_DIR on Windows where it would otherwise use
+  # the platform certificate store. Required when the local Gateway uses
+  # a self-issued CA not present in the Windows root store.
   CORDUM_AGENTD_NONCE="${AGENTD_NONCE}" \
     CORDUM_GATEWAY="${API_BASE}" \
     CORDUM_API_KEY="${CORDUM_API_KEY}" \
     CORDUM_TENANT_ID="${CORDUM_TENANT_ID}" \
     CORDUM_AGENTD_SOCKET="${agentd_socket}" \
     CORDUM_AGENTD_STATE_DIR="${AGENTD_STATE_DIR}" \
+    SSL_CERT_FILE="${agentd_ssl_cert_file}" \
+    SSL_CERT_DIR="$(dirname "${agentd_ssl_cert_file}")" \
+    GODEBUG="x509usefallbackroots=1" \
     "${AGENTD_BIN}" >/dev/null 2>"${agentd_stderr}" &
   AGENTD_PID=$!
   log "agentd PID=${AGENTD_PID}"
@@ -776,6 +808,13 @@ probe_api_base_reachable() {
   if [[ -n "${CORDUM_TLS_CA}" ]] || [[ -f "./certs/ca/ca.crt" ]]; then
     local ca=${CORDUM_TLS_CA:-./certs/ca/ca.crt}
     curl_opts+=(--cacert "${ca}")
+  fi
+  # Match init_curl_opts behavior: Windows schannel curl can fail TLS
+  # revocation checks against locally-issued CAs even though the cert is
+  # otherwise valid. Mirror the --ssl-no-revoke flag here so the probe
+  # doesn't return SKIP/FAIL on a working stack.
+  if curl --version 2>/dev/null | grep -qi schannel; then
+    curl_opts+=(--ssl-no-revoke)
   fi
   local code
   if ! code=$(curl "${curl_opts[@]}" "${api_base}/api/v1/health" 2>/dev/null); then
