@@ -171,7 +171,8 @@ func (s *LocalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 		writeLocalError(w, http.StatusServiceUnavailable, "agentd event evidence unavailable")
 		return
 	}
-	if err := s.flushHookEventBatch(r.Context(), buffer.Events(), s.hookBatchIdempotencyKey(req)); err != nil {
+	bufferedEvents := buffer.Events()
+	if err := s.flushHookEventBatch(r.Context(), bufferedEvents, s.hookBatchIdempotencyKey(req, bufferedEvents)); err != nil {
 		writeLocalError(w, http.StatusServiceUnavailable, "agentd event writer unavailable")
 		return
 	}
@@ -321,7 +322,7 @@ func (s *LocalServer) flushHookEventBatch(ctx context.Context, events []edgecore
 	return nil
 }
 
-func (s *LocalServer) hookBatchIdempotencyKey(req claude.AgentdRequest) string {
+func (s *LocalServer) hookBatchIdempotencyKey(req claude.AgentdRequest, events []edgecore.AgentActionEvent) string {
 	h := sha256.New()
 	writeHashPart := func(value string) {
 		_, _ = h.Write([]byte(boundMetadataString(value)))
@@ -338,6 +339,24 @@ func (s *LocalServer) hookBatchIdempotencyKey(req claude.AgentdRequest) string {
 		if encoded, err := json.Marshal(redacted); err == nil {
 			_, _ = h.Write(encoded)
 		}
+	}
+	// Approval-flow stateful retries (initial REQUIRE_APPROVAL → consume
+	// allow → terminal already-consumed deny) all share the same request
+	// shape (session/execution/event_name/tool_use_id/action_hash/input_hash)
+	// but produce different decision-evidence events. Without including the
+	// per-event identifiers, the second call would replay the first key,
+	// the Gateway would see the same idempotency key with a different
+	// RequestHash, and AppendEventsWithIdempotency would 409 with
+	// edgeErrCodeIdempotencyConflict (store_redis.go:957). Hashing the
+	// per-event identifiers + decisions makes each call's flush land on a
+	// unique key while keeping retries of the SAME call (same events with
+	// same EventIDs) idempotent for network-drop replay.
+	for _, event := range events {
+		writeHashPart(event.EventID)
+		writeHashPart(string(event.Kind))
+		writeHashPart(string(event.Decision))
+		writeHashPart(event.RuleID)
+		writeHashPart(event.ApprovalRef)
 	}
 	sum := h.Sum(nil)
 	return "agentd-hook-" + hex.EncodeToString(sum[:16])

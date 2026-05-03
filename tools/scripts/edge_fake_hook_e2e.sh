@@ -782,13 +782,20 @@ setup_fixture_paths() {
     fail edge_fake_hook_e2e 'setup_fixture_paths called before init_tempdir'
   fi
   FIXTURE_DIR="${TMP_ROOT}/fixture"
-  mkdir -p "${FIXTURE_DIR}"
+  mkdir -p "${FIXTURE_DIR}/src"
   # Path containment match -> classifier path.class=secret + risk_tags=secrets
   # -> deny-secret-reads rule. Path string only; file never created/read.
   FIXTURE_DENY_PATH="${FIXTURE_DIR}/.env"
-  # Any path is sufficient for the require-approval-for-edits rule (matches
-  # by capability=file.write + risk_tags=write, not path). Path string only.
-  FIXTURE_APPROVE_PATH="${FIXTURE_DIR}/protected.txt"
+  # Path containment match (/src/ + .go suffix) -> classifier
+  # path.class=source_code + risk_tags=source_code. The cordum-edge-pack
+  # ships demo+production policy fragments with overlapping rule IDs;
+  # production rules sort later alphabetically and replace demo's during
+  # mergePolicies (kernel.go:1608). Production's
+  # `claude-code.require-approval-for-edits` requires path.class=source_code,
+  # so the fixture is a fake .go path under /src/ to satisfy the narrower
+  # production matcher. File is never created/read; the path string alone
+  # drives the classifier.
+  FIXTURE_APPROVE_PATH="${FIXTURE_DIR}/src/protected.go"
   log "fixture deny path (synthetic, never read): ${FIXTURE_DENY_PATH}"
   log "fixture approve path (synthetic, never read): ${FIXTURE_APPROVE_PATH}"
 }
@@ -1191,12 +1198,24 @@ JSON
   assert_json "${gate}" '.session_id == "'"${EDGE_SESSION_ID}"'"' 'approval bound to wrong session'
 
   # 3. Resolve as approved (Gateway-direct in both modes — approver is
-  # human-side and never flows through cordum-hook).
+  # human-side and never flows through cordum-hook). The approver principal
+  # MUST differ from the requester principal: edgeApprovalRequesterMatchesResolver
+  # (handlers_edge_approvals.go:335) returns 403 self_approval_denied when
+  # the resolver identity matches approval.Requester or approval.PrincipalID.
+  # Use a separate synthetic approver so the test exercises the
+  # require-approval path end-to-end without needing a second API key.
   local approve_body='{"reason":"edge_fake_hook_e2e synthetic approval"}'
+  local saved_headers=("${AUTH_HEADERS[@]}")
+  AUTH_HEADERS=(
+    -H "X-API-Key: ${CORDUM_API_KEY}"
+    -H "X-Tenant-ID: ${CORDUM_TENANT_ID}"
+    -H "X-Principal-Id: edge-fake-hook-e2e-approver-$$"
+  )
   code=$(curl_request POST "${API_BASE}/api/v1/edge/approvals/${approval_ref}/approve" "${approve_body}")
+  AUTH_HEADERS=("${saved_headers[@]}")
   log_http "${gate}" POST "/api/v1/edge/approvals/${approval_ref}/approve" "${code}"
   if [[ "${code}" == "403" ]]; then
-    fail "${gate}" 'approve returned 403 (likely self_approval_denied — set CORDUM_API_KEY to a different principal than the requester)'
+    fail "${gate}" 'approve returned 403 (likely self_approval_denied — script approver principal collided with requester)'
   fi
   assert_http_status "${gate}" "${code}" "200" "POST approval approve"
   assert_json "${gate}" '.status == "approved"' 'post-approve status != approved'
