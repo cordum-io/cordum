@@ -6,6 +6,8 @@ settings:
 
 overrides:
   dompurify: ^3.4.0
+  lodash: ^4.18.0
+  postcss: ^8.5.10
 
 importers:
 
@@ -1691,7 +1693,7 @@ packages:
     engines: {node: ^10 || ^12 || >=14}
     hasBin: true
     peerDependencies:
-      postcss: ^8.1.0
+      postcss: ^8.5.10
 
   available-typed-arrays@1.0.7:
     resolution: {integrity: sha512-wvUjBtSGN7+7SjNpq/9M2Tg350UZD3q62IFZLbRAR1bSMlCo1ZaeW+BJ+D090e4hIIZLBcTDWe4Mh4jvUDajzQ==}
