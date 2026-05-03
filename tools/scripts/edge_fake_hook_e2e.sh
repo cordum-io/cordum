@@ -639,9 +639,9 @@ start_agentd() {
     CORDUM_TENANT_ID="${CORDUM_TENANT_ID}" \
     CORDUM_AGENTD_SOCKET="${agentd_socket}" \
     CORDUM_AGENTD_STATE_DIR="${AGENTD_STATE_DIR}" \
+    CORDUM_TLS_CA="${agentd_ssl_cert_file}" \
     SSL_CERT_FILE="${agentd_ssl_cert_file}" \
     SSL_CERT_DIR="$(dirname "${agentd_ssl_cert_file}")" \
-    GODEBUG="x509usefallbackroots=1" \
     "${AGENTD_BIN}" >/dev/null 2>"${agentd_stderr}" &
   AGENTD_PID=$!
   log "agentd PID=${AGENTD_PID}"

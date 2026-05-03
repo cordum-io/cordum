@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -43,7 +46,21 @@ func NewGatewayClient(cfg GatewayClientConfig) (*GatewayClient, error) {
 	}
 	client := cfg.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: timeout}
+		httpClient := &http.Client{Timeout: timeout}
+		if caFile := strings.TrimSpace(cfg.TLSCAFile); caFile != "" {
+			pem, err := os.ReadFile(caFile)
+			if err != nil {
+				return nil, fmt.Errorf("read TLS CA file %q: %w", caFile, err)
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(pem) {
+				return nil, fmt.Errorf("TLS CA file %q contains no valid PEM certificates", caFile)
+			}
+			httpClient.Transport = &http.Transport{
+				TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
+			}
+		}
+		client = httpClient
 	}
 	return &GatewayClient{
 		baseURL: base,

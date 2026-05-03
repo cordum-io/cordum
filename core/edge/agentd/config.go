@@ -32,6 +32,11 @@ type Config struct {
 	InlineApprovalWaitEnabled bool
 	InlineApprovalWaitTimeout time.Duration
 	StateDir                  string
+	// TLSCAFile, when non-empty, is forwarded to the Gateway HTTP client so
+	// agentd can validate Gateway TLS against a locally-issued CA. Required
+	// on Windows when Go's default trust store doesn't include the local CA.
+	// Read from CORDUM_TLS_CA env var.
+	TLSCAFile string
 }
 
 func LoadConfig(env map[string]string) (Config, error) {
@@ -56,6 +61,7 @@ func LoadConfig(env map[string]string) (Config, error) {
 		InlineApprovalWaitEnabled: false,
 		InlineApprovalWaitTimeout: defaultInlineApprovalWaitTimeout,
 		StateDir:                  defaultStateDir(),
+		TLSCAFile:                 strings.TrimSpace(envString(env, "CORDUM_TLS_CA")),
 	}
 	if raw := strings.TrimSpace(envString(env, "CORDUM_EDGE_POLICY_MODE")); raw != "" {
 		cfg.PolicyMode = edgecore.PolicyMode(raw)

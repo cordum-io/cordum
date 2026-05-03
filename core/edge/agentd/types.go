@@ -43,6 +43,14 @@ type GatewayClientConfig struct {
 	TenantID   string
 	Timeout    time.Duration
 	HTTPClient httpDoer
+	// TLSCAFile, when non-empty, points to a PEM-encoded CA bundle that
+	// will be used to validate the Gateway's TLS certificate. Required on
+	// Windows when the Gateway uses a locally-issued CA: Go's HTTP client
+	// uses the Windows certificate store and ignores SSL_CERT_FILE.
+	// On Linux/macOS SSL_CERT_FILE works as a fallback but TLSCAFile is
+	// the explicit, cross-platform way to wire it in. Has no effect when
+	// HTTPClient is supplied (caller controls TLS in that case).
+	TLSCAFile string
 }
 
 type httpDoer interface {

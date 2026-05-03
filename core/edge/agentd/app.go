@@ -51,10 +51,11 @@ func Run(ctx context.Context, opts RunOptions) error {
 	gateway := opts.Gateway
 	if gateway == nil {
 		client, err := NewGatewayClient(GatewayClientConfig{
-			BaseURL:  cfg.GatewayURL,
-			APIKey:   cfg.APIKey,
-			TenantID: cfg.TenantID,
-			Timeout:  cfg.GatewayTimeout,
+			BaseURL:   cfg.GatewayURL,
+			APIKey:    cfg.APIKey,
+			TenantID:  cfg.TenantID,
+			Timeout:   cfg.GatewayTimeout,
+			TLSCAFile: cfg.TLSCAFile,
 		})
 		if err != nil {
 			return err
