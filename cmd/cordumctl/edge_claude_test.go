@@ -13,6 +13,10 @@ import (
 )
 
 func TestEdgeClaudeDryRunSettingsOutputRedactsSecrets(t *testing.T) {
+	// Isolate config-file lookup from any local ~/.cordum/config.yaml or
+	// ./cordum.yaml so the test reflects only the env vars set below.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
 	t.Setenv("CORDUM_GATEWAY", "http://gateway.local")
 	t.Setenv("CORDUM_API_KEY", "super-secret-token")
 	t.Setenv("CORDUM_TENANT_ID", "tenant-cli")

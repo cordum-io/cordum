@@ -426,6 +426,7 @@ Usage:
   cordumctl doctor [--json] [--verbose] [--strict] [--timeout SEC] [--skip-workers] [--fix]
   cordumctl delegation <subcommand> [...]
   cordumctl governance <subcommand> [...]
+  cordumctl edge init [--cwd path] [--force] [--gateway URL] [--tenant id] [--principal id] [--api-key-env NAME] [--no-wrapper] [--non-interactive]
   cordumctl edge claude [--policy-mode enforce] [--dry-run|--no-launch] [--settings-output path|-] [--claude-path path] [-- --claude-args]
   cordumctl edge doctor [--json] [--policy-mode enforce] [--settings-path path] [--claude-path path]
 

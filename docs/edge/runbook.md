@@ -44,6 +44,11 @@ in the internal Edge P0 threat model is the production sign-off reference
    echo "$CORDUM_GATEWAY"
    echo "$CORDUM_TENANT_ID"
    echo "$CORDUM_PRINCIPAL_ID"
+
+   # Or — dump the resolved config (api_key redacted) with per-field
+   # source attribution so you can see flag/env/yaml/default precedence
+   # at a glance before launching anything:
+   cordumctl edge claude --print-config
    ```
 
    Do not echo `CORDUM_API_KEY` or any nonce value.

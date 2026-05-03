@@ -5,7 +5,7 @@ PROTO_FILES = api.proto context.proto output_policy.proto
 OPENAPI_OUT = docs/api/openapi
 
 BIN_DIR ?= bin
-SERVICES = cordum-api-gateway cordum-scheduler cordum-safety-kernel cordum-workflow-engine cordum-context-engine cordum-mcp cordumctl cordum-hook cordum-agentd
+SERVICES = cordum-api-gateway cordum-scheduler cordum-safety-kernel cordum-workflow-engine cordum-context-engine cordum-mcp cordumctl cordum-hook cordum-agentd cordum-claude
 
 VERSION ?= dev
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -102,6 +102,7 @@ edge-rebuild-e2e:
 	go build -o ./bin/cordum-hook ./cmd/cordum-hook
 	go build -o ./bin/cordum-agentd ./cmd/cordum-agentd
 	go build -o ./bin/cordumctl ./cmd/cordumctl
+	go build -o ./bin/cordum-claude ./cmd/cordum-claude
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml build api-gateway
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --no-deps api-gateway
 

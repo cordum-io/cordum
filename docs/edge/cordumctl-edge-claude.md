@@ -7,7 +7,47 @@ and then launches the `claude` binary with those settings. It is the developer
 boundary. Fleet enforcement still requires managed Claude settings plus
 endpoint controls (the full Edge P0 threat model is internal Cordum engineering).
 
-## Usage
+## Quickstart
+
+Three tiers, pick the one that fits the situation:
+
+### 30-second — env vars only
+
+```bash
+export CORDUM_GATEWAY=https://localhost:8081
+export CORDUM_API_KEY=<your-key>
+export CORDUM_TENANT_ID=default
+export CORDUM_PRINCIPAL_ID=<you>
+
+cordumctl edge claude              # launches Claude with governance applied
+cordumctl edge claude --print-config   # verify resolved config without launching
+```
+
+No config files, no flags. Every required field is read from `CORDUM_*` env
+vars and the wrapper resolves the rest from PATH.
+
+### 5-minute — scaffolded config + shortcut
+
+```bash
+cordumctl edge init --principal <you> --non-interactive
+# wrote ./cordum.yaml + ./cordum-claude.sh (or .ps1 on Windows)
+
+export CORDUM_API_KEY=<your-key>     # only the secret stays in env
+./cordum-claude.sh                   # zero-flag invocation
+```
+
+The init scaffold writes a checked-in-friendly `./cordum.yaml` with everything
+*except* the API key. The api_key field is written as `${CORDUM_API_KEY}`, a
+runtime env-reference; plaintext values are rejected at load time so a real
+key never lands in source control by accident. Re-running `cordumctl edge
+init` is idempotent (use `--force` to refresh).
+
+A `cordum-claude` standalone shortcut is also installed alongside `cordumctl`
+when you `make build`; it is the same binary contract — `cordum-claude` is
+literally an alias for `cordumctl edge claude` and forwards every argv
+unchanged, including the `--` boundary and post-`--` Claude args.
+
+### Full reference
 
 ```bash
 cordumctl edge claude \
@@ -21,6 +61,47 @@ Flags before `--` configure Cordum. Arguments after `--` are forwarded verbatim
 to the launched `claude` binary. Cordum supplies `claude --settings
 <temp-settings.json>` itself and rejects a forwarded `--settings` override so
 the governed settings cannot be bypassed accidentally.
+
+## Configuration discovery (precedence order)
+
+`cordumctl edge claude` resolves each field by walking the layers below in
+order, with the first non-empty match winning:
+
+1. **CLI flag** — e.g. `--gateway https://x`. Highest priority.
+2. **Env var** — `CORDUM_GATEWAY`, `CORDUM_API_KEY`, `CORDUM_TENANT_ID`,
+   `CORDUM_PRINCIPAL_ID`, `CORDUM_EDGE_POLICY_MODE`, `CORDUM_TLS_CA`,
+   `CORDUM_AGENTD_PATH`, `CORDUM_HOOK_COMMAND`,
+   `CORDUM_EDGE_DASHBOARD_URL`.
+3. **Project config** — `./cordum.yaml` in the current working directory.
+4. **User config** — `~/.cordum/config.yaml`.
+5. **Built-in default** — `gateway: http://localhost:8081`,
+   `tenant: default`, `policy_mode: enforce`, `hook_command: cordum-hook`,
+   `approval_wait_timeout: 30s`.
+
+YAML schema (every field optional):
+
+```yaml
+gateway: https://localhost:8081
+api_key: ${CORDUM_API_KEY}     # MUST be empty or a ${ENV_VAR} reference
+tenant: default
+principal: yaron
+policy_mode: enforce            # observe | enforce | enterprise-strict
+cacert: ./certs/ca/ca.crt       # auto-detected for https://localhost:* if omitted
+dashboard_url: http://localhost:8082
+agentd_path: ./bin/cordum-agentd
+hook_command: ./bin/cordum-hook
+approval_wait_timeout: 30s
+```
+
+Plaintext `api_key` in YAML is rejected at load time — the loader produces a
+clear error and refuses to launch. Per-session metadata (cwd, repo, git-*,
+host-id, device-id, state-dir) stays flag/env-only by design and is not part
+of the YAML schema.
+
+`cordumctl edge claude --print-config` dumps the resolved YAML (with
+`api_key: <redacted>`) followed by a comment block naming the precedence
+layer that produced each field, e.g. `gateway source: project_yaml`. Use it
+to debug "which value is actually winning" without launching the wrapper.
 
 ## What the wrapper does
 
@@ -62,6 +143,7 @@ redacted before printing; API keys and nonces are never printed.
 | `--dry-run` | `false` | Start agentd, render settings, print non-secret summary JSON, skip Claude launch. |
 | `--no-launch` | `false` | Start agentd and render settings, then exit without launching Claude. |
 | `--verbose` | `false` | Print non-secret diagnostics to stderr. |
+| `--print-config` | `false` | Render resolved config as YAML (api_key redacted) plus per-field source attribution, then exit 0 without launching agentd or Claude. |
 
 ## Dry-run and settings output
 

@@ -87,6 +87,8 @@ and a Windows-specific settings rendering bug.
 - EDGE-043: EDGE-042 design gaps — rejected/expired approvals silently re-enqueue, 4-page scan limit, no auto-consume unit test
 - EDGE-044: EDGE-041 _redacted suffix rename broke Safety Kernel policy matching — every PreToolUse defaults to DENY post-rename
 - EDGE-045: cordumctl edge claude renders hook command path with stripped backslashes on Windows — settings.json gets `.bincordum-hook` instead of `./bin/cordum-hook.exe`
+- EDGE-046: redactHookBoundaryString over-redacts any prompt containing the substring "secret" — wipes whole value to literal "<redacted>" instead of preserving content
+- EDGE-047: cordumctl edge claude UX — 9-flag invocation defeats "drop in front of Claude Code" product story; ship `cordumctl edge init` scaffold + `./cordum.yaml`/`~/.cordum/config.yaml` config auto-discovery + `cordum-claude` standalone shortcut + `--print-config` diagnostic
 - BUG-001: TestCollectCopilotSessionDecisionsPaginatesPastUnrelatedTenantDecisions returns len(decisions)=0 want 1 — pre-existing fail in core/controlplane/gateway from PR #233
 
 #### Docs visibility split (EDGE-036)
