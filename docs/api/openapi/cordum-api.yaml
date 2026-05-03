@@ -2580,6 +2580,66 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/policy/global:
+    get:
+      operationId: getPolicyGlobal
+      summary: Read the unified Global policy authority
+      description: |
+        EDGE-052 — returns the five-section view of the Global policy
+        authority that all four evaluators (Cordum job, Edge action, MCP
+        tool, output scan) consult. Each section is a YAML SafetyPolicy
+        fragment persisted under a dedicated `secops/`-prefixed bundle key.
+      tags:
+      - Policy
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Unified Global policy snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyGlobalDocument'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      operationId: updatePolicyGlobal
+      summary: Atomically update the unified Global policy authority
+      description: |
+        EDGE-052 — atomically writes one or more sections of the Global
+        policy. Sections not present in the request body are left
+        unchanged. A `snapshot_version` field on the request acts as
+        optimistic concurrency: when non-empty and != the current
+        snapshot the request is rejected with 409 Conflict.
+      tags:
+      - Policy
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePolicyGlobalRequest'
+      responses:
+        '200':
+          description: Unified Global policy updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyGlobalDocument'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: snapshot_version mismatch (optimistic concurrency)
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/policy/bundles:
     get:
       operationId: listPolicyBundles
@@ -9435,6 +9495,66 @@ components:
           type: string
         message:
           type: string
+    PolicyGlobalSection:
+      type: object
+      description: |
+        One section of the unified Global policy. The bundle_id is the
+        underlying configsvc key (e.g. `secops/global-input`,
+        `secops/invariants`). Empty content means no studio overrides
+        are authored for this section.
+      properties:
+        bundle_id:
+          type: string
+        content:
+          type: string
+          description: YAML SafetyPolicy fragment for this section.
+        sha256:
+          type: string
+        enabled:
+          type: boolean
+    PolicyGlobalDocument:
+      type: object
+      description: |
+        EDGE-052 — five-section view of the Global policy authority. The
+        snapshot_hash matches the cfg:&lt;sha&gt; identifier the kernel
+        propagates on policy decisions; clients pass it back on PUT for
+        optimistic concurrency.
+      properties:
+        snapshot_version:
+          type: string
+        snapshot_hash:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        sections:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/PolicyGlobalSection'
+          description: Keyed by section name — input_rules, output_rules, edge_action_rules, mcp_tool_rules, invariants.
+    UpdatePolicyGlobalRequest:
+      type: object
+      properties:
+        snapshot_version:
+          type: string
+          description: Optimistic concurrency token. When non-empty and != current snapshot, request is rejected with 409.
+        author:
+          type: string
+        message:
+          type: string
+        sections:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              content:
+                type: string
+                description: YAML SafetyPolicy fragment. Empty content deletes the section's bundle.
+              enabled:
+                type: boolean
+          description: Keyed by section name. Only listed sections are written; absent sections remain unchanged.
+      required:
+      - sections
     PublishPolicyRequest:
       type: object
       properties:
