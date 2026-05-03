@@ -8,10 +8,36 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 )
+
+// siblingExecutable returns an absolute path to a binary named `name` that
+// lives in the same directory as the running cordumctl (or whichever process
+// the launcher is hosted in). Returns ok=false if the binary is not found.
+// Honors Windows .exe convention. This lets `./bin/cordumctl edge claude`
+// resolve `./bin/cordum-agentd(.exe)` and `./bin/cordum-hook(.exe)` without
+// requiring the user to add `./bin` to PATH or set --agentd-path explicitly.
+func siblingExecutable(name string) (string, bool) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", false
+	}
+	dir := filepath.Dir(self)
+	candidates := []string{name}
+	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(name), ".exe") {
+		candidates = []string{name + ".exe", name}
+	}
+	for _, candidate := range candidates {
+		full := filepath.Join(dir, candidate)
+		if info, statErr := os.Stat(full); statErr == nil && !info.IsDir() {
+			return full, true
+		}
+	}
+	return "", false
+}
 
 func prepareLaunchTempRoot(parent string) (string, func(), error) {
 	root, err := os.MkdirTemp(strings.TrimSpace(parent), "cordum-edge-claude-*")
@@ -44,11 +70,17 @@ func resolveClaudePath(opts LaunchOptions) (string, error) {
 
 func resolveExecutable(explicit, fallback string) (string, error) {
 	if strings.TrimSpace(explicit) == "" {
-		path, err := exec.LookPath(fallback)
-		if err != nil {
-			return "", fmt.Errorf("%s binary not found on PATH: %w", fallback, err)
+		if path, err := exec.LookPath(fallback); err == nil {
+			abs, absErr := filepath.Abs(path)
+			if absErr != nil {
+				return path, nil
+			}
+			return abs, nil
 		}
-		return path, nil
+		if sibling, ok := siblingExecutable(fallback); ok {
+			return sibling, nil
+		}
+		return "", fmt.Errorf("%s binary not found on PATH or alongside cordumctl", fallback)
 	}
 	candidates := executableCandidates(explicit)
 	for _, candidate := range candidates {
