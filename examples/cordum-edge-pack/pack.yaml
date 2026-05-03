@@ -16,6 +16,13 @@ overlays:
     - name: demo-edge-policy
       strategy: bundle_fragment
       path: overlays/policy.fragment.yaml
-    - name: production-edge-policy
-      strategy: bundle_fragment
-      path: overlays/policy.production.fragment.yaml
+    # NOTE: overlays/policy.production.fragment.yaml is intentionally NOT
+    # registered here. It ships in this pack as a COPYABLE TEMPLATE for
+    # customers building their own production overlay, not as an active
+    # policy. Loading both fragments simultaneously caused last-seen-wins
+    # rule merging where the production fragment's `default_decision: deny`
+    # overrode the demo fragment's `default_decision: allow`, breaking the
+    # demo flow (every Claude Glob/Bash/Write call hit "no matching rule"
+    # default-deny). Customers wanting a production overlay should fork
+    # this pack, replace overlays/policy.fragment.yaml with their tuned
+    # rules, and ship as their own pack.

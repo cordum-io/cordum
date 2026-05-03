@@ -156,3 +156,16 @@ rules:
         "unknown.impact": high
     decision: deny
     reason: "Unknown high-impact Claude Code actions are denied until a specific policy classification exists."
+
+  # CATCH-ALL ALLOW (DEMO ONLY) — fires when no preceding rule matches. Lives
+  # at the end so the explicit denies/approvals/safe-allows above all run
+  # first via first-match policy evaluation. Ensures the demo doesn't fall
+  # into the global default_decision (which other co-installed packs may set
+  # to deny). PRODUCTION DEPLOYMENTS MUST REMOVE THIS RULE and rely on
+  # default_decision=deny + explicit allows.
+  - id: claude-code.allow-edge-actions-default
+    match:
+      topics:
+        - job.edge.action
+    decision: allow
+    reason: "Demo catch-all: edge action recorded for audit; no preceding deny/approval rule matched."
