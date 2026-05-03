@@ -64,6 +64,13 @@ type Recorder interface {
 	RecordApprovalRequested(tenant, layer, kind string)
 	RecordApprovalResolved(tenant, layer, kind, outcome string) // approved | rejected | expired | timeout | invalidated
 
+	// RecordApprovalEnqueueAborted emits a metric counter when EnqueueApproval
+	// refuses to enqueue a new approval because of a fail-closed safety guard
+	// — currently only the EDGE-058 event-list-too-large path. `reason`
+	// collapses to {"event_list_too_large", "other", "unknown"} via the
+	// bounded-label helper. Bounded cardinality.
+	RecordApprovalEnqueueAborted(reason string)
+
 	// Degraded / fail-closed outcomes.
 	RecordDegraded(tenant, mode, component, reasonCode string)
 	RecordFailClosed(tenant, mode, reasonCode string)
@@ -102,6 +109,7 @@ func (NoopRecorder) RecordActionDecision(string, string, string, string, string)
 func (NoopRecorder) RecordActionDenied(string, string, string, string)           {}
 func (NoopRecorder) RecordApprovalRequested(string, string, string)              {}
 func (NoopRecorder) RecordApprovalResolved(string, string, string, string)       {}
+func (NoopRecorder) RecordApprovalEnqueueAborted(string)                         {}
 func (NoopRecorder) RecordDegraded(string, string, string, string)               {}
 func (NoopRecorder) RecordFailClosed(string, string, string)                     {}
 func (NoopRecorder) RecordArtifactExport(string, string, string)                 {}

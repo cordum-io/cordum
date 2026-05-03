@@ -16,11 +16,32 @@ const (
 	maxApprovalFieldBytes     = 2048
 	maxApprovalReasonBytes    = 4096
 	maxApprovalMetadataFields = 64
+	// maxEventsPerApprovalValidation caps how many AgentActionEvents the
+	// approval-store loadEventFromTx pulls under WATCH/MULTI/EXEC when
+	// validating an EnqueueApproval. EDGE-058 closed an unbounded LRange(0,-1)
+	// DoS vector at approval_store_redis.go:692 — an agent looping AppendEvent
+	// could fan an execution's event list well beyond what fits in a TX read,
+	// pinning gateway memory and breaking the EXEC for healthy executions
+	// sharing the same connection. 500 is the operator-facing ceiling: in
+	// practice, an EnqueueApproval scoped to one Claude tool action needs to
+	// match a single recent event, so a few hundred recent entries suffice
+	// for the existing PolicySnapshot/InputHash binding check at
+	// validateApprovalEventBinding.
+	maxEventsPerApprovalValidation = 500
 )
 
 // ErrApprovalConflict marks a fail-closed lifecycle conflict that API
 // handlers should surface as HTTP 409 without leaking internal Redis details.
 var ErrApprovalConflict = errors.New("edge approval: conflict")
+
+// ErrEventListTooLarge is returned by EnqueueApproval (via loadEventFromTx)
+// when the parent execution's event list exceeds maxEventsPerApprovalValidation
+// at the moment the approval is validated under WATCH/MULTI/EXEC. EDGE-058
+// closed an unbounded LRange DoS vector by gating the inline read on LLEN;
+// callers (gateway handlers) MUST map this to a stable 4xx code (422
+// edge_event_list_too_large) so an attacker-induced fan-out cannot surface
+// as a generic 500.
+var ErrEventListTooLarge = errors.New("edge approval: execution event list exceeds inline-validation cap")
 
 // EdgeApprovalRequest is the validated input for creating one action-scoped
 // approval. It intentionally stores only hashes/snapshots/redacted metadata and

@@ -706,6 +706,7 @@ func (r *captureRecorder) SetSessionsActive(string, string, int)         {}
 func (r *captureRecorder) RecordExecutionStarted(string, string, string) {}
 func (r *captureRecorder) RecordExecutionEnded(string, string, string)   {}
 func (r *captureRecorder) RecordCreateExecutionAborted(string)           {}
+func (r *captureRecorder) RecordApprovalEnqueueAborted(string)           {}
 
 func (r *captureRecorder) RecordActionDecision(tenant, layer, kind, decision, mode string) {
 	r.actionDecisions = append(r.actionDecisions, recordActionDecisionCall{tenant: tenant, layer: layer, kind: kind, decision: decision, mode: mode})

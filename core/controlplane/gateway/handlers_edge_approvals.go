@@ -294,6 +294,13 @@ func writeEdgeApprovalStoreError(w http.ResponseWriter, r *http.Request, err err
 		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge approval not found", nil)
 	case errors.Is(err, edgecore.ErrApprovalConflict):
 		writeEdgeError(w, r, http.StatusConflict, edgeErrCodeApprovalConflict, "edge approval conflict", nil)
+	case errors.Is(err, edgecore.ErrEventListTooLarge):
+		// EDGE-058 — fail-closed safety guard: parent execution's event list
+		// exceeds the inline-validation cap. 422 distinguishes lifecycle-state
+		// rejection from request-shape (400) or auth (401/403) failures so
+		// callers can present a meaningful UX (e.g. "this session has too
+		// many events; archive and start a new session").
+		writeEdgeError(w, r, http.StatusUnprocessableEntity, edgeErrCodeEventListTooLarge, "edge execution event list exceeds approval validation cap", nil)
 	case isEdgeValidationError(err):
 		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge approval request", nil)
 	default:

@@ -55,6 +55,11 @@ const (
 	edgeErrCodeIdempotencyKeyTooLong    = "idempotency_key_invalid"
 	edgeErrCodeIdempotencyWindowExpired = "idempotency_window_expired"
 	edgeErrCodeMaxExecutionsExceeded    = "max_executions_exceeded"
+	// EDGE-058 — EnqueueApproval refused inline validation because the parent
+	// execution's event list exceeded maxEventsPerApprovalValidation. Maps to
+	// HTTP 422 Unprocessable Entity (request well-formed but execution state
+	// precludes the operation).
+	edgeErrCodeEventListTooLarge        = "event_list_too_large"
 )
 
 // edgeErrorEnvelope is the on-the-wire shape of a /api/v1/edge/* error.

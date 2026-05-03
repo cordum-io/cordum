@@ -29,8 +29,9 @@ type PrometheusRecorder struct {
 	executionAborts   *prometheus.CounterVec
 	actionDecisions   *prometheus.CounterVec
 	actionsDenied     *prometheus.CounterVec
-	approvalRequested *prometheus.CounterVec
-	approvalResolved  *prometheus.CounterVec
+	approvalRequested      *prometheus.CounterVec
+	approvalResolved       *prometheus.CounterVec
+	approvalEnqueueAborts  *prometheus.CounterVec
 	degraded          *prometheus.CounterVec
 	failClosed        *prometheus.CounterVec
 	artifactExports   *prometheus.CounterVec
@@ -97,6 +98,13 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 			Namespace: ns, Name: "approvals_resolved_total",
 			Help: "Edge approvals resolved, labeled by layer, kind, and outcome.",
 		}, []string{"layer", "kind", "outcome"}),
+		// EDGE-058 — counter for fail-closed EnqueueApproval aborts. `reason`
+		// collapses to {"event_list_too_large", "other", "unknown"} via
+		// boundedApprovalEnqueueAbortReason. Bounded cardinality.
+		approvalEnqueueAborts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns, Name: "approval_enqueue_aborted_total",
+			Help: "Edge EnqueueApproval aborts due to fail-closed safety guards (e.g. event list too large for inline validation), labeled by bounded reason.",
+		}, []string{"reason"}),
 		degraded: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: ns, Name: "degraded_total",
 			Help: "Edge degraded outcomes, labeled by mode, component, and reason_code.",
@@ -136,7 +144,7 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 		r.sessionsCreated, r.sessionsEnded, r.sessionsActive,
 		r.executionsStarted, r.executionsEnded, r.executionAborts,
 		r.actionDecisions, r.actionsDenied,
-		r.approvalRequested, r.approvalResolved,
+		r.approvalRequested, r.approvalResolved, r.approvalEnqueueAborts,
 		r.degraded, r.failClosed,
 		r.artifactExports,
 		r.hookLatency, r.evaluateLatency,
@@ -175,6 +183,9 @@ func (r *PrometheusRecorder) RecordApprovalRequested(_ /*tenant*/, layer, kind s
 }
 func (r *PrometheusRecorder) RecordApprovalResolved(_ /*tenant*/, layer, kind, outcome string) {
 	r.approvalResolved.WithLabelValues(NormalizeLayer(layer), NormalizeKind(kind), NormalizeApprovalOutcome(outcome)).Inc()
+}
+func (r *PrometheusRecorder) RecordApprovalEnqueueAborted(reason string) {
+	r.approvalEnqueueAborts.WithLabelValues(boundedApprovalEnqueueAbortReason(reason)).Inc()
 }
 func (r *PrometheusRecorder) RecordDegraded(_ /*tenant*/, mode, component, reasonCode string) {
 	r.degraded.WithLabelValues(boundedMode(mode), boundedComponent(component), boundedReasonCode(reasonCode)).Inc()
@@ -445,6 +456,25 @@ func boundedCacheResult(value string) string {
 		return "unknown"
 	}
 	if _, ok := allowedCacheResults[v]; ok {
+		return v
+	}
+	return "other"
+}
+
+// allowedApprovalEnqueueAbortReasons is the bounded set of `reason` label
+// values for the EDGE-058 approval_enqueue_aborted_total counter.
+//   - event_list_too_large: parent execution's AgentActionEvent list exceeded
+//     maxEventsPerApprovalValidation at the moment loadEventFromTx ran.
+var allowedApprovalEnqueueAbortReasons = map[string]struct{}{
+	"event_list_too_large": {},
+}
+
+func boundedApprovalEnqueueAbortReason(value string) string {
+	v := lowerTrim(value)
+	if v == "" {
+		return "unknown"
+	}
+	if _, ok := allowedApprovalEnqueueAbortReasons[v]; ok {
 		return v
 	}
 	return "other"

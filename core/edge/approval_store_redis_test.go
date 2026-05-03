@@ -318,6 +318,231 @@ func TestRedisStoreApprovalLifecycleEnqueueResolveListAndConsume(t *testing.T) {
 	}
 }
 
+// EDGE-058 — EnqueueApproval refuses inline validation when the parent
+// execution's event list exceeds maxEventsPerApprovalValidation. The pre-fix
+// loadEventFromTx at approval_store_redis.go:692 ran an unbounded
+// LRange(ctx, edgeEventsKey, 0, -1) inside the WATCH/MULTI/EXEC, which an
+// attacker could weaponize by looping AppendEvent on a runaway execution to
+// pin gateway memory and break the EXEC for healthy executions sharing the
+// same Redis connection. This test seeds an execution with more events than
+// the validation cap allows, calls EnqueueApproval, and asserts the typed
+// error is returned + nothing was enqueued. RED on unfixed code (approval
+// enqueued silently); GREEN once loadEventFromTx adds the LLEN guard.
+func TestRedisStoreEnqueueApprovalRefusesWhenEventListExceedsValidationCap(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 4, 10, 0, 0, 0, time.UTC)
+	store, client, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	tenantID := "tenant-a"
+	sessionID := "sess-edge058"
+	executionID := "exec-edge058"
+	eventID := "event-edge058"
+	createApprovalParents(t, ctx, store, tenantID, sessionID, executionID, eventID, base)
+
+	// createApprovalParents already appended one event. Append (max - 0) more
+	// events so the list size is strictly greater than the cap and the LLEN
+	// guard is forced to fire (1 + maxEventsPerApprovalValidation = cap+1).
+	extra := make([]AgentActionEvent, 0, maxEventsPerApprovalValidation)
+	for i := 0; i < maxEventsPerApprovalValidation; i++ {
+		evt := validStoreEvent(tenantID, sessionID, executionID, fmt.Sprintf("event-edge058-pad-%d", i), 0, base.Add(time.Duration(i+10)*time.Second), EventKindHookPreToolUse, DecisionAllow)
+		extra = append(extra, evt)
+	}
+	if _, err := store.AppendEvents(ctx, extra); err != nil {
+		t.Fatalf("AppendEvents pad: %v", err)
+	}
+
+	// Sanity: list should now be cap+1 entries (1 from createApprovalParents +
+	// cap pads). LLEN equals exactly maxEventsPerApprovalValidation+1.
+	listLen, err := client.LLen(ctx, edgeEventsKey(executionID)).Result()
+	if err != nil {
+		t.Fatalf("LLen events: %v", err)
+	}
+	if listLen != int64(maxEventsPerApprovalValidation+1) {
+		t.Fatalf("event list length = %d, want %d (cap+1)", listLen, maxEventsPerApprovalValidation+1)
+	}
+
+	req := validApprovalRequest(tenantID, sessionID, executionID, eventID, base)
+	approval, err := store.EnqueueApproval(ctx, req)
+	if !errors.Is(err, ErrEventListTooLarge) {
+		t.Fatalf("EnqueueApproval err = %v, want ErrEventListTooLarge", err)
+	}
+	if approval != nil {
+		t.Fatalf("EnqueueApproval returned approval=%#v, want nil on cap rejection", approval)
+	}
+
+	// No partial enqueue: the pending-status index for this tenant must stay
+	// empty, the by-action tuple set must stay empty, and the per-principal
+	// index must stay empty. (The TX is supposed to short-circuit before any
+	// of the ZAdd / SAdd writes at L127-133.)
+	pendingCount, err := client.ZCard(ctx, edgeApprovalStatusIndexKey(req.TenantID, ApprovalStatusPending)).Result()
+	if err != nil {
+		t.Fatalf("ZCard pending status index: %v", err)
+	}
+	if pendingCount != 0 {
+		t.Fatalf("pending-status index ZCard = %d after rejected enqueue, want 0", pendingCount)
+	}
+	tupleMembers, err := client.SMembers(ctx, edgeApprovalTupleIndexKey(req.TenantID, req.SessionID, req.ExecutionID, req.ActionHash)).Result()
+	if err != nil {
+		t.Fatalf("SMembers tuple index: %v", err)
+	}
+	if len(tupleMembers) != 0 {
+		t.Fatalf("tuple index members = %#v after rejected enqueue, want empty", tupleMembers)
+	}
+	principalCount, err := client.ZCard(ctx, edgeApprovalPrincipalStatusIndexKey(req.TenantID, req.PrincipalID, ApprovalStatusPending)).Result()
+	if err != nil {
+		t.Fatalf("ZCard principal-status index: %v", err)
+	}
+	if principalCount != 0 {
+		t.Fatalf("principal-status index ZCard = %d after rejected enqueue, want 0", principalCount)
+	}
+}
+
+// EDGE-058 — verify the approval_enqueue_aborted_total{reason} metric fires
+// with the bounded "event_list_too_large" reason on the abort path. Stub
+// recorder embeds NoopRecorder so unrelated method calls (RecordSessionCreated
+// etc. fired by other store paths) are no-ops; only RecordApprovalEnqueueAborted
+// is captured under a mutex for safety.
+type approvalAbortRecorder struct {
+	NoopRecorder
+	mu      sync.Mutex
+	reasons []string
+}
+
+func (r *approvalAbortRecorder) RecordApprovalEnqueueAborted(reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reasons = append(r.reasons, reason)
+}
+
+func (r *approvalAbortRecorder) Snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.reasons...)
+}
+
+func TestRedisStoreEnqueueApprovalAbortedMetricFiresWithBoundedReason(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 4, 11, 0, 0, 0, time.UTC)
+	rec := &approvalAbortRecorder{}
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }), WithRecorder(rec))
+	defer cleanup()
+
+	tenantID := "tenant-a"
+	sessionID := "sess-edge058-metric"
+	executionID := "exec-edge058-metric"
+	eventID := "event-edge058-metric"
+	createApprovalParents(t, ctx, store, tenantID, sessionID, executionID, eventID, base)
+
+	// Pad past the cap so EnqueueApproval refuses.
+	extra := make([]AgentActionEvent, 0, maxEventsPerApprovalValidation)
+	for i := 0; i < maxEventsPerApprovalValidation; i++ {
+		evt := validStoreEvent(tenantID, sessionID, executionID, fmt.Sprintf("event-edge058-metric-pad-%d", i), 0, base.Add(time.Duration(i+10)*time.Second), EventKindHookPreToolUse, DecisionAllow)
+		extra = append(extra, evt)
+	}
+	if _, err := store.AppendEvents(ctx, extra); err != nil {
+		t.Fatalf("AppendEvents pad: %v", err)
+	}
+
+	req := validApprovalRequest(tenantID, sessionID, executionID, eventID, base)
+	if _, err := store.EnqueueApproval(ctx, req); !errors.Is(err, ErrEventListTooLarge) {
+		t.Fatalf("EnqueueApproval err = %v, want ErrEventListTooLarge", err)
+	}
+	got := rec.Snapshot()
+	if len(got) != 1 || got[0] != "event_list_too_large" {
+		t.Fatalf("recorder reasons = %#v, want [event_list_too_large]", got)
+	}
+
+	// Happy-path call (different execution, parent active, list under cap)
+	// must NOT increment the abort counter.
+	createApprovalParents(t, ctx, store, tenantID, "sess-happy", "exec-happy", "event-happy", base.Add(time.Hour))
+	happyReq := validApprovalRequest(tenantID, "sess-happy", "exec-happy", "event-happy", base.Add(time.Hour))
+	if _, err := store.EnqueueApproval(ctx, happyReq); err != nil {
+		t.Fatalf("EnqueueApproval happy: %v", err)
+	}
+	got = rec.Snapshot()
+	if len(got) != 1 {
+		t.Fatalf("recorder reasons after happy enqueue = %#v, want still [event_list_too_large]", got)
+	}
+}
+
+// EDGE-058 — adversarial-review case (c): zero-event execution must NOT
+// surface as ErrEventListTooLarge from the new LLEN guard. The outside-TX
+// validateApprovalRequestParents pre-check (L600 area) rejects with
+// ErrNotFound before the WATCH/MULTI/EXEC closure runs, so loadEventFromTx
+// is never reached. Confirms the bound is benign for empty lists and the
+// pre-existing event-missing wire envelope is preserved (404, not 422).
+func TestRedisStoreEnqueueApprovalZeroEventsReturnsNotFoundNotTooLarge(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 4, 11, 30, 0, 0, time.UTC)
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	tenantID := "tenant-a"
+	sessionID := "sess-edge058-zero"
+	executionID := "exec-edge058-zero"
+	eventID := "event-edge058-zero"
+	// Create session + execution but DO NOT append the approval-parent event.
+	createSessionAndExecution(t, ctx, store, tenantID, sessionID, executionID, base)
+
+	req := validApprovalRequest(tenantID, sessionID, executionID, eventID, base)
+	approval, err := store.EnqueueApproval(ctx, req)
+	if err == nil {
+		t.Fatalf("EnqueueApproval err = nil, want ErrNotFound (event missing on zero-event execution)")
+	}
+	if errors.Is(err, ErrEventListTooLarge) {
+		t.Fatalf("EnqueueApproval err = %v, must NOT be ErrEventListTooLarge for zero-event execution", err)
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("EnqueueApproval err = %v, want ErrNotFound (event missing path)", err)
+	}
+	if approval != nil {
+		t.Fatalf("EnqueueApproval returned approval=%#v, want nil", approval)
+	}
+}
+
+// EDGE-058 — boundary: list size exactly equal to the cap is allowed (the
+// guard is `> cap`, not `>= cap`). Confirms the LLEN-vs-cap comparison is
+// strict-greater-than so legitimate workloads at the ceiling proceed.
+func TestRedisStoreEnqueueApprovalAllowsExactlyCapEvents(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 4, 10, 30, 0, 0, time.UTC)
+	store, client, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	tenantID := "tenant-a"
+	sessionID := "sess-edge058-boundary"
+	executionID := "exec-edge058-boundary"
+	eventID := "event-edge058-boundary"
+	createApprovalParents(t, ctx, store, tenantID, sessionID, executionID, eventID, base)
+
+	// createApprovalParents seeded 1 event; pad to exactly cap entries.
+	extra := make([]AgentActionEvent, 0, maxEventsPerApprovalValidation-1)
+	for i := 0; i < maxEventsPerApprovalValidation-1; i++ {
+		evt := validStoreEvent(tenantID, sessionID, executionID, fmt.Sprintf("event-edge058-boundary-pad-%d", i), 0, base.Add(time.Duration(i+10)*time.Second), EventKindHookPreToolUse, DecisionAllow)
+		extra = append(extra, evt)
+	}
+	if _, err := store.AppendEvents(ctx, extra); err != nil {
+		t.Fatalf("AppendEvents pad: %v", err)
+	}
+	listLen, err := client.LLen(ctx, edgeEventsKey(executionID)).Result()
+	if err != nil {
+		t.Fatalf("LLen events: %v", err)
+	}
+	if listLen != int64(maxEventsPerApprovalValidation) {
+		t.Fatalf("event list length = %d, want %d (exactly cap)", listLen, maxEventsPerApprovalValidation)
+	}
+
+	req := validApprovalRequest(tenantID, sessionID, executionID, eventID, base)
+	approval, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval at boundary: %v, want success", err)
+	}
+	if approval == nil || approval.Status != ApprovalStatusPending {
+		t.Fatalf("EnqueueApproval at boundary returned %#v, want pending approval", approval)
+	}
+}
+
 func TestRedisStoreApprovalListPaginationIsBounded(t *testing.T) {
 	ctx := context.Background()
 	base := time.Date(2026, 5, 1, 15, 30, 0, 0, time.UTC)

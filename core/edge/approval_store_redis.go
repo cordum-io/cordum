@@ -139,6 +139,13 @@ func (s *RedisStore) EnqueueApproval(ctx context.Context, req EdgeApprovalReques
 		return err
 	}, redisutil.WithKeys(tupleKey, edgeSessionKey(req.SessionID), edgeExecutionKey(req.ExecutionID), edgeEventsKey(req.ExecutionID)), redisutil.WithMaxAttempts(approvalCASMaxAttempts))
 	if err != nil && !errors.Is(err, redisutil.ErrMaxAttemptsExceeded) {
+		// EDGE-058 — emit the bounded fail-closed counter at the EnqueueApproval
+		// boundary so the dashboard surfaces the abort regardless of which
+		// inner validator (validateApprovalRequestParentsTx → loadEventFromTx)
+		// surfaced ErrEventListTooLarge.
+		if errors.Is(err, ErrEventListTooLarge) {
+			s.recorder.RecordApprovalEnqueueAborted("event_list_too_large")
+		}
 		return nil, err
 	}
 	if result == nil {
@@ -689,7 +696,21 @@ func (s *RedisStore) findEvent(ctx context.Context, tenantID, sessionID, executi
 }
 
 func loadEventFromTx(ctx context.Context, tx *redis.Tx, approval EdgeApproval) (*AgentActionEvent, bool, error) {
-	rawEvents, err := tx.LRange(ctx, edgeEventsKey(approval.ExecutionID), 0, -1).Result()
+	// EDGE-058 — bound the inline read so a runaway execution event list
+	// cannot pin gateway memory or starve EXEC for healthy executions sharing
+	// the same Redis connection. LLEN is O(1); a list above the cap aborts
+	// before any large LRange allocation. Below the cap, LRange uses an
+	// inclusive upper index so requesting `0, cap-1` reads at most `cap`
+	// entries.
+	eventsKey := edgeEventsKey(approval.ExecutionID)
+	size, err := tx.LLen(ctx, eventsKey).Result()
+	if err != nil {
+		return nil, false, err
+	}
+	if size > maxEventsPerApprovalValidation {
+		return nil, false, fmt.Errorf("%w: execution=%s events=%d cap=%d", ErrEventListTooLarge, approval.ExecutionID, size, maxEventsPerApprovalValidation)
+	}
+	rawEvents, err := tx.LRange(ctx, eventsKey, 0, maxEventsPerApprovalValidation-1).Result()
 	if err != nil {
 		return nil, false, err
 	}
