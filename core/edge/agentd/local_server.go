@@ -196,10 +196,6 @@ func (s *LocalServer) requestMatchesState(req claude.AgentdRequest) bool {
 	return true
 }
 
-func (s *LocalServer) hookEvent(req claude.AgentdRequest) edgecore.AgentActionEvent {
-	return s.hookEventAt(req, time.Now().UTC())
-}
-
 func (s *LocalServer) hookEventAt(req claude.AgentdRequest, receivedAt time.Time) edgecore.AgentActionEvent {
 	if receivedAt.IsZero() {
 		receivedAt = time.Now().UTC()
