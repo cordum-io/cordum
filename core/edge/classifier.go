@@ -50,6 +50,18 @@ type ActionClassification struct {
 // policy dimensions. It does not mutate the input event, does not trust
 // event.RiskTags for deterministic cases, and never stores raw command strings
 // or secret-like values in labels.
+// hookKindRequiresTool returns true for hook kinds whose Claude Code payload
+// always includes a tool_name. Other hook kinds (UserPromptSubmit, ConfigChange,
+// FileChanged, PolicyDecision, PermissionRequest) carry session-level metadata
+// that is intentionally tool-less; ClassifyEvent must accept them.
+func hookKindRequiresTool(kind EventKind) bool {
+	switch kind {
+	case EventKindHookPreToolUse, EventKindHookPostToolUse, EventKindHookPostToolUseFailure:
+		return true
+	}
+	return false
+}
+
 func ClassifyEvent(event AgentActionEvent) (ActionClassification, error) {
 	if strings.TrimSpace(string(event.Layer)) == "" {
 		return ActionClassification{}, fmt.Errorf("layer is required")
@@ -57,7 +69,14 @@ func ClassifyEvent(event AgentActionEvent) (ActionClassification, error) {
 	if strings.TrimSpace(string(event.Kind)) == "" {
 		return ActionClassification{}, fmt.Errorf("kind is required")
 	}
-	if event.Layer == LayerHook && strings.TrimSpace(event.ToolName) == "" {
+	// EDGE-049: tool_name is required ONLY for hook kinds that actually carry a
+	// tool — PreToolUse, PostToolUse, PostToolUseFailure. UserPromptSubmit,
+	// ConfigChange, FileChanged, PolicyDecision, PermissionRequest legitimately
+	// have no tool_name and must classify cleanly. Pre-fix, every UserPromptSubmit
+	// hook fell into mapper's reasonUnsupportedToolInputShape branch, agentd's
+	// evaluator treated the gateway 400 as `unavailable`, and enforce mode
+	// fail-closed denied every prompt — see EDGE-049 closure trail.
+	if event.Layer == LayerHook && hookKindRequiresTool(event.Kind) && strings.TrimSpace(event.ToolName) == "" {
 		return ActionClassification{}, fmt.Errorf("tool_name is required")
 	}
 

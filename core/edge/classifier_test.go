@@ -604,6 +604,65 @@ func TestClassifyMCPEventIgnoresClientSuppliedReservedLabels(t *testing.T) {
 	}
 }
 
+// TestClassifyEventAcceptsHookKindsWithoutToolName is the EDGE-049 regression
+// guard. Pre-fix, ClassifyEvent rejected ANY hook-layer event with empty
+// tool_name. UserPromptSubmit, ConfigChange, FileChanged hooks legitimately
+// have no tool_name, so cordum-hook's mapper fell into the
+// reasonUnsupportedToolInputShape branch, agentd treated the gateway 400 as
+// "unavailable", and enforce mode fail-closed denied every prompt the user
+// typed in `cordumctl edge claude` — defeating the entire real-Claude demo.
+//
+// This test pins the contract: tool-less hook kinds MUST classify cleanly.
+func TestClassifyEventAcceptsHookKindsWithoutToolName(t *testing.T) {
+	at := time.Date(2026, 5, 3, 18, 0, 0, 0, time.UTC)
+	for _, kind := range []EventKind{
+		EventKindHookUserPromptSubmit,
+		EventKindHookConfigChange,
+		EventKindHookFileChanged,
+		EventKindHookPolicyDecision,
+		EventKindHookPermissionRequest,
+	} {
+		t.Run(string(kind), func(t *testing.T) {
+			event := classifierEvent(at, LayerHook, kind, "claude-code", "", map[string]any{
+				"prompt_redacted": "test prompt",
+			})
+			classification, err := ClassifyEvent(event)
+			if err != nil {
+				t.Fatalf("ClassifyEvent(%s, tool_name=\"\") error = %v, want nil", kind, err)
+			}
+			if classification.Capability == "" {
+				t.Errorf("classification.Capability = empty, want a non-empty capability")
+			}
+		})
+	}
+}
+
+// TestClassifyEventStillRequiresToolNameForToolHooks pins the inverse: hook
+// kinds that DO carry a tool (PreToolUse, PostToolUse, PostToolUseFailure)
+// MUST still error on missing tool_name so a malformed Claude payload can't
+// silently bypass classification.
+func TestClassifyEventStillRequiresToolNameForToolHooks(t *testing.T) {
+	at := time.Date(2026, 5, 3, 18, 0, 0, 0, time.UTC)
+	for _, kind := range []EventKind{
+		EventKindHookPreToolUse,
+		EventKindHookPostToolUse,
+		EventKindHookPostToolUseFailure,
+	} {
+		t.Run(string(kind), func(t *testing.T) {
+			event := classifierEvent(at, LayerHook, kind, "claude-code", "", map[string]any{
+				"command": "echo hi",
+			})
+			_, err := ClassifyEvent(event)
+			if err == nil {
+				t.Fatalf("ClassifyEvent(%s, tool_name=\"\") error = nil, want tool_name required", kind)
+			}
+			if !strings.Contains(err.Error(), "tool_name") {
+				t.Errorf("error = %q, want mentions tool_name", err.Error())
+			}
+		})
+	}
+}
+
 func classifierHookEvent(at time.Time, toolName string, input map[string]any) AgentActionEvent {
 	return classifierEvent(at, LayerHook, EventKindHookPreToolUse, "claude-code", toolName, input)
 }

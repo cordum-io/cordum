@@ -549,20 +549,6 @@ func apiKeyMiddleware(provider auth.AuthProvider, next http.Handler, auditSender
 					},
 				})
 			}
-			// EDGE-049 diagnostic: temporary log to identify why /evaluate auth fails
-			// while /events + /heartbeat with same client succeed. Field names
-			// avoid api_key/secret/token substrings to bypass slog redaction.
-			rawKey := r.Header.Get("X-API-Key")
-			hdrPfx := ""
-			if len(rawKey) >= 8 {
-				hdrPfx = rawKey[:8]
-			}
-			slog.Info("EDGE049-GATEWAY auth-rejected",
-				"path", r.URL.Path, "mthd", r.Method,
-				"hdr_len", len(rawKey), "hdr_pfx", hdrPfx,
-				"tnt", r.Header.Get("X-Tenant-ID"),
-				"prn", r.Header.Get("X-Principal-Id"),
-				"reason", err.Error())
 			writeErrorJSON(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
