@@ -47,6 +47,11 @@ type LaunchOptions struct {
 	DryRun              bool
 	NoLaunch            bool
 	Verbose             bool
+	// CACertPath, when non-empty, is forwarded to the cordum-agentd
+	// subprocess as CORDUM_TLS_CA so it can validate Gateway TLS against
+	// a locally-issued CA. Required on Windows when the Gateway uses a
+	// self-signed cert (Go's HTTP client there ignores SSL_CERT_FILE).
+	CACertPath string
 }
 
 // LaunchResult is safe to print in dry-run diagnostics. It intentionally omits
@@ -159,6 +164,7 @@ type launchConfig struct {
 	StateDir            string
 	DashboardURL        string
 	Env                 []string
+	CACertPath          string
 }
 
 func prepareLaunchConfig(opts LaunchOptions, meta LaunchMetadata) (launchConfig, error) {
@@ -194,6 +200,7 @@ func prepareLaunchConfig(opts LaunchOptions, meta LaunchMetadata) (launchConfig,
 		AgentdPath: agentdPath, AgentdURL: agentdURL, HookNonce: nonce,
 		HookCommand: hookCommandOrDefault(opts.HookCommand), StateDir: strings.TrimSpace(opts.StateDir),
 		DashboardURL: strings.TrimSpace(opts.DashboardURL), Env: opts.Env,
+		CACertPath: strings.TrimSpace(opts.CACertPath),
 	}, nil
 }
 

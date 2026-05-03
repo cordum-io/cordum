@@ -67,6 +67,7 @@ func runEdgeClaudeCmd(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 		ApprovalWaitTimeout: *approvalWait, AgentdPath: *agentdPath, AgentdURL: *agentdURL,
 		ClaudePath: *claudePath, HookCommand: *hookCommand, StateDir: *stateDir,
 		ClaudeArgs: claudeArgs, DryRun: *dryRun, NoLaunch: effectiveNoLaunch, Verbose: *verbose,
+		CACertPath: *fs.cacert,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "cordumctl edge claude: %s\n", redactEdgeClaudeError(err.Error(), *fs.apiKey))

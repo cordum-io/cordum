@@ -98,6 +98,7 @@ func (c launchConfig) agentdEnv(meta LaunchMetadata) []string {
 		"CORDUM_AGENTD_STATE_DIR":                    c.StateDir,
 		"CORDUM_AGENTD_INLINE_APPROVAL_WAIT":         "true",
 		"CORDUM_AGENTD_INLINE_APPROVAL_WAIT_TIMEOUT": durationForEnv(c.ApprovalWaitTimeout),
+		"CORDUM_TLS_CA":                              c.CACertPath,
 	})
 }
 
