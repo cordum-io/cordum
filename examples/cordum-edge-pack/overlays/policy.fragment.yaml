@@ -85,6 +85,34 @@ rules:
     decision: require_approval
     reason: "Outbound network access from Claude Code requires approval in demo mode."
 
+  # User prompts (UserPromptSubmit, ConfigChange, FileChanged, PolicyDecision,
+  # PermissionRequest) are tool-less hook events that carry session-level
+  # metadata, not tool calls. They're audit/observability surfaces — the
+  # actionable governance happens at the tool-call hooks (PreToolUse,
+  # PostToolUse) above. Without this rule, every user prompt falls through to
+  # default-deny in enforce mode and blocks the entire session before any tool
+  # is ever called. Customers wanting to gate prompts (prompt-injection
+  # screening, jailbreak patterns) can add a more specific rule above this one.
+  - id: claude-code.allow-user-prompt-submit
+    match:
+      topics:
+        - job.edge.action
+      labels:
+        "edge.kind": hook.user_prompt_submit
+    decision: allow
+    reason: "User prompt submitted; recorded for audit. Governance enforces at tool-call hooks."
+
+  - id: claude-code.allow-tool-less-hook-metadata
+    match:
+      topics:
+        - job.edge.action
+      capabilities:
+        - edge.unknown
+      labels:
+        "hook.tool_name": ""
+    decision: allow
+    reason: "Tool-less hook metadata event (config change, file changed, permission request) recorded for audit; no actionable target."
+
   # Safe local test/build commands are Bash commands classified with
   # command.class=safe and command.family=test or build. This rule is deliberately
   # after denies/approvals so first-match policy evaluation remains fail-closed.
