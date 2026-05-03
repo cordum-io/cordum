@@ -174,6 +174,39 @@ appears in a screenshot, log, event, export, or chat handoff.
 5. File a follow-up bug with sanitized reproduction steps. Do not attach raw
    payloads.
 
+## Per-session execution cap and DeleteSession cleanup
+
+The Gateway enforces a per-session execution cap to keep one EdgeSession from
+fanning out to thousands of `AgentExecution` rows. Configure with
+`CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` (default 100). When the cap is hit,
+`POST /api/v1/edge/executions` returns `429 max_executions_exceeded` with
+`details.{limit, current}`. Operator response: end the session and start a new
+one; do not raise the cap globally to mask a runaway agent — investigate the
+loop.
+
+`DeleteSession` cleanup is paged (EDGE-037). The cleanup walks the
+session-to-executions index in `maxStorePageLimit` (200) row chunks and runs a
+per-page `MULTI/EXEC` for the execution data + secondary-index `ZRem`s before
+running a final atomic batch for the session-level keys and indexes. Three
+operational consequences:
+
+1. Memory and pipeline size are bounded regardless of execution count.
+2. If a per-page batch fails (network blip, Redis error, store-level
+   `ErrValidation`), the wrapped error reports the page number and the
+   `cleaned` count of executions removed before the failure. The session
+   record itself stays intact, so re-invoking `DeleteSession` is safe and
+   resumes from where it stopped (already-deleted executions just do not
+   appear in the next iteration's `ZRange`).
+3. If the loop succeeds but the final session-level batch fails, individual
+   executions are gone but the session record remains. Re-invoke
+   `DeleteSession` to drop the now-empty session record; the per-page loop
+   will simply observe zero executions and proceed straight to the
+   session-level delete.
+
+In log triage, `cleaned=N` in the wrapped error tells you how far the cleanup
+got; missing artifacts/audit pointers under those execution IDs are expected
+on the cleaned subset.
+
 ## Go / no-go checklist before demo signoff
 
 - `cordumctl edge doctor --json` has no unexpected `fail` entries.

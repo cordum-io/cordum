@@ -54,6 +54,7 @@ const (
 	edgeErrCodeIdempotencyConflict      = "idempotency_conflict"
 	edgeErrCodeIdempotencyKeyTooLong    = "idempotency_key_invalid"
 	edgeErrCodeIdempotencyWindowExpired = "idempotency_window_expired"
+	edgeErrCodeMaxExecutionsExceeded    = "max_executions_exceeded"
 )
 
 // edgeErrorEnvelope is the on-the-wire shape of a /api/v1/edge/* error.

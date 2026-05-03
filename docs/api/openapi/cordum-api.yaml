@@ -723,6 +723,8 @@ paths:
           $ref: '#/components/responses/EdgeNotFound'
         '413':
           $ref: '#/components/responses/EdgePayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/EdgeMaxExecutionsExceeded'
         '503':
           $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
@@ -7388,6 +7390,18 @@ components:
             $ref: '#/components/schemas/EdgeError'
     EdgeServiceUnavailable:
       description: Edge service unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
+    EdgeMaxExecutionsExceeded:
+      description: |
+        The target Edge session already holds the maximum number of
+        AgentExecution rows allowed by the gateway. Configure the cap via
+        CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION; default 100. End the session
+        and start a new one to continue recording executions. Error envelope
+        `code` is `max_executions_exceeded`; `details` carries
+        `{limit, current}`.
       content:
         application/json:
           schema:

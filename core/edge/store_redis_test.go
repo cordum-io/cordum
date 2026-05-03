@@ -1355,3 +1355,238 @@ func decodeStoreCursorForTest(t *testing.T, raw string) storeCursor {
 	}
 	return cursor
 }
+
+// EDGE-037 tests: per-session execution cap + bounded DeleteSession cleanup.
+
+func TestRedisStoreCountSessionExecutionsEmptySession(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	if err := store.CreateSession(ctx, validStoreSession("tenant-a", "sess-empty", "principal-a", time.Now().UTC())); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	count, err := store.CountSessionExecutions(ctx, "tenant-a", "sess-empty")
+	if err != nil {
+		t.Fatalf("CountSessionExecutions empty: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("count empty session = %d, want 0", count)
+	}
+}
+
+func TestRedisStoreCountSessionExecutionsRequiresInputs(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	for _, tc := range []struct{ tenant, session string }{
+		{"", "sess-x"},
+		{"tenant-a", ""},
+		{"   ", "sess-x"},
+		{"tenant-a", "   "},
+	} {
+		_, err := store.CountSessionExecutions(ctx, tc.tenant, tc.session)
+		if err == nil {
+			t.Fatalf("CountSessionExecutions(%q,%q) succeeded; want validation error", tc.tenant, tc.session)
+		}
+		if !errors.Is(err, ErrValidation) {
+			t.Fatalf("CountSessionExecutions(%q,%q) error = %v, want errors.Is(ErrValidation)", tc.tenant, tc.session, err)
+		}
+	}
+}
+
+func TestRedisStoreCountSessionExecutionsAfterMultipleCreates(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Now().UTC()
+	if err := store.CreateSession(ctx, validStoreSession("tenant-a", "sess-multi", "principal-a", base)); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	for i := 0; i < 7; i++ {
+		execution := validStoreExecution("tenant-a", "sess-multi", fmt.Sprintf("exec-multi-%d", i), base.Add(time.Duration(i+1)*time.Second), nil)
+		if err := store.CreateExecution(ctx, execution); err != nil {
+			t.Fatalf("CreateExecution %d: %v", i, err)
+		}
+	}
+	count, err := store.CountSessionExecutions(ctx, "tenant-a", "sess-multi")
+	if err != nil {
+		t.Fatalf("CountSessionExecutions: %v", err)
+	}
+	if count != 7 {
+		t.Fatalf("count after 7 creates = %d, want 7", count)
+	}
+}
+
+func TestRedisStoreCountSessionExecutionsTenantSessionIsolation(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Now().UTC()
+	// Two different sessions for the same tenant
+	if err := store.CreateSession(ctx, validStoreSession("tenant-a", "sess-iso-1", "principal-a", base)); err != nil {
+		t.Fatalf("CreateSession iso-1: %v", err)
+	}
+	if err := store.CreateSession(ctx, validStoreSession("tenant-a", "sess-iso-2", "principal-a", base)); err != nil {
+		t.Fatalf("CreateSession iso-2: %v", err)
+	}
+	// Different tenant, different session
+	if err := store.CreateSession(ctx, validStoreSession("tenant-b", "sess-iso-3", "principal-b", base)); err != nil {
+		t.Fatalf("CreateSession iso-3: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := store.CreateExecution(ctx, validStoreExecution("tenant-a", "sess-iso-1", fmt.Sprintf("exec-iso-1-%d", i), base.Add(time.Second), nil)); err != nil {
+			t.Fatalf("CreateExecution iso-1-%d: %v", i, err)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		if err := store.CreateExecution(ctx, validStoreExecution("tenant-a", "sess-iso-2", fmt.Sprintf("exec-iso-2-%d", i), base.Add(time.Second), nil)); err != nil {
+			t.Fatalf("CreateExecution iso-2-%d: %v", i, err)
+		}
+	}
+	for i := 0; i < 11; i++ {
+		if err := store.CreateExecution(ctx, validStoreExecution("tenant-b", "sess-iso-3", fmt.Sprintf("exec-iso-3-%d", i), base.Add(time.Second), nil)); err != nil {
+			t.Fatalf("CreateExecution iso-3-%d: %v", i, err)
+		}
+	}
+	cases := []struct {
+		tenant, session string
+		want            int64
+	}{
+		{"tenant-a", "sess-iso-1", 3},
+		{"tenant-a", "sess-iso-2", 5},
+		{"tenant-b", "sess-iso-3", 11},
+	}
+	for _, tc := range cases {
+		got, err := store.CountSessionExecutions(ctx, tc.tenant, tc.session)
+		if err != nil {
+			t.Fatalf("CountSessionExecutions(%s/%s): %v", tc.tenant, tc.session, err)
+		}
+		if got != tc.want {
+			t.Fatalf("CountSessionExecutions(%s/%s) = %d, want %d", tc.tenant, tc.session, got, tc.want)
+		}
+	}
+}
+
+func TestRedisStoreDeleteSessionPagedCleanupOverMaxStorePageLimit(t *testing.T) {
+	ctx := context.Background()
+	store, client, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	const tenantID = "tenant-paged"
+	const sessionID = "sess-paged-cleanup"
+	// One session, 1.25 pages worth of executions, to force >2 ZRange calls.
+	executionCount := maxStorePageLimit + maxStorePageLimit/4
+	base := time.Now().UTC()
+	if err := store.CreateSession(ctx, validStoreSession(tenantID, sessionID, "principal-paged", base)); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	executionIDs := make([]string, 0, executionCount)
+	for i := 0; i < executionCount; i++ {
+		executionID := fmt.Sprintf("exec-paged-%04d", i)
+		execution := validStoreExecution(tenantID, sessionID, executionID, base.Add(time.Duration(i+1)*time.Millisecond), func(e *AgentExecution) {
+			e.JobID = "job-" + executionID
+			e.TraceID = "trace-paged-" + executionID
+			e.WorkflowRunID = "run-paged-" + executionID
+		})
+		if err := store.CreateExecution(ctx, execution); err != nil {
+			t.Fatalf("CreateExecution %d: %v", i, err)
+		}
+		executionIDs = append(executionIDs, executionID)
+	}
+
+	// Pre-condition: count matches
+	if got, err := store.CountSessionExecutions(ctx, tenantID, sessionID); err != nil || got != int64(executionCount) {
+		t.Fatalf("pre-delete count = %d (err=%v), want %d", got, err, executionCount)
+	}
+
+	if err := store.DeleteSession(ctx, tenantID, sessionID); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+
+	// Post-condition: all session-level keys gone
+	for _, key := range []string{
+		edgeSessionKey(sessionID),
+		edgeSessionHeartbeatKey(sessionID),
+		edgeSessionExecutionsIndexKey(sessionID),
+		edgeSessionEventsIndexKey(sessionID),
+	} {
+		exists, err := client.Exists(ctx, key).Result()
+		if err != nil {
+			t.Fatalf("Exists(%s): %v", key, err)
+		}
+		if exists != 0 {
+			t.Fatalf("session-level key %s exists after DeleteSession; want 0", key)
+		}
+	}
+
+	// Post-condition: all execution-level keys + secondary indexes gone
+	for _, executionID := range executionIDs {
+		for _, key := range []string{
+			edgeExecutionKey(executionID),
+			edgeEventsKey(executionID),
+			edgeEventSeqKey(executionID),
+			edgeEventIDIndexKey(executionID),
+			edgeJobIndexKey("job-" + executionID),
+			edgeExecutionTraceIndexKey("trace-paged-" + executionID),
+			edgeExecutionRunIndexKey("run-paged-" + executionID),
+		} {
+			exists, err := client.Exists(ctx, key).Result()
+			if err != nil {
+				t.Fatalf("Exists(%s): %v", key, err)
+			}
+			if exists != 0 {
+				t.Fatalf("execution-scoped key %s exists after DeleteSession; want 0", key)
+			}
+		}
+	}
+}
+
+func TestRedisStoreDeleteSessionPageBoundaryEqualsLimit(t *testing.T) {
+	ctx := context.Background()
+	store, client, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	const tenantID = "tenant-boundary"
+	const sessionID = "sess-boundary"
+	// Exactly maxStorePageLimit executions — exercises the
+	// "len(executionIDs) < maxStorePageLimit" termination on the SECOND
+	// iteration after the first page returns exactly the limit.
+	base := time.Now().UTC()
+	if err := store.CreateSession(ctx, validStoreSession(tenantID, sessionID, "principal-boundary", base)); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	for i := 0; i < maxStorePageLimit; i++ {
+		executionID := fmt.Sprintf("exec-bndy-%04d", i)
+		execution := validStoreExecution(tenantID, sessionID, executionID, base.Add(time.Duration(i+1)*time.Millisecond), nil)
+		if err := store.CreateExecution(ctx, execution); err != nil {
+			t.Fatalf("CreateExecution %d: %v", i, err)
+		}
+	}
+
+	if err := store.DeleteSession(ctx, tenantID, sessionID); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+
+	exists, err := client.Exists(ctx, edgeSessionExecutionsIndexKey(sessionID)).Result()
+	if err != nil {
+		t.Fatalf("Exists session executions index: %v", err)
+	}
+	if exists != 0 {
+		t.Fatalf("session executions index exists after DeleteSession; want 0")
+	}
+}
+
+func TestRedisStoreDeleteSessionIdempotentOnMissingSession(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	// Calling DeleteSession on a never-created session is a no-op (no error).
+	if err := store.DeleteSession(ctx, "tenant-z", "sess-never-existed"); err != nil {
+		t.Fatalf("DeleteSession on missing session = %v, want nil (idempotent)", err)
+	}
+}

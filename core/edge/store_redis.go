@@ -389,6 +389,21 @@ func (s *RedisStore) EndSession(ctx context.Context, tenantID, sessionID string,
 // DeleteSession removes an Edge session and session-scoped evidence indexes.
 // It is intentionally idempotent so Gateway compensation can call it after a
 // partially failed create flow without leaking whether a tenant/session exists.
+//
+// Cleanup is paged (EDGE-037): the previous implementation pulled every
+// executionID into memory with a single ZRange(0, -1) and did one giant
+// Pipelined delete, which scaled linearly with execution count and could
+// emit a multi-megabyte pipeline on pathological sessions. The new flow
+// reads at most maxStorePageLimit IDs per round-trip, executes a per-page
+// TxPipelined delete, and only after every execution has been cleaned does
+// it run a final TxPipelined for session-level keys + secondary-index ZRems.
+//
+// Partial-failure semantics: the per-page delete is atomic via MULTI/EXEC;
+// if a page fails the function returns an error citing how many executions
+// were cleaned before the failure. The session record itself is NOT touched
+// until all pages succeed, so the caller can re-invoke DeleteSession for
+// idempotent retry — already-cleaned executions simply do not appear in the
+// next iteration's ZRange.
 func (s *RedisStore) DeleteSession(ctx context.Context, tenantID, sessionID string) error {
 	if err := s.ensureReady(); err != nil {
 		return err
@@ -406,26 +421,75 @@ func (s *RedisStore) DeleteSession(ctx context.Context, tenantID, sessionID stri
 		return nil
 	}
 
-	executionIDs, err := s.client.ZRange(ctx, edgeSessionExecutionsIndexKey(sessionID), 0, -1).Result()
-	if err != nil {
-		return fmt.Errorf("list executions for edge session cleanup %s: %w", sessionID, err)
-	}
-	executions := make([]AgentExecution, 0, len(executionIDs))
-	for _, executionID := range executionIDs {
-		execution, ok, err := s.loadExecution(ctx, executionID)
+	indexKey := edgeSessionExecutionsIndexKey(sessionID)
+	var (
+		cleaned int64
+		cursor  int64
+		page    int
+	)
+	for {
+		page++
+		executionIDs, err := s.client.ZRange(ctx, indexKey, cursor, cursor+int64(maxStorePageLimit)-1).Result()
 		if err != nil {
-			return err
+			return fmt.Errorf("delete edge session %s: list executions page %d (cleaned=%d): %w", sessionID, page, cleaned, err)
 		}
-		if !ok || execution == nil {
-			continue
+		if len(executionIDs) == 0 {
+			break
 		}
-		if execution.TenantID != tenantID || execution.SessionID != sessionID {
-			continue
+		// Load each execution to know which secondary indexes (job/trace/run)
+		// to ZRem. loadExecution remains sequential within a page, but the
+		// page itself is bounded by maxStorePageLimit so the per-page memory
+		// and round-trip count are constant.
+		pageExecutions := make([]AgentExecution, 0, len(executionIDs))
+		for _, executionID := range executionIDs {
+			execution, ok, err := s.loadExecution(ctx, executionID)
+			if err != nil {
+				return fmt.Errorf("delete edge session %s: load execution %s in page %d (cleaned=%d): %w", sessionID, executionID, page, cleaned, err)
+			}
+			if !ok || execution == nil {
+				continue
+			}
+			if execution.TenantID != tenantID || execution.SessionID != sessionID {
+				// Defensive: skip rows that do not belong to (tenant, session).
+				// The session->executions index is sessionID-scoped, so a
+				// mismatch indicates a corrupted index and should not be
+				// cleaned by this caller.
+				continue
+			}
+			pageExecutions = append(pageExecutions, *execution)
 		}
-		executions = append(executions, *execution)
+		if len(pageExecutions) > 0 {
+			_, err = s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+				for _, execution := range pageExecutions {
+					pipe.Del(ctx, edgeExecutionKey(execution.ExecutionID), edgeEventsKey(execution.ExecutionID), edgeEventSeqKey(execution.ExecutionID), edgeEventIDIndexKey(execution.ExecutionID))
+					if strings.TrimSpace(execution.JobID) != "" {
+						pipe.ZRem(ctx, edgeJobIndexKey(execution.JobID), execution.ExecutionID)
+					}
+					if strings.TrimSpace(execution.TraceID) != "" {
+						pipe.ZRem(ctx, edgeExecutionTraceIndexKey(execution.TraceID), execution.ExecutionID)
+					}
+					if strings.TrimSpace(execution.WorkflowRunID) != "" {
+						pipe.ZRem(ctx, edgeExecutionRunIndexKey(execution.WorkflowRunID), execution.ExecutionID)
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				return fmt.Errorf("delete edge session %s: cleanup page %d (cleaned=%d, page_size=%d): %w", sessionID, page, cleaned, len(pageExecutions), err)
+			}
+			cleaned += int64(len(pageExecutions))
+		}
+		// Advance cursor by the page size we observed. We do not ZRem inside
+		// the loop because the final TxPipelined below drops the entire
+		// session->executions index in one shot. Skipped (cross-tenant or
+		// missing-data) rows still occupy index slots, so we step over them.
+		cursor += int64(len(executionIDs))
+		if len(executionIDs) < maxStorePageLimit {
+			break
+		}
 	}
 
-	_, err = s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+	_, err = s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		pipe.Del(ctx, edgeSessionKey(sessionID), edgeSessionHeartbeatKey(sessionID), edgeSessionExecutionsIndexKey(sessionID), edgeSessionEventsIndexKey(sessionID))
 		pipe.ZRem(ctx, edgeTenantIndexKey(session.TenantID), sessionID)
 		if strings.TrimSpace(session.PrincipalID) != "" {
@@ -437,22 +501,10 @@ func (s *RedisStore) DeleteSession(ctx context.Context, tenantID, sessionID stri
 		if strings.TrimSpace(session.WorkflowRunID) != "" {
 			pipe.ZRem(ctx, edgeSessionRunIndexKey(session.WorkflowRunID), sessionID)
 		}
-		for _, execution := range executions {
-			pipe.Del(ctx, edgeExecutionKey(execution.ExecutionID), edgeEventsKey(execution.ExecutionID), edgeEventSeqKey(execution.ExecutionID), edgeEventIDIndexKey(execution.ExecutionID))
-			if strings.TrimSpace(execution.JobID) != "" {
-				pipe.ZRem(ctx, edgeJobIndexKey(execution.JobID), execution.ExecutionID)
-			}
-			if strings.TrimSpace(execution.TraceID) != "" {
-				pipe.ZRem(ctx, edgeExecutionTraceIndexKey(execution.TraceID), execution.ExecutionID)
-			}
-			if strings.TrimSpace(execution.WorkflowRunID) != "" {
-				pipe.ZRem(ctx, edgeExecutionRunIndexKey(execution.WorkflowRunID), execution.ExecutionID)
-			}
-		}
 		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("delete edge session %s: %w", sessionID, err)
+		return fmt.Errorf("delete edge session %s: session-level cleanup (executions cleaned=%d): %w", sessionID, cleaned, err)
 	}
 	return nil
 }

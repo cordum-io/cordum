@@ -32,6 +32,7 @@ operator-oriented map of routes, request/response shapes, auth, and errors.
 | 404 | `not_found` | Missing, cross-tenant, or intentionally hidden resource. |
 | 409 | `conflict`, `session_terminal`, `execution_terminal`, `execution_session_mismatch`, `approval_conflict`, `approval_not_actionable`, `idempotency_conflict`, `idempotency_window_expired` | Terminal resource, approval state/CAS conflict, or idempotent replay mismatch. |
 | 413 | `request_too_large` | Body/export exceeds configured limits. |
+| 429 | `max_executions_exceeded` | `POST /api/v1/edge/executions` only: target session has already reached `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` (default 100). Error envelope `details` carries `{limit, current}`. End the session and start a new one to continue recording executions. |
 | 502 | `upstream_error` | Upstream policy/evaluate dependency failed in a way the route could not degrade. |
 | 503 | `service_unavailable`, `store_unavailable` | Gateway store or Edge dependency is unavailable. |
 | 500 | `internal_error` | Unexpected server failure; response remains redacted. |
@@ -50,7 +51,7 @@ operator-oriented map of routes, request/response shapes, auth, and errors.
 
 | Method/path | Request shape | Response shape | Notes |
 | --- | --- | --- | --- |
-| `POST /api/v1/edge/executions` | `EdgeExecutionCreateRequest`: required `session_id`; optional `adapter`, `mode`, `workflow_run_id`, `step_id`, `job_id`, `attempt`, `trace_id`, `worker_id`, `policy_snapshot`, `labels`. | `201 EdgeAgentExecution`. | Adds another execution under an existing session. |
+| `POST /api/v1/edge/executions` | `EdgeExecutionCreateRequest`: required `session_id`; optional `adapter`, `mode`, `workflow_run_id`, `step_id`, `job_id`, `attempt`, `trace_id`, `worker_id`, `policy_snapshot`, `labels`. | `201 EdgeAgentExecution`. | Adds another execution under an existing session. Bounded by the per-session execution cap (`CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION`, default 100) — the (cap+1)th call returns `429 max_executions_exceeded` with `details.{limit,current}`. |
 | `GET /api/v1/edge/executions/{execution_id}` | Path parameter. | `200 EdgeAgentExecution`. | Tenant-scoped execution lookup. |
 | `POST /api/v1/edge/executions/{execution_id}/end` | `EdgeEndExecutionRequest`: optional `status`, `ended_at`. | `200 EdgeAgentExecution`. | Ends an execution; terminal executions reject incompatible event writes. |
 

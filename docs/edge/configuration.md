@@ -124,6 +124,22 @@ out of metrics labels when high cardinality would create noise.
 P0 evidence exports include session/execution/event data and artifact pointer
 metadata. They do not inline raw artifact bodies.
 
+## Per-session execution cap
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` | `100` | Maximum number of `AgentExecution` rows that may be recorded under a single `EdgeSession`. The Gateway counts executions before each `POST /api/v1/edge/executions` and rejects the call with `429 max_executions_exceeded` once the cap is reached. Missing/invalid/non-positive values fall back to the default. |
+
+The cap protects against pathological retry storms or runaway loops fanning a
+single session out to thousands of executions, which previously caused
+unbounded memory and pipeline size in `DeleteSession` cleanup. The cap is the
+maximum number of *stored* executions for a session — to record more
+executions, end the current session and start a new one.
+
+The error envelope on rejection carries `details.limit` (the active cap) and
+`details.current` (the count observed at rejection time) so clients can render
+a helpful message and operators can correlate logs.
+
 ## Related docs
 
 - [CLI guide](cli.md)

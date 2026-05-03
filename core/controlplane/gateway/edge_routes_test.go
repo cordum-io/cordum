@@ -1289,3 +1289,79 @@ func edgeRouteExpectations() []edgeRouteExpectation {
 func (r routeInfo) methodPathKey() string {
 	return r.Method + " " + r.Path
 }
+
+// TestGatewayEdgeMaxExecutionsPerSessionCapReturns429 (EDGE-037) verifies that
+// CreateExecution rejects the (cap+1)th execution for a session with the
+// stable Edge error envelope and HTTP 429 max_executions_exceeded.
+// Uses CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION=2 to keep the test fast; the
+// helper is the same env knob production operators use.
+func TestGatewayEdgeMaxExecutionsPerSessionCapReturns429(t *testing.T) {
+	t.Setenv("CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION", "2")
+
+	_, handler := newEdgeRouteTestServer(t)
+	session := createEdgeRouteSession(t, handler)
+
+	body := `{
+		"session_id":"` + session.SessionID + `",
+		"adapter":"claude-code-hook",
+		"mode":"local-dev",
+		"attempt":1
+	}`
+
+	// First two creates land successfully (cap = 2; createEdgeRouteSession
+	// already created the session-initial execution which counts toward the
+	// cap, so this is execution #2 and #2 — wait, the cap counts existing
+	// rows. createEdgeRouteSession created 1 already; the next CreateExecution
+	// makes it 2, and the one after that should be rejected at count=2 >= cap=2).
+	r1 := edgeRoutePOST(t, handler, "/api/v1/edge/executions", body)
+	if r1.Code != http.StatusCreated {
+		t.Fatalf("first CreateExecution status = %d body=%s, want 201", r1.Code, r1.Body.String())
+	}
+	// Now count = 2 (initial + r1); the next create should hit the cap.
+	r2 := edgeRoutePOST(t, handler, "/api/v1/edge/executions", body)
+	if r2.Code != http.StatusTooManyRequests {
+		t.Fatalf("over-cap CreateExecution status = %d body=%s, want 429", r2.Code, r2.Body.String())
+	}
+	type errEnvelope struct {
+		Code    string         `json:"code"`
+		Message string         `json:"message"`
+		Details map[string]any `json:"details"`
+	}
+	var env errEnvelope
+	decodeEdgeRouteJSON(t, r2, &env)
+	if env.Code != "max_executions_exceeded" {
+		t.Fatalf("over-cap error code = %q, want max_executions_exceeded (body=%s)", env.Code, r2.Body.String())
+	}
+	if env.Details == nil {
+		t.Fatalf("over-cap error missing details body=%s", r2.Body.String())
+	}
+	if limit, ok := env.Details["limit"].(float64); !ok || int(limit) != 2 {
+		t.Fatalf("over-cap details limit = %v, want 2 (body=%s)", env.Details["limit"], r2.Body.String())
+	}
+	if current, ok := env.Details["current"].(float64); !ok || int(current) < 2 {
+		t.Fatalf("over-cap details current = %v, want >= 2 (body=%s)", env.Details["current"], r2.Body.String())
+	}
+}
+
+// TestGatewayEdgeMaxExecutionsPerSessionCapDefaultAcceptsSmallSessions ensures
+// the cap default doesn't break realistic dev workflows. With the default
+// (DefaultMaxExecutionsPerSession=100), a few executions in a row stay under
+// cap and continue to return 201.
+func TestGatewayEdgeMaxExecutionsPerSessionCapDefaultAcceptsSmallSessions(t *testing.T) {
+	// No env override — exercises the production default code path.
+	_, handler := newEdgeRouteTestServer(t)
+	session := createEdgeRouteSession(t, handler)
+
+	body := `{
+		"session_id":"` + session.SessionID + `",
+		"adapter":"claude-code-hook",
+		"mode":"local-dev",
+		"attempt":1
+	}`
+	for i := 0; i < 5; i++ {
+		r := edgeRoutePOST(t, handler, "/api/v1/edge/executions", body)
+		if r.Code != http.StatusCreated {
+			t.Fatalf("CreateExecution #%d status = %d body=%s, want 201 under default cap", i, r.Code, r.Body.String())
+		}
+	}
+}
