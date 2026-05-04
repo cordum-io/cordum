@@ -706,10 +706,18 @@ paths:
     post:
       operationId: createEdgeExecution
       summary: Create an Edge agent execution
+      description: |
+        EDGE-060 — supports `Idempotency-Key`. A retry with the same
+        key and identical body returns the SAME `execution_id` (cached
+        replay, 201) without burning against the per-session execution
+        cap. A retry with the same key but different body returns 409
+        `idempotency_conflict`. Missing key falls back to non-idempotent
+        behavior (every call generates a fresh `execution_id`).
       tags:
       - Edge
       parameters:
       - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:

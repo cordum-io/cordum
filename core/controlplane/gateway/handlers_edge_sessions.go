@@ -554,14 +554,57 @@ func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Reques
 		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeMissingField, "session_id is required", nil)
 		return
 	}
-	parent, found, err := store.GetSession(r.Context(), tenantID, sessionID)
-	if err != nil {
-		writeEdgeInternalError(w, r, "load edge execution parent session", err)
+
+	// EDGE-060 step 3 reopen #1 — idempotency hash AFTER tenant override
+	// per EDGE-008.7 invariant. SessionID + ExecutionID lifecycle: the
+	// returned execution_id is server-generated, so retries with the same
+	// idempotency key replay the same execution_id without creating a
+	// duplicate execution row that would burn against the per-session cap.
+	normalizedReq := req
+	normalizedReq.TenantID = tenantID
+	normalizedReq.SessionID = sessionID
+	idempotencyReq, idempotent, handled := s.prepareEdgeIdempotencyRequest(w, r, tenantID, edgeExecutionCreateEndpoint, normalizedReq)
+	if handled {
 		return
 	}
-	if !found || parent == nil {
-		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
+	if idempotent {
+		s.applyEdgeIdempotency(w, r, store, idempotencyReq,
+			func() (edgeIdempotentWriteResult, error) {
+				return s.executeCreateEdgeExecution(r, store, req, tenantID, sessionID)
+			},
+			func(err error) {
+				writeCreateEdgeExecutionDomainError(w, r, err)
+			})
 		return
+	}
+
+	result, err := s.executeCreateEdgeExecution(r, store, req, tenantID, sessionID)
+	if err != nil {
+		writeCreateEdgeExecutionDomainError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", result.ContentType)
+	w.WriteHeader(result.StatusCode)
+	_, _ = w.Write(result.Body)
+}
+
+// executeCreateEdgeExecution is the body of handleCreateEdgeExecution
+// factored out for idempotency-wrapping reuse. Returns the marshalled
+// response on success and a typed domain error on failure (mapped to
+// the wire envelope by writeCreateEdgeExecutionDomainError).
+//
+// Per-session execution cap and parent-session lookup live INSIDE the
+// helper so cached idempotent replays bypass them — a retry that
+// originally succeeded must replay successfully even if the session
+// has subsequently filled its execution cap or transitioned to
+// terminal.
+func (s *server) executeCreateEdgeExecution(r *http.Request, store edgecore.Store, req edgeExecutionCreateRequest, tenantID, sessionID string) (edgeIdempotentWriteResult, error) {
+	parent, found, err := store.GetSession(r.Context(), tenantID, sessionID)
+	if err != nil {
+		return edgeIdempotentWriteResult{}, edgeCreateExecutionInternalErr{op: "load edge execution parent session", wrapped: err}
+	}
+	if !found || parent == nil {
+		return edgeIdempotentWriteResult{}, edgeCreateExecutionParentNotFoundErr{}
 	}
 
 	// Per-session execution cap (EDGE-037). Reject before redaction/validate so
@@ -573,14 +616,10 @@ func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Reques
 	maxExecutions := edgeMaxExecutionsPerSession()
 	executionCount, err := store.CountSessionExecutions(r.Context(), tenantID, sessionID)
 	if err != nil {
-		writeEdgeInternalError(w, r, "count edge session executions", err)
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateExecutionInternalErr{op: "count edge session executions", wrapped: err}
 	}
 	if executionCount >= maxExecutions {
-		writeEdgeError(w, r, http.StatusTooManyRequests, edgeErrCodeMaxExecutionsExceeded,
-			fmt.Sprintf("session has reached the maximum of %d executions; end the session or start a new one", maxExecutions),
-			map[string]any{"limit": maxExecutions, "current": executionCount})
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateExecutionCapExceededErr{limit: maxExecutions, current: executionCount}
 	}
 
 	adapter := req.Adapter
@@ -601,18 +640,15 @@ func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Reques
 	}
 	redacted, err := redactEdgeExecutionCreateRequest(req)
 	if err != nil {
-		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateExecutionInvalidErr{wrapped: err}
 	}
 	traceID, err = redacted.String(traceID)
 	if err != nil {
-		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateExecutionInvalidErr{wrapped: err}
 	}
 	policySnapshot, err = redacted.String(policySnapshot)
 	if err != nil {
-		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateExecutionInvalidErr{wrapped: err}
 	}
 
 	execution := edgecore.AgentExecution{
@@ -633,32 +669,104 @@ func (s *server) handleCreateEdgeExecution(w http.ResponseWriter, r *http.Reques
 		Labels:         redacted.Labels,
 	}
 	if err := execution.Validate(); err != nil {
-		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateExecutionInvalidErr{wrapped: err}
 	}
 	if err := store.CreateExecution(r.Context(), execution); err != nil {
-		if errors.Is(err, edgecore.ErrParentSessionTerminal) {
-			// EDGE-054 — parent session is terminal; map to 409 so callers
-			// can distinguish lifecycle violations from validation failures.
-			writeEdgeError(w, r, http.StatusConflict, edgeErrCodeSessionTerminal, "parent edge session is terminal", nil)
-			return
-		}
-		if errors.Is(err, edgecore.ErrNotFound) {
-			writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
-			return
-		}
-		if isEdgeValidationError(err) {
-			writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
-			return
-		}
-		writeEdgeInternalError(w, r, "create edge execution", err)
-		return
+		return edgeIdempotentWriteResult{}, err
 	}
 	// EDGE-014 step-10: emit best-effort execution_started audit event.
 	edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForExecutionStarted(execution))
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, execution)
+	body, err := json.Marshal(execution)
+	if err != nil {
+		return edgeIdempotentWriteResult{}, edgeCreateExecutionInternalErr{op: "marshal edge execution response", wrapped: err}
+	}
+	return edgeIdempotentWriteResult{
+		StatusCode:  http.StatusCreated,
+		ContentType: "application/json",
+		Body:        body,
+	}, nil
+}
+
+// edgeCreateExecutionInternalErr signals a 500-shape internal failure
+// from inside executeCreateEdgeExecution.
+type edgeCreateExecutionInternalErr struct {
+	op      string
+	wrapped error
+}
+
+func (e edgeCreateExecutionInternalErr) Error() string {
+	if e.wrapped == nil {
+		return e.op
+	}
+	return e.op + ": " + e.wrapped.Error()
+}
+func (e edgeCreateExecutionInternalErr) Unwrap() error { return e.wrapped }
+
+// edgeCreateExecutionParentNotFoundErr signals a 404 — parent session
+// is missing or cross-tenant. Distinct envelope from "execution
+// validation failed" so callers can route correctly.
+type edgeCreateExecutionParentNotFoundErr struct{}
+
+func (edgeCreateExecutionParentNotFoundErr) Error() string {
+	return "edge execution parent session not found"
+}
+
+// edgeCreateExecutionCapExceededErr signals a 429 — per-session cap.
+type edgeCreateExecutionCapExceededErr struct {
+	limit   int64
+	current int64
+}
+
+func (e edgeCreateExecutionCapExceededErr) Error() string {
+	return fmt.Sprintf("session has reached the maximum of %d executions; end the session or start a new one", e.limit)
+}
+
+// writeCreateEdgeExecutionDomainError maps the typed errors from
+// executeCreateEdgeExecution into the shared edge-error wire envelope.
+// Both the idempotent + non-idempotent paths funnel through here so
+// the responses are byte-identical.
+func writeCreateEdgeExecutionDomainError(w http.ResponseWriter, r *http.Request, err error) {
+	if err == nil {
+		writeEdgeInternalError(w, r, "create edge execution", fmt.Errorf("nil error"))
+		return
+	}
+	var execInvalid edgeCreateExecutionInvalidErr
+	if errors.As(err, &execInvalid) {
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
+		return
+	}
+	var parentMissing edgeCreateExecutionParentNotFoundErr
+	if errors.As(err, &parentMissing) {
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
+		return
+	}
+	var capErr edgeCreateExecutionCapExceededErr
+	if errors.As(err, &capErr) {
+		writeEdgeError(w, r, http.StatusTooManyRequests, edgeErrCodeMaxExecutionsExceeded,
+			capErr.Error(),
+			map[string]any{"limit": capErr.limit, "current": capErr.current})
+		return
+	}
+	if errors.Is(err, edgecore.ErrParentSessionTerminal) {
+		// EDGE-054 — parent session is terminal; map to 409 so callers
+		// can distinguish lifecycle violations from validation failures.
+		writeEdgeError(w, r, http.StatusConflict, edgeErrCodeSessionTerminal, "parent edge session is terminal", nil)
+		return
+	}
+	if errors.Is(err, edgecore.ErrNotFound) {
+		writeEdgeError(w, r, http.StatusNotFound, edgeErrCodeNotFound, "edge session not found", nil)
+		return
+	}
+	if isEdgeValidationError(err) {
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
+		return
+	}
+	var internal edgeCreateExecutionInternalErr
+	if errors.As(err, &internal) {
+		writeEdgeInternalError(w, r, internal.op, internal.wrapped)
+		return
+	}
+	writeEdgeInternalError(w, r, "create edge execution", err)
 }
 
 func (s *server) handleGetEdgeExecution(w http.ResponseWriter, r *http.Request) {
