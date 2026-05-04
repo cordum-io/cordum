@@ -90,6 +90,20 @@ func mapLabelsForPolicy(event AgentActionEvent, classification ActionClassificat
 		putPolicyLabel(labels, "hook.event", string(event.Kind), true)
 		putPolicyLabel(labels, "hook.tool_name", event.ToolName, true)
 	}
+	// EDGE-069 — surface classifier completeness in the policy
+	// labels so audit-evidence consumers (dashboard, SIEM, governance
+	// timeline) can distinguish full classifications from partial.
+	// Backward-compat: absent label means "complete" — only emit when
+	// the field is meaningful, i.e. always emit complete state and
+	// only emit missing_fields when non-empty.
+	if classification.Complete {
+		putPolicyLabel(labels, "classifier.complete", "true", true)
+	} else {
+		putPolicyLabel(labels, "classifier.complete", "false", true)
+		if len(classification.MissingFields) > 0 {
+			putPolicyLabel(labels, "classifier.missing_fields", strings.Join(classification.MissingFields, ","), true)
+		}
+	}
 	return labels
 }
 
@@ -135,6 +149,11 @@ var reservedPolicyLabelPrefixes = []string{
 	"command.",
 	"unknown.",
 	"action.",
+	// EDGE-069 step 5 — classifier completeness signal MUST be
+	// classifier-owned: a malicious request must not set
+	// classifier.complete=true to short-circuit the fail-closed path
+	// for an actually-partial classification.
+	"classifier.",
 }
 
 func isReservedPolicyLabel(key string) bool {

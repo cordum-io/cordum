@@ -36,6 +36,16 @@ const (
 // use this output when constructing policy inputs. Large/raw hook payloads
 // should be represented as bounded redacted content plus artifact pointers, not
 // embedded in labels or logs.
+//
+// EDGE-069 — Complete + MissingFields capture whether the classifier's
+// output is partial. A partial classification (Capability empty,
+// ActionName empty, or RiskTags empty/only-default-sentinels) is
+// flagged so downstream evaluators can route to deny-with-reason
+// "classifier_incomplete" rather than allowing a policy match against
+// a half-populated input. Backward-compat: existing consumers that do
+// not inspect Complete see the field default-false; the gateway
+// evaluator path treats an absent field as Complete=true so historic
+// callers unaware of the field continue to function.
 type ActionClassification struct {
 	ActionName       string
 	Capability       string
@@ -44,6 +54,14 @@ type ActionClassification struct {
 	InputContent     []byte
 	InputContentType string
 	InputSizeBytes   int64
+	// Complete reports whether the classifier emitted all required
+	// fields (capability, action name, risk tags). false ⇒ partial
+	// classification; downstream evaluators should fail closed.
+	Complete bool
+	// MissingFields lists the field names the classifier did NOT
+	// populate when Complete=false. Sorted alphabetically for stable
+	// audit-evidence emission.
+	MissingFields []string
 }
 
 // ClassifyEvent normalizes an AgentActionEvent into deterministic server-side
@@ -110,7 +128,38 @@ func ClassifyEvent(event AgentActionEvent) (ActionClassification, error) {
 	}
 	classification.RiskTags = sortedUniqueStrings(classification.RiskTags)
 	classification.Labels = cloneLabels(classification.Labels)
+	// EDGE-069 — flag partial classifications so downstream evaluators
+	// can fail closed. A complete classification has a non-empty
+	// ActionName, Capability, and RiskTags. The default-sentinel
+	// fallback (capability=edge.unknown, action_name=unknown.hook,
+	// risk_tags=[review_required, unknown]) is itself "complete" — the
+	// classifier intentionally emits these for unknown tools so policy
+	// can fire deny-unknown-high-risk. "Incomplete" means a code path
+	// failed to populate one of the three required fields entirely.
+	classification.Complete, classification.MissingFields = computeClassificationCompleteness(classification)
 	return classification, nil
+}
+
+// computeClassificationCompleteness inspects an ActionClassification
+// and reports whether the classifier produced the three required
+// fields. A returned MissingFields slice is sorted (and may be nil
+// when Complete=true) so audit-evidence emission is deterministic.
+func computeClassificationCompleteness(c ActionClassification) (bool, []string) {
+	var missing []string
+	if strings.TrimSpace(c.ActionName) == "" {
+		missing = append(missing, "action_name")
+	}
+	if strings.TrimSpace(c.Capability) == "" {
+		missing = append(missing, "capability")
+	}
+	if len(c.RiskTags) == 0 {
+		missing = append(missing, "risk_tags")
+	}
+	if len(missing) == 0 {
+		return true, nil
+	}
+	sort.Strings(missing)
+	return false, missing
 }
 
 func classifyHookEvent(event AgentActionEvent, out *ActionClassification) {

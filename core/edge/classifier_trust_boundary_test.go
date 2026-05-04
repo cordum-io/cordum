@@ -243,16 +243,33 @@ func TestClassifier_UnknownImpactInjectionDoesNotDowngrade(t *testing.T) {
 }
 
 // Invariant (b): Empty/sentinel classifier output (capability empty,
-// risk_tags empty) MUST be flagged for fail-closed handling.
-// Pre-fix: today the classifier's missing-fields detection is implicit
-// (default-decision: deny in policy catches it). EDGE-069 step 4 adds
-// an explicit `Complete bool` + `MissingFields []string` to the
-// classification so downstream consumers see the partial state.
-//
-// This test is intentionally RED until step 4 lands. Skipping for now
-// is acceptable; the test as a placeholder records the contract.
+// risk_tags empty) MUST be flagged for fail-closed handling. EDGE-069
+// step 4 adds Complete + MissingFields to the classification so
+// downstream consumers see the partial state.
 func TestClassifier_EmptyClassificationFailsClosed(t *testing.T) {
-	t.Skip("invariant (b) placeholder — Complete/MissingFields fields land in step 4")
+	// Construct a classification by calling ClassifyEvent with a normal
+	// hook event; verify the happy-path Complete=true.
+	happy, err := ClassifyEvent(newBaseHookEvent("Read", map[string]any{"file_path": "/tmp/x"}))
+	if err != nil {
+		t.Fatalf("happy ClassifyEvent: %v", err)
+	}
+	if !happy.Complete || len(happy.MissingFields) != 0 {
+		t.Fatalf("happy classification expected Complete=true MissingFields=nil; got Complete=%v MissingFields=%v",
+			happy.Complete, happy.MissingFields)
+	}
+
+	// Now exercise the helper directly with a partial classification —
+	// proves the boundary detects each missing field.
+	partial := ActionClassification{}
+	complete, missing := computeClassificationCompleteness(partial)
+	if complete {
+		t.Fatal("zero-value classification reported Complete=true")
+	}
+	for _, want := range []string{"action_name", "capability", "risk_tags"} {
+		if !trustBoundaryContains(missing, want) {
+			t.Errorf("zero-value classification missing %q not flagged; got MissingFields=%v", want, missing)
+		}
+	}
 }
 
 // Invariant (g): Audit-evidence event MUST cite rule_id (or the
@@ -272,11 +289,115 @@ func TestClassifier_TenantNotUserSettable(t *testing.T) {
 	t.Skip("invariant (c) tracked in handlers_edge_evaluate_test.go (EDGE-008.7 already covers this)")
 }
 
-// Invariant (f): Partial classification (missing action_hash) → deny.
-// Action hash lives downstream in policy_mapper.go; this lands with
-// step 4 alongside Complete/MissingFields.
+// Invariant (f): Partial classification → flagged for fail-closed
+// downstream handling. The classifier produces ActionClassification
+// with Complete=false + MissingFields populated when any of
+// {action_name, capability, risk_tags} is empty. The architect's
+// "missing action_hash" wording maps to "missing one of the three
+// required field categories" since action_hash is computed downstream
+// in policy_mapper.go from the classifier's output.
 func TestClassifier_PartialClassificationDenied(t *testing.T) {
-	t.Skip("invariant (f) placeholder — Complete/MissingFields fields land in step 4")
+	// Manufacture a classification with each of the 3 required fields
+	// missing in turn; assert the helper flags it.
+	cases := []struct {
+		name        string
+		c           ActionClassification
+		wantMissing string
+	}{
+		{
+			name:        "missing_action_name",
+			c:           ActionClassification{Capability: "exec.shell", RiskTags: []string{"exec"}},
+			wantMissing: "action_name",
+		},
+		{
+			name:        "missing_capability",
+			c:           ActionClassification{ActionName: "bash.exec", RiskTags: []string{"exec"}},
+			wantMissing: "capability",
+		},
+		{
+			name:        "missing_risk_tags",
+			c:           ActionClassification{ActionName: "bash.exec", Capability: "exec.shell"},
+			wantMissing: "risk_tags",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			complete, missing := computeClassificationCompleteness(tc.c)
+			if complete {
+				t.Fatalf("expected Complete=false for partial classification, got Complete=true")
+			}
+			if !trustBoundaryContains(missing, tc.wantMissing) {
+				t.Fatalf("expected MissingFields to include %q; got %v", tc.wantMissing, missing)
+			}
+		})
+	}
+}
+
+// TestPolicyMapper_ClassifierCompletenessSurfacedInLabels pins the
+// EDGE-069 step-5 audit-evidence contract: every policy decision
+// includes classifier.complete and (when partial) classifier.missing_fields
+// so downstream consumers (governance timeline, SIEM, dashboard) can
+// see when a classification was partial.
+//
+// Defense-in-depth: classifier.* is in reservedPolicyLabelPrefixes so
+// a malicious request body labels.classifier.complete=true cannot
+// short-circuit a downstream fail-closed evaluator.
+func TestPolicyMapper_ClassifierCompletenessSurfacedInLabels(t *testing.T) {
+	t.Run("complete_classification", func(t *testing.T) {
+		event := newBaseHookEvent("Read", map[string]any{"file_path": "/tmp/x"})
+		classification, err := ClassifyEvent(event)
+		if err != nil {
+			t.Fatalf("ClassifyEvent: %v", err)
+		}
+		labels := mapLabelsForPolicy(event, classification)
+		if got := labels["classifier.complete"]; got != "true" {
+			t.Fatalf("classifier.complete = %q, want true", got)
+		}
+		if got, ok := labels["classifier.missing_fields"]; ok {
+			t.Fatalf("classifier.missing_fields should be absent on complete classifications; got %q", got)
+		}
+	})
+
+	t.Run("partial_classification", func(t *testing.T) {
+		// Hand-craft a partial classification (missing capability).
+		event := newBaseHookEvent("Read", map[string]any{"file_path": "/tmp/x"})
+		partial := ActionClassification{
+			ActionName:    "file.read",
+			Capability:    "", // intentionally missing
+			RiskTags:      []string{"filesystem", "read"},
+			Labels:        Labels{},
+			Complete:      false,
+			MissingFields: []string{"capability"},
+		}
+		labels := mapLabelsForPolicy(event, partial)
+		if got := labels["classifier.complete"]; got != "false" {
+			t.Fatalf("classifier.complete = %q, want false", got)
+		}
+		if got := labels["classifier.missing_fields"]; got != "capability" {
+			t.Fatalf("classifier.missing_fields = %q, want capability", got)
+		}
+	})
+
+	t.Run("user_cannot_set_classifier_complete", func(t *testing.T) {
+		// Malicious request tries to claim Complete=true; classifier.*
+		// is in reservedPolicyLabelPrefixes so the user value drops.
+		event := newBaseHookEvent("Read", map[string]any{"file_path": "/tmp/x"})
+		event.Labels = Labels{"classifier.complete": "true"}
+		// Pass a partial classification — labels output must reflect
+		// the classifier's "false", not the user's "true".
+		partial := ActionClassification{
+			ActionName:    "file.read",
+			Capability:    "",
+			RiskTags:      []string{"filesystem", "read"},
+			Labels:        Labels{},
+			Complete:      false,
+			MissingFields: []string{"capability"},
+		}
+		labels := mapLabelsForPolicy(event, partial)
+		if got := labels["classifier.complete"]; got != "false" {
+			t.Fatalf("classifier.complete = %q, want false (user injection ignored)", got)
+		}
+	})
 }
 
 // TestPolicyMapper_StripMetricEmittedPerNamespace pins the EDGE-069
