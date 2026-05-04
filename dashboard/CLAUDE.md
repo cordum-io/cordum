@@ -1,5 +1,38 @@
 # Cordum Dashboard Agent Notes
 
+## Dependency Hygiene
+
+`dashboard/package.json` has `dependencies` + `devDependencies` + `overrides`
++ `pnpm.overrides` blocks. The override semantics is the most common source
+of drift bugs — and the silent kind that only fires when a docker layer
+cache misses. Two rules:
+
+**Rule 1 — bump direct dep AND override together.** If a dep listed in
+`dependencies` (or `devDependencies`) has a matching entry in `overrides` /
+`pnpm.overrides`, bumping one without the other can produce
+non-intersecting semver ranges and `npm install` fails with `EOVERRIDE`.
+Example of the failure mode:
+
+```jsonc
+"dependencies":  { "lodash":  "^4.17.21" }   // >=4.17.21, <4.18.0
+"overrides":     { "lodash":  "^4.18.0"  }   // >=4.18.0,  <4.19.0  ← no overlap
+```
+
+**Rule 2 — regenerate the lockfile after any `package.json` edit.** Edits
+that don't touch `package-lock.json` go silently green when docker caches
+the prior `npm ci` layer, then explode at build time inside the
+container. After any `package.json` edit, run:
+
+```bash
+cd dashboard
+npm install --package-lock-only --legacy-peer-deps
+git add package.json package-lock.json
+```
+
+CI enforces both rules via `tools/scripts/check_dashboard_deps.sh`
+(EDGE-074), which runs in the `dashboard-test` job before `npm ci` and
+fails the PR on EOVERRIDE / ERESOLVE / EUSAGE / lockfile drift.
+
 ## Testing
 
 Page-level tests that render a page composing React Query hooks must use the

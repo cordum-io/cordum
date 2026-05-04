@@ -133,6 +133,9 @@ jobs:
         cache: npm
         cache-dependency-path: dashboard/package-lock.json
 
+    - name: Check dashboard dependency hygiene (EDGE-074)
+      run: bash tools/scripts/check_dashboard_deps.sh
+
     - name: Install dashboard dependencies
       working-directory: dashboard
       run: npm ci
