@@ -99,19 +99,62 @@ func putPolicyLabel(labels map[string]string, key, value string, trusted bool) {
 	if key == "" || value == "" {
 		return
 	}
-	if !trusted && isReservedPolicyLabel(key) {
-		return
+	if !trusted {
+		if prefix, reserved := reservedPolicyLabelPrefix(key); reserved {
+			// EDGE-069 — request body cannot inject classifier-owned
+			// labels. Drop AND emit the metric so operators can see
+			// when a client is mis-using the namespace.
+			edgeRequestLabelsStrippedTotal.WithLabelValues(prefix).Inc()
+			return
+		}
 	}
 	labels[key] = safeLabelValue(value, "unknown")
 }
 
+// reservedPolicyLabelPrefixes is the canonical list of label-key
+// prefixes OWNED by the classifier. Request-body labels with any of
+// these prefixes are dropped at the trust boundary in
+// `mapLabelsForPolicy` so a malicious or naive client cannot poison
+// the policy input by setting `path.class`, `command.class`,
+// `unknown.impact`, etc. Any classifier file that emits a NEW reserved
+// namespace MUST also add the prefix here. See EDGE-069 +
+// docs/edge/classifier-trust-boundary.md.
+var reservedPolicyLabelPrefixes = []string{
+	"edge.",
+	"hook.",
+	"mcp.",
+	"llm.",
+	"runtime.",
+	"agent.",
+	// EDGE-069 additions — close the path./command./unknown./action.
+	// gap that let a request-body label downgrade its own
+	// classification when the classifier did not emit a value for
+	// that key (verified RED in classifier_trust_boundary_test.go
+	// pre-fix).
+	"path.",
+	"command.",
+	"unknown.",
+	"action.",
+}
+
 func isReservedPolicyLabel(key string) bool {
-	for _, prefix := range []string{"edge.", "hook.", "mcp.", "llm.", "runtime.", "agent."} {
+	_, reserved := reservedPolicyLabelPrefix(key)
+	return reserved
+}
+
+// reservedPolicyLabelPrefix reports whether key is in a reserved
+// namespace and returns the matching prefix (without trailing dot)
+// so callers can label observability metrics by namespace.
+func reservedPolicyLabelPrefix(key string) (string, bool) {
+	for _, prefix := range reservedPolicyLabelPrefixes {
 		if strings.HasPrefix(key, prefix) {
-			return true
+			// Strip the trailing dot so the metric label is
+			// "path" / "command" / "edge" — fewer tokens for
+			// alert routing and dashboard breakdowns.
+			return strings.TrimSuffix(prefix, "."), true
 		}
 	}
-	return false
+	return "", false
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
