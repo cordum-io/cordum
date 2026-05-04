@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -132,23 +133,90 @@ func (s *server) handleResolveEdgeApproval(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	resolverID := edgeApprovalResolverID(r)
+	resolvedBy := edgeApprovalResolvedBy(r)
+	reason := strings.TrimSpace(body.Reason)
+
+	// EDGE-060 step 4 — idempotency hash payload AFTER tenant +
+	// resolver-principal override per EDGE-008.7 invariant. ResolvedAt
+	// is server-generated and intentionally OMITTED from the hash so a
+	// retry hashes identically to its original. The (decision +
+	// approvalRef + reason) tuple anchors the action; the resolver id
+	// scopes it to a specific operator.
+	endpoint := edgeApprovalApproveEndpoint
+	if decision != edgecore.ApprovalDecisionApprove {
+		endpoint = edgeApprovalRejectEndpoint
+	}
+	normalizedReq := struct {
+		TenantID    string                     `json:"tenant_id"`
+		ApprovalRef string                     `json:"approval_ref"`
+		Decision    edgecore.ApprovalDecision  `json:"decision"`
+		ResolverID  string                     `json:"resolver_id"`
+		ResolvedBy  string                     `json:"resolved_by"`
+		Reason      string                     `json:"reason"`
+	}{
+		TenantID:    tenantID,
+		ApprovalRef: strings.TrimSpace(approvalRef),
+		Decision:    decision,
+		ResolverID:  resolverID,
+		ResolvedBy:  resolvedBy,
+		Reason:      reason,
+	}
+	idempotencyReq, idempotent, handled := s.prepareEdgeIdempotencyRequest(w, r, tenantID, endpoint, normalizedReq)
+	if handled {
+		return
+	}
+
+	resolveFn := func() (edgeIdempotentWriteResult, error) {
+		return s.executeResolveEdgeApproval(r, store, decision, tenantID, approvalRef, resolverID, resolvedBy, reason)
+	}
+	errFn := func(err error) {
+		writeEdgeApprovalStoreError(w, r, err, "resolve edge approval")
+	}
+	if idempotent {
+		s.applyEdgeIdempotency(w, r, store, idempotencyReq, resolveFn, errFn)
+		return
+	}
+	result, err := resolveFn()
+	if err != nil {
+		errFn(err)
+		return
+	}
+	w.Header().Set("Content-Type", result.ContentType)
+	w.WriteHeader(result.StatusCode)
+	_, _ = w.Write(result.Body)
+}
+
+// executeResolveEdgeApproval is the body of handleResolveEdgeApproval
+// factored out for idempotency-wrapping reuse. Returns the marshalled
+// approval response on success and the underlying store error on failure
+// (mapped to the wire envelope by writeEdgeApprovalStoreError so the
+// idempotent + non-idempotent paths emit identical responses).
+//
+// DoD #7: a same-key + same-body retry of an already-succeeded resolution
+// returns the cached 200 response (replay) — NOT a 409 "already approved".
+// The applyEdgeIdempotency wrapper handles replay automatically; this
+// function is only invoked on the fresh path. A different idempotency key
+// hitting an already-terminal approval still surfaces store-level
+// "already approved" as a 409 via writeEdgeApprovalStoreError.
+func (s *server) executeResolveEdgeApproval(r *http.Request, store edgecore.Store, decision edgecore.ApprovalDecision, tenantID, approvalRef, resolverID, resolvedBy, reason string) (edgeIdempotentWriteResult, error) {
 	resolution := edgecore.ApprovalResolution{
 		TenantID:    tenantID,
 		ApprovalRef: strings.TrimSpace(approvalRef),
-		ResolverID:  edgeApprovalResolverID(r),
-		ResolvedBy:  edgeApprovalResolvedBy(r),
-		Reason:      strings.TrimSpace(body.Reason),
+		ResolverID:  resolverID,
+		ResolvedBy:  resolvedBy,
+		Reason:      reason,
 		ResolvedAt:  time.Now().UTC(),
 	}
 	var approval *edgecore.EdgeApproval
+	var err error
 	if decision == edgecore.ApprovalDecisionApprove {
 		approval, err = store.ApproveApproval(r.Context(), resolution)
 	} else {
 		approval, err = store.RejectApproval(r.Context(), resolution)
 	}
 	if err != nil {
-		writeEdgeApprovalStoreError(w, r, err, "resolve edge approval")
-		return
+		return edgeIdempotentWriteResult{}, err
 	}
 	// EDGE-014 step-10: emit best-effort approval-resolved audit event.
 	// Severity follows decision: approved -> info, rejected -> high
@@ -167,12 +235,20 @@ func (s *server) handleResolveEdgeApproval(w http.ResponseWriter, r *http.Reques
 			approval.ApprovalRef,
 			approval.RuleID,
 			outcome,
-			resolution.ResolverID,
+			resolverID,
 			resolvedAt,
 			nil,
 		))
 	}
-	writeJSON(w, approval)
+	body, err := json.Marshal(approval)
+	if err != nil {
+		return edgeIdempotentWriteResult{}, err
+	}
+	return edgeIdempotentWriteResult{
+		StatusCode:  http.StatusOK,
+		ContentType: "application/json",
+		Body:        body,
+	}, nil
 }
 
 func edgeApprovalListQueryFromRequest(r *http.Request, tenantID string) (edgecore.ListApprovalsQuery, error) {

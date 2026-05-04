@@ -481,10 +481,18 @@ paths:
     post:
       operationId: createEdgeSession
       summary: Create an Edge session and initial execution
+      description: |
+        EDGE-060 — supports `Idempotency-Key`. A retry with the same key
+        and identical body returns the SAME `session_id` /
+        `execution_id` / `trace_id` (cached replay, 201). A retry with
+        the same key but different body returns 409
+        `idempotency_conflict`. Missing key falls back to non-idempotent
+        behavior (every call generates fresh UUIDs).
       tags:
       - Edge
       parameters:
       - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -504,6 +512,8 @@ paths:
           $ref: '#/components/responses/EdgeUnauthorized'
         '403':
           $ref: '#/components/responses/EdgeForbidden'
+        '409':
+          $ref: '#/components/responses/EdgeConflict'
         '413':
           $ref: '#/components/responses/EdgePayloadTooLarge'
         '503':
@@ -908,7 +918,15 @@ paths:
     post:
       operationId: approveEdgeApproval
       summary: Approve an Edge action approval
-      description: Resolves a pending Edge approval as approved for one retry/consume. Requires approval/admin permission, enforces tenant scope and self-approval protection, and fails with 409 if the session/execution/event/action hash or policy snapshot is stale.
+      description: |
+        Resolves a pending Edge approval as approved for one retry/consume. Requires approval/admin permission, enforces tenant scope and self-approval protection, and fails with 409 if the session/execution/event/action hash or policy snapshot is stale.
+
+        EDGE-060 — supports `Idempotency-Key` for safe retry against
+        the resolution state transition. Same key + same body returns
+        the SAME cached 200 response (replay), NOT 409 "already
+        approved" — this is the EDGE-060 DoD #7 invariant. A different
+        key against an already-terminal approval still surfaces the
+        existing 409 path.
       tags:
       - Edge
       parameters:
@@ -919,6 +937,7 @@ paths:
           type: string
           pattern: ^edge_appr_[A-Za-z0-9_-]+$
       - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: false
         content:
@@ -1020,7 +1039,13 @@ paths:
     post:
       operationId: rejectEdgeApproval
       summary: Reject an Edge action approval
-      description: Resolves a pending Edge approval as rejected. Requires approval/admin permission, enforces tenant scope and self-approval protection, and fails with 409 if the referenced Edge session/execution/event is stale.
+      description: |
+        Resolves a pending Edge approval as rejected. Requires approval/admin permission, enforces tenant scope and self-approval protection, and fails with 409 if the referenced Edge session/execution/event is stale.
+
+        EDGE-060 — supports `Idempotency-Key` for safe retry against
+        the resolution state transition. Same key + same body returns
+        the SAME cached 200 response (replay), NOT 409 "already
+        rejected".
       tags:
       - Edge
       parameters:
@@ -1031,6 +1056,7 @@ paths:
           type: string
           pattern: ^edge_appr_[A-Za-z0-9_-]+$
       - $ref: '#/components/parameters/TenantID'
+      - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: false
         content:
