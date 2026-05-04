@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/cordum/cordum/core/edge"
 )
 
 func TestRedactDiagnosticMasksSyntheticSecretsByValue(t *testing.T) {
@@ -161,3 +164,139 @@ func TestSafeIDPreservesShortIDsUnchanged(t *testing.T) {
 	}
 }
 
+// EDGE-071 — redactHookBoundaryString MUST fail closed when the
+// underlying edge.RedactValue returns an error. The dangerous pattern
+// the fix prevents is: redact fails -> fallback returns raw value ->
+// the very secret the redactor was supposed to mask leaks into events,
+// audit, or logs. The pre-fix code at mapper.go L591 left `candidate`
+// as the raw value when `err != nil`, which under
+// `result.Redacted/Truncated == false` AND no diagnostic transformation
+// returned the raw input verbatim. The fix replaces the err-tolerant
+// branch with an early-return placeholder.
+func TestRedactHookBoundaryStringFailsClosedOnRedactError(t *testing.T) {
+	saved := claudeRedactValue
+	defer func() { claudeRedactValue = saved }()
+	claudeRedactValue = func(any, edge.RedactionOptions) (edge.RedactionResult, error) {
+		return edge.RedactionResult{}, errors.New("forced redactor failure")
+	}
+
+	// A value that would NOT match any redaction pattern in the
+	// post-redactor diagnostic pass — so pre-fix the leak path was
+	// reachable: redactor errored, candidate stayed raw, no diagnostic
+	// transformation, no [REDACTED] marker -> return raw.
+	rawIDLikeInput := "tenant-acme-prod-001"
+
+	got := redactHookBoundaryString(rawIDLikeInput)
+	if got == rawIDLikeInput {
+		t.Fatalf("redactHookBoundaryString leaked raw value on redactor error: got %q", got)
+	}
+	if got != "<redacted>" {
+		t.Errorf("redactHookBoundaryString = %q on redactor error, want %q", got, "<redacted>")
+	}
+}
+
+// EDGE-071 — redactHookBoundaryString MUST fail closed on inputs that
+// exceed edge.MaxRedactionInputBytes. The unscanned tail of an oversized
+// input might contain secrets, so the call site cannot safely return the
+// partially-scanned head. The 1 MiB ceiling is also a memory-safety net
+// against attacker-supplied huge payloads.
+func TestRedactHookBoundaryStringFailsClosedOnOversizedInput(t *testing.T) {
+	// Build a value just past the cap. The body is benign ASCII so no
+	// redaction pattern would have fired on a smaller version of it —
+	// asserting that the size-bound short-circuit fires regardless of
+	// content.
+	oversized := strings.Repeat("a", edge.MaxRedactionInputBytes+1)
+
+	got := redactHookBoundaryString(oversized)
+	if got != "<redacted>" {
+		t.Errorf("redactHookBoundaryString(oversized) = %q (len=%d), want %q",
+			got, len(got), "<redacted>")
+	}
+}
+
+// EDGE-071 — sanity check that the success path still produces the
+// pre-fix shape for a benign value: small, no secret, returns the
+// trimmed input unchanged. Pins the EDGE-046 over-redaction guard
+// (no broad substring check on "secret") against accidental regression
+// from the EDGE-071 fail-closed changes.
+func TestRedactHookBoundaryStringSuccessPathPreservesBenignValue(t *testing.T) {
+	got := redactHookBoundaryString("  tenant-id-with-secret-substring  ")
+	if got != "tenant-id-with-secret-substring" {
+		t.Errorf("redactHookBoundaryString(benign) = %q, want %q",
+			got, "tenant-id-with-secret-substring")
+	}
+}
+
+// EDGE-071 — when a redaction call site falls back to the safe
+// placeholder, the package-level recorder MUST receive a
+// RecordRedactionFailed call with the matching site + reason labels.
+// This is the operational signal operators rely on to spot the
+// fail-closed event and investigate.
+type redactionFailedRecorder struct {
+	edge.NoopRecorder
+	mu    sync.Mutex
+	calls []redactionFailedCall
+}
+
+type redactionFailedCall struct{ site, reason string }
+
+func (r *redactionFailedRecorder) RecordRedactionFailed(site, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, redactionFailedCall{site: site, reason: reason})
+}
+
+func (r *redactionFailedRecorder) snapshot() []redactionFailedCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]redactionFailedCall(nil), r.calls...)
+}
+
+func TestRedactHookBoundaryStringEmitsMetricOnRedactorError(t *testing.T) {
+	rec := &redactionFailedRecorder{}
+	SetRedactionRecorder(rec)
+	defer SetRedactionRecorder(nil)
+
+	saved := claudeRedactValue
+	defer func() { claudeRedactValue = saved }()
+	claudeRedactValue = func(any, edge.RedactionOptions) (edge.RedactionResult, error) {
+		return edge.RedactionResult{}, errors.New("forced redactor failure")
+	}
+
+	if got := redactHookBoundaryString("tenant-acme-prod-001"); got != "<redacted>" {
+		t.Fatalf("fail-closed return = %q, want %q", got, "<redacted>")
+	}
+
+	calls := rec.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("got %d RecordRedactionFailed calls, want 1: %+v", len(calls), calls)
+	}
+	if calls[0].site != "claude.redact_hook_boundary_string" {
+		t.Errorf("site = %q, want %q", calls[0].site, "claude.redact_hook_boundary_string")
+	}
+	if calls[0].reason != "redactor_error" {
+		t.Errorf("reason = %q, want %q", calls[0].reason, "redactor_error")
+	}
+}
+
+func TestRedactHookBoundaryStringEmitsMetricOnOversizedInput(t *testing.T) {
+	rec := &redactionFailedRecorder{}
+	SetRedactionRecorder(rec)
+	defer SetRedactionRecorder(nil)
+
+	oversized := strings.Repeat("a", edge.MaxRedactionInputBytes+1)
+	if got := redactHookBoundaryString(oversized); got != "<redacted>" {
+		t.Fatalf("fail-closed return = %q, want %q", got, "<redacted>")
+	}
+
+	calls := rec.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("got %d RecordRedactionFailed calls, want 1: %+v", len(calls), calls)
+	}
+	if calls[0].site != "claude.redact_hook_boundary_string" {
+		t.Errorf("site = %q, want %q", calls[0].site, "claude.redact_hook_boundary_string")
+	}
+	if calls[0].reason != "input_too_large" {
+		t.Errorf("reason = %q, want %q", calls[0].reason, "input_too_large")
+	}
+}

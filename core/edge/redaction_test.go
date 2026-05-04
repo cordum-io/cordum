@@ -685,3 +685,86 @@ func mustMarshalForComparison(t *testing.T, value any) []byte {
 	}
 	return data
 }
+
+// EDGE-071 — SafePlaceholder MUST emit a JSON envelope that callers can
+// persist on the redaction-error path WITHOUT carrying the original
+// payload. The presence of the redaction_failed=true field is the
+// contract by which downstream code (e.g. dashboard timeline,
+// audit-event consumers) can detect that the value was a fail-closed
+// placeholder rather than a successfully-redacted result.
+func TestSafePlaceholderEnvelopeShape(t *testing.T) {
+	got := SafePlaceholder("redactor_error", 4096, true)
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("SafePlaceholder produced non-JSON output: %q (err=%v)", got, err)
+	}
+	if parsed["redacted"] != true {
+		t.Errorf("envelope.redacted = %v, want true (got=%q)", parsed["redacted"], got)
+	}
+	if parsed["redaction_failed"] != true {
+		t.Errorf("envelope.redaction_failed = %v, want true (got=%q)", parsed["redaction_failed"], got)
+	}
+	if parsed["reason"] != "redactor_error" {
+		t.Errorf("envelope.reason = %v, want %q (got=%q)", parsed["reason"], "redactor_error", got)
+	}
+	if parsed["truncated"] != true {
+		t.Errorf("envelope.truncated = %v, want true (got=%q)", parsed["truncated"], got)
+	}
+	// json.Unmarshal decodes numeric to float64 by default.
+	if size, ok := parsed["size"].(float64); !ok || int(size) != 4096 {
+		t.Errorf("envelope.size = %v, want 4096 (got=%q)", parsed["size"], got)
+	}
+}
+
+// EDGE-071 — empty/negative inputs collapse to safe defaults so a caller
+// that doesn't know the original size doesn't accidentally publish a
+// nonsense envelope (negative size, blank reason).
+func TestSafePlaceholderNormalizesInputs(t *testing.T) {
+	got := SafePlaceholder("", -42, false)
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("SafePlaceholder produced non-JSON output: %q (err=%v)", got, err)
+	}
+	if parsed["reason"] != "unknown" {
+		t.Errorf("envelope.reason for empty input = %v, want %q", parsed["reason"], "unknown")
+	}
+	if size, ok := parsed["size"].(float64); !ok || int(size) != 0 {
+		t.Errorf("envelope.size for negative input = %v, want 0", parsed["size"])
+	}
+}
+
+// EDGE-071 — SafePlaceholder MUST NEVER carry the original payload.
+// This is the data-loss-prevention invariant: the envelope is metadata
+// only. The test asserts that a sensitive value passed as `reason`
+// (callers should not do that, but defensive check) does NOT leak
+// alongside structural metadata; i.e. the only place the reason string
+// appears is the bounded reason field.
+func TestSafePlaceholderNeverEmbedsRawPayload(t *testing.T) {
+	// A caller that mistakenly passes a literal secret-shaped string as
+	// `reason` would still embed it in the JSON envelope; SafePlaceholder
+	// is not a redactor. The contract this test pins is structural:
+	// SafePlaceholder writes EXACTLY the documented fields and no
+	// inadvertent extras. If the envelope grows a `payload` or `value`
+	// field in the future, this test fails — which is the desired
+	// regression signal.
+	got := SafePlaceholder("redactor_error", 1024, false)
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Fatalf("SafePlaceholder produced non-JSON output: %q (err=%v)", got, err)
+	}
+	allowed := map[string]struct{}{
+		"redacted":         {},
+		"redaction_failed": {},
+		"reason":           {},
+		"size":             {},
+		"truncated":        {},
+	}
+	for key := range parsed {
+		if _, ok := allowed[key]; !ok {
+			t.Errorf("envelope contains disallowed field %q (got=%q)", key, got)
+		}
+	}
+}

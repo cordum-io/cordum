@@ -40,6 +40,7 @@ type PrometheusRecorder struct {
 	agentdResponseWriteAborts *prometheus.CounterVec
 	agentdShutdownForced      *prometheus.CounterVec
 	edgeExportRejected        *prometheus.CounterVec
+	redactionFailed           *prometheus.CounterVec
 	artifactExports   *prometheus.CounterVec
 	hookLatency       *prometheus.HistogramVec
 	evaluateLatency   *prometheus.HistogramVec
@@ -166,6 +167,17 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 			Namespace: ns, Name: "export_request_rejected_total",
 			Help: "Edge session-export request-validation rejections, labeled by bounded reason.",
 		}, []string{"reason"}),
+		// EDGE-071 — counter for redaction call-site fail-closed events.
+		// Fires when an Edge redaction site returns the safe placeholder
+		// because the underlying redactor errored or the input exceeded
+		// MaxRedactionInputBytes. `site` identifies the call site;
+		// `reason` describes the failure mode. Both labels collapse via
+		// boundedRedactionFailedSite / boundedRedactionFailedReason.
+		// Bounded cardinality.
+		redactionFailed: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns, Name: "redaction_failed_total",
+			Help: "Edge redaction fail-closed events (redactor error or input too large), labeled by bounded site and reason.",
+		}, []string{"site", "reason"}),
 		artifactExports: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: ns, Name: "artifact_exports_total",
 			Help: "Edge artifact exports, labeled by artifact_type and result.",
@@ -203,6 +215,7 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 		r.degraded, r.failClosed, r.agentdResponseWriteAborts,
 		r.agentdShutdownForced,
 		r.edgeExportRejected,
+		r.redactionFailed,
 		r.artifactExports,
 		r.hookLatency, r.evaluateLatency,
 		r.cacheLookups,
@@ -264,6 +277,9 @@ func (r *PrometheusRecorder) RecordAgentdResponseWriteAborted(reason string) {
 }
 func (r *PrometheusRecorder) RecordAgentdShutdownForced(reason string) {
 	r.agentdShutdownForced.WithLabelValues(boundedAgentdShutdownForcedReason(reason)).Inc()
+}
+func (r *PrometheusRecorder) RecordRedactionFailed(site, reason string) {
+	r.redactionFailed.WithLabelValues(boundedRedactionFailedSite(site), boundedRedactionFailedReason(reason)).Inc()
 }
 func (r *PrometheusRecorder) RecordEdgeExportRequestRejected(reason string) {
 	r.edgeExportRejected.WithLabelValues(boundedEdgeExportRejectedReason(reason)).Inc()
@@ -703,6 +719,51 @@ func boundedAppendEventsAbortReason(value string) string {
 		return "unknown"
 	}
 	if _, ok := allowedAppendEventsAbortReasons[v]; ok {
+		return v
+	}
+	return "other"
+}
+
+// allowedRedactionFailedSites is the bounded set of `site` label values
+// for the EDGE-071 redaction_failed_total counter. Every Edge call site
+// that emits the fail-closed placeholder must register its site name
+// here; arbitrary input collapses to "other" so an attacker-supplied
+// or future-added site name cannot blow up cardinality.
+//   - claude.redact_hook_boundary_string: mapper.go redactHookBoundaryString
+//     (the EDGE-071 fix site).
+var allowedRedactionFailedSites = map[string]struct{}{
+	"claude.redact_hook_boundary_string": {},
+}
+
+func boundedRedactionFailedSite(value string) string {
+	v := lowerTrim(value)
+	if v == "" {
+		return "unknown"
+	}
+	if _, ok := allowedRedactionFailedSites[v]; ok {
+		return v
+	}
+	return "other"
+}
+
+// allowedRedactionFailedReasons is the bounded set of `reason` label
+// values for the EDGE-071 redaction_failed_total counter.
+//   - redactor_error: edge.RedactValue (or its claude alias) returned a
+//     non-nil error; today's only path is applyHashOptions but the
+//     fail-closed branch protects against future regressions.
+//   - input_too_large: the call site received an input larger than
+//     edge.MaxRedactionInputBytes and short-circuited to the placeholder.
+var allowedRedactionFailedReasons = map[string]struct{}{
+	"redactor_error":  {},
+	"input_too_large": {},
+}
+
+func boundedRedactionFailedReason(value string) string {
+	v := lowerTrim(value)
+	if v == "" {
+		return "unknown"
+	}
+	if _, ok := allowedRedactionFailedReasons[v]; ok {
 		return v
 	}
 	return "other"

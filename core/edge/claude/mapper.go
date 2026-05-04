@@ -8,10 +8,41 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/edge"
 )
+
+// EDGE-071: package-level recorder for redaction fail-closed events.
+// Defaults to a no-op so unit tests do not need to inject one. Production
+// init code (gateway/agentd/hook startup) replaces this with the
+// Prometheus recorder via SetRedactionRecorder so the
+// redaction_failed_total counter actually fires under the real registry.
+var (
+	redactionRecorder   edge.Recorder = edge.NewNoopRecorder()
+	redactionRecorderMu sync.RWMutex
+)
+
+// SetRedactionRecorder replaces the package-level recorder used by Edge
+// claude redaction call sites. Pass nil to revert to a no-op (used by
+// tests that want to drop emissions without exposing them via the
+// production registry). Safe for concurrent use.
+func SetRedactionRecorder(r edge.Recorder) {
+	if r == nil {
+		r = edge.NewNoopRecorder()
+	}
+	redactionRecorderMu.Lock()
+	defer redactionRecorderMu.Unlock()
+	redactionRecorder = r
+}
+
+func emitRedactionFailed(site, reason string) {
+	redactionRecorderMu.RLock()
+	r := redactionRecorder
+	redactionRecorderMu.RUnlock()
+	r.RecordRedactionFailed(site, reason)
+}
 
 // MappedHookAction is the transport-neutral result of mapping one Claude Code
 // hook payload into the Edge action shape used by Gateway evaluate, AgentdRequest
@@ -582,19 +613,59 @@ func sanitizeMappingContext(ctx MappingContext) MappingContext {
 	return ctx
 }
 
+// claudeRedactValue is the package-level alias for edge.RedactValue, exposed
+// only so tests can inject errors to verify the EDGE-071 fail-closed
+// contract on the redaction-error path. Production code MUST NOT rebind
+// this variable — it exists for testability of an otherwise-unreachable
+// error branch in edge.RedactValue (the only error source today is
+// applyHashOptions, which sha256 cannot trigger in practice). The
+// fail-closed branch protects against a future regression where the
+// redactor grows a reachable error path.
+var claudeRedactValue = edge.RedactValue
+
 func redactHookBoundaryString(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return ""
 	}
+	// EDGE-071: bound input size BEFORE the redactor sees it as a
+	// memory-safety net. The redactor itself caps via MaxInputRedactedBytes
+	// (64 KiB), but call sites enforce the higher MaxRedactionInputBytes
+	// ceiling first so an attacker-supplied value cannot force an
+	// arbitrary allocation. Truncated inputs are STILL scanned (per
+	// task rail "truncate + scan, never skip-scan-on-oversize") so the
+	// redaction patterns at least cover the leading 1 MiB; the call site
+	// then fail-closes to "<redacted>" because the unscanned tail might
+	// have contained secrets we cannot prove absent.
+	truncated := false
+	if len(value) > edge.MaxRedactionInputBytes {
+		value = value[:edge.MaxRedactionInputBytes]
+		truncated = true
+		emitRedactionFailed("claude.redact_hook_boundary_string", "input_too_large")
+	}
+	result, err := claudeRedactValue(value, edge.RedactionOptions{HashMode: edge.RedactionHashNone})
+	if err != nil {
+		// EDGE-071: NEVER let the raw value through on a redaction error.
+		// The dangerous pattern this guards against is "redact failed,
+		// fallback to raw" — which leaks the very secret the redactor
+		// was supposed to mask. Returning the safe placeholder forfeits
+		// some forensic detail to preserve the data-loss-prevention
+		// invariant.
+		emitRedactionFailed("claude.redact_hook_boundary_string", "redactor_error")
+		return "<redacted>"
+	}
+	if truncated {
+		// Scan happened (above), result is discarded because the
+		// unscanned tail forfeits any guarantee that the head alone is
+		// safe to surface. The metric emission above is the operational
+		// signal.
+		return "<redacted>"
+	}
 	candidate := value
-	result, err := edge.RedactValue(value, edge.RedactionOptions{HashMode: edge.RedactionHashNone})
-	if err == nil {
-		if redacted, ok := result.Value.(string); ok {
-			candidate = redacted
-		} else if result.Value != nil {
-			candidate = fmt.Sprint(result.Value)
-		}
+	if redacted, ok := result.Value.(string); ok {
+		candidate = redacted
+	} else if result.Value != nil {
+		candidate = fmt.Sprint(result.Value)
 	}
 	diagnostic := redactDiagnostic(candidate)
 	// EDGE-046: do not add a broad substring check on the word "secret" here.

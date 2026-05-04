@@ -122,6 +122,18 @@ type Recorder interface {
 	// to {"max_events_too_large", "other", "unknown"}.
 	RecordEdgeExportRequestRejected(reason string)
 
+	// RecordRedactionFailed emits a metric counter when an Edge redaction
+	// call site falls back to the EDGE-071 fail-closed placeholder because
+	// the underlying redactor returned an error or the input exceeded
+	// MaxRedactionInputBytes. `site` identifies the call site (collapsed
+	// via boundedRedactionFailedSite) and `reason` describes the failure
+	// mode (collapsed via boundedRedactionFailedReason). Bounded
+	// cardinality. The metric is the operational signal that the
+	// data-loss-prevention contract fired — operators must investigate
+	// any non-zero value because the placeholder represents real data
+	// that could not be safely persisted.
+	RecordRedactionFailed(site, reason string)
+
 	// Artifact / export observability.
 	RecordArtifactExport(tenant, artifactType, result string)
 
@@ -165,6 +177,7 @@ func (NoopRecorder) RecordFailClosed(string, string, string)                    
 func (NoopRecorder) RecordAgentdResponseWriteAborted(string)                     {}
 func (NoopRecorder) RecordAgentdShutdownForced(string)                           {}
 func (NoopRecorder) RecordEdgeExportRequestRejected(string)                      {}
+func (NoopRecorder) RecordRedactionFailed(string, string)                        {}
 func (NoopRecorder) RecordArtifactExport(string, string, string)                 {}
 func (NoopRecorder) ObserveHookLatency(string, string, string, time.Duration)    {}
 func (NoopRecorder) ObserveEvaluateLatency(string, string, string, string, time.Duration) {

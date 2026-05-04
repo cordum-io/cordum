@@ -23,6 +23,18 @@ const (
 	binaryRedactionPlaceholder     = "<redacted:binary>"
 	tooLargeRedactionPlaceholder   = "<redacted:too_large>"
 	nonFiniteRedactionPlaceholder  = "<redacted:non_finite>"
+
+	// MaxRedactionInputBytes is the upper bound on raw input accepted by
+	// edge redaction call sites BEFORE the value reaches the redactor.
+	// EDGE-071: the redactor itself caps via defaultRedactionMaxTotalBytes
+	// (= MaxInputRedactedBytes = 64 KiB), but call sites must enforce a
+	// hard ceiling first as a memory-safety net so an attacker cannot
+	// force the redactor to allocate against an arbitrarily large value.
+	// Inputs above this cap MUST be truncated to the cap and STILL
+	// scanned (never skip-scan-on-oversize); when the call site cannot
+	// safely return a partial scan result, return SafePlaceholder or the
+	// site's documented placeholder string.
+	MaxRedactionInputBytes = 1 * 1024 * 1024 // 1 MiB
 )
 
 // RedactionHashMode controls which stable hashes are returned with a redaction
@@ -108,6 +120,50 @@ func RedactJSON(data []byte, opts RedactionOptions) (RedactionResult, error) {
 		return RedactionResult{}, fmt.Errorf("edge redaction: parse json: %w", err)
 	}
 	return RedactValue(payload, opts)
+}
+
+// SafePlaceholder returns a JSON-encoded fail-closed marker that callers
+// MUST persist on the redaction-error path instead of the raw payload.
+//
+// EDGE-071: redaction is a data-loss-prevention boundary. The dangerous
+// pattern is "log error, then persist raw payload as fallback" — that
+// leaks the very secret the redactor was supposed to mask. Every Edge
+// redaction call site whose error path needs a structured envelope must
+// return SafePlaceholder; sites that document a string placeholder
+// (e.g. <redacted>) keep that contract.
+//
+// The envelope intentionally does NOT carry the original payload — only
+// metadata describing why redaction failed and how big the input was.
+// `truncated` records whether the call site truncated to
+// MaxRedactionInputBytes before invoking the redactor.
+func SafePlaceholder(reason string, originalSize int, truncated bool) string {
+	if reason == "" {
+		reason = "unknown"
+	}
+	if originalSize < 0 {
+		originalSize = 0
+	}
+	envelope := struct {
+		Redacted        bool   `json:"redacted"`
+		RedactionFailed bool   `json:"redaction_failed"`
+		Reason          string `json:"reason"`
+		Size            int    `json:"size"`
+		Truncated       bool   `json:"truncated"`
+	}{
+		Redacted:        true,
+		RedactionFailed: true,
+		Reason:          reason,
+		Size:            originalSize,
+		Truncated:       truncated,
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		// json.Marshal of a fixed-shape struct cannot fail in practice;
+		// the fallback exists so callers never persist raw payload even
+		// on this unreachable path.
+		return `{"redacted":true,"redaction_failed":true,"reason":"marshal_error","size":0,"truncated":false}`
+	}
+	return string(encoded)
 }
 
 // RedactBytes redacts arbitrary bytes. Binary input is replaced by a safe

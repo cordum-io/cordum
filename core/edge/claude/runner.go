@@ -23,6 +23,14 @@ func Run(ctx context.Context, opts RunOptions) int {
 	if stderr == nil {
 		stderr = io.Discard
 	}
+	// EDGE-071: route the package-level redaction recorder through the
+	// caller-supplied Recorder so metric emissions in mapper.go's
+	// fail-closed branches reach the same registry as the rest of the
+	// hook's edge metrics. Idempotent and concurrency-safe via
+	// SetRedactionRecorder's mutex.
+	if opts.Recorder != nil {
+		SetRedactionRecorder(opts.Recorder)
+	}
 
 	timeout, err := hookTimeout(opts)
 	if err != nil {

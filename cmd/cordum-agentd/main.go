@@ -12,6 +12,7 @@ import (
 
 	edgecore "github.com/cordum/cordum/core/edge"
 	agentdcore "github.com/cordum/cordum/core/edge/agentd"
+	"github.com/cordum/cordum/core/edge/claude"
 	"github.com/cordum/cordum/core/infra/logging"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -129,6 +130,10 @@ func defaultRunOptionsWithRecorder(cfg runConfig, recorder edgecore.Recorder) (a
 	if recorder == nil {
 		recorder = edgecore.NewPrometheusRecorder(prometheus.DefaultRegisterer)
 	}
+	// EDGE-071: wire the package-level claude redaction recorder so the
+	// fail-closed events from redactHookBoundaryString reach the same
+	// Prometheus registry as the rest of agentd's edge metrics.
+	claude.SetRedactionRecorder(recorder)
 	return agentdcore.RunOptions{
 		Config:   loaded,
 		Metadata: meta,
