@@ -44,6 +44,16 @@ var ErrIdempotencyPending = errors.New("edge idempotency: request pending")
 // persisted. Callers must not append a duplicate event in this case.
 var ErrIdempotencyWindowExpired = errors.New("edge idempotency: replay window expired")
 
+// ErrIdempotencyRecordExpired is returned when an idempotency record's
+// CreatedAt is older than the max-in-flight window (EDGE-061: 7 days). A
+// long-running flow that has held a pending reservation past the cap can
+// no longer be completed or retried under the same key; the caller must
+// generate a fresh idempotency key. Distinct from
+// ErrIdempotencyWindowExpired which fires when the redis TTL has actually
+// elapsed; ErrIdempotencyRecordExpired fires while the record is still
+// present in redis but its age exceeds the policy bound.
+var ErrIdempotencyRecordExpired = errors.New("edge idempotency: record exceeded max in-flight window")
+
 // ErrParentSessionTerminal is returned by CreateExecution when the parent
 // EdgeSession has transitioned to a terminal status (Ended/Failed) by the
 // time the WATCH/MULTI/EXEC pipeline executes. EDGE-054 closed the TOCTOU

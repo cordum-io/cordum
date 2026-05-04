@@ -1382,6 +1382,173 @@ func TestRedisStoreEdgeIdempotencyReserveCompleteReplayTTLConflictAndNoRawKey(t 
 	}
 }
 
+// EDGE-061 — pending-branch retry on ReserveIdempotency must refresh the
+// redis key TTL so a long-running flow that retries past the initial TTL
+// keeps once-semantics. Pre-fix, the pending-branch returned without
+// refreshing TTL, allowing the key to expire mid-flight and a later retry
+// to be processed as fresh.
+//
+// Strategy A+B: TTL extension on retry. The 7-day cap (Strategy B) is
+// pinned by TestRedisStoreIdempotencyReserveRejects7DayCappedRecord and
+// TestRedisStoreIdempotencyCompleteRejects7DayCappedRecord below.
+func TestRedisStoreIdempotencyPendingRetryRefreshesTTL(t *testing.T) {
+	ctx := context.Background()
+	store, client, mr, cleanup := newRedisEdgeStore(t, WithIdempotencyTTL(2*time.Second))
+	defer cleanup()
+
+	req := EdgeIdempotencyRequest{
+		TenantID:    "tenant-a",
+		Endpoint:    "POST /api/v1/edge/events",
+		Key:         "edge061-long-running",
+		RequestHash: "sha256:edge061-long",
+	}
+
+	first, err := store.ReserveIdempotency(ctx, req)
+	if err != nil {
+		t.Fatalf("first ReserveIdempotency: %v", err)
+	}
+	if first.State != EdgeIdempotencyReserved {
+		t.Fatalf("first reserve state = %q, want reserved", first.State)
+	}
+
+	keys, err := client.Keys(ctx, "edge:idempotency:*").Result()
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("idempotency key count = %d (err=%v), want 1: %#v", len(keys), err, keys)
+	}
+	idemKey := keys[0]
+
+	// Advance most of the way through the TTL but stop short.
+	mr.FastForward(1500 * time.Millisecond)
+
+	// Pending-retry: the second Reserve sees the in-flight record. EDGE-061
+	// requires that the redis key TTL is refreshed back to the full
+	// idempotencyTTL — otherwise the next FastForward will expire the key.
+	second, err := store.ReserveIdempotency(ctx, req)
+	if err != nil {
+		t.Fatalf("pending ReserveIdempotency: %v", err)
+	}
+	if second.State != EdgeIdempotencyPending {
+		t.Fatalf("second reserve state = %q, want pending", second.State)
+	}
+
+	// Confirm the redis-side TTL is now back to ~full TTL (within tolerance
+	// for miniredis float-rounding). Pre-fix, this remaining TTL is < 1s
+	// (1.5s elapsed of 2s); post-fix, it is ~2s.
+	ttl, err := client.TTL(ctx, idemKey).Result()
+	if err != nil {
+		t.Fatalf("TTL(%s): %v", idemKey, err)
+	}
+	if ttl < 1500*time.Millisecond {
+		t.Fatalf("TTL after pending retry = %v, want ~2s (refresh missing — EDGE-061 fix not applied at ReserveIdempotency pending branch)", ttl)
+	}
+
+	// Sanity: advance another 1.5s. With refresh, total real time passed is
+	// 3s but only 1.5s since the last Reserve, so the key is still alive.
+	// Without the refresh, the key would have expired at the 2s mark and
+	// the third Reserve would create a new record (state=Reserved).
+	mr.FastForward(1500 * time.Millisecond)
+	third, err := store.ReserveIdempotency(ctx, req)
+	if err != nil {
+		t.Fatalf("third ReserveIdempotency: %v", err)
+	}
+	if third.State != EdgeIdempotencyPending {
+		t.Fatalf("third reserve state = %q, want pending (key should still be alive after refresh) — EDGE-061 once-semantics broken", third.State)
+	}
+}
+
+// EDGE-061 — ReserveIdempotency must reject records older than the
+// 7-day max-in-flight window with ErrIdempotencyRecordExpired so a
+// stuck long-running request cannot hold the key forever (Strategy B
+// cap). Pre-fix, the entry handler reads the existing record and
+// returns it as Pending regardless of age.
+func TestRedisStoreIdempotencyReserveRejects7DayCappedRecord(t *testing.T) {
+	ctx := context.Background()
+	// Use a fake clock we can advance past the 7-day cap without redis-side
+	// TTL expiry interfering. Set TTL large enough that the redis key stays
+	// alive across the simulated 8-day jump.
+	clock := &mutableClock{now: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)}
+	store, _, _, cleanup := newRedisEdgeStore(t,
+		WithIdempotencyTTL(30*24*time.Hour),
+		WithClock(clock.Now),
+	)
+	defer cleanup()
+
+	req := EdgeIdempotencyRequest{
+		TenantID:    "tenant-a",
+		Endpoint:    "POST /api/v1/edge/events",
+		Key:         "edge061-cap-reserve",
+		RequestHash: "sha256:edge061-cap",
+	}
+
+	first, err := store.ReserveIdempotency(ctx, req)
+	if err != nil {
+		t.Fatalf("first ReserveIdempotency: %v", err)
+	}
+	if first.State != EdgeIdempotencyReserved {
+		t.Fatalf("first reserve state = %q, want reserved", first.State)
+	}
+
+	// Jump 8 days forward — past the 7-day cap. The redis key is still
+	// present (TTL > 8d), but the record's CreatedAt is now > 7d in the past.
+	clock.Advance(8 * 24 * time.Hour)
+
+	if _, err := store.ReserveIdempotency(ctx, req); !errors.Is(err, ErrIdempotencyRecordExpired) {
+		t.Fatalf("ReserveIdempotency past 7-day cap err = %v, want ErrIdempotencyRecordExpired", err)
+	}
+}
+
+// EDGE-061 — CompleteIdempotency must also enforce the 7-day cap. A
+// stuck request whose record sits unresolved past the cap cannot
+// complete; the caller must observe a typed error rather than silently
+// transition to a stale record.
+func TestRedisStoreIdempotencyCompleteRejects7DayCappedRecord(t *testing.T) {
+	ctx := context.Background()
+	clock := &mutableClock{now: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)}
+	store, _, _, cleanup := newRedisEdgeStore(t,
+		WithIdempotencyTTL(30*24*time.Hour),
+		WithClock(clock.Now),
+	)
+	defer cleanup()
+
+	req := EdgeIdempotencyRequest{
+		TenantID:    "tenant-a",
+		Endpoint:    "POST /api/v1/edge/events",
+		Key:         "edge061-cap-complete",
+		RequestHash: "sha256:edge061-cap-c",
+	}
+	if _, err := store.ReserveIdempotency(ctx, req); err != nil {
+		t.Fatalf("ReserveIdempotency: %v", err)
+	}
+
+	clock.Advance(8 * 24 * time.Hour)
+
+	resp := EdgeIdempotencyResponse{StatusCode: 201, ContentType: "application/json", Body: []byte(`{"ok":true}`)}
+	if _, err := store.CompleteIdempotency(ctx, req, resp); !errors.Is(err, ErrIdempotencyRecordExpired) {
+		t.Fatalf("CompleteIdempotency past 7-day cap err = %v, want ErrIdempotencyRecordExpired", err)
+	}
+}
+
+// mutableClock is a tiny mockable now-fn used only by EDGE-061 cap-check
+// tests. The miniredis FastForward used by sibling tests advances redis
+// time but not s.now; for cap-check tests we want the inverse — advance
+// s.now without expiring redis keys.
+type mutableClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *mutableClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *mutableClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
 func TestRedisStoreEdgeIdempotencyConcurrentReserveSingleWriter(t *testing.T) {
 	ctx := context.Background()
 	store, _, _, cleanup := newRedisEdgeStore(t)

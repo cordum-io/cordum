@@ -21,7 +21,13 @@ const (
 	defaultMaxEventBytes            = 128 * 1024
 	defaultIdempotencyTTL           = 24 * time.Hour
 	defaultMaxIdempotencyReplayBody = 256 * 1024
-	edgeEventAppendCASMaxAttempts   = 5
+	// maxIdempotencyAge is the EDGE-061 max in-flight cap. A record whose
+	// CreatedAt is older than this returns ErrIdempotencyRecordExpired on
+	// any further Reserve/Complete attempt, even if the redis-side TTL has
+	// not yet elapsed. Bounds zombie state when a long-running flow is
+	// kept alive indefinitely by repeated TTL refreshes on retries.
+	maxIdempotencyAge             = 7 * 24 * time.Hour
+	edgeEventAppendCASMaxAttempts = 5
 	// maxSessionEventScan is the legacy hard-stop threshold retained as a
 	// regression-test fixture. Production session event listing no longer
 	// truncates at this count; it stops per request after the cursor window has
@@ -1354,11 +1360,40 @@ func (s *RedisStore) ReserveIdempotency(ctx context.Context, req EdgeIdempotency
 				if record.RequestHash != normalized.RequestHash {
 					return ErrIdempotencyConflict
 				}
+				// EDGE-061 — max-in-flight cap. A record older than the cap
+				// must be rejected even if the redis TTL has not yet elapsed
+				// (which can only happen if Reserve refreshed the TTL beyond
+				// the original 24h). Tested in
+				// TestRedisStoreIdempotencyReserveRejects7DayCappedRecord.
+				if !record.CreatedAt.IsZero() && now.Sub(record.CreatedAt) > maxIdempotencyAge {
+					return ErrIdempotencyRecordExpired
+				}
 				if record.Status == EdgeIdempotencyCompleted && len(record.Response.Body) > 0 && record.Response.StatusCode > 0 {
 					reservation = EdgeIdempotencyReservation{State: EdgeIdempotencyReplay, Record: record}
+					// EDGE-061 — refresh TTL on Replay retry so a long-lived
+					// completed record stays available for further idempotent
+					// retries up to the max-in-flight cap.
+					_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+						pipe.Set(ctx, key, raw, s.idempotencyTTL)
+						return nil
+					})
+					if err != nil {
+						return fmt.Errorf("refresh edge idempotency replay TTL: %w", err)
+					}
 					return nil
 				}
 				reservation = EdgeIdempotencyReservation{State: EdgeIdempotencyPending, Record: record}
+				// EDGE-061 — refresh the redis key TTL on the pending-retry
+				// path so a long-running flow that retries past the original
+				// TTL keeps once-semantics. Tested in
+				// TestRedisStoreIdempotencyPendingRetryRefreshesTTL.
+				_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+					pipe.Set(ctx, key, raw, s.idempotencyTTL)
+					return nil
+				})
+				if err != nil {
+					return fmt.Errorf("refresh edge idempotency pending TTL: %w", err)
+				}
 				return nil
 			}
 			if !errors.Is(err, redis.Nil) {
@@ -1415,11 +1450,18 @@ func (s *RedisStore) CompleteIdempotency(ctx context.Context, req EdgeIdempotenc
 			if record.RequestHash != normalized.RequestHash {
 				return ErrIdempotencyConflict
 			}
+			now := s.now().UTC()
+			// EDGE-061 — max-in-flight cap. A pending record older than the
+			// cap cannot complete; the caller must generate a fresh
+			// idempotency key. Tested in
+			// TestRedisStoreIdempotencyCompleteRejects7DayCappedRecord.
+			if !record.CreatedAt.IsZero() && now.Sub(record.CreatedAt) > maxIdempotencyAge {
+				return ErrIdempotencyRecordExpired
+			}
 			if record.Status == EdgeIdempotencyCompleted && len(record.Response.Body) > 0 && record.Response.StatusCode > 0 {
 				completed = record
 				return nil
 			}
-			now := s.now().UTC()
 			record.TenantID = normalized.TenantID
 			record.Endpoint = normalized.Endpoint
 			record.RequestHash = normalized.RequestHash

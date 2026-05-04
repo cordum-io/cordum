@@ -90,6 +90,22 @@ Event idempotency is scoped by tenant and endpoint. If the idempotency record
 expires but the logical `event_id` is already present, the API returns
 `409 idempotency_window_expired` and does not append a duplicate.
 
+### Idempotency max-in-flight contract (EDGE-061)
+
+The redis-side idempotency record TTL is 24 hours by default, but is
+**refreshed on every Reserve retry** so a long-running flow (e.g. an
+approval-bound request waiting on a human reviewer) keeps once-semantics
+even past the original 24-hour window. To bound zombie state, the record
+is rejected once its `created_at` exceeds the 7-day max-in-flight cap;
+further Reserve or Complete attempts return
+`409 idempotency_record_expired` (sentinel `ErrIdempotencyRecordExpired`).
+The caller must generate a fresh idempotency key to make new progress.
+
+Strategy: A+B (TTL extension on retry, capped at 7 days). The cap is
+enforced at both `ReserveIdempotency` and `CompleteIdempotency` entry, so
+a stuck pending record can never silently transition to completed past
+the cap nor accept additional retry attempts.
+
 ## Evidence export
 
 | Method/path | Request shape | Response shape | Notes |
