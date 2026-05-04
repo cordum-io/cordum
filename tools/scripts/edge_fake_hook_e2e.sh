@@ -345,18 +345,26 @@ curl_request() {
   CURL_LAST_BODY_FILE="${body_file}"
   printf '%s' "${body_file}" > "${CURL_LAST_BODY_SENTINEL}"
   local code
+  # EDGE-051: Windows-schannel curl 8.16 exits non-zero on a non-fatal cert
+  # diagnostic even when --write-out wrote a valid HTTP code to stdout. The
+  # `|| true` swallows the exit; the regex check below validates that
+  # stdout actually carries a 3-digit HTTP status before we trust it. On
+  # Linux where curl exits 0 on success, behavior is unchanged. On real
+  # network failure (curl writes nothing to stdout), regex fails and code
+  # falls back to "000" — same fail-mode as the previous `|| code="000"`.
   if [[ -n "${body}" ]]; then
     code=$(curl "${CURL_OPTS[@]}" "${AUTH_HEADERS[@]}" \
       -H 'Content-Type: application/json' \
       -X "${method}" -d "${body}" \
       -o "${body_file}" -w '%{http_code}' \
-      "${url}" 2>/dev/null) || code="000"
+      "${url}" 2>/dev/null) || true
   else
     code=$(curl "${CURL_OPTS[@]}" "${AUTH_HEADERS[@]}" \
       -X "${method}" \
       -o "${body_file}" -w '%{http_code}' \
-      "${url}" 2>/dev/null) || code="000"
+      "${url}" 2>/dev/null) || true
   fi
+  [[ "${code}" =~ ^[0-9]{3}$ ]] || code="000"
   printf '%s' "${code}"
 }
 
@@ -858,9 +866,12 @@ probe_api_base_reachable() {
     curl_opts+=(--ssl-no-revoke)
   fi
   local code
-  if ! code=$(curl "${curl_opts[@]}" "${api_base}/api/v1/health" 2>/dev/null); then
-    return 1
-  fi
+  # EDGE-051: Windows-schannel curl 8.16 exits non-zero on a non-fatal cert
+  # diagnostic even when --write-out wrote a valid HTTP code to stdout.
+  # Trust stdout if it looks like a 3-digit status; otherwise treat as
+  # no-response. Mirrors the EDGE-051 fix in curl_request above.
+  code=$(curl "${curl_opts[@]}" "${api_base}/api/v1/health" 2>/dev/null) || true
+  [[ "${code}" =~ ^[0-9]{3}$ ]] || return 1
   # Any 2xx/3xx/4xx means the Gateway answered; only network failure -> SKIP.
   case "${code}" in
     2*|3*|4*) return 0 ;;
