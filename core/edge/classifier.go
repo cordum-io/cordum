@@ -562,7 +562,7 @@ func normalizePathForClass(path string) string {
 
 func isSecretPath(path string) bool {
 	padded := "/" + strings.TrimPrefix(path, "/")
-	return strings.Contains(padded, "/.env") ||
+	return matchesEnvSecretFile(padded) ||
 		strings.Contains(padded, "/secrets/") ||
 		strings.Contains(padded, "/.ssh/") ||
 		strings.Contains(padded, "/.aws/") ||
@@ -589,6 +589,27 @@ func isSecretPath(path string) bool {
 		strings.HasSuffix(path, ".p12") ||
 		strings.HasSuffix(path, ".pfx") ||
 		strings.HasSuffix(path, ".kdbx")
+}
+
+// matchesEnvSecretFile narrows the original `/.env` substring match so
+// `.env.example` and other clearly-non-secret template files do not
+// false-positive. EDGE-064: the original `strings.Contains(path, "/.env")`
+// matched any path containing `/.env` as a substring — including
+// `.env.example`, `.env.template`, `.env.sample`. Real .env files
+// (e.g. `/.env`, `/.env.local`, `/.env.production`) carry actual
+// secrets; template/example files do NOT. This helper preserves
+// matches on real .env variants while excluding well-known
+// non-secret suffixes.
+func matchesEnvSecretFile(padded string) bool {
+	if !strings.Contains(padded, "/.env") {
+		return false
+	}
+	for _, suffix := range []string{".example", ".sample", ".template", ".dist", ".defaults"} {
+		if strings.HasSuffix(padded, "/.env"+suffix) {
+			return false
+		}
+	}
+	return true
 }
 
 func isSourceCodePath(path string) bool {

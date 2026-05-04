@@ -1022,6 +1022,44 @@ func TestIsSecretPathRecognizesCommonCredentialFiles(t *testing.T) {
 	}
 }
 
+// EDGE-064 — Windows UNC + ~-prefixed home + env-var-prefixed paths must
+// classify as secret when their suffix matches the existing secret-pattern
+// list. Pre-fix, normalizePathForClass loses these markers and isSecretPath
+// fails to match. Table-test covers the 9 DoD scenarios.
+func TestPathClassUNCAndHomePrefixedPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		path      string
+		wantClass string
+	}{
+		{name: "unc_dot_env", path: `\\server\share\.env`, wantClass: "secret"},
+		{name: "unc_long_form_ssh", path: `\\?\C:\Users\foo\.ssh\id_rsa`, wantClass: "secret"},
+		{name: "tilde_aws_credentials", path: "~/.aws/credentials", wantClass: "secret"},
+		{name: "tilde_user_netrc", path: "~user/.netrc", wantClass: "secret"},
+		{name: "home_env_kube_config", path: "$HOME/.kube/config", wantClass: "secret"},
+		{name: "userprofile_env_npmrc", path: `%USERPROFILE%\.npmrc`, wantClass: "secret"},
+		// EDGE-064 task description listed /etc/passwd as expected "secret",
+		// but the existing isSecretPath substring list does not cover it (it
+		// matches `password` as a substring; `/etc/passwd` contains
+		// `passwd` only). Adding `/etc/passwd` would violate the task rail
+		// "Do not add new secret-pattern entries beyond what's listed; this
+		// is a normalization fix." The current classifier's behavior is
+		// "file" — pinning that here so future workers see the gap, with
+		// the follow-up filed as a separate task. See commit message.
+		{name: "etc_passwd_current_behavior", path: "/etc/passwd", wantClass: "file"},
+		{name: "env_example_false_positive_guard", path: ".env.example", wantClass: "file"},
+		{name: "plain_safe_file", path: "safe.txt", wantClass: "file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			labels := classifyPathLabels(tc.path)
+			got := labels["path.class"]
+			if got != tc.wantClass {
+				t.Fatalf("classifyPathLabels(%q) path.class = %q, want %q (full labels=%v)", tc.path, got, tc.wantClass, labels)
+			}
+		})
+	}
+}
+
 func TestIsSecretPathDoesNotFlagBenignPaths(t *testing.T) {
 	for _, path := range []string{
 		"/home/alice/code/main.go",
