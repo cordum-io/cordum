@@ -70,14 +70,24 @@ func TestEdgePolicySimulationFixturesDeclareRequiredCases(t *testing.T) {
 func TestEdgeDemoPolicyFragmentParsesAndOrdersRules(t *testing.T) {
 	policy := loadEdgeSafetyPolicyFragment(t, "policy.fragment.yaml")
 
+	// EDGE-050 — wantOrder reflects the current shipped overlay yaml after
+	// commits 06e34966 + db235832 + 1347bea7. The demo overlay grew from
+	// 7 to 10 rules: the EDGE-049 fix added explicit allow-rules for
+	// tool-less hooks (UserPromptSubmit, ConfigChange, FileChanged,
+	// PolicyDecision, PermissionRequest); 1347bea7 ships only the demo
+	// overlay (production fragment is a copyable template, not active);
+	// db235832 restructured to default_decision=allow with explicit denies.
 	wantOrder := []string{
 		"claude-code.deny-secret-reads",
 		"claude-code.deny-destructive-shell",
 		"claude-code.require-approval-for-edits",
 		"claude-code.require-approval-for-vcs-push",
 		"claude-code.require-approval-for-network",
+		"claude-code.allow-user-prompt-submit",
+		"claude-code.allow-tool-less-hook-metadata",
 		"claude-code.allow-safe-build-test",
 		"claude-code.deny-unknown-high-risk",
+		"claude-code.allow-edge-actions-default",
 	}
 	if len(policy.Rules) != len(wantOrder) {
 		t.Fatalf("demo policy rule count = %d, want %d", len(policy.Rules), len(wantOrder))
@@ -159,9 +169,16 @@ func TestEdgePackManifestIsPolicyOnly(t *testing.T) {
 	if len(manifest.Overlays.Config) != 0 {
 		t.Fatalf("edge pack manifest must not declare config/pool/timeouts overlays; got %#v", manifest.Overlays.Config)
 	}
+	// EDGE-050 — manifest collapsed to demo-only after 1347bea7. The
+	// production fragment still ships in overlays/ as a copyable
+	// template (covered by TestEdgeProductionPolicyFragmentParses-
+	// AndDocumentsEnterpriseBoundary which loads it by direct path),
+	// but it is NOT registered in pack.yaml because loading both
+	// fragments simultaneously caused last-seen-wins rule merging
+	// where production's default_decision=deny overrode demo's
+	// default_decision=allow, breaking demo flow.
 	wantPolicyOverlays := map[string]string{
-		"demo-edge-policy":       "overlays/policy.fragment.yaml",
-		"production-edge-policy": "overlays/policy.production.fragment.yaml",
+		"demo-edge-policy": "overlays/policy.fragment.yaml",
 	}
 	if len(manifest.Overlays.Policy) != len(wantPolicyOverlays) {
 		t.Fatalf("policy overlay count = %d, want %d", len(manifest.Overlays.Policy), len(wantPolicyOverlays))
