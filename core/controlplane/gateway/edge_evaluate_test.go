@@ -374,6 +374,139 @@ func TestGatewayEdgeEvaluateRequireApprovalResponseIncludesRetryMetadata(t *test
 	}
 }
 
+// EDGE-059 — /api/v1/edge/evaluate must let callers shorten the default
+// 5-minute approval TTL via approval_ttl_seconds in the request body.
+// Pre-fix the TTL was hardcoded; e2e gates that needed to exercise
+// approval expiration (EDGE-056 gate_approval_expired) had no way to
+// shorten the wait without violating the bounded-sleep rail. Per
+// architect-72ce direction (msg-2595e7ea), the override is shorten-only
+// to preserve the security floor against malicious indefinite-hold
+// attempts.
+
+func edgeEvaluateBodyWithApprovalTTL(sessionID, executionID, tenantID, toolName string, input map[string]any, ttlSeconds int) string {
+	body := map[string]any{
+		"tenant_id":            tenantID,
+		"principal_id":         "principal-edge-a",
+		"session_id":           sessionID,
+		"execution_id":         executionID,
+		"agent_product":        "claude-code",
+		"layer":                "hook",
+		"kind":                 "hook.pre_tool_use",
+		"tool_name":            toolName,
+		"input_redacted":       input,
+		"approval_ttl_seconds": ttlSeconds,
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
+
+func setupEdgeEvaluateApprovalRequiredServer(t *testing.T) (*server, http.Handler, edgeSessionCreateResponseJSON) {
+	t.Helper()
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "approval required",
+		RuleId:           "edge059.test",
+		ApprovalRequired: true,
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeRouteSession(t, handler)
+	safety.response.PolicySnapshot = session.PolicySnapshot
+	return s, handler, session
+}
+
+func TestEnqueueEdgeEvaluateApprovalRespectsCustomTTL(t *testing.T) {
+	s, handler, session := setupEdgeEvaluateApprovalRequiredServer(t)
+
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate",
+		edgeEvaluateBodyWithApprovalTTL(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}, 2))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("evaluate status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &resp)
+	if resp.Decision != string(edgecore.DecisionRequireApproval) || resp.ApprovalRef == "" {
+		t.Fatalf("decision = %q, approval_ref = %q, want REQUIRE_APPROVAL + non-empty ref", resp.Decision, resp.ApprovalRef)
+	}
+
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, resp.ApprovalRef)
+	if err != nil || !ok || stored == nil || stored.ExpiresAt == nil {
+		t.Fatalf("GetApproval(%q) = (%#v,%v,%v), want stored approval with expires_at", resp.ApprovalRef, stored, ok, err)
+	}
+	now := time.Now().UTC()
+	expiresIn := stored.ExpiresAt.Sub(now)
+	// Expect ≈ 2s — allow [1s, 5s] slack for scheduling.
+	if expiresIn < time.Second || expiresIn > 5*time.Second {
+		t.Fatalf("approval_ttl_seconds=2 → expires_at delta = %v, want [1s, 5s] (now=%v expires=%v)", expiresIn, now, *stored.ExpiresAt)
+	}
+}
+
+func TestEnqueueEdgeEvaluateApprovalDefaultTTLWhenUnset(t *testing.T) {
+	s, handler, session := setupEdgeEvaluateApprovalRequiredServer(t)
+
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate",
+		edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("evaluate status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &resp)
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, resp.ApprovalRef)
+	if err != nil || !ok || stored == nil || stored.ExpiresAt == nil {
+		t.Fatalf("GetApproval(%q): (%#v,%v,%v), want stored approval with expires_at", resp.ApprovalRef, stored, ok, err)
+	}
+	now := time.Now().UTC()
+	expiresIn := stored.ExpiresAt.Sub(now)
+	// Expect ≈ 5min — allow [4m55s, 5m05s] slack.
+	if expiresIn < 295*time.Second || expiresIn > 305*time.Second {
+		t.Fatalf("default TTL → expires_at delta = %v, want ~5min ±5s", expiresIn)
+	}
+}
+
+func TestEnqueueEdgeEvaluateApprovalCapsExtendAttempts(t *testing.T) {
+	s, handler, session := setupEdgeEvaluateApprovalRequiredServer(t)
+
+	// Caller asks for 999 seconds (16+ minutes) — server-side cap drops to 5min default.
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate",
+		edgeEvaluateBodyWithApprovalTTL(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}, 999))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("evaluate status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &resp)
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, resp.ApprovalRef)
+	if err != nil || !ok || stored == nil || stored.ExpiresAt == nil {
+		t.Fatalf("GetApproval(%q): (%#v,%v,%v)", resp.ApprovalRef, stored, ok, err)
+	}
+	expiresIn := stored.ExpiresAt.Sub(time.Now().UTC())
+	if expiresIn < 295*time.Second || expiresIn > 305*time.Second {
+		t.Fatalf("approval_ttl_seconds=999 (>5min cap) → expires_at delta = %v, want ~5min ±5s (cap fired)", expiresIn)
+	}
+}
+
+func TestEnqueueEdgeEvaluateApprovalEnforcesNegativeFallthroughToDefault(t *testing.T) {
+	s, handler, session := setupEdgeEvaluateApprovalRequiredServer(t)
+
+	// Negative value: handler treats as "use default".
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate",
+		edgeEvaluateBodyWithApprovalTTL(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}, -5))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("evaluate status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &resp)
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, resp.ApprovalRef)
+	if err != nil || !ok || stored == nil || stored.ExpiresAt == nil {
+		t.Fatalf("GetApproval(%q): (%#v,%v,%v)", resp.ApprovalRef, stored, ok, err)
+	}
+	expiresIn := stored.ExpiresAt.Sub(time.Now().UTC())
+	if expiresIn < 295*time.Second || expiresIn > 305*time.Second {
+		t.Fatalf("approval_ttl_seconds=-5 → expires_at delta = %v, want ~5min ±5s (negative falls through to default)", expiresIn)
+	}
+}
+
 func TestGatewayEdgeEvaluateRetryConsumesApprovedApprovalAndDeniesDuplicate(t *testing.T) {
 	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
 		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,

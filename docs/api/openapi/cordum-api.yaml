@@ -7907,6 +7907,18 @@ components:
           description: References to redacted external artifacts for large or sensitive evidence.
           items:
             $ref: '#/components/schemas/EdgeArtifactPointer'
+        approval_ttl_seconds:
+          type: integer
+          minimum: 1
+          maximum: 300
+          description: |
+            Optional override of the default 5-minute approval TTL when policy
+            returns REQUIRE_APPROVAL (EDGE-059). Bound to [1, 300] seconds
+            server-side; values outside this range or omitted use the 5-minute
+            default. Callers can ONLY shorten the TTL — values >300 are
+            silently capped at the default. Used by e2e tests that need to
+            exercise approval expiration inside a bounded sleep window.
+          example: 2
     EdgeEvaluateResponse:
       type: object
       required: [decision, permission_decision, exit_code]

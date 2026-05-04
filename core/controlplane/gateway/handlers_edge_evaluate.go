@@ -86,6 +86,13 @@ type edgeEvaluateRequest struct {
 	// bounds the wait; the gateway always uses a server-side cap.
 	WaitForApproval       bool `json:"wait_for_approval"`
 	ApprovalWaitTimeoutMS int  `json:"approval_wait_timeout_ms"`
+
+	// ApprovalTTLSeconds shortens the default 5-minute approval TTL when set
+	// (EDGE-059: enables e2e gates that need to exercise approval expiration
+	// inside a bounded sleep window). Server-side cap: callers can ONLY
+	// shorten the TTL, never extend it past the 5-minute default — preserves
+	// the existing security floor. Min 1 second; values <= 0 use the default.
+	ApprovalTTLSeconds int `json:"approval_ttl_seconds,omitempty"`
 }
 
 func (r edgeEvaluateRequest) redactedInput() map[string]any {
@@ -236,7 +243,7 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 	outcome.response.EventID = appended.EventID
 	switch outcome.decision {
 	case edgecore.DecisionRequireApproval:
-		approval, err := s.enqueueEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, actionHash)
+		approval, err := s.enqueueEdgeEvaluateApproval(r.Context(), evalCtx.store, appended, outcome, actionHash, evalCtx.req.ApprovalTTLSeconds)
 		if err != nil {
 			writeEdgeApprovalStoreError(w, r, err, "enqueue edge evaluate approval")
 			return
@@ -678,6 +685,28 @@ const (
 	edgeEvaluateInlineWaitDefaultTimeoutMS = 30 * 1000
 )
 
+// boundEdgeEvaluateApprovalTTL clamps the caller-requested approval TTL to
+// the [1s, 5min] window (EDGE-059). Values <= 0 return the 5-min default.
+// Values > 5min also return the 5-min default — callers can ONLY shorten
+// the TTL, preserving the security floor against malicious indefinite-hold
+// requests. Mirror of boundEdgeEvaluateWaitTimeout for the approval-TTL
+// field on edgeEvaluateRequest.
+func boundEdgeEvaluateApprovalTTL(requestedSec int) time.Duration {
+	const defaultApprovalTTL = 5 * time.Minute
+	const minApprovalTTL = time.Second
+	if requestedSec <= 0 {
+		return defaultApprovalTTL
+	}
+	requested := time.Duration(requestedSec) * time.Second
+	if requested < minApprovalTTL {
+		return minApprovalTTL
+	}
+	if requested > defaultApprovalTTL {
+		return defaultApprovalTTL
+	}
+	return requested
+}
+
 // boundEdgeEvaluateWaitTimeout clamps the caller-requested timeout to the
 // server-side window. Zero or negative falls back to the default; values larger
 // than the max are capped silently because inline wait is a demo affordance and
@@ -1038,7 +1067,7 @@ func (s *server) findReusableEdgeApprovalForAction(ctx context.Context, store ed
 	return nil, nil
 }
 
-func (s *server) enqueueEdgeEvaluateApproval(ctx context.Context, store edgecore.Store, event edgecore.AgentActionEvent, outcome edgeEvaluateDecisionOutcome, actionHash string) (*edgecore.EdgeApproval, error) {
+func (s *server) enqueueEdgeEvaluateApproval(ctx context.Context, store edgecore.Store, event edgecore.AgentActionEvent, outcome edgeEvaluateDecisionOutcome, actionHash string, ttlSecondsHint int) (*edgecore.EdgeApproval, error) {
 	policySnapshot := strings.TrimSpace(outcome.policySnapshot)
 	if policySnapshot == "" {
 		policySnapshot = strings.TrimSpace(event.PolicySnapshot)
@@ -1055,9 +1084,11 @@ func (s *server) enqueueEdgeEvaluateApproval(ctx context.Context, store edgecore
 		PolicySnapshot: policySnapshot,
 		ActionHash:     strings.TrimSpace(actionHash),
 		InputHash:      strings.TrimSpace(event.InputHash),
-		TTL:            5 * time.Minute,
-		Labels:         edgecore.Labels{"source": "edge.evaluate"},
-		Metadata:       edgecore.Metadata{"source": "edge.evaluate"},
+		// EDGE-059 — caller-shortened TTL via edgeEvaluateRequest.ApprovalTTLSeconds.
+		// boundEdgeEvaluateApprovalTTL caps at the previously-hardcoded 5-min default.
+		TTL:      boundEdgeEvaluateApprovalTTL(ttlSecondsHint),
+		Labels:   edgecore.Labels{"source": "edge.evaluate"},
+		Metadata: edgecore.Metadata{"source": "edge.evaluate"},
 	})
 }
 
