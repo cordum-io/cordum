@@ -750,6 +750,98 @@ func TestRedisStoreAppendEventsRejectsTerminalExecution(t *testing.T) {
 	assertEventIDs(t, page.Items, []string{})
 }
 
+// EDGE-055 — AppendEvents must refuse when the parent session has gone
+// terminal, even if the AgentExecution itself is still RUNNING (the
+// EDGE-054 sibling pattern applied to AppendEvents). Pre-fix, AppendEvents
+// only watched the execution key + executionID re-checked terminal status;
+// session-level termination between the outside-TX read and the WATCH
+// commit could let events land on a terminal-parent session's still-running
+// execution. This test pre-ends the session AFTER createSessionAndExecution
+// has built both records (which itself uses store.CreateSession +
+// store.CreateExecution while parent is non-terminal — pre-fix path), then
+// attempts AppendEvents while the execution stays RUNNING. Without the
+// EDGE-055 widening, the append would silently land on a terminal-parent
+// execution. With the fix, the inside-TX session re-check fires
+// ErrParentSessionTerminal.
+func TestRedisStoreAppendEventsRefusesWhenParentSessionAlreadyTerminal(t *testing.T) {
+	ctx := context.Background()
+	store, client, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Date(2026, 5, 1, 13, 55, 0, 0, time.UTC)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-edge055-parent", "exec-edge055-parent", base)
+	// Pre-end the parent session so the execution is still RUNNING (we did
+	// NOT call EndExecution — the execution-level terminal check from
+	// TestRedisStoreAppendEventsRejectsTerminalExecution would NOT fire here).
+	// EDGE-055 must reject solely on parent-session-terminal grounds.
+	if _, err := store.EndSession(ctx, "tenant-a", "sess-edge055-parent", base.Add(time.Minute), SessionStatusEnded); err != nil {
+		t.Fatalf("EndSession: %v", err)
+	}
+
+	_, err := store.AppendEvents(ctx, []AgentActionEvent{
+		validStoreEvent("tenant-a", "sess-edge055-parent", "exec-edge055-parent", "event-after-parent-terminal", 0, base.Add(2*time.Minute), EventKindHookPostToolUse, DecisionAllow),
+	})
+	if err == nil {
+		t.Fatalf("AppendEvents succeeded with terminal parent session — EDGE-055 widening missing; events would land on a terminal-parent execution")
+	}
+	if !errors.Is(err, ErrParentSessionTerminal) {
+		t.Fatalf("AppendEvents err = %v, want ErrParentSessionTerminal (EDGE-055 contract)", err)
+	}
+
+	// Negative: NO event should have been persisted. The events list, seq,
+	// and id-index keys must all stay empty.
+	for _, key := range []string{
+		edgeEventsKey("exec-edge055-parent"),
+		edgeEventSeqKey("exec-edge055-parent"),
+		edgeEventIDIndexKey("exec-edge055-parent"),
+	} {
+		exists, err := client.Exists(ctx, key).Result()
+		if err != nil {
+			t.Fatalf("Exists(%s): %v", key, err)
+		}
+		if exists != 0 {
+			t.Fatalf("key %s exists after AppendEvents rejected on terminal-parent — partial write breaks the EDGE-055 invariant", key)
+		}
+	}
+
+	page, err := store.ListEvents(ctx, ListEventsQuery{TenantID: "tenant-a", ExecutionID: "exec-edge055-parent", Limit: 10})
+	if err != nil {
+		t.Fatalf("ListEvents after rejection: %v", err)
+	}
+	assertEventIDs(t, page.Items, []string{})
+}
+
+// EDGE-055 — same contract for the idempotent path. AppendEventsWithIdempotency
+// MUST also fire ErrParentSessionTerminal when the parent session is terminal,
+// not silently fall through and persist an idempotency-cached event on a
+// terminal-parent execution.
+func TestRedisStoreAppendEventsWithIdempotencyRefusesWhenParentSessionTerminal(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Date(2026, 5, 1, 14, 5, 0, 0, time.UTC)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-edge055-idem-parent", "exec-edge055-idem-parent", base)
+	if _, err := store.EndSession(ctx, "tenant-a", "sess-edge055-idem-parent", base.Add(time.Minute), SessionStatusEnded); err != nil {
+		t.Fatalf("EndSession: %v", err)
+	}
+
+	idemReq := EdgeIdempotencyRequest{
+		TenantID:    "tenant-a",
+		Endpoint:    "POST /api/v1/edge/events",
+		Key:         "edge055-idem-key",
+		RequestHash: strings.Repeat("a", 64),
+	}
+	event := validStoreEvent("tenant-a", "sess-edge055-idem-parent", "exec-edge055-idem-parent", "event-edge055-idem", 0, base.Add(2*time.Minute), EventKindHookPostToolUse, DecisionAllow)
+	_, err := store.AppendEventsWithIdempotency(ctx, idemReq, []AgentActionEvent{event}, storeSingleEventReplayResponse)
+	if err == nil {
+		t.Fatalf("AppendEventsWithIdempotency succeeded with terminal parent — EDGE-055 widening missing on idempotent path")
+	}
+	if !errors.Is(err, ErrParentSessionTerminal) {
+		t.Fatalf("AppendEventsWithIdempotency err = %v, want ErrParentSessionTerminal (EDGE-055 contract on idempotent path)", err)
+	}
+}
+
 func TestRedisStoreHeartbeatTTL(t *testing.T) {
 	ctx := context.Background()
 	ttl := 3 * time.Second

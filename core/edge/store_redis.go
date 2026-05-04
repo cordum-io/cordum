@@ -876,41 +876,28 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 		return nil, err
 	}
 
-	watchKeys := make([]string, 0, len(groups)*4)
-	for executionID := range groups {
+	watchKeys := make([]string, 0, len(groups)*5)
+	for executionID, group := range groups {
 		// Watch the execution document too: a concurrent EndExecution must
 		// invalidate this transaction so we never append events past a
 		// terminal state. The seq key + list key alone do not catch a
-		// status-only mutation.
-		watchKeys = append(watchKeys, edgeEventSeqKey(executionID), edgeEventsKey(executionID), edgeEventIDIndexKey(executionID), edgeExecutionKey(executionID))
+		// status-only mutation. EDGE-055 also adds the parent session key
+		// so a concurrent EndSession bumping it forces TxFailedErr; the
+		// inside-TX session re-check in refreshAppendExecutionsInTx then
+		// surfaces ErrParentSessionTerminal rather than a generic conflict.
+		watchKeys = append(watchKeys, edgeEventSeqKey(executionID), edgeEventsKey(executionID), edgeEventIDIndexKey(executionID), edgeExecutionKey(executionID), edgeSessionKey(group.execution.SessionID))
 	}
 	appended := make([]AgentActionEvent, len(events))
 	err = redisutil.Retry(ctx, s.client, func(tx *redis.Tx) error {
 		// Re-read each execution inside the watched transaction and reject
 		// the batch if it is missing, cross-tenant, or already terminal.
 		// Without this re-check, a TOCTOU window between the GetExecution
-		// done outside the closure (line ~597) and the seq read below
-		// would let events land on a session/execution that has since been
-		// ended, deleted, or moved to another tenant.
-		for executionID, group := range groups {
-			raw, err := tx.Get(ctx, edgeExecutionKey(executionID)).Bytes()
-			if errors.Is(err, redis.Nil) {
-				return fmt.Errorf("%w: agent execution %s", ErrNotFound, executionID)
-			}
-			if err != nil {
-				return fmt.Errorf("re-read agent execution %s: %w", executionID, err)
-			}
-			var fresh AgentExecution
-			if err := json.Unmarshal(raw, &fresh); err != nil {
-				return fmt.Errorf("unmarshal agent execution %s: %w", executionID, err)
-			}
-			if fresh.TenantID != group.execution.TenantID {
-				return fmt.Errorf("%w: agent execution %s", ErrNotFound, executionID)
-			}
-			if fresh.EndedAt != nil || isTerminalExecutionStatus(fresh.Status) {
-				return fmt.Errorf("agent execution %s is terminal; cannot append events", executionID)
-			}
-			group.execution = &fresh
+		// done outside the closure and the seq read below would let events
+		// land on a session/execution that has since been ended, deleted,
+		// or moved to another tenant. EDGE-055 extends the same helper to
+		// re-check parent session status under WATCH discipline.
+		if err := refreshAppendExecutionsInTx(ctx, tx, groups); err != nil {
+			return err
 		}
 		payloadsByExecution := make(map[string][]redisEventAppendPayload, len(groups))
 		for executionID, group := range groups {
@@ -989,8 +976,11 @@ func (s *RedisStore) AppendEventsWithIdempotency(
 	}
 	key := edgeIdempotencyKey(normalized.TenantID, normalized.Endpoint, normalized.Key)
 	watchKeys := []string{key}
-	for executionID := range groups {
-		watchKeys = append(watchKeys, edgeEventSeqKey(executionID), edgeEventsKey(executionID), edgeEventIDIndexKey(executionID), edgeExecutionKey(executionID))
+	for executionID, group := range groups {
+		// EDGE-055 — parent session key included so EndSession invalidates
+		// the TX and refreshAppendExecutionsInTx surfaces
+		// ErrParentSessionTerminal rather than a generic conflict on retry.
+		watchKeys = append(watchKeys, edgeEventSeqKey(executionID), edgeEventsKey(executionID), edgeEventIDIndexKey(executionID), edgeExecutionKey(executionID), edgeSessionKey(group.execution.SessionID))
 	}
 	return s.appendEventsWithIdempotencyTx(ctx, normalized, key, watchKeys, groups, events, buildResponse)
 }
@@ -1110,6 +1100,30 @@ func refreshAppendExecutionsInTx(ctx context.Context, tx *redis.Tx, groups map[s
 		}
 		if fresh.EndedAt != nil || isTerminalExecutionStatus(fresh.Status) {
 			return fmt.Errorf("agent execution %s is terminal; cannot append events", executionID)
+		}
+		// EDGE-055 — parent session re-check under WATCH discipline. The
+		// execution-level guard above catches the worst case (events on a
+		// terminal execution); this guard catches the narrower defense-in-
+		// depth case where EndSession terminates the parent BEFORE the
+		// execution-level termination has propagated. Without this re-check,
+		// the WATCH set widening alone (parent session key now in the
+		// watched set per the corresponding watchKeys construction) would
+		// abort the TX with TxFailedErr, but the typed error would not
+		// surface — callers would see a generic conflict instead of the
+		// EDGE-054-aligned ErrParentSessionTerminal sentinel.
+		parentRaw, err := tx.Get(ctx, edgeSessionKey(fresh.SessionID)).Bytes()
+		if errors.Is(err, redis.Nil) {
+			return fmt.Errorf("%w: parent edge session %s", ErrNotFound, fresh.SessionID)
+		}
+		if err != nil {
+			return fmt.Errorf("re-read parent edge session %s: %w", fresh.SessionID, err)
+		}
+		var parent EdgeSession
+		if err := json.Unmarshal(parentRaw, &parent); err != nil {
+			return fmt.Errorf("unmarshal parent edge session %s: %w", fresh.SessionID, err)
+		}
+		if isTerminalSessionStatus(parent.Status) {
+			return fmt.Errorf("%w: parent edge session %s status=%s", ErrParentSessionTerminal, fresh.SessionID, parent.Status)
 		}
 		group.execution = &fresh
 	}
