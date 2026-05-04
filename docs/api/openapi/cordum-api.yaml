@@ -1301,10 +1301,16 @@ paths:
                 max_events:
                   type: integer
                   minimum: 1
+                  maximum: 10000
+                  default: 5000
                   description: |
                     Caps the number of events the bundle carries. When the
                     session has more, `truncation.events_truncated = true`
                     and `truncation.event_count` records the actual total.
+                    Values above 10000 are rejected with HTTP 400 +
+                    `code=max_events_too_large` (EDGE-065 request-validation
+                    bound). Values <= 0 fall back to the assembler default
+                    (5000).
       responses:
         '200':
           description: Edge session export bundle

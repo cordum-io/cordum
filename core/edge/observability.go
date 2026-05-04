@@ -115,6 +115,13 @@ type Recorder interface {
 	// "heartbeat_drain", "other", "unknown"}.
 	RecordAgentdShutdownForced(reason string)
 
+	// RecordEdgeExportRequestRejected emits a metric counter when an Edge
+	// session-export request is rejected at request-validation time
+	// (EDGE-065 max_events upper bound, plus future request-shape
+	// rejections). `reason` is bounded via boundedEdgeExportRejectedReason
+	// to {"max_events_too_large", "other", "unknown"}.
+	RecordEdgeExportRequestRejected(reason string)
+
 	// Artifact / export observability.
 	RecordArtifactExport(tenant, artifactType, result string)
 
@@ -157,6 +164,7 @@ func (NoopRecorder) RecordDegraded(string, string, string, string)              
 func (NoopRecorder) RecordFailClosed(string, string, string)                     {}
 func (NoopRecorder) RecordAgentdResponseWriteAborted(string)                     {}
 func (NoopRecorder) RecordAgentdShutdownForced(string)                           {}
+func (NoopRecorder) RecordEdgeExportRequestRejected(string)                      {}
 func (NoopRecorder) RecordArtifactExport(string, string, string)                 {}
 func (NoopRecorder) ObserveHookLatency(string, string, string, time.Duration)    {}
 func (NoopRecorder) ObserveEvaluateLatency(string, string, string, string, time.Duration) {

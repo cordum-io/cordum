@@ -344,24 +344,46 @@ func (a *SessionExportAssembler) collectEvents(ctx context.Context, tenantID, se
 }
 
 func (a *SessionExportAssembler) collectApprovals(ctx context.Context, tenantID, sessionID string) ([]EdgeApproval, error) {
+	// EDGE-062 narrowed the tenant-wide approval ZSET index to active
+	// approvals (Pending), so the audit-export must query each status
+	// index separately and union the results to preserve the
+	// export-bundle audit completeness contract: bundles include every
+	// approval ever created for the session, regardless of terminal state.
 	var approvals []EdgeApproval
-	cursor := ""
-	for {
-		page, err := a.Store.ListApprovals(ctx, ListApprovalsQuery{
-			TenantID:  tenantID,
-			SessionID: sessionID,
-			Cursor:    cursor,
-			Limit:     maxStorePageLimit,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("list approvals: %w", err)
+	seen := make(map[string]struct{})
+	for _, status := range []ApprovalStatus{
+		ApprovalStatusPending,
+		ApprovalStatusApproved,
+		ApprovalStatusRejected,
+		ApprovalStatusExpired,
+	} {
+		cursor := ""
+		for {
+			page, err := a.Store.ListApprovals(ctx, ListApprovalsQuery{
+				TenantID:  tenantID,
+				SessionID: sessionID,
+				Status:    status,
+				Cursor:    cursor,
+				Limit:     maxStorePageLimit,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("list approvals (status=%s): %w", status, err)
+			}
+			for _, approval := range page.Items {
+				ref := approval.ApprovalRef
+				if _, dup := seen[ref]; dup {
+					continue
+				}
+				seen[ref] = struct{}{}
+				approvals = append(approvals, approval)
+			}
+			if page.NextCursor == "" {
+				break
+			}
+			cursor = page.NextCursor
 		}
-		approvals = append(approvals, page.Items...)
-		if page.NextCursor == "" {
-			return approvals, nil
-		}
-		cursor = page.NextCursor
 	}
+	return approvals, nil
 }
 
 func (a *SessionExportAssembler) collectArtifacts(ctx context.Context, tenantID string, events []AgentActionEvent) ([]ExportArtifactEntry, []ExportMissingArtifact) {

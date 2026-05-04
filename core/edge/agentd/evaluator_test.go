@@ -713,6 +713,7 @@ func (r *captureRecorder) RecordAppendEventsAborted(string)              {}
 func (r *captureRecorder) RecordIdempotencyTTLExtended(string)           {}
 func (r *captureRecorder) RecordIdempotencyWindowExpired(string)         {}
 func (r *captureRecorder) RecordAgentdResponseWriteAborted(string)       {}
+func (r *captureRecorder) RecordEdgeExportRequestRejected(string)        {}
 func (r *captureRecorder) RecordAgentdShutdownForced(reason string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

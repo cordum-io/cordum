@@ -27,6 +27,15 @@ const (
 	// the most pathological allowed session while still bounding gateway
 	// memory deterministically.
 	edgeExportMaxBytesCeiling int64 = 64 * 1024 * 1024
+
+	// maxExportEventsRequest caps the caller-supplied max_events upper
+	// bound at request validation time (EDGE-065). The assembler still
+	// enforces edgeExportMaxBytes downstream, but pre-allocation under
+	// sustained malicious requests can exhaust gateway memory before the
+	// size cap fires. 10000 is well above any legitimate session
+	// (typical Edge sessions emit < 500 events) and well below an
+	// abuse threshold (1M events × ~1KB each = 1 GB pre-marshal).
+	maxExportEventsRequest = 10000
 )
 
 // edgeExportMaxBytes resolves the active size cap for evidence exports.
@@ -104,6 +113,20 @@ func (s *server) handleExportEdgeSession(w http.ResponseWriter, r *http.Request)
 			writeEdgeJSONDecodeError(w, r, err, "invalid edge export request")
 			return
 		}
+	}
+	// EDGE-065 — request-validation cap on max_events. Pre-fix, a caller
+	// could request 1M events and the assembler would allocate the
+	// iteration buffer before the late edgeExportMaxBytes size cap fired
+	// during marshal. Validate at parse time + emit a bounded metric.
+	// MaxEvents <= 0 falls through to the assembler's defaultExportEventsCap
+	// (5000 in core/edge/export.go) — preserved as the historical default.
+	if req.MaxEvents > maxExportEventsRequest {
+		if s.edgeRecorder != nil {
+			s.edgeRecorder.RecordEdgeExportRequestRejected("max_events_too_large")
+		}
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeMaxEventsTooLarge,
+			fmt.Sprintf("max_events %d exceeds cap of %d; reduce max_events", req.MaxEvents, maxExportEventsRequest), nil)
+		return
 	}
 	opts := edgecore.ExportOptions{
 		MaxEvents:             req.MaxEvents,

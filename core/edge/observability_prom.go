@@ -39,6 +39,7 @@ type PrometheusRecorder struct {
 	failClosed           *prometheus.CounterVec
 	agentdResponseWriteAborts *prometheus.CounterVec
 	agentdShutdownForced      *prometheus.CounterVec
+	edgeExportRejected        *prometheus.CounterVec
 	artifactExports   *prometheus.CounterVec
 	hookLatency       *prometheus.HistogramVec
 	evaluateLatency   *prometheus.HistogramVec
@@ -158,6 +159,13 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 			Namespace: ns, Name: "agentd_shutdown_forced_total",
 			Help: "agentd shutdown forced exits when a sub-component's graceful drain timed out, labeled by bounded reason.",
 		}, []string{"reason"}),
+		// EDGE-065 — counter for Edge session-export request-validation
+		// rejections (max_events upper bound, future request-shape
+		// rejections). `reason` collapses via boundedEdgeExportRejectedReason.
+		edgeExportRejected: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns, Name: "export_request_rejected_total",
+			Help: "Edge session-export request-validation rejections, labeled by bounded reason.",
+		}, []string{"reason"}),
 		artifactExports: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: ns, Name: "artifact_exports_total",
 			Help: "Edge artifact exports, labeled by artifact_type and result.",
@@ -194,6 +202,7 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 		r.idempotencyTTLExtended, r.idempotencyWindowExpired,
 		r.degraded, r.failClosed, r.agentdResponseWriteAborts,
 		r.agentdShutdownForced,
+		r.edgeExportRejected,
 		r.artifactExports,
 		r.hookLatency, r.evaluateLatency,
 		r.cacheLookups,
@@ -255,6 +264,9 @@ func (r *PrometheusRecorder) RecordAgentdResponseWriteAborted(reason string) {
 }
 func (r *PrometheusRecorder) RecordAgentdShutdownForced(reason string) {
 	r.agentdShutdownForced.WithLabelValues(boundedAgentdShutdownForcedReason(reason)).Inc()
+}
+func (r *PrometheusRecorder) RecordEdgeExportRequestRejected(reason string) {
+	r.edgeExportRejected.WithLabelValues(boundedEdgeExportRejectedReason(reason)).Inc()
 }
 func (r *PrometheusRecorder) RecordArtifactExport(_ /*tenant*/, artifactType, result string) {
 	r.artifactExports.WithLabelValues(boundedArtifactType(artifactType), boundedResult(result)).Inc()
@@ -627,6 +639,25 @@ func boundedIdempotencyWindowExpiredPhase(value string) string {
 		return "unknown"
 	}
 	if _, ok := allowedIdempotencyWindowExpiredPhases[v]; ok {
+		return v
+	}
+	return "other"
+}
+
+// allowedEdgeExportRejectedReasons is the bounded set of `reason` label
+// values for the EDGE-065 export_request_rejected_total counter.
+//   - max_events_too_large: caller-supplied max_events exceeded the
+//     server-side cap (handlers_edge_export.go maxExportEventsRequest).
+var allowedEdgeExportRejectedReasons = map[string]struct{}{
+	"max_events_too_large": {},
+}
+
+func boundedEdgeExportRejectedReason(value string) string {
+	v := lowerTrim(value)
+	if v == "" {
+		return "unknown"
+	}
+	if _, ok := allowedEdgeExportRejectedReasons[v]; ok {
 		return v
 	}
 	return "other"
