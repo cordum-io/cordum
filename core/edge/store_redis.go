@@ -1040,6 +1040,9 @@ func (s *RedisStore) appendEventsWithIdempotencyTx(
 			s.recorder.RecordAppendEventsAborted(abortReason)
 		}
 		if errors.Is(err, ErrIdempotencyWindowExpired) {
+			// EDGE-061 — quantify how often the append surface hits the
+			// existing duplicate-after-TTL window. Bounded `phase` label.
+			s.recorder.RecordIdempotencyWindowExpired("append")
 			replay, ok, replayErr := s.loadCompletedAppendReplay(ctx, key, req)
 			if replayErr != nil {
 				return EdgeIdempotentAppendResult{}, replayErr
@@ -1349,8 +1352,15 @@ func (s *RedisStore) ReserveIdempotency(ctx context.Context, req EdgeIdempotency
 	}
 
 	var reservation EdgeIdempotencyReservation
+	// EDGE-061 — out-scope capture so the metric is emitted at most once
+	// per call (after the WATCH closure returns successfully), even if
+	// TxFailedErr triggers a retry. Reset at the top of each attempt.
+	ttlExtendedState := ""
+	windowExpiredPhase := ""
 	for attempt := 0; attempt < 8; attempt++ {
 		err = s.client.Watch(ctx, func(tx *redis.Tx) error {
+			ttlExtendedState = ""
+			windowExpiredPhase = ""
 			raw, err := tx.Get(ctx, key).Bytes()
 			if err == nil {
 				record, err := decodeEdgeIdempotencyRecord(raw)
@@ -1366,6 +1376,7 @@ func (s *RedisStore) ReserveIdempotency(ctx context.Context, req EdgeIdempotency
 				// the original 24h). Tested in
 				// TestRedisStoreIdempotencyReserveRejects7DayCappedRecord.
 				if !record.CreatedAt.IsZero() && now.Sub(record.CreatedAt) > maxIdempotencyAge {
+					windowExpiredPhase = "reserve"
 					return ErrIdempotencyRecordExpired
 				}
 				if record.Status == EdgeIdempotencyCompleted && len(record.Response.Body) > 0 && record.Response.StatusCode > 0 {
@@ -1380,6 +1391,7 @@ func (s *RedisStore) ReserveIdempotency(ctx context.Context, req EdgeIdempotency
 					if err != nil {
 						return fmt.Errorf("refresh edge idempotency replay TTL: %w", err)
 					}
+					ttlExtendedState = "replay"
 					return nil
 				}
 				reservation = EdgeIdempotencyReservation{State: EdgeIdempotencyPending, Record: record}
@@ -1394,6 +1406,7 @@ func (s *RedisStore) ReserveIdempotency(ctx context.Context, req EdgeIdempotency
 				if err != nil {
 					return fmt.Errorf("refresh edge idempotency pending TTL: %w", err)
 				}
+				ttlExtendedState = "pending"
 				return nil
 			}
 			if !errors.Is(err, redis.Nil) {
@@ -1411,6 +1424,11 @@ func (s *RedisStore) ReserveIdempotency(ctx context.Context, req EdgeIdempotency
 		}, key)
 		if errors.Is(err, redis.TxFailedErr) {
 			continue
+		}
+		if windowExpiredPhase != "" {
+			s.recorder.RecordIdempotencyWindowExpired(windowExpiredPhase)
+		} else if ttlExtendedState != "" {
+			s.recorder.RecordIdempotencyTTLExtended(ttlExtendedState)
 		}
 		if err != nil {
 			return EdgeIdempotencyReservation{}, err
@@ -1434,8 +1452,10 @@ func (s *RedisStore) CompleteIdempotency(ctx context.Context, req EdgeIdempotenc
 	}
 	key := edgeIdempotencyKey(normalized.TenantID, normalized.Endpoint, normalized.Key)
 	var completed *EdgeIdempotencyRecord
+	completeWindowExpired := ""
 	for attempt := 0; attempt < 8; attempt++ {
 		err = s.client.Watch(ctx, func(tx *redis.Tx) error {
+			completeWindowExpired = ""
 			raw, err := tx.Get(ctx, key).Bytes()
 			if errors.Is(err, redis.Nil) {
 				return ErrNotFound
@@ -1456,6 +1476,7 @@ func (s *RedisStore) CompleteIdempotency(ctx context.Context, req EdgeIdempotenc
 			// idempotency key. Tested in
 			// TestRedisStoreIdempotencyCompleteRejects7DayCappedRecord.
 			if !record.CreatedAt.IsZero() && now.Sub(record.CreatedAt) > maxIdempotencyAge {
+				completeWindowExpired = "complete"
 				return ErrIdempotencyRecordExpired
 			}
 			if record.Status == EdgeIdempotencyCompleted && len(record.Response.Body) > 0 && record.Response.StatusCode > 0 {
@@ -1487,6 +1508,9 @@ func (s *RedisStore) CompleteIdempotency(ctx context.Context, req EdgeIdempotenc
 		}, key)
 		if errors.Is(err, redis.TxFailedErr) {
 			continue
+		}
+		if completeWindowExpired != "" {
+			s.recorder.RecordIdempotencyWindowExpired(completeWindowExpired)
 		}
 		if err != nil {
 			return nil, err

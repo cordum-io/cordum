@@ -417,9 +417,11 @@ func TestRedisStoreCreateExecutionRefusesOrphanWhenParentEndedConcurrently(t *te
 // AppendEvents abort emissions.
 type abortRecorder struct {
 	NoopRecorder
-	mu                  sync.Mutex
-	reasons             []string
-	appendEventsReasons []string
+	mu                       sync.Mutex
+	reasons                  []string
+	appendEventsReasons      []string
+	idempotencyTTLExtended   []string
+	idempotencyWindowExpired []string
 }
 
 func (r *abortRecorder) RecordCreateExecutionAborted(reason string) {
@@ -444,6 +446,33 @@ func (r *abortRecorder) SnapshotAppendEvents() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]string(nil), r.appendEventsReasons...)
+}
+
+// EDGE-061 — extend abortRecorder with idempotency-metric capture so the
+// reopen-fix regression test can pin the bounded label contract for both
+// new metrics.
+func (r *abortRecorder) RecordIdempotencyTTLExtended(state string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.idempotencyTTLExtended = append(r.idempotencyTTLExtended, state)
+}
+
+func (r *abortRecorder) RecordIdempotencyWindowExpired(phase string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.idempotencyWindowExpired = append(r.idempotencyWindowExpired, phase)
+}
+
+func (r *abortRecorder) SnapshotIdempotencyTTLExtended() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.idempotencyTTLExtended...)
+}
+
+func (r *abortRecorder) SnapshotIdempotencyWindowExpired() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.idempotencyWindowExpired...)
 }
 
 func TestRedisStoreCreateExecutionAbortedMetricFiresWithBoundedReason(t *testing.T) {
@@ -1547,6 +1576,170 @@ func (c *mutableClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.now = c.now.Add(d)
+}
+
+// EDGE-061 reopen #1 — verify both new metrics fire with bounded labels.
+// Mirrors TestRedisStoreCreateExecutionAbortedMetricFiresWithBoundedReason.
+func TestRedisStoreIdempotencyMetricsFireWithBoundedLabels(t *testing.T) {
+	t.Run("ttl_extended_pending", func(t *testing.T) {
+		ctx := context.Background()
+		mr := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 1})
+		t.Cleanup(func() { _ = client.Close(); mr.Close() })
+		rec := &abortRecorder{}
+		store := NewRedisStoreFromClient(client, WithRecorder(rec), WithIdempotencyTTL(2*time.Second))
+
+		req := EdgeIdempotencyRequest{
+			TenantID:    "tenant-a",
+			Endpoint:    "POST /api/v1/edge/events",
+			Key:         "edge061-metric-pending",
+			RequestHash: "sha256:edge061-metric-pending",
+		}
+		if _, err := store.ReserveIdempotency(ctx, req); err != nil {
+			t.Fatalf("first ReserveIdempotency: %v", err)
+		}
+		// First Reserve takes the Reserved branch (no TTL extension).
+		if got := rec.SnapshotIdempotencyTTLExtended(); len(got) != 0 {
+			t.Fatalf("first Reserve TTL-extended reasons = %#v, want empty", got)
+		}
+		// Second Reserve hits the pending branch and refreshes TTL.
+		if _, err := store.ReserveIdempotency(ctx, req); err != nil {
+			t.Fatalf("pending ReserveIdempotency: %v", err)
+		}
+		got := rec.SnapshotIdempotencyTTLExtended()
+		if len(got) != 1 || got[0] != "pending" {
+			t.Fatalf("TTL-extended reasons = %#v, want [pending]", got)
+		}
+	})
+
+	t.Run("ttl_extended_replay", func(t *testing.T) {
+		ctx := context.Background()
+		mr := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 1})
+		t.Cleanup(func() { _ = client.Close(); mr.Close() })
+		rec := &abortRecorder{}
+		store := NewRedisStoreFromClient(client, WithRecorder(rec))
+
+		req := EdgeIdempotencyRequest{
+			TenantID:    "tenant-a",
+			Endpoint:    "POST /api/v1/edge/events",
+			Key:         "edge061-metric-replay",
+			RequestHash: "sha256:edge061-metric-replay",
+		}
+		if _, err := store.ReserveIdempotency(ctx, req); err != nil {
+			t.Fatalf("ReserveIdempotency: %v", err)
+		}
+		if _, err := store.CompleteIdempotency(ctx, req, EdgeIdempotencyResponse{
+			StatusCode:  201,
+			ContentType: "application/json",
+			Body:        []byte(`{"event_id":"evt-replay"}`),
+		}); err != nil {
+			t.Fatalf("CompleteIdempotency: %v", err)
+		}
+		// The Reserve immediately after Complete takes the replay branch and refreshes TTL.
+		replay, err := store.ReserveIdempotency(ctx, req)
+		if err != nil {
+			t.Fatalf("Reserve after Complete: %v", err)
+		}
+		if replay.State != EdgeIdempotencyReplay {
+			t.Fatalf("Reserve after Complete state = %q, want replay", replay.State)
+		}
+		got := rec.SnapshotIdempotencyTTLExtended()
+		if len(got) != 1 || got[0] != "replay" {
+			t.Fatalf("TTL-extended reasons = %#v, want [replay]", got)
+		}
+	})
+
+	t.Run("window_expired_reserve", func(t *testing.T) {
+		ctx := context.Background()
+		clock := &mutableClock{now: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)}
+		mr := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 1})
+		t.Cleanup(func() { _ = client.Close(); mr.Close() })
+		rec := &abortRecorder{}
+		store := NewRedisStoreFromClient(client,
+			WithRecorder(rec),
+			WithClock(clock.Now),
+			WithIdempotencyTTL(30*24*time.Hour),
+		)
+		req := EdgeIdempotencyRequest{
+			TenantID:    "tenant-a",
+			Endpoint:    "POST /api/v1/edge/events",
+			Key:         "edge061-metric-cap-reserve",
+			RequestHash: "sha256:edge061-metric-cap-reserve",
+		}
+		if _, err := store.ReserveIdempotency(ctx, req); err != nil {
+			t.Fatalf("ReserveIdempotency: %v", err)
+		}
+		clock.Advance(8 * 24 * time.Hour)
+		if _, err := store.ReserveIdempotency(ctx, req); !errors.Is(err, ErrIdempotencyRecordExpired) {
+			t.Fatalf("ReserveIdempotency past cap = %v, want ErrIdempotencyRecordExpired", err)
+		}
+		got := rec.SnapshotIdempotencyWindowExpired()
+		if len(got) != 1 || got[0] != "reserve" {
+			t.Fatalf("window-expired phases = %#v, want [reserve]", got)
+		}
+	})
+
+	t.Run("window_expired_complete", func(t *testing.T) {
+		ctx := context.Background()
+		clock := &mutableClock{now: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)}
+		mr := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 1})
+		t.Cleanup(func() { _ = client.Close(); mr.Close() })
+		rec := &abortRecorder{}
+		store := NewRedisStoreFromClient(client,
+			WithRecorder(rec),
+			WithClock(clock.Now),
+			WithIdempotencyTTL(30*24*time.Hour),
+		)
+		req := EdgeIdempotencyRequest{
+			TenantID:    "tenant-a",
+			Endpoint:    "POST /api/v1/edge/events",
+			Key:         "edge061-metric-cap-complete",
+			RequestHash: "sha256:edge061-metric-cap-complete",
+		}
+		if _, err := store.ReserveIdempotency(ctx, req); err != nil {
+			t.Fatalf("ReserveIdempotency: %v", err)
+		}
+		clock.Advance(8 * 24 * time.Hour)
+		resp := EdgeIdempotencyResponse{StatusCode: 201, ContentType: "application/json", Body: []byte(`{"ok":true}`)}
+		if _, err := store.CompleteIdempotency(ctx, req, resp); !errors.Is(err, ErrIdempotencyRecordExpired) {
+			t.Fatalf("CompleteIdempotency past cap = %v, want ErrIdempotencyRecordExpired", err)
+		}
+		got := rec.SnapshotIdempotencyWindowExpired()
+		if len(got) != 1 || got[0] != "complete" {
+			t.Fatalf("window-expired phases = %#v, want [complete]", got)
+		}
+	})
+
+	t.Run("happy_path_emits_no_metric", func(t *testing.T) {
+		ctx := context.Background()
+		mr := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 1})
+		t.Cleanup(func() { _ = client.Close(); mr.Close() })
+		rec := &abortRecorder{}
+		store := NewRedisStoreFromClient(client, WithRecorder(rec))
+
+		req := EdgeIdempotencyRequest{
+			TenantID:    "tenant-a",
+			Endpoint:    "POST /api/v1/edge/events",
+			Key:         "edge061-metric-ok",
+			RequestHash: "sha256:edge061-metric-ok",
+		}
+		if _, err := store.ReserveIdempotency(ctx, req); err != nil {
+			t.Fatalf("Reserve: %v", err)
+		}
+		if _, err := store.CompleteIdempotency(ctx, req, EdgeIdempotencyResponse{StatusCode: 201, ContentType: "application/json", Body: []byte(`{"ok":true}`)}); err != nil {
+			t.Fatalf("Complete: %v", err)
+		}
+		if got := rec.SnapshotIdempotencyTTLExtended(); len(got) != 0 {
+			t.Fatalf("TTL-extended on first Reserve+Complete = %#v, want empty", got)
+		}
+		if got := rec.SnapshotIdempotencyWindowExpired(); len(got) != 0 {
+			t.Fatalf("window-expired on first Reserve+Complete = %#v, want empty", got)
+		}
+	})
 }
 
 func TestRedisStoreEdgeIdempotencyConcurrentReserveSingleWriter(t *testing.T) {

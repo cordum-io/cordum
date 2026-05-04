@@ -708,6 +708,8 @@ func (r *captureRecorder) RecordExecutionEnded(string, string, string)   {}
 func (r *captureRecorder) RecordCreateExecutionAborted(string)           {}
 func (r *captureRecorder) RecordApprovalEnqueueAborted(string)           {}
 func (r *captureRecorder) RecordAppendEventsAborted(string)              {}
+func (r *captureRecorder) RecordIdempotencyTTLExtended(string)           {}
+func (r *captureRecorder) RecordIdempotencyWindowExpired(string)         {}
 func (r *captureRecorder) RecordAgentdResponseWriteAborted(string)       {}
 
 func (r *captureRecorder) RecordActionDecision(tenant, layer, kind, decision, mode string) {

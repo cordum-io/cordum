@@ -33,6 +33,8 @@ type PrometheusRecorder struct {
 	approvalResolved       *prometheus.CounterVec
 	approvalEnqueueAborts  *prometheus.CounterVec
 	appendEventsAborts     *prometheus.CounterVec
+	idempotencyTTLExtended *prometheus.CounterVec
+	idempotencyWindowExpired *prometheus.CounterVec
 	degraded             *prometheus.CounterVec
 	failClosed           *prometheus.CounterVec
 	agentdResponseWriteAborts *prometheus.CounterVec
@@ -116,6 +118,22 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 			Namespace: ns, Name: "append_events_aborted_total",
 			Help: "Edge AppendEvents aborts when the parent edge session or execution transitioned to terminal between request entry and the WATCH commit, labeled by bounded reason.",
 		}, []string{"reason"}),
+		// EDGE-061 — counter for idempotency record TTL refresh on
+		// Reserve retry. `state` collapses to {"pending", "replay",
+		// "other", "unknown"} via boundedIdempotencyTTLExtendedState.
+		idempotencyTTLExtended: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns, Name: "idempotency_ttl_extended_total",
+			Help: "Edge idempotency record TTL refreshes on Reserve retry, labeled by bounded state.",
+		}, []string{"state"}),
+		// EDGE-061 — counter for idempotency window-expired rejections at
+		// Reserve/Complete cap-check (ErrIdempotencyRecordExpired) and
+		// at the existing append surface (ErrIdempotencyWindowExpired).
+		// `phase` collapses to {"reserve", "complete", "append",
+		// "other", "unknown"} via boundedIdempotencyWindowExpiredPhase.
+		idempotencyWindowExpired: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns, Name: "idempotency_window_expired_total",
+			Help: "Edge idempotency window-expired rejections (max in-flight cap or duplicate-after-TTL), labeled by bounded phase.",
+		}, []string{"phase"}),
 		degraded: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: ns, Name: "degraded_total",
 			Help: "Edge degraded outcomes, labeled by mode, component, and reason_code.",
@@ -164,6 +182,7 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 		r.actionDecisions, r.actionsDenied,
 		r.approvalRequested, r.approvalResolved, r.approvalEnqueueAborts,
 		r.appendEventsAborts,
+		r.idempotencyTTLExtended, r.idempotencyWindowExpired,
 		r.degraded, r.failClosed, r.agentdResponseWriteAborts,
 		r.artifactExports,
 		r.hookLatency, r.evaluateLatency,
@@ -208,6 +227,12 @@ func (r *PrometheusRecorder) RecordApprovalEnqueueAborted(reason string) {
 }
 func (r *PrometheusRecorder) RecordAppendEventsAborted(reason string) {
 	r.appendEventsAborts.WithLabelValues(boundedAppendEventsAbortReason(reason)).Inc()
+}
+func (r *PrometheusRecorder) RecordIdempotencyTTLExtended(state string) {
+	r.idempotencyTTLExtended.WithLabelValues(boundedIdempotencyTTLExtendedState(state)).Inc()
+}
+func (r *PrometheusRecorder) RecordIdempotencyWindowExpired(phase string) {
+	r.idempotencyWindowExpired.WithLabelValues(boundedIdempotencyWindowExpiredPhase(phase)).Inc()
 }
 func (r *PrometheusRecorder) RecordDegraded(_ /*tenant*/, mode, component, reasonCode string) {
 	r.degraded.WithLabelValues(boundedMode(mode), boundedComponent(component), boundedReasonCode(reasonCode)).Inc()
@@ -542,6 +567,53 @@ func boundedCreateExecutionAbortReason(value string) string {
 		return "unknown"
 	}
 	if _, ok := allowedCreateExecutionAbortReasons[v]; ok {
+		return v
+	}
+	return "other"
+}
+
+// allowedIdempotencyTTLExtendedStates is the bounded set of `state`
+// label values for the EDGE-061 idempotency_ttl_extended_total counter.
+//   - pending: Reserve retry observed an in-flight Pending record and
+//     refreshed its TTL inside the WATCH transaction.
+//   - replay: Reserve retry observed a Completed record (replay path)
+//     and refreshed its TTL so further retries find it within the cap.
+var allowedIdempotencyTTLExtendedStates = map[string]struct{}{
+	"pending": {},
+	"replay":  {},
+}
+
+func boundedIdempotencyTTLExtendedState(value string) string {
+	v := lowerTrim(value)
+	if v == "" {
+		return "unknown"
+	}
+	if _, ok := allowedIdempotencyTTLExtendedStates[v]; ok {
+		return v
+	}
+	return "other"
+}
+
+// allowedIdempotencyWindowExpiredPhases is the bounded set of `phase`
+// label values for the EDGE-061 idempotency_window_expired_total
+// counter.
+//   - reserve: ReserveIdempotency rejected with ErrIdempotencyRecordExpired
+//     (record older than the 7-day max-in-flight cap).
+//   - complete: CompleteIdempotency rejected with ErrIdempotencyRecordExpired.
+//   - append: append-with-idempotency hit the existing
+//     ErrIdempotencyWindowExpired surface (duplicate event_id post-TTL).
+var allowedIdempotencyWindowExpiredPhases = map[string]struct{}{
+	"reserve":  {},
+	"complete": {},
+	"append":   {},
+}
+
+func boundedIdempotencyWindowExpiredPhase(value string) string {
+	v := lowerTrim(value)
+	if v == "" {
+		return "unknown"
+	}
+	if _, ok := allowedIdempotencyWindowExpiredPhases[v]; ok {
 		return v
 	}
 	return "other"

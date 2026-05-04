@@ -81,6 +81,22 @@ type Recorder interface {
 	// "execution_terminal", "other", "unknown"}.
 	RecordAppendEventsAborted(reason string)
 
+	// RecordIdempotencyTTLExtended emits a metric counter when the Edge
+	// idempotency record's redis TTL is refreshed on a Reserve retry
+	// (EDGE-061 long-running flow contract). `state` is bounded via
+	// boundedIdempotencyTTLExtendedState to {"pending", "replay", "other",
+	// "unknown"}. Bounded cardinality.
+	RecordIdempotencyTTLExtended(state string)
+
+	// RecordIdempotencyWindowExpired emits a metric counter when an Edge
+	// idempotency operation rejects because the underlying record has
+	// passed the max-in-flight cap (EDGE-061: ErrIdempotencyRecordExpired)
+	// or the redis TTL has elapsed but the logical event is already
+	// persisted (existing ErrIdempotencyWindowExpired at the append
+	// surface). `phase` is bounded via boundedIdempotencyWindowExpiredPhase
+	// to {"reserve", "complete", "append", "other", "unknown"}.
+	RecordIdempotencyWindowExpired(phase string)
+
 	// Degraded / fail-closed outcomes.
 	RecordDegraded(tenant, mode, component, reasonCode string)
 	RecordFailClosed(tenant, mode, reasonCode string)
@@ -128,6 +144,8 @@ func (NoopRecorder) RecordApprovalRequested(string, string, string)             
 func (NoopRecorder) RecordApprovalResolved(string, string, string, string)       {}
 func (NoopRecorder) RecordApprovalEnqueueAborted(string)                         {}
 func (NoopRecorder) RecordAppendEventsAborted(string)                            {}
+func (NoopRecorder) RecordIdempotencyTTLExtended(string)                         {}
+func (NoopRecorder) RecordIdempotencyWindowExpired(string)                       {}
 func (NoopRecorder) RecordDegraded(string, string, string, string)               {}
 func (NoopRecorder) RecordFailClosed(string, string, string)                     {}
 func (NoopRecorder) RecordAgentdResponseWriteAborted(string)                     {}
