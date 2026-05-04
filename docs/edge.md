@@ -99,6 +99,15 @@ adds managed Claude settings, endpoint controls, binary signing/notarization,
 service bootstrap or keychain secret handling, SIEM/compliance export packs,
 long-retention policies, and org-wide enforcement reporting.
 
+## Identity contracts
+
+Edge has a small set of identity contracts that bind components together
+without colliding their namespaces — gateway-issued `event_id`,
+agentd-prefixed evidence id, the `(tenant, session, execution,
+action_hash)` approval-reuse tuple, and the approval_ref lifecycle. The
+canonical reference is [Edge identity contract](edge/identity-contract.md).
+Read it before touching any audit, evidence, approval, or cache code.
+
 ## Start here
 
 - [Edge docs index](edge/README.md)
@@ -106,4 +115,5 @@ long-retention policies, and org-wide enforcement reporting.
 - [Manual demo](demo-edge-claude.md)
 - [Edge API reference](edge/api.md)
 - [Edge configuration](edge/configuration.md)
+- [Edge identity contract](edge/identity-contract.md) — IDs, hashes, approval lifecycle.
 - Edge P0 threat model: internal Cordum engineering.

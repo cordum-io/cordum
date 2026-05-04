@@ -124,6 +124,14 @@ actual hook receipt time, not batch commit time. Non-hook evidence writes and
 metrics/audit emission remain best-effort: upload failures are recorded as
 degraded where possible and do not rewrite a fresh Gateway decision.
 
+Agentd's evidence-event id is in a DISTINCT namespace from the gateway's
+authoritative `event_id` — agentd records carry an `agentd-`-prefixed id
+and link to the gateway record via `parent_event_id`. The dual-witness
+audit invariant is: exactly one gateway record + AT MOST one agentd
+evidence record per decision. See
+[Edge identity contract](identity-contract.md) for the full ID-namespace
++ approval-lifecycle reference.
+
 ## State persistence
 
 By default, agentd stores session state under:

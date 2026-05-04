@@ -53,6 +53,13 @@ and `CORDUM_AGENTD_HOOK_NONCE` is supplied only in the hook process environment.
 
 The request sent to agentd contains bounded hook metadata, session/execution IDs, tool metadata, and the bounded raw Claude payload only in memory. The hook does not persist or log raw payloads.
 
+Hook generates `session_id` (or inherits from the wrapper's
+`~/.claude/settings.json`) and validates it against the auth tenant at the
+gateway boundary. `execution_id` is issued by agentd at execution-create
+time. See [Edge identity contract](identity-contract.md) for the full
+ownership chain (session/execution/event/trace/job/workflow_run) and the
+tenant-scoping invariant established by EDGE-008.7.
+
 For the developer wrapper that starts agentd, generates temporary settings,
 and launches Claude Code, see [`cordumctl edge claude`](./cordumctl-edge-claude.md).
 
