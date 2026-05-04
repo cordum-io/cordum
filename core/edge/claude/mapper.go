@@ -263,9 +263,11 @@ func MapHookInput(input HookInput, ctx MappingContext) (MappedHookAction, error)
 }
 
 // mapHookEventToKind translates the Claude hook event name to the canonical
-// EventKind. ConfigChange/FileChanged are valid hook events but EDGE-016
-// only maps them when the runner forwards the event; the kind set here
-// matches the existing core/edge constants.
+// EventKind. The switch must be exhaustive over the EventKindHook* constants
+// declared in core/edge/event.go — EDGE-049 closed the UserPromptSubmit gap;
+// EDGE-066 closes the same gap for PolicyDecision + PermissionRequest, two
+// tool-less metadata kinds the classifier already accepts via
+// hookKindRequiresTool.
 func mapHookEventToKind(eventName string) (edge.EventKind, bool) {
 	switch eventName {
 	case "PreToolUse":
@@ -280,6 +282,10 @@ func mapHookEventToKind(eventName string) (edge.EventKind, bool) {
 		return edge.EventKindHookConfigChange, true
 	case "FileChanged":
 		return edge.EventKindHookFileChanged, true
+	case "PolicyDecision":
+		return edge.EventKindHookPolicyDecision, true
+	case "PermissionRequest":
+		return edge.EventKindHookPermissionRequest, true
 	default:
 		return "", false
 	}

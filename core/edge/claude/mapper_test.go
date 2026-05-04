@@ -178,6 +178,42 @@ func TestMapHookInputUnknownToolUsesUnknownCapability(t *testing.T) {
 	}
 }
 
+// EDGE-066 — mapHookEventToKind must accept "PolicyDecision" and
+// "PermissionRequest" as valid Claude hook event names. event.go declares
+// EventKindHookPolicyDecision + EventKindHookPermissionRequest as canonical
+// EventKind values, but the mapper switch only handled 6 of the 8 hook
+// kinds defined in event.go. Pre-fix, those names fall through to the
+// default branch and the mapper degrades the event with
+// "unsupported hook event name" — the same shape of failure that EDGE-049
+// fixed for UserPromptSubmit.
+func TestMapHookEventToKindHandlesPolicyDecision(t *testing.T) {
+	got, ok := mapHookEventToKind("PolicyDecision")
+	if !ok {
+		t.Fatalf("mapHookEventToKind(\"PolicyDecision\") ok = false, want true")
+	}
+	if got != edge.EventKindHookPolicyDecision {
+		t.Fatalf("mapHookEventToKind(\"PolicyDecision\") = %q, want %q", got, edge.EventKindHookPolicyDecision)
+	}
+}
+
+func TestMapHookEventToKindHandlesPermissionRequest(t *testing.T) {
+	got, ok := mapHookEventToKind("PermissionRequest")
+	if !ok {
+		t.Fatalf("mapHookEventToKind(\"PermissionRequest\") ok = false, want true")
+	}
+	if got != edge.EventKindHookPermissionRequest {
+		t.Fatalf("mapHookEventToKind(\"PermissionRequest\") = %q, want %q", got, edge.EventKindHookPermissionRequest)
+	}
+}
+
+// Negative regression — typos / unknown event names still fall through
+// to the unsupported-hook-event default branch.
+func TestMapHookEventToKindRejectsUnknownEvent(t *testing.T) {
+	if _, ok := mapHookEventToKind("PolicyDecisionTypo"); ok {
+		t.Fatalf("mapHookEventToKind(\"PolicyDecisionTypo\") ok = true, want false (unknown name must NOT map)")
+	}
+}
+
 func TestMapHookInputUserPromptSubmit(t *testing.T) {
 	input := loadHookFixture(t, "user_prompt_submit.json")
 	got, err := MapHookInput(input, newTestMappingContext())
