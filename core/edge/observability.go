@@ -71,6 +71,16 @@ type Recorder interface {
 	// bounded-label helper. Bounded cardinality.
 	RecordApprovalEnqueueAborted(reason string)
 
+	// RecordAppendEventsAborted emits a metric counter when AppendEvents
+	// refuses to write a batch because the parent edge session or its
+	// execution transitioned to a terminal status between the request entry
+	// and the WATCH commit. EDGE-055 widened the WATCH set to include the
+	// parent session key, and refreshAppendExecutionsInTx surfaces the
+	// typed error this counter quantifies. `reason` is bounded via
+	// boundedAppendEventsAbortReason to {"parent_session_terminal",
+	// "execution_terminal", "other", "unknown"}.
+	RecordAppendEventsAborted(reason string)
+
 	// Degraded / fail-closed outcomes.
 	RecordDegraded(tenant, mode, component, reasonCode string)
 	RecordFailClosed(tenant, mode, reasonCode string)
@@ -117,6 +127,7 @@ func (NoopRecorder) RecordActionDenied(string, string, string, string)          
 func (NoopRecorder) RecordApprovalRequested(string, string, string)              {}
 func (NoopRecorder) RecordApprovalResolved(string, string, string, string)       {}
 func (NoopRecorder) RecordApprovalEnqueueAborted(string)                         {}
+func (NoopRecorder) RecordAppendEventsAborted(string)                            {}
 func (NoopRecorder) RecordDegraded(string, string, string, string)               {}
 func (NoopRecorder) RecordFailClosed(string, string, string)                     {}
 func (NoopRecorder) RecordAgentdResponseWriteAborted(string)                     {}

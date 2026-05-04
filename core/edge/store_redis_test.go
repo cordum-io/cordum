@@ -413,10 +413,13 @@ func TestRedisStoreCreateExecutionRefusesOrphanWhenParentEndedConcurrently(t *te
 // EDGE-054 — verify the create_execution_aborted_total metric fires with the
 // correct bounded reason on each abort path. Uses a stub Recorder embedded in
 // NoopRecorder so unrelated method calls (RecordExecutionStarted etc.) are no-ops.
+// EDGE-055 — extends the same stub with appendEventsReasons to capture
+// AppendEvents abort emissions.
 type abortRecorder struct {
 	NoopRecorder
-	mu      sync.Mutex
-	reasons []string
+	mu                  sync.Mutex
+	reasons             []string
+	appendEventsReasons []string
 }
 
 func (r *abortRecorder) RecordCreateExecutionAborted(reason string) {
@@ -425,10 +428,22 @@ func (r *abortRecorder) RecordCreateExecutionAborted(reason string) {
 	r.reasons = append(r.reasons, reason)
 }
 
+func (r *abortRecorder) RecordAppendEventsAborted(reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.appendEventsReasons = append(r.appendEventsReasons, reason)
+}
+
 func (r *abortRecorder) Snapshot() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]string(nil), r.reasons...)
+}
+
+func (r *abortRecorder) SnapshotAppendEvents() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.appendEventsReasons...)
 }
 
 func TestRedisStoreCreateExecutionAbortedMetricFiresWithBoundedReason(t *testing.T) {
@@ -840,6 +855,81 @@ func TestRedisStoreAppendEventsWithIdempotencyRefusesWhenParentSessionTerminal(t
 	if !errors.Is(err, ErrParentSessionTerminal) {
 		t.Fatalf("AppendEventsWithIdempotency err = %v, want ErrParentSessionTerminal (EDGE-055 contract on idempotent path)", err)
 	}
+}
+
+// EDGE-055 — verify the append_events_aborted_total metric fires with the
+// correct bounded reason on each abort path. Mirrors
+// TestRedisStoreCreateExecutionAbortedMetricFiresWithBoundedReason.
+func TestRedisStoreAppendEventsAbortedMetricFiresWithBoundedReason(t *testing.T) {
+	t.Run("parent_session_terminal", func(t *testing.T) {
+		ctx := context.Background()
+		mr := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 1})
+		t.Cleanup(func() { _ = client.Close(); mr.Close() })
+		rec := &abortRecorder{}
+		store := NewRedisStoreFromClient(client, WithRecorder(rec))
+
+		base := time.Date(2026, 5, 1, 15, 0, 0, 0, time.UTC)
+		createSessionAndExecution(t, ctx, store, "tenant-a", "sess-edge055-metric-parent", "exec-edge055-metric-parent", base)
+		if _, err := store.EndSession(ctx, "tenant-a", "sess-edge055-metric-parent", base.Add(time.Minute), SessionStatusEnded); err != nil {
+			t.Fatalf("EndSession: %v", err)
+		}
+		_, err := store.AppendEvents(ctx, []AgentActionEvent{
+			validStoreEvent("tenant-a", "sess-edge055-metric-parent", "exec-edge055-metric-parent", "event-edge055-parent-metric", 0, base.Add(2*time.Minute), EventKindHookPostToolUse, DecisionAllow),
+		})
+		if !errors.Is(err, ErrParentSessionTerminal) {
+			t.Fatalf("AppendEvents = %v, want ErrParentSessionTerminal", err)
+		}
+		got := rec.SnapshotAppendEvents()
+		if len(got) != 1 || got[0] != "parent_session_terminal" {
+			t.Fatalf("recorder appendEvents reasons = %#v, want [parent_session_terminal]", got)
+		}
+	})
+
+	t.Run("execution_terminal", func(t *testing.T) {
+		ctx := context.Background()
+		mr := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 1})
+		t.Cleanup(func() { _ = client.Close(); mr.Close() })
+		rec := &abortRecorder{}
+		store := NewRedisStoreFromClient(client, WithRecorder(rec))
+
+		base := time.Date(2026, 5, 1, 15, 15, 0, 0, time.UTC)
+		createSessionAndExecution(t, ctx, store, "tenant-a", "sess-edge055-metric-exec", "exec-edge055-metric-exec", base)
+		if _, err := store.EndExecution(ctx, "tenant-a", "exec-edge055-metric-exec", base.Add(time.Minute), ExecutionStatusFailed); err != nil {
+			t.Fatalf("EndExecution: %v", err)
+		}
+		_, err := store.AppendEvents(ctx, []AgentActionEvent{
+			validStoreEvent("tenant-a", "sess-edge055-metric-exec", "exec-edge055-metric-exec", "event-edge055-exec-metric", 0, base.Add(2*time.Minute), EventKindHookPostToolUse, DecisionAllow),
+		})
+		if err == nil {
+			t.Fatal("AppendEvents succeeded with terminal execution")
+		}
+		got := rec.SnapshotAppendEvents()
+		if len(got) != 1 || got[0] != "execution_terminal" {
+			t.Fatalf("recorder appendEvents reasons = %#v, want [execution_terminal]", got)
+		}
+	})
+
+	t.Run("happy_path_emits_no_abort", func(t *testing.T) {
+		ctx := context.Background()
+		mr := miniredis.RunT(t)
+		client := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 1})
+		t.Cleanup(func() { _ = client.Close(); mr.Close() })
+		rec := &abortRecorder{}
+		store := NewRedisStoreFromClient(client, WithRecorder(rec))
+
+		base := time.Date(2026, 5, 1, 15, 30, 0, 0, time.UTC)
+		createSessionAndExecution(t, ctx, store, "tenant-a", "sess-edge055-metric-ok", "exec-edge055-metric-ok", base)
+		if _, err := store.AppendEvents(ctx, []AgentActionEvent{
+			validStoreEvent("tenant-a", "sess-edge055-metric-ok", "exec-edge055-metric-ok", "event-edge055-ok", 0, base.Add(time.Minute), EventKindHookPostToolUse, DecisionAllow),
+		}); err != nil {
+			t.Fatalf("AppendEvents happy path: %v", err)
+		}
+		if got := rec.SnapshotAppendEvents(); len(got) != 0 {
+			t.Fatalf("recorder appendEvents reasons = %#v, want empty (happy path)", got)
+		}
+	})
 }
 
 func TestRedisStoreHeartbeatTTL(t *testing.T) {

@@ -888,7 +888,9 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 		watchKeys = append(watchKeys, edgeEventSeqKey(executionID), edgeEventsKey(executionID), edgeEventIDIndexKey(executionID), edgeExecutionKey(executionID), edgeSessionKey(group.execution.SessionID))
 	}
 	appended := make([]AgentActionEvent, len(events))
+	abortReason := ""
 	err = redisutil.Retry(ctx, s.client, func(tx *redis.Tx) error {
+		abortReason = "" // EDGE-055 — only the final attempt's reason is recorded
 		// Re-read each execution inside the watched transaction and reject
 		// the batch if it is missing, cross-tenant, or already terminal.
 		// Without this re-check, a TOCTOU window between the GetExecution
@@ -896,7 +898,7 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 		// land on a session/execution that has since been ended, deleted,
 		// or moved to another tenant. EDGE-055 extends the same helper to
 		// re-check parent session status under WATCH discipline.
-		if err := refreshAppendExecutionsInTx(ctx, tx, groups); err != nil {
+		if err := refreshAppendExecutionsInTx(ctx, tx, groups, &abortReason); err != nil {
 			return err
 		}
 		payloadsByExecution := make(map[string][]redisEventAppendPayload, len(groups))
@@ -941,6 +943,9 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 		}
 		return nil
 	}, redisutil.WithKeys(watchKeys...), redisutil.WithMaxAttempts(edgeEventAppendCASMaxAttempts))
+	if abortReason != "" {
+		s.recorder.RecordAppendEventsAborted(abortReason)
+	}
 	if errors.Is(err, redis.TxFailedErr) || errors.Is(err, redisutil.ErrMaxAttemptsExceeded) {
 		return nil, fmt.Errorf("append agent action event batch conflict: %w", err)
 	}
@@ -996,14 +1001,16 @@ func (s *RedisStore) appendEventsWithIdempotencyTx(
 ) (EdgeIdempotentAppendResult, error) {
 	var result EdgeIdempotentAppendResult
 	var err error
+	abortReason := ""
 	for attempt := 0; attempt < 8; attempt++ {
 		err = s.client.Watch(ctx, func(tx *redis.Tx) error {
+			abortReason = "" // EDGE-055 — only the final attempt's reason is recorded
 			replay, handled, err := loadExistingEdgeIdempotencyForAppend(ctx, tx, key, req)
 			if err != nil || handled {
 				result = replay
 				return err
 			}
-			if err := refreshAppendExecutionsInTx(ctx, tx, groups); err != nil {
+			if err := refreshAppendExecutionsInTx(ctx, tx, groups, &abortReason); err != nil {
 				return err
 			}
 			plan, err := s.planIdempotentAppend(ctx, tx, req, groups, events, buildResponse)
@@ -1022,6 +1029,9 @@ func (s *RedisStore) appendEventsWithIdempotencyTx(
 		}, watchKeys...)
 		if errors.Is(err, redis.TxFailedErr) {
 			continue
+		}
+		if abortReason != "" {
+			s.recorder.RecordAppendEventsAborted(abortReason)
 		}
 		if errors.Is(err, ErrIdempotencyWindowExpired) {
 			replay, ok, replayErr := s.loadCompletedAppendReplay(ctx, key, req)
@@ -1082,7 +1092,13 @@ func loadExistingEdgeIdempotencyForAppend(ctx context.Context, tx *redis.Tx, key
 	return EdgeIdempotentAppendResult{}, true, ErrIdempotencyPending
 }
 
-func refreshAppendExecutionsInTx(ctx context.Context, tx *redis.Tx, groups map[string]*redisEventGroup) error {
+// refreshAppendExecutionsInTx re-reads each execution and its parent session
+// inside the WATCH transaction and aborts the batch if either has gone
+// terminal. The optional `abortReason` out-pointer captures a bounded
+// EDGE-055 abort reason so the caller can emit
+// recorder.RecordAppendEventsAborted exactly once after the WATCH closure
+// returns. Callers pass nil when they don't need to record.
+func refreshAppendExecutionsInTx(ctx context.Context, tx *redis.Tx, groups map[string]*redisEventGroup, abortReason *string) error {
 	for executionID, group := range groups {
 		raw, err := tx.Get(ctx, edgeExecutionKey(executionID)).Bytes()
 		if errors.Is(err, redis.Nil) {
@@ -1099,6 +1115,9 @@ func refreshAppendExecutionsInTx(ctx context.Context, tx *redis.Tx, groups map[s
 			return fmt.Errorf("%w: agent execution %s", ErrNotFound, executionID)
 		}
 		if fresh.EndedAt != nil || isTerminalExecutionStatus(fresh.Status) {
+			if abortReason != nil {
+				*abortReason = "execution_terminal"
+			}
 			return fmt.Errorf("agent execution %s is terminal; cannot append events", executionID)
 		}
 		// EDGE-055 — parent session re-check under WATCH discipline. The
@@ -1123,6 +1142,9 @@ func refreshAppendExecutionsInTx(ctx context.Context, tx *redis.Tx, groups map[s
 			return fmt.Errorf("unmarshal parent edge session %s: %w", fresh.SessionID, err)
 		}
 		if isTerminalSessionStatus(parent.Status) {
+			if abortReason != nil {
+				*abortReason = "parent_session_terminal"
+			}
 			return fmt.Errorf("%w: parent edge session %s status=%s", ErrParentSessionTerminal, fresh.SessionID, parent.Status)
 		}
 		group.execution = &fresh

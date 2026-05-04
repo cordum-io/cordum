@@ -32,6 +32,7 @@ type PrometheusRecorder struct {
 	approvalRequested      *prometheus.CounterVec
 	approvalResolved       *prometheus.CounterVec
 	approvalEnqueueAborts  *prometheus.CounterVec
+	appendEventsAborts     *prometheus.CounterVec
 	degraded             *prometheus.CounterVec
 	failClosed           *prometheus.CounterVec
 	agentdResponseWriteAborts *prometheus.CounterVec
@@ -106,6 +107,15 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 			Namespace: ns, Name: "approval_enqueue_aborted_total",
 			Help: "Edge EnqueueApproval aborts due to fail-closed safety guards (e.g. event list too large for inline validation), labeled by bounded reason.",
 		}, []string{"reason"}),
+		// EDGE-055 — counter for AppendEvents aborts when the parent edge
+		// session or its execution transitioned to terminal mid-flight.
+		// `reason` collapses to {"parent_session_terminal",
+		// "execution_terminal", "other", "unknown"} via
+		// boundedAppendEventsAbortReason. Bounded cardinality.
+		appendEventsAborts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns, Name: "append_events_aborted_total",
+			Help: "Edge AppendEvents aborts when the parent edge session or execution transitioned to terminal between request entry and the WATCH commit, labeled by bounded reason.",
+		}, []string{"reason"}),
 		degraded: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: ns, Name: "degraded_total",
 			Help: "Edge degraded outcomes, labeled by mode, component, and reason_code.",
@@ -153,6 +163,7 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 		r.executionsStarted, r.executionsEnded, r.executionAborts,
 		r.actionDecisions, r.actionsDenied,
 		r.approvalRequested, r.approvalResolved, r.approvalEnqueueAborts,
+		r.appendEventsAborts,
 		r.degraded, r.failClosed, r.agentdResponseWriteAborts,
 		r.artifactExports,
 		r.hookLatency, r.evaluateLatency,
@@ -194,6 +205,9 @@ func (r *PrometheusRecorder) RecordApprovalResolved(_ /*tenant*/, layer, kind, o
 }
 func (r *PrometheusRecorder) RecordApprovalEnqueueAborted(reason string) {
 	r.approvalEnqueueAborts.WithLabelValues(boundedApprovalEnqueueAbortReason(reason)).Inc()
+}
+func (r *PrometheusRecorder) RecordAppendEventsAborted(reason string) {
+	r.appendEventsAborts.WithLabelValues(boundedAppendEventsAbortReason(reason)).Inc()
 }
 func (r *PrometheusRecorder) RecordDegraded(_ /*tenant*/, mode, component, reasonCode string) {
 	r.degraded.WithLabelValues(boundedMode(mode), boundedComponent(component), boundedReasonCode(reasonCode)).Inc()
@@ -528,6 +542,29 @@ func boundedCreateExecutionAbortReason(value string) string {
 		return "unknown"
 	}
 	if _, ok := allowedCreateExecutionAbortReasons[v]; ok {
+		return v
+	}
+	return "other"
+}
+
+// allowedAppendEventsAbortReasons is the bounded set of `reason` label
+// values for the EDGE-055 append_events_aborted_total counter.
+//   - parent_session_terminal: parent EdgeSession was Ended/Failed at the
+//     moment AppendEvents' WATCH/MULTI/EXEC ran (the EDGE-055 widening).
+//   - execution_terminal: the execution itself was Ended/Failed/Cancelled
+//     at the moment refreshAppendExecutionsInTx ran (preexisting guard,
+//     reused in EDGE-055).
+var allowedAppendEventsAbortReasons = map[string]struct{}{
+	"parent_session_terminal": {},
+	"execution_terminal":      {},
+}
+
+func boundedAppendEventsAbortReason(value string) string {
+	v := lowerTrim(value)
+	if v == "" {
+		return "unknown"
+	}
+	if _, ok := allowedAppendEventsAbortReasons[v]; ok {
 		return v
 	}
 	return "other"
