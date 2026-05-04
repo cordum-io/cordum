@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -134,6 +135,46 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 	}
 	principalID = strings.TrimSpace(principalID)
 
+	// EDGE-060 — idempotency hash is computed AFTER tenant/principal
+	// override (and using the request body as the normalized payload)
+	// so a malicious client cannot reuse another tenant's key by
+	// flipping the body principal_id. The request body itself is the
+	// hash input — UUIDs are server-generated, so they're not in the
+	// hash and a retry with the same body lands on the same record.
+	normalizedReq := req
+	normalizedReq.TenantID = tenantID
+	normalizedReq.PrincipalID = principalID
+	idempotencyReq, idempotent, handled := s.prepareEdgeIdempotencyRequest(w, r, tenantID, edgeSessionCreateEndpoint, normalizedReq)
+	if handled {
+		return
+	}
+	if idempotent {
+		s.applyEdgeIdempotency(w, r, store, idempotencyReq,
+			func() (edgeIdempotentWriteResult, error) {
+				return s.executeCreateEdgeSession(r, store, req, tenantID, principalID)
+			},
+			func(err error) {
+				writeCreateEdgeSessionDomainError(w, r, err)
+			})
+		return
+	}
+
+	result, err := s.executeCreateEdgeSession(r, store, req, tenantID, principalID)
+	if err != nil {
+		writeCreateEdgeSessionDomainError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", result.ContentType)
+	w.WriteHeader(result.StatusCode)
+	_, _ = w.Write(result.Body)
+}
+
+// executeCreateEdgeSession is the body of handleCreateEdgeSession factored
+// out for idempotency-wrapping reuse. Returns the marshalled response on
+// success and a domain error on failure (mapped to the wire envelope by
+// writeCreateEdgeSessionDomainError so the idempotent + non-idempotent
+// paths emit identical responses).
+func (s *server) executeCreateEdgeSession(r *http.Request, store edgecore.Store, req edgeSessionCreateRequest, tenantID, principalID string) (edgeIdempotentWriteResult, error) {
 	now := time.Now().UTC()
 	sessionID := uuid.NewString()
 	executionID := uuid.NewString()
@@ -156,23 +197,19 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 	}
 	redacted, err := redactEdgeSessionCreateRequest(req)
 	if err != nil {
-		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session request", nil)
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateSessionInvalidErr{wrapped: err}
 	}
 	traceID, err = redacted.String(traceID)
 	if err != nil {
-		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session request", nil)
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateSessionInvalidErr{wrapped: err}
 	}
 	policySnapshot, err = redacted.String(policySnapshot)
 	if err != nil {
-		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session request", nil)
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateSessionInvalidErr{wrapped: err}
 	}
 	redactedPrincipalID, err := redacted.String(principalID)
 	if err != nil {
-		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session request", nil)
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateSessionInvalidErr{wrapped: err}
 	}
 
 	session := edgecore.EdgeSession{
@@ -204,8 +241,7 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 		Labels:    redacted.Labels,
 	}
 	if err := session.Validate(); err != nil {
-		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session request", nil)
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateSessionInvalidErr{wrapped: err}
 	}
 
 	execution := edgecore.AgentExecution{
@@ -223,38 +259,28 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 		Labels:         redacted.Labels,
 	}
 	if err := execution.Validate(); err != nil {
-		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateExecutionInvalidErr{wrapped: err}
 	}
 
 	if err := store.CreateSession(r.Context(), session); err != nil {
 		if isEdgeValidationError(err) {
-			writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session request", nil)
-			return
+			return edgeIdempotentWriteResult{}, edgeCreateSessionInvalidErr{wrapped: err}
 		}
-		writeEdgeInternalError(w, r, "create edge session", err)
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateSessionInternalErr{op: "create edge session", wrapped: err}
 	}
 	if err := store.CreateExecution(r.Context(), execution); err != nil {
 		s.cleanupFailedEdgeSessionCreate(r, tenantID, sessionID)
 		if errors.Is(err, edgecore.ErrParentSessionTerminal) {
-			// EDGE-054 — parent session transitioned to terminal between the
-			// initial GetSession read and the WATCH commit. Map to 409 so
-			// callers can distinguish "session ended" from a 400 shape error.
-			writeEdgeError(w, r, http.StatusConflict, edgeErrCodeSessionTerminal, "parent edge session is terminal", nil)
-			return
+			return edgeIdempotentWriteResult{}, err
 		}
 		if errors.Is(err, edgecore.ErrNotFound) || isEdgeValidationError(err) {
-			writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
-			return
+			return edgeIdempotentWriteResult{}, edgeCreateExecutionInvalidErr{wrapped: err}
 		}
-		writeEdgeInternalError(w, r, "create initial edge execution", err)
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateSessionInternalErr{op: "create initial edge execution", wrapped: err}
 	}
 	if err := store.TouchHeartbeat(r.Context(), tenantID, sessionID); err != nil {
 		s.cleanupFailedEdgeSessionCreate(r, tenantID, sessionID)
-		writeEdgeInternalError(w, r, "touch edge session heartbeat", err)
-		return
+		return edgeIdempotentWriteResult{}, edgeCreateSessionInternalErr{op: "touch edge session heartbeat", wrapped: err}
 	}
 
 	// EDGE-014 step-10: emit best-effort audit events for the session and
@@ -263,9 +289,7 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 	edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForSessionStarted(session))
 	edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForExecutionStarted(execution))
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, edgeSessionCreateResponse{
+	body, err := jsonMarshalForEdgeIdempotency(edgeSessionCreateResponse{
 		SessionID:      sessionID,
 		ExecutionID:    executionID,
 		TraceID:        traceID,
@@ -274,6 +298,93 @@ func (s *server) handleCreateEdgeSession(w http.ResponseWriter, r *http.Request)
 		Session:        session,
 		Execution:      execution,
 	})
+	if err != nil {
+		return edgeIdempotentWriteResult{}, edgeCreateSessionInternalErr{op: "marshal edge session response", wrapped: err}
+	}
+	return edgeIdempotentWriteResult{
+		StatusCode:  http.StatusCreated,
+		ContentType: "application/json",
+		Body:        body,
+	}, nil
+}
+
+// edgeCreateSessionInvalidErr signals a 400-shape validation failure
+// from inside executeCreateEdgeSession. writeCreateEdgeSessionDomainError
+// maps it to the wire envelope.
+type edgeCreateSessionInvalidErr struct{ wrapped error }
+
+func (e edgeCreateSessionInvalidErr) Error() string {
+	if e.wrapped == nil {
+		return "invalid edge session request"
+	}
+	return "invalid edge session request: " + e.wrapped.Error()
+}
+func (e edgeCreateSessionInvalidErr) Unwrap() error { return e.wrapped }
+
+// edgeCreateExecutionInvalidErr is the same shape for the initial
+// execution validation failures.
+type edgeCreateExecutionInvalidErr struct{ wrapped error }
+
+func (e edgeCreateExecutionInvalidErr) Error() string {
+	if e.wrapped == nil {
+		return "invalid edge execution request"
+	}
+	return "invalid edge execution request: " + e.wrapped.Error()
+}
+func (e edgeCreateExecutionInvalidErr) Unwrap() error { return e.wrapped }
+
+// edgeCreateSessionInternalErr signals a 500-shape internal failure
+// (Redis outage, marshal failure, etc).
+type edgeCreateSessionInternalErr struct {
+	op      string
+	wrapped error
+}
+
+func (e edgeCreateSessionInternalErr) Error() string {
+	if e.wrapped == nil {
+		return e.op
+	}
+	return e.op + ": " + e.wrapped.Error()
+}
+func (e edgeCreateSessionInternalErr) Unwrap() error { return e.wrapped }
+
+// writeCreateEdgeSessionDomainError maps the typed errors above into the
+// shared edge-error wire envelope. Both the idempotent and non-idempotent
+// paths funnel through here so the responses are byte-identical.
+func writeCreateEdgeSessionDomainError(w http.ResponseWriter, r *http.Request, err error) {
+	if err == nil {
+		writeEdgeInternalError(w, r, "create edge session", fmt.Errorf("nil error"))
+		return
+	}
+	var sessionInvalid edgeCreateSessionInvalidErr
+	if errors.As(err, &sessionInvalid) {
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge session request", nil)
+		return
+	}
+	var execInvalid edgeCreateExecutionInvalidErr
+	if errors.As(err, &execInvalid) {
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge execution request", nil)
+		return
+	}
+	if errors.Is(err, edgecore.ErrParentSessionTerminal) {
+		// EDGE-054 — parent session transitioned to terminal between the
+		// initial GetSession read and the WATCH commit. Map to 409 so
+		// callers can distinguish "session ended" from a 400 shape error.
+		writeEdgeError(w, r, http.StatusConflict, edgeErrCodeSessionTerminal, "parent edge session is terminal", nil)
+		return
+	}
+	var internal edgeCreateSessionInternalErr
+	if errors.As(err, &internal) {
+		writeEdgeInternalError(w, r, internal.op, internal.wrapped)
+		return
+	}
+	writeEdgeInternalError(w, r, "create edge session", err)
+}
+
+// jsonMarshalForEdgeIdempotency wraps json.Marshal so the executeXxx
+// helper can return an error-typed marshal failure rather than panicking.
+func jsonMarshalForEdgeIdempotency(v any) ([]byte, error) {
+	return json.Marshal(v)
 }
 
 func (s *server) handleListEdgeSessions(w http.ResponseWriter, r *http.Request) {
