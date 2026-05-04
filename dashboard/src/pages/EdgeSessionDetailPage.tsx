@@ -16,6 +16,9 @@ import {
   Workflow,
   GitBranch,
   Clock,
+  ChevronRight,
+  ChevronDown,
+  AlertTriangle,
 } from "lucide-react";
 import type { AgentActionEvent, EdgeDecision } from "@/api/types";
 import { Button } from "@/components/ui/Button";
@@ -32,6 +35,7 @@ import { EdgeApprovalsDrawer } from "@/components/edge/EdgeApprovalsDrawer";
 import { EdgeArtifactsPanel } from "@/components/edge/EdgeArtifactsPanel";
 import { EdgeEventInspector } from "@/components/edge/EdgeEventInspector";
 import { cn, formatRelativeTime } from "@/lib/utils";
+import { groupEdgeEvents, type EdgeEventGroup } from "@/lib/edge-event-groups";
 
 type Filter = { executionId: string; decision: string; kind: string };
 
@@ -88,6 +92,12 @@ export default function EdgeSessionDetailPage() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [approvalsOpen, setApprovalsOpen] = useState(false);
   const [filter, setFilter] = useState<Filter>({ executionId: "", decision: "", kind: "" });
+  // EDGE-050 — UI surface for the 3-events-per-hook collapse. Default
+  // hides pre-evaluation receipts (status=degraded agentd-receipt rows)
+  // because they're plumbing the operator doesn't normally want to see;
+  // toggle exposes them as standalone rows for audit-trail inspection.
+  const [showReceipts, setShowReceipts] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
 
   const session = sessionQuery.data;
   const events = useMemo(() => {
@@ -95,6 +105,11 @@ export default function EdgeSessionDetailPage() {
     return [...items].sort(sortByOrder);
   }, [eventsQuery.data]);
   const visibleEvents = useMemo(() => applyFilter(events, filter), [events, filter]);
+  // EDGE-050 — collapse 3-events-per-hook (receipt + gateway-decision +
+  // agentd-evidence) into one logical row per hook fire. Underlying
+  // events remain accessible via the expand caret per audit-verifiability
+  // requirement (see docs/edge/identity-contract.md §1 dual-witness).
+  const groups = useMemo(() => groupEdgeEvents(visibleEvents), [visibleEvents]);
   const decisions = useMemo(
     () => Array.from(new Set(events.map((event) => String(event.decision)))).sort(),
     [events],
@@ -179,9 +194,22 @@ export default function EdgeSessionDetailPage() {
           />
         </header>
 
+        <div className="mt-3 flex items-center gap-2">
+          <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              data-testid="edge-toggle-receipts"
+              checked={showReceipts}
+              onChange={(e) => setShowReceipts(e.target.checked)}
+              className="h-3.5 w-3.5 rounded border-border accent-cordum"
+            />
+            <span>Show pre-evaluation receipts</span>
+          </label>
+        </div>
+
         {eventsQuery.isPending ? (
           <Skeleton className="mt-4 h-48 w-full" />
-        ) : visibleEvents.length === 0 ? (
+        ) : groups.length === 0 ? (
           <div className="mt-4">
             <EmptyState
               title="No events match"
@@ -194,12 +222,22 @@ export default function EdgeSessionDetailPage() {
           </div>
         ) : (
           <ol className="mt-4 space-y-2" data-testid="edge-event-timeline">
-            {visibleEvents.map((event) => (
-              <TimelineRow
-                key={event.eventId}
-                event={event}
-                selected={event.eventId === selectedEventId}
-                onSelect={() => setSelectedEventId(event.eventId)}
+            {groups.map((group) => (
+              <TimelineGroupRow
+                key={group.id}
+                group={group}
+                expanded={expandedGroups.has(group.id)}
+                showReceipts={showReceipts}
+                selectedEventId={selectedEventId}
+                onToggleExpanded={() =>
+                  setExpandedGroups((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(group.id)) next.delete(group.id);
+                    else next.add(group.id);
+                    return next;
+                  })
+                }
+                onSelectEvent={(eventId) => setSelectedEventId(eventId)}
               />
             ))}
           </ol>
@@ -343,15 +381,35 @@ function FilterSelect({
   );
 }
 
-function TimelineRow({
-  event,
-  selected,
-  onSelect,
+// EDGE-050 — TimelineRow superseded by TimelineGroupRow which renders
+// per-hook-fire collapsed groups. The single-event row pattern is now
+// the leaf inside an expanded group's witness list.
+
+// EDGE-050 — collapsed timeline row that wraps an EdgeEventGroup.
+// Headline binds to the gateway authoritative decision when available;
+// caret expands to reveal the underlying 1–3 witnesses (receipt /
+// gatewayDecision / agentdEvidence). When showReceipts is on AND the
+// group has a receipt, the receipt also surfaces as a standalone
+// nested row so audit operators can scan pre-evaluation timestamps
+// without expanding every row.
+function TimelineGroupRow({
+  group,
+  expanded,
+  showReceipts,
+  selectedEventId,
+  onToggleExpanded,
+  onSelectEvent,
 }: {
-  event: AgentActionEvent;
-  selected: boolean;
-  onSelect: () => void;
+  group: EdgeEventGroup;
+  expanded: boolean;
+  showReceipts: boolean;
+  selectedEventId: string | null;
+  onToggleExpanded: () => void;
+  onSelectEvent: (eventId: string) => void;
 }) {
+  const headline = group.headline;
+  const hasMultiple = group.events.length > 1;
+  const showDivergence = Boolean(group.divergence);
   return (
     <motion.li
       layout
@@ -359,34 +417,117 @@ function TimelineRow({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18 }}
       className={cn(
-        "rounded-2xl border border-border bg-surface-1/80 transition-shadow",
-        selected ? "shadow-soft-hover ring-1 ring-cordum/40" : "shadow-soft hover:shadow-soft-hover",
+        "rounded-2xl border bg-surface-1/80 transition-shadow",
+        showDivergence
+          ? "border-amber-300 shadow-soft-hover ring-1 ring-amber-300/50"
+          : "border-border shadow-soft hover:shadow-soft-hover",
       )}
+      data-testid="edge-event-group"
+      data-group-id={group.id}
+      data-divergent={showDivergence ? "true" : "false"}
     >
       <button
         type="button"
-        onClick={onSelect}
-        data-testid="edge-event-row"
-        data-event-id={event.eventId}
-        aria-pressed={selected}
+        onClick={hasMultiple ? onToggleExpanded : () => onSelectEvent(headline.eventId)}
+        aria-expanded={hasMultiple ? expanded : undefined}
+        data-testid="edge-event-group-headline"
         className="flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl px-3 py-2 text-left"
       >
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <StatusBadge variant={decisionVariant(event.decision)}>{String(event.decision)}</StatusBadge>
-          <span className="font-mono text-xs text-foreground">{event.kind}</span>
-          {event.toolName ? (
-            <span className="text-xs text-muted-foreground">· {event.toolName}</span>
+          {hasMultiple ? (
+            expanded ? (
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            )
+          ) : (
+            <span className="inline-block h-3.5 w-3.5" aria-hidden />
+          )}
+          <StatusBadge variant={decisionVariant(headline.decision)}>{String(headline.decision)}</StatusBadge>
+          <span className="font-mono text-xs text-foreground">{headline.kind}</span>
+          {headline.toolName ? (
+            <span className="text-xs text-muted-foreground">· {headline.toolName}</span>
           ) : null}
-          {event.approvalRef ? (
-            <span className="font-mono text-[10px] text-cordum">{event.approvalRef}</span>
+          {headline.approvalRef ? (
+            <span className="font-mono text-[10px] text-cordum">{headline.approvalRef}</span>
+          ) : null}
+          {showDivergence ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-800"
+              data-testid="edge-event-divergence-chip"
+              title="Gateway decision and agentd evidence disagree on a watched field"
+            >
+              <AlertTriangle className="h-3 w-3" aria-hidden />
+              audit divergence
+            </span>
           ) : null}
         </div>
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
           <Clock className="h-3 w-3" />
-          <span>{formatRelativeTime(event.ts)}</span>
-          <span className="font-mono">#{event.seq}</span>
+          <span>{formatRelativeTime(headline.ts)}</span>
+          {hasMultiple ? (
+            <span className="font-mono" data-testid="edge-event-group-count">
+              {group.events.length} events
+            </span>
+          ) : (
+            <span className="font-mono">#{headline.seq}</span>
+          )}
         </div>
       </button>
+      {expanded && hasMultiple ? (
+        <ol
+          className="space-y-1 border-t border-border/60 px-3 py-2"
+          data-testid="edge-event-group-expanded"
+        >
+          {group.events.map((event) => (
+            <li key={event.eventId}>
+              <button
+                type="button"
+                onClick={() => onSelectEvent(event.eventId)}
+                aria-pressed={event.eventId === selectedEventId}
+                data-testid="edge-event-group-witness"
+                data-event-id={event.eventId}
+                className={cn(
+                  "flex w-full flex-wrap items-center justify-between gap-2 rounded-xl px-2 py-1 text-left text-[11px]",
+                  event.eventId === selectedEventId
+                    ? "bg-surface-2 ring-1 ring-cordum/40"
+                    : "hover:bg-surface-2",
+                )}
+              >
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
+                    {witnessRoleLabel(event, group)}
+                  </span>
+                  <span className="font-mono text-[10px] text-foreground">{event.eventId}</span>
+                  <span className="text-muted-foreground">{event.kind}</span>
+                </div>
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {formatRelativeTime(event.ts)} · #{event.seq}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {showReceipts && group.receipt && !expanded ? (
+        <div
+          className="border-t border-border/60 px-3 py-2 text-[10px] text-muted-foreground"
+          data-testid="edge-event-group-receipt-summary"
+        >
+          <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">
+            Receipt
+          </span>{" "}
+          <span className="font-mono text-[10px] text-foreground">{group.receipt.eventId}</span>{" "}
+          · {formatRelativeTime(group.receipt.ts)}
+        </div>
+      ) : null}
     </motion.li>
   );
+}
+
+function witnessRoleLabel(event: AgentActionEvent, group: EdgeEventGroup): string {
+  if (group.receipt && event.eventId === group.receipt.eventId) return "receipt";
+  if (group.gatewayDecision && event.eventId === group.gatewayDecision.eventId) return "gateway";
+  if (group.agentdEvidence && event.eventId === group.agentdEvidence.eventId) return "agentd";
+  return "event";
 }
