@@ -32,7 +32,7 @@ floor, and the wire surface (`/api/v1/policy/global`).
 | `output_rules`     | Output scanner        | `core/controlplane/safetykernel/output_policy.go EvaluateOutput / CheckOutput`    |
 | `edge_action_rules`| Edge action evaluator | `core/controlplane/gateway/handlers_edge_evaluate.go evaluateEdgeSafety` → kernel |
 | `mcp_tool_rules`   | MCP tool gate         | `core/controlplane/gateway/mcp_gate.go gatewayApprovalGate.Check`                 |
-| `invariants`       | ALL FOUR              | `applyKernelInvariants` (kernel) + `MCPInvariantLookup` (gateway)                 |
+| `invariants`       | ALL FOUR              | `applyKernelInvariants` (kernel) + `MCPInvariantLookup` wired via `s.wireMCPApprovalGate` (gateway, see `handlers_mcp.go`) |
 
 Implementation entry points:
 

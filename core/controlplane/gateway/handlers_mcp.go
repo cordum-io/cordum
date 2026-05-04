@@ -18,6 +18,7 @@ import (
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/buildinfo"
+	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/mcp"
 	mcpresources "github.com/cordum/cordum/core/mcp/resources"
 	mcptools "github.com/cordum/cordum/core/mcp/tools"
@@ -90,19 +91,37 @@ func (s *server) registerMCPRoutes(mux *http.ServeMux) error {
 		// store first so a CI bot with PreapprovedMutatingTools set
 		// can skip the human-approval step. Audit still fires; see
 		// MarkApprovalPreapproved in core/mcp/audit_invocation.go.
-		rawGate := NewGatewayApprovalGate(approvalStore)
-		if gate, ok := rawGate.(*gatewayApprovalGate); ok {
-			if s.agentIdentityStore != nil {
-				gate.preapproval = newAgentIdentityPreapprovalLookup(s.agentIdentityStore)
+		// EDGE-052 reopen #1 — production wiring of the MCP approval gate
+		// MUST attach the invariant lookup so admin-authored secops/invariants
+		// rules block at the gate (not just surface via RulesForMCPTool).
+		// Extracted to wireMCPApprovalGate for testability; the test path
+		// passes a stub invariant lookup, the production path passes the
+		// bundle-reading closure below.
+		invariantLookup := MCPInvariantLookupFunc(func(ctx context.Context) []config.PolicyRule {
+			bundles, _, err := s.loadPolicyBundles(ctx)
+			if err != nil {
+				slog.Warn("mcp gate invariant lookup: load policy bundles failed", "err", err)
+				return nil
 			}
-			toolRegistry.SetApprovalGate(gate)
-			slog.Info("mcp approval gate enabled", "preapproval", gate.preapproval != nil)
+			rules, err := loadMCPInvariantsFromBundles(bundles)
+			if err != nil {
+				slog.Warn("mcp gate invariant lookup: parse invariants failed", "err", err)
+				return nil
+			}
+			return rules
+		})
+		rawGate, gate := s.wireMCPApprovalGate(approvalStore, invariantLookup)
+		toolRegistry.SetApprovalGate(rawGate)
+		if gate != nil {
+			slog.Info("mcp approval gate enabled",
+				"preapproval", gate.preapproval != nil,
+				"invariants", gate.invariants != nil)
 		} else {
 			// Future-proof: if NewGatewayApprovalGate is ever swapped to a
-			// different concrete, we still install the gate but skip the
-			// preapproval lookup rather than panic.
-			toolRegistry.SetApprovalGate(rawGate)
-			slog.Warn("mcp approval gate enabled but preapproval lookup unavailable: unexpected concrete type")
+			// different concrete type, the helper falls back to attaching
+			// the rawGate without the preapproval/invariants extras —
+			// the gate is still installed, just degraded.
+			slog.Warn("mcp approval gate enabled but preapproval+invariant lookup unavailable: unexpected concrete type")
 		}
 	} else {
 		slog.Warn("mcp approval gate disabled: redis client unavailable — RequiresApproval tools will not be gated")
@@ -771,6 +790,40 @@ func lookupAnyPath(data map[string]any, keys ...string) (any, bool) {
 // ---------------------------------------------------------------------------
 // MCP service bridge — closure-based bridge from MCP tools to HTTP handlers
 // ---------------------------------------------------------------------------
+
+// wireMCPApprovalGate constructs the production MCP approval gate with
+// per-tool wiring (preapproval lookup + invariant lookup). EDGE-052
+// reopen #1 extracted this from the inline registerMCPHandlers block so
+// the regression test in mcp_gate_invariants_test.go can verify that the
+// production wiring path attaches the invariant lookup automatically —
+// previously the gate was constructed inline and the call to
+// WithInvariantLookup was omitted in production, leaving every
+// admin-authored secops/invariants MCP rule silently ignored at the
+// gate (DoD #4 failure).
+//
+// invariantLookup MUST be non-nil for the security-floor contract; the
+// production caller passes a closure reading from loadPolicyBundles +
+// loadMCPInvariantsFromBundles, the test caller passes a static stub.
+//
+// Returns the rawGate (mcp.ApprovalGate interface — what the registry
+// actually consumes) AND the underlying *gatewayApprovalGate (for the
+// caller's logging + the test's field-level assertions). The concrete
+// pointer is nil when NewGatewayApprovalGate ever returns a different
+// type — caller treats that as the degraded path.
+func (s *server) wireMCPApprovalGate(approvalStore *MCPApprovalStore, invariantLookup MCPInvariantLookup) (mcp.ApprovalGate, *gatewayApprovalGate) {
+	rawGate := NewGatewayApprovalGate(approvalStore)
+	gate, ok := rawGate.(*gatewayApprovalGate)
+	if !ok {
+		return rawGate, nil
+	}
+	if s.agentIdentityStore != nil {
+		gate.preapproval = newAgentIdentityPreapprovalLookup(s.agentIdentityStore)
+	}
+	if invariantLookup != nil {
+		gate.WithInvariantLookup(invariantLookup)
+	}
+	return gate, gate
+}
 
 func (s *server) newMCPServiceBridge() mcp.ServiceBridge {
 	if s == nil {
