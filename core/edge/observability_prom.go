@@ -38,6 +38,7 @@ type PrometheusRecorder struct {
 	degraded             *prometheus.CounterVec
 	failClosed           *prometheus.CounterVec
 	agentdResponseWriteAborts *prometheus.CounterVec
+	agentdShutdownForced      *prometheus.CounterVec
 	artifactExports   *prometheus.CounterVec
 	hookLatency       *prometheus.HistogramVec
 	evaluateLatency   *prometheus.HistogramVec
@@ -149,6 +150,14 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 			Namespace: ns, Name: "agentd_response_write_aborted_total",
 			Help: "agentd local-server response-write aborts (slow-loris guard), labeled by bounded reason.",
 		}, []string{"reason"}),
+		// EDGE-063 — counter for agentd shutdown sub-component force-exits
+		// when graceful drain timed out. `reason` collapses via
+		// boundedAgentdShutdownForcedReason to {"http_server_drain",
+		// "heartbeat_drain", "other", "unknown"}.
+		agentdShutdownForced: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns, Name: "agentd_shutdown_forced_total",
+			Help: "agentd shutdown forced exits when a sub-component's graceful drain timed out, labeled by bounded reason.",
+		}, []string{"reason"}),
 		artifactExports: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: ns, Name: "artifact_exports_total",
 			Help: "Edge artifact exports, labeled by artifact_type and result.",
@@ -184,6 +193,7 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 		r.appendEventsAborts,
 		r.idempotencyTTLExtended, r.idempotencyWindowExpired,
 		r.degraded, r.failClosed, r.agentdResponseWriteAborts,
+		r.agentdShutdownForced,
 		r.artifactExports,
 		r.hookLatency, r.evaluateLatency,
 		r.cacheLookups,
@@ -242,6 +252,9 @@ func (r *PrometheusRecorder) RecordFailClosed(_ /*tenant*/, mode, reasonCode str
 }
 func (r *PrometheusRecorder) RecordAgentdResponseWriteAborted(reason string) {
 	r.agentdResponseWriteAborts.WithLabelValues(boundedAgentdResponseWriteAbortReason(reason)).Inc()
+}
+func (r *PrometheusRecorder) RecordAgentdShutdownForced(reason string) {
+	r.agentdShutdownForced.WithLabelValues(boundedAgentdShutdownForcedReason(reason)).Inc()
 }
 func (r *PrometheusRecorder) RecordArtifactExport(_ /*tenant*/, artifactType, result string) {
 	r.artifactExports.WithLabelValues(boundedArtifactType(artifactType), boundedResult(result)).Inc()
@@ -614,6 +627,28 @@ func boundedIdempotencyWindowExpiredPhase(value string) string {
 		return "unknown"
 	}
 	if _, ok := allowedIdempotencyWindowExpiredPhases[v]; ok {
+		return v
+	}
+	return "other"
+}
+
+// allowedAgentdShutdownForcedReasons is the bounded set of `reason`
+// label values for the EDGE-063 agentd_shutdown_forced_total counter.
+//   - http_server_drain: httpServer.Shutdown returned but the Serve
+//     goroutine did not exit before the bounded join timeout fired.
+//   - heartbeat_drain: heartbeat OnStatus / RecordHeartbeatStatus
+//     could not complete inside the bounded shutdown budget.
+var allowedAgentdShutdownForcedReasons = map[string]struct{}{
+	"http_server_drain": {},
+	"heartbeat_drain":   {},
+}
+
+func boundedAgentdShutdownForcedReason(value string) string {
+	v := lowerTrim(value)
+	if v == "" {
+		return "unknown"
+	}
+	if _, ok := allowedAgentdShutdownForcedReasons[v]; ok {
 		return v
 	}
 	return "other"

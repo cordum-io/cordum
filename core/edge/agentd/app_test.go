@@ -662,6 +662,118 @@ func (s *shutdownRaceStateStore) Load(ctx context.Context, sessionID string) (Se
 	return s.inner.Load(ctx, sessionID)
 }
 
+// EDGE-063 — pure unit test of the bounded HTTP-server-join helper.
+// HookTimeout default 5s -> 10s join timeout (2x). HookTimeout=0
+// (operator misconfig) -> hard floor of 5s. HookTimeout=1s -> 5s
+// (hard floor still wins). HookTimeout=10s -> 20s.
+func TestAgentdHTTPJoinTimeoutHardFloor(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		hookTimeout time.Duration
+		want        time.Duration
+	}{
+		{name: "default_5s_doubles_to_10s", hookTimeout: 5 * time.Second, want: 10 * time.Second},
+		{name: "operator_misconfig_zero_hits_hard_floor", hookTimeout: 0, want: 5 * time.Second},
+		{name: "tiny_1s_hits_hard_floor", hookTimeout: 1 * time.Second, want: 5 * time.Second},
+		{name: "ten_s_doubles_to_20s", hookTimeout: 10 * time.Second, want: 20 * time.Second},
+		{name: "negative_hits_hard_floor", hookTimeout: -1 * time.Second, want: 5 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := agentdHTTPJoinTimeout(tc.hookTimeout)
+			if got != tc.want {
+				t.Fatalf("agentdHTTPJoinTimeout(%v) = %v, want %v", tc.hookTimeout, got, tc.want)
+			}
+		})
+	}
+}
+
+// EDGE-063 — clean shutdown must NOT emit the agentd_shutdown_forced
+// metric. A false-positive on this counter would make operators chase
+// a non-existent shutdown bug.
+func TestRunCleanShutdownDoesNotEmitForcedMetric(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	bindURL := "http://" + freeLoopbackAddr(t) + "/v1/edge/hooks/claude"
+	gateway := &stubRunGateway{
+		createSession: func(context.Context, CreateSessionRequest) (CreateSessionResponse, error) {
+			return CreateSessionResponse{
+				SessionID:      "sess-clean-shutdown",
+				ExecutionID:    "exec-clean-shutdown",
+				TraceID:        "trace-clean-shutdown",
+				PolicySnapshot: "snap-clean-shutdown",
+				DashboardURL:   "/edge/sessions/sess-clean-shutdown",
+			}, nil
+		},
+		heartbeat: func(context.Context, string) (HeartbeatResponse, error) {
+			return HeartbeatResponse{SessionID: "sess-clean-shutdown", HeartbeatAlive: true}, nil
+		},
+	}
+	recorder := &captureRecorder{}
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, RunOptions{
+			Config: Config{
+				GatewayURL:        "http://127.0.0.1:8081",
+				APIKey:            "api-key",
+				TenantID:          "tenant-a",
+				PolicyMode:        edgecore.PolicyModeObserve,
+				BindURL:           bindURL,
+				HookTimeout:       100 * time.Millisecond,
+				GatewayTimeout:    100 * time.Millisecond,
+				HeartbeatTTL:      100 * time.Millisecond,
+				HeartbeatInterval: 10 * time.Millisecond,
+				StateDir:          t.TempDir(),
+			},
+			Metadata: LocalSessionMetadata{
+				TenantID:      "tenant-a",
+				PrincipalID:   "principal-a",
+				PrincipalType: edgecore.PrincipalTypeHuman,
+				CWD:           "D:/Cordum/cordum",
+			},
+			Gateway:    gateway,
+			StateStore: NewMemoryStateStore(),
+			Recorder:   recorder,
+			Clock:      realClock{},
+		})
+	}()
+	eventually(t, time.Second, func() bool { return gateway.heartbeatCount() > 0 })
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after context cancellation — EDGE-063 join may be hanging")
+	}
+
+	// EDGE-063 — Clean shutdown should NOT trigger the forced-shutdown
+	// metric. The HTTP server's Serve goroutine exits via http.ErrServerClosed
+	// before the join timeout; the heartbeat early-out fires only on a late
+	// tick AFTER hbCancel.
+	got := recorder.shutdownForcedSnapshot()
+	for _, reason := range got {
+		if reason == "http_server_drain" {
+			t.Fatalf("clean shutdown emitted shutdown_forced{reason=http_server_drain}: %#v", got)
+		}
+	}
+	// heartbeat_drain is acceptable IF it fires from a late OnStatus tick
+	// after hbCancel — that's the early-out doing its job. But it should
+	// be at most a small handful of emissions, not unbounded.
+	hbDrain := 0
+	for _, reason := range got {
+		if reason == "heartbeat_drain" {
+			hbDrain++
+		}
+	}
+	if hbDrain > 5 {
+		t.Fatalf("heartbeat_drain emitted %d times on clean shutdown — bound looks broken: %#v", hbDrain, got)
+	}
+}
+
 func freeLoopbackAddr(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

@@ -108,6 +108,13 @@ type Recorder interface {
 	// "unknown"} via the bounded-label helper. Bounded cardinality.
 	RecordAgentdResponseWriteAborted(reason string)
 
+	// RecordAgentdShutdownForced emits a metric counter when the agentd
+	// shutdown sequence had to force-exit a sub-component because its
+	// graceful drain timed out (EDGE-063). `reason` is bounded via
+	// boundedAgentdShutdownForcedReason to {"http_server_drain",
+	// "heartbeat_drain", "other", "unknown"}.
+	RecordAgentdShutdownForced(reason string)
+
 	// Artifact / export observability.
 	RecordArtifactExport(tenant, artifactType, result string)
 
@@ -149,6 +156,7 @@ func (NoopRecorder) RecordIdempotencyWindowExpired(string)                      
 func (NoopRecorder) RecordDegraded(string, string, string, string)               {}
 func (NoopRecorder) RecordFailClosed(string, string, string)                     {}
 func (NoopRecorder) RecordAgentdResponseWriteAborted(string)                     {}
+func (NoopRecorder) RecordAgentdShutdownForced(string)                           {}
 func (NoopRecorder) RecordArtifactExport(string, string, string)                 {}
 func (NoopRecorder) ObserveHookLatency(string, string, string, time.Duration)    {}
 func (NoopRecorder) ObserveEvaluateLatency(string, string, string, string, time.Duration) {

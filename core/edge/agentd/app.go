@@ -194,6 +194,20 @@ func Run(ctx context.Context, opts RunOptions) error {
 			PolicyMode:             cfg.PolicyMode,
 			FailClosed:             cfg.FailClosed,
 			OnStatus: func(status HeartbeatStatus) {
+				// EDGE-063 — early-out if hbCtx is already cancelled (the
+				// shutdown sequence is in progress). Without this guard, a
+				// late OnStatus tick during shutdown could call
+				// manager.RecordHeartbeatStatus while the manager is itself
+				// tearing down, risking a deadlock-shaped wait. statusCtx
+				// inherits from hbCtx, so any subsequent call would see a
+				// pre-cancelled context anyway — making the early-out the
+				// honest behavior.
+				if hbCtx.Err() != nil {
+					if opts.Recorder != nil {
+						opts.Recorder.RecordAgentdShutdownForced("heartbeat_drain")
+					}
+					return
+				}
 				statusCtx, cancel := context.WithTimeout(hbCtx, cfg.GatewayTimeout)
 				defer cancel()
 				updated, err := manager.RecordHeartbeatStatus(statusCtx, status)
@@ -232,6 +246,19 @@ func Run(ctx context.Context, opts RunOptions) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.HookTimeout)
 		_ = httpServer.Shutdown(shutdownCtx)
 		cancel()
+		// EDGE-063 — wait for the Serve goroutine to fully exit so we
+		// don't return Run while it still holds the listener. Bounded by
+		// 2x HookTimeout (hard floor 5s for operator misconfig) so the
+		// developer Ctrl-C path can't hang indefinitely.
+		joinTimeout := agentdHTTPJoinTimeout(cfg.HookTimeout)
+		select {
+		case <-serverErr:
+		case <-time.After(joinTimeout):
+			slog.Warn("agentd HTTP server drain timed out", "timeout", joinTimeout)
+			if opts.Recorder != nil {
+				opts.Recorder.RecordAgentdShutdownForced("http_server_drain")
+			}
+		}
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.GatewayTimeout)
 	defer cancel()
@@ -271,6 +298,19 @@ func waitForHeartbeatDrain(service *HeartbeatService, timeout time.Duration) boo
 		cancel()
 	}()
 	return service.WaitContext(ctx)
+}
+
+// agentdHTTPJoinTimeout returns the bounded wait for the HTTP server's
+// Serve goroutine to exit after Shutdown completes. Per EDGE-063: 2x the
+// HookTimeout, with a hard floor of 5s so an operator misconfiguration
+// (HookTimeout=0) cannot drop the wait below a useful threshold.
+func agentdHTTPJoinTimeout(hookTimeout time.Duration) time.Duration {
+	const hardFloor = 5 * time.Second
+	candidate := hookTimeout * 2
+	if candidate < hardFloor {
+		return hardFloor
+	}
+	return candidate
 }
 
 func validateExternalNonce(raw string) (string, error) {

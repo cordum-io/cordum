@@ -660,6 +660,7 @@ func evaluatorMetricsRequest() claude.AgentdRequest {
 }
 
 type captureRecorder struct {
+	mu                sync.Mutex
 	actionDecisions   []recordActionDecisionCall
 	cacheLookups      []recordCacheLookupCall
 	degraded          []recordReasonCall
@@ -668,6 +669,7 @@ type captureRecorder struct {
 	approvalResolved  []recordApprovalResolvedCall
 	evaluateLatency   []recordEvaluateLatencyCall
 	hookLatency       []recordHookLatencyCall
+	shutdownForced    []string
 }
 
 type recordActionDecisionCall struct {
@@ -711,6 +713,17 @@ func (r *captureRecorder) RecordAppendEventsAborted(string)              {}
 func (r *captureRecorder) RecordIdempotencyTTLExtended(string)           {}
 func (r *captureRecorder) RecordIdempotencyWindowExpired(string)         {}
 func (r *captureRecorder) RecordAgentdResponseWriteAborted(string)       {}
+func (r *captureRecorder) RecordAgentdShutdownForced(reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.shutdownForced = append(r.shutdownForced, reason)
+}
+
+func (r *captureRecorder) shutdownForcedSnapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.shutdownForced...)
+}
 
 func (r *captureRecorder) RecordActionDecision(tenant, layer, kind, decision, mode string) {
 	r.actionDecisions = append(r.actionDecisions, recordActionDecisionCall{tenant: tenant, layer: layer, kind: kind, decision: decision, mode: mode})
