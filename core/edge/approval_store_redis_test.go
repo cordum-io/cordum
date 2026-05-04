@@ -928,6 +928,242 @@ func TestRedisStoreApprovalValidationAndTenantIsolation(t *testing.T) {
 	}
 }
 
+// EDGE-062 — terminal-state transitions on an approval must remove the
+// ref from the tenant-wide ZSET index. Pre-fix, expireApproval and
+// resolveApproval (approve/reject) added the ref to a per-status index
+// but did NOT ZRem from the tenant index, so the tenant index grew
+// unbounded over the system's lifetime and a list-without-filter call
+// returned ghosts of terminal approvals.
+
+func TestRedisStoreApprovalExpireRemovesFromTenantIndex(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 1, 19, 0, 0, 0, time.UTC)
+	store, client, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	tenantID := "tenant-a"
+	expireAt := base.Add(2 * time.Hour) // past the 5m default TTL in validApprovalRequest
+	for i := 0; i < 5; i++ {
+		suffix := fmt.Sprintf("expire-%d", i)
+		createApprovalParents(t, ctx, store, tenantID, "sess-"+suffix, "exec-"+suffix, "event-"+suffix, base)
+		req := validApprovalRequest(tenantID, "sess-"+suffix, "exec-"+suffix, "event-"+suffix, base)
+		if _, err := store.EnqueueApproval(ctx, req); err != nil {
+			t.Fatalf("EnqueueApproval %s: %v", suffix, err)
+		}
+	}
+
+	preExpire, err := client.ZCard(ctx, edgeApprovalTenantIndexKey(tenantID)).Result()
+	if err != nil || preExpire != 5 {
+		t.Fatalf("ZCard tenant index pre-expire = %d (err=%v), want 5", preExpire, err)
+	}
+
+	expired, err := store.ExpireApprovals(ctx, tenantID, expireAt)
+	if err != nil {
+		t.Fatalf("ExpireApprovals: %v", err)
+	}
+	if expired != 5 {
+		t.Fatalf("ExpireApprovals expired = %d, want 5", expired)
+	}
+
+	postExpire, err := client.ZCard(ctx, edgeApprovalTenantIndexKey(tenantID)).Result()
+	if err != nil {
+		t.Fatalf("ZCard tenant index post-expire: %v", err)
+	}
+	if postExpire != 0 {
+		t.Fatalf("tenant index ZCard post-expire = %d, want 0 (EDGE-062: expire path leaks tenant-index membership)", postExpire)
+	}
+
+	// Status indexes should reflect the transition.
+	expiredCount, err := client.ZCard(ctx, edgeApprovalStatusIndexKey(tenantID, ApprovalStatusExpired)).Result()
+	if err != nil || expiredCount != 5 {
+		t.Fatalf("expired status index ZCard = %d (err=%v), want 5", expiredCount, err)
+	}
+}
+
+func TestRedisStoreApprovalRejectRemovesFromTenantIndex(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 1, 19, 30, 0, 0, time.UTC)
+	store, client, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	tenantID := "tenant-a"
+	refs := make([]string, 0, 5)
+	for i := 0; i < 5; i++ {
+		suffix := fmt.Sprintf("reject-%d", i)
+		createApprovalParents(t, ctx, store, tenantID, "sess-"+suffix, "exec-"+suffix, "event-"+suffix, base)
+		req := validApprovalRequest(tenantID, "sess-"+suffix, "exec-"+suffix, "event-"+suffix, base)
+		approval, err := store.EnqueueApproval(ctx, req)
+		if err != nil {
+			t.Fatalf("EnqueueApproval %s: %v", suffix, err)
+		}
+		refs = append(refs, approval.ApprovalRef)
+	}
+
+	for i, ref := range refs {
+		if _, err := store.RejectApproval(ctx, ApprovalResolution{
+			TenantID:    tenantID,
+			ApprovalRef: ref,
+			ResolverID:  "principal-reviewer",
+			ResolvedBy:  "reviewer@example.invalid",
+			Reason:      fmt.Sprintf("rejected %d", i),
+			ResolvedAt:  base.Add(time.Duration(i+1) * time.Minute),
+		}); err != nil {
+			t.Fatalf("RejectApproval %s: %v", ref, err)
+		}
+	}
+
+	postReject, err := client.ZCard(ctx, edgeApprovalTenantIndexKey(tenantID)).Result()
+	if err != nil {
+		t.Fatalf("ZCard tenant index post-reject: %v", err)
+	}
+	if postReject != 0 {
+		t.Fatalf("tenant index ZCard post-reject = %d, want 0 (EDGE-062: reject path leaks tenant-index membership)", postReject)
+	}
+}
+
+func TestRedisStoreApprovalApproveAndClaimRemovesFromTenantIndex(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 1, 20, 0, 0, 0, time.UTC)
+	store, client, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	tenantID := "tenant-a"
+	type seeded struct {
+		ref string
+		req EdgeApprovalRequest
+	}
+	approvals := make([]seeded, 0, 5)
+	for i := 0; i < 5; i++ {
+		suffix := fmt.Sprintf("approve-%d", i)
+		createApprovalParents(t, ctx, store, tenantID, "sess-"+suffix, "exec-"+suffix, "event-"+suffix, base)
+		req := validApprovalRequest(tenantID, "sess-"+suffix, "exec-"+suffix, "event-"+suffix, base)
+		approval, err := store.EnqueueApproval(ctx, req)
+		if err != nil {
+			t.Fatalf("EnqueueApproval %s: %v", suffix, err)
+		}
+		approvals = append(approvals, seeded{ref: approval.ApprovalRef, req: req})
+	}
+
+	// Approvals have a 5-minute TTL by default; keep all resolutions and
+	// consumptions inside the first minute so the cap doesn't fire.
+	for i, s := range approvals {
+		offset := time.Duration(i) * time.Second
+		if _, err := store.ApproveApproval(ctx, ApprovalResolution{
+			TenantID:    tenantID,
+			ApprovalRef: s.ref,
+			ResolverID:  "principal-reviewer",
+			ResolvedBy:  "reviewer@example.invalid",
+			Reason:      fmt.Sprintf("approved %d", i),
+			ResolvedAt:  base.Add(offset),
+		}); err != nil {
+			t.Fatalf("ApproveApproval %s: %v", s.ref, err)
+		}
+		consumed, ok, err := store.ClaimApproval(ctx, ApprovalClaimRequest{
+			TenantID:       tenantID,
+			ApprovalRef:    s.ref,
+			SessionID:      s.req.SessionID,
+			ExecutionID:    s.req.ExecutionID,
+			EventID:        s.req.EventID,
+			ActionHash:     s.req.ActionHash,
+			PolicySnapshot: s.req.PolicySnapshot,
+			InputHash:      s.req.InputHash,
+			ConsumedAt:     base.Add(offset + 100*time.Millisecond),
+		})
+		if err != nil || !ok || consumed == nil {
+			t.Fatalf("ClaimApproval %s = (%v,%v,%v), want consumed", s.ref, consumed, ok, err)
+		}
+	}
+
+	postConsume, err := client.ZCard(ctx, edgeApprovalTenantIndexKey(tenantID)).Result()
+	if err != nil {
+		t.Fatalf("ZCard tenant index post-consume: %v", err)
+	}
+	if postConsume != 0 {
+		t.Fatalf("tenant index ZCard post-consume = %d, want 0 (EDGE-062: consumed approvals leak tenant-index membership)", postConsume)
+	}
+}
+
+func TestRedisStoreApprovalListWithoutFilterReturnsOnlyActive(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 1, 21, 0, 0, 0, time.UTC)
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	tenantID := "tenant-a"
+	type seeded struct {
+		ref      string
+		shouldBe string // "expired" or "active"
+	}
+	all := make([]seeded, 0, 5)
+	for i := 0; i < 5; i++ {
+		suffix := fmt.Sprintf("list-%d", i)
+		createApprovalParents(t, ctx, store, tenantID, "sess-"+suffix, "exec-"+suffix, "event-"+suffix, base)
+		req := validApprovalRequest(tenantID, "sess-"+suffix, "exec-"+suffix, "event-"+suffix, base)
+		approval, err := store.EnqueueApproval(ctx, req)
+		if err != nil {
+			t.Fatalf("EnqueueApproval %s: %v", suffix, err)
+		}
+		role := "active"
+		if i < 3 {
+			role = "expired"
+		}
+		all = append(all, seeded{ref: approval.ApprovalRef, shouldBe: role})
+	}
+
+	// Expire the first 3 by advancing past their 5m TTL.
+	expireAt := base.Add(10 * time.Minute)
+	expired, err := store.ExpireApprovals(ctx, tenantID, expireAt)
+	if err != nil {
+		t.Fatalf("ExpireApprovals: %v", err)
+	}
+	if expired != 5 {
+		// All 5 expire because validApprovalRequest sets a 5-minute TTL on each.
+		// Adjust by re-enqueueing 2 fresh approvals with later TTLs so the
+		// list-without-filter test has 3 expired + 2 active to differentiate.
+	}
+
+	// Re-seed 2 active approvals AFTER the expire pass so they survive.
+	expectedActive := make([]string, 0, 2)
+	for i := 0; i < 2; i++ {
+		suffix := fmt.Sprintf("active-%d", i)
+		createApprovalParents(t, ctx, store, tenantID, "sess-"+suffix, "exec-"+suffix, "event-"+suffix, expireAt)
+		req := validApprovalRequest(tenantID, "sess-"+suffix, "exec-"+suffix, "event-"+suffix, expireAt)
+		req.ExpiresAt = expireAt.Add(1 * time.Hour) // active beyond expireAt
+		approval, err := store.EnqueueApproval(ctx, req)
+		if err != nil {
+			t.Fatalf("EnqueueApproval active %s: %v", suffix, err)
+		}
+		expectedActive = append(expectedActive, approval.ApprovalRef)
+	}
+
+	page, err := store.ListApprovals(ctx, ListApprovalsQuery{TenantID: tenantID, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListApprovals no-filter: %v", err)
+	}
+	gotRefs := make([]string, 0, len(page.Items))
+	for _, item := range page.Items {
+		gotRefs = append(gotRefs, item.ApprovalRef)
+	}
+
+	// Post-fix: only active approvals appear in tenant index. Pre-fix: all 7
+	// would appear (5 expired + 2 active) because no ZRem on expire.
+	if len(gotRefs) != 2 {
+		t.Fatalf("ListApprovals no-filter returned %d items, want 2 (only active approvals — EDGE-062 expire leaks tenant-index): %#v", len(gotRefs), gotRefs)
+	}
+	for _, ref := range gotRefs {
+		found := false
+		for _, expected := range expectedActive {
+			if ref == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("ListApprovals no-filter returned unexpected ref %q (not in expected active set %#v)", ref, expectedActive)
+		}
+	}
+}
+
 func TestRedisStoreApprovalConcurrentClaimConsumesOnce(t *testing.T) {
 	ctx := context.Background()
 	base := time.Date(2026, 5, 1, 18, 0, 0, 0, time.UTC)

@@ -333,6 +333,10 @@ func (s *RedisStore) ClaimApproval(ctx context.Context, req ApprovalClaimRequest
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.Set(ctx, key, payload, preservedApprovalSetTTL(ttl))
 			pipe.SRem(ctx, edgeApprovalTupleIndexKey(next.TenantID, next.SessionID, next.ExecutionID, next.ActionHash), next.ApprovalRef)
+			// EDGE-062 — consumed approvals are no longer actionable; remove
+			// from the tenant index so list-without-filter returns only
+			// the active set (Pending + Approved-not-yet-consumed).
+			pipe.ZRem(ctx, edgeApprovalTenantIndexKey(next.TenantID), next.ApprovalRef)
 			return nil
 		})
 		if err == nil {
@@ -465,6 +469,9 @@ func (s *RedisStore) resolveApproval(ctx context.Context, req ApprovalResolution
 			pipe.ZAdd(ctx, edgeApprovalStatusIndexKey(next.TenantID, next.Status), redis.Z{Score: float64(next.CreatedAt.UnixMicro()), Member: next.ApprovalRef})
 			pipe.ZRem(ctx, edgeApprovalPrincipalStatusIndexKey(next.TenantID, next.PrincipalID, ApprovalStatusPending), next.ApprovalRef)
 			pipe.ZAdd(ctx, edgeApprovalPrincipalStatusIndexKey(next.TenantID, next.PrincipalID, next.Status), redis.Z{Score: float64(next.CreatedAt.UnixMicro()), Member: next.ApprovalRef})
+			// EDGE-062 — terminal-state transitions remove from the tenant
+			// index so list-without-filter returns only the active set.
+			pipe.ZRem(ctx, edgeApprovalTenantIndexKey(next.TenantID), next.ApprovalRef)
 			if next.Status == ApprovalStatusRejected {
 				pipe.SRem(ctx, edgeApprovalTupleIndexKey(next.TenantID, next.SessionID, next.ExecutionID, next.ActionHash), next.ApprovalRef)
 			}
@@ -533,6 +540,9 @@ func (s *RedisStore) expireApproval(ctx context.Context, tenantID, approvalRef s
 			pipe.ZAdd(ctx, edgeApprovalStatusIndexKey(next.TenantID, ApprovalStatusExpired), redis.Z{Score: float64(next.CreatedAt.UnixMicro()), Member: next.ApprovalRef})
 			pipe.ZRem(ctx, edgeApprovalPrincipalStatusIndexKey(next.TenantID, next.PrincipalID, ApprovalStatusPending), next.ApprovalRef)
 			pipe.ZAdd(ctx, edgeApprovalPrincipalStatusIndexKey(next.TenantID, next.PrincipalID, ApprovalStatusExpired), redis.Z{Score: float64(next.CreatedAt.UnixMicro()), Member: next.ApprovalRef})
+			// EDGE-062 — terminal-state transitions remove from the tenant
+			// index so list-without-filter returns only the active set.
+			pipe.ZRem(ctx, edgeApprovalTenantIndexKey(next.TenantID), next.ApprovalRef)
 			pipe.SRem(ctx, edgeApprovalTupleIndexKey(next.TenantID, next.SessionID, next.ExecutionID, next.ActionHash), next.ApprovalRef)
 			return nil
 		})
