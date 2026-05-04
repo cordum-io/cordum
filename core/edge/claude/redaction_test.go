@@ -126,3 +126,38 @@ func TestUnknownEventDiagnosticsRedactSecretsEvenWithoutSensitiveKeys(t *testing
 		t.Fatalf("stderr leaked raw event context: %q", stderr)
 	}
 }
+
+// EDGE-049 — safeID() must preserve legitimate IDs that happen to contain
+// the substring "secret" (e.g., session labels like "secret-rotation-bot").
+// Pre-fix, safeID wholesale-replaced any such ID with [REDACTED] via a broad
+// strings.Contains(..., "secret") check that confused CONTEXT with CONTENT.
+// Sibling fix: EDGE-046 (mapper.go:594 redactHookBoundaryString).
+func TestSafeIDPreservesIDsWithSecretSubstring(t *testing.T) {
+	got := safeID("secret-rotation-bot-001")
+	if got != "secret-r..." {
+		t.Errorf("safeID(legitimate ID with 'secret' substring) = %q, want %q", got, "secret-r...")
+	}
+}
+
+// EDGE-049 — safeID() must STILL redact actual secret values via the
+// redactDiagnostic-produced [REDACTED] marker. The sk- token pattern at
+// redaction.go:15 catches OpenAI-style API keys; safeID's first-clause
+// check on the [REDACTED] substring preserves this protection. (The
+// bearer pattern at L13 requires the full "Authorization: Bearer ..."
+// prefix; sk- is the simpler trigger for a unit-test-shape value.)
+func TestSafeIDStillRedactsActualSecretValue(t *testing.T) {
+	got := safeID("sk-test123abc456def789")
+	if got != "[REDACTED]" {
+		t.Errorf("safeID(actual secret with sk- pattern) = %q, want %q", got, "[REDACTED]")
+	}
+}
+
+// EDGE-049 — short IDs that don't trigger redaction must pass through
+// unchanged (no truncation, no [REDACTED]).
+func TestSafeIDPreservesShortIDsUnchanged(t *testing.T) {
+	got := safeID("abc-001")
+	if got != "abc-001" {
+		t.Errorf("safeID(short benign ID) = %q, want %q", got, "abc-001")
+	}
+}
+

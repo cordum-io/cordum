@@ -86,7 +86,14 @@ func safeID(id string) string {
 		return ""
 	}
 	redacted := redactDiagnostic(trimmed)
-	if strings.Contains(redacted, "[REDACTED]") || strings.Contains(strings.ToLower(trimmed), "secret") {
+	// EDGE-049: drop the broad substring "secret" check; redactDiagnostic
+	// already produces the [REDACTED] marker for actual leak vectors via
+	// the EDGE-004 regex patterns (bearer/sk-/AKIA/secret=value/etc.).
+	// The bare strings.Contains(..., "secret") confused CONTEXT with
+	// CONTENT and wholesale-replaced legitimate IDs that happen to contain
+	// the substring (e.g., session IDs like "secret-rotation-bot-001").
+	// Sibling fix: EDGE-046 (mapper.go:594 redactHookBoundaryString).
+	if strings.Contains(redacted, "[REDACTED]") {
 		return "[REDACTED]"
 	}
 	if len(redacted) <= 8 {
