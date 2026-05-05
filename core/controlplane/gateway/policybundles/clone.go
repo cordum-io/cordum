@@ -32,6 +32,18 @@ func applyTierMetadata(policy *config.SafetyPolicy) {
 		}
 		policy.Rules[idx] = rule
 	}
+	for idx, rule := range policy.InputRules {
+		ruleTier := rule.Tier
+		if strings.TrimSpace(ruleTier) == "" {
+			ruleTier = policy.Tier
+		}
+		rule.Tier = config.NormalizePolicyTier(ruleTier)
+		rule.Selector = config.MergePolicySelector(policy.Selector, rule.Selector)
+		if rule.Tier == config.PolicyTierGlobal {
+			rule.Selector = config.PolicySelector{}
+		}
+		policy.InputRules[idx] = rule
+	}
 	if policy.Tier == config.PolicyTierGlobal {
 		policy.Selector = config.PolicySelector{}
 	}

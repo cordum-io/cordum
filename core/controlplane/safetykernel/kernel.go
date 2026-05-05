@@ -585,6 +585,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 
 	workflowID, scopedJobID := resolvePolicyScope(req)
 	evalPolicy := scopedPolicyForRequest(policy, global, workflowID, scopedJobID, topic, req.GetLabels())
+	inputRules = selectInputRulesForScope(inputRules, workflowID, scopedJobID)
 
 	// Bypass decision cache when the active policy has effective velocity rules.
 	// Velocity decisions depend on sliding-window state that changes with every
@@ -809,16 +810,16 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 					decision = pb.DecisionType_DECISION_TYPE_DENY
 					reason = inputRuleReason(rule, findings)
 					ruleID = rule.id
-					ruleTier = config.PolicyTierGlobal
+					ruleTier = rule.tier
 					inputDecision = "deny"
 				case "require_approval", "require-approval", "require_human":
 					decision = pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
 					reason = inputRuleReason(rule, findings)
 					ruleID = rule.id
-					ruleTier = config.PolicyTierGlobal
+					ruleTier = rule.tier
 					inputDecision = "require_human"
 				}
-				slog.Info("input rule matched", "component", "safety", "rule", rule.id, "decision", rule.decision, "findings", len(findings))
+				slog.Info("input rule matched", "component", "safety", "rule", rule.id, "ruleTier", rule.tier, "decision", rule.decision, "findings", len(findings))
 				break // first matching input rule wins
 			}
 			finishInput(inputDecision, matchedCount)

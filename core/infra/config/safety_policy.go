@@ -37,6 +37,8 @@ type InputPolicyConfig struct {
 // Mirrors OutputPolicyRule — same scanner/pattern infrastructure applied pre-execution.
 type InputPolicyRule struct {
 	ID       string           `yaml:"id"`
+	Tier     string           `yaml:"tier,omitempty" json:"tier,omitempty"`
+	Selector PolicySelector   `yaml:"selector,omitempty" json:"selector,omitempty"`
 	Enabled  *bool            `yaml:"enabled,omitempty"`
 	Severity string           `yaml:"severity"` // low|medium|high|critical
 	Desc     string           `yaml:"description"`
@@ -443,6 +445,16 @@ func ParseSafetyPolicy(data []byte) (*SafetyPolicy, error) {
 	}
 	if err := validatePolicyTierSelector("policy", policy.Tier, policy.Selector); err != nil {
 		return nil, fmt.Errorf("parse safety policy: %w", err)
+	}
+	for _, rule := range policy.InputRules {
+		tier := rule.Tier
+		if strings.TrimSpace(tier) == "" {
+			tier = policy.Tier
+		}
+		selector := MergePolicySelector(policy.Selector, rule.Selector)
+		if err := validatePolicyTierSelector(fmt.Sprintf("input_rule %q", rule.ID), tier, selector); err != nil {
+			return nil, fmt.Errorf("parse safety policy: %w", err)
+		}
 	}
 	// Validate velocity configs on all rules.
 	for _, rule := range policy.Rules {

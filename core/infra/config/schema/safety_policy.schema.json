@@ -108,6 +108,12 @@
       "additionalProperties": false,
       "properties": {
         "id": {"type": "string"},
+        "tier": {
+          "type": "string",
+          "enum": ["global", "workflow", "job"],
+          "description": "Input rule tier. Empty/missing inherits the fragment tier or global."
+        },
+        "selector": {"$ref": "#/definitions/policySelector"},
         "enabled": {"type": "boolean"},
         "severity": {
           "type": "string",

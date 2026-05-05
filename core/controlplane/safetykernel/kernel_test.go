@@ -348,6 +348,83 @@ func TestEvaluate_NoTierMatchUsesMostRestrictiveDefault(t *testing.T) {
 	}
 }
 
+func TestQA_EDGE053_WorkflowScopedInputRuleDoesNotLeak(t *testing.T) {
+	basePolicy := &config.SafetyPolicy{
+		DefaultDecision: "allow",
+		Rules: []config.PolicyRule{
+			{
+				ID:       "global-allow-default",
+				Tier:     config.PolicyTierGlobal,
+				Decision: "allow",
+				Match:    config.PolicyMatch{Topics: []string{"job.default"}},
+			},
+		},
+	}
+	workflowFragment := &config.SafetyPolicy{
+		Tier:     config.PolicyTierWorkflow,
+		Selector: config.PolicySelector{WorkflowID: "wf-prod"},
+		InputRules: []config.InputPolicyRule{
+			{
+				ID:       "workflow-deny-secret-input",
+				Severity: "high",
+				Decision: "deny",
+				Reason:   "wf-prod secret input blocked",
+				Match: config.InputPolicyMatch{
+					Topics:   []string{"job.default"},
+					Keywords: []string{"secret"},
+				},
+			},
+		},
+	}
+	policy := mergePolicies(basePolicy, workflowFragment)
+	srv := &server{scanners: loadOutputScanners()}
+	if err := srv.setPolicyWithBundleCount(context.Background(), policy, "cfg:input-tiers", 0); err != nil {
+		t.Fatalf("setPolicyWithBundleCount: %v", err)
+	}
+
+	other, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+		JobId:  "job-other",
+		Topic:  "job.default",
+		Tenant: "default",
+		Labels: map[string]string{
+			"workflow_id":     "wf-other",
+			"_content.prompt": "contains secret but belongs to another workflow",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate wf-other returned error: %v", err)
+	}
+	if other.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
+		t.Fatalf("wf-other decision = %v rule=%q reason=%q, want ALLOW without workflow input_rule leak",
+			other.GetDecision(), other.GetRuleId(), other.GetReason())
+	}
+
+	var logBuf bytes.Buffer
+	origLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(origLogger)
+
+	prod, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+		JobId:  "job-prod",
+		Topic:  "job.default",
+		Tenant: "default",
+		Labels: map[string]string{
+			"workflow_id":     "wf-prod",
+			"_content.prompt": "contains secret in prod workflow",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate wf-prod returned error: %v", err)
+	}
+	if prod.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY || prod.GetRuleId() != "workflow-deny-secret-input" {
+		t.Fatalf("wf-prod decision/rule = %v/%q, want DENY/workflow-deny-secret-input",
+			prod.GetDecision(), prod.GetRuleId())
+	}
+	if !strings.Contains(logBuf.String(), "ruleTier=workflow") {
+		t.Fatalf("input-rule audit/log evidence did not record workflow tier: %s", logBuf.String())
+	}
+}
+
 func newTierEvalServer(policy, invariants *config.SafetyPolicy) *server {
 	var invariantRules []config.PolicyRule
 	if invariants != nil {
@@ -1548,6 +1625,8 @@ func TestMergePolicies_InputRules(t *testing.T) {
 		},
 	}
 	extra := &config.SafetyPolicy{
+		Tier:     config.PolicyTierWorkflow,
+		Selector: config.PolicySelector{WorkflowID: "wf-prod"},
 		InputRules: []config.InputPolicyRule{
 			{ID: "ir2", Severity: "medium", Decision: "require_approval"},
 		},
@@ -1555,6 +1634,10 @@ func TestMergePolicies_InputRules(t *testing.T) {
 	merged := mergePolicies(base, extra)
 	if len(merged.InputRules) != 2 {
 		t.Fatalf("expected 2 input rules, got %d", len(merged.InputRules))
+	}
+	if merged.InputRules[1].Tier != config.PolicyTierWorkflow ||
+		merged.InputRules[1].Selector.WorkflowID != "wf-prod" {
+		t.Fatalf("input rule did not inherit workflow tier/selector: %+v", merged.InputRules[1])
 	}
 }
 

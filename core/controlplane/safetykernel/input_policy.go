@@ -11,6 +11,8 @@ import (
 // compiledInputRule mirrors compiledOutputRule for pre-execution content scanning.
 type compiledInputRule struct {
 	id           string
+	tier         string
+	selector     config.PolicySelector
 	decision     string // "deny", "require_approval"
 	reason       string
 	severity     string
@@ -94,8 +96,22 @@ func compileInputRules(policy *config.SafetyPolicy) []compiledInputRule {
 		}
 
 		scannerList := mergeScannerLists(rule.Match.Scanners, rule.Match.Detectors)
+		ruleTier := rule.Tier
+		if strings.TrimSpace(ruleTier) == "" {
+			ruleTier = policy.Tier
+		}
+		tier := config.NormalizePolicyTier(ruleTier)
+		selector := config.MergePolicySelector(policy.Selector, rule.Selector)
+		if !config.IsValidPolicyTier(tier) {
+			tier = config.PolicyTierGlobal
+		}
+		if tier == config.PolicyTierGlobal {
+			selector = config.PolicySelector{}
+		}
 		out = append(out, compiledInputRule{
 			id:           strings.TrimSpace(rule.ID),
+			tier:         tier,
+			selector:     selector,
 			decision:     decision,
 			reason:       strings.TrimSpace(rule.Reason),
 			severity:     normalizeSeverity(rule.Severity),
@@ -112,6 +128,40 @@ func compileInputRules(policy *config.SafetyPolicy) []compiledInputRule {
 		})
 	}
 	return out
+}
+
+func selectInputRulesForScope(
+	rules []compiledInputRule,
+	workflowID string,
+	jobID string,
+) []compiledInputRule {
+	if len(rules) == 0 {
+		return nil
+	}
+	workflowID = strings.TrimSpace(workflowID)
+	jobID = strings.TrimSpace(jobID)
+	out := make([]compiledInputRule, 0, len(rules))
+	for _, rule := range rules {
+		if inputRuleAppliesToScope(rule, workflowID, jobID) {
+			out = append(out, rule)
+		}
+	}
+	return out
+}
+
+func inputRuleAppliesToScope(rule compiledInputRule, workflowID, jobID string) bool {
+	switch config.NormalizePolicyTier(rule.tier) {
+	case config.PolicyTierWorkflow:
+		key := config.PolicySelectorKey(config.PolicyTierWorkflow, rule.selector)
+		return key != "" && key == workflowID
+	case config.PolicyTierJob:
+		key := config.PolicySelectorKey(config.PolicyTierJob, rule.selector)
+		return key != "" && key == jobID
+	case config.PolicyTierGlobal:
+		return true
+	default:
+		return false
+	}
 }
 
 // evaluateInputRule checks if a single input rule matches the request.

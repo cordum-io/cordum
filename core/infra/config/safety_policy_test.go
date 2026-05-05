@@ -327,6 +327,51 @@ rules:
 	}
 }
 
+func TestParseSafetyPolicyInputRuleTierSelectorFields(t *testing.T) {
+	policy, err := ParseSafetyPolicy([]byte(`
+input_rules:
+  - id: job-deny-secret-input
+    tier: job
+    selector:
+      session_id: edgesess-1
+    severity: high
+    decision: deny
+    reason: scoped input secret
+    match:
+      topics: ["job.default"]
+      keywords: ["secret"]
+`))
+	if err != nil {
+		t.Fatalf("expected scoped input rule to parse: %v", err)
+	}
+	if len(policy.InputRules) != 1 {
+		t.Fatalf("input rules len = %d, want 1", len(policy.InputRules))
+	}
+	rule := policy.InputRules[0]
+	if rule.Tier != PolicyTierJob {
+		t.Fatalf("input rule tier = %q, want job", rule.Tier)
+	}
+	if rule.Selector.SessionID != "edgesess-1" {
+		t.Fatalf("input rule session selector = %q, want edgesess-1", rule.Selector.SessionID)
+	}
+}
+
+func TestParseSafetyPolicyScopedInputRuleRequiresSelector(t *testing.T) {
+	_, err := ParseSafetyPolicy([]byte(`
+input_rules:
+  - id: workflow-deny-secret-input
+    tier: workflow
+    severity: high
+    decision: deny
+    match:
+      topics: ["job.default"]
+      keywords: ["secret"]
+`))
+	if err == nil {
+		t.Fatalf("expected workflow-tier input_rule without workflow_id selector to fail")
+	}
+}
+
 func TestParseSafetyPolicyAgentScopeMatchFields(t *testing.T) {
 	policy, err := ParseSafetyPolicy([]byte(`
 rules:

@@ -97,6 +97,18 @@ func applyKernelTierMetadata(policy *config.SafetyPolicy) {
 		}
 		policy.Rules[idx] = rule
 	}
+	for idx, rule := range policy.InputRules {
+		tier := rule.Tier
+		if strings.TrimSpace(tier) == "" {
+			tier = policy.Tier
+		}
+		rule.Tier = config.NormalizePolicyTier(tier)
+		rule.Selector = config.MergePolicySelector(policy.Selector, rule.Selector)
+		if rule.Tier == config.PolicyTierGlobal {
+			rule.Selector = config.PolicySelector{}
+		}
+		policy.InputRules[idx] = rule
+	}
 	if policy.Tier == config.PolicyTierGlobal {
 		policy.Selector = config.PolicySelector{}
 	}
