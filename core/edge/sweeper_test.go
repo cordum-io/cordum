@@ -48,6 +48,53 @@ func TestSessionSweeperRemovesAgedSessionAndPreservesFresh(t *testing.T) {
 	}
 }
 
+func TestSessionSweeperIgnoresHeartbeatKeys(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	agedStarted := now.Add(-40 * 24 * time.Hour)
+	freshStarted := now.Add(-10 * 24 * time.Hour)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-aged-heartbeat-sweep", "exec-aged-heartbeat-sweep", agedStarted)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-fresh-heartbeat", "exec-fresh-heartbeat", freshStarted)
+	if _, err := store.EndSession(ctx, "tenant-a", "sess-aged-heartbeat-sweep", now.Add(-31*24*time.Hour), SessionStatusEnded); err != nil {
+		t.Fatalf("EndSession aged: %v", err)
+	}
+	if err := store.TouchHeartbeat(ctx, "tenant-a", "sess-fresh-heartbeat"); err != nil {
+		t.Fatalf("TouchHeartbeat fresh: %v", err)
+	}
+
+	sweeper, err := NewSessionSweeper(store, SessionSweeperOptions{
+		RetentionTTL: DefaultSessionRetentionTTL,
+		Interval:     time.Hour,
+		Now:          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewSessionSweeper: %v", err)
+	}
+	swept, err := sweeper.SweepOnce(ctx)
+	if err != nil {
+		t.Fatalf("SweepOnce with heartbeat side key: %v", err)
+	}
+	if swept != 1 {
+		t.Fatalf("swept = %d, want 1", swept)
+	}
+	if _, ok, err := store.GetSession(ctx, "tenant-a", "sess-aged-heartbeat-sweep"); err != nil || ok {
+		t.Fatalf("aged session exists=%v err=%v, want removed", ok, err)
+	}
+	if _, ok, err := store.GetSession(ctx, "tenant-a", "sess-fresh-heartbeat"); err != nil || !ok {
+		t.Fatalf("fresh heartbeat session exists=%v err=%v, want preserved", ok, err)
+	}
+	alive, err := store.HeartbeatAlive(ctx, "tenant-a", "sess-fresh-heartbeat")
+	if err != nil {
+		t.Fatalf("HeartbeatAlive fresh: %v", err)
+	}
+	if !alive {
+		t.Fatalf("fresh heartbeat was not preserved")
+	}
+}
+
 func TestSessionSweeperAfterDeleteSessionIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	store, _, _, cleanup := newRedisEdgeStore(t)

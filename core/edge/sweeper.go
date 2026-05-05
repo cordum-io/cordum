@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -114,6 +115,9 @@ func (s *SessionSweeper) SweepOnce(ctx context.Context) (int, error) {
 func (s *SessionSweeper) sweepSessionKeys(ctx context.Context, keys []string) (int, error) {
 	var swept int
 	for _, key := range keys {
+		if !isSweepSessionDocumentKey(key) {
+			continue
+		}
 		session, ok, err := s.loadSweepSession(ctx, key)
 		if err != nil {
 			return swept, err
@@ -128,6 +132,12 @@ func (s *SessionSweeper) sweepSessionKeys(ctx context.Context, keys []string) (i
 		swept++
 	}
 	return swept, nil
+}
+
+func isSweepSessionDocumentKey(key string) bool {
+	key = strings.TrimSpace(key)
+	return strings.HasPrefix(key, edgeSessionKey("")) &&
+		!strings.HasPrefix(key, edgeSessionHeartbeatKey(""))
 }
 
 func (s *SessionSweeper) loadSweepSession(ctx context.Context, key string) (EdgeSession, bool, error) {
