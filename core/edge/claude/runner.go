@@ -216,6 +216,9 @@ func recordHookObservability(opts RunOptions, req AgentdRequest, decision Decisi
 }
 
 func hookPolicyMode(opts RunOptions) string {
+	if mode := strings.TrimSpace(envValue(opts.Env, managedPolicyModeEnv)); mode != "" {
+		return mode
+	}
 	if mode := strings.TrimSpace(envValue(opts.Env, "CORDUM_EDGE_MODE")); mode != "" {
 		return mode
 	}

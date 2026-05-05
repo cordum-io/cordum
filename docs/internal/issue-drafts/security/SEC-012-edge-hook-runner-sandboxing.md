@@ -32,10 +32,15 @@ The EDGE-068 execution boundary covers the local Claude wrapper and launcher:
    Claude streams are not buffered in memory; the generated `--settings` path
    and caller path args are prefix-validated.
 5. `CORDUM_HOOK_PROD_LOCK=1` ignores `CORDUM_DEV_ALLOW_ENV` and strips `PATH`
-   so development overrides cannot weaken production/managed execution.
+   so development overrides cannot weaken production execution.
+6. Managed settings emit `CORDUM_EDGE_MANAGED_POLICY_MODE=enterprise-strict`
+   and `CORDUM_EDGE_MANAGED_HOOKS_ONLY=true`; the hook runtime uses the managed
+   policy mode before local/dev `CORDUM_EDGE_MODE`, and dev settings generation
+   rejects `CORDUM_EDGE_MANAGED_*` overrides.
 
 ## Regression hooks
 
 Focused tests cover shell metacharacter literals, env scrub, prod-lock
-precedence, IO caps, traversal rejection, state-dir parse rejection,
-path-bearing argv prefix checks, and structured hook error envelopes.
+precedence, managed-vs-dev settings precedence, IO caps, traversal rejection,
+state-dir parse rejection, path-bearing argv prefix checks, and structured hook
+error envelopes.

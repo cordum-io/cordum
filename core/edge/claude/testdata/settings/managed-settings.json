@@ -16,6 +16,8 @@
     "CORDUM_AGENTD_FAIL_CLOSED": "true",
     "CORDUM_AGENTD_HOOK_TIMEOUT": "4.5s",
     "CORDUM_AGENTD_URL": "http://127.0.0.1:8765/v1/edge/hooks/claude",
+    "CORDUM_EDGE_MANAGED_HOOKS_ONLY": "true",
+    "CORDUM_EDGE_MANAGED_POLICY_MODE": "enterprise-strict",
     "CORDUM_EDGE_MODE": "enterprise-strict",
     "CORDUM_EDGE_PLATFORM": "linux"
   },

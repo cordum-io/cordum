@@ -6,6 +6,11 @@ import (
 	"strings"
 )
 
+const (
+	managedPolicyModeEnv = "CORDUM_EDGE_MANAGED_POLICY_MODE"
+	managedHooksOnlyEnv  = "CORDUM_EDGE_MANAGED_HOOKS_ONLY"
+)
+
 type managedSettingsDocument struct {
 	Schema                     string                     `json:"$schema,omitempty"`
 	AllowManagedHooksOnly      bool                       `json:"allowManagedHooksOnly"`
@@ -44,6 +49,8 @@ func GenerateManagedSettingsTemplate(opts ManagedSettingsOptions) (ManagedSettin
 	timeout := hookTimeoutOrDefault(opts.HookTimeout)
 	env := map[string]string{
 		"CORDUM_EDGE_MODE":           "enterprise-strict",
+		managedPolicyModeEnv:         "enterprise-strict",
+		managedHooksOnlyEnv:          "true",
 		"CORDUM_AGENTD_FAIL_CLOSED":  "true",
 		"CORDUM_AGENTD_URL":          agentdURLForSettings(opts.AgentdURL),
 		"CORDUM_AGENTD_HOOK_TIMEOUT": durationForEnv(timeout),

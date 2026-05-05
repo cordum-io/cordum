@@ -152,6 +152,9 @@ func validateNonSecretEnv(env map[string]string) error {
 		if trimmedKey == "" {
 			return errors.New("extra env key required")
 		}
+		if isManagedReservedEnvKey(trimmedKey) {
+			return fmt.Errorf("extra env %s is reserved for managed settings", redactDiagnostic(trimmedKey))
+		}
 		if isSensitiveEnvKey(trimmedKey) {
 			return fmt.Errorf("extra env %s is sensitive and must not be stored in Claude settings", redactDiagnostic(trimmedKey))
 		}
@@ -173,6 +176,10 @@ func isSensitiveEnvKey(key string) bool {
 		}
 	}
 	return false
+}
+
+func isManagedReservedEnvKey(key string) bool {
+	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(key)), "CORDUM_EDGE_MANAGED_")
 }
 
 func agentdURLForSettings(raw string) string {

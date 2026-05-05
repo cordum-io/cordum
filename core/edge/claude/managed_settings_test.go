@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGenerateManagedSettingsTemplateIncludesEnterpriseControls(t *testing.T) {
@@ -105,6 +106,66 @@ func TestGenerateManagedSettingsTemplateIncludesEnterpriseControls(t *testing.T)
 	if !strings.Contains(bundle.Notes, "Jamf") || !strings.Contains(bundle.Notes, "Intune") || !strings.Contains(bundle.Notes, "keychain") {
 		t.Fatalf("notes missing rollout/token storage guidance: %q", bundle.Notes)
 	}
+}
+
+func TestManagedSettingsDominateMaliciousDevSettings(t *testing.T) {
+	devData, err := GenerateDevSettingsJSON(DevSettingsOptions{
+		SessionID:           "sess-dev",
+		ExecutionID:         "exec-dev",
+		AgentdURL:           "http://127.0.0.1:8765/v1/edge/hooks/claude",
+		HookCommand:         "cordum-hook",
+		HookTimeout:         DefaultHookTimeout,
+		PolicyMode:          "observe",
+		ApprovalWaitTimeout: 30 * time.Second,
+		Platform:            "linux",
+	})
+	if err != nil {
+		t.Fatalf("GenerateDevSettingsJSON returned error: %v", err)
+	}
+	devSettings := decodeJSONMap(t, devData)
+	devSettings["disableAllHooks"] = true
+	devSettings["hooks"] = map[string]any{}
+	devEnv := jsonObject(t, devSettings["env"])
+	devEnv["CORDUM_EDGE_MODE"] = "observe"
+
+	bundle, err := GenerateManagedSettingsTemplate(ManagedSettingsOptions{
+		HookCommand:                "/opt/cordum/bin/cordum-hook",
+		HookTimeout:                DefaultHookTimeout,
+		AgentdURL:                  "http://127.0.0.1:8765/v1/edge/hooks/claude",
+		MCPGatewayURL:              "https://mcp.cordum.example/mcp",
+		LLMProxyBaseURL:            "https://llm-proxy.cordum.example",
+		APIKeyHelperCommand:        "/opt/cordum/bin/cordum-agentd claude api-key-helper",
+		ForceRemoteSettingsRefresh: true,
+		Platform:                   "linux",
+	})
+	if err != nil {
+		t.Fatalf("GenerateManagedSettingsTemplate returned error: %v", err)
+	}
+	managedSettings := decodeJSONMap(t, bundle.ManagedSettingsJSON)
+	managedEnv := jsonObject(t, managedSettings["env"])
+	if got := managedEnv[managedPolicyModeEnv]; got != "enterprise-strict" {
+		t.Fatalf("%s = %v, want enterprise-strict", managedPolicyModeEnv, got)
+	}
+	if got := managedEnv[managedHooksOnlyEnv]; got != "true" {
+		t.Fatalf("%s = %v, want true", managedHooksOnlyEnv, got)
+	}
+	if got := hookPolicyMode(RunOptions{Env: map[string]string{
+		"CORDUM_EDGE_MODE":   devEnv["CORDUM_EDGE_MODE"].(string),
+		managedPolicyModeEnv: managedEnv[managedPolicyModeEnv].(string),
+	}}); got != "enterprise-strict" {
+		t.Fatalf("hookPolicyMode with malicious dev observe + managed lock = %q, want enterprise-strict", got)
+	}
+	if got := managedSettings["allowManagedHooksOnly"]; got != true {
+		t.Fatalf("allowManagedHooksOnly = %v, want true", got)
+	}
+	if got := managedSettings["disableBypassPermissionsMode"]; got != "disable" {
+		t.Fatalf("disableBypassPermissionsMode = %v, want disable", got)
+	}
+	if _, ok := managedSettings["disableAllHooks"]; ok {
+		t.Fatalf("managed settings must not emit dev weakening disableAllHooks: %#v", managedSettings)
+	}
+	hooks := jsonObject(t, managedSettings["hooks"])
+	assertCommandHook(t, hooks, "PreToolUse", "*", "/opt/cordum/bin/cordum-hook claude pre-tool-use", 5)
 }
 
 func TestManagedSettingsRendersNonceOutsideURL(t *testing.T) {

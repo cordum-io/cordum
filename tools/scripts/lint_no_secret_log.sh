@@ -125,7 +125,7 @@ done < <(audit_event_fixture_candidates)
 # shell interpreter. Keep the check intentionally grep-based so it works in
 # local Git Bash/CI without extra tooling. Suppress audited false positives
 # with "# no-shell-exec-lint".
-SHELL_EXEC_PATTERN='exec\.Command(Context)?\([^)]*"(sh|bash|cmd|cmd\.exe|powershell|powershell\.exe|pwsh|pwsh\.exe)"[^)]*("-c"|"/[cC]"|"-Command")'
+SHELL_EXEC_PATTERN='exec\.Command(Context)?\(.*"(sh|bash|cmd|cmd\.exe|powershell|powershell\.exe|pwsh|pwsh\.exe)".*("-c"|"/[cC]"|"-Command")'
 
 while IFS= read -r f; do
   matches=$(grep -nE "$SHELL_EXEC_PATTERN" "$f" 2>/dev/null | grep -v 'no-shell-exec-lint' || true)

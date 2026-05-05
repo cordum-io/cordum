@@ -26,6 +26,8 @@ Use managed Claude Code settings for enterprise enforcement where users must not
   "apiKeyHelper": "/opt/cordum/bin/cordum-agentd claude api-key-helper",
   "env": {
     "CORDUM_EDGE_MODE": "enterprise-strict",
+    "CORDUM_EDGE_MANAGED_POLICY_MODE": "enterprise-strict",
+    "CORDUM_EDGE_MANAGED_HOOKS_ONLY": "true",
     "CORDUM_AGENTD_FAIL_CLOSED": "true",
     "CORDUM_AGENTD_URL": "http://127.0.0.1:8765/v1/edge/hooks/claude",
     "CORDUM_AGENTD_HOOK_TIMEOUT": "4.5s",
@@ -92,6 +94,7 @@ Use managed Claude Code settings for enterprise enforcement where users must not
 - **Windows/Intune or Group Policy:** deploy policy JSON through `HKLM\SOFTWARE\Policies\ClaudeCode` or file-based templates under `C:\Program Files\ClaudeCode\`.
 - **Linux and WSL:** deploy file-based `managed-settings.json` and `managed-mcp.json` under `/etc/claude-code/`.
 - **System policy:** keep managed settings controlled by administrators. User/project settings must not weaken hook, MCP, or permission enforcement.
+- **Managed precedence:** the template emits `CORDUM_EDGE_MANAGED_POLICY_MODE=enterprise-strict` and `CORDUM_EDGE_MANAGED_HOOKS_ONLY=true`; the hook runtime treats the managed policy value as higher precedence than any local/dev `CORDUM_EDGE_MODE` value, and dev settings generation rejects `CORDUM_EDGE_MANAGED_*` overrides.
 - **Hook timeout:** keep the internal `CORDUM_AGENTD_HOOK_TIMEOUT` strictly below Claude Code's 5s hook deadline. The recommended `4.5s` value matches the generated default and leaves a `500ms` response-write reserve; the Claude command-hook `"timeout": 5` entries above are Claude-side command deadlines and should not be copied into `CORDUM_AGENTD_HOOK_TIMEOUT`.
 
 ## Token tradeoff

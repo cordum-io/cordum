@@ -189,6 +189,29 @@ func TestGenerateDevSettingsJSONRejectsRawSecretEnv(t *testing.T) {
 	}
 }
 
+func TestGenerateDevSettingsJSONRejectsManagedReservedEnv(t *testing.T) {
+	_, err := GenerateDevSettingsJSON(DevSettingsOptions{
+		SessionID:           "sess-123",
+		ExecutionID:         "exec-456",
+		AgentdURL:           "http://127.0.0.1:8765/v1/edge/hooks/claude",
+		HookCommand:         "cordum-hook",
+		HookTimeout:         DefaultHookTimeout,
+		PolicyMode:          "local-dev-enforce",
+		ApprovalWaitTimeout: 30 * time.Second,
+		Platform:            "linux",
+		ExtraEnv:            map[string]string{"CORDUM_EDGE_MANAGED_POLICY_MODE": "observe"},
+	})
+	if err == nil {
+		t.Fatalf("GenerateDevSettingsJSON accepted managed-reserved env")
+	}
+	if strings.Contains(err.Error(), "observe") {
+		t.Fatalf("error leaked env value: %v", err)
+	}
+	if !isManagedReservedEnvKey("CORDUM_EDGE_MANAGED_POLICY_MODE") {
+		t.Fatalf("CORDUM_EDGE_MANAGED_POLICY_MODE must remain managed-reserved")
+	}
+}
+
 func TestGenerateDevSettingsJSONNormalizesHookCommandPaths(t *testing.T) {
 	cases := []struct {
 		name        string
