@@ -708,6 +708,11 @@ func (r *captureRecorder) SetSessionsActive(string, string, int)         {}
 func (r *captureRecorder) RecordExecutionStarted(string, string, string) {}
 func (r *captureRecorder) RecordExecutionEnded(string, string, string)   {}
 func (r *captureRecorder) RecordCreateExecutionAborted(string)           {}
+func (r *captureRecorder) ObserveSessionCleanupDuration(time.Duration)   {}
+func (r *captureRecorder) AddSessionCleanupKeysDeleted(int)              {}
+func (r *captureRecorder) RecordSessionCleanupDeadline()                 {}
+func (r *captureRecorder) RecordSessionEventCapRejected()                {}
+func (r *captureRecorder) RecordSessionSwept()                           {}
 func (r *captureRecorder) RecordApprovalEnqueueAborted(string)           {}
 func (r *captureRecorder) RecordAppendEventsAborted(string)              {}
 func (r *captureRecorder) RecordIdempotencyTTLExtended(string)           {}

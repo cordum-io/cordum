@@ -87,8 +87,14 @@ stable hashes, and artifact pointer metadata.
 Edge stores bounded session/event metadata in Gateway stores. Large evidence
 bodies belong in the artifact store and are referenced by pointer metadata.
 Session export returns JSON evidence plus artifact metadata and is capped by
-`CORDUM_EDGE_EXPORT_MAX_BYTES`; P0 does not inline artifact bodies. Audit and
-artifact retention policies determine how long evidence remains available.
+`CORDUM_EDGE_EXPORT_MAX_BYTES`; P0 does not inline artifact bodies.
+
+Redis evidence fanout is bounded by 100 executions per session and 5000 events
+per execution (500,000 events/session worst case). `DeleteSession` cleans up via
+bounded `ZSCAN Count=100`, `DEL` batches of at most 100 keys, a 30 second
+foreground deadline, and a background retention sweeper. See
+[Edge retention, caps, and cleanup](edge/retention.md) for the exact policy and
+metrics.
 
 ## OSS and enterprise boundary
 
@@ -115,5 +121,6 @@ Read it before touching any audit, evidence, approval, or cache code.
 - [Manual demo](demo-edge-claude.md)
 - [Edge API reference](edge/api.md)
 - [Edge configuration](edge/configuration.md)
+- [Edge retention, caps, and cleanup](edge/retention.md)
 - [Edge identity contract](edge/identity-contract.md) — IDs, hashes, approval lifecycle.
 - Edge P0 threat model: internal Cordum engineering.

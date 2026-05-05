@@ -93,6 +93,11 @@ retention metadata and redaction levels. P0 session export returns JSON evidence
 plus artifact pointer metadata; it does not inline artifact bodies. Large exports
 are capped by `CORDUM_EDGE_EXPORT_MAX_BYTES`.
 
+Redis fanout is bounded at 100 executions per session and 5000 events per
+execution. `DeleteSession` uses bounded scans and batched deletes, and Gateway
+runs a 30-day retention sweeper by default. Details:
+[retention, caps, and cleanup](retention.md).
+
 Use redacted synthetic examples in docs, tests, and demos. Do not paste real API
 keys, bearer tokens, `.env` contents, raw prompts, transcripts, command output,
 or provider secrets into Edge events, settings files, issue comments, or docs.
@@ -114,6 +119,7 @@ enterprise shape, but do not treat the developer wrapper as fleet enforcement.
   [cordumctl edge claude contract](cordumctl-edge-claude.md). Use
   [cordumctl edge doctor](cordumctl-edge-doctor.md) for local diagnostics.
 - **Configuration:** [configuration.md](configuration.md).
+- **Retention:** [retention.md](retention.md).
 - **API reference:** [api.md](api.md) plus the canonical
   [OpenAPI spec](../api/openapi/cordum-api.yaml).
 - **Threat model:** Edge P0 threat model is internal Cordum engineering.

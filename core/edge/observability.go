@@ -56,6 +56,13 @@ type Recorder interface {
 	// {"parent_terminal", "parent_missing", "other", "unknown"}.
 	RecordCreateExecutionAborted(reason string)
 
+	// Session cleanup / cap metrics.
+	ObserveSessionCleanupDuration(duration time.Duration)
+	AddSessionCleanupKeysDeleted(count int)
+	RecordSessionCleanupDeadline()
+	RecordSessionEventCapRejected()
+	RecordSessionSwept()
+
 	// Action decisions.
 	RecordActionDecision(tenant, layer, kind, decision, mode string)
 	RecordActionDenied(tenant, layer, kind, reasonCode string)
@@ -164,6 +171,11 @@ func (NoopRecorder) SetSessionsActive(string, string, int)                      
 func (NoopRecorder) RecordExecutionStarted(string, string, string)               {}
 func (NoopRecorder) RecordExecutionEnded(string, string, string)                 {}
 func (NoopRecorder) RecordCreateExecutionAborted(string)                         {}
+func (NoopRecorder) ObserveSessionCleanupDuration(time.Duration)                 {}
+func (NoopRecorder) AddSessionCleanupKeysDeleted(int)                            {}
+func (NoopRecorder) RecordSessionCleanupDeadline()                               {}
+func (NoopRecorder) RecordSessionEventCapRejected()                              {}
+func (NoopRecorder) RecordSessionSwept()                                         {}
 func (NoopRecorder) RecordActionDecision(string, string, string, string, string) {}
 func (NoopRecorder) RecordActionDenied(string, string, string, string)           {}
 func (NoopRecorder) RecordApprovalRequested(string, string, string)              {}

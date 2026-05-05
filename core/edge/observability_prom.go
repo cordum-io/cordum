@@ -21,32 +21,37 @@ import (
 // identification is recovered via correlated logs/audit events; metrics
 // stay tenant-agnostic to bound cardinality.
 type PrometheusRecorder struct {
-	sessionsCreated   *prometheus.CounterVec
-	sessionsEnded     *prometheus.CounterVec
-	sessionsActive    *prometheus.GaugeVec
-	executionsStarted *prometheus.CounterVec
-	executionsEnded   *prometheus.CounterVec
-	executionAborts   *prometheus.CounterVec
-	actionDecisions   *prometheus.CounterVec
-	actionsDenied     *prometheus.CounterVec
-	approvalRequested      *prometheus.CounterVec
-	approvalResolved       *prometheus.CounterVec
-	approvalEnqueueAborts  *prometheus.CounterVec
-	appendEventsAborts     *prometheus.CounterVec
-	idempotencyTTLExtended *prometheus.CounterVec
-	idempotencyWindowExpired *prometheus.CounterVec
-	degraded             *prometheus.CounterVec
-	failClosed           *prometheus.CounterVec
+	sessionsCreated           *prometheus.CounterVec
+	sessionsEnded             *prometheus.CounterVec
+	sessionsActive            *prometheus.GaugeVec
+	executionsStarted         *prometheus.CounterVec
+	executionsEnded           *prometheus.CounterVec
+	executionAborts           *prometheus.CounterVec
+	sessionCleanupDuration    prometheus.Histogram
+	sessionCleanupKeysDeleted prometheus.Counter
+	sessionCleanupDeadlines   prometheus.Counter
+	sessionEventCapRejected   prometheus.Counter
+	sessionSwept              prometheus.Counter
+	actionDecisions           *prometheus.CounterVec
+	actionsDenied             *prometheus.CounterVec
+	approvalRequested         *prometheus.CounterVec
+	approvalResolved          *prometheus.CounterVec
+	approvalEnqueueAborts     *prometheus.CounterVec
+	appendEventsAborts        *prometheus.CounterVec
+	idempotencyTTLExtended    *prometheus.CounterVec
+	idempotencyWindowExpired  *prometheus.CounterVec
+	degraded                  *prometheus.CounterVec
+	failClosed                *prometheus.CounterVec
 	agentdResponseWriteAborts *prometheus.CounterVec
 	agentdShutdownForced      *prometheus.CounterVec
 	edgeExportRejected        *prometheus.CounterVec
 	redactionFailed           *prometheus.CounterVec
-	artifactExports   *prometheus.CounterVec
-	hookLatency       *prometheus.HistogramVec
-	evaluateLatency   *prometheus.HistogramVec
-	cacheLookups      *prometheus.CounterVec
-	streamClients     prometheus.Gauge
-	streamDrops       *prometheus.CounterVec
+	artifactExports           *prometheus.CounterVec
+	hookLatency               *prometheus.HistogramVec
+	evaluateLatency           *prometheus.HistogramVec
+	cacheLookups              *prometheus.CounterVec
+	streamClients             prometheus.Gauge
+	streamDrops               *prometheus.CounterVec
 }
 
 // NewPrometheusRecorder allocates and registers Edge metrics on the given
@@ -89,6 +94,27 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 			Namespace: ns, Name: "create_execution_aborted_total",
 			Help: "Edge CreateExecution aborts due to parent session terminal or missing, labeled by bounded reason.",
 		}, []string{"reason"}),
+		sessionCleanupDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Namespace: ns, Name: "session_cleanup_duration_seconds",
+			Help:    "Duration of bounded Edge session cleanup attempts.",
+			Buckets: prometheus.DefBuckets,
+		}),
+		sessionCleanupKeysDeleted: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: ns, Name: "session_cleanup_keys_deleted_total",
+			Help: "Redis keys deleted by bounded Edge session cleanup.",
+		}),
+		sessionCleanupDeadlines: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: ns, Name: "session_cleanup_deadline_total",
+			Help: "Edge session cleanup attempts that reached the bounded cleanup deadline.",
+		}),
+		sessionEventCapRejected: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: ns, Name: "session_event_cap_rejected_total",
+			Help: "Edge event append attempts rejected because an execution reached the per-execution event cap.",
+		}),
+		sessionSwept: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: ns, Name: "session_swept_total",
+			Help: "Edge sessions removed by the retention sweeper.",
+		}),
 		actionDecisions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: ns, Name: "action_decisions_total",
 			Help: "Edge action policy decisions by layer, kind, decision, and mode.",
@@ -208,6 +234,9 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 	reg.MustRegister(
 		r.sessionsCreated, r.sessionsEnded, r.sessionsActive,
 		r.executionsStarted, r.executionsEnded, r.executionAborts,
+		r.sessionCleanupDuration, r.sessionCleanupKeysDeleted,
+		r.sessionCleanupDeadlines, r.sessionEventCapRejected,
+		r.sessionSwept,
 		r.actionDecisions, r.actionsDenied,
 		r.approvalRequested, r.approvalResolved, r.approvalEnqueueAborts,
 		r.appendEventsAborts,
@@ -241,6 +270,23 @@ func (r *PrometheusRecorder) RecordExecutionEnded(_ /*tenant*/, mode, status str
 }
 func (r *PrometheusRecorder) RecordCreateExecutionAborted(reason string) {
 	r.executionAborts.WithLabelValues(boundedCreateExecutionAbortReason(reason)).Inc()
+}
+func (r *PrometheusRecorder) ObserveSessionCleanupDuration(duration time.Duration) {
+	r.sessionCleanupDuration.Observe(duration.Seconds())
+}
+func (r *PrometheusRecorder) AddSessionCleanupKeysDeleted(count int) {
+	if count > 0 {
+		r.sessionCleanupKeysDeleted.Add(float64(count))
+	}
+}
+func (r *PrometheusRecorder) RecordSessionCleanupDeadline() {
+	r.sessionCleanupDeadlines.Inc()
+}
+func (r *PrometheusRecorder) RecordSessionEventCapRejected() {
+	r.sessionEventCapRejected.Inc()
+}
+func (r *PrometheusRecorder) RecordSessionSwept() {
+	r.sessionSwept.Inc()
 }
 func (r *PrometheusRecorder) RecordActionDecision(_ /*tenant*/, layer, kind, decision, mode string) {
 	r.actionDecisions.WithLabelValues(NormalizeLayer(layer), NormalizeKind(kind), NormalizeDecision(decision), boundedMode(mode)).Inc()

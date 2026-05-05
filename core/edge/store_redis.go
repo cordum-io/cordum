@@ -21,6 +21,9 @@ const (
 	defaultMaxEventBytes            = 128 * 1024
 	defaultIdempotencyTTL           = 24 * time.Hour
 	defaultMaxIdempotencyReplayBody = 256 * 1024
+	sessionCleanupScanCount         = 100
+	sessionCleanupDeleteBatchSize   = 100
+	sessionCleanupDeadline          = 30 * time.Second
 	// maxIdempotencyAge is the EDGE-061 max in-flight cap. A record whose
 	// CreatedAt is older than this returns ErrIdempotencyRecordExpired on
 	// any further Reserve/Complete attempt, even if the redis-side TTL has
@@ -63,6 +66,8 @@ type RedisStore struct {
 	now                      func() time.Time
 	heartbeatTTL             time.Duration
 	maxEventBytes            int
+	maxExecutionsPerSession  int
+	maxEventsPerExecution    int
 	idempotencyTTL           time.Duration
 	maxIdempotencyReplayBody int
 	// recorder captures Edge store-level metrics. Defaults to NoopRecorder so
@@ -82,6 +87,12 @@ type redisEventAppendPayload struct {
 	payload []byte
 }
 
+type sessionCleanupProgress struct {
+	cleaned     int64
+	keysDeleted int64
+	cursor      uint64
+}
+
 type redisIdempotentAppendPlan struct {
 	appended            []AgentActionEvent
 	payloadsByExecution map[string][]redisEventAppendPayload
@@ -97,6 +108,8 @@ func NewRedisStoreFromClient(client redis.UniversalClient, opts ...StoreOption) 
 		now:                      func() time.Time { return time.Now().UTC() },
 		heartbeatTTL:             defaultHeartbeatTTL,
 		maxEventBytes:            defaultMaxEventBytes,
+		maxExecutionsPerSession:  DefaultMaxExecutionsPerSession,
+		maxEventsPerExecution:    DefaultMaxEventsPerExecution,
 		idempotencyTTL:           defaultIdempotencyTTL,
 		maxIdempotencyReplayBody: defaultMaxIdempotencyReplayBody,
 		recorder:                 NewNoopRecorder(),
@@ -114,6 +127,12 @@ func NewRedisStoreFromClient(client redis.UniversalClient, opts ...StoreOption) 
 	}
 	if s.maxEventBytes <= 0 {
 		s.maxEventBytes = defaultMaxEventBytes
+	}
+	if s.maxExecutionsPerSession <= 0 {
+		s.maxExecutionsPerSession = DefaultMaxExecutionsPerSession
+	}
+	if s.maxEventsPerExecution <= 0 {
+		s.maxEventsPerExecution = DefaultMaxEventsPerExecution
 	}
 	if s.idempotencyTTL <= 0 {
 		s.idempotencyTTL = defaultIdempotencyTTL
@@ -145,6 +164,22 @@ func WithHeartbeatTTL(ttl time.Duration) StoreOption {
 func WithMaxEventBytes(max int) StoreOption {
 	return func(s *RedisStore) {
 		s.maxEventBytes = max
+	}
+}
+
+// WithMaxExecutionsPerSession overrides the per-session execution fanout cap.
+// It is primarily intended for tests that exercise cleanup pagination.
+func WithMaxExecutionsPerSession(max int) StoreOption {
+	return func(s *RedisStore) {
+		s.maxExecutionsPerSession = max
+	}
+}
+
+// WithMaxEventsPerExecution overrides the per-execution event cap. It is
+// primarily intended for focused cap tests.
+func WithMaxEventsPerExecution(max int) StoreOption {
+	return func(s *RedisStore) {
+		s.maxEventsPerExecution = max
 	}
 }
 
@@ -417,20 +452,14 @@ func (s *RedisStore) EndSession(ctx context.Context, tenantID, sessionID string,
 // It is intentionally idempotent so Gateway compensation can call it after a
 // partially failed create flow without leaking whether a tenant/session exists.
 //
-// Cleanup is paged (EDGE-037): the previous implementation pulled every
-// executionID into memory with a single ZRange(0, -1) and did one giant
-// Pipelined delete, which scaled linearly with execution count and could
-// emit a multi-megabyte pipeline on pathological sessions. The new flow
-// reads at most maxStorePageLimit IDs per round-trip, executes a per-page
-// TxPipelined delete, and only after every execution has been cleaned does
-// it run a final TxPipelined for session-level keys + secondary-index ZRems.
+// Cleanup is bounded (EDGE-070): it ZSCANs the session execution index with
+// Count=100, deletes Redis keys in batches of at most 100, and records cleanup
+// duration / deleted-key metrics. A 30s deadline returns a typed error and
+// schedules a best-effort background continuation from the last cursor.
 //
-// Partial-failure semantics: the per-page delete is atomic via MULTI/EXEC;
-// if a page fails the function returns an error citing how many executions
-// were cleaned before the failure. The session record itself is NOT touched
-// until all pages succeed, so the caller can re-invoke DeleteSession for
-// idempotent retry — already-cleaned executions simply do not appear in the
-// next iteration's ZRange.
+// Partial-failure semantics: the session record itself is NOT touched until
+// all execution pages succeed, so the caller can re-invoke DeleteSession for
+// idempotent retry.
 func (s *RedisStore) DeleteSession(ctx context.Context, tenantID, sessionID string) error {
 	if err := s.ensureReady(); err != nil {
 		return err
@@ -440,100 +469,205 @@ func (s *RedisStore) DeleteSession(ctx context.Context, tenantID, sessionID stri
 	if tenantID == "" || sessionID == "" {
 		return fmt.Errorf("tenant_id and session_id are required")
 	}
+	return s.deleteSessionFromCursor(ctx, tenantID, sessionID, 0, true)
+}
+
+func (s *RedisStore) deleteSessionFromCursor(ctx context.Context, tenantID, sessionID string, cursor uint64, scheduleBackground bool) error {
+	started := time.Now()
+	deadline := started.Add(sessionCleanupDeadline)
+	progress, err := s.deleteSessionFromCursorOnce(ctx, tenantID, sessionID, cursor, deadline)
+	s.recorder.ObserveSessionCleanupDuration(time.Since(started))
+	s.recorder.AddSessionCleanupKeysDeleted(int(progress.keysDeleted))
+	if errors.Is(err, ErrSessionCleanupDeadlineExceeded) {
+		s.recorder.RecordSessionCleanupDeadline()
+		if scheduleBackground {
+			s.continueDeleteSessionInBackground(tenantID, sessionID, progress.cursor)
+		}
+		return fmt.Errorf("%w: edge session %s cleaned=%d cursor=%d", err, sessionID, progress.cleaned, progress.cursor)
+	}
+	return err
+}
+
+func (s *RedisStore) deleteSessionFromCursorOnce(ctx context.Context, tenantID, sessionID string, cursor uint64, deadline time.Time) (sessionCleanupProgress, error) {
 	session, ok, err := s.GetSession(ctx, tenantID, sessionID)
 	if err != nil {
-		return err
+		return sessionCleanupProgress{}, err
 	}
 	if !ok || session == nil {
-		return nil
+		return sessionCleanupProgress{}, nil
 	}
 
+	progress := sessionCleanupProgress{cursor: cursor}
 	indexKey := edgeSessionExecutionsIndexKey(sessionID)
-	var (
-		cleaned int64
-		cursor  int64
-		page    int
-	)
-	for {
-		page++
-		executionIDs, err := s.client.ZRange(ctx, indexKey, cursor, cursor+int64(maxStorePageLimit)-1).Result()
+	for page := 1; ; page++ {
+		if time.Now().After(deadline) {
+			return progress, ErrSessionCleanupDeadlineExceeded
+		}
+		executionIDs, nextCursor, err := s.scanSessionExecutionIDs(ctx, indexKey, progress.cursor)
 		if err != nil {
-			return fmt.Errorf("delete edge session %s: list executions page %d (cleaned=%d): %w", sessionID, page, cleaned, err)
+			return progress, fmt.Errorf("delete edge session %s: scan executions page %d (cleaned=%d): %w", sessionID, page, progress.cleaned, err)
 		}
 		if len(executionIDs) == 0 {
+			progress.cursor = nextCursor
+			if nextCursor != 0 {
+				continue
+			}
 			break
 		}
-		// Load each execution to know which secondary indexes (job/trace/run)
-		// to ZRem. loadExecution remains sequential within a page, but the
-		// page itself is bounded by maxStorePageLimit so the per-page memory
-		// and round-trip count are constant.
-		pageExecutions := make([]AgentExecution, 0, len(executionIDs))
-		for _, executionID := range executionIDs {
-			execution, ok, err := s.loadExecution(ctx, executionID)
-			if err != nil {
-				return fmt.Errorf("delete edge session %s: load execution %s in page %d (cleaned=%d): %w", sessionID, executionID, page, cleaned, err)
-			}
-			if !ok || execution == nil {
-				continue
-			}
-			if execution.TenantID != tenantID || execution.SessionID != sessionID {
-				// Defensive: skip rows that do not belong to (tenant, session).
-				// The session->executions index is sessionID-scoped, so a
-				// mismatch indicates a corrupted index and should not be
-				// cleaned by this caller.
-				continue
-			}
-			pageExecutions = append(pageExecutions, *execution)
+		deleted, cleaned, err := s.cleanupExecutionIDs(ctx, tenantID, sessionID, executionIDs)
+		if err != nil {
+			return progress, fmt.Errorf("delete edge session %s: cleanup page %d (cleaned=%d, page_size=%d): %w", sessionID, page, progress.cleaned, len(executionIDs), err)
 		}
-		if len(pageExecutions) > 0 {
-			_, err = s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-				for _, execution := range pageExecutions {
-					pipe.Del(ctx, edgeExecutionKey(execution.ExecutionID), edgeEventsKey(execution.ExecutionID), edgeEventSeqKey(execution.ExecutionID), edgeEventIDIndexKey(execution.ExecutionID))
-					if strings.TrimSpace(execution.JobID) != "" {
-						pipe.ZRem(ctx, edgeJobIndexKey(execution.JobID), execution.ExecutionID)
-					}
-					if strings.TrimSpace(execution.TraceID) != "" {
-						pipe.ZRem(ctx, edgeExecutionTraceIndexKey(execution.TraceID), execution.ExecutionID)
-					}
-					if strings.TrimSpace(execution.WorkflowRunID) != "" {
-						pipe.ZRem(ctx, edgeExecutionRunIndexKey(execution.WorkflowRunID), execution.ExecutionID)
-					}
-				}
-				return nil
-			})
-			if err != nil {
-				return fmt.Errorf("delete edge session %s: cleanup page %d (cleaned=%d, page_size=%d): %w", sessionID, page, cleaned, len(pageExecutions), err)
-			}
-			cleaned += int64(len(pageExecutions))
-		}
-		// Advance cursor by the page size we observed. We do not ZRem inside
-		// the loop because the final TxPipelined below drops the entire
-		// session->executions index in one shot. Skipped (cross-tenant or
-		// missing-data) rows still occupy index slots, so we step over them.
-		cursor += int64(len(executionIDs))
-		if len(executionIDs) < maxStorePageLimit {
+		progress.keysDeleted += deleted
+		progress.cleaned += cleaned
+		progress.cursor = nextCursor
+		if nextCursor == 0 {
 			break
 		}
 	}
 
-	_, err = s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.Del(ctx, edgeSessionKey(sessionID), edgeSessionHeartbeatKey(sessionID), edgeSessionExecutionsIndexKey(sessionID), edgeSessionEventsIndexKey(sessionID))
-		pipe.ZRem(ctx, edgeTenantIndexKey(session.TenantID), sessionID)
-		if strings.TrimSpace(session.PrincipalID) != "" {
-			pipe.ZRem(ctx, edgePrincipalIndexKey(session.TenantID, session.PrincipalID), sessionID)
+	deleted, err := s.cleanupSessionKeys(ctx, *session)
+	if err != nil {
+		return progress, fmt.Errorf("delete edge session %s: session-level cleanup (executions cleaned=%d): %w", sessionID, progress.cleaned, err)
+	}
+	progress.keysDeleted += deleted
+	return progress, nil
+}
+
+func (s *RedisStore) scanSessionExecutionIDs(ctx context.Context, indexKey string, cursor uint64) ([]string, uint64, error) {
+	values, nextCursor, err := s.client.ZScan(ctx, indexKey, cursor, "", sessionCleanupScanCount).Result()
+	if err != nil {
+		return nil, cursor, err
+	}
+	ids := make([]string, 0, len(values)/2)
+	for i := 0; i < len(values); i += 2 {
+		ids = append(ids, values[i])
+	}
+	return ids, nextCursor, nil
+}
+
+func (s *RedisStore) cleanupExecutionIDs(ctx context.Context, tenantID, sessionID string, executionIDs []string) (int64, int64, error) {
+	executions, err := s.loadSessionExecutions(ctx, tenantID, sessionID, executionIDs)
+	if err != nil || len(executions) == 0 {
+		return 0, int64(len(executions)), err
+	}
+	deleted, err := s.deleteRedisKeysInBatches(ctx, executionCleanupKeys(executions))
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := s.removeExecutionSecondaryIndexes(ctx, executions); err != nil {
+		return deleted, int64(len(executions)), err
+	}
+	return deleted, int64(len(executions)), nil
+}
+
+func (s *RedisStore) loadSessionExecutions(ctx context.Context, tenantID, sessionID string, executionIDs []string) ([]AgentExecution, error) {
+	executions := make([]AgentExecution, 0, len(executionIDs))
+	for _, executionID := range executionIDs {
+		execution, ok, err := s.loadExecution(ctx, executionID)
+		if err != nil {
+			return nil, fmt.Errorf("load execution %s: %w", executionID, err)
 		}
-		if strings.TrimSpace(session.TraceID) != "" {
-			pipe.ZRem(ctx, edgeSessionTraceIndexKey(session.TraceID), sessionID)
+		if !ok || execution == nil || execution.TenantID != tenantID || execution.SessionID != sessionID {
+			continue
 		}
-		if strings.TrimSpace(session.WorkflowRunID) != "" {
-			pipe.ZRem(ctx, edgeSessionRunIndexKey(session.WorkflowRunID), sessionID)
+		executions = append(executions, *execution)
+	}
+	return executions, nil
+}
+
+func executionCleanupKeys(executions []AgentExecution) []string {
+	keys := make([]string, 0, len(executions)*4)
+	for _, execution := range executions {
+		keys = append(keys,
+			edgeExecutionKey(execution.ExecutionID),
+			edgeEventsKey(execution.ExecutionID),
+			edgeEventSeqKey(execution.ExecutionID),
+			edgeEventIDIndexKey(execution.ExecutionID),
+		)
+	}
+	return keys
+}
+
+func (s *RedisStore) removeExecutionSecondaryIndexes(ctx context.Context, executions []AgentExecution) error {
+	_, err := s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, execution := range executions {
+			queueExecutionIndexRemovals(ctx, pipe, execution)
 		}
 		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("delete edge session %s: session-level cleanup (executions cleaned=%d): %w", sessionID, cleaned, err)
+	return err
+}
+
+func queueExecutionIndexRemovals(ctx context.Context, pipe redis.Pipeliner, execution AgentExecution) {
+	if strings.TrimSpace(execution.JobID) != "" {
+		pipe.ZRem(ctx, edgeJobIndexKey(execution.JobID), execution.ExecutionID)
 	}
-	return nil
+	if strings.TrimSpace(execution.TraceID) != "" {
+		pipe.ZRem(ctx, edgeExecutionTraceIndexKey(execution.TraceID), execution.ExecutionID)
+	}
+	if strings.TrimSpace(execution.WorkflowRunID) != "" {
+		pipe.ZRem(ctx, edgeExecutionRunIndexKey(execution.WorkflowRunID), execution.ExecutionID)
+	}
+}
+
+func (s *RedisStore) cleanupSessionKeys(ctx context.Context, session EdgeSession) (int64, error) {
+	deleted, err := s.deleteRedisKeysInBatches(ctx, []string{
+		edgeSessionKey(session.SessionID),
+		edgeSessionHeartbeatKey(session.SessionID),
+		edgeSessionExecutionsIndexKey(session.SessionID),
+		edgeSessionEventsIndexKey(session.SessionID),
+	})
+	if err != nil {
+		return deleted, err
+	}
+	return deleted, s.removeSessionSecondaryIndexes(ctx, session)
+}
+
+func (s *RedisStore) removeSessionSecondaryIndexes(ctx context.Context, session EdgeSession) error {
+	_, err := s.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.ZRem(ctx, edgeTenantIndexKey(session.TenantID), session.SessionID)
+		if strings.TrimSpace(session.PrincipalID) != "" {
+			pipe.ZRem(ctx, edgePrincipalIndexKey(session.TenantID, session.PrincipalID), session.SessionID)
+		}
+		if strings.TrimSpace(session.TraceID) != "" {
+			pipe.ZRem(ctx, edgeSessionTraceIndexKey(session.TraceID), session.SessionID)
+		}
+		if strings.TrimSpace(session.WorkflowRunID) != "" {
+			pipe.ZRem(ctx, edgeSessionRunIndexKey(session.WorkflowRunID), session.SessionID)
+		}
+		return nil
+	})
+	return err
+}
+
+func (s *RedisStore) deleteRedisKeysInBatches(ctx context.Context, keys []string) (int64, error) {
+	var deleted int64
+	for start := 0; start < len(keys); start += sessionCleanupDeleteBatchSize {
+		end := start + sessionCleanupDeleteBatchSize
+		if end > len(keys) {
+			end = len(keys)
+		}
+		count, err := s.client.Del(ctx, keys[start:end]...).Result()
+		if err != nil {
+			return deleted, err
+		}
+		deleted += count
+	}
+	return deleted, nil
+}
+
+func (s *RedisStore) continueDeleteSessionInBackground(tenantID, sessionID string, cursor uint64) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), sessionCleanupDeadline)
+		defer cancel()
+		if err := s.deleteSessionFromCursor(ctx, tenantID, sessionID, cursor, false); err != nil {
+			// The foreground caller already received the typed deadline error.
+			// The background pass is best-effort; callers can still retry
+			// DeleteSession because cleanup is idempotent.
+			return
+		}
+	}()
 }
 
 func (s *RedisStore) TouchHeartbeat(ctx context.Context, tenantID, sessionID string) error {
@@ -629,6 +763,7 @@ func (s *RedisStore) CreateExecution(ctx context.Context, execution AgentExecuti
 	}
 	key := edgeExecutionKey(execution.ExecutionID)
 	parentKey := edgeSessionKey(execution.SessionID)
+	executionIndexKey := edgeSessionExecutionsIndexKey(execution.SessionID)
 	score := float64(execution.StartedAt.UTC().UnixMicro())
 	// EDGE-054 — WATCH set includes both the new execution key (existence
 	// guard) AND the parent session key (terminal/missing guard). Before
@@ -660,9 +795,16 @@ func (s *RedisStore) CreateExecution(ctx context.Context, execution AgentExecuti
 			abortReason = "parent_terminal"
 			return fmt.Errorf("%w: parent edge session %s status=%s", ErrParentSessionTerminal, execution.SessionID, parentInTx.Status)
 		}
+		executionCount, err := tx.ZCard(ctx, executionIndexKey).Result()
+		if err != nil {
+			return fmt.Errorf("count edge session executions %s: %w", execution.SessionID, err)
+		}
+		if executionCount >= int64(s.maxExecutionsPerSession) {
+			return fmt.Errorf("%w: edge session %s has %d executions (limit %d)", ErrSessionExecutionFanoutExceeded, execution.SessionID, executionCount, s.maxExecutionsPerSession)
+		}
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			pipe.Set(ctx, key, payload, 0)
-			pipe.ZAdd(ctx, edgeSessionExecutionsIndexKey(execution.SessionID), redis.Z{Score: score, Member: execution.ExecutionID})
+			pipe.ZAdd(ctx, executionIndexKey, redis.Z{Score: score, Member: execution.ExecutionID})
 			if strings.TrimSpace(execution.JobID) != "" {
 				pipe.ZAdd(ctx, edgeJobIndexKey(execution.JobID), redis.Z{Score: score, Member: execution.ExecutionID})
 			}
@@ -678,7 +820,7 @@ func (s *RedisStore) CreateExecution(ctx context.Context, execution AgentExecuti
 			return fmt.Errorf("write agent execution %s: %w", execution.ExecutionID, err)
 		}
 		return nil
-	}, key, parentKey)
+	}, key, parentKey, executionIndexKey)
 	if abortReason != "" {
 		s.recorder.RecordCreateExecutionAborted(abortReason)
 	}
@@ -913,6 +1055,9 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 			if err != nil {
 				return err
 			}
+			if err := s.ensureExecutionEventCap(ctx, tx, executionID, len(group.events)); err != nil {
+				return err
+			}
 			payloads := make([]redisEventAppendPayload, 0, len(group.events))
 			for _, index := range group.events {
 				payload, next, err := s.prepareAppendEventPayload(events[index], lastSeq)
@@ -951,6 +1096,9 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 	}, redisutil.WithKeys(watchKeys...), redisutil.WithMaxAttempts(edgeEventAppendCASMaxAttempts))
 	if abortReason != "" {
 		s.recorder.RecordAppendEventsAborted(abortReason)
+	}
+	if errors.Is(err, ErrExecutionEventCapExceeded) {
+		s.recorder.RecordSessionEventCapRejected()
 	}
 	if errors.Is(err, redis.TxFailedErr) || errors.Is(err, redisutil.ErrMaxAttemptsExceeded) {
 		return nil, fmt.Errorf("append agent action event batch conflict: %w", err)
@@ -1052,6 +1200,9 @@ func (s *RedisStore) appendEventsWithIdempotencyTx(
 			}
 		}
 		if err != nil {
+			if errors.Is(err, ErrExecutionEventCapExceeded) {
+				s.recorder.RecordSessionEventCapRejected()
+			}
 			return EdgeIdempotentAppendResult{}, err
 		}
 		return result, nil
@@ -1202,6 +1353,9 @@ func (s *RedisStore) planIdempotentExecutionAppend(
 	if err != nil {
 		return nil, err
 	}
+	if err := s.ensureExecutionEventCap(ctx, tx, executionID, len(group.events)); err != nil {
+		return nil, err
+	}
 	payloads := make([]redisEventAppendPayload, 0, len(group.events))
 	plannedEventIDs := make(map[string]struct{}, len(group.events))
 	for _, index := range group.events {
@@ -1229,6 +1383,22 @@ func (s *RedisStore) planIdempotentExecutionAppend(
 		lastSeq = planned.Seq
 	}
 	return payloads, nil
+}
+
+func (s *RedisStore) ensureExecutionEventCap(ctx context.Context, tx *redis.Tx, executionID string, appendCount int) error {
+	if appendCount <= 0 {
+		return nil
+	}
+	current, err := tx.LLen(ctx, edgeEventsKey(executionID)).Result()
+	if err != nil {
+		return fmt.Errorf("count events for execution %s: %w", executionID, err)
+	}
+	limit := int64(s.maxEventsPerExecution)
+	if current+int64(appendCount) <= limit {
+		return nil
+	}
+	return fmt.Errorf("%w: agent execution %s has %d events, append_count=%d, limit=%d",
+		ErrExecutionEventCapExceeded, executionID, current, appendCount, limit)
 }
 
 func readEventSeqInTx(ctx context.Context, tx *redis.Tx, executionID string) (int, error) {

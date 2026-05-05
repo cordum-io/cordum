@@ -747,6 +747,11 @@ func writeCreateEdgeExecutionDomainError(w http.ResponseWriter, r *http.Request,
 			map[string]any{"limit": capErr.limit, "current": capErr.current})
 		return
 	}
+	if errors.Is(err, edgecore.ErrSessionExecutionFanoutExceeded) {
+		writeEdgeError(w, r, http.StatusTooManyRequests, edgeErrCodeMaxExecutionsExceeded,
+			"session has reached the maximum number of executions; end the session or start a new one", nil)
+		return
+	}
 	if errors.Is(err, edgecore.ErrParentSessionTerminal) {
 		// EDGE-054 — parent session is terminal; map to 409 so callers
 		// can distinguish lifecycle violations from validation failures.

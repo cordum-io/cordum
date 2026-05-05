@@ -32,7 +32,7 @@ operator-oriented map of routes, request/response shapes, auth, and errors.
 | 404 | `not_found` | Missing, cross-tenant, or intentionally hidden resource. |
 | 409 | `conflict`, `session_terminal`, `execution_terminal`, `execution_session_mismatch`, `approval_conflict`, `approval_not_actionable`, `idempotency_conflict`, `idempotency_window_expired` | Terminal resource, approval state/CAS conflict, or idempotent replay mismatch. |
 | 413 | `request_too_large` | Body/export exceeds configured limits. |
-| 429 | `max_executions_exceeded` | `POST /api/v1/edge/executions` only: target session has already reached `CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION` (default 100). Error envelope `details` carries `{limit, current}`. End the session and start a new one to continue recording executions. |
+| 429 | `max_executions_exceeded`, `event_cap_exceeded` | Write-side fanout caps. Execution creates return `max_executions_exceeded` after 100 executions/session (default). Event writes return `event_cap_exceeded` after 5000 events/execution. End the session/execution and start a new one to continue recording evidence. |
 | 502 | `upstream_error` | Upstream policy/evaluate dependency failed in a way the route could not degrade. |
 | 503 | `service_unavailable`, `store_unavailable` | Gateway store or Edge dependency is unavailable. |
 | 500 | `internal_error` | Unexpected server failure; response remains redacted. |
@@ -81,8 +81,8 @@ status so an approval cannot be replayed against a different action/input.
 
 | Method/path | Request shape | Response shape | Notes |
 | --- | --- | --- | --- |
-| `POST /api/v1/edge/events` | `EdgeAgentActionEventWriteRequest`: required `event_id`, `session_id`, `execution_id`, `ts`, `layer`, `kind`, `decision`, `status`; optional principal/tool/action metadata, redacted input/hash, `approval_ref`, artifact pointers, duration, errors, labels. Optional `Idempotency-Key` header. | `201 EdgeAgentActionEvent`. | Appends one event and assigns/validates sequence. Idempotent retries replay the first success or return conflict. |
-| `POST /api/v1/edge/events/batch` | `EdgeAgentActionEventBatchRequest`: `events[]` with the same event shape. Optional `Idempotency-Key` header. | `201 EdgeAgentActionEventBatchResponse`: `items`. | Appends events in input order. Agentd uses this for atomic hook receipt + decision evidence. |
+| `POST /api/v1/edge/events` | `EdgeAgentActionEventWriteRequest`: required `event_id`, `session_id`, `execution_id`, `ts`, `layer`, `kind`, `decision`, `status`; optional principal/tool/action metadata, redacted input/hash, `approval_ref`, artifact pointers, duration, errors, labels. Optional `Idempotency-Key` header. | `201 EdgeAgentActionEvent`. | Appends one event and assigns/validates sequence. Idempotent retries replay the first success or return conflict. The 5001st event for one execution returns `429 event_cap_exceeded`. |
+| `POST /api/v1/edge/events/batch` | `EdgeAgentActionEventBatchRequest`: `events[]` with the same event shape. Optional `Idempotency-Key` header. | `201 EdgeAgentActionEventBatchResponse`: `items`. | Appends events in input order. Agentd uses this for atomic hook receipt + decision evidence. A batch that would exceed 5000 events for any execution returns `429 event_cap_exceeded` and writes nothing. |
 | `GET /api/v1/edge/sessions/{session_id}/events?cursor=&limit=&kind=&decision=&since=&until=` | Path/query only. | `200 EdgeAgentActionEventPageResponse`: `items`, `next_cursor`. | Lists session events with bounded filters. |
 | `GET /api/v1/edge/executions/{execution_id}/events?cursor=&limit=&kind=&decision=&since=&until=` | Path/query only. | `200 EdgeAgentActionEventPageResponse`. | Lists events for one execution. |
 

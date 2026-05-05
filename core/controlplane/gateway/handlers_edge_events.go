@@ -703,6 +703,10 @@ func writeEdgeEventStoreError(w http.ResponseWriter, r *http.Request, err error,
 		writeEdgeError(w, r, http.StatusRequestEntityTooLarge, edgeErrCodeRequestTooLarge, "edge event too large; use artifact_ptrs", nil)
 		return
 	}
+	if errors.Is(err, edgecore.ErrExecutionEventCapExceeded) {
+		writeEdgeError(w, r, http.StatusTooManyRequests, edgeErrCodeEventCapExceeded, "edge execution event cap exceeded; end the execution or start a new session", nil)
+		return
+	}
 	if isEdgeValidationError(err) {
 		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, "invalid edge event request", nil)
 		return

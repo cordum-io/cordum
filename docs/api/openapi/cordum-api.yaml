@@ -516,6 +516,8 @@ paths:
           $ref: '#/components/responses/EdgeConflict'
         '413':
           $ref: '#/components/responses/EdgePayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/EdgeEventCapExceeded'
         '503':
           $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
@@ -975,6 +977,8 @@ paths:
           $ref: '#/components/responses/EdgeConflict'
         '413':
           $ref: '#/components/responses/EdgePayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/EdgeEventCapExceeded'
         '503':
           $ref: '#/components/responses/EdgeServiceUnavailable'
         '500':
@@ -7506,6 +7510,16 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/EdgeError'
+    EdgeEventCapExceeded:
+      description: |
+        The target Edge execution already holds the maximum number of
+        AgentActionEvent rows allowed by the store (default 5000). End the
+        execution or start a new session to continue recording evidence. Error
+        envelope `code` is `event_cap_exceeded`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/EdgeError'
     TierLimit:
       description: Forbidden by current license entitlements
       content:
@@ -8478,6 +8492,8 @@ components:
           - idempotency_conflict
           - idempotency_key_invalid
           - idempotency_window_expired
+          - max_executions_exceeded
+          - event_cap_exceeded
           example: idempotency_conflict
         message:
           type: string

@@ -104,6 +104,8 @@ const (
 	envGRPCServerMaxConnectionAge   = "CORDUM_GRPC_SERVER_MAX_CONNECTION_AGE"
 	envGRPCServerMaxConnectionGrace = "CORDUM_GRPC_SERVER_MAX_CONNECTION_AGE_GRACE"
 	envGRPCServerEnforcementMinTime = "CORDUM_GRPC_SERVER_ENFORCEMENT_MIN_TIME"
+	envEdgeSessionRetentionTTL      = "CORDUM_EDGE_SESSION_RETENTION_TTL"
+	envEdgeSessionSweepInterval     = "CORDUM_EDGE_SESSION_SWEEP_INTERVAL"
 )
 
 var (
@@ -189,7 +191,8 @@ type server struct {
 	// Prometheus registerer never panics on first metric emission;
 	// production wiring sets this to NewPrometheusRecorder via the
 	// metrics initializer.
-	edgeRecorder edgecore.Recorder
+	edgeRecorder      edgecore.Recorder
+	edgeSweeperCancel context.CancelFunc
 
 	legalHoldStore    *audit.LegalHoldStore
 	statusCacheObj    *statusCache
@@ -260,6 +263,9 @@ func (s *server) Close() {
 	if s.instanceRegistry != nil {
 		s.instanceRegistry.Stop()
 	}
+	if s.edgeSweeperCancel != nil {
+		s.edgeSweeperCancel()
+	}
 	s.stopBusTaps()
 	s.stopWorkerExpiry()
 	// Close safety kernel gRPC connection AFTER HTTP shutdown completes so
@@ -312,6 +318,29 @@ func oidcFlowConfiguredFromEnv() bool {
 
 func scimConfiguredFromEnv() bool {
 	return strings.TrimSpace(os.Getenv("CORDUM_SCIM_BEARER_TOKEN")) != ""
+}
+
+func edgeSessionRetentionTTLFromEnv() (time.Duration, error) {
+	return positiveDurationFromEnv(envEdgeSessionRetentionTTL, edgecore.DefaultSessionRetentionTTL)
+}
+
+func edgeSessionSweepIntervalFromEnv() (time.Duration, error) {
+	return positiveDurationFromEnv(envEdgeSessionSweepInterval, edgecore.DefaultSessionSweepInterval)
+}
+
+func positiveDurationFromEnv(key string, fallback time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	duration, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a valid duration: %w", key, err)
+	}
+	if duration <= 0 {
+		return 0, fmt.Errorf("%s must be > 0", key)
+	}
+	return duration, nil
 }
 
 // RunWithAuth starts the gateway with a custom auth provider. When nil, a basic
@@ -608,10 +637,19 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	// Hoist edgeRecorder before edgeStore so the store and handlers share the
 	// same Recorder instance. EDGE-054 store-level metrics flow through this.
 	edgeRecorder := edgecore.NewNoopRecorder()
+	edgeRetentionTTL, err := edgeSessionRetentionTTLFromEnv()
+	if err != nil {
+		return err
+	}
+	edgeSweepInterval, err := edgeSessionSweepIntervalFromEnv()
+	if err != nil {
+		return err
+	}
+	edgeStore := edgecore.NewRedisStoreFromClient(jobStore.Client(), edgecore.WithRecorder(edgeRecorder))
 	s := &server{
 		memStore:               memStore,
 		jobStore:               jobStore,
-		edgeStore:              edgecore.NewRedisStoreFromClient(jobStore.Client(), edgecore.WithRecorder(edgeRecorder)),
+		edgeStore:              edgeStore,
 		decisionLogStore:       decisionLogStore,
 		copilotStore:           copilot.NotImplementedStore{},
 		governanceHealthCache:  governance.NewCache(60 * time.Second),
@@ -803,6 +841,17 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 			slog.Error("grpc server error", "error", err)
 		}
 	}()
+
+	edgeSweeper, err := edgecore.NewSessionSweeper(edgeStore, edgecore.SessionSweeperOptions{
+		RetentionTTL: edgeRetentionTTL,
+		Interval:     edgeSweepInterval,
+	})
+	if err != nil {
+		return fmt.Errorf("init edge session sweeper: %w", err)
+	}
+	edgeSweepCtx, edgeSweepCancel := context.WithCancel(context.Background())
+	s.edgeSweeperCancel = edgeSweepCancel
+	go edgeSweeper.Run(edgeSweepCtx)
 
 	return startHTTPServer(s, httpAddr, metricsAddr, grpcServer)
 }

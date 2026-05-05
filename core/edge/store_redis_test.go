@@ -420,6 +420,11 @@ type abortRecorder struct {
 	mu                       sync.Mutex
 	reasons                  []string
 	appendEventsReasons      []string
+	eventCapRejected         int
+	cleanupDurations         []time.Duration
+	cleanupKeysDeleted       int
+	cleanupDeadlines         int
+	sessionsSwept            int
 	idempotencyTTLExtended   []string
 	idempotencyWindowExpired []string
 }
@@ -436,6 +441,36 @@ func (r *abortRecorder) RecordAppendEventsAborted(reason string) {
 	r.appendEventsReasons = append(r.appendEventsReasons, reason)
 }
 
+func (r *abortRecorder) RecordSessionEventCapRejected() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.eventCapRejected++
+}
+
+func (r *abortRecorder) ObserveSessionCleanupDuration(duration time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cleanupDurations = append(r.cleanupDurations, duration)
+}
+
+func (r *abortRecorder) AddSessionCleanupKeysDeleted(count int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cleanupKeysDeleted += count
+}
+
+func (r *abortRecorder) RecordSessionCleanupDeadline() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cleanupDeadlines++
+}
+
+func (r *abortRecorder) RecordSessionSwept() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sessionsSwept++
+}
+
 func (r *abortRecorder) Snapshot() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -446,6 +481,24 @@ func (r *abortRecorder) SnapshotAppendEvents() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]string(nil), r.appendEventsReasons...)
+}
+
+func (r *abortRecorder) SnapshotEventCapRejected() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.eventCapRejected
+}
+
+func (r *abortRecorder) SnapshotCleanupMetrics() (int, int, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.cleanupDurations), r.cleanupKeysDeleted, r.cleanupDeadlines
+}
+
+func (r *abortRecorder) SnapshotSessionsSwept() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sessionsSwept
 }
 
 // EDGE-061 — extend abortRecorder with idempotency-metric capture so the
@@ -661,7 +714,7 @@ func TestRedisStoreAppendEventsAtomicPrevalidation(t *testing.T) {
 
 func TestRedisStoreListSessionEventsPagesBeyondOldScanCap(t *testing.T) {
 	ctx := context.Background()
-	store, _, _, cleanup := newRedisEdgeStore(t)
+	store, _, _, cleanup := newRedisEdgeStore(t, WithMaxEventsPerExecution(maxSessionEventScan+10))
 	defer cleanup()
 
 	base := time.Date(2026, 5, 1, 13, 45, 0, 0, time.UTC)
@@ -853,6 +906,29 @@ func TestRedisStoreAppendEventsRefusesWhenParentSessionAlreadyTerminal(t *testin
 		t.Fatalf("ListEvents after rejection: %v", err)
 	}
 	assertEventIDs(t, page.Items, []string{})
+}
+
+func TestRedisStoreAppendEventsAfterDeleteSessionLeavesNoOrphan(t *testing.T) {
+	ctx := context.Background()
+	store, client, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	base := time.Date(2026, 5, 1, 14, 10, 0, 0, time.UTC)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-delete-append", "exec-delete-append", base)
+	if err := store.DeleteSession(ctx, "tenant-a", "sess-delete-append"); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	_, err := store.AppendEvents(ctx, []AgentActionEvent{
+		validStoreEvent("tenant-a", "sess-delete-append", "exec-delete-append", "event-after-delete", 0, base.Add(time.Minute), EventKindHookPostToolUse, DecisionAllow),
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("AppendEvents after DeleteSession error = %v, want ErrNotFound", err)
+	}
+	assertRedisKeysGone(t, ctx, client,
+		edgeEventsKey("exec-delete-append"),
+		edgeEventSeqKey("exec-delete-append"),
+		edgeEventIDIndexKey("exec-delete-append"),
+	)
 }
 
 // EDGE-055 — same contract for the idempotent path. AppendEventsWithIdempotency
@@ -1243,7 +1319,7 @@ func TestRedisStoreListSessionsDeletedSameScoreCursorBeyondFirstWindow(t *testin
 
 func TestRedisStoreListExecutionsUsesOpaqueCursorPastMaxPageLimit(t *testing.T) {
 	ctx := context.Background()
-	store, _, _, cleanup := newRedisEdgeStore(t)
+	store, _, _, cleanup := newRedisEdgeStore(t, WithMaxExecutionsPerSession(maxStorePageLimit+3))
 	defer cleanup()
 
 	base := time.Date(2026, 5, 1, 16, 30, 0, 0, time.UTC)
@@ -1283,14 +1359,14 @@ func TestRedisStoreListExecutionsUsesOpaqueCursorPastMaxPageLimit(t *testing.T) 
 
 func TestRedisStoreListExecutionsDeletedSameScoreCursorBeyondFirstWindow(t *testing.T) {
 	ctx := context.Background()
-	store, client, _, cleanup := newRedisEdgeStore(t)
+	startedAt := time.Date(2026, 5, 1, 16, 35, 0, 0, time.UTC)
+	total := maxStorePageLimit*4 + 5
+	store, client, _, cleanup := newRedisEdgeStore(t, WithMaxExecutionsPerSession(total+1))
 	defer cleanup()
 
-	startedAt := time.Date(2026, 5, 1, 16, 35, 0, 0, time.UTC)
 	if err := store.CreateSession(ctx, validStoreSession("tenant-a", "sess-exec-same-delete", "principal-a", startedAt)); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	total := maxStorePageLimit*4 + 5
 	for i := 0; i < total; i++ {
 		execution := validStoreExecution("tenant-a", "sess-exec-same-delete", fmt.Sprintf("exec-same-delete-%04d", i), startedAt.Add(time.Second), nil)
 		if err := store.CreateExecution(ctx, execution); err != nil {
@@ -1991,6 +2067,51 @@ func createSessionAndExecution(t *testing.T, ctx context.Context, store *RedisSt
 	}
 }
 
+func appendStoreEventsInChunks(t *testing.T, ctx context.Context, store *RedisStore, tenantID, sessionID, executionID string, count int, started time.Time) {
+	t.Helper()
+	const chunkSize = 250
+	for offset := 0; offset < count; offset += chunkSize {
+		end := offset + chunkSize
+		if end > count {
+			end = count
+		}
+		events := make([]AgentActionEvent, 0, end-offset)
+		for i := offset; i < end; i++ {
+			eventID := fmt.Sprintf("%s-event-%05d", executionID, i)
+			at := started.Add(time.Duration(i+1) * time.Millisecond)
+			events = append(events, validStoreEvent(tenantID, sessionID, executionID, eventID, 0, at, EventKindHookPostToolUse, DecisionAllow))
+		}
+		if _, err := store.AppendEvents(ctx, events); err != nil {
+			t.Fatalf("AppendEvents chunk %d..%d: %v", offset, end, err)
+		}
+	}
+}
+
+func assertRedisKeysGone(t *testing.T, ctx context.Context, client redis.UniversalClient, keys ...string) {
+	t.Helper()
+	for _, key := range keys {
+		exists, err := client.Exists(ctx, key).Result()
+		if err != nil {
+			t.Fatalf("Exists(%s): %v", key, err)
+		}
+		if exists != 0 {
+			t.Fatalf("key %s exists after cleanup; want 0", key)
+		}
+	}
+}
+
+func assertSortedSetMemberAbsent(t *testing.T, ctx context.Context, client redis.UniversalClient, key, member string) {
+	t.Helper()
+	_, err := client.ZScore(ctx, key, member).Result()
+	if errors.Is(err, redis.Nil) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("ZScore(%s,%s): %v", key, member, err)
+	}
+	t.Fatalf("member %s still present in sorted set %s", member, key)
+}
+
 func validStoreSession(tenantID, sessionID, principalID string, started time.Time) EdgeSession {
 	return EdgeSession{
 		SessionID:         sessionID,
@@ -2269,15 +2390,157 @@ func TestRedisStoreCountSessionExecutionsTenantSessionIsolation(t *testing.T) {
 	}
 }
 
-func TestRedisStoreDeleteSessionPagedCleanupOverMaxStorePageLimit(t *testing.T) {
+func TestRedisStoreCreateExecutionEnforcesSessionCap(t *testing.T) {
 	ctx := context.Background()
-	store, client, _, cleanup := newRedisEdgeStore(t)
+	store, _, _, cleanup := newRedisEdgeStore(t, WithMaxExecutionsPerSession(2))
 	defer cleanup()
 
+	base := time.Now().UTC()
+	if err := store.CreateSession(ctx, validStoreSession("tenant-a", "sess-exec-cap", "principal-a", base)); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		execution := validStoreExecution("tenant-a", "sess-exec-cap", fmt.Sprintf("exec-cap-%d", i), base.Add(time.Duration(i+1)*time.Second), nil)
+		if err := store.CreateExecution(ctx, execution); err != nil {
+			t.Fatalf("CreateExecution under cap %d: %v", i, err)
+		}
+	}
+	err := store.CreateExecution(ctx, validStoreExecution("tenant-a", "sess-exec-cap", "exec-cap-over", base.Add(3*time.Second), nil))
+	if !errors.Is(err, ErrSessionExecutionFanoutExceeded) {
+		t.Fatalf("CreateExecution over cap error = %v, want ErrSessionExecutionFanoutExceeded", err)
+	}
+	count, err := store.CountSessionExecutions(ctx, "tenant-a", "sess-exec-cap")
+	if err != nil {
+		t.Fatalf("CountSessionExecutions: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("execution count after rejected create = %d, want 2", count)
+	}
+}
+
+func TestRedisStoreAppendEventsRejectsAfterDefaultExecutionEventCap(t *testing.T) {
+	ctx := context.Background()
+	rec := &abortRecorder{}
+	store, client, _, cleanup := newRedisEdgeStore(t, WithRecorder(rec))
+	defer cleanup()
+
+	base := time.Now().UTC()
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-event-cap", "exec-event-cap", base)
+	appendStoreEventsInChunks(t, ctx, store, "tenant-a", "sess-event-cap", "exec-event-cap", DefaultMaxEventsPerExecution, base)
+
+	_, err := store.AppendEvents(ctx, []AgentActionEvent{
+		validStoreEvent("tenant-a", "sess-event-cap", "exec-event-cap", "event-cap-over", 0, base.Add(time.Hour), EventKindHookPostToolUse, DecisionAllow),
+	})
+	if !errors.Is(err, ErrExecutionEventCapExceeded) {
+		t.Fatalf("AppendEvents over cap error = %v, want ErrExecutionEventCapExceeded", err)
+	}
+	if got := rec.SnapshotEventCapRejected(); got != 1 {
+		t.Fatalf("event cap metric count = %d, want 1", got)
+	}
+	length, err := client.LLen(ctx, edgeEventsKey("exec-event-cap")).Result()
+	if err != nil {
+		t.Fatalf("LLen events: %v", err)
+	}
+	if length != int64(DefaultMaxEventsPerExecution) {
+		t.Fatalf("event list length after rejected append = %d, want %d", length, DefaultMaxEventsPerExecution)
+	}
+}
+
+func TestRedisStoreAppendEventsWithIdempotencyRejectsEventCap(t *testing.T) {
+	ctx := context.Background()
+	rec := &abortRecorder{}
+	store, _, _, cleanup := newRedisEdgeStore(t, WithMaxEventsPerExecution(1), WithRecorder(rec))
+	defer cleanup()
+
+	base := time.Now().UTC()
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-idem-event-cap", "exec-idem-event-cap", base)
+	if _, err := store.AppendEvents(ctx, []AgentActionEvent{
+		validStoreEvent("tenant-a", "sess-idem-event-cap", "exec-idem-event-cap", "event-idem-cap-1", 0, base.Add(time.Second), EventKindHookPostToolUse, DecisionAllow),
+	}); err != nil {
+		t.Fatalf("AppendEvents seed: %v", err)
+	}
+	req := EdgeIdempotencyRequest{
+		TenantID:    "tenant-a",
+		Endpoint:    "POST /api/v1/edge/events/batch",
+		Key:         "idem-event-cap",
+		RequestHash: "sha256:idem-event-cap",
+	}
+	_, err := store.AppendEventsWithIdempotency(ctx, req, []AgentActionEvent{
+		validStoreEvent("tenant-a", "sess-idem-event-cap", "exec-idem-event-cap", "event-idem-cap-2", 0, base.Add(2*time.Second), EventKindHookPostToolUse, DecisionAllow),
+	}, storeSingleEventReplayResponse)
+	if !errors.Is(err, ErrExecutionEventCapExceeded) {
+		t.Fatalf("AppendEventsWithIdempotency over cap error = %v, want ErrExecutionEventCapExceeded", err)
+	}
+	if got := rec.SnapshotEventCapRejected(); got != 1 {
+		t.Fatalf("event cap metric count = %d, want 1", got)
+	}
+}
+
+func TestRedisStoreDeleteSessionCleansHundredExecutionsWithHundredEventsEach(t *testing.T) {
+	ctx := context.Background()
+	rec := &abortRecorder{}
+	store, client, _, cleanup := newRedisEdgeStore(t, WithRecorder(rec))
+	defer cleanup()
+
+	const tenantID = "tenant-cleanup-100"
+	const sessionID = "sess-cleanup-100"
+	const executionCount = DefaultMaxExecutionsPerSession
+	const eventsPerExecution = 100
+	base := time.Now().UTC()
+	if err := store.CreateSession(ctx, validStoreSession(tenantID, sessionID, "principal-cleanup", base)); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	executionIDs := make([]string, 0, executionCount)
+	for i := 0; i < executionCount; i++ {
+		executionID := fmt.Sprintf("exec-cleanup-%03d", i)
+		execution := validStoreExecution(tenantID, sessionID, executionID, base.Add(time.Duration(i+1)*time.Millisecond), func(e *AgentExecution) {
+			e.JobID = "job-" + executionID
+			e.TraceID = "trace-" + executionID
+			e.WorkflowRunID = "run-" + executionID
+		})
+		if err := store.CreateExecution(ctx, execution); err != nil {
+			t.Fatalf("CreateExecution %d: %v", i, err)
+		}
+		appendStoreEventsInChunks(t, ctx, store, tenantID, sessionID, executionID, eventsPerExecution, base.Add(time.Duration(i)*time.Second))
+		executionIDs = append(executionIDs, executionID)
+	}
+
+	started := time.Now()
+	if err := store.DeleteSession(ctx, tenantID, sessionID); err != nil {
+		t.Fatalf("DeleteSession: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= sessionCleanupDeadline {
+		t.Fatalf("DeleteSession elapsed %s, want under %s", elapsed, sessionCleanupDeadline)
+	}
+	durationCount, keysDeleted, deadlines := rec.SnapshotCleanupMetrics()
+	if durationCount != 1 || keysDeleted == 0 || deadlines != 0 {
+		t.Fatalf("cleanup metrics durations=%d keys_deleted=%d deadlines=%d, want one duration, >0 keys, zero deadlines", durationCount, keysDeleted, deadlines)
+	}
+	assertRedisKeysGone(t, ctx, client, edgeSessionKey(sessionID), edgeSessionHeartbeatKey(sessionID), edgeSessionExecutionsIndexKey(sessionID), edgeSessionEventsIndexKey(sessionID))
+	assertSortedSetMemberAbsent(t, ctx, client, edgeTenantIndexKey(tenantID), sessionID)
+	assertSortedSetMemberAbsent(t, ctx, client, edgePrincipalIndexKey(tenantID, "principal-cleanup"), sessionID)
+	for _, executionID := range executionIDs {
+		assertRedisKeysGone(t, ctx, client,
+			edgeExecutionKey(executionID),
+			edgeEventsKey(executionID),
+			edgeEventSeqKey(executionID),
+			edgeEventIDIndexKey(executionID),
+		)
+		assertSortedSetMemberAbsent(t, ctx, client, edgeJobIndexKey("job-"+executionID), executionID)
+		assertSortedSetMemberAbsent(t, ctx, client, edgeExecutionTraceIndexKey("trace-"+executionID), executionID)
+		assertSortedSetMemberAbsent(t, ctx, client, edgeExecutionRunIndexKey("run-"+executionID), executionID)
+	}
+}
+
+func TestRedisStoreDeleteSessionPagedCleanupOverMaxStorePageLimit(t *testing.T) {
+	ctx := context.Background()
 	const tenantID = "tenant-paged"
 	const sessionID = "sess-paged-cleanup"
 	// One session, 1.25 pages worth of executions, to force >2 ZRange calls.
 	executionCount := maxStorePageLimit + maxStorePageLimit/4
+	store, client, _, cleanup := newRedisEdgeStore(t, WithMaxExecutionsPerSession(executionCount+1))
+	defer cleanup()
+
 	base := time.Now().UTC()
 	if err := store.CreateSession(ctx, validStoreSession(tenantID, sessionID, "principal-paged", base)); err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -2345,14 +2608,15 @@ func TestRedisStoreDeleteSessionPagedCleanupOverMaxStorePageLimit(t *testing.T) 
 
 func TestRedisStoreDeleteSessionPageBoundaryEqualsLimit(t *testing.T) {
 	ctx := context.Background()
-	store, client, _, cleanup := newRedisEdgeStore(t)
-	defer cleanup()
 
 	const tenantID = "tenant-boundary"
 	const sessionID = "sess-boundary"
 	// Exactly maxStorePageLimit executions — exercises the
 	// "len(executionIDs) < maxStorePageLimit" termination on the SECOND
 	// iteration after the first page returns exactly the limit.
+	store, client, _, cleanup := newRedisEdgeStore(t, WithMaxExecutionsPerSession(maxStorePageLimit+1))
+	defer cleanup()
+
 	base := time.Now().UTC()
 	if err := store.CreateSession(ctx, validStoreSession(tenantID, sessionID, "principal-boundary", base)); err != nil {
 		t.Fatalf("CreateSession: %v", err)

@@ -1,0 +1,132 @@
+package edge
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+)
+
+func TestSessionSweeperRemovesAgedSessionAndPreservesFresh(t *testing.T) {
+	ctx := context.Background()
+	rec := &abortRecorder{}
+	store, _, _, cleanup := newRedisEdgeStore(t, WithRecorder(rec))
+	defer cleanup()
+
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	agedStarted := now.Add(-40 * 24 * time.Hour)
+	freshStarted := now.Add(-10 * 24 * time.Hour)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-aged-sweep", "exec-aged-sweep", agedStarted)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-fresh-sweep", "exec-fresh-sweep", freshStarted)
+	if _, err := store.EndSession(ctx, "tenant-a", "sess-aged-sweep", now.Add(-31*24*time.Hour), SessionStatusEnded); err != nil {
+		t.Fatalf("EndSession aged: %v", err)
+	}
+
+	sweeper, err := NewSessionSweeper(store, SessionSweeperOptions{
+		RetentionTTL: DefaultSessionRetentionTTL,
+		Interval:     time.Hour,
+		Now:          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewSessionSweeper: %v", err)
+	}
+	swept, err := sweeper.SweepOnce(ctx)
+	if err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	if swept != 1 {
+		t.Fatalf("swept = %d, want 1", swept)
+	}
+	if got := rec.SnapshotSessionsSwept(); got != 1 {
+		t.Fatalf("sessions_swept metric = %d, want 1", got)
+	}
+	if _, ok, err := store.GetSession(ctx, "tenant-a", "sess-aged-sweep"); err != nil || ok {
+		t.Fatalf("aged session exists=%v err=%v, want removed", ok, err)
+	}
+	if _, ok, err := store.GetSession(ctx, "tenant-a", "sess-fresh-sweep"); err != nil || !ok {
+		t.Fatalf("fresh session exists=%v err=%v, want preserved", ok, err)
+	}
+}
+
+func TestSessionSweeperAfterDeleteSessionIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	agedStarted := now.Add(-40 * 24 * time.Hour)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-delete-before-sweep", "exec-delete-before-sweep", agedStarted)
+	if _, err := store.EndSession(ctx, "tenant-a", "sess-delete-before-sweep", now.Add(-31*24*time.Hour), SessionStatusEnded); err != nil {
+		t.Fatalf("EndSession aged: %v", err)
+	}
+	if err := store.DeleteSession(ctx, "tenant-a", "sess-delete-before-sweep"); err != nil {
+		t.Fatalf("DeleteSession first pass: %v", err)
+	}
+	sweeper, err := NewSessionSweeper(store, SessionSweeperOptions{
+		RetentionTTL: DefaultSessionRetentionTTL,
+		Interval:     time.Hour,
+		Now:          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewSessionSweeper: %v", err)
+	}
+	swept, err := sweeper.SweepOnce(ctx)
+	if err != nil {
+		t.Fatalf("SweepOnce after DeleteSession: %v", err)
+	}
+	if swept != 0 {
+		t.Fatalf("swept after explicit DeleteSession = %d, want 0", swept)
+	}
+}
+
+func TestSessionSweeperRunRespectsCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	sweeper, err := NewSessionSweeper(store, SessionSweeperOptions{Interval: time.Millisecond})
+	if err != nil {
+		t.Fatalf("NewSessionSweeper: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sweeper.Run(ctx)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("sweeper.Run did not return after context cancellation")
+	}
+}
+
+func TestSessionSweeperRejectsInvalidOptions(t *testing.T) {
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	if _, err := NewSessionSweeper(nil, SessionSweeperOptions{}); err == nil {
+		t.Fatal("NewSessionSweeper nil store succeeded, want error")
+	}
+	if _, err := NewSessionSweeper(store, SessionSweeperOptions{RetentionTTL: -time.Second}); err == nil {
+		t.Fatal("NewSessionSweeper negative retention succeeded, want error")
+	}
+	if _, err := NewSessionSweeper(store, SessionSweeperOptions{Interval: -time.Second}); err == nil {
+		t.Fatal("NewSessionSweeper negative interval succeeded, want error")
+	}
+}
+
+func TestSessionSweeperSweepOnceReturnsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	store, _, _, cleanup := newRedisEdgeStore(t)
+	defer cleanup()
+
+	sweeper, err := NewSessionSweeper(store, SessionSweeperOptions{})
+	if err != nil {
+		t.Fatalf("NewSessionSweeper: %v", err)
+	}
+	if _, err := sweeper.SweepOnce(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("SweepOnce canceled error = %v, want context.Canceled", err)
+	}
+}

@@ -8,8 +8,10 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/redis/go-redis/v9"
@@ -700,5 +702,35 @@ func TestHandleListJobDecisions(t *testing.T) {
 	}
 	if len(out) != 1 || out[0].Decision != model.SafetyAllow {
 		t.Fatalf("unexpected decisions: %#v", out)
+	}
+}
+
+func TestEdgeSessionRetentionDurationEnvRejectsNonPositive(t *testing.T) {
+	t.Setenv(envEdgeSessionRetentionTTL, "0")
+	if _, err := edgeSessionRetentionTTLFromEnv(); err == nil {
+		t.Fatal("edgeSessionRetentionTTLFromEnv with 0 succeeded, want error")
+	}
+	t.Setenv(envEdgeSessionRetentionTTL, "-1s")
+	if _, err := edgeSessionRetentionTTLFromEnv(); err == nil {
+		t.Fatal("edgeSessionRetentionTTLFromEnv with -1s succeeded, want error")
+	}
+}
+
+func TestEdgeSessionRetentionDurationEnvDefaultsAndParses(t *testing.T) {
+	t.Setenv(envEdgeSessionRetentionTTL, "")
+	got, err := edgeSessionRetentionTTLFromEnv()
+	if err != nil {
+		t.Fatalf("edgeSessionRetentionTTLFromEnv default: %v", err)
+	}
+	if got != edgecore.DefaultSessionRetentionTTL {
+		t.Fatalf("default retention TTL = %s, want %s", got, edgecore.DefaultSessionRetentionTTL)
+	}
+	t.Setenv(envEdgeSessionRetentionTTL, "48h")
+	got, err = edgeSessionRetentionTTLFromEnv()
+	if err != nil {
+		t.Fatalf("edgeSessionRetentionTTLFromEnv 48h: %v", err)
+	}
+	if got != 48*time.Hour {
+		t.Fatalf("retention TTL = %s, want 48h", got)
 	}
 }

@@ -17,6 +17,12 @@ const (
 	// out to thousands of executions, blowing up cleanup memory and dashboard
 	// timelines. Operators can tune via CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION.
 	DefaultMaxExecutionsPerSession = 100
+
+	// DefaultMaxEventsPerExecution bounds the number of AgentActionEvent rows
+	// any single AgentExecution may accumulate. Combined with
+	// DefaultMaxExecutionsPerSession this keeps the worst-case session cleanup
+	// fanout bounded at 500,000 events.
+	DefaultMaxEventsPerExecution = 5000
 )
 
 // ErrSessionExecutionFanoutExceeded is returned by store / handler code when a
@@ -24,6 +30,16 @@ const (
 // cap. Wrap with fmt.Errorf("%w: <human message>", Err...) so gateway handlers
 // map it to 429 edge_max_executions_exceeded via errors.Is.
 var ErrSessionExecutionFanoutExceeded = errors.New("edge session execution fanout exceeded")
+
+// ErrExecutionEventCapExceeded is returned when an AppendEvents call would
+// push a single AgentExecution over its configured event cap. Callers should
+// surface this typed error to the agent rather than silently dropping events.
+var ErrExecutionEventCapExceeded = errors.New("edge execution event cap exceeded")
+
+// ErrSessionCleanupDeadlineExceeded is returned when DeleteSession reaches its
+// bounded cleanup deadline before finishing. Cleanup is idempotent and a
+// background continuation is scheduled when possible.
+var ErrSessionCleanupDeadlineExceeded = errors.New("edge session cleanup deadline exceeded")
 
 // ErrNotFound is returned by mutating store operations when the target record
 // does not exist for the requested tenant. Read operations return ok=false
