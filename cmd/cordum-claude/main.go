@@ -46,15 +46,15 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	full := append([]string{"edge", "claude"}, args...)
 	cmd, err := safeexec.CommandContext(context.Background(), bin, full, safeexec.Options{
-		Env: os.Environ(),
+		Env:    os.Environ(),
+		Stdin:  stdin,
+		Stdout: stdout,
+		Stderr: stderr,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "cordum-claude: launch %s: %s\n", bin, err)
 		return 1
 	}
-	cmd.Stdin = stdin
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {

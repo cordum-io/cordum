@@ -82,7 +82,23 @@ while IFS= read -r f; do
   fi
 done < <(find "${TEST_SCAN_GLOBS[@]}" \( -name '*_test.go' -o -path '*/testdata/*' \) -type f 2>/dev/null)
 
+# --- Phase 3: EDGE-068 argv-only exec guard ----------------------------------
+# Hook-boundary subprocesses must never route untrusted payloads through a
+# shell interpreter. Keep the check intentionally grep-based so it works in
+# local Git Bash/CI without extra tooling. Suppress audited false positives
+# with "# no-shell-exec-lint".
+SHELL_EXEC_PATTERN='exec\.Command(Context)?\([^)]*"(sh|bash|cmd|cmd\.exe|powershell|powershell\.exe|pwsh|pwsh\.exe)"[^)]*("-c"|"/[cC]"|"-Command")'
+
+while IFS= read -r f; do
+  matches=$(grep -nE "$SHELL_EXEC_PATTERN" "$f" 2>/dev/null | grep -v 'no-shell-exec-lint' || true)
+  if [[ -n "$matches" ]]; then
+    echo "FAIL: $f may spawn a shell interpreter via exec.Command; use argv-only safeexec:"
+    echo "$matches"
+    FAILED=1
+  fi
+done < <(find "$REPO_ROOT/cmd" "$REPO_ROOT/core" -name '*.go' -type f 2>/dev/null)
+
 if [[ "$FAILED" -eq 0 ]]; then
-  echo "OK: No raw secret logging or test-fixture leaks found"
+  echo "OK: No raw secret logging, test-fixture leaks, or shell exec patterns found"
 fi
 exit $FAILED

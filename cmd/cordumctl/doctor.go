@@ -866,9 +866,9 @@ type shellRunner func(ctx context.Context, command string) (string, error)
 func doctorShellRunner(ctx context.Context, command string) (string, error) {
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "cmd", "/C", command)
+		cmd = exec.CommandContext(ctx, "cmd", "/C", command) // no-shell-exec-lint: operator-confirmed doctor repair only
 	} else {
-		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", command)
+		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", command) // no-shell-exec-lint: operator-confirmed doctor repair only
 	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err

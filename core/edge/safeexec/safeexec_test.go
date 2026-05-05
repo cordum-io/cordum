@@ -2,9 +2,11 @@ package safeexec
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -106,6 +108,20 @@ func TestNormalizeExecutablePathRejectsAbsoluteTraversal(t *testing.T) {
 	}
 }
 
+func TestValidateArgPathsRejectsTraversalAndOutsidePrefix(t *testing.T) {
+	base := t.TempDir()
+	if err := ValidateArgPaths([]string{"--settings", filepath.Join(base, "settings.json")}, base, []string{base}); err != nil {
+		t.Fatalf("ValidateArgPaths rejected allowed settings path: %v", err)
+	}
+	if err := ValidateArgPaths([]string{"--settings=..\\evil.json"}, base, []string{base}); err == nil {
+		t.Fatalf("ValidateArgPaths accepted traversal")
+	}
+	outside := filepath.Join(filepath.Dir(base), "outside.json")
+	if err := ValidateArgPaths([]string{outside}, base, []string{base}); err == nil {
+		t.Fatalf("ValidateArgPaths accepted path outside prefix")
+	}
+}
+
 func TestCommandContextPropagatesContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -131,6 +147,36 @@ func TestSanitizeEnvRejectsNULBytes(t *testing.T) {
 	}
 }
 
+func TestRunCaptureRejectsOversizeStdin(t *testing.T) {
+	_, err := RunCapture(context.Background(), os.Args[0], helperArgs("readstdin"), strings.NewReader("123456"), Options{
+		Env:           []string{"CORDUM_SAFEEXEC_HELPER=readstdin"},
+		MaxStdinBytes: 4,
+	})
+	if !errors.Is(err, ErrIOLimitExceeded) {
+		t.Fatalf("RunCapture error=%v, want ErrIOLimitExceeded", err)
+	}
+}
+
+func TestRunCaptureRejectsOversizeStdout(t *testing.T) {
+	_, err := RunCapture(context.Background(), os.Args[0], helperArgs("stdout"), nil, Options{
+		Env:            []string{"CORDUM_SAFEEXEC_HELPER=stdout", "CORDUM_SAFEEXEC_WRITE_BYTES=32"},
+		MaxStdoutBytes: 8,
+	})
+	if !errors.Is(err, ErrIOLimitExceeded) {
+		t.Fatalf("RunCapture error=%v, want ErrIOLimitExceeded", err)
+	}
+}
+
+func TestRunCaptureRejectsOversizeStderr(t *testing.T) {
+	_, err := RunCapture(context.Background(), os.Args[0], helperArgs("stderr"), nil, Options{
+		Env:            []string{"CORDUM_SAFEEXEC_HELPER=stderr", "CORDUM_SAFEEXEC_WRITE_BYTES=32"},
+		MaxStderrBytes: 8,
+	})
+	if !errors.Is(err, ErrIOLimitExceeded) {
+		t.Fatalf("RunCapture error=%v, want ErrIOLimitExceeded", err)
+	}
+}
+
 func TestSafeExecHelperProcess(t *testing.T) {
 	mode := os.Getenv("CORDUM_SAFEEXEC_HELPER")
 	if mode == "" {
@@ -141,6 +187,14 @@ func TestSafeExecHelperProcess(t *testing.T) {
 		_, _ = os.Stdout.WriteString(strings.Join(os.Args, "\n"))
 	case "sleep":
 		time.Sleep(5 * time.Second)
+	case "readstdin":
+		data, _ := os.ReadFile(os.DevNull)
+		_ = data
+		_, _ = os.Stdout.WriteString("read")
+	case "stdout":
+		_, _ = os.Stdout.WriteString(strings.Repeat("x", helperWriteBytes()))
+	case "stderr":
+		_, _ = os.Stderr.WriteString(strings.Repeat("x", helperWriteBytes()))
 	default:
 		os.Exit(2)
 	}
@@ -152,6 +206,14 @@ func helperArgs(mode string, extra ...string) []string {
 	args = append(args, extra...)
 	_ = mode
 	return args
+}
+
+func helperWriteBytes() int {
+	n, err := strconv.Atoi(os.Getenv("CORDUM_SAFEEXEC_WRITE_BYTES"))
+	if err != nil || n <= 0 {
+		return 1
+	}
+	return n
 }
 
 func envMap(env []string) map[string]string {

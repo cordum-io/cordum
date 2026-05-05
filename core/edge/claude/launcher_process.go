@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/cordum/cordum/core/edge/safeexec"
@@ -14,16 +15,19 @@ import (
 func startLaunchAgentd(ctx context.Context, cfg launchConfig, opts LaunchOptions, meta LaunchMetadata, stderr io.Writer) (*launchAgentd, error) {
 	agentdCtx, cancel := context.WithCancel(ctx)
 	cmd, err := safeexec.CommandContext(agentdCtx, cfg.AgentdPath, nil, safeexec.Options{
-		Dir: meta.CWD,
-		Env: cfg.agentdEnv(meta),
+		Dir:            meta.CWD,
+		Env:            cfg.agentdEnv(meta),
+		AllowEnv:       []string{"CORDUMCTL_*"},
+		Stderr:         stderr,
+		MaxStdoutBytes: 1 << 20,
+		MaxStderrBytes: 1 << 20,
 	})
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("prepare cordum-agentd: %w", err)
 	}
-	cmd.Stderr = stderr
 	if opts.Verbose {
-		cmd.Stdout = stderr
+		cmd.Stdout = safeexec.LimitWriter(stderr, 1<<20)
 	}
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -91,15 +95,16 @@ func waitForAgentdReady(ctx context.Context, endpoint string, done <-chan error)
 func runClaudeProcess(ctx context.Context, cfg launchConfig, opts LaunchOptions, meta LaunchMetadata, state launchSessionState, settingsPath, claudePath string) (int, error) {
 	args := append([]string{"--settings", settingsPath}, opts.ClaudeArgs...)
 	cmd, err := safeexec.CommandContext(ctx, claudePath, args, safeexec.Options{
-		Dir: meta.CWD,
-		Env: cfg.claudeEnv(meta, state),
+		Dir:                    meta.CWD,
+		Env:                    cfg.claudeEnv(meta, state),
+		Stdin:                  opts.Stdin,
+		Stdout:                 opts.Stdout,
+		Stderr:                 opts.Stderr,
+		AllowedArgPathPrefixes: []string{meta.CWD, filepath.Dir(settingsPath)},
 	})
 	if err != nil {
 		return 1, fmt.Errorf("prepare claude: %w", err)
 	}
-	cmd.Stdin = opts.Stdin
-	cmd.Stdout = opts.Stdout
-	cmd.Stderr = opts.Stderr
 	err = cmd.Run()
 	if err == nil {
 		return 0, nil

@@ -12,9 +12,9 @@ hook runner boundary and all already used argv-mode instead of shell strings:
 | Site | Spawn | Control |
 |---|---|---|
 | `cmd/cordum-claude/main.go` | `cordumctl edge claude ...` | Wrapped with `safeexec.CommandContext`. |
-| `core/edge/claude/launcher_helpers.go` | `git -C <cwd> ...` | Wrapped with `safeexec.CommandContext`. |
+| `core/edge/claude/launcher_helpers.go` | `git -C <cwd> ...` | Wrapped with `safeexec.RunCapture` and bounded stdout/stderr. |
 | `core/edge/claude/launcher_process.go` | `cordum-agentd` | Wrapped with `safeexec.CommandContext`. |
-| `core/edge/claude/launcher_process.go` | `claude --settings <tmp> ...` | Wrapped with `safeexec.CommandContext`. |
+| `core/edge/claude/launcher_process.go` | `claude --settings <tmp> ...` | Wrapped with `safeexec.CommandContext` plus path-argv prefix checks. |
 
 `cmd/cordumctl doctor` still has deliberate shell execution for operator
 diagnostics. That path is outside the hook runner boundary and should remain
@@ -46,7 +46,17 @@ with `_`. NUL bytes in env keys or values are rejected before spawning.
 Path-shaped executables are cleaned, made absolute, and optionally checked
 against allowed prefixes before `exec.Cmd` is returned. `..` traversal is
 rejected during parse/normalization, not after opening a file. The command
-working directory is normalized the same way.
+working directory is normalized the same way. Launcher temp roots, generated
+settings paths, state dirs, and path-bearing Claude argv values are also
+validated before process start.
+
+### IO bounds
+
+Captured subprocess output goes through `safeexec.RunCapture` with explicit
+stdout/stderr byte caps. Oversized captured stdin/stdout/stderr returns a
+structured `safeexec` limit error instead of growing memory without bound.
+Interactive Claude stdout/stderr are streamed to caller-provided writers and
+are not accumulated in memory.
 
 ### Dev cannot weaken production
 
@@ -69,4 +79,6 @@ binary path into children.
 
 `core/edge/safeexec` tests cover literal shell metacharacters, env scrub,
 explicit allowlisting, path normalization, traversal rejection, context
-cancellation, NUL rejection, dev-vs-prod env precedence, and prefix checks.
+cancellation, NUL rejection, IO caps, dev-vs-prod env precedence, and prefix
+checks. The companion issue-draft addendum lives at
+`docs/internal/issue-drafts/security/SEC-012-edge-hook-runner-sandboxing.md`.

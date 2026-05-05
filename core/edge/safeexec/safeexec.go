@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,10 +13,17 @@ import (
 )
 
 type Options struct {
-	Env                 []string
-	AllowEnv            []string
-	AllowedPathPrefixes []string
-	Dir                 string
+	Env                    []string
+	AllowEnv               []string
+	AllowedPathPrefixes    []string
+	AllowedArgPathPrefixes []string
+	Dir                    string
+	Stdin                  io.Reader
+	Stdout                 io.Writer
+	Stderr                 io.Writer
+	MaxStdinBytes          int64
+	MaxStdoutBytes         int64
+	MaxStderrBytes         int64
 }
 
 func CommandContext(ctx context.Context, argv0 string, args []string, opts Options) (*exec.Cmd, error) {
@@ -29,6 +37,9 @@ func CommandContext(ctx context.Context, argv0 string, args []string, opts Optio
 	if err := validateArgs(args); err != nil {
 		return nil, err
 	}
+	if err := ValidateArgPaths(args, opts.Dir, opts.AllowedArgPathPrefixes); err != nil {
+		return nil, err
+	}
 	env, err := SanitizeEnv(opts.Env, opts.AllowEnv)
 	if err != nil {
 		return nil, err
@@ -36,11 +47,18 @@ func CommandContext(ctx context.Context, argv0 string, args []string, opts Optio
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = env
 	if strings.TrimSpace(opts.Dir) != "" {
-		dir, err := normalizeDir(opts.Dir)
+		dir, err := NormalizeDir(opts.Dir, nil)
 		if err != nil {
 			return nil, err
 		}
 		cmd.Dir = dir
+	}
+	cmd.Stdin = opts.Stdin
+	if opts.Stdout != nil {
+		cmd.Stdout = LimitWriter(opts.Stdout, opts.MaxStdoutBytes)
+	}
+	if opts.Stderr != nil {
+		cmd.Stderr = LimitWriter(opts.Stderr, opts.MaxStderrBytes)
 	}
 	return cmd, nil
 }
@@ -108,7 +126,7 @@ func validateArgs(args []string) error {
 	return nil
 }
 
-func normalizeDir(dir string) (string, error) {
+func NormalizeDir(dir string, allowedPrefixes []string) (string, error) {
 	if strings.ContainsRune(dir, '\x00') {
 		return "", errors.New("safeexec: dir contains NUL byte")
 	}
@@ -119,7 +137,11 @@ func normalizeDir(dir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("safeexec: normalize dir: %w", err)
 	}
-	return evalPathIfPossible(abs), nil
+	abs = evalPathIfPossible(abs)
+	if err := requireAllowedPrefix(abs, allowedPrefixes); err != nil {
+		return "", err
+	}
+	return abs, nil
 }
 
 func containsTraversal(path string) bool {

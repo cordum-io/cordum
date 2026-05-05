@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/cordum/cordum/core/edge/safeexec"
 )
 
 const (
@@ -120,6 +122,10 @@ func LaunchEdgeClaude(ctx context.Context, opts LaunchOptions) (LaunchResult, er
 	if cfg.StateDir == "" {
 		cfg.StateDir = filepath.Join(tempRoot, "agentd-state")
 	}
+	cfg.StateDir, err = safeexec.NormalizeDir(cfg.StateDir, nil)
+	if err != nil {
+		return LaunchResult{}, fmt.Errorf("normalize agentd state dir: %w", err)
+	}
 	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
 		return LaunchResult{}, fmt.Errorf("create agentd state dir: %w", err)
 	}
@@ -205,11 +211,18 @@ func prepareLaunchConfig(opts LaunchOptions, meta LaunchMetadata) (launchConfig,
 	if wait <= 0 {
 		wait = 30 * time.Second
 	}
+	stateDir := strings.TrimSpace(opts.StateDir)
+	if stateDir != "" {
+		stateDir, err = safeexec.NormalizeDir(stateDir, nil)
+		if err != nil {
+			return launchConfig{}, fmt.Errorf("state dir: %w", err)
+		}
+	}
 	return launchConfig{
 		Gateway: strings.TrimRight(strings.TrimSpace(opts.Gateway), "/"), APIKey: strings.TrimSpace(opts.APIKey),
 		TenantID: strings.TrimSpace(opts.TenantID), PolicyMode: policy, ApprovalWaitTimeout: wait,
 		AgentdPath: agentdPath, AgentdURL: agentdURL, HookNonce: nonce,
-		HookCommand: hookCommand, StateDir: strings.TrimSpace(opts.StateDir),
+		HookCommand: hookCommand, StateDir: stateDir,
 		DashboardURL: strings.TrimSpace(opts.DashboardURL), Env: opts.Env,
 		CACertPath: strings.TrimSpace(opts.CACertPath),
 	}, nil

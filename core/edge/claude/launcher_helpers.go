@@ -42,7 +42,15 @@ func siblingExecutable(name string) (string, bool) {
 }
 
 func prepareLaunchTempRoot(parent string) (string, func(), error) {
-	root, err := os.MkdirTemp(strings.TrimSpace(parent), "cordum-edge-claude-*")
+	parent = strings.TrimSpace(parent)
+	if parent != "" {
+		normalized, err := safeexec.NormalizeDir(parent, nil)
+		if err != nil {
+			return "", nil, fmt.Errorf("normalize launcher temp dir: %w", err)
+		}
+		parent = normalized
+	}
+	root, err := os.MkdirTemp(parent, "cordum-edge-claude-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create launcher temp dir: %w", err)
 	}
@@ -232,15 +240,14 @@ func envSliceMap(values []string) map[string]string {
 func gitOutput(ctx context.Context, cwd string, args ...string) string {
 	runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	cmd, err := safeexec.CommandContext(runCtx, "git", append([]string{"-C", cwd}, args...), safeexec.Options{})
+	result, err := safeexec.RunCapture(runCtx, "git", append([]string{"-C", cwd}, args...), nil, safeexec.Options{
+		MaxStdoutBytes: 64 << 10,
+		MaxStderrBytes: 16 << 10,
+	})
 	if err != nil {
 		return ""
 	}
-	data, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
+	return strings.TrimSpace(string(result.Stdout))
 }
 
 func firstNonEmpty(values ...string) string {

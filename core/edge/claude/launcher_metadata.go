@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/cordum/cordum/core/edge/safeexec"
 )
 
 // LaunchMetadata is the local machine/repository identity sent to agentd.
@@ -131,6 +133,10 @@ func (c launchConfig) result(meta LaunchMetadata, state launchSessionState, sett
 }
 
 func writeLaunchSettings(root string, cfg launchConfig, meta LaunchMetadata, state launchSessionState) (string, []byte, error) {
+	root, err := safeexec.NormalizeDir(root, nil)
+	if err != nil {
+		return "", nil, fmt.Errorf("normalize temporary Claude settings dir: %w", err)
+	}
 	settings, err := GenerateDevSettingsJSON(DevSettingsOptions{
 		SessionID: state.SessionID, ExecutionID: state.ExecutionID, AgentdURL: cfg.AgentdURL,
 		AgentdHookNonce: cfg.HookNonce, HookCommand: cfg.HookCommand, HookTimeout: DefaultHookTimeout,
@@ -141,6 +147,9 @@ func writeLaunchSettings(root string, cfg launchConfig, meta LaunchMetadata, sta
 		return "", nil, err
 	}
 	path := filepath.Join(root, "settings.json")
+	if err := safeexec.ValidateArgPaths([]string{path}, "", []string{root}); err != nil {
+		return "", nil, fmt.Errorf("validate temporary Claude settings path: %w", err)
+	}
 	if err := os.WriteFile(path, settings, 0o600); err != nil {
 		return "", nil, fmt.Errorf("write temporary Claude settings: %w", err)
 	}
