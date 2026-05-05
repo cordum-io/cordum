@@ -1,8 +1,7 @@
-import { fireEvent, screen, within } from "@testing-library/react";
 import { Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentActionEvent, AgentExecution, EdgeSession } from "@/api/types";
-import { renderWithProviders } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import {
   useApproveEdgeApproval,
   useEdgeApprovals,

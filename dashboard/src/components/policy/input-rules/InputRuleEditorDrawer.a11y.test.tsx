@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent } from "@testing-library/react";
-import { renderWithProviders } from "@/test-utils/render";
+import { fireEvent, renderWithProviders } from "@/test-utils/render";
 import { InputRuleEditorDrawer } from "./InputRuleEditorDrawer";
 
 describe("InputRuleEditorDrawer a11y", () => {

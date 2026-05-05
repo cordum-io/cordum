@@ -1,7 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { Routes, Route } from "react-router-dom";
-import { screen, waitFor } from "@testing-library/react";
-import { renderWithProviders } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { http, HttpResponse, server } from "@/test-utils/msw";
 
 const { permissionMock } = vi.hoisted(() => ({

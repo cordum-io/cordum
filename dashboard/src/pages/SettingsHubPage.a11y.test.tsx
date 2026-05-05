@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { http, HttpResponse } from "msw";
-import { waitFor } from "@testing-library/react";
-import { renderWithProviders } from "@/test-utils/render";
+import { renderWithProviders, waitFor } from "@/test-utils/render";
 import { server } from "@/test-utils/msw";
 import { assertNoSeriousAxeViolations } from "@/test-utils/a11y";
 import SettingsHubPage from "./SettingsHubPage";

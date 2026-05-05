@@ -8,6 +8,9 @@ import { registerQueryClient } from "@/state/config";
 import { useUiStore } from "@/state/ui";
 import { ensureMswServerListening } from "./msw";
 
+export { fireEvent, screen, waitFor, within } from "@testing-library/dom";
+export { cleanup, render } from "@testing-library/react";
+
 export interface RenderWithProvidersOptions extends Omit<RenderOptions, "wrapper"> {
   initialEntries?: MemoryRouterProps["initialEntries"];
   queryClient?: QueryClient;

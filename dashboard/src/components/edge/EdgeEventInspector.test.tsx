@@ -1,7 +1,6 @@
-import { fireEvent, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentActionEvent } from "@/api/types";
-import { renderWithProviders } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import { EdgeEventInspector } from "./EdgeEventInspector";
 
 function makeEvent(overrides: Partial<AgentActionEvent> = {}): AgentActionEvent {

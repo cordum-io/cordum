@@ -1,7 +1,6 @@
-import { fireEvent, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentActionEvent, EdgeArtifactPointer, EdgeSessionExportBundle } from "@/api/types";
-import { renderWithProviders } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen } from "@/test-utils/render";
 import { useExportEdgeSession } from "@/hooks/useEdgeSessions";
 import { EdgeArtifactsPanel } from "./EdgeArtifactsPanel";
 

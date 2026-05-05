@@ -1,7 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { Routes, Route } from "react-router-dom";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
-import { renderWithProviders } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { http, HttpResponse, server } from "@/test-utils/msw";
 import CopilotSessionPage from "./CopilotSessionPage";
 

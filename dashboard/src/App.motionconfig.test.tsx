@@ -1,6 +1,6 @@
-import { cleanup, render, screen } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@/test-utils/render";
 
 vi.mock("sonner", () => ({
   Toaster: () => null,

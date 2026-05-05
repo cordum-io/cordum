@@ -1,8 +1,7 @@
-import { fireEvent, screen } from "@testing-library/react";
 import { Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EdgeSession } from "@/api/types";
-import { renderWithProviders } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen } from "@/test-utils/render";
 import { useEdgeSessions } from "@/hooks/useEdgeSessions";
 import EdgeSessionsPage from "./EdgeSessionsPage";
 

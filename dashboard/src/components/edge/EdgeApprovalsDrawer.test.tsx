@@ -1,9 +1,8 @@
-import { fireEvent, screen, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/client";
 import type { AgentActionEvent, EdgeApproval } from "@/api/types";
-import { renderWithProviders } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import {
   useApproveEdgeApproval,
   useEdgeApprovals,

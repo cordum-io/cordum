@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { act } from "react";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { UserMenu } from "./UserMenu";
 
 const { configState } = vi.hoisted(() => ({
@@ -19,6 +19,7 @@ const { configState } = vi.hoisted(() => ({
 }));
 
 vi.mock("@/state/config", () => ({
+  registerQueryClient: vi.fn(),
   useConfigStore: <T,>(selector: (state: typeof configState) => T): T =>
     selector(configState),
 }));
@@ -32,11 +33,7 @@ vi.mock("react-router-dom", async () => {
 });
 
 function renderMenu() {
-  return render(
-    <MemoryRouter>
-      <UserMenu />
-    </MemoryRouter>,
-  );
+  return renderWithProviders(<UserMenu />);
 }
 
 beforeEach(() => {

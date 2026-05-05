@@ -1,11 +1,9 @@
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createRoot, type Root } from "react-dom/client";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent } from "@testing-library/react";
+import type { QueryClient } from "@tanstack/react-query";
+import { renderWithProviders, waitFor } from "@/test-utils/render";
+import { http, HttpResponse, server } from "@/test-utils/msw";
 import InputSafetySettings from "./InputSafetySettings";
-import { mockFetch } from "../../hooks/__tests__/test-utils";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -32,6 +30,7 @@ const { mockConfigState } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../state/config", () => ({
+  registerQueryClient: vi.fn(),
   useConfigStore: {
     getState: () => mockConfigState,
   },
@@ -56,71 +55,32 @@ vi.mock("../../lib/logger", () => ({
 }));
 
 interface RenderResult {
-  container: HTMLDivElement;
+  container: HTMLElement;
   queryClient: QueryClient;
   unmount: () => void;
-  waitFor: (assertion: () => void, timeoutMs?: number) => Promise<void>;
-}
-
-function createTestQueryClient(): QueryClient {
-  return new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-      mutations: { retry: false },
-    },
-  });
 }
 
 function renderPage(): RenderResult {
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  const root: Root = createRoot(container);
-  const queryClient = createTestQueryClient();
-
-  act(() => {
-    root.render(
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={["/settings/input-safety"]}>
-          <Routes>
-            <Route path="/settings/input-safety" element={<InputSafetySettings />} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
+  const view = renderWithProviders(<InputSafetySettings />, {
+    initialEntries: ["/settings/input-safety"],
   });
+  return view;
+}
 
-  async function waitFor(assertion: () => void, timeoutMs = 2500): Promise<void> {
-    const start = Date.now();
-    while (true) {
-      try {
-        assertion();
-        return;
-      } catch (error) {
-        if (Date.now() - start >= timeoutMs) throw error;
-        await act(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        });
-      }
-    }
-  }
-
-  return {
-    container,
-    queryClient,
-    unmount: () => {
-      act(() => {
-        root.unmount();
-      });
-      queryClient.clear();
-      container.remove();
-    },
-    waitFor,
-  };
+function mockInputSafetyEndpoints(
+  configBody: Record<string, unknown>,
+  statusBody: Record<string, unknown> = {},
+): void {
+  server.use(
+    http.get("*/api/v1/config", () => HttpResponse.json(configBody)),
+    http.get("*/api/v1/status", () => HttpResponse.json(statusBody)),
+  );
 }
 
 describe("InputSafetySettings page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    server.resetHandlers();
     mockConfigState.apiBaseUrl = "/api/v1";
     mockConfigState.apiKey = "";
     mockConfigState.tenantId = "";
@@ -135,13 +95,13 @@ describe("InputSafetySettings page", () => {
   });
 
   it("renders with default config", async () => {
-    mockFetch([
-      { match: "/config", method: "GET", body: { input_policy: { fail_mode: "closed" } } },
-      { match: "/status", method: "GET", body: { nats: { connected: true }, redis: { ok: true } } },
-    ]);
+    mockInputSafetyEndpoints(
+      { input_policy: { fail_mode: "closed" } },
+      { nats: { connected: true }, redis: { ok: true } },
+    );
 
     const view = renderPage();
-    await view.waitFor(() => {
+    await waitFor(() => {
       expect(view.container.textContent).toContain("Input Safety");
       expect(view.container.textContent).toContain("Fail Mode");
       expect(view.container.textContent).toContain("How It Works");
@@ -150,49 +110,54 @@ describe("InputSafetySettings page", () => {
   });
 
   it("shows warning banner when fail-open is selected", async () => {
-    mockFetch([
-      { match: "/config", method: "GET", body: { input_policy: { fail_mode: "open" } } },
-      { match: "/status", method: "GET", body: {} },
-    ]);
+    mockInputSafetyEndpoints({ input_policy: { fail_mode: "open" } });
 
     const view = renderPage();
-    await view.waitFor(() => {
+    await waitFor(() => {
       expect(view.container.textContent).toContain("Fail-open mode bypasses safety checks");
     });
     view.unmount();
   });
 
   it("saves config through API when changed", async () => {
-    const fetchSpy = mockFetch([
-      { match: "/config", method: "GET", body: { input_policy: { fail_mode: "closed" } } },
-      { match: "/status", method: "GET", body: {} },
-      { match: "/config", method: "PUT", body: {} },
-    ]);
+    let putPayload: Record<string, unknown> | undefined;
+    mockInputSafetyEndpoints({ input_policy: { fail_mode: "closed" } });
+    server.use(
+      http.put("*/api/v1/config", async ({ request }) => {
+        putPayload = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({});
+      }),
+    );
 
     const view = renderPage();
-    await view.waitFor(() => {
+    await waitFor(() => {
       expect(view.container.textContent).toContain("Input Safety");
+    });
+    await waitFor(() => {
+      expect(view.queryClient.isFetching()).toBe(0);
     });
 
     // Change the select to "open"
     const select = view.container.querySelector("select") as HTMLSelectElement | null;
     expect(select).toBeTruthy();
     if (select) {
-      fireEvent.change(select, { target: { value: "open" } });
+      select.value = "open";
+      select.dispatchEvent(new Event("input", { bubbles: true }));
+      select.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
-    await view.waitFor(() => {
+    await waitFor(() => {
       expect(select?.value).toBe("open");
     });
 
-    await view.waitFor(() => {
+    await waitFor(() => {
       expect(view.container.textContent).toContain("Fail-open mode bypasses safety checks");
       const liveSaveButton = Array.from(view.container.querySelectorAll("button")).find((btn) =>
         btn.textContent?.includes("Save Input Safety Settings"),
       ) as HTMLButtonElement | undefined;
       expect(liveSaveButton).toBeTruthy();
       expect(liveSaveButton?.disabled).toBe(false);
-    }, 5000);
+    }, { timeout: 5000 });
     await act(async () => {
       const liveSaveButton = Array.from(view.container.querySelectorAll("button")).find((btn) =>
         btn.textContent?.includes("Save Input Safety Settings"),
@@ -201,15 +166,9 @@ describe("InputSafetySettings page", () => {
       liveSaveButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    await view.waitFor(() => {
-      const putCall = fetchSpy.mock.calls.find((call) => {
-        const [, init] = call as [string, RequestInit];
-        return init.method === "PUT";
-      });
-      expect(putCall).toBeTruthy();
-      const [, putInit] = putCall as [string, RequestInit];
-      const payload = JSON.parse(String(putInit.body)) as Record<string, unknown>;
-      const data = payload.data as Record<string, unknown>;
+    await waitFor(() => {
+      expect(putPayload).toBeTruthy();
+      const data = putPayload?.data as Record<string, unknown>;
       expect(data.policy_check_fail_mode).toBe("open");
     });
 
