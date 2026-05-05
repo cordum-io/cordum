@@ -1,6 +1,7 @@
 package edge
 
 import (
+	"encoding/json"
 	"log/slog"
 	"strings"
 	"sync"
@@ -35,6 +36,9 @@ func TestNoopRecorderImplementsRecorder(t *testing.T) {
 	r.RecordSessionCleanupDeadline()
 	r.RecordSessionEventCapRejected()
 	r.RecordSessionSwept()
+	r.RecordEventPersisted("tenant-a", "hook", "hook.pre_tool_use", "allow")
+	r.RecordEventRedacted("applied")
+	r.RecordHookTimeout("request")
 	r.RecordActionDecision("tenant-a", "hook", "hook.pre_tool_use", "allow", "local-dev")
 	r.RecordActionDenied("tenant-a", "hook", "hook.pre_tool_use", "destructive_command")
 	r.RecordApprovalRequested("tenant-a", "hook", "hook.pre_tool_use")
@@ -46,6 +50,7 @@ func TestNoopRecorderImplementsRecorder(t *testing.T) {
 	r.ObserveEvaluateLatency("tenant-a", "hook", "hook.pre_tool_use", "allow", 25*time.Millisecond)
 	r.RecordCacheLookup("tenant-a", "hook", "hook.pre_tool_use", "hit")
 	r.AddStreamClients("tenant-a", 1)
+	r.RecordStreamEventSent("tenant-a")
 	r.RecordStreamDrop("client_buffer_full")
 }
 
@@ -390,6 +395,9 @@ func TestPrometheusRecorderRegistersAndEmitsBoundedMetrics(t *testing.T) {
 	r.RecordSessionCleanupDeadline()
 	r.RecordSessionEventCapRejected()
 	r.RecordSessionSwept()
+	r.RecordEventPersisted("tenant-edge014", "hook", "hook.pre_tool_use", "ALLOW")
+	r.RecordEventRedacted("applied")
+	r.RecordHookTimeout("request")
 	r.RecordActionDecision("tenant-edge014", "hook", "hook.pre_tool_use", "ALLOW", "local-dev")
 	r.RecordActionDenied("tenant-edge014", "hook", "hook.pre_tool_use", "destructive_command")
 	r.RecordApprovalRequested("tenant-edge014", "hook", "hook.pre_tool_use")
@@ -402,7 +410,50 @@ func TestPrometheusRecorderRegistersAndEmitsBoundedMetrics(t *testing.T) {
 	r.RecordCacheLookup("tenant-edge014", "hook", "hook.pre_tool_use", "hit")
 	r.AddStreamClients("tenant-edge014", 2)
 	r.AddStreamClients("tenant-edge014", -1)
+	r.RecordStreamEventSent("tenant-edge014")
 	r.RecordStreamDrop("client_buffer_full")
+}
+
+// TestEDGE072PrometheusReviewerGapMetricsRegistered pins the reviewer-listed
+// metrics that were missing during the EDGE-072 audit. Labels are intentionally
+// bounded enums only; tenant/session/execution IDs must never appear.
+func TestEDGE072PrometheusReviewerGapMetricsRegistered(t *testing.T) {
+	reg := prometheusNewRegistryHelper(t)
+	r := NewPrometheusRecorder(reg)
+
+	r.RecordEventPersisted("tenant-edge072", "hook", "hook.pre_tool_use", "ALLOW")
+	r.RecordEventRedacted("applied")
+	r.RecordStreamEventSent("tenant-edge072")
+	r.RecordHookTimeout("request")
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	var text strings.Builder
+	for _, family := range families {
+		text.WriteString(family.String())
+	}
+	metricsText := text.String()
+	for _, want := range []string{
+		`name:"cordum_edge_event_persisted_total"`,
+		`name:"cordum_edge_event_redacted_total"`,
+		`name:"cordum_edge_ws_events_sent_total"`,
+		`name:"cordum_edge_hook_timeout_total"`,
+		`name:"layer"  value:"hook"`,
+		`name:"kind"  value:"hook.pre_tool_use"`,
+		`name:"decision"  value:"allow"`,
+		`name:"outcome"  value:"applied"`,
+		`name:"tenant_present"  value:"true"`,
+		`name:"phase"  value:"request"`,
+	} {
+		if !strings.Contains(metricsText, want) {
+			t.Fatalf("gathered metrics missing %s in:\n%s", want, metricsText)
+		}
+	}
+	if strings.Contains(metricsText, "tenant-edge072") {
+		t.Fatalf("metric labels leaked tenant id: %s", metricsText)
+	}
 }
 
 // TestPrometheusRecorderBoundsHighCardinalityInputs pins that
@@ -417,11 +468,15 @@ func TestPrometheusRecorderBoundsHighCardinalityInputs(t *testing.T) {
 	const rawSecret = "Authorization: Bearer edge014-prom-secret-xyz"
 	r.RecordActionDecision("tenant-edge014", "WEIRD-LAYER", "rm -rf /", rawSecret, "evil-mode")
 	r.RecordActionDenied("tenant-edge014", rawSecret, "hook.pre_tool_use", "very_long_reason_code_that_should_collapse_to_other_because_it_exceeds_the_48_char_bound_with_lots_of_extra")
+	r.RecordEventPersisted(rawSecret, rawSecret, rawSecret, rawSecret)
+	r.RecordEventRedacted(rawSecret)
+	r.RecordHookTimeout(rawSecret)
 	r.RecordDegraded("tenant-edge014", rawSecret, rawSecret, rawSecret)
 	r.RecordFailClosed("tenant-edge014", rawSecret, rawSecret)
 	r.RecordArtifactExport("tenant-edge014", rawSecret, rawSecret)
 	r.ObserveHookLatency("tenant-edge014", rawSecret, rawSecret, 1*time.Millisecond)
 	r.RecordCacheLookup("tenant-edge014", rawSecret, rawSecret, rawSecret)
+	r.RecordStreamEventSent(rawSecret)
 	r.RecordStreamDrop(rawSecret)
 	// If any of these calls had leaked the raw secret as a label, the
 	// Prometheus registry would have created N+ unique label sets. We
@@ -440,6 +495,10 @@ func TestPrometheusRecorderNilRegistererReturnsNoop(t *testing.T) {
 	}
 	// Sanity: methods don't panic.
 	r.RecordSessionCreated("", "", "")
+	r.RecordEventPersisted("", "", "", "")
+	r.RecordEventRedacted("")
+	r.RecordHookTimeout("")
+	r.RecordStreamEventSent("")
 	r.RecordStreamDrop("")
 }
 
@@ -647,6 +706,61 @@ func TestSIEMEventForActionExtraIsBoundedAndSecretFree(t *testing.T) {
 	}
 }
 
+// TestEDGE072ActionAuditIncludesReviewerFieldsAndNoRawSecrets pins the
+// outside-reviewer audit checklist for policy-decision audit records. The
+// synthetic secret is deliberately placed in nested input/labels; SIEM output
+// must carry only hashes/bounded classifier fields and redaction_status.
+func TestEDGE072ActionAuditIncludesReviewerFieldsAndNoRawSecrets(t *testing.T) {
+	const fakeSecret = "AKIATESTFAKEAKIA1234"
+	event := AgentActionEvent{
+		EventID:     "evt-edge072-audit",
+		SessionID:   "edge_sess_edge072",
+		ExecutionID: "edge_exec_edge072",
+		TenantID:    "tenant-edge072",
+		PrincipalID: "principal-edge072",
+		Timestamp:   time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC),
+		Layer:       LayerHook,
+		Kind:        EventKindHookPreToolUse,
+		ToolName:    "Bash",
+		ActionName:  "bash.exec",
+		Capability:  "exec.shell",
+		RiskTags:    []string{"exec", "secret_access"},
+		InputHash:   "sha256:" + strings.Repeat("a", 64),
+		InputRedacted: map[string]any{
+			"command": "cat .env && echo " + fakeSecret,
+			"nested":  map[string]any{"secret_token": fakeSecret},
+		},
+		Decision: DecisionDeny,
+		Status:   ActionStatusBlocked,
+		Labels:   Labels{"raw_tool_input": fakeSecret, "redaction_status": "applied"},
+	}
+
+	got := SIEMEventForAction(event)
+	if got.TenantID == "" || got.Identity == "" || got.Timestamp.IsZero() {
+		t.Fatalf("audit top-level tenant/principal/timestamp missing: %#v", got)
+	}
+	if got.Decision == "" || got.Action == "" || len(got.RiskTags) == 0 || len(got.Capabilities) == 0 {
+		t.Fatalf("audit policy_decision/classifier_result incomplete: %#v", got)
+	}
+	for _, key := range []string{"session_id", "execution_id", "event_id", "layer", "kind", "input_hash", "redaction_status"} {
+		if got.Extra[key] == "" {
+			t.Fatalf("audit Extra missing %q: %#v", key, got.Extra)
+		}
+	}
+	if got.Extra["redaction_status"] != "applied" {
+		t.Fatalf("redaction_status = %q, want applied", got.Extra["redaction_status"])
+	}
+	payload, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal SIEM event: %v", err)
+	}
+	for _, forbidden := range []string{fakeSecret, "raw_prompt", "raw_tool_input", "raw_stderr", "secret_token", ".env_content"} {
+		if strings.Contains(string(payload), forbidden) {
+			t.Fatalf("audit payload leaked forbidden marker %q: %s", forbidden, payload)
+		}
+	}
+}
+
 // TestSIEMEventForSessionLifecycle pins start/end event types + severity
 // (info on clean end, high on failed/degraded).
 func TestSIEMEventForSessionLifecycle(t *testing.T) {
@@ -700,6 +814,30 @@ func TestSIEMEventForSessionLifecycle(t *testing.T) {
 	}
 	if startEvent.Severity != audit.SeverityInfo {
 		t.Errorf("started Severity = %q, want info", startEvent.Severity)
+	}
+}
+
+// TestEDGE072ExecutionAuditIncludesEventCounts pins the audit-field gap found
+// in Phase 2: execution lifecycle records must expose bounded event_counts so
+// operators can correlate session evidence volume without loading Redis logs.
+func TestEDGE072ExecutionAuditIncludesEventCounts(t *testing.T) {
+	endedAt := time.Date(2026, 5, 5, 12, 30, 0, 0, time.UTC)
+	got := SIEMEventForExecutionEnded(AgentExecution{
+		ExecutionID: "edge_exec_edge072_counts",
+		SessionID:   "edge_sess_edge072_counts",
+		TenantID:    "tenant-edge072",
+		Status:      ExecutionStatusSucceeded,
+		EndedAt:     &endedAt,
+		Metrics: ExecutionMetrics{
+			Events:          7,
+			Allow:           4,
+			Deny:            2,
+			RequireApproval: 1,
+			Artifacts:       3,
+		},
+	})
+	if got.Extra["event_counts"] != "events=7,allow=4,deny=2,require_approval=1,artifacts=3" {
+		t.Fatalf("event_counts = %q, want all execution event counters; extra=%#v", got.Extra["event_counts"], got.Extra)
 	}
 }
 
@@ -1366,12 +1504,16 @@ func TestEdgeObservabilitySecretLeakMatrix(t *testing.T) {
 	for _, secret := range secrets {
 		recorder.RecordActionDecision(secret, secret, secret, secret, secret)
 		recorder.RecordActionDenied(secret, secret, secret, secret)
+		recorder.RecordEventPersisted(secret, secret, secret, secret)
+		recorder.RecordEventRedacted(secret)
+		recorder.RecordHookTimeout(secret)
 		recorder.RecordDegraded(secret, secret, secret, secret)
 		recorder.RecordFailClosed(secret, secret, secret)
 		recorder.RecordArtifactExport(secret, secret, secret)
 		recorder.ObserveHookLatency(secret, secret, secret, time.Millisecond)
 		recorder.ObserveEvaluateLatency(secret, secret, secret, secret, time.Millisecond)
 		recorder.RecordCacheLookup(secret, secret, secret, secret)
+		recorder.RecordStreamEventSent(secret)
 		recorder.RecordStreamDrop(secret)
 	}
 	metricsFamilies, err := reg.Gather()

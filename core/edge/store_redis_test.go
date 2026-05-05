@@ -420,6 +420,7 @@ type abortRecorder struct {
 	mu                       sync.Mutex
 	reasons                  []string
 	appendEventsReasons      []string
+	eventsPersisted          []eventPersistedCall
 	eventCapRejected         int
 	cleanupDurations         []time.Duration
 	cleanupKeysDeleted       int
@@ -427,6 +428,10 @@ type abortRecorder struct {
 	sessionsSwept            int
 	idempotencyTTLExtended   []string
 	idempotencyWindowExpired []string
+}
+
+type eventPersistedCall struct {
+	layer, kind, decision string
 }
 
 func (r *abortRecorder) RecordCreateExecutionAborted(reason string) {
@@ -439,6 +444,12 @@ func (r *abortRecorder) RecordAppendEventsAborted(reason string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.appendEventsReasons = append(r.appendEventsReasons, reason)
+}
+
+func (r *abortRecorder) RecordEventPersisted(_ string, layer string, kind string, decision string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.eventsPersisted = append(r.eventsPersisted, eventPersistedCall{layer: layer, kind: kind, decision: decision})
 }
 
 func (r *abortRecorder) RecordSessionEventCapRejected() {
@@ -481,6 +492,12 @@ func (r *abortRecorder) SnapshotAppendEvents() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]string(nil), r.appendEventsReasons...)
+}
+
+func (r *abortRecorder) SnapshotEventsPersisted() []eventPersistedCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]eventPersistedCall(nil), r.eventsPersisted...)
 }
 
 func (r *abortRecorder) SnapshotEventCapRejected() int {
@@ -1035,6 +1052,42 @@ func TestRedisStoreAppendEventsAbortedMetricFiresWithBoundedReason(t *testing.T)
 			t.Fatalf("recorder appendEvents reasons = %#v, want empty (happy path)", got)
 		}
 	})
+}
+
+func TestEDGE072RedisStoreRecordsEventPersistedOnlyAfterSuccessfulAppend(t *testing.T) {
+	ctx := context.Background()
+	rec := &abortRecorder{}
+	store, _, mr, cleanup := newRedisEdgeStore(t, WithRecorder(rec))
+	defer cleanup()
+
+	base := time.Date(2026, 5, 5, 10, 0, 0, 0, time.UTC)
+	createSessionAndExecution(t, ctx, store, "tenant-a", "sess-edge072-persisted", "exec-edge072-persisted", base)
+
+	mr.SetError("edge redis unavailable")
+	_, err := store.AppendEvents(ctx, []AgentActionEvent{
+		validStoreEvent("tenant-a", "sess-edge072-persisted", "exec-edge072-persisted", "event-edge072-failed", 0, base.Add(time.Second), EventKindHookPreToolUse, DecisionAllow),
+	})
+	assertRedisUnavailableError(t, err)
+	if got := rec.SnapshotEventsPersisted(); len(got) != 0 {
+		t.Fatalf("RecordEventPersisted fired on failed append: %#v", got)
+	}
+
+	mr.SetError("")
+	_, err = store.AppendEvents(ctx, []AgentActionEvent{
+		validStoreEvent("tenant-a", "sess-edge072-persisted", "exec-edge072-persisted", "event-edge072-ok-1", 0, base.Add(2*time.Second), EventKindHookPreToolUse, DecisionAllow),
+		validStoreEvent("tenant-a", "sess-edge072-persisted", "exec-edge072-persisted", "event-edge072-ok-2", 0, base.Add(3*time.Second), EventKindHookPolicyDecision, DecisionDeny),
+	})
+	if err != nil {
+		t.Fatalf("AppendEvents successful batch: %v", err)
+	}
+	got := rec.SnapshotEventsPersisted()
+	want := []eventPersistedCall{
+		{layer: "hook", kind: "hook.pre_tool_use", decision: "ALLOW"},
+		{layer: "hook", kind: "hook.policy_decision", decision: "DENY"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("RecordEventPersisted calls = %#v, want %#v", got, want)
+	}
 }
 
 func TestRedisStoreHeartbeatTTL(t *testing.T) {

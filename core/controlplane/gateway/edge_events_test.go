@@ -125,7 +125,9 @@ func TestGatewayEdgeEventRoutesDenyCrossTenantWithoutLeakingIDs(t *testing.T) {
 }
 
 func TestGatewayEdgeEventSingleWriteRedactsHashesAndPreservesSeq(t *testing.T) {
-	_, handler := newEdgeRouteTestServer(t)
+	s, handler := newEdgeRouteTestServer(t)
+	rec := &recordingEdgeRecorder{}
+	s.edgeRecorder = rec
 	session := createEdgeRouteSession(t, handler)
 
 	rawSecretCommand := "Authorization: Bearer edge006-secret-token"
@@ -164,6 +166,9 @@ func TestGatewayEdgeEventSingleWriteRedactsHashesAndPreservesSeq(t *testing.T) {
 	if created.InputRedacted["command"] == rawSecretCommand {
 		t.Fatalf("stored event input_redacted kept raw command: %#v", created.InputRedacted)
 	}
+	if got := rec.Redacted(); len(got) != 1 || got[0] != "applied" {
+		t.Fatalf("redaction metric calls = %#v, want [applied]", got)
+	}
 
 	second := edgeRoutePOST(t, handler, "/api/v1/edge/events", `{
 		"event_id":"evt-edge006-single-2",
@@ -185,6 +190,19 @@ func TestGatewayEdgeEventSingleWriteRedactsHashesAndPreservesSeq(t *testing.T) {
 	decodeEdgeRouteJSON(t, second, &createdSecond)
 	if createdSecond.Seq != 2 {
 		t.Fatalf("second event seq = %d, want explicit seq 2 preserved", createdSecond.Seq)
+	}
+}
+
+func TestRecordEdgeEventRedactionFailedRecordsFailedOutcome(t *testing.T) {
+	rec := &recordingEdgeRecorder{}
+
+	recordEdgeEventRedactionFailed(rec, "gateway.edge_event_input", "redactor_error")
+
+	if got := rec.Redacted(); len(got) != 1 || got[0] != "failed" {
+		t.Fatalf("redaction outcomes = %v, want [failed]", got)
+	}
+	if got := rec.RedactionFailures(); len(got) != 1 || got[0] != "gateway.edge_event_input:redactor_error" {
+		t.Fatalf("redaction failures = %v, want gateway.edge_event_input:redactor_error", got)
 	}
 }
 

@@ -46,6 +46,9 @@ func Run(ctx context.Context, opts RunOptions) int {
 
 	input, err := readHookInput(runCtx, opts.Stdin, maxInputBytes(opts))
 	if err != nil {
+		if errors.Is(err, errInputTimeout) {
+			recordHookTimeout(opts, "request")
+		}
 		writeInputError(stderr, err)
 		return 2
 	}
@@ -133,6 +136,7 @@ func handleAgentdError(stderr, stdout io.Writer, input HookInput, req AgentdRequ
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		code = "agentd_timeout"
 		reason = "Cordum Edge timeout; blocking by fail-closed policy"
+		recordHookTimeout(opts, "gateway")
 	}
 	warnf(stderr, "%s error=%s", code, redactDiagnostic(err.Error()))
 	if input.HookEventName == "FileChanged" {
@@ -169,6 +173,12 @@ func handleAgentdError(stderr, stdout io.Writer, input HookInput, req AgentdRequ
 	}
 	recordHookObservability(opts, req, Decision("degraded"), code, true, false, startedAt)
 	return 0
+}
+
+func recordHookTimeout(opts RunOptions, phase string) {
+	if opts.Recorder != nil {
+		opts.Recorder.RecordHookTimeout(phase)
+	}
 }
 
 func recordHookObservability(opts RunOptions, req AgentdRequest, decision Decision, reasonCode string, degraded, failClosed bool, startedAt time.Time) {

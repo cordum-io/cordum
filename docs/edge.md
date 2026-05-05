@@ -68,7 +68,8 @@ stable hashes, and artifact pointer metadata.
   evaluate calls, optional safe-allow cache, optional local/demo inline approval
   wait, heartbeat, and shutdown evidence.
 - Gateway and Safety Kernel enforce tenant auth, policy modes/snapshots,
-  approvals, audit, metrics, and redaction before persistence.
+  approvals, audit, metrics, and redaction before persistence. The canonical
+  metric and audit-field inventory is [Edge observability](edge/observability.md).
 - Enterprise managed settings, endpoint controls, binary trust, and
   keychain/service bootstrap are the fleet enforcement boundary. The developer
   wrapper alone does not stop a user from running raw `claude`.
@@ -122,5 +123,6 @@ Read it before touching any audit, evidence, approval, or cache code.
 - [Edge API reference](edge/api.md)
 - [Edge configuration](edge/configuration.md)
 - [Edge retention, caps, and cleanup](edge/retention.md)
+- [Edge observability](edge/observability.md) — metrics, audit fields, and dashboard hook status.
 - [Edge identity contract](edge/identity-contract.md) — IDs, hashes, approval lifecycle.
 - Edge P0 threat model: internal Cordum engineering.

@@ -112,7 +112,7 @@ func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.PrincipalID = principalID
-	event, err := normalizeEdgeEventRequest(req, tenantID)
+	event, err := normalizeEdgeEventRequest(req, tenantID, s.edgeRecorder)
 	if err != nil {
 		writeEdgeEventRequestError(w, r, err, "invalid edge event request")
 		return
@@ -181,7 +181,7 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		item.PrincipalID = principalID
-		event, err := normalizeEdgeEventRequest(item, tenantID)
+		event, err := normalizeEdgeEventRequest(item, tenantID, s.edgeRecorder)
 		if err != nil {
 			writeEdgeEventRequestError(w, r, err, "invalid edge event batch request")
 			return
@@ -413,11 +413,11 @@ func isValidEdgeDecision(value edgecore.EdgeDecision) bool {
 	}
 }
 
-func normalizeEdgeEventRequest(req edgeEventWriteRequest, tenantID string) (edgecore.AgentActionEvent, error) {
+func normalizeEdgeEventRequest(req edgeEventWriteRequest, tenantID string, recorder edgecore.Recorder) (edgecore.AgentActionEvent, error) {
 	if err := rejectRawEdgeEventPayload(req); err != nil {
 		return edgecore.AgentActionEvent{}, err
 	}
-	inputRedacted, inputHash, err := redactEdgeEventInput(req.InputRedacted, req.InputHash)
+	inputRedacted, inputHash, err := redactEdgeEventInput(req.InputRedacted, req.InputHash, recorder)
 	if err != nil {
 		return edgecore.AgentActionEvent{}, err
 	}
@@ -583,12 +583,13 @@ func rejectRawEdgeEventPayload(req edgeEventWriteRequest) error {
 	return nil
 }
 
-func redactEdgeEventInput(input map[string]any, providedHash string) (map[string]any, string, error) {
+func redactEdgeEventInput(input map[string]any, providedHash string, recorder edgecore.Recorder) (map[string]any, string, error) {
 	inputHash, err := redactEdgeString(providedHash)
 	if err != nil {
 		return nil, "", err
 	}
 	if len(input) == 0 {
+		recordEdgeEventRedaction(recorder, "skipped")
 		return nil, inputHash, nil
 	}
 	if err := ensureEdgeInlineJSONSize("input_redacted", input, edgecore.MaxInputRedactedBytes); err != nil {
@@ -596,6 +597,7 @@ func redactEdgeEventInput(input map[string]any, providedHash string) (map[string
 	}
 	result, err := edgecore.RedactValue(input, edgecore.RedactionOptions{HashMode: edgecore.RedactionHashBoth})
 	if err != nil {
+		recordEdgeEventRedactionFailed(recorder, "gateway.edge_event_input", "redactor_error")
 		return nil, "", err
 	}
 	redacted, ok := result.Value.(map[string]any)
@@ -610,7 +612,31 @@ func redactEdgeEventInput(input map[string]any, providedHash string) (map[string
 	} else if result.RedactedHash != "" {
 		inputHash = result.RedactedHash
 	}
+	recordEdgeEventRedaction(recorder, edgeEventRedactionOutcome(result))
 	return redacted, inputHash, nil
+}
+
+func edgeEventRedactionOutcome(result edgecore.RedactionResult) string {
+	if result.Truncated {
+		return "partial"
+	}
+	if result.Redacted {
+		return "applied"
+	}
+	return "skipped"
+}
+
+func recordEdgeEventRedaction(recorder edgecore.Recorder, outcome string) {
+	if recorder != nil {
+		recorder.RecordEventRedacted(outcome)
+	}
+}
+
+func recordEdgeEventRedactionFailed(recorder edgecore.Recorder, site, reason string) {
+	if recorder != nil {
+		recorder.RecordEventRedacted("failed")
+		recorder.RecordRedactionFailed(site, reason)
+	}
 }
 
 func ensureEdgeInlineJSONSize(field string, value any, maxBytes int) error {

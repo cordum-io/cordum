@@ -20,6 +20,7 @@ type hookRecordingRecorder struct {
 	hookLatency     []hookLatencyCall
 	degraded        []hookReasonCall
 	failClosed      []hookReasonCall
+	hookTimeout     []string
 }
 
 type hookActionDecisionCall struct {
@@ -57,6 +58,10 @@ func (r *hookRecordingRecorder) RecordDegraded(tenant, mode, component, reason s
 
 func (r *hookRecordingRecorder) RecordFailClosed(tenant, mode, reason string) {
 	r.failClosed = append(r.failClosed, hookReasonCall{tenant: tenant, mode: mode, reason: reason})
+}
+
+func (r *hookRecordingRecorder) RecordHookTimeout(phase string) {
+	r.hookTimeout = append(r.hookTimeout, phase)
 }
 
 type fakeAgentdClient struct {
@@ -196,6 +201,33 @@ func TestRunRecordsHookObservabilityForFailClosedAgentdOutage(t *testing.T) {
 	}
 	if len(recorder.hookLatency) != 1 || recorder.hookLatency[0].decision != "deny" || recorder.hookLatency[0].hookEvent != "PreToolUse" {
 		t.Fatalf("hook latency calls = %#v, want PreToolUse deny", recorder.hookLatency)
+	}
+}
+
+func TestRunRecordsHookTimeoutMetricForAgentdDeadline(t *testing.T) {
+	recorder := &hookRecordingRecorder{}
+	agentd := &fakeAgentdClient{fn: func(context.Context, AgentdRequest) (AgentdDecision, error) {
+		return AgentdDecision{}, context.DeadlineExceeded
+	}}
+
+	code, _, stderr := runHook(t, RunOptions{
+		Args:     []string{"claude", "pre-tool-use"},
+		Stdin:    hookInput(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"npm test"}}`),
+		Agentd:   agentd,
+		Recorder: recorder,
+		Env: map[string]string{
+			"CORDUM_AGENTD_FAIL_CLOSED": "true",
+		},
+	})
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr=%q", code, stderr)
+	}
+	if len(recorder.hookTimeout) != 1 || recorder.hookTimeout[0] != "gateway" {
+		t.Fatalf("hook timeout calls = %#v, want [gateway]", recorder.hookTimeout)
+	}
+	if len(recorder.actionDenied) != 1 || recorder.actionDenied[0].reason != "agentd_timeout" {
+		t.Fatalf("action denied calls = %#v, want agentd_timeout", recorder.actionDenied)
 	}
 }
 

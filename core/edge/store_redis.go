@@ -1106,6 +1106,7 @@ func (s *RedisStore) AppendEvents(ctx context.Context, events []AgentActionEvent
 	if err != nil {
 		return nil, err
 	}
+	s.recordEventsPersisted(appended)
 	return appended, nil
 }
 
@@ -1205,9 +1206,21 @@ func (s *RedisStore) appendEventsWithIdempotencyTx(
 			}
 			return EdgeIdempotentAppendResult{}, err
 		}
+		if result.State == EdgeIdempotencyCompleted {
+			s.recordEventsPersisted(result.Events)
+		}
 		return result, nil
 	}
 	return EdgeIdempotentAppendResult{}, fmt.Errorf("edge idempotent append conflict: %w", redis.TxFailedErr)
+}
+
+func (s *RedisStore) recordEventsPersisted(events []AgentActionEvent) {
+	if s == nil || s.recorder == nil {
+		return
+	}
+	for _, event := range events {
+		s.recorder.RecordEventPersisted(event.TenantID, string(event.Layer), string(event.Kind), string(event.Decision))
+	}
 }
 
 func (s *RedisStore) loadCompletedAppendReplay(ctx context.Context, key string, req EdgeIdempotencyRequest) (EdgeIdempotentAppendResult, bool, error) {

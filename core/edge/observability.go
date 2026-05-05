@@ -24,6 +24,7 @@ package edge
 
 import (
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,6 +63,11 @@ type Recorder interface {
 	RecordSessionCleanupDeadline()
 	RecordSessionEventCapRejected()
 	RecordSessionSwept()
+
+	// Event persistence / redaction metrics.
+	RecordEventPersisted(tenant, layer, kind, decision string)
+	RecordEventRedacted(outcome string) // applied | skipped | partial | failed
+	RecordHookTimeout(phase string)     // request | gateway | kernel | other
 
 	// Action decisions.
 	RecordActionDecision(tenant, layer, kind, decision, mode string)
@@ -153,6 +159,7 @@ type Recorder interface {
 
 	// Stream observability.
 	AddStreamClients(tenant string, delta int)
+	RecordStreamEventSent(tenant string)
 	RecordStreamDrop(reason string) // marshal_error | client_buffer_full | tenant_filter | stopped
 }
 
@@ -176,6 +183,9 @@ func (NoopRecorder) AddSessionCleanupKeysDeleted(int)                           
 func (NoopRecorder) RecordSessionCleanupDeadline()                               {}
 func (NoopRecorder) RecordSessionEventCapRejected()                              {}
 func (NoopRecorder) RecordSessionSwept()                                         {}
+func (NoopRecorder) RecordEventPersisted(string, string, string, string)         {}
+func (NoopRecorder) RecordEventRedacted(string)                                  {}
+func (NoopRecorder) RecordHookTimeout(string)                                    {}
 func (NoopRecorder) RecordActionDecision(string, string, string, string, string) {}
 func (NoopRecorder) RecordActionDenied(string, string, string, string)           {}
 func (NoopRecorder) RecordApprovalRequested(string, string, string)              {}
@@ -196,6 +206,7 @@ func (NoopRecorder) ObserveEvaluateLatency(string, string, string, string, time.
 }
 func (NoopRecorder) RecordCacheLookup(string, string, string, string) {}
 func (NoopRecorder) AddStreamClients(string, int)                     {}
+func (NoopRecorder) RecordStreamEventSent(string)                     {}
 func (NoopRecorder) RecordStreamDrop(string)                          {}
 
 // Bounded label normalization helpers. NormalizeDecision/NormalizeLayer/
@@ -308,6 +319,24 @@ func NormalizeStreamDropReason(value string) string {
 		return "unknown"
 	}
 	if _, ok := allowedStreamDropReasons[v]; ok {
+		return v
+	}
+	return "other"
+}
+
+var allowedRedactionStatuses = map[string]struct{}{
+	"applied": {},
+	"skipped": {},
+	"partial": {},
+	"failed":  {},
+}
+
+func NormalizeRedactionStatus(value string) string {
+	v := lowerTrim(value)
+	if v == "" {
+		return "unknown"
+	}
+	if _, ok := allowedRedactionStatuses[v]; ok {
 		return v
 	}
 	return "other"
@@ -677,7 +706,22 @@ func actionExtra(event AgentActionEvent) map[string]string {
 	if v := strings.TrimSpace(event.ApprovalRef); v != "" {
 		extra["approval_ref"] = boundedShortString(v, 64)
 	}
+	extra["redaction_status"] = redactionStatusForAction(event)
 	return extra
+}
+
+func redactionStatusForAction(event AgentActionEvent) string {
+	for _, key := range []string{"redaction_status", "redaction.status"} {
+		if event.Labels != nil {
+			if status := NormalizeRedactionStatus(event.Labels[key]); status != "unknown" {
+				return status
+			}
+		}
+	}
+	if len(event.InputRedacted) > 0 || strings.TrimSpace(event.InputHash) != "" {
+		return "applied"
+	}
+	return "skipped"
 }
 
 func boundedRuleTier(value string) string {
@@ -895,7 +939,23 @@ func executionExtra(exec AgentExecution) map[string]string {
 	if exec.Attempt > 0 {
 		extra["attempt"] = strconvItoa(exec.Attempt)
 	}
+	extra["event_counts"] = executionEventCounts(exec.Metrics)
 	return extra
+}
+
+func executionEventCounts(metrics ExecutionMetrics) string {
+	return "events=" + strconv.Itoa(nonNegativeMetric(metrics.Events)) +
+		",allow=" + strconv.Itoa(nonNegativeMetric(metrics.Allow)) +
+		",deny=" + strconv.Itoa(nonNegativeMetric(metrics.Deny)) +
+		",require_approval=" + strconv.Itoa(nonNegativeMetric(metrics.RequireApproval)) +
+		",artifacts=" + strconv.Itoa(nonNegativeMetric(metrics.Artifacts))
+}
+
+func nonNegativeMetric(value int) int {
+	if value < 0 {
+		return 0
+	}
+	return value
 }
 
 // strconvItoa is a tiny inline replacement for strconv.Itoa so we don't

@@ -295,6 +295,7 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 type edgeEvaluateContext struct {
 	req         edgeEvaluateRequest
 	store       edgecore.Store
+	recorder    edgecore.Recorder
 	tenantID    string
 	principalID string
 	session     *edgecore.EdgeSession
@@ -383,6 +384,7 @@ func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Reque
 	return edgeEvaluateContext{
 		req:         req,
 		store:       store,
+		recorder:    s.edgeRecorder,
 		tenantID:    tenantID,
 		principalID: principalID,
 		session:     session,
@@ -1255,7 +1257,7 @@ func buildEdgeEvaluatePolicyInput(evalCtx edgeEvaluateContext) (edgeEvaluatePoli
 		return edgeEvaluatePolicyInput{}, err
 	}
 
-	inputRedacted, inputHash, err := redactEdgeEventInput(req.redactedInput(), req.inputHash())
+	inputRedacted, inputHash, err := redactEdgeEventInput(req.redactedInput(), req.inputHash(), evalCtx.recorder)
 	if err != nil {
 		return edgeEvaluatePolicyInput{}, err
 	}

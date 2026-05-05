@@ -702,24 +702,27 @@ type recordHookLatencyCall struct {
 	duration                    time.Duration
 }
 
-func (r *captureRecorder) RecordSessionCreated(string, string, string)   {}
-func (r *captureRecorder) RecordSessionEnded(string, string, string)     {}
-func (r *captureRecorder) SetSessionsActive(string, string, int)         {}
-func (r *captureRecorder) RecordExecutionStarted(string, string, string) {}
-func (r *captureRecorder) RecordExecutionEnded(string, string, string)   {}
-func (r *captureRecorder) RecordCreateExecutionAborted(string)           {}
-func (r *captureRecorder) ObserveSessionCleanupDuration(time.Duration)   {}
-func (r *captureRecorder) AddSessionCleanupKeysDeleted(int)              {}
-func (r *captureRecorder) RecordSessionCleanupDeadline()                 {}
-func (r *captureRecorder) RecordSessionEventCapRejected()                {}
-func (r *captureRecorder) RecordSessionSwept()                           {}
-func (r *captureRecorder) RecordApprovalEnqueueAborted(string)           {}
-func (r *captureRecorder) RecordAppendEventsAborted(string)              {}
-func (r *captureRecorder) RecordIdempotencyTTLExtended(string)           {}
-func (r *captureRecorder) RecordIdempotencyWindowExpired(string)         {}
-func (r *captureRecorder) RecordAgentdResponseWriteAborted(string)       {}
-func (r *captureRecorder) RecordEdgeExportRequestRejected(string)        {}
-func (r *captureRecorder) RecordRedactionFailed(string, string)          {}
+func (r *captureRecorder) RecordSessionCreated(string, string, string)         {}
+func (r *captureRecorder) RecordSessionEnded(string, string, string)           {}
+func (r *captureRecorder) SetSessionsActive(string, string, int)               {}
+func (r *captureRecorder) RecordExecutionStarted(string, string, string)       {}
+func (r *captureRecorder) RecordExecutionEnded(string, string, string)         {}
+func (r *captureRecorder) RecordCreateExecutionAborted(string)                 {}
+func (r *captureRecorder) ObserveSessionCleanupDuration(time.Duration)         {}
+func (r *captureRecorder) AddSessionCleanupKeysDeleted(int)                    {}
+func (r *captureRecorder) RecordSessionCleanupDeadline()                       {}
+func (r *captureRecorder) RecordSessionEventCapRejected()                      {}
+func (r *captureRecorder) RecordSessionSwept()                                 {}
+func (r *captureRecorder) RecordEventPersisted(string, string, string, string) {}
+func (r *captureRecorder) RecordEventRedacted(string)                          {}
+func (r *captureRecorder) RecordHookTimeout(string)                            {}
+func (r *captureRecorder) RecordApprovalEnqueueAborted(string)                 {}
+func (r *captureRecorder) RecordAppendEventsAborted(string)                    {}
+func (r *captureRecorder) RecordIdempotencyTTLExtended(string)                 {}
+func (r *captureRecorder) RecordIdempotencyWindowExpired(string)               {}
+func (r *captureRecorder) RecordAgentdResponseWriteAborted(string)             {}
+func (r *captureRecorder) RecordEdgeExportRequestRejected(string)              {}
+func (r *captureRecorder) RecordRedactionFailed(string, string)                {}
 func (r *captureRecorder) RecordAgentdShutdownForced(reason string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -769,6 +772,7 @@ func (r *captureRecorder) RecordCacheLookup(tenant, layer, kind, result string) 
 }
 
 func (r *captureRecorder) AddStreamClients(string, int) {}
+func (r *captureRecorder) RecordStreamEventSent(string) {}
 func (r *captureRecorder) RecordStreamDrop(string)      {}
 
 func (r *captureRecorder) hasCacheResult(result string) bool {

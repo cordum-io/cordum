@@ -104,7 +104,9 @@ func (s *server) forwardPersistedEdgeEvent(event edgecore.AgentActionEvent) {
 			"event_id", sanitizeUTF8ForLog(strings.TrimSpace(event.EventID)),
 			"kind", sanitizeUTF8ForLog(strings.TrimSpace(string(event.Kind))),
 		)
+		return
 	}
+	s.recordEdgeStreamEventSent(event.TenantID)
 }
 
 // recordEdgeStreamDrop fires the EDGE-014 stream-drop metric with a
@@ -118,4 +120,11 @@ func (s *server) recordEdgeStreamDrop(reason string) {
 		return
 	}
 	s.edgeRecorder.RecordStreamDrop(reason)
+}
+
+func (s *server) recordEdgeStreamEventSent(tenant string) {
+	if s == nil || s.edgeRecorder == nil {
+		return
+	}
+	s.edgeRecorder.RecordStreamEventSent(tenant)
 }

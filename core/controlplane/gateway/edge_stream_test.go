@@ -358,6 +358,9 @@ type recordingEdgeRecorder struct {
 	mu     sync.Mutex
 	drops  []string
 	deltas []int
+	sent   []string
+	redact []string
+	failed []string
 }
 
 func (r *recordingEdgeRecorder) RecordStreamDrop(reason string) {
@@ -372,10 +375,63 @@ func (r *recordingEdgeRecorder) AddStreamClients(_ string, delta int) {
 	r.deltas = append(r.deltas, delta)
 }
 
+func (r *recordingEdgeRecorder) RecordStreamEventSent(tenant string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sent = append(r.sent, tenant)
+}
+
+func (r *recordingEdgeRecorder) RecordEventRedacted(outcome string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.redact = append(r.redact, outcome)
+}
+
+func (r *recordingEdgeRecorder) RecordRedactionFailed(site, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.failed = append(r.failed, site+":"+reason)
+}
+
 func (r *recordingEdgeRecorder) Drops() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]string(nil), r.drops...)
+}
+
+func (r *recordingEdgeRecorder) Sent() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.sent...)
+}
+
+func (r *recordingEdgeRecorder) Redacted() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.redact...)
+}
+
+func (r *recordingEdgeRecorder) RedactionFailures() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.failed...)
+}
+
+func TestForwardPersistedEdgeEventRecordsSentMetricOnQueueSuccess(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	rec := &recordingEdgeRecorder{}
+	s.edgeRecorder = rec
+	drainGatewayEdgeStreamQueue(s.eventsCh)
+
+	s.forwardPersistedEdgeEvent(validGatewayEdgeStreamEvent())
+
+	got := rec.Sent()
+	if len(got) != 1 || got[0] != "tenant-edge-a" {
+		t.Fatalf("sent metrics = %v, want [tenant-edge-a]", got)
+	}
+	if drops := rec.Drops(); len(drops) != 0 {
+		t.Fatalf("drops = %v, want none on success", drops)
+	}
 }
 
 // TestForwardPersistedEdgeEventRecordsMarshalErrorDrop pins step-11

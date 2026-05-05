@@ -32,6 +32,9 @@ type PrometheusRecorder struct {
 	sessionCleanupDeadlines   prometheus.Counter
 	sessionEventCapRejected   prometheus.Counter
 	sessionSwept              prometheus.Counter
+	eventsPersisted           *prometheus.CounterVec
+	eventsRedacted            *prometheus.CounterVec
+	hookTimeouts              *prometheus.CounterVec
 	actionDecisions           *prometheus.CounterVec
 	actionsDenied             *prometheus.CounterVec
 	approvalRequested         *prometheus.CounterVec
@@ -51,6 +54,7 @@ type PrometheusRecorder struct {
 	evaluateLatency           *prometheus.HistogramVec
 	cacheLookups              *prometheus.CounterVec
 	streamClients             prometheus.Gauge
+	streamEventsSent          *prometheus.CounterVec
 	streamDrops               *prometheus.CounterVec
 }
 
@@ -115,6 +119,18 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 			Namespace: ns, Name: "session_swept_total",
 			Help: "Edge sessions removed by the retention sweeper.",
 		}),
+		eventsPersisted: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns, Name: "event_persisted_total",
+			Help: "Edge action events successfully persisted after store commit, labeled by layer, kind, and decision.",
+		}, []string{"layer", "kind", "decision"}),
+		eventsRedacted: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns, Name: "event_redacted_total",
+			Help: "Edge event redaction outcomes at request normalization boundaries, labeled by bounded outcome.",
+		}, []string{"outcome"}),
+		hookTimeouts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns, Name: "hook_timeout_total",
+			Help: "Edge hook timeout events, labeled by bounded phase.",
+		}, []string{"phase"}),
 		actionDecisions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: ns, Name: "action_decisions_total",
 			Help: "Edge action policy decisions by layer, kind, decision, and mode.",
@@ -226,6 +242,10 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 			Namespace: ns, Name: "stream_clients",
 			Help: "Active Edge stream WebSocket clients (sum across tenants).",
 		}),
+		streamEventsSent: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: ns, Name: "ws_events_sent_total",
+			Help: "Edge WebSocket events accepted into the broadcast queue, labeled only by tenant_present to avoid cardinality.",
+		}, []string{"tenant_present"}),
 		streamDrops: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: ns, Name: "stream_drops_total",
 			Help: "Edge stream events dropped, labeled by bounded reason.",
@@ -237,6 +257,7 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 		r.sessionCleanupDuration, r.sessionCleanupKeysDeleted,
 		r.sessionCleanupDeadlines, r.sessionEventCapRejected,
 		r.sessionSwept,
+		r.eventsPersisted, r.eventsRedacted, r.hookTimeouts,
 		r.actionDecisions, r.actionsDenied,
 		r.approvalRequested, r.approvalResolved, r.approvalEnqueueAborts,
 		r.appendEventsAborts,
@@ -248,7 +269,7 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 		r.artifactExports,
 		r.hookLatency, r.evaluateLatency,
 		r.cacheLookups,
-		r.streamClients, r.streamDrops,
+		r.streamClients, r.streamEventsSent, r.streamDrops,
 	)
 	return r
 }
@@ -287,6 +308,15 @@ func (r *PrometheusRecorder) RecordSessionEventCapRejected() {
 }
 func (r *PrometheusRecorder) RecordSessionSwept() {
 	r.sessionSwept.Inc()
+}
+func (r *PrometheusRecorder) RecordEventPersisted(_ /*tenant*/, layer, kind, decision string) {
+	r.eventsPersisted.WithLabelValues(NormalizeLayer(layer), NormalizeKind(kind), NormalizeDecision(decision)).Inc()
+}
+func (r *PrometheusRecorder) RecordEventRedacted(outcome string) {
+	r.eventsRedacted.WithLabelValues(NormalizeRedactionStatus(outcome)).Inc()
+}
+func (r *PrometheusRecorder) RecordHookTimeout(phase string) {
+	r.hookTimeouts.WithLabelValues(boundedHookTimeoutPhase(phase)).Inc()
 }
 func (r *PrometheusRecorder) RecordActionDecision(_ /*tenant*/, layer, kind, decision, mode string) {
 	r.actionDecisions.WithLabelValues(NormalizeLayer(layer), NormalizeKind(kind), NormalizeDecision(decision), boundedMode(mode)).Inc()
@@ -349,6 +379,9 @@ func (r *PrometheusRecorder) RecordCacheLookup(_ /*tenant*/, layer, kind, result
 func (r *PrometheusRecorder) AddStreamClients(_ /*tenant*/ string, delta int) {
 	r.streamClients.Add(float64(delta))
 }
+func (r *PrometheusRecorder) RecordStreamEventSent(tenant string) {
+	r.streamEventsSent.WithLabelValues(boundedTenantPresent(tenant)).Inc()
+}
 func (r *PrometheusRecorder) RecordStreamDrop(reason string) {
 	r.streamDrops.WithLabelValues(NormalizeStreamDropReason(reason)).Inc()
 }
@@ -369,6 +402,30 @@ func boundedMode(value string) string {
 		return "unknown"
 	}
 	if _, ok := allowedModes[v]; ok {
+		return v
+	}
+	return "other"
+}
+
+func boundedTenantPresent(value string) string {
+	if lowerTrim(value) == "" {
+		return "false"
+	}
+	return "true"
+}
+
+var allowedHookTimeoutPhases = map[string]struct{}{
+	"request": {},
+	"gateway": {},
+	"kernel":  {},
+}
+
+func boundedHookTimeoutPhase(value string) string {
+	v := lowerTrim(value)
+	if v == "" {
+		return "unknown"
+	}
+	if _, ok := allowedHookTimeoutPhases[v]; ok {
 		return v
 	}
 	return "other"
@@ -777,8 +834,10 @@ func boundedAppendEventsAbortReason(value string) string {
 // or future-added site name cannot blow up cardinality.
 //   - claude.redact_hook_boundary_string: mapper.go redactHookBoundaryString
 //     (the EDGE-071 fix site).
+//   - gateway.edge_event_input: Gateway Edge event/evaluate input redaction.
 var allowedRedactionFailedSites = map[string]struct{}{
 	"claude.redact_hook_boundary_string": {},
+	"gateway.edge_event_input":           {},
 }
 
 func boundedRedactionFailedSite(value string) string {

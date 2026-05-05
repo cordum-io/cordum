@@ -56,13 +56,15 @@ TEST_FIXTURE_PATTERN='(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9_]{20,}|github_pat_[A
 #   - github_pat_test* / github_pat_fake* / github_pat_edge* — same for
 #     GitHub PAT shape.
 #   - AKIAIOSFODNN7EXAMPLE — AWS-documented public placeholder.
+#   - AKIATESTFAKEAKIA* — EDGE-072 no-leak unit-test sentinel; serialized
+#     audit fixtures are still scanned without this allowlist below.
 #   - EXAMPLEKEY / EXAMPLE / TESTKEY suffixes on AWS-shape access keys.
 #   - DUMMY*, synthetic, placeholder prefix tokens.
 #   - pemBody / privateKeyBody — synthetic PEM-block body sentinels in
 #     redaction tests.
 #   - sentinels\[ — Go map-indexed test sentinel pattern.
 #   - // no-secret-lint — explicit suppression marker.
-TEST_FIXTURE_SAFE_PATTERN='cordum_fake_|sk-test|sk-fake|sk-edge|sk-proj-|sk-redaction|sk-leaked|ghp_test|ghp_fake|ghp_edge|ghp_redaction|ghp_leaked|github_pat_test|github_pat_fake|github_pat_edge|github_pat_leaked|AKIAIOSFODNN7EXAMPLE|EXAMPLEKEY|EXAMPLE\b|TESTKEY|DUMMY|synthetic|placeholder|pemBody|privateKeyBody|sentinels\[|no-secret-lint'
+TEST_FIXTURE_SAFE_PATTERN='cordum_fake_|sk-test|sk-fake|sk-edge|sk-proj-|sk-redaction|sk-leaked|ghp_test|ghp_fake|ghp_edge|ghp_redaction|ghp_leaked|github_pat_test|github_pat_fake|github_pat_edge|github_pat_leaked|AKIAIOSFODNN7EXAMPLE|AKIATESTFAKEAKIA|EXAMPLEKEY|EXAMPLE\b|TESTKEY|DUMMY|synthetic|placeholder|pemBody|privateKeyBody|sentinels\[|no-secret-lint'
 
 # EDGE-071 audit invariant — scan test source + fixture files for raw secrets.
 TEST_SCAN_GLOBS=(
@@ -82,7 +84,43 @@ while IFS= read -r f; do
   fi
 done < <(find "${TEST_SCAN_GLOBS[@]}" \( -name '*_test.go' -o -path '*/testdata/*' \) -type f 2>/dev/null)
 
-# --- Phase 3: EDGE-068 argv-only exec guard ----------------------------------
+# --- Phase 3: EDGE-072 serialized audit-event fixture leak audit --------------
+# Serialized audit/SIEM fixtures are downstream evidence. Unlike unit-test source
+# fixtures, they must not contain even fake-but-secret-shaped sentinels because
+# those bytes are meant to represent what an operator/SIEM receives.
+# Keep this scan narrowly scoped to serialized fixtures so redaction unit tests
+# may still use synthetic secrets as inputs.
+AUDIT_EVENT_FIXTURE_PATTERN='(AKIA[A-Z0-9]{12,}|sk-[A-Za-z0-9]{20,}|-----BEGIN PRIVATE KEY-----)'
+AUDIT_FIXTURE_ROOTS=("$REPO_ROOT/core" "$REPO_ROOT/cmd")
+
+audit_event_fixture_candidates() {
+  find "${AUDIT_FIXTURE_ROOTS[@]}" \
+    \( -path '*/testdata/*' -o -name '*.golden' -o -name '*.snap' -o -name '*.snapshot' -o -name '*.ndjson' \) \
+    -type f 2>/dev/null
+}
+
+is_serialized_audit_event_fixture() {
+  local f="$1"
+  case "$f" in
+    *audit*|*siem*)
+      return 0
+      ;;
+  esac
+  grep -Eq '"event_type"[[:space:]]*:' "$f" 2>/dev/null &&
+    grep -Eq '"(tenant_id|extra|decision|timestamp)"[[:space:]]*:' "$f" 2>/dev/null
+}
+
+while IFS= read -r f; do
+  is_serialized_audit_event_fixture "$f" || continue
+  matches=$(grep -nE "$AUDIT_EVENT_FIXTURE_PATTERN" "$f" 2>/dev/null || true)
+  if [[ -n "$matches" ]]; then
+    echo "FAIL: $f serialized audit-event fixture contains a raw/fake secret-shaped value:"
+    echo "$matches"
+    FAILED=1
+  fi
+done < <(audit_event_fixture_candidates)
+
+# --- Phase 4: EDGE-068 argv-only exec guard ----------------------------------
 # Hook-boundary subprocesses must never route untrusted payloads through a
 # shell interpreter. Keep the check intentionally grep-based so it works in
 # local Git Bash/CI without extra tooling. Suppress audited false positives

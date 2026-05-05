@@ -295,6 +295,7 @@ func (s *LocalServer) evaluateHookWithBuffer(ctx context.Context, req claude.Age
 		before := buffer.Len()
 		decision, err := evaluator.EvaluateHookWithEventWriter(evalCtx, req, buffer)
 		if err != nil {
+			s.recordHookTimeoutIfDeadline(err, evalCtx)
 			return decision, err
 		}
 		if buffer.Len() == before {
@@ -304,9 +305,19 @@ func (s *LocalServer) evaluateHookWithBuffer(ctx context.Context, req claude.Age
 	}
 	decision, err := s.evaluator.EvaluateHook(evalCtx, req)
 	if err != nil {
+		s.recordHookTimeoutIfDeadline(err, evalCtx)
 		return decision, err
 	}
 	return decision, s.appendDecisionEvent(buffer, req, decision)
+}
+
+func (s *LocalServer) recordHookTimeoutIfDeadline(err error, ctx context.Context) {
+	if s == nil || s.recorder == nil {
+		return
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		s.recorder.RecordHookTimeout("kernel")
+	}
 }
 
 func (s *LocalServer) appendDecisionEvent(buffer *hookEventBuffer, req claude.AgentdRequest, decision claude.AgentdDecision) error {
