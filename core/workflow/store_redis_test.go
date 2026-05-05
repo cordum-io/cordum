@@ -57,6 +57,72 @@ func TestWorkflowSaveGetList(t *testing.T) {
 	}
 }
 
+func TestWorkflowPolicyOverrideRoundTrip(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	policyOverride := `tier: workflow
+selector:
+  workflow_id: wf-policy
+default_decision: deny
+rules:
+  - id: workflow-deny-deploy
+    decision: deny
+    match:
+      topics: ["job.deploy"]
+`
+	wf := &Workflow{
+		ID:             "wf-policy",
+		OrgID:          "org-1",
+		Name:           "Policy workflow",
+		PolicyOverride: policyOverride,
+		Steps:          map[string]*Step{"start": {ID: "start", Type: StepTypeWorker}},
+	}
+	if err := store.SaveWorkflow(ctx, wf); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	got, err := store.GetWorkflow(ctx, wf.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.PolicyOverride != policyOverride {
+		t.Fatalf("policy override mismatch:\n got %q\nwant %q", got.PolicyOverride, policyOverride)
+	}
+
+	list, err := store.ListWorkflows(ctx, "org-1", 10)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list) != 1 || list[0].PolicyOverride != policyOverride {
+		t.Fatalf("list did not preserve policy override: %+v", list)
+	}
+}
+
+func TestWorkflowPolicyOverrideRemovedOnDelete(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	wf := &Workflow{
+		ID:             "wf-policy-delete",
+		OrgID:          "org-1",
+		Name:           "Delete policy workflow",
+		PolicyOverride: "tier: workflow\nselector:\n  workflow_id: wf-policy-delete\nrules: []\n",
+		Steps:          map[string]*Step{"start": {ID: "start", Type: StepTypeWorker}},
+	}
+	if err := store.SaveWorkflow(ctx, wf); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := store.DeleteWorkflow(ctx, wf.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := store.GetWorkflow(ctx, wf.ID); err == nil {
+		t.Fatalf("expected workflow and policy override to be deleted")
+	}
+}
+
 func TestWorkflowRunsCRUD(t *testing.T) {
 	store := newTestStore(t)
 	defer func() { _ = store.Close() }()

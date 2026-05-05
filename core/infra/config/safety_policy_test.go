@@ -289,6 +289,44 @@ rules:
 	}
 }
 
+func TestParseSafetyPolicyTierSelectorFields(t *testing.T) {
+	policy, err := ParseSafetyPolicy([]byte(`
+tier: workflow
+selector:
+  workflow_id: deploy-prod
+default_decision: deny
+rules:
+  - id: workflow-deny-write
+    decision: deny
+    match:
+      topics: ["job.deploy"]
+`))
+	if err != nil {
+		t.Fatalf("expected workflow tier policy to parse: %v", err)
+	}
+	if policy.Tier != PolicyTierWorkflow {
+		t.Fatalf("tier = %q, want workflow", policy.Tier)
+	}
+	if policy.Selector.WorkflowID != "deploy-prod" {
+		t.Fatalf("workflow selector = %q, want deploy-prod", policy.Selector.WorkflowID)
+	}
+}
+
+func TestParseSafetyPolicyScopedTierRequiresSelector(t *testing.T) {
+	_, err := ParseSafetyPolicy([]byte(`
+tier: job
+default_decision: deny
+rules:
+  - id: job-deny-write
+    decision: deny
+    match:
+      topics: ["job.deploy"]
+`))
+	if err == nil {
+		t.Fatalf("expected job tier without job_id/session_id selector to fail")
+	}
+}
+
 func TestParseSafetyPolicyAgentScopeMatchFields(t *testing.T) {
 	policy, err := ParseSafetyPolicy([]byte(`
 rules:

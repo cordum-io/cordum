@@ -8,6 +8,7 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/store"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -326,6 +327,22 @@ func TestBuildJobRequestMetadata(t *testing.T) {
 	}
 	if !strings.Contains(req.Env["CORDUM_EFFECTIVE_CONFIG"], "limit") {
 		t.Fatalf("unexpected effective config payload")
+	}
+}
+
+func TestJobAttachmentPropagatesToLabels(t *testing.T) {
+	engine := &Engine{}
+	wf := &Workflow{ID: "wf-policy"}
+	run := &WorkflowRun{ID: "run-policy", OrgID: "org-policy"}
+	step := &Step{ID: "step-policy", Type: StepTypeWorker, WorkerID: "worker-policy", Topic: "job.policy"}
+
+	req := engine.buildJobRequest(context.Background(), wf, run, step, "step-policy", "job-policy-1")
+	want := edgecore.JobPolicyAttachmentID("job-policy-1")
+	if got := req.Labels[edgecore.LabelPolicyAttachmentID]; got != want {
+		t.Fatalf("policy attachment label = %q, want %q in %#v", got, want, req.Labels)
+	}
+	if got := req.Labels["workflow_id"]; got != wf.ID {
+		t.Fatalf("workflow_id label = %q, want %q in %#v", got, wf.ID, req.Labels)
 	}
 }
 

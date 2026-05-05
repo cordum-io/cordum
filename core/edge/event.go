@@ -87,6 +87,7 @@ type AgentActionEvent struct {
 	Decision         EdgeDecision      `json:"decision"`
 	DecisionReason   string            `json:"decision_reason"`
 	RuleID           string            `json:"rule_id"`
+	RuleTier         string            `json:"tier"`
 	PolicySnapshot   string            `json:"policy_snapshot"`
 	ApprovalRef      string            `json:"approval_ref"`
 	ArtifactPointers []ArtifactPointer `json:"artifact_ptrs"`

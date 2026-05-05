@@ -48,7 +48,7 @@ func EvaluatePolicyCheck(policy *config.SafetyPolicy, snapshot string, req *pb.P
 	}
 	input.SecretsPresent = SecretsPresent(input.Meta, req.GetLabels())
 
-	policyDecision := config.PolicyDecision{Decision: "allow"}
+	policyDecision := config.PolicyDecision{Decision: "allow", RuleTier: config.PolicyTierGlobal}
 	if policy != nil {
 		policyDecision = policy.Evaluate(input)
 		if tp, ok := policy.Tenants[tenant]; ok {

@@ -57,13 +57,15 @@ type edgeSessionCreateRequest struct {
 }
 
 type edgeSessionCreateResponse struct {
-	SessionID      string                  `json:"session_id"`
-	ExecutionID    string                  `json:"execution_id"`
-	TraceID        string                  `json:"trace_id"`
-	PolicySnapshot string                  `json:"policy_snapshot"`
-	DashboardURL   string                  `json:"dashboard_url"`
-	Session        edgecore.EdgeSession    `json:"session"`
-	Execution      edgecore.AgentExecution `json:"execution"`
+	SessionID                string                  `json:"session_id"`
+	ExecutionID              string                  `json:"execution_id"`
+	TraceID                  string                  `json:"trace_id"`
+	PolicySnapshot           string                  `json:"policy_snapshot"`
+	WorkflowOverrideSnapshot string                  `json:"workflow_override_snapshot,omitempty"`
+	JobOverrideSnapshot      string                  `json:"job_override_snapshot,omitempty"`
+	DashboardURL             string                  `json:"dashboard_url"`
+	Session                  edgecore.EdgeSession    `json:"session"`
+	Execution                edgecore.AgentExecution `json:"execution"`
 }
 
 type edgeSessionPageResponse struct {
@@ -211,6 +213,13 @@ func (s *server) executeCreateEdgeSession(r *http.Request, store edgecore.Store,
 	if err != nil {
 		return edgeIdempotentWriteResult{}, edgeCreateSessionInvalidErr{wrapped: err}
 	}
+	attachmentID := edgecore.SessionPolicyAttachmentID(sessionID)
+	sessionLabels := edgecore.WithPolicyAttachmentLabel(redacted.Labels, attachmentID)
+	executionLabels := edgecore.WithPolicyAttachmentLabel(redacted.Labels, attachmentID)
+	workflowOverrideSnapshot, jobOverrideSnapshot := edgeEvaluateScopeSnapshots(policySnapshot, sessionLabels)
+	if workflowOverrideSnapshot == "" {
+		workflowOverrideSnapshot = edgeTierSnapshot(policySnapshot, "workflow", redacted.WorkflowRunID)
+	}
 
 	session := edgecore.EdgeSession{
 		SessionID:         sessionID,
@@ -238,7 +247,7 @@ func (s *server) executeCreateEdgeSession(r *http.Request, store edgecore.Store,
 			MaxRisk: edgecore.RiskLevelLow,
 		},
 		StartedAt: now,
-		Labels:    redacted.Labels,
+		Labels:    sessionLabels,
 	}
 	if err := session.Validate(); err != nil {
 		return edgeIdempotentWriteResult{}, edgeCreateSessionInvalidErr{wrapped: err}
@@ -256,7 +265,7 @@ func (s *server) executeCreateEdgeSession(r *http.Request, store edgecore.Store,
 		PolicySnapshot: policySnapshot,
 		Status:         edgecore.ExecutionStatusRunning,
 		StartedAt:      now,
-		Labels:         redacted.Labels,
+		Labels:         executionLabels,
 	}
 	if err := execution.Validate(); err != nil {
 		return edgeIdempotentWriteResult{}, edgeCreateExecutionInvalidErr{wrapped: err}
@@ -290,13 +299,15 @@ func (s *server) executeCreateEdgeSession(r *http.Request, store edgecore.Store,
 	edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForExecutionStarted(execution))
 
 	body, err := jsonMarshalForEdgeIdempotency(edgeSessionCreateResponse{
-		SessionID:      sessionID,
-		ExecutionID:    executionID,
-		TraceID:        traceID,
-		PolicySnapshot: policySnapshot,
-		DashboardURL:   "/edge/sessions/" + sessionID,
-		Session:        session,
-		Execution:      execution,
+		SessionID:                sessionID,
+		ExecutionID:              executionID,
+		TraceID:                  traceID,
+		PolicySnapshot:           policySnapshot,
+		WorkflowOverrideSnapshot: workflowOverrideSnapshot,
+		JobOverrideSnapshot:      jobOverrideSnapshot,
+		DashboardURL:             "/edge/sessions/" + sessionID,
+		Session:                  session,
+		Execution:                execution,
 	})
 	if err != nil {
 		return edgeIdempotentWriteResult{}, edgeCreateSessionInternalErr{op: "marshal edge session response", wrapped: err}

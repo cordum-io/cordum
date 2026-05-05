@@ -118,6 +118,7 @@ type PolicyAuditEntry struct {
 
 type PolicyRuleSource struct {
 	FragmentID  string `json:"fragment_id"`
+	Tier        string `json:"tier,omitempty"`
 	PackID      string `json:"pack_id,omitempty"`
 	OverlayName string `json:"overlay_name,omitempty"`
 	Version     string `json:"version,omitempty"`

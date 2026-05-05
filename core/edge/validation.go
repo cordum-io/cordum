@@ -113,6 +113,9 @@ func (e AgentActionEvent) Validate() error {
 	if err := validateEdgeDecision(e.Decision); err != nil {
 		return err
 	}
+	if err := validateRuleTier(e.RuleTier); err != nil {
+		return err
+	}
 	if e.DurationMS < 0 {
 		return fmt.Errorf("duration_ms must be non-negative")
 	}
@@ -415,6 +418,15 @@ func validateEdgeDecision(value EdgeDecision) error {
 		return nil
 	default:
 		return fmt.Errorf("decision has unsafe value %q", value)
+	}
+}
+
+func validateRuleTier(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "global", "workflow", "job":
+		return nil
+	default:
+		return fmt.Errorf("tier has unsafe value %q", value)
 	}
 }
 

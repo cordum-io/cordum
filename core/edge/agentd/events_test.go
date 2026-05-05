@@ -115,6 +115,59 @@ func TestRecordDecisionEvidenceFailureDoesNotFlipFreshGatewayDecision(t *testing
 	}
 }
 
+func TestAuditEvidence_TierFieldRecorded(t *testing.T) {
+	t.Parallel()
+
+	event, err := BuildDecisionEvidenceEvent(DecisionEvidence{
+		State: evidenceTestState(edgecore.PolicyModeEnforce),
+		Request: claude.AgentdRequest{
+			EventName:     "PreToolUse",
+			SessionID:     "edge_sess_ev",
+			ExecutionID:   "edge_exec_ev",
+			TenantID:      "tenant-ev",
+			PrincipalID:   "principal-ev",
+			ToolName:      "Bash",
+			InputRedacted: map[string]any{"command": "npm test"},
+			InputHash:     "sha256:input-tier",
+			ActionHash:    "sha256:action-tier",
+			Labels:        map[string]string{"command.class": "safe"},
+		},
+		Response: EvaluateResponse{
+			Decision:            string(edgecore.DecisionAllow),
+			EventID:             "evt-tier-evidence",
+			RuleID:              "job.allow-tests",
+			RuleTier:            "job",
+			PolicySnapshot:      "snap-tier-global",
+			JobOverrideSnapshot: "snap-tier-job",
+			PermissionDecision:  "allow",
+		},
+		CacheMiss: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildDecisionEvidenceEvent: %v", err)
+	}
+	if event.RuleTier != "job" {
+		t.Fatalf("RuleTier = %q, want job", event.RuleTier)
+	}
+	if event.Labels["tier"] != "job" {
+		t.Fatalf("labels tier = %q, want job; labels=%#v", event.Labels["tier"], event.Labels)
+	}
+	siem := edgecore.SIEMEventForAction(event)
+	if siem.Extra["tier"] != "job" {
+		t.Fatalf("SIEM extra tier = %q, want job; extra=%#v", siem.Extra["tier"], siem.Extra)
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	if !strings.Contains(string(payload), `"tier":"job"`) {
+		t.Fatalf("event JSON missing tier=job: %s", payload)
+	}
+	if err := event.Validate(); err != nil {
+		t.Fatalf("event with rule tier did not validate: %v", err)
+	}
+}
+
 func TestBuildDecisionEvidenceEventAttachesArtifactPointers(t *testing.T) {
 	t.Parallel()
 

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
+	"github.com/cordum/cordum/core/infra/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,8 +23,15 @@ func RulesFromPolicyContent(fragmentID string, bundle map[string]any, content st
 	if len(rules) == 0 {
 		rules = LegacyPolicyRules(root["tenants"])
 	}
-	source := PolicyRuleSourceFromBundle(fragmentID, bundle)
 	for _, rule := range rules {
+		source := PolicyRuleSourceFromBundle(fragmentID, bundle)
+		source.Tier = policyRuleTier(root, rule)
+		if _, ok := rule["tier"]; !ok {
+			rule["tier"] = source.Tier
+		}
+		if _, ok := rule["selector"]; !ok && root["selector"] != nil {
+			rule["selector"] = root["selector"]
+		}
 		rule["source"] = source
 	}
 	return rules, nil
@@ -41,6 +49,7 @@ func OutputRulesFromPolicyContent(fragmentID string, bundle map[string]any, cont
 	}
 	rules := NormalizePolicyRules(root["output_rules"])
 	source := PolicyRuleSourceFromBundle(fragmentID, bundle)
+	source.Tier = config.NormalizePolicyTier(StringFromAny(root["tier"]))
 	out := make([]map[string]any, 0, len(rules))
 	for _, rule := range rules {
 		normalized := NormalizeOutputRule(rule)
@@ -201,4 +210,11 @@ func PolicyRuleSourceFromBundle(fragmentID string, bundle map[string]any) Policy
 	source.InstalledAt = strings.TrimSpace(StringFromAny(bundle["installed_at"]))
 	source.Sha256 = strings.TrimSpace(StringFromAny(bundle["sha256"]))
 	return source
+}
+
+func policyRuleTier(root, rule map[string]any) string {
+	if raw := strings.TrimSpace(StringFromAny(rule["tier"])); raw != "" {
+		return config.NormalizePolicyTier(raw)
+	}
+	return config.NormalizePolicyTier(StringFromAny(root["tier"]))
 }

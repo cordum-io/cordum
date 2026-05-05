@@ -2,12 +2,14 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/licensing"
 	wf "github.com/cordum/cordum/core/workflow"
 )
@@ -103,6 +105,116 @@ func TestWorkflowLifecycleHandlers(t *testing.T) {
 	if deleteRR.Code != http.StatusNoContent {
 		t.Fatalf("delete workflow: %d %s", deleteRR.Code, deleteRR.Body.String())
 	}
+}
+
+func TestWorkflowPolicyOverrideRoundTrip(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	policyOverride := validWorkflowPolicyOverride("wf-policy")
+	body, _ := json.Marshal(map[string]any{
+		"id":              "wf-policy",
+		"org_id":          "default",
+		"name":            "Workflow Policy",
+		"policy_override": policyOverride,
+		"steps": map[string]any{
+			"start": map[string]any{"type": "approval"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleCreateWorkflow(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create workflow: %d %s", rec.Code, rec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/wf-policy", nil)
+	getReq.Header.Set("X-Tenant-ID", "default")
+	getReq.SetPathValue("id", "wf-policy")
+	getRec := httptest.NewRecorder()
+	s.handleGetWorkflow(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get workflow: %d %s", getRec.Code, getRec.Body.String())
+	}
+	var got wf.Workflow
+	if err := json.Unmarshal(getRec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode workflow: %v", err)
+	}
+	if got.PolicyOverride != policyOverride {
+		t.Fatalf("policy_override = %q, want %q", got.PolicyOverride, policyOverride)
+	}
+}
+
+func TestCreateWorkflowRejectsInvalidPolicyOverride(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	body, _ := json.Marshal(map[string]any{
+		"id":              "wf-invalid-policy",
+		"org_id":          "default",
+		"name":            "Invalid Policy",
+		"policy_override": "tier: job\nselector:\n  job_id: job-1\nrules: []\n",
+		"steps": map[string]any{
+			"start": map[string]any{"type": "approval"},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	rec := httptest.NewRecorder()
+	s.handleCreateWorkflow(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid policy override, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "policy_override") {
+		t.Fatalf("expected policy_override validation error, got %s", rec.Body.String())
+	}
+}
+
+func TestWorkflowPolicyOverrideMergesIntoGlobalBundles(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	if err := s.workflowStore.SaveWorkflow(context.Background(), &wf.Workflow{
+		ID:             "wf-policy-merge",
+		OrgID:          "default",
+		Name:           "Workflow Policy Merge",
+		PolicyOverride: validWorkflowPolicyOverride("wf-policy-merge"),
+		Steps:          map[string]*wf.Step{"start": {ID: "start", Type: wf.StepTypeApproval}},
+	}); err != nil {
+		t.Fatalf("save workflow: %v", err)
+	}
+
+	bundles, _, err := s.loadPolicyBundles(context.Background())
+	if err != nil {
+		t.Fatalf("load policy bundles: %v", err)
+	}
+	if _, ok := bundles["workflow/wf-policy-merge/policy"]; !ok {
+		t.Fatalf("missing workflow policy override bundle: %+v", bundles)
+	}
+	policy, snapshot, err := policybundles.BuildPolicyFromBundles(bundles)
+	if err != nil {
+		t.Fatalf("BuildPolicyFromBundles: %v", err)
+	}
+	if !strings.HasPrefix(snapshot, "cfg:") {
+		t.Fatalf("snapshot = %q, want cfg: prefix", snapshot)
+	}
+	if policy == nil || len(policy.Rules) != 1 {
+		t.Fatalf("expected one merged workflow rule, got %+v", policy)
+	}
+	rule := policy.Rules[0]
+	if rule.Tier != "workflow" || rule.Selector.WorkflowID != "wf-policy-merge" {
+		t.Fatalf("merged rule tier/selector = %q/%+v, want workflow/wf-policy-merge", rule.Tier, rule.Selector)
+	}
+
+	if err := s.workflowStore.DeleteWorkflow(context.Background(), "wf-policy-merge"); err != nil {
+		t.Fatalf("delete workflow: %v", err)
+	}
+	bundles, _, err = s.loadPolicyBundles(context.Background())
+	if err != nil {
+		t.Fatalf("reload policy bundles: %v", err)
+	}
+	if _, ok := bundles["workflow/wf-policy-merge/policy"]; ok {
+		t.Fatalf("workflow policy override bundle still present after delete: %+v", bundles)
+	}
+}
+
+func validWorkflowPolicyOverride(workflowID string) string {
+	return "tier: workflow\nselector:\n  workflow_id: " + workflowID + "\ndefault_decision: deny\nrules:\n  - id: workflow-deny-deploy\n    decision: deny\n    match:\n      topics: [\"job.deploy\"]\n"
 }
 
 func TestCreateWorkflowRejectsInvalidStepID(t *testing.T) {

@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	edgecore "github.com/cordum/cordum/core/edge"
+	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -110,17 +112,20 @@ func (r edgeEvaluateRequest) inputHash() string {
 }
 
 type edgeEvaluateResponse struct {
-	Decision       edgecore.EdgeDecision `json:"decision"`
-	Reason         string                `json:"reason,omitempty"`
-	RuleID         string                `json:"rule_id,omitempty"`
-	PolicySnapshot string                `json:"policy_snapshot,omitempty"`
-	ApprovalRef    string                `json:"approval_ref,omitempty"`
-	ApprovalURL    string                `json:"approval_url,omitempty"`
-	ActionHash     string                `json:"action_hash,omitempty"`
-	InputHash      string                `json:"input_hash,omitempty"`
-	Constraints    map[string]any        `json:"constraints,omitempty"`
-	UpdatedInput   map[string]any        `json:"updated_input,omitempty"`
-	EventID        string                `json:"event_id,omitempty"`
+	Decision                 edgecore.EdgeDecision `json:"decision"`
+	Reason                   string                `json:"reason,omitempty"`
+	RuleID                   string                `json:"rule_id,omitempty"`
+	RuleTier                 string                `json:"rule_tier,omitempty"`
+	PolicySnapshot           string                `json:"policy_snapshot,omitempty"`
+	WorkflowOverrideSnapshot string                `json:"workflow_override_snapshot,omitempty"`
+	JobOverrideSnapshot      string                `json:"job_override_snapshot,omitempty"`
+	ApprovalRef              string                `json:"approval_ref,omitempty"`
+	ApprovalURL              string                `json:"approval_url,omitempty"`
+	ActionHash               string                `json:"action_hash,omitempty"`
+	InputHash                string                `json:"input_hash,omitempty"`
+	Constraints              map[string]any        `json:"constraints,omitempty"`
+	UpdatedInput             map[string]any        `json:"updated_input,omitempty"`
+	EventID                  string                `json:"event_id,omitempty"`
 
 	Degraded     bool   `json:"degraded,omitempty"`
 	ErrorCode    string `json:"error_code,omitempty"`
@@ -160,6 +165,7 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	outcome := edgeEvaluateOutcomeFromSafety(policyInput.event.EventID, safetyResp)
+	outcome = s.decorateEdgeEvaluateTierEvidence(r.Context(), policyInput.event.Labels, outcome)
 	actionHash, err := edgeEvaluateActionHash(policyInput.event, outcome.policySnapshot)
 	if err != nil {
 		writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")
@@ -400,16 +406,19 @@ type edgeEvaluatePolicyInput struct {
 }
 
 type edgeEvaluateDecisionOutcome struct {
-	response       edgeEvaluateResponse
-	kind           edgecore.EventKind
-	decision       edgecore.EdgeDecision
-	status         edgecore.ActionStatus
-	reason         string
-	ruleID         string
-	policySnapshot string
-	approvalRef    string
-	errorCode      string
-	errorMessage   string
+	response                 edgeEvaluateResponse
+	kind                     edgecore.EventKind
+	decision                 edgecore.EdgeDecision
+	status                   edgecore.ActionStatus
+	reason                   string
+	ruleID                   string
+	ruleTier                 string
+	policySnapshot           string
+	workflowOverrideSnapshot string
+	jobOverrideSnapshot      string
+	approvalRef              string
+	errorCode                string
+	errorMessage             string
 }
 
 func (s *server) evaluateEdgeSafety(ctx context.Context, req *pb.PolicyCheckRequest) (*pb.PolicyCheckResponse, error) {
@@ -486,6 +495,79 @@ func edgeEvaluateOutcomeFromSafety(eventID string, resp *pb.PolicyCheckResponse)
 		return base
 	default:
 		return base.edgeEvaluateDeny(defaultEdgeEvaluateReason(reason, "unknown policy decision"))
+	}
+}
+
+func (s *server) decorateEdgeEvaluateTierEvidence(ctx context.Context, labels edgecore.Labels, outcome edgeEvaluateDecisionOutcome) edgeEvaluateDecisionOutcome {
+	tier := edgeNormalizeRuleTier(s.edgeEvaluateRuleTier(ctx, outcome.ruleID))
+	workflowSnapshot, jobSnapshot := edgeEvaluateScopeSnapshots(outcome.policySnapshot, labels)
+	outcome.ruleTier = tier
+	outcome.workflowOverrideSnapshot = workflowSnapshot
+	outcome.jobOverrideSnapshot = jobSnapshot
+	outcome.response.RuleTier = tier
+	outcome.response.WorkflowOverrideSnapshot = workflowSnapshot
+	outcome.response.JobOverrideSnapshot = jobSnapshot
+	return outcome
+}
+
+func (s *server) edgeEvaluateRuleTier(ctx context.Context, ruleID string) string {
+	ruleID = strings.TrimSpace(ruleID)
+	if ruleID == "" {
+		return ""
+	}
+	if s == nil || s.configSvc == nil {
+		return config.PolicyTierGlobal
+	}
+	bundles, _, err := s.loadPolicyBundles(ctx)
+	if err != nil {
+		return config.PolicyTierGlobal
+	}
+	policy, _, err := policybundles.BuildPolicyFromBundles(bundles)
+	if err != nil || policy == nil {
+		return config.PolicyTierGlobal
+	}
+	for _, rule := range policy.Rules {
+		if strings.TrimSpace(rule.ID) == ruleID {
+			return config.NormalizePolicyTier(rule.Tier)
+		}
+	}
+	return config.PolicyTierGlobal
+}
+
+func edgeEvaluateScopeSnapshots(policySnapshot string, labels edgecore.Labels) (string, string) {
+	workflowScope := edgeWorkflowPolicyScope(labels)
+	jobScope := edgeJobPolicyScope(labels)
+	return edgeTierSnapshot(policySnapshot, "workflow", workflowScope),
+		edgeTierSnapshot(policySnapshot, "job", jobScope)
+}
+
+func edgeWorkflowPolicyScope(labels edgecore.Labels) string {
+	return firstEdgeEvaluateNonEmpty(labels["workflow_id"], labels["workflow.id"],
+		labels["workflow"], labels["workflow_run_id"], labels["workflow.run_id"])
+}
+
+func edgeJobPolicyScope(labels edgecore.Labels) string {
+	return firstEdgeEvaluateNonEmpty(labels[edgecore.LabelPolicyAttachmentID], labels["job_id"],
+		labels["job.id"], labels["edge.job_id"], labels["session_id"], labels["edge.session_id"])
+}
+
+func edgeTierSnapshot(policySnapshot, tier, scope string) string {
+	policySnapshot = strings.TrimSpace(policySnapshot)
+	tier = strings.TrimSpace(tier)
+	scope = strings.TrimSpace(scope)
+	if policySnapshot == "" || tier == "" || scope == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(tier + "\x00" + policySnapshot + "\x00" + scope))
+	return policySnapshot + ":" + tier + ":" + hex.EncodeToString(sum[:8])
+}
+
+func edgeNormalizeRuleTier(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case config.PolicyTierGlobal, config.PolicyTierWorkflow, config.PolicyTierJob:
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
 	}
 }
 
@@ -1118,6 +1200,7 @@ func (s *server) appendEdgeEvaluateOutcome(ctx context.Context, store edgecore.S
 	event.Decision = outcome.decision
 	event.DecisionReason = mustRedactEdgeString(outcome.reason)
 	event.RuleID = mustRedactEdgeString(outcome.ruleID)
+	event.RuleTier = edgeNormalizeRuleTier(outcome.ruleTier)
 	event.PolicySnapshot = mustRedactEdgeString(outcome.policySnapshot)
 	event.ApprovalRef = mustRedactEdgeString(outcome.approvalRef)
 	event.DurationMS = durationMS
@@ -1252,20 +1335,32 @@ func edgeEvaluateContextLabels(labels edgecore.Labels, req edgeEvaluateRequest, 
 	if labels == nil {
 		labels = edgecore.Labels{}
 	}
+	if session != nil {
+		var err error
+		labels, err = edgeEvaluateMergeSessionLabels(labels, session.Labels)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var sessionCWD, sessionRepo, sessionGitRemote, sessionGitBranch, sessionGitSHA string
+	var sessionWorkflowRunID, sessionJobID string
 	if session != nil {
 		sessionCWD = session.CWD
 		sessionRepo = session.Repo
 		sessionGitRemote = session.GitRemote
 		sessionGitBranch = session.GitBranch
 		sessionGitSHA = session.GitSHA
+		sessionWorkflowRunID = session.WorkflowRunID
+		sessionJobID = session.JobID
 	}
 	contextFields := map[string]string{
-		"cwd":        firstEdgeEvaluateNonEmpty(req.CWD, sessionCWD),
-		"repo.path":  firstEdgeEvaluateNonEmpty(req.Repo, sessionRepo),
-		"git.remote": firstEdgeEvaluateNonEmpty(req.GitRemote, sessionGitRemote),
-		"git.branch": firstEdgeEvaluateNonEmpty(req.GitBranch, sessionGitBranch),
-		"git.sha":    firstEdgeEvaluateNonEmpty(req.GitSHA, sessionGitSHA),
+		"cwd":             firstEdgeEvaluateNonEmpty(req.CWD, sessionCWD),
+		"repo.path":       firstEdgeEvaluateNonEmpty(req.Repo, sessionRepo),
+		"git.remote":      firstEdgeEvaluateNonEmpty(req.GitRemote, sessionGitRemote),
+		"git.branch":      firstEdgeEvaluateNonEmpty(req.GitBranch, sessionGitBranch),
+		"git.sha":         firstEdgeEvaluateNonEmpty(req.GitSHA, sessionGitSHA),
+		"workflow_run_id": sessionWorkflowRunID,
+		"job_id":          sessionJobID,
 	}
 	for key, value := range contextFields {
 		redacted, err := redactEdgeString(value)
@@ -1274,6 +1369,26 @@ func edgeEvaluateContextLabels(labels edgecore.Labels, req edgeEvaluateRequest, 
 		}
 		if strings.TrimSpace(redacted) != "" {
 			labels[key] = redacted
+		}
+	}
+	if len(labels) > edgecore.MaxLabelEntries {
+		return nil, edgeEventRequestError{status: http.StatusBadRequest, message: "invalid edge evaluate request"}
+	}
+	return labels, nil
+}
+
+func edgeEvaluateMergeSessionLabels(labels, sessionLabels edgecore.Labels) (edgecore.Labels, error) {
+	for key, value := range sessionLabels {
+		redactedKey, err := redactEdgeString(key)
+		if err != nil {
+			return nil, edgeEventRequestError{status: http.StatusBadRequest, message: "invalid edge evaluate request"}
+		}
+		redactedValue, err := redactEdgeString(value)
+		if err != nil {
+			return nil, edgeEventRequestError{status: http.StatusBadRequest, message: "invalid edge evaluate request"}
+		}
+		if strings.TrimSpace(redactedKey) != "" && strings.TrimSpace(redactedValue) != "" {
+			labels[redactedKey] = redactedValue
 		}
 	}
 	if len(labels) > edgecore.MaxLabelEntries {

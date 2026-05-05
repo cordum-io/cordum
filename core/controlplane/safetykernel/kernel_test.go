@@ -203,6 +203,164 @@ func TestCheckReturnsRemediations(t *testing.T) {
 	}
 }
 
+func TestEvaluate_WorkflowOverrideBlocksGlobalAllow(t *testing.T) {
+	policy := &config.SafetyPolicy{
+		DefaultDecision: "deny",
+		Rules: []config.PolicyRule{
+			{ID: "global-allow-deploy", Decision: "allow", Match: config.PolicyMatch{Topics: []string{"job.deploy"}}},
+			{
+				ID:       "workflow-deny-deploy",
+				Tier:     config.PolicyTierWorkflow,
+				Selector: config.PolicySelector{WorkflowID: "deploy-prod"},
+				Decision: "deny",
+				Match:    config.PolicyMatch{Topics: []string{"job.deploy"}},
+			},
+		},
+	}
+	srv := newTierEvalServer(policy, nil)
+
+	resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+		JobId:  "job-1",
+		Topic:  "job.deploy",
+		Tenant: "default",
+		Labels: map[string]string{"workflow_id": "deploy-prod"},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate returned error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY || resp.GetRuleId() != "workflow-deny-deploy" {
+		t.Fatalf("decision/rule = %v/%q, want DENY/workflow-deny-deploy", resp.GetDecision(), resp.GetRuleId())
+	}
+}
+
+func TestEvaluate_JobOverrideBlocksWorkflowAllow(t *testing.T) {
+	policy := &config.SafetyPolicy{
+		DefaultDecision: "deny",
+		Rules: []config.PolicyRule{
+			{
+				ID:       "workflow-allow-deploy",
+				Tier:     config.PolicyTierWorkflow,
+				Selector: config.PolicySelector{WorkflowID: "deploy-prod"},
+				Decision: "allow",
+				Match:    config.PolicyMatch{Topics: []string{"job.deploy"}},
+			},
+			{
+				ID:       "job-deny-deploy",
+				Tier:     config.PolicyTierJob,
+				Selector: config.PolicySelector{JobID: "job-1"},
+				Decision: "deny",
+				Match:    config.PolicyMatch{Topics: []string{"job.deploy"}},
+			},
+		},
+	}
+	srv := newTierEvalServer(policy, nil)
+
+	resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+		JobId:  "job-1",
+		Topic:  "job.deploy",
+		Tenant: "default",
+		Labels: map[string]string{"workflow_id": "deploy-prod"},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate returned error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY || resp.GetRuleId() != "job-deny-deploy" {
+		t.Fatalf("decision/rule = %v/%q, want DENY/job-deny-deploy", resp.GetDecision(), resp.GetRuleId())
+	}
+}
+
+func TestEvaluate_InvariantDenyOverridesAllTiers(t *testing.T) {
+	policy := &config.SafetyPolicy{
+		DefaultDecision: "deny",
+		Rules: []config.PolicyRule{
+			{
+				ID:       "job-allow-secret",
+				Tier:     config.PolicyTierJob,
+				Selector: config.PolicySelector{JobID: "job-1"},
+				Decision: "allow",
+				Match: config.PolicyMatch{
+					Topics: []string{"job.deploy"},
+					Labels: map[string]string{"path.class": "secret"},
+				},
+			},
+		},
+	}
+	invariants := &config.SafetyPolicy{Rules: []config.PolicyRule{
+		{
+			ID:       "inv-deny-secret",
+			Decision: "deny",
+			Match: config.PolicyMatch{
+				Topics: []string{"job.deploy"},
+				Labels: map[string]string{"path.class": "secret"},
+			},
+		},
+	}}
+	srv := newTierEvalServer(policy, invariants)
+
+	resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+		JobId:  "job-1",
+		Topic:  "job.deploy",
+		Tenant: "default",
+		Labels: map[string]string{"path.class": "secret"},
+	})
+	if err != nil {
+		t.Fatalf("Evaluate returned error: %v", err)
+	}
+	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_DENY || resp.GetRuleId() != "inv-deny-secret" {
+		t.Fatalf("decision/rule = %v/%q, want DENY/inv-deny-secret", resp.GetDecision(), resp.GetRuleId())
+	}
+}
+
+func TestEvaluate_NoTierMatchUsesMostRestrictiveDefault(t *testing.T) {
+	policy := &config.SafetyPolicy{
+		DefaultDecision: "allow",
+		TierDefaults: []config.PolicyTierDefault{
+			{Tier: config.PolicyTierWorkflow, Selector: config.PolicySelector{WorkflowID: "deploy-prod"}, Decision: "deny"},
+			{Tier: config.PolicyTierJob, Selector: config.PolicySelector{JobID: "job-allow"}, Decision: "allow"},
+		},
+	}
+	srv := newTierEvalServer(policy, nil)
+
+	for _, tc := range []struct {
+		name     string
+		jobID    string
+		workflow string
+		want     pb.DecisionType
+	}{
+		{name: "job default wins", jobID: "job-allow", workflow: "deploy-prod", want: pb.DecisionType_DECISION_TYPE_ALLOW},
+		{name: "workflow default wins", workflow: "deploy-prod", want: pb.DecisionType_DECISION_TYPE_DENY},
+		{name: "global default fallback", workflow: "deploy-dev", want: pb.DecisionType_DECISION_TYPE_ALLOW},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := srv.Evaluate(context.Background(), &pb.PolicyCheckRequest{
+				JobId:  tc.jobID,
+				Topic:  "job.deploy",
+				Tenant: "default",
+				Labels: map[string]string{"workflow_id": tc.workflow},
+			})
+			if err != nil {
+				t.Fatalf("Evaluate returned error: %v", err)
+			}
+			if resp.GetDecision() != tc.want {
+				t.Fatalf("decision = %v, want %v", resp.GetDecision(), tc.want)
+			}
+		})
+	}
+}
+
+func newTierEvalServer(policy, invariants *config.SafetyPolicy) *server {
+	var invariantRules []config.PolicyRule
+	if invariants != nil {
+		invariantRules = append([]config.PolicyRule{}, invariants.Rules...)
+	}
+	return &server{
+		policy:   applyKernelInvariants(policy, invariants),
+		global:   FromSafetyPolicy(policy, invariantRules, nil, "cfg:tiers"),
+		scanners: loadOutputScanners(),
+		snapshot: "cfg:tiers",
+	}
+}
+
 func TestCheckAppliesEffectiveConfigDeny(t *testing.T) {
 	srv := &server{policy: &config.SafetyPolicy{
 		DefaultTenant: "default",

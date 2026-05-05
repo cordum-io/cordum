@@ -25,6 +25,7 @@
     "decision",
     "decision_reason",
     "rule_id",
+    "tier",
     "policy_snapshot",
     "approval_ref",
     "artifact_ptrs",
@@ -65,6 +66,7 @@
     },
     "decision_reason": { "type": "string" },
     "rule_id": { "type": "string" },
+    "tier": { "type": "string", "enum": ["", "global", "workflow", "job"] },
     "policy_snapshot": { "type": "string" },
     "approval_ref": { "type": ["string", "null"] },
     "artifact_ptrs": {

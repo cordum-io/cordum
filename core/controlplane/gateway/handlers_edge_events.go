@@ -46,6 +46,8 @@ type edgeEventWriteRequest struct {
 	Decision         edgecore.EdgeDecision      `json:"decision"`
 	DecisionReason   string                     `json:"decision_reason"`
 	RuleID           string                     `json:"rule_id"`
+	Tier             string                     `json:"tier"`
+	RuleTier         string                     `json:"rule_tier"`
 	PolicySnapshot   string                     `json:"policy_snapshot"`
 	ApprovalRef      string                     `json:"approval_ref"`
 	ArtifactPointers []edgecore.ArtifactPointer `json:"artifact_ptrs"`
@@ -448,6 +450,7 @@ func normalizeEdgeEventRequest(req edgeEventWriteRequest, tenantID string) (edge
 		Decision:       req.Decision,
 		DecisionReason: mustRedactEdgeString(req.DecisionReason),
 		RuleID:         mustRedactEdgeString(req.RuleID),
+		RuleTier:       edgeNormalizeRuleTier(firstEdgeEvaluateNonEmpty(req.Tier, req.RuleTier)),
 		PolicySnapshot: mustRedactEdgeString(req.PolicySnapshot),
 		ApprovalRef:    mustRedactEdgeString(req.ApprovalRef),
 		DurationMS:     req.DurationMS,

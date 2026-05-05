@@ -35,7 +35,7 @@ func TestEdgeContractsJSONRoundTripUsePRDSnakeCaseFields(t *testing.T) {
 	assertJSONKeys(t, event, []string{
 		"event_id", "session_id", "execution_id", "tenant_id", "principal_id", "seq", "ts", "layer",
 		"kind", "agent_product", "tool_name", "tool_use_id", "action_name", "capability", "risk_tags",
-		"input_redacted", "input_hash", "decision", "decision_reason", "rule_id", "policy_snapshot",
+		"input_redacted", "input_hash", "decision", "decision_reason", "rule_id", "tier", "policy_snapshot",
 		"approval_ref", "artifact_ptrs", "duration_ms", "status", "error_code", "error_message", "labels",
 	})
 	assertJSONKeys(t, approval, []string{
@@ -351,6 +351,7 @@ func validAgentActionEvent(started time.Time) AgentActionEvent {
 		Decision:       DecisionAllow,
 		DecisionReason: "test command allowed",
 		RuleID:         "claude-code.allow-tests",
+		RuleTier:       "global",
 		PolicySnapshot: "sha256:policy",
 		ApprovalRef:    "edge_appr_01J",
 		ArtifactPointers: []ArtifactPointer{

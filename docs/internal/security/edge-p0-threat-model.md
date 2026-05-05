@@ -44,6 +44,38 @@ Out of scope for P0 closure:
   rollout/bootstrap. Wrapper-only behavior is a local developer convenience, not
   enterprise bypass prevention.
 
+## Policy hierarchy and invariants posture
+
+EDGE-053 adds the three-tier policy hierarchy that Edge and workflow evidence
+now rely on: **Job → Workflow → Global**, with Global Invariants as an
+uncrossable security floor.
+
+- Global fragments without `tier` remain backward-compatible global policy.
+- Workflow overrides live on workflow definitions as `policy_override` YAML and
+  are loaded into the unified policy authority as synthetic
+  `workflow/{id}/policy` bundles.
+- Job overrides do not add a new persistence layer. Workflow jobs and Edge
+  sessions carry `policy.attachment_id` labels (`job/{id}/policy` or
+  `session/{id}/policy`) and Safety Kernel evaluate resolves scope from those
+  labels before falling back to job/session IDs.
+- Evaluation order is: Global Invariant DENY / approval / throttle first, then
+  Job rules, then Workflow rules, then Global rules, then the most-specific
+  scoped default decision. Invariant ALLOW rules remain fallback defaults and do
+  not override a workflow/job/global DENY.
+- Edge audit evidence records the producing tier as `tier:
+  global|workflow|job` alongside `rule_id` and `policy_snapshot`; SIEM extras
+  carry the same bounded tier field.
+- Agentd safe-allow cache keys include the global snapshot plus workflow/job
+  scoped snapshot identifiers, so a per-job allow cannot be replayed in another
+  workflow/job scope. Empty scoped snapshots keep the previous global-only cache
+  key shape.
+
+Security consequence: a workflow or job owner can narrow or locally relax policy
+within its scope, but cannot cross the Global Invariants floor. The integration
+test `TestEDGE053_TierPrecedenceIntegration` pins the GlobalOnly, Workflow
+override, Job override, Invariant DENY, and scoped-default cases against one
+Safety Kernel snapshot.
+
 ## Gateway auth, tenant, rate-limit, and transport posture
 
 The Edge Gateway surface is not a bypass around the existing API posture:

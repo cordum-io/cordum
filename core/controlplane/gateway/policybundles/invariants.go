@@ -35,7 +35,12 @@ func ApplyInvariants(base, inv *config.SafetyPolicy) *config.SafetyPolicy {
 		out = &config.SafetyPolicy{}
 	}
 
-	denies, allows := splitInvariantRulesByDecision(inv.Rules)
+	invariantRules := ClonePolicyRules(inv.Rules)
+	for idx := range invariantRules {
+		invariantRules[idx].Tier = config.PolicyTierGlobal
+		invariantRules[idx].Selector = config.PolicySelector{}
+	}
+	denies, allows := splitInvariantRulesByDecision(invariantRules)
 	if len(denies) > 0 {
 		// Prepend invariant DENY rules so first-match evaluators short-
 		// circuit before any pack/studio ALLOW with overlapping match.
@@ -118,7 +123,8 @@ func SplitInvariantsFromBundles(bundles map[string]any) ([]config.PolicyRule, []
 	if policy == nil {
 		return nil, nil, nil
 	}
-	rules := append([]config.PolicyRule{}, policy.Rules...)
+	policy = cloneWithTierMetadata(policy)
+	rules := ClonePolicyRules(policy.Rules)
 	outputRules := CloneOutputPolicyRules(policy.OutputRules)
 	return rules, outputRules, nil
 }

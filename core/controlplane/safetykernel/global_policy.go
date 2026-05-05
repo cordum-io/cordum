@@ -29,14 +29,21 @@ const EdgeActionTopic = "job.edge.action"
 // they are an authoring/inspection view used by the dashboard and the
 // /api/v1/policy/global endpoint to expose the unified shape.
 type GlobalPolicy struct {
-	InputRules       []config.PolicyRule
-	OutputRules      []config.OutputPolicyRule
-	EdgeActionRules  []config.PolicyRule
-	MCPToolRules     []config.PolicyRule
-	Invariants       []config.PolicyRule
-	OutputInvariants []config.OutputPolicyRule
-	SnapshotVersion  string
-	SnapshotHash     string
+	InputRules               []config.PolicyRule
+	OutputRules              []config.OutputPolicyRule
+	EdgeActionRules          []config.PolicyRule
+	MCPToolRules             []config.PolicyRule
+	WorkflowOverrides        map[string][]config.PolicyRule
+	JobOverrides             map[string][]config.PolicyRule
+	Invariants               []config.PolicyRule
+	OutputInvariants         []config.OutputPolicyRule
+	GlobalDefaultDecision    string
+	WorkflowDefaultDecisions map[string]string
+	JobDefaultDecisions      map[string]string
+	SnapshotVersion          string
+	SnapshotHash             string
+	WorkflowSnapshot         string
+	JobSnapshot              string
 }
 
 // FromSafetyPolicy projects a merged *config.SafetyPolicy plus a separately-
@@ -57,13 +64,22 @@ func FromSafetyPolicy(
 	invariants []config.PolicyRule,
 	outputInvariants []config.OutputPolicyRule,
 	snapshot string,
+	scopedSnapshots ...string,
 ) *GlobalPolicy {
 	g := &GlobalPolicy{
-		SnapshotVersion: snapshot,
-		SnapshotHash:    snapshot,
+		SnapshotVersion:  snapshot,
+		SnapshotHash:     snapshot,
+		WorkflowSnapshot: snapshot,
+		JobSnapshot:      snapshot,
+	}
+	if len(scopedSnapshots) > 0 {
+		g.WorkflowSnapshot = strings.TrimSpace(scopedSnapshots[0])
+	}
+	if len(scopedSnapshots) > 1 {
+		g.JobSnapshot = strings.TrimSpace(scopedSnapshots[1])
 	}
 	if len(invariants) > 0 {
-		g.Invariants = append([]config.PolicyRule{}, invariants...)
+		g.Invariants = cloneRulesWithTier(invariants, config.PolicyTierGlobal)
 	}
 	if len(outputInvariants) > 0 {
 		g.OutputInvariants = append([]config.OutputPolicyRule{}, outputInvariants...)
@@ -74,15 +90,15 @@ func FromSafetyPolicy(
 	if len(policy.OutputRules) > 0 {
 		g.OutputRules = append([]config.OutputPolicyRule{}, policy.OutputRules...)
 	}
+	if config.NormalizePolicyTier(policy.Tier) == config.PolicyTierGlobal {
+		g.GlobalDefaultDecision = normalizedOptionalDecision(policy.DefaultDecision)
+	}
+	g.addPolicyLevelDefault(policy)
+	for _, def := range policy.TierDefaults {
+		g.addTierDefault(def)
+	}
 	for _, rule := range policy.Rules {
-		switch {
-		case isEdgeActionRule(rule):
-			g.EdgeActionRules = append(g.EdgeActionRules, rule)
-		case isMCPToolRule(rule):
-			g.MCPToolRules = append(g.MCPToolRules, rule)
-		default:
-			g.InputRules = append(g.InputRules, rule)
-		}
+		g.addRule(rule)
 	}
 	return g
 }
@@ -90,29 +106,111 @@ func FromSafetyPolicy(
 // RulesForInput returns the rules a Cordum-job evaluator must consider:
 // Invariants prepended, then the Input bucket. Invariants come first so a
 // matcher that returns on first match honours DENY-uncrossable precedence.
-func (g *GlobalPolicy) RulesForInput() []config.PolicyRule {
+func (g *GlobalPolicy) RulesForInput(scope ...string) []config.PolicyRule {
 	if g == nil {
 		return nil
+	}
+	if len(scope) >= 2 {
+		return g.RulesForJobWorkflow(scope[0], scope[1])
 	}
 	return concatRules(g.Invariants, g.InputRules)
 }
 
-// RulesForEdgeAction returns the rules an Edge evaluator must consider:
-// Invariants prepended, then the EdgeAction bucket.
-func (g *GlobalPolicy) RulesForEdgeAction() []config.PolicyRule {
+// RulesForJobWorkflow returns Cordum-job input rules with tier precedence:
+// Invariants first (security floor), then Job, Workflow, and Global input
+// rules. The matcher's first-match semantics then implement Job >
+// Workflow > Global while preserving DENY-uncrossable invariants.
+func (g *GlobalPolicy) RulesForJobWorkflow(workflowID, jobID string) []config.PolicyRule {
 	if g == nil {
 		return nil
+	}
+	workflowID = strings.TrimSpace(workflowID)
+	jobID = strings.TrimSpace(jobID)
+	invariantDenies, invariantAllows := splitGlobalInvariantRules(g.Invariants)
+	rules := make([]config.PolicyRule, 0, len(g.Invariants)+len(g.InputRules))
+	rules = append(rules, invariantDenies...)
+	if jobID != "" {
+		rules = appendInputScopedRules(rules, g.JobOverrides[jobID])
+	}
+	if workflowID != "" {
+		rules = appendInputScopedRules(rules, g.WorkflowOverrides[workflowID])
+	}
+	rules = append(rules, g.InputRules...)
+	rules = append(rules, invariantAllows...)
+	return rules
+}
+
+// DefaultDecisionForJobWorkflow returns the most-specific tier default for a
+// request. A scoped tier with rules but no explicit default fails closed.
+func (g *GlobalPolicy) DefaultDecisionForJobWorkflow(workflowID, jobID string) string {
+	decision, _ := g.DefaultDecisionForJobWorkflowTier(workflowID, jobID)
+	return decision
+}
+
+// DefaultDecisionForJobWorkflowTier returns the default decision and the tier
+// that supplied it. A scoped tier with rules but no explicit default fails
+// closed at that tier.
+func (g *GlobalPolicy) DefaultDecisionForJobWorkflowTier(workflowID, jobID string) (string, string) {
+	if g == nil {
+		return "deny", config.PolicyTierGlobal
+	}
+	if decision, ok := scopedDefault(g.JobDefaultDecisions, g.JobOverrides, jobID); ok {
+		return decision, config.PolicyTierJob
+	}
+	if decision, ok := scopedDefault(g.WorkflowDefaultDecisions, g.WorkflowOverrides, workflowID); ok {
+		return decision, config.PolicyTierWorkflow
+	}
+	if g.GlobalDefaultDecision != "" {
+		return g.GlobalDefaultDecision, config.PolicyTierGlobal
+	}
+	return "deny", config.PolicyTierGlobal
+}
+
+// RulesForEdgeAction returns the rules an Edge evaluator must consider:
+// Invariants prepended, then scoped EdgeAction rules and the global
+// EdgeAction bucket.
+func (g *GlobalPolicy) RulesForEdgeAction(scope ...string) []config.PolicyRule {
+	if g == nil {
+		return nil
+	}
+	if len(scope) >= 2 {
+		return g.rulesForScopedSection(scope[0], scope[1], isEdgeActionRule, g.EdgeActionRules)
 	}
 	return concatRules(g.Invariants, g.EdgeActionRules)
 }
 
 // RulesForMCPTool returns the rules an MCP-tool gate must consider:
 // Invariants prepended, then the MCP bucket.
-func (g *GlobalPolicy) RulesForMCPTool() []config.PolicyRule {
+func (g *GlobalPolicy) RulesForMCPTool(scope ...string) []config.PolicyRule {
 	if g == nil {
 		return nil
 	}
+	if len(scope) >= 2 {
+		return g.rulesForScopedSection(scope[0], scope[1], isMCPToolRule, g.MCPToolRules)
+	}
 	return concatRules(g.Invariants, g.MCPToolRules)
+}
+
+func (g *GlobalPolicy) rulesForScopedSection(
+	workflowID string,
+	jobID string,
+	include func(config.PolicyRule) bool,
+	globalRules []config.PolicyRule,
+) []config.PolicyRule {
+	workflowID = strings.TrimSpace(workflowID)
+	jobID = strings.TrimSpace(jobID)
+	invariantDenies, invariantAllows := splitGlobalInvariantRules(g.Invariants)
+	rules := make([]config.PolicyRule, 0, len(g.Invariants)+len(globalRules))
+	rules = append(rules, invariantDenies...)
+	if jobID != "" {
+		rules = appendScopedRulesForSection(rules, g.JobOverrides[jobID], include)
+	}
+	if workflowID != "" {
+		rules = appendScopedRulesForSection(rules, g.WorkflowOverrides[workflowID], include)
+	}
+	rules = append(rules, globalRules...)
+	rules = append(rules, invariantAllows...)
+	return rules
 }
 
 // RulesForOutput returns the output-policy rules an output scanner must
@@ -127,16 +225,6 @@ func (g *GlobalPolicy) RulesForOutput() []config.OutputPolicyRule {
 	out := make([]config.OutputPolicyRule, 0, len(g.OutputInvariants)+len(g.OutputRules))
 	out = append(out, g.OutputInvariants...)
 	out = append(out, g.OutputRules...)
-	return out
-}
-
-func concatRules(invariants, section []config.PolicyRule) []config.PolicyRule {
-	if len(invariants) == 0 {
-		return append([]config.PolicyRule{}, section...)
-	}
-	out := make([]config.PolicyRule, 0, len(invariants)+len(section))
-	out = append(out, invariants...)
-	out = append(out, section...)
 	return out
 }
 

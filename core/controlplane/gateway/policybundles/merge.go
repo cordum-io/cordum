@@ -9,30 +9,34 @@ import (
 // MergeSafetyPolicies merges two safety policies into one.
 func MergeSafetyPolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
 	if base == nil {
-		return CloneSafetyPolicy(extra)
+		return cloneWithTierMetadata(extra)
 	}
 	if extra == nil {
-		return CloneSafetyPolicy(base)
+		return cloneWithTierMetadata(base)
 	}
-	out := CloneSafetyPolicy(base)
+	out := cloneWithTierMetadata(base)
+	add := cloneWithTierMetadata(extra)
+	out.Tier = config.PolicyTierGlobal
+	out.Selector = config.PolicySelector{}
 	if out.Version == "" {
-		out.Version = extra.Version
+		out.Version = add.Version
 	}
 	if out.DefaultTenant == "" {
-		out.DefaultTenant = extra.DefaultTenant
+		out.DefaultTenant = add.DefaultTenant
 	}
 	if strings.TrimSpace(out.DefaultDecision) == "" {
-		out.DefaultDecision = strings.TrimSpace(extra.DefaultDecision)
+		out.DefaultDecision = strings.TrimSpace(add.DefaultDecision)
 	}
-	if !out.OutputPolicy.Enabled && extra.OutputPolicy.Enabled {
+	if !out.OutputPolicy.Enabled && add.OutputPolicy.Enabled {
 		out.OutputPolicy.Enabled = true
 	}
 	if strings.TrimSpace(out.OutputPolicy.FailMode) == "" {
-		out.OutputPolicy.FailMode = strings.TrimSpace(extra.OutputPolicy.FailMode)
+		out.OutputPolicy.FailMode = strings.TrimSpace(add.OutputPolicy.FailMode)
 	}
-	out.Rules = append(out.Rules, extra.Rules...)
-	out.OutputRules = append(out.OutputRules, CloneOutputPolicyRules(extra.OutputRules)...)
-	out.Tenants = MergeTenantPolicies(out.Tenants, extra.Tenants)
+	out.Rules = append(out.Rules, add.Rules...)
+	out.OutputRules = append(out.OutputRules, CloneOutputPolicyRules(add.OutputRules)...)
+	out.TierDefaults = append(out.TierDefaults, add.TierDefaults...)
+	out.Tenants = MergeTenantPolicies(out.Tenants, add.Tenants)
 	return out
 }
 
@@ -43,11 +47,16 @@ func CloneSafetyPolicy(policy *config.SafetyPolicy) *config.SafetyPolicy {
 	}
 	out := &config.SafetyPolicy{
 		Version:         policy.Version,
+		Tier:            policy.Tier,
+		Selector:        config.TrimPolicySelector(policy.Selector),
 		DefaultTenant:   policy.DefaultTenant,
 		DefaultDecision: policy.DefaultDecision,
-		Rules:           append([]config.PolicyRule{}, policy.Rules...),
+		InputPolicy:     policy.InputPolicy,
+		InputRules:      append([]config.InputPolicyRule{}, policy.InputRules...),
+		Rules:           ClonePolicyRules(policy.Rules),
 		OutputPolicy:    policy.OutputPolicy,
 		OutputRules:     CloneOutputPolicyRules(policy.OutputRules),
+		TierDefaults:    ClonePolicyTierDefaults(policy.TierDefaults),
 		Tenants:         map[string]config.TenantPolicy{},
 	}
 	if policy.Tenants != nil {
@@ -132,20 +141,20 @@ func CloneTenantPolicy(policy config.TenantPolicy) config.TenantPolicy {
 		AllowedRepoHosts: append([]string{}, policy.AllowedRepoHosts...),
 		DeniedRepoHosts:  append([]string{}, policy.DeniedRepoHosts...),
 		MaxConcurrent:    policy.MaxConcurrent,
-		MCP:              policy.MCP,
+		MCP:              cloneMCPPolicy(policy.MCP),
 	}
 }
 
 // MergeMCPPolicy merges two MCP policies.
 func MergeMCPPolicy(base, extra config.MCPPolicy) config.MCPPolicy {
 	return config.MCPPolicy{
-		AllowServers:   append(base.AllowServers, extra.AllowServers...),
-		DenyServers:    append(base.DenyServers, extra.DenyServers...),
-		AllowTools:     append(base.AllowTools, extra.AllowTools...),
-		DenyTools:      append(base.DenyTools, extra.DenyTools...),
-		AllowResources: append(base.AllowResources, extra.AllowResources...),
-		DenyResources:  append(base.DenyResources, extra.DenyResources...),
-		AllowActions:   append(base.AllowActions, extra.AllowActions...),
-		DenyActions:    append(base.DenyActions, extra.DenyActions...),
+		AllowServers:   append(append([]string{}, base.AllowServers...), extra.AllowServers...),
+		DenyServers:    append(append([]string{}, base.DenyServers...), extra.DenyServers...),
+		AllowTools:     append(append([]string{}, base.AllowTools...), extra.AllowTools...),
+		DenyTools:      append(append([]string{}, base.DenyTools...), extra.DenyTools...),
+		AllowResources: append(append([]string{}, base.AllowResources...), extra.AllowResources...),
+		DenyResources:  append(append([]string{}, base.DenyResources...), extra.DenyResources...),
+		AllowActions:   append(append([]string{}, base.AllowActions...), extra.AllowActions...),
+		DenyActions:    append(append([]string{}, base.DenyActions...), extra.DenyActions...),
 	}
 }

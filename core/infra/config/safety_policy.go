@@ -13,6 +13,8 @@ import (
 // SafetyPolicy defines allow/deny rules per tenant.
 type SafetyPolicy struct {
 	Version         string                  `yaml:"version"`
+	Tier            string                  `yaml:"tier,omitempty" json:"tier,omitempty"`
+	Selector        PolicySelector          `yaml:"selector,omitempty" json:"selector,omitempty"`
 	Rules           []PolicyRule            `yaml:"rules"`
 	InputPolicy     InputPolicyConfig       `yaml:"input_policy"`
 	InputRules      []InputPolicyRule       `yaml:"input_rules"`
@@ -21,6 +23,7 @@ type SafetyPolicy struct {
 	DefaultTenant   string                  `yaml:"default_tenant,omitempty"`
 	DefaultDecision string                  `yaml:"default_decision,omitempty" json:"default_decision,omitempty"` // allow|deny (default: deny = fail-closed)
 	Tenants         map[string]TenantPolicy `yaml:"tenants"`
+	TierDefaults    []PolicyTierDefault     `yaml:"-" json:"-"`
 }
 
 // InputPolicyConfig controls input-policy evaluation behavior.
@@ -101,12 +104,96 @@ type OutputPolicyConfig struct {
 
 type PolicyRule struct {
 	ID           string              `yaml:"id"`
+	Tier         string              `yaml:"tier,omitempty" json:"tier,omitempty"`
+	Selector     PolicySelector      `yaml:"selector,omitempty" json:"selector,omitempty"`
 	Match        PolicyMatch         `yaml:"match"`
 	Velocity     *VelocityConfig     `yaml:"velocity,omitempty"`
 	Decision     string              `yaml:"decision"` // allow|deny|require_approval|allow_with_constraints|throttle
 	Reason       string              `yaml:"reason"`
 	Constraints  PolicyConstraints   `yaml:"constraints"`
 	Remediations []PolicyRemediation `yaml:"remediations"`
+}
+
+const (
+	PolicyTierGlobal   = "global"
+	PolicyTierWorkflow = "workflow"
+	PolicyTierJob      = "job"
+)
+
+// PolicySelector scopes workflow/job-tier policy fragments and rules.
+type PolicySelector struct {
+	WorkflowID string `yaml:"workflow_id,omitempty" json:"workflow_id,omitempty"`
+	JobID      string `yaml:"job_id,omitempty" json:"job_id,omitempty"`
+	SessionID  string `yaml:"session_id,omitempty" json:"session_id,omitempty"`
+}
+
+// PolicyTierDefault preserves scoped default_decision values through bundle
+// merges. Global default_decision remains SafetyPolicy.DefaultDecision.
+type PolicyTierDefault struct {
+	Tier     string         `json:"tier"`
+	Selector PolicySelector `json:"selector"`
+	Decision string         `json:"decision"`
+}
+
+// NormalizePolicyTier returns the canonical policy tier. Empty means global
+// for backward compatibility with existing bundles.
+func NormalizePolicyTier(raw string) string {
+	tier := strings.ToLower(strings.TrimSpace(raw))
+	if tier == "" {
+		return PolicyTierGlobal
+	}
+	return tier
+}
+
+// IsValidPolicyTier reports whether raw is one of the supported policy tiers.
+func IsValidPolicyTier(raw string) bool {
+	switch NormalizePolicyTier(raw) {
+	case PolicyTierGlobal, PolicyTierWorkflow, PolicyTierJob:
+		return true
+	default:
+		return false
+	}
+}
+
+// MergePolicySelector overlays non-empty override fields onto base.
+func MergePolicySelector(base, override PolicySelector) PolicySelector {
+	out := TrimPolicySelector(base)
+	override = TrimPolicySelector(override)
+	if override.WorkflowID != "" {
+		out.WorkflowID = override.WorkflowID
+	}
+	if override.JobID != "" {
+		out.JobID = override.JobID
+	}
+	if override.SessionID != "" {
+		out.SessionID = override.SessionID
+	}
+	return out
+}
+
+// TrimPolicySelector trims all selector fields.
+func TrimPolicySelector(selector PolicySelector) PolicySelector {
+	return PolicySelector{
+		WorkflowID: strings.TrimSpace(selector.WorkflowID),
+		JobID:      strings.TrimSpace(selector.JobID),
+		SessionID:  strings.TrimSpace(selector.SessionID),
+	}
+}
+
+// PolicySelectorKey returns the lookup key for the requested tier.
+func PolicySelectorKey(tier string, selector PolicySelector) string {
+	selector = TrimPolicySelector(selector)
+	switch NormalizePolicyTier(tier) {
+	case PolicyTierWorkflow:
+		return selector.WorkflowID
+	case PolicyTierJob:
+		if selector.JobID != "" {
+			return selector.JobID
+		}
+		return selector.SessionID
+	default:
+		return ""
+	}
 }
 
 // VelocityConfig defines sliding-window rate limiting for a policy rule.
@@ -325,6 +412,7 @@ type PolicyDecision struct {
 	Decision         string
 	Reason           string
 	RuleID           string
+	RuleTier         string
 	Constraints      PolicyConstraints
 	ApprovalRequired bool
 	Remediations     []PolicyRemediation
@@ -353,8 +441,19 @@ func ParseSafetyPolicy(data []byte) (*SafetyPolicy, error) {
 	if policy.Tenants == nil {
 		policy.Tenants = map[string]TenantPolicy{}
 	}
+	if err := validatePolicyTierSelector("policy", policy.Tier, policy.Selector); err != nil {
+		return nil, fmt.Errorf("parse safety policy: %w", err)
+	}
 	// Validate velocity configs on all rules.
 	for _, rule := range policy.Rules {
+		tier := rule.Tier
+		if strings.TrimSpace(tier) == "" {
+			tier = policy.Tier
+		}
+		selector := MergePolicySelector(policy.Selector, rule.Selector)
+		if err := validatePolicyTierSelector(fmt.Sprintf("rule %q", rule.ID), tier, selector); err != nil {
+			return nil, fmt.Errorf("parse safety policy: %w", err)
+		}
 		if rule.Velocity != nil {
 			if err := rule.Velocity.Validate(rule.ID); err != nil {
 				return nil, fmt.Errorf("parse safety policy: %w", err)
@@ -370,6 +469,18 @@ func ParseSafetyPolicy(data []byte) (*SafetyPolicy, error) {
 	return &policy, nil
 }
 
+func validatePolicyTierSelector(scope, tier string, selector PolicySelector) error {
+	normalized := NormalizePolicyTier(tier)
+	if !IsValidPolicyTier(normalized) {
+		return fmt.Errorf("%s tier %q must be one of: global, workflow, job", scope, tier)
+	}
+	key := PolicySelectorKey(normalized, selector)
+	if normalized != PolicyTierGlobal && key == "" {
+		return fmt.Errorf("%s selector is required for %s tier", scope, normalized)
+	}
+	return nil
+}
+
 // Evaluate returns the decision for the provided input, using rules or legacy tenant config.
 func (p *SafetyPolicy) Evaluate(input PolicyInput) PolicyDecision {
 	rules := p.Rules
@@ -383,6 +494,7 @@ func (p *SafetyPolicy) Evaluate(input PolicyInput) PolicyDecision {
 				Decision:         decision,
 				Reason:           rule.Reason,
 				RuleID:           rule.ID,
+				RuleTier:         NormalizePolicyTier(rule.Tier),
 				Constraints:      rule.Constraints,
 				ApprovalRequired: decision == "require_approval",
 				Remediations:     rule.Remediations,
@@ -391,7 +503,7 @@ func (p *SafetyPolicy) Evaluate(input PolicyInput) PolicyDecision {
 	}
 	dd := strings.ToLower(strings.TrimSpace(p.DefaultDecision))
 	if dd == "allow" || dd == "permit" {
-		return PolicyDecision{Decision: "allow", Reason: "no matching rule — default policy: allow"}
+		return PolicyDecision{Decision: "allow", Reason: "no matching rule — default policy: allow", RuleTier: NormalizePolicyTier(p.Tier)}
 	}
 	// Fail-closed: empty, "deny", or any unrecognized default_decision value
 	// results in deny. This prevents typos like "alow" from silently allowing.
@@ -401,6 +513,7 @@ func (p *SafetyPolicy) Evaluate(input PolicyInput) PolicyDecision {
 	return PolicyDecision{
 		Decision: "deny",
 		Reason:   "no matching rule — default policy: deny",
+		RuleTier: NormalizePolicyTier(p.Tier),
 	}
 }
 
@@ -417,12 +530,12 @@ func (p *SafetyPolicy) EffectiveRules() []PolicyRule {
 func (p *SafetyPolicy) DefaultPolicyDecision() PolicyDecision {
 	dd := strings.ToLower(strings.TrimSpace(p.DefaultDecision))
 	if dd == "allow" || dd == "permit" {
-		return PolicyDecision{Decision: "allow", Reason: "no matching rule — default policy: allow"}
+		return PolicyDecision{Decision: "allow", Reason: "no matching rule — default policy: allow", RuleTier: NormalizePolicyTier(p.Tier)}
 	}
 	if dd != "" && dd != "deny" {
 		slog.Warn("unrecognized default_decision value, defaulting to deny (fail-closed)", "raw", p.DefaultDecision)
 	}
-	return PolicyDecision{Decision: "deny", Reason: "no matching rule — default policy: deny"}
+	return PolicyDecision{Decision: "deny", Reason: "no matching rule — default policy: deny", RuleTier: NormalizePolicyTier(p.Tier)}
 }
 
 // MatchRule checks if a policy rule's match criteria are satisfied by the input.
@@ -442,6 +555,7 @@ func BuildDecision(rule PolicyRule) PolicyDecision {
 		Decision:         decision,
 		Reason:           rule.Reason,
 		RuleID:           rule.ID,
+		RuleTier:         NormalizePolicyTier(rule.Tier),
 		Constraints:      rule.Constraints,
 		ApprovalRequired: decision == "require_approval",
 		Remediations:     rule.Remediations,

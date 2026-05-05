@@ -88,16 +88,19 @@ errors return `DENY` with retry guidance. Approval-derived allows are never
 stored in the safe allow cache.
 
 The safe allow cache is disabled by default. When explicitly enabled, it is
-bounded in memory by TTL and max entries, keyed by tenant, policy mode,
-`policy_snapshot`, action kind/capability/risk, action hash, and input hash. It
+bounded in memory by TTL and max entries, keyed by tenant, policy mode, the
+global `policy_snapshot`, workflow/job override snapshots, action
+kind/capability/risk, action hash, and input hash. It
 stores only minimal sanitized allow metadata. It never stores raw payloads,
 tokens, approval references, reviewer-updated inputs, degraded results, high-risk
-actions, unknown actions, or decisions from a different policy snapshot/mode.
+actions, unknown actions, or decisions from a different policy snapshot, scoped
+override snapshot, or mode.
 
 Concurrent identical hook requests are coalesced with singleflight using the
 same deterministic decision identity: tenant, policy mode, `policy_snapshot`,
-action hash, input hash, action kind/capability, normalized command labels, and
-sorted risk tags. For a fully identified logical action, only one Gateway
+workflow/job override snapshots, action hash, input hash, action
+kind/capability, normalized command labels, and sorted risk tags. For a fully
+identified logical action, only one Gateway
 evaluate call and one decision-evidence event row are produced even when many
 callers arrive at the same time; followers receive the leader's hook decision.
 Gateway error/degraded paths do not poison the singleflight slot: once the leader

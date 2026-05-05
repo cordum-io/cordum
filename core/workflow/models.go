@@ -164,9 +164,13 @@ type Workflow struct {
 	Config      map[string]any   `json:"config,omitempty" db:"config"`      // JSON
 	InputSchema map[string]any   `json:"input_schema,omitempty" db:"input"` // JSON
 	Parameters  []map[string]any `json:"parameters,omitempty" db:"params"`  // JSON
-	CreatedBy   string           `json:"created_by" db:"created_by"`
-	CreatedAt   time.Time        `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time        `json:"updated_at" db:"updated_at"`
+	// PolicyOverride is an optional SafetyPolicy YAML fragment scoped to this
+	// workflow. The gateway validates it before saving and exposes it as a
+	// synthetic workflow/{id}/policy bundle at policy-load time.
+	PolicyOverride string    `json:"policy_override,omitempty" db:"policy_override"`
+	CreatedBy      string    `json:"created_by" db:"created_by"`
+	CreatedAt      time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // Step is a node in the workflow graph.

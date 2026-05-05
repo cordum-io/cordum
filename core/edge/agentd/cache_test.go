@@ -52,6 +52,48 @@ func TestSafeAllowCacheMissHitAndKeyIsolation(t *testing.T) {
 	}
 }
 
+func TestSafeAllowCacheKey_DistinctPerJobSnapshot(t *testing.T) {
+	t.Parallel()
+
+	clock := &cacheTestClock{now: time.Date(2026, 5, 5, 16, 0, 0, 0, time.UTC)}
+	cache := NewSafeAllowCache(SafeAllowCacheConfig{Enabled: true, TTL: time.Minute, MaxEntries: 8}, clock)
+	req := safeAllowCacheTestRequest()
+	req.WorkflowOverrideSnapshot = "snap-workflow-a"
+	req.JobOverrideSnapshot = "snap-job-a"
+
+	if !cache.Put(req, safeAllowCacheTestResponse()) {
+		t.Fatal("Put returned false for safe cache-eligible ALLOW")
+	}
+	if _, ok := cache.Get(req); !ok {
+		t.Fatal("Get with original tier snapshots missed; want hit")
+	}
+
+	cases := []struct {
+		name string
+		req  SafeAllowCacheRequest
+	}{
+		{
+			name: "workflow snapshot",
+			req: mutateSafeAllowCacheRequest(req, func(v *SafeAllowCacheRequest) {
+				v.WorkflowOverrideSnapshot = "snap-workflow-b"
+			}),
+		},
+		{
+			name: "job snapshot",
+			req: mutateSafeAllowCacheRequest(req, func(v *SafeAllowCacheRequest) {
+				v.JobOverrideSnapshot = "snap-job-b"
+			}),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, ok := cache.Get(tc.req); ok {
+				t.Fatalf("mutated %s hit cache with %#v; want miss", tc.name, got)
+			}
+		})
+	}
+}
+
 func TestSafeAllowCacheTTLEvictionAndDisable(t *testing.T) {
 	t.Parallel()
 

@@ -51,15 +51,18 @@ type EvaluateRequest struct {
 // follow the canonical edgecore.EdgeDecision wire enum (ALLOW, DENY,
 // REQUIRE_APPROVAL, THROTTLE, CONSTRAIN, RECORDED).
 type EvaluateResponse struct {
-	Decision       string `json:"decision"`
-	Reason         string `json:"reason,omitempty"`
-	RuleID         string `json:"rule_id,omitempty"`
-	PolicySnapshot string `json:"policy_snapshot,omitempty"`
-	ApprovalRef    string `json:"approval_ref,omitempty"`
-	ApprovalURL    string `json:"approval_url,omitempty"`
-	ActionHash     string `json:"action_hash,omitempty"`
-	InputHash      string `json:"input_hash,omitempty"`
-	CacheEligible  bool   `json:"cache_eligible,omitempty"`
+	Decision                 string `json:"decision"`
+	Reason                   string `json:"reason,omitempty"`
+	RuleID                   string `json:"rule_id,omitempty"`
+	RuleTier                 string `json:"rule_tier,omitempty"`
+	PolicySnapshot           string `json:"policy_snapshot,omitempty"`
+	WorkflowOverrideSnapshot string `json:"workflow_override_snapshot,omitempty"`
+	JobOverrideSnapshot      string `json:"job_override_snapshot,omitempty"`
+	ApprovalRef              string `json:"approval_ref,omitempty"`
+	ApprovalURL              string `json:"approval_url,omitempty"`
+	ActionHash               string `json:"action_hash,omitempty"`
+	InputHash                string `json:"input_hash,omitempty"`
+	CacheEligible            bool   `json:"cache_eligible,omitempty"`
 
 	Constraints  map[string]any `json:"constraints,omitempty"`
 	UpdatedInput map[string]any `json:"updated_input,omitempty"`

@@ -26,18 +26,20 @@ type SafeAllowCacheConfig struct {
 // the hook request shape directly, but it is deliberately never included in the
 // cache key or stored entry.
 type SafeAllowCacheRequest struct {
-	TenantID       string
-	PolicyMode     edgecore.PolicyMode
-	PolicySnapshot string
-	Kind           string
-	ActionName     string
-	Capability     string
-	RiskTags       []string
-	Labels         map[string]string
-	ActionHash     string
-	InputHash      string
-	ApprovalRef    string
-	InputRedacted  map[string]any
+	TenantID                 string
+	PolicyMode               edgecore.PolicyMode
+	PolicySnapshot           string
+	WorkflowOverrideSnapshot string
+	JobOverrideSnapshot      string
+	Kind                     string
+	ActionName               string
+	Capability               string
+	RiskTags                 []string
+	Labels                   map[string]string
+	ActionHash               string
+	InputHash                string
+	ApprovalRef              string
+	InputRedacted            map[string]any
 }
 
 type safeAllowCacheRecord struct {
@@ -176,10 +178,18 @@ func safeAllowCacheKey(req SafeAllowCacheRequest) string {
 		tags[i] = strings.ToLower(strings.TrimSpace(tags[i]))
 	}
 	sort.Strings(tags)
-	return strings.Join([]string{
+	parts := []string{
 		strings.TrimSpace(req.TenantID),
 		strings.TrimSpace(string(req.PolicyMode)),
 		strings.TrimSpace(req.PolicySnapshot),
+	}
+	if strings.TrimSpace(req.WorkflowOverrideSnapshot) != "" || strings.TrimSpace(req.JobOverrideSnapshot) != "" {
+		parts = append(parts,
+			strings.TrimSpace(req.WorkflowOverrideSnapshot),
+			strings.TrimSpace(req.JobOverrideSnapshot),
+		)
+	}
+	parts = append(parts,
 		strings.TrimSpace(req.Kind),
 		strings.TrimSpace(req.ActionName),
 		strings.TrimSpace(req.Capability),
@@ -188,14 +198,18 @@ func safeAllowCacheKey(req SafeAllowCacheRequest) string {
 		strings.ToLower(strings.TrimSpace(req.Labels["command.family"])),
 		strings.TrimSpace(req.ActionHash),
 		strings.TrimSpace(req.InputHash),
-	}, "\x00")
+	)
+	return strings.Join(parts, "\x00")
 }
 
 func safeAllowCacheResponse(resp EvaluateResponse) EvaluateResponse {
 	out := cloneEvaluateResponse(resp)
 	out.Reason = boundMetadataString(redactSecretLike(out.Reason))
 	out.RuleID = boundMetadataString(out.RuleID)
+	out.RuleTier = boundMetadataString(out.RuleTier)
 	out.PolicySnapshot = boundMetadataString(out.PolicySnapshot)
+	out.WorkflowOverrideSnapshot = boundMetadataString(out.WorkflowOverrideSnapshot)
+	out.JobOverrideSnapshot = boundMetadataString(out.JobOverrideSnapshot)
 	out.ActionHash = boundMetadataString(out.ActionHash)
 	out.InputHash = boundMetadataString(out.InputHash)
 	out.PermissionDecision = boundMetadataString(out.PermissionDecision)

@@ -109,17 +109,19 @@ func (m *SessionManager) Start(ctx context.Context) (*SessionState, error) {
 		return nil, err
 	}
 	state := SessionState{
-		SessionID:      resp.SessionID,
-		ExecutionID:    resp.ExecutionID,
-		TraceID:        resp.TraceID,
-		TenantID:       nonEmpty(resp.Session.TenantID, req.TenantID),
-		PrincipalID:    nonEmpty(resp.Session.PrincipalID, req.PrincipalID),
-		PolicySnapshot: resp.PolicySnapshot,
-		DashboardURL:   resp.DashboardURL,
-		PolicyMode:     nonEmptyPolicyMode(resp.Session.PolicyMode, req.PolicyMode),
-		Status:         edgecore.SessionStatusRunning,
-		StartedAt:      m.clock.Now(),
-		Metadata:       m.stateMetadata(),
+		SessionID:                resp.SessionID,
+		ExecutionID:              resp.ExecutionID,
+		TraceID:                  resp.TraceID,
+		TenantID:                 nonEmpty(resp.Session.TenantID, req.TenantID),
+		PrincipalID:              nonEmpty(resp.Session.PrincipalID, req.PrincipalID),
+		PolicySnapshot:           resp.PolicySnapshot,
+		WorkflowOverrideSnapshot: resp.WorkflowOverrideSnapshot,
+		JobOverrideSnapshot:      resp.JobOverrideSnapshot,
+		DashboardURL:             resp.DashboardURL,
+		PolicyMode:               nonEmptyPolicyMode(resp.Session.PolicyMode, req.PolicyMode),
+		Status:                   edgecore.SessionStatusRunning,
+		StartedAt:                m.clock.Now(),
+		Metadata:                 m.stateMetadata(),
 	}
 	if !resp.Session.StartedAt.IsZero() {
 		state.StartedAt = resp.Session.StartedAt

@@ -71,12 +71,16 @@ func MapEventToPolicyCheckRequest(event AgentActionEvent, classification ActionC
 func mapLabelsForPolicy(event AgentActionEvent, classification ActionClassification) map[string]string {
 	labels := make(map[string]string)
 	for key, value := range event.Labels {
+		if trustedPolicyAttachmentValue(event, key, value) {
+			continue
+		}
 		putPolicyLabel(labels, key, value, false)
 	}
 	for key, value := range classification.Labels {
 		putPolicyLabel(labels, key, value, true)
 	}
 
+	putTrustedPolicyAttachmentLabel(labels, event)
 	putPolicyLabel(labels, "edge.session_id", event.SessionID, true)
 	putPolicyLabel(labels, "edge.execution_id", event.ExecutionID, true)
 	putPolicyLabel(labels, "edge.event_id", event.EventID, true)
@@ -105,6 +109,19 @@ func mapLabelsForPolicy(event AgentActionEvent, classification ActionClassificat
 		}
 	}
 	return labels
+}
+
+func putTrustedPolicyAttachmentLabel(labels map[string]string, event AgentActionEvent) {
+	attachmentID := strings.TrimSpace(event.Labels[LabelPolicyAttachmentID])
+	if !trustedPolicyAttachmentValue(event, LabelPolicyAttachmentID, attachmentID) {
+		return
+	}
+	putPolicyLabel(labels, LabelPolicyAttachmentID, attachmentID, true)
+}
+
+func trustedPolicyAttachmentValue(event AgentActionEvent, key, value string) bool {
+	return strings.TrimSpace(key) == LabelPolicyAttachmentID &&
+		strings.TrimSpace(value) == SessionPolicyAttachmentID(event.SessionID)
 }
 
 func putPolicyLabel(labels map[string]string, key, value string, trusted bool) {
@@ -149,6 +166,9 @@ var reservedPolicyLabelPrefixes = []string{
 	"command.",
 	"unknown.",
 	"action.",
+	// Policy labels select privileged evaluation scopes; request-supplied
+	// values are dropped unless re-added through a server-owned path.
+	"policy.",
 	// EDGE-069 step 5 — classifier completeness signal MUST be
 	// classifier-owned: a malicious request must not set
 	// classifier.complete=true to short-circuit the fail-closed path

@@ -10,6 +10,7 @@ import (
 
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
+	"github.com/cordum/cordum/core/policylabels"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -221,10 +222,11 @@ func (e *Engine) buildJobRequest(ctx context.Context, wfDef *Workflow, run *Work
 			"context_mode": defaultContextModeForTopic(subject),
 		},
 		Labels: map[string]string{
-			"workflow_id": wfDef.ID,
-			"run_id":      run.ID,
-			"step_id":     stepID,
-			"_source":     "workflow",
+			"workflow_id":                   wfDef.ID,
+			"run_id":                        run.ID,
+			"step_id":                       stepID,
+			policylabels.PolicyAttachmentID: policylabels.JobAttachmentID(jobID),
+			"_source":                       "workflow",
 		},
 		TenantId: run.OrgID,
 	}

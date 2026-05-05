@@ -5,6 +5,12 @@
   "additionalProperties": false,
   "properties": {
     "version": {"type": "string"},
+    "tier": {
+      "type": "string",
+      "enum": ["global", "workflow", "job"],
+      "description": "Policy tier. Empty/missing means global."
+    },
+    "selector": {"$ref": "#/definitions/policySelector"},
     "default_tenant": {"type": "string"},
     "default_decision": {
       "type": "string",
@@ -40,6 +46,12 @@
       "additionalProperties": false,
       "properties": {
         "id": {"type": "string"},
+        "tier": {
+          "type": "string",
+          "enum": ["global", "workflow", "job"],
+          "description": "Rule tier. Empty/missing inherits the fragment tier or global."
+        },
+        "selector": {"$ref": "#/definitions/policySelector"},
         "match": {"$ref": "#/definitions/policyMatch"},
         "decision": {
           "type": "string",
@@ -80,6 +92,15 @@
           "enum": ["allow", "deny", "quarantine", "redact"]
         },
         "reason": {"type": "string"}
+      }
+    },
+    "policySelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "workflow_id": {"type": "string"},
+        "job_id": {"type": "string"},
+        "session_id": {"type": "string"}
       }
     },
     "inputRule": {

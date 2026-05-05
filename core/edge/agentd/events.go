@@ -91,6 +91,7 @@ func BuildDecisionEvidenceEvent(evidence DecisionEvidence) (edgecore.AgentAction
 		Decision:       decisionEvidenceDecision(resp),
 		DecisionReason: decisionEvidenceReason(resp),
 		RuleID:         boundMetadataString(resp.RuleID),
+		RuleTier:       decisionEvidenceRuleTier(resp),
 		PolicySnapshot: boundMetadataString(nonEmpty(resp.PolicySnapshot, state.PolicySnapshot)),
 		ApprovalRef:    boundMetadataString(resp.ApprovalRef),
 		DurationMS:     decisionEvidenceDuration(req, resp, evidence.DurationMS),
@@ -181,6 +182,26 @@ func decisionEvidenceDuration(req claude.AgentdRequest, resp EvaluateResponse, e
 	return 0
 }
 
+func decisionEvidenceRuleTier(resp EvaluateResponse) string {
+	tier := normalizeDecisionTier(resp.RuleTier)
+	if tier != "" {
+		return tier
+	}
+	if strings.TrimSpace(resp.RuleID) != "" {
+		return "global"
+	}
+	return ""
+}
+
+func normalizeDecisionTier(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "global", "workflow", "job":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return ""
+	}
+}
+
 func decisionEvidenceLabels(req claude.AgentdRequest, state SessionState, evidence DecisionEvidence) edgecore.Labels {
 	labels := edgecore.Labels{
 		"source": "cordum-agentd",
@@ -204,8 +225,14 @@ func decisionEvidenceLabels(req claude.AgentdRequest, state SessionState, eviden
 	} else if req.ActionHash != "" {
 		labels["action_hash"] = sanitizeEventText(req.ActionHash)
 	}
+	if tier := decisionEvidenceRuleTier(evidence.Response); tier != "" {
+		labels["tier"] = tier
+	}
 	for k, v := range req.Labels {
 		if unsafeEvidenceLabel(k, v) {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(k), "tier") || strings.EqualFold(strings.TrimSpace(k), "rule_tier") {
 			continue
 		}
 		if len(labels) >= edgecore.MaxLabelEntries {

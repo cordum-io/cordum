@@ -156,7 +156,7 @@ func (e *Evaluator) evaluateFreshDecision(evalCtx context.Context, req claude.Ag
 	}
 	decision := AgentdDecisionFromEvaluateResponse(evalCtx, *resp, e.approvalConfig, e.approvalWaiter)
 	e.recordDecisionObservability(req, evalReq, *resp, decision, startedAt)
-	_ = e.cache.Put(cacheReq, *resp)
+	_ = e.cache.Put(cacheRequestWithEvaluateResponse(cacheReq, *resp), *resp)
 	// Gateway evaluate already persisted a hook.policy_decision event under
 	// resp.EventID. The agentd-side evidence event captures separate local
 	// metadata (cache lookup, fail-mode, agentd timing) and must be a distinct
@@ -229,18 +229,33 @@ func (e *Evaluator) evaluateRequest(req claude.AgentdRequest) EvaluateRequest {
 
 func (e *Evaluator) cacheRequest(req claude.AgentdRequest, evalReq EvaluateRequest) SafeAllowCacheRequest {
 	return SafeAllowCacheRequest{
-		TenantID:       evalReq.TenantID,
-		PolicyMode:     nonEmptyPolicyMode(e.state.PolicyMode, edgecore.PolicyModeObserve),
-		PolicySnapshot: e.state.PolicySnapshot,
-		Kind:           evalReq.Kind,
-		ActionName:     evalReq.ActionName,
-		Capability:     evalReq.Capability,
-		RiskTags:       append([]string(nil), evalReq.RiskTags...),
-		Labels:         evaluatorLabels(req.Labels),
-		ActionHash:     req.ActionHash,
-		InputHash:      evalReq.InputHash,
-		InputRedacted:  evalReq.InputRedacted,
+		TenantID:                 evalReq.TenantID,
+		PolicyMode:               nonEmptyPolicyMode(e.state.PolicyMode, edgecore.PolicyModeObserve),
+		PolicySnapshot:           e.state.PolicySnapshot,
+		WorkflowOverrideSnapshot: e.state.WorkflowOverrideSnapshot,
+		JobOverrideSnapshot:      e.state.JobOverrideSnapshot,
+		Kind:                     evalReq.Kind,
+		ActionName:               evalReq.ActionName,
+		Capability:               evalReq.Capability,
+		RiskTags:                 append([]string(nil), evalReq.RiskTags...),
+		Labels:                   evaluatorLabels(req.Labels),
+		ActionHash:               req.ActionHash,
+		InputHash:                evalReq.InputHash,
+		InputRedacted:            evalReq.InputRedacted,
 	}
+}
+
+func cacheRequestWithEvaluateResponse(req SafeAllowCacheRequest, resp EvaluateResponse) SafeAllowCacheRequest {
+	if strings.TrimSpace(resp.PolicySnapshot) != "" {
+		req.PolicySnapshot = resp.PolicySnapshot
+	}
+	if strings.TrimSpace(resp.WorkflowOverrideSnapshot) != "" {
+		req.WorkflowOverrideSnapshot = resp.WorkflowOverrideSnapshot
+	}
+	if strings.TrimSpace(resp.JobOverrideSnapshot) != "" {
+		req.JobOverrideSnapshot = resp.JobOverrideSnapshot
+	}
+	return req
 }
 
 func (e *Evaluator) degradedDecision(req claude.AgentdRequest, evalReq EvaluateRequest, err error, cacheReq SafeAllowCacheRequest, startedAt time.Time, writer EventWriter, requireEvidence bool) (claude.AgentdDecision, error) {
@@ -261,14 +276,16 @@ func (e *Evaluator) degradedDecision(req claude.AgentdRequest, evalReq EvaluateR
 	}
 	e.recordFailModeObservability(req, evalReq, outcome, category, startedAt)
 	resp := EvaluateResponse{
-		Decision:           string(edgeDecisionFromClaude(outcome.Decision)),
-		Reason:             outcome.Reason,
-		PolicySnapshot:     e.state.PolicySnapshot,
-		Degraded:           true,
-		ErrorCode:          string(category),
-		ErrorMessage:       outcome.Reason,
-		PermissionDecision: string(outcome.Decision),
-		TerminalMessage:    outcome.TerminalCopy,
+		Decision:                 string(edgeDecisionFromClaude(outcome.Decision)),
+		Reason:                   outcome.Reason,
+		PolicySnapshot:           e.state.PolicySnapshot,
+		WorkflowOverrideSnapshot: e.state.WorkflowOverrideSnapshot,
+		JobOverrideSnapshot:      e.state.JobOverrideSnapshot,
+		Degraded:                 true,
+		ErrorCode:                string(category),
+		ErrorMessage:             outcome.Reason,
+		PermissionDecision:       string(outcome.Decision),
+		TerminalMessage:          outcome.TerminalCopy,
 	}
 	if err := e.recordDecisionEvidence(writer, requireEvidence, decision, evalReq, DecisionEvidence{
 		State:        e.state,

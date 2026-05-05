@@ -112,18 +112,19 @@ func (s *server) acquireWorkflowAdmissionLock(ctx context.Context, orgID string)
 }
 
 type createWorkflowRequest struct {
-	ID          string             `json:"id"`
-	OrgID       string             `json:"org_id"`
-	TeamID      string             `json:"team_id"`
-	Name        string             `json:"name"`
-	Description string             `json:"description"`
-	Version     string             `json:"version"`
-	TimeoutSec  int64              `json:"timeout_sec"`
-	CreatedBy   string             `json:"created_by"`
-	InputSchema map[string]any     `json:"input_schema"`
-	Parameters  []map[string]any   `json:"parameters"`
-	Steps       map[string]wf.Step `json:"steps"`
-	Config      map[string]any     `json:"config"`
+	ID             string             `json:"id"`
+	OrgID          string             `json:"org_id"`
+	TeamID         string             `json:"team_id"`
+	Name           string             `json:"name"`
+	Description    string             `json:"description"`
+	Version        string             `json:"version"`
+	TimeoutSec     int64              `json:"timeout_sec"`
+	CreatedBy      string             `json:"created_by"`
+	InputSchema    map[string]any     `json:"input_schema"`
+	Parameters     []map[string]any   `json:"parameters"`
+	PolicyOverride *string            `json:"policy_override"`
+	Steps          map[string]wf.Step `json:"steps"`
+	Config         map[string]any     `json:"config"`
 }
 
 func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -160,8 +161,10 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 	req.OrgID = orgID
 
+	var existing *wf.Workflow
 	// Preserve existing fields on upsert for callers that send partial payloads.
-	if existing, err := s.workflowStore.GetWorkflow(r.Context(), req.ID); err == nil && existing != nil {
+	if found, err := s.workflowStore.GetWorkflow(r.Context(), req.ID); err == nil && found != nil {
+		existing = found
 		if existing.OrgID != "" && existing.OrgID != req.OrgID {
 			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
 			return
@@ -197,6 +200,17 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 			req.Config = existing.Config
 		}
 	}
+	policyOverride := ""
+	if existing != nil {
+		policyOverride = existing.PolicyOverride
+	}
+	if req.PolicyOverride != nil {
+		policyOverride, err = validateWorkflowPolicyOverride(req.ID, *req.PolicyOverride)
+		if err != nil {
+			writeErrorJSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if err := validateWorkflowSteps(req.Steps); err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
@@ -217,18 +231,19 @@ func (s *server) handleCreateWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wfDef := &wf.Workflow{
-		ID:          req.ID,
-		OrgID:       req.OrgID,
-		TeamID:      req.TeamID,
-		Name:        req.Name,
-		Description: req.Description,
-		Version:     req.Version,
-		TimeoutSec:  req.TimeoutSec,
-		Config:      req.Config,
-		InputSchema: req.InputSchema,
-		Parameters:  req.Parameters,
-		CreatedBy:   req.CreatedBy,
-		Steps:       map[string]*wf.Step{},
+		ID:             req.ID,
+		OrgID:          req.OrgID,
+		TeamID:         req.TeamID,
+		Name:           req.Name,
+		Description:    req.Description,
+		Version:        req.Version,
+		TimeoutSec:     req.TimeoutSec,
+		Config:         req.Config,
+		InputSchema:    req.InputSchema,
+		Parameters:     req.Parameters,
+		PolicyOverride: policyOverride,
+		CreatedBy:      req.CreatedBy,
+		Steps:          map[string]*wf.Step{},
 	}
 	for id, step := range req.Steps {
 		s := step

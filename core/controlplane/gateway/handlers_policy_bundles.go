@@ -1085,7 +1085,11 @@ func (s *server) loadPolicyBundles(ctx context.Context) (map[string]any, string,
 	doc, err := s.configSvc.Get(ctx, configsvc.Scope(packs.PolicyConfigScope), packs.PolicyConfigID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return map[string]any{}, "", nil
+			bundles := map[string]any{}
+			if addErr := s.addWorkflowPolicyOverrideBundles(ctx, bundles); addErr != nil {
+				return nil, "", addErr
+			}
+			return bundles, "", nil
 		}
 		return nil, "", err
 	}
@@ -1093,6 +1097,9 @@ func (s *server) loadPolicyBundles(ctx context.Context) (map[string]any, string,
 	bundles, _ := raw.(map[string]any)
 	if bundles == nil {
 		bundles = map[string]any{}
+	}
+	if err := s.addWorkflowPolicyOverrideBundles(ctx, bundles); err != nil {
+		return nil, "", err
 	}
 	updatedAt := ""
 	if !doc.Updated.IsZero() {

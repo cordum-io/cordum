@@ -81,16 +81,16 @@ type server struct {
 	scanners             map[string]OutputScanner
 	snapshot             string
 	snapshots            []string
-	resultClient      redis.UniversalClient
-	velocityChecker   *velocityChecker
-	policyVersion     atomic.Uint64
-	cacheMu           sync.Mutex
-	cacheTTL          time.Duration
-	cache             map[string]cacheEntry
-	cacheMaxSize      int
-	entitlements      *licensing.EntitlementResolver
-	customBundleCount int
-	shadowEvaluator   *ShadowEvaluator
+	resultClient         redis.UniversalClient
+	velocityChecker      *velocityChecker
+	policyVersion        atomic.Uint64
+	cacheMu              sync.Mutex
+	cacheTTL             time.Duration
+	cache                map[string]cacheEntry
+	cacheMaxSize         int
+	entitlements         *licensing.EntitlementResolver
+	customBundleCount    int
+	shadowEvaluator      *ShadowEvaluator
 
 	// Agent identity store for enriching policy evaluation with agent context.
 	agentStore    *store.AgentIdentityStore
@@ -572,6 +572,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	// so concurrent evaluations still run in parallel.
 	s.mu.RLock()
 	policy := s.policy
+	global := s.global
 	snapshot := s.snapshot
 	inputRules := s.inputRules
 	scanners := s.scanners
@@ -582,11 +583,14 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	}
 	s.mu.RUnlock()
 
+	workflowID, scopedJobID := resolvePolicyScope(req)
+	evalPolicy := scopedPolicyForRequest(policy, global, workflowID, scopedJobID, topic, req.GetLabels())
+
 	// Bypass decision cache when the active policy has effective velocity rules.
 	// Velocity decisions depend on sliding-window state that changes with every
 	// request, so caching any result (even a fallthrough ALLOW) would prevent
 	// the window from advancing correctly.
-	policyHasVelocity := effectiveVelocityRuleCount(policy, s.velocityRuleLimit()) > 0
+	policyHasVelocity := effectiveVelocityRuleCount(evalPolicy, s.velocityRuleLimit()) > 0
 	cacheKey := ""
 	if s.cacheTTL > 0 && !policyHasVelocity {
 		cacheKey = cacheKeyForRequest(req, snapshot)
@@ -687,6 +691,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 				policyDecision = config.PolicyDecision{
 					Decision: "deny",
 					Reason:   fmt.Sprintf("policy evaluation panic: %v", r),
+					RuleTier: config.PolicyTierGlobal,
 				}
 			}
 		}()
@@ -694,22 +699,23 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 			policyEvalTestHook()
 		}
 		if policyHasVelocity {
-			policyDecision = s.evaluateRulesWithVelocity(ctx, policy, input, req.GetJobId(), method)
+			policyDecision = s.evaluateRulesWithVelocity(ctx, evalPolicy, input, req.GetJobId(), method)
 		} else {
-			policyDecision = policy.Evaluate(input)
+			policyDecision = evalPolicy.Evaluate(input)
 		}
-		if tp, ok := policy.Tenants[tenant]; ok {
+		if tp, ok := evalPolicy.Tenants[tenant]; ok {
 			if ok, mcpReason := config.MCPAllowed(tp.MCP, input.MCP); !ok {
 				policyDecision.Decision = "deny"
 				policyDecision.Reason = mcpReason
 			}
 		}
 	}()
-	slog.Debug("policy evaluation complete", "component", "safety", "tenant", tenant, "topic", topic, "decision", policyDecision.Decision, "ruleId", policyDecision.RuleID, "duration", time.Since(evalStart).String())
+	slog.Debug("policy evaluation complete", "component", "safety", "tenant", tenant, "topic", topic, "decision", policyDecision.Decision, "ruleId", policyDecision.RuleID, "ruleTier", policyDecision.RuleTier, "duration", time.Since(evalStart).String())
 	evalSpan.SetAttributes(
 		attribute.String("cordum.safety_decision", policyDecision.Decision),
 		attribute.String("cordum.safety_rule_id", policyDecision.RuleID),
 		attribute.String("cordum.safety_rule_name", policyDecision.RuleID),
+		attribute.String("cordum.safety_rule_tier", policyDecision.RuleTier),
 		attribute.String("cordum.safety_reason", policyDecision.Reason),
 	)
 	if strings.HasPrefix(policyDecision.Reason, "no matching rule") {
@@ -762,6 +768,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 	//
 	// Input rules can only escalate (allow→deny or allow→require_approval), never downgrade.
 	ruleID := policyDecision.RuleID
+	ruleTier := policyDecision.RuleTier
 	if len(inputRules) > 0 {
 		if decision == pb.DecisionType_DECISION_TYPE_ALLOW || decision == pb.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS {
 			// Mirror the output-policy tracing: wrap input rule evaluation
@@ -802,11 +809,13 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 					decision = pb.DecisionType_DECISION_TYPE_DENY
 					reason = inputRuleReason(rule, findings)
 					ruleID = rule.id
+					ruleTier = config.PolicyTierGlobal
 					inputDecision = "deny"
 				case "require_approval", "require-approval", "require_human":
 					decision = pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
 					reason = inputRuleReason(rule, findings)
 					ruleID = rule.id
+					ruleTier = config.PolicyTierGlobal
 					inputDecision = "require_human"
 				}
 				slog.Info("input rule matched", "component", "safety", "rule", rule.id, "decision", rule.decision, "findings", len(findings))
@@ -838,6 +847,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 				Decision:         shadowDecisionName(decision, approvalRequired),
 				Reason:           reason,
 				RuleID:           ruleID,
+				RuleTier:         ruleTier,
 				Constraints:      policyDecision.Constraints,
 				Remediations:     policyDecision.Remediations,
 				ApprovalRequired: approvalRequired,
@@ -848,7 +858,7 @@ func (s *server) evaluate(ctx context.Context, req *pb.PolicyCheckRequest, metho
 		)
 	}
 
-	slog.Info("policy evaluation result", "component", "safety", "tenant", tenant, "topic", topic, "jobId", req.GetJobId(), "decision", resp.Decision.String(), "ruleId", resp.RuleId)
+	slog.Info("policy evaluation result", "component", "safety", "tenant", tenant, "topic", topic, "jobId", req.GetJobId(), "decision", resp.Decision.String(), "ruleId", resp.RuleId, "ruleTier", ruleTier)
 
 	if cacheKey != "" && s.cacheTTL > 0 {
 		cacheResp := clonePolicyResponse(resp)
@@ -1673,17 +1683,23 @@ func combineSnapshots(base, extra string) string {
 
 func mergePolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
 	if base == nil {
-		return clonePolicy(extra)
+		return clonePolicyWithTierMetadata(extra)
 	}
 	if extra == nil {
-		return clonePolicy(base)
+		return clonePolicyWithTierMetadata(base)
 	}
-	out := clonePolicy(base)
+	out := clonePolicyWithTierMetadata(base)
+	add := clonePolicyWithTierMetadata(extra)
+	out.Tier = config.PolicyTierGlobal
+	out.Selector = config.PolicySelector{}
 	if out.Version == "" {
-		out.Version = extra.Version
+		out.Version = add.Version
 	}
 	if out.DefaultTenant == "" {
-		out.DefaultTenant = extra.DefaultTenant
+		out.DefaultTenant = add.DefaultTenant
+	}
+	if strings.TrimSpace(out.DefaultDecision) == "" {
+		out.DefaultDecision = strings.TrimSpace(add.DefaultDecision)
 	}
 	// Merge input rules with duplicate detection (last-seen wins)
 	seenInput := make(map[string]int, len(out.Rules))
@@ -1692,7 +1708,7 @@ func mergePolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
 			seenInput[r.ID] = i
 		}
 	}
-	for _, r := range extra.Rules {
+	for _, r := range add.Rules {
 		if r.ID != "" {
 			if idx, dup := seenInput[r.ID]; dup {
 				slog.Warn("duplicate policy rule ID in merge — replacing with latest",
@@ -1712,7 +1728,7 @@ func mergePolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
 			seenOutput[r.ID] = i
 		}
 	}
-	for _, r := range extra.OutputRules {
+	for _, r := range add.OutputRules {
 		if r.ID != "" {
 			if idx, dup := seenOutput[r.ID]; dup {
 				slog.Warn("duplicate output policy rule ID in merge — replacing with latest",
@@ -1731,7 +1747,7 @@ func mergePolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
 			seenInputRules[r.ID] = i
 		}
 	}
-	for _, r := range extra.InputRules {
+	for _, r := range add.InputRules {
 		if r.ID != "" {
 			if idx, dup := seenInputRules[r.ID]; dup {
 				slog.Warn("duplicate input policy rule ID in merge — replacing with latest",
@@ -1743,7 +1759,8 @@ func mergePolicies(base, extra *config.SafetyPolicy) *config.SafetyPolicy {
 		}
 		out.InputRules = append(out.InputRules, r)
 	}
-	out.Tenants = mergeTenantPolicies(out.Tenants, extra.Tenants)
+	out.TierDefaults = append(out.TierDefaults, add.TierDefaults...)
+	out.Tenants = mergeTenantPolicies(out.Tenants, add.Tenants)
 	return out
 }
 
@@ -1753,6 +1770,8 @@ func clonePolicy(policy *config.SafetyPolicy) *config.SafetyPolicy {
 	}
 	out := &config.SafetyPolicy{
 		Version:         policy.Version,
+		Tier:            policy.Tier,
+		Selector:        config.TrimPolicySelector(policy.Selector),
 		DefaultTenant:   policy.DefaultTenant,
 		DefaultDecision: policy.DefaultDecision,
 		InputPolicy:     policy.InputPolicy,
@@ -1760,6 +1779,7 @@ func clonePolicy(policy *config.SafetyPolicy) *config.SafetyPolicy {
 		Rules:           append([]config.PolicyRule{}, policy.Rules...),
 		OutputRules:     append([]config.OutputPolicyRule{}, policy.OutputRules...),
 		InputRules:      append([]config.InputPolicyRule{}, policy.InputRules...),
+		TierDefaults:    append([]config.PolicyTierDefault{}, policy.TierDefaults...),
 		Tenants:         map[string]config.TenantPolicy{},
 	}
 	if policy.Tenants != nil {

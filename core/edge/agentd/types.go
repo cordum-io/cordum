@@ -107,13 +107,15 @@ type CreateSessionRequest struct {
 }
 
 type CreateSessionResponse struct {
-	SessionID      string                  `json:"session_id"`
-	ExecutionID    string                  `json:"execution_id"`
-	TraceID        string                  `json:"trace_id"`
-	PolicySnapshot string                  `json:"policy_snapshot"`
-	DashboardURL   string                  `json:"dashboard_url"`
-	Session        edgecore.EdgeSession    `json:"session"`
-	Execution      edgecore.AgentExecution `json:"execution"`
+	SessionID                string                  `json:"session_id"`
+	ExecutionID              string                  `json:"execution_id"`
+	TraceID                  string                  `json:"trace_id"`
+	PolicySnapshot           string                  `json:"policy_snapshot"`
+	WorkflowOverrideSnapshot string                  `json:"workflow_override_snapshot,omitempty"`
+	JobOverrideSnapshot      string                  `json:"job_override_snapshot,omitempty"`
+	DashboardURL             string                  `json:"dashboard_url"`
+	Session                  edgecore.EdgeSession    `json:"session"`
+	Execution                edgecore.AgentExecution `json:"execution"`
 }
 
 type HeartbeatResponse struct {
@@ -149,22 +151,24 @@ type LocalSessionMetadata struct {
 }
 
 type SessionState struct {
-	SessionID         string                 `json:"session_id"`
-	ExecutionID       string                 `json:"execution_id"`
-	TraceID           string                 `json:"trace_id"`
-	TenantID          string                 `json:"tenant_id"`
-	PrincipalID       string                 `json:"principal_id"`
-	PolicySnapshot    string                 `json:"policy_snapshot"`
-	DashboardURL      string                 `json:"dashboard_url"`
-	PolicyMode        edgecore.PolicyMode    `json:"policy_mode"`
-	Status            edgecore.SessionStatus `json:"status"`
-	SocketPath        string                 `json:"socket_path,omitempty"`
-	StartedAt         time.Time              `json:"started_at"`
-	EndedAt           *time.Time             `json:"ended_at,omitempty"`
-	DegradedReason    string                 `json:"degraded_reason,omitempty"`
-	FailClosed        bool                   `json:"fail_closed,omitempty"`
-	PendingGatewayEnd bool                   `json:"pending_gateway_end,omitempty"`
-	Metadata          map[string]string      `json:"metadata,omitempty"`
+	SessionID                string                 `json:"session_id"`
+	ExecutionID              string                 `json:"execution_id"`
+	TraceID                  string                 `json:"trace_id"`
+	TenantID                 string                 `json:"tenant_id"`
+	PrincipalID              string                 `json:"principal_id"`
+	PolicySnapshot           string                 `json:"policy_snapshot"`
+	WorkflowOverrideSnapshot string                 `json:"workflow_override_snapshot,omitempty"`
+	JobOverrideSnapshot      string                 `json:"job_override_snapshot,omitempty"`
+	DashboardURL             string                 `json:"dashboard_url"`
+	PolicyMode               edgecore.PolicyMode    `json:"policy_mode"`
+	Status                   edgecore.SessionStatus `json:"status"`
+	SocketPath               string                 `json:"socket_path,omitempty"`
+	StartedAt                time.Time              `json:"started_at"`
+	EndedAt                  *time.Time             `json:"ended_at,omitempty"`
+	DegradedReason           string                 `json:"degraded_reason,omitempty"`
+	FailClosed               bool                   `json:"fail_closed,omitempty"`
+	PendingGatewayEnd        bool                   `json:"pending_gateway_end,omitempty"`
+	Metadata                 map[string]string      `json:"metadata,omitempty"`
 
 	TransientSecrets map[string]string `json:"-"`
 }

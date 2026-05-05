@@ -1723,6 +1723,74 @@ func TestEdgeEvaluateMergeLabelsRejectsOversizeBeforeAllocation(t *testing.T) {
 	}
 }
 
+func TestEdgeSessionPolicyOverrideAttachment(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{
+		response: &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW, Reason: "allowed"},
+	}
+	_, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeEvaluateSessionWithPolicyMode(t, handler, edgecore.PolicyModeObserve)
+	want := edgecore.SessionPolicyAttachmentID(session.SessionID)
+	if got := session.Session.Labels[edgecore.LabelPolicyAttachmentID]; got != want {
+		t.Fatalf("session attachment label = %q, want %q in %#v", got, want, session.Session.Labels)
+	}
+	if got := session.Execution.Labels[edgecore.LabelPolicyAttachmentID]; got != want {
+		t.Fatalf("execution attachment label = %q, want %q in %#v", got, want, session.Execution.Labels)
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"tenant_id":     edgeRouteTenant,
+		"principal_id":  "principal-edge-a",
+		"session_id":    session.SessionID,
+		"execution_id":  session.ExecutionID,
+		"agent_product": "claude-code",
+		"layer":         "hook",
+		"kind":          "hook.pre_tool_use",
+		"tool_name":     "Bash",
+		"input_redacted": map[string]any{
+			"command": "npm test",
+		},
+		"labels": map[string]string{
+			edgecore.LabelPolicyAttachmentID: "session/evil/policy",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal evaluate body: %v", err)
+	}
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", string(body))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("evaluate status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	requests := safety.capturedRequests()
+	if len(requests) != 1 {
+		t.Fatalf("captured safety requests = %d, want 1", len(requests))
+	}
+	if got := requests[0].GetLabels()[edgecore.LabelPolicyAttachmentID]; got != want {
+		t.Fatalf("policy request attachment label = %q, want %q in %#v", got, want, requests[0].GetLabels())
+	}
+}
+
+func TestJobAttachmentCleanupOnEnd(t *testing.T) {
+	safety := &edgeEvaluateStubSafetyClient{}
+	_, handler := newEdgeEvaluateTestServer(t, safety)
+	session := createEdgeEvaluateSessionWithPolicyMode(t, handler, edgecore.PolicyModeObserve)
+	if got := session.Session.Labels[edgecore.LabelPolicyAttachmentID]; got == "" {
+		t.Fatalf("session did not receive policy attachment label: %#v", session.Session.Labels)
+	}
+
+	end := edgeRoutePOST(t, handler, "/api/v1/edge/sessions/"+session.SessionID+"/end", `{"status":"ended"}`)
+	if end.Code != http.StatusOK {
+		t.Fatalf("end session status = %d, want 200 body=%s", end.Code, end.Body.String())
+	}
+	evaluate := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate",
+		edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", map[string]any{"command": "npm test"}))
+	if evaluate.Code != http.StatusConflict {
+		t.Fatalf("evaluate after end status = %d, want 409 body=%s", evaluate.Code, evaluate.Body.String())
+	}
+	if requests := safety.capturedRequests(); len(requests) != 0 {
+		t.Fatalf("terminal session still reached safety kernel with %d request(s)", len(requests))
+	}
+}
+
 func TestGatewayEdgeEvaluateAppliesDemoPolicySimulationFixtures(t *testing.T) {
 	safety := &edgeEvaluatePolicySafetyClient{
 		policy:   loadEdgeEvaluateDemoPolicy(t),
@@ -2026,6 +2094,14 @@ func (c *edgeEvaluateStubSafetyClient) Evaluate(ctx context.Context, in *pb.Poli
 		return c.response, nil
 	}
 	return &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW, Reason: "allowed"}, nil
+}
+
+func (c *edgeEvaluateStubSafetyClient) capturedRequests() []*pb.PolicyCheckRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]*pb.PolicyCheckRequest, len(c.requests))
+	copy(out, c.requests)
+	return out
 }
 
 func (c *edgeEvaluatePolicySafetyClient) Evaluate(_ context.Context, in *pb.PolicyCheckRequest, _ ...grpc.CallOption) (*pb.PolicyCheckResponse, error) {

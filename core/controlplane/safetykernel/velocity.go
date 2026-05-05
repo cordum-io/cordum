@@ -287,6 +287,7 @@ func (s *server) evaluateRulesWithVelocity(ctx context.Context, policy *config.S
 				return config.PolicyDecision{
 					Decision:         "require_approval",
 					Reason:           "velocity check unavailable",
+					RuleTier:         config.PolicyTierGlobal,
 					ApprovalRequired: true,
 				}
 			}

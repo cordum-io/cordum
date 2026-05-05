@@ -464,7 +464,7 @@ func boundedShortString(value string, max int) string {
 //
 // Extra carries only safe values: session_id, execution_id, event_id, layer,
 // kind, tool_name (bounded), input_hash, action_hash, policy_snapshot,
-// rule_id (bounded), approval_ref. Raw InputRedacted/Labels/Reason MUST NOT
+// rule_id/tier (bounded), approval_ref. Raw InputRedacted/Labels/Reason MUST NOT
 // be added by callers via this builder.
 func SIEMEventForAction(event AgentActionEvent) audit.SIEMEvent {
 	decision := strings.ToUpper(strings.TrimSpace(string(event.Decision)))
@@ -671,10 +671,22 @@ func actionExtra(event AgentActionEvent) map[string]string {
 	if v := strings.TrimSpace(event.PolicySnapshot); v != "" {
 		extra["policy_snapshot"] = boundedShortString(v, 80)
 	}
+	if v := strings.TrimSpace(event.RuleTier); v != "" {
+		extra["tier"] = boundedRuleTier(v)
+	}
 	if v := strings.TrimSpace(event.ApprovalRef); v != "" {
 		extra["approval_ref"] = boundedShortString(v, 64)
 	}
 	return extra
+}
+
+func boundedRuleTier(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "global", "workflow", "job":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "unknown"
+	}
 }
 
 // sessionExtra builds the safe Extra map for an EdgeSession lifecycle event.
