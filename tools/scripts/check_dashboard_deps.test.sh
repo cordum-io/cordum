@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # EDGE-074 — synthetic test for tools/scripts/check_dashboard_deps.sh.
 #
-# Asserts the gate's three failure modes:
+# Asserts the gate's main modes:
 #   T1 — clean tree: gate exits 0 with "OK:" line.
-#   T2 — EOVERRIDE injected (lodash dep reverted to ^4.17.21 while overrides
-#        keeps ^4.18.0): gate exits 2 with EOVERRIDE in output.
-#   T3 — lockfile drift injected (package.json edited but lockfile not
-#        regenerated): gate exits 3 with "out of sync" in output.
+#   T2 — package.json edited while pnpm-lock.yaml is stale: gate exits 3.
+#   T3 — malformed package.json: gate exits 2 with validation failure output.
 #
 # Each test runs in an isolated /tmp copy of dashboard/ so the working tree
 # is never mutated. Restoration of the original tree is unconditional via
@@ -28,7 +26,7 @@ trap 'rm -rf "${SANDBOX}"' EXIT
 
 mkdir -p "${SANDBOX}/dashboard"
 cp "${REPO_ROOT}/dashboard/package.json"      "${SANDBOX}/dashboard/"
-cp "${REPO_ROOT}/dashboard/package-lock.json" "${SANDBOX}/dashboard/"
+cp "${REPO_ROOT}/dashboard/pnpm-lock.yaml"    "${SANDBOX}/dashboard/"
 # The gate locates the repo via $(cd "$(dirname "$0")/../.." && pwd), so
 # stage a copy of the script under the sandbox to make REPO_ROOT resolve to
 # ${SANDBOX} instead of the real repo.
@@ -73,48 +71,29 @@ run_case() {
 
 restore_clean_tree() {
   cp "${REPO_ROOT}/dashboard/package.json"      "${SANDBOX}/dashboard/"
-  cp "${REPO_ROOT}/dashboard/package-lock.json" "${SANDBOX}/dashboard/"
+  cp "${REPO_ROOT}/dashboard/pnpm-lock.yaml"    "${SANDBOX}/dashboard/"
 }
 
 # T1 — clean tree
 restore_clean_tree
 run_case "T1 clean tree" 0 "OK: dashboard dependencies clean"
 
-# Surgical sed-range edit: only modify entries WITHIN the dependencies block,
-# leaving overrides + pnpm.overrides untouched. The range delimiters are
-# context lines that are unique to the dependencies block in the current
-# dashboard/package.json shape (jspdf...lucide-react bracket the lodash
-# entry; any future structural change requires updating these markers).
-# Portable across BSD sed (macOS) and GNU sed (Linux/MSYS).
-edit_dependencies_block() {
-  local key="$1"
-  local from="$2"
-  local to="$3"
-  local pkg="${SANDBOX}/dashboard/package.json"
-  local tmp
-  tmp="$(mktemp -t edge074-edit.XXXXXX)"
-  sed "/\"jspdf\"/,/\"lucide-react\"/ s|\"${key}\": \"${from}\"|\"${key}\": \"${to}\"|" "${pkg}" > "${tmp}"
-  mv "${tmp}" "${pkg}"
-}
-
-# T2 — inject EOVERRIDE: revert dependencies.lodash to ^4.17.21 while
-# overrides.lodash and pnpm.overrides.lodash stay at ^4.18.0. Reproduces
-# the architect's 2026-05-04 discovery: ^4.17.21 (>=4.17.21 <4.18.0) does
-# not intersect ^4.18.0 (>=4.18.0 <4.19.0); npm flags EOVERRIDE.
-restore_clean_tree
-edit_dependencies_block "lodash" "\^4\.18\.0" "^4.17.21"
-run_case "T2 EOVERRIDE detected" 2 "EOVERRIDE|dependency resolution error"
-
-# T3 — inject lockfile drift: lodash already has 4.18.1 published. Bump
-# BOTH dependencies.lodash and overrides.lodash + pnpm.overrides.lodash to
-# ^4.18.1 (so no EOVERRIDE), then assert the gate's Phase B detects that
-# the existing lockfile (resolved against ^4.18.0 -> 4.18.0) drifts from
-# the package.json's new ^4.18.1 range.
+# T2 — inject lockfile drift: bump every lodash range in package.json while
+# leaving pnpm-lock.yaml unchanged. `pnpm install --frozen-lockfile` should
+# fail with ERR_PNPM_OUTDATED_LOCKFILE, and the gate maps that to exit 3.
 restore_clean_tree
 sed_tmp="$(mktemp -t edge074-edit.XXXXXX)"
 sed 's|"lodash": "\^4\.18\.0"|"lodash": "^4.18.1"|g' "${SANDBOX}/dashboard/package.json" > "${sed_tmp}"
 mv "${sed_tmp}" "${SANDBOX}/dashboard/package.json"
-run_case "T3 lockfile drift detected" 3 "out of sync|drift detected"
+run_case "T2 pnpm lockfile drift detected" 3 "out of sync|ERR_PNPM_(OUTDATED_LOCKFILE|LOCKFILE_CONFIG_MISMATCH)"
+
+# T3 — inject a malformed package.json. This is not lockfile drift; the gate
+# should return the dependency/configuration failure class (exit 2).
+restore_clean_tree
+sed_tmp="$(mktemp -t edge074-edit.XXXXXX)"
+sed 's|"name": "cordum-dashboard-v2"|"name": |' "${SANDBOX}/dashboard/package.json" > "${sed_tmp}"
+mv "${sed_tmp}" "${SANDBOX}/dashboard/package.json"
+run_case "T3 package config error detected" 2 "dependency validation failed|Unexpected token"
 
 echo ""
 echo "==== SUMMARY: ${PASS} pass, ${FAIL} fail ===="

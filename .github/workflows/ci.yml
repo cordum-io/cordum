@@ -126,29 +126,35 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Set up pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 9.15.9
+        run_install: false
+
     - name: Set up Node
       uses: actions/setup-node@v5
       with:
         node-version-file: dashboard/.nvmrc
-        cache: npm
-        cache-dependency-path: dashboard/package-lock.json
+        cache: pnpm
+        cache-dependency-path: dashboard/pnpm-lock.yaml
 
     - name: Check dashboard dependency hygiene (EDGE-074)
       run: bash tools/scripts/check_dashboard_deps.sh
 
     - name: Install dashboard dependencies
       working-directory: dashboard
-      run: npm ci
+      run: pnpm install --frozen-lockfile
 
     - name: Typecheck dashboard (noUnusedLocals + noUnusedParameters gate, task-dd1a5934)
       working-directory: dashboard
-      run: node ./node_modules/typescript/bin/tsc --noEmit
+      run: pnpm exec tsc --noEmit
 
     - name: Run dashboard tests
       working-directory: dashboard
       run: |
         mkdir -p test-results
-        npx vitest run --reporter=junit --outputFile=./test-results/vitest.xml
+        pnpm exec vitest run --reporter=junit --outputFile=./test-results/vitest.xml
 
     - name: Upload dashboard test results
       if: always()

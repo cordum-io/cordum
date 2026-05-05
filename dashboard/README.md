@@ -4,9 +4,12 @@ Frontend control-plane UI for Cordum operators.
 
 ## Local development
 
+The dashboard uses **pnpm**. `pnpm-lock.yaml` is the committed lockfile used by
+local development, CI, and the dashboard Docker image.
+
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm run dev
 ```
 
 ## Testing

@@ -1,12 +1,15 @@
 # syntax=docker/dockerfile:1
 FROM node:22-alpine AS builder
 WORKDIR /app
+ARG PNPM_VERSION=9.15.9
 
-COPY package.json package-lock.json ./
-RUN npm ci --legacy-peer-deps
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
+
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 COPY . .
-RUN npm run build
+RUN pnpm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 USER root
