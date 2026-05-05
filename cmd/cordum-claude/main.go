@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +22,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+
+	"github.com/cordum/cordum/core/edge/safeexec"
 )
 
 const cordumctlBinName = "cordumctl"
@@ -42,11 +45,16 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	full := append([]string{"edge", "claude"}, args...)
-	cmd := exec.Command(bin, full...)
+	cmd, err := safeexec.CommandContext(context.Background(), bin, full, safeexec.Options{
+		Env: os.Environ(),
+	})
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "cordum-claude: launch %s: %s\n", bin, err)
+		return 1
+	}
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.Env = os.Environ()
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {

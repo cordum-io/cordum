@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/cordum/cordum/core/edge/safeexec"
 )
 
 // siblingExecutable returns an absolute path to a binary named `name` that
@@ -230,7 +232,10 @@ func envSliceMap(values []string) map[string]string {
 func gitOutput(ctx context.Context, cwd string, args ...string) string {
 	runCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(runCtx, "git", append([]string{"-C", cwd}, args...)...)
+	cmd, err := safeexec.CommandContext(runCtx, "git", append([]string{"-C", cwd}, args...), safeexec.Options{})
+	if err != nil {
+		return ""
+	}
 	data, err := cmd.Output()
 	if err != nil {
 		return ""
