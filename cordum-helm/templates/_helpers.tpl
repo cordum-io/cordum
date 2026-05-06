@@ -75,6 +75,77 @@ redisPassword
 {{- end -}}
 {{- end -}}
 
+{{- define "cordum.licenseSecretName" -}}
+{{- if .Values.licensing.existingSecret -}}
+{{- .Values.licensing.existingSecret -}}
+{{- else -}}
+{{- printf "%s-license" (include "cordum.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cordum.natsTokenSecretName" -}}
+{{- if .Values.nats.auth.existingTokenSecret -}}
+{{- .Values.nats.auth.existingTokenSecret -}}
+{{- else -}}
+{{- printf "%s-nats-token" (include "cordum.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cordum.jwtSecretName" -}}
+{{- printf "%s-jwt" (include "cordum.fullname" .) -}}
+{{- end -}}
+
+{{- define "cordum.auditWebhookSecretName" -}}
+{{- printf "%s-audit-webhook" (include "cordum.fullname" .) -}}
+{{- end -}}
+
+{{- define "cordum.auditDatadogSecretName" -}}
+{{- printf "%s-audit-datadog" (include "cordum.fullname" .) -}}
+{{- end -}}
+
+{{/*
+Shared environment injected into every control-plane container. Keep this
+list to cross-cutting runtime knobs only; service-specific endpoints and
+secrets stay near the service that consumes them.
+*/}}
+{{- define "cordum.sharedEnv" -}}
+- name: CORDUM_LOG_LEVEL
+  value: {{ .Values.logging.level | quote }}
+- name: CORDUM_LOG_FORMAT
+  value: {{ .Values.logging.format | quote }}
+{{- if .Values.telemetry.mode }}
+- name: CORDUM_TELEMETRY_MODE
+  value: {{ .Values.telemetry.mode | quote }}
+{{- end }}
+{{- if .Values.licensing.mode }}
+- name: CORDUM_LICENSE_MODE
+  value: {{ .Values.licensing.mode | quote }}
+{{- end }}
+{{- if .Values.licensing.file }}
+- name: CORDUM_LICENSE_FILE
+  value: {{ .Values.licensing.file | quote }}
+{{- end }}
+{{- if or .Values.licensing.token .Values.licensing.existingSecret }}
+- name: CORDUM_LICENSE_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "cordum.licenseSecretName" . }}
+      key: license.json
+{{- end }}
+{{- if .Values.licensing.publicKey }}
+- name: CORDUM_LICENSE_PUBLIC_KEY
+  value: {{ .Values.licensing.publicKey | quote }}
+{{- end }}
+{{- if .Values.licensing.publicKeyPath }}
+- name: CORDUM_LICENSE_PUBLIC_KEY_PATH
+  value: {{ .Values.licensing.publicKeyPath | quote }}
+{{- end }}
+{{- if .Values.marketplace.provider }}
+- name: CORDUM_MARKETPLACE_PROVIDER
+  value: {{ .Values.marketplace.provider | quote }}
+{{- end }}
+{{- end -}}
+
 {{/*
 Production safety validations — hard-fail on dangerous combinations.
 TLS is mandatory in production mode; network policies and persistence

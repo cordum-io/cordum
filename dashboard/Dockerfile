@@ -13,7 +13,8 @@ RUN pnpm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 USER root
-RUN apk add --no-cache curl gettext
+# Refresh Alpine packages so fixed OS CVEs in the base image do not block release scans.
+RUN apk upgrade --no-cache && apk add --no-cache curl gettext
 COPY --from=builder --chown=101:101 /app/dist /usr/share/nginx/html
 COPY --chown=101:101 nginx.conf /etc/nginx/conf.d/default.conf
 COPY --chown=101:101 nginx.conf.template /etc/nginx/templates/nginx.conf.template
