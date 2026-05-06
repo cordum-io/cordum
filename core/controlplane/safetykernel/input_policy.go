@@ -140,12 +140,26 @@ func selectInputRulesForScope(
 	}
 	workflowID = strings.TrimSpace(workflowID)
 	jobID = strings.TrimSpace(jobID)
-	out := make([]compiledInputRule, 0, len(rules))
+	jobRules := make([]compiledInputRule, 0, len(rules))
+	workflowRules := make([]compiledInputRule, 0, len(rules))
+	globalRules := make([]compiledInputRule, 0, len(rules))
 	for _, rule := range rules {
-		if inputRuleAppliesToScope(rule, workflowID, jobID) {
-			out = append(out, rule)
+		if !inputRuleAppliesToScope(rule, workflowID, jobID) {
+			continue
+		}
+		switch config.NormalizePolicyTier(rule.tier) {
+		case config.PolicyTierJob:
+			jobRules = append(jobRules, rule)
+		case config.PolicyTierWorkflow:
+			workflowRules = append(workflowRules, rule)
+		case config.PolicyTierGlobal:
+			globalRules = append(globalRules, rule)
 		}
 	}
+	out := make([]compiledInputRule, 0, len(jobRules)+len(workflowRules)+len(globalRules))
+	out = append(out, jobRules...)
+	out = append(out, workflowRules...)
+	out = append(out, globalRules...)
 	return out
 }
 
