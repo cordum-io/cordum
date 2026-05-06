@@ -83,6 +83,36 @@ jobs:
         github-token: ${{ secrets.GITHUB_TOKEN }}
         auto-push: true
 
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.25'
+        cache: false
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - name: Drop local replace directives (CI uses published modules)
+      run: |
+        go mod edit -dropreplace github.com/cordum-io/cap/v2
+        go mod tidy
+
+    - name: Run integration-tagged tests
+      run: go test -v -tags=integration -timeout 10m ./...
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
