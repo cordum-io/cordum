@@ -404,7 +404,7 @@ jobs:
           echo "Verifying images at ghcr.io/cordum-io/cordum/*:${IMAGE_TAG}"
 
           control_plane=(api-gateway scheduler safety-kernel workflow-engine context-engine mcp)
-          declare -a failed
+          failed=()
           for name in "${control_plane[@]}" dashboard demo-quickstart-worker; do
             image="ghcr.io/cordum-io/cordum/${name}:${IMAGE_TAG}"
             echo "::group::pull ${image}"
