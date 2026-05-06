@@ -21,10 +21,10 @@ imagePullSecrets: []
 global:
   image:
     # Container registry prefix. Each service appends its own repo name.
-    # GHCR: ghcr.io/cordum-io/cordum  →  ghcr.io/cordum-io/cordum/api-gateway:v0.9.7
-    # Docker Hub: docker.io/cordum    →  docker.io/cordum/api-gateway:v0.9.7
+    # GHCR: ghcr.io/cordum-io/cordum  →  ghcr.io/cordum-io/cordum/api-gateway:1.0.0
+    # Docker Hub: docker.io/cordum    →  docker.io/cordum/api-gateway:1.0.0
     registry: ghcr.io/cordum-io/cordum
-    tag: "v0.9.7"
+    tag: "1.0.0"
     pullPolicy: IfNotPresent
   # Set to true for production deployments (enables TLS enforcement, strict guards)
   production: false
@@ -336,6 +336,13 @@ gateway:
     idempotencyTTL: "" # CORDUM_IDEMPOTENCY_TTL
     sessionTTL: "" # CORDUM_SESSION_TTL
     artifactMaxBytes: 0 # ARTIFACT_MAX_BYTES
+    # Cordum Edge P0 backend controls. Edge runs in the API Gateway; the
+    # developer-side cordumctl/cordum-agentd/cordum-hook binaries are installed
+    # on user machines, not as Kubernetes pods.
+    edgeSessionRetentionTTL: "" # CORDUM_EDGE_SESSION_RETENTION_TTL
+    edgeSessionSweepInterval: "" # CORDUM_EDGE_SESSION_SWEEP_INTERVAL
+    edgeMaxExecutionsPerSession: 0 # CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION
+    edgeExportMaxBytes: 0 # CORDUM_EDGE_EXPORT_MAX_BYTES
     # User authentication settings
     userAuthEnabled: false
     adminUsername: admin

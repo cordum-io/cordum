@@ -51,7 +51,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       -o /out/${SERVICE} ./cmd/${SERVICE}
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates
+# Refresh Alpine packages so fixed OS CVEs in the base image do not block
+# release scans for control-plane images.
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates
 RUN adduser -D -u 65532 cordum
 USER cordum
 WORKDIR /home/cordum

@@ -865,6 +865,22 @@ spec:
             - name: ARTIFACT_MAX_BYTES
               value: {{ .Values.gateway.env.artifactMaxBytes | quote }}
             {{- end }}
+            {{- if .Values.gateway.env.edgeSessionRetentionTTL }}
+            - name: CORDUM_EDGE_SESSION_RETENTION_TTL
+              value: {{ .Values.gateway.env.edgeSessionRetentionTTL | quote }}
+            {{- end }}
+            {{- if .Values.gateway.env.edgeSessionSweepInterval }}
+            - name: CORDUM_EDGE_SESSION_SWEEP_INTERVAL
+              value: {{ .Values.gateway.env.edgeSessionSweepInterval | quote }}
+            {{- end }}
+            {{- if gt (int .Values.gateway.env.edgeMaxExecutionsPerSession) 0 }}
+            - name: CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION
+              value: {{ .Values.gateway.env.edgeMaxExecutionsPerSession | quote }}
+            {{- end }}
+            {{- if gt (int .Values.gateway.env.edgeExportMaxBytes) 0 }}
+            - name: CORDUM_EDGE_EXPORT_MAX_BYTES
+              value: {{ .Values.gateway.env.edgeExportMaxBytes | quote }}
+            {{- end }}
             {{- if .Values.outputPolicy.enabled }}
             - name: OUTPUT_POLICY_ENABLED
               value: "true"

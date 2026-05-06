@@ -499,8 +499,12 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           sed -i "s/^version:.*/version: ${VERSION}/" cordum-helm/Chart.yaml
           sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" cordum-helm/Chart.yaml
-          echo "Chart version set to ${VERSION}"
+          # Keep the packaged chart default image tag aligned with the images
+          # published by docker/metadata-action (semver tag without the leading v).
+          sed -i -E "/^global:/,/^secrets:/ s/^([[:space:]]+tag: ).*/\1\"${VERSION}\"/" cordum-helm/values.yaml
+          echo "Chart version and default image tag set to ${VERSION}"
           grep -E '^(version|appVersion):' cordum-helm/Chart.yaml
+          sed -n '/^global:/,/^secrets:/p' cordum-helm/values.yaml | grep -E '^[[:space:]]+tag:'
 
       - name: Update image tags in Artifact Hub annotations
         run: |

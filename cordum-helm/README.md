@@ -1,7 +1,10 @@
 # Cordum Helm Chart
 
 This chart deploys the Cordum control plane (gateway, scheduler, safety kernel,
-workflow engine, optional context engine) plus Redis and NATS by default.
+workflow engine, context engine, dashboard) plus Redis and NATS by default.
+Cordum Edge P0 backend APIs are served by the API Gateway; the developer-side
+`cordumctl`, `cordum-agentd`, `cordum-hook`, and `cordum-claude` binaries are
+installed on user machines rather than as Kubernetes pods.
 
 ## Required Values
 
@@ -33,9 +36,10 @@ helm install cordum cordum/cordum -n cordum --create-namespace \
   --set dashboard.env.tenantId=default
 ```
 
-Note: the chart defaults to the image tags in `values.yaml` (currently `v0.1.4`)
-and pulls from GHCR. Override `global.image.tag` and `dashboard.image.tag` if
-your registry uses different tags.
+Note: the chart defaults to the image tag in `values.yaml` (currently `1.0.0`)
+and pulls from GHCR. The release workflow rewrites this default to the pushed
+tag before packaging the OCI chart. Override `global.image.tag` if your
+registry uses a different tag.
 
 ## Configuration
 
@@ -44,13 +48,29 @@ Common overrides:
 ```bash
 helm install cordum ./cordum-helm \
   -n cordum --create-namespace \
-  --set global.image.tag=v0.1.4 \
+  --set global.image.tag=1.0.0 \
   --set secrets.apiKey=$(openssl rand -hex 32) \
   --set redis.auth.password=$(openssl rand -hex 32) \
   --set gateway.env.tenantId=default \
   --set dashboard.env.tenantId=default \
   --set ingress.enabled=true
 ```
+
+Cordum Edge P0 backend tuning:
+
+```bash
+helm upgrade --install cordum ./cordum-helm \
+  -n cordum --create-namespace \
+  --set gateway.env.edgeSessionRetentionTTL=168h \
+  --set gateway.env.edgeSessionSweepInterval=10m \
+  --set gateway.env.edgeMaxExecutionsPerSession=500 \
+  --set gateway.env.edgeExportMaxBytes=52428800
+```
+
+These values set the Gateway environment variables used by Edge session
+retention, sweeps, execution caps, and evidence export limits. Policy behavior
+still comes from Safety Kernel/global policy; install or merge the Edge policy
+pack/rules you want for allow/deny/human-approval demos.
 
 Use external Redis/NATS:
 
