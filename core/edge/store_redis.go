@@ -29,8 +29,9 @@ const (
 	// any further Reserve/Complete attempt, even if the redis-side TTL has
 	// not yet elapsed. Bounds zombie state when a long-running flow is
 	// kept alive indefinitely by repeated TTL refreshes on retries.
-	maxIdempotencyAge             = 7 * 24 * time.Hour
-	edgeEventAppendCASMaxAttempts = 5
+	maxIdempotencyAge                 = 7 * 24 * time.Hour
+	edgeCreateExecutionCASMaxAttempts = 5
+	edgeEventAppendCASMaxAttempts     = 5
 	// maxSessionEventScan is the legacy hard-stop threshold retained as a
 	// regression-test fixture. Production session event listing no longer
 	// truncates at this count; it stops per request after the cursor window has
@@ -750,10 +751,10 @@ func (s *RedisStore) CreateExecution(ctx context.Context, execution AgentExecuti
 		return fmt.Errorf("%w: parent edge session %s", ErrNotFound, execution.SessionID)
 	}
 	if isTerminalSessionStatus(parent.Status) {
-		// Fast-path: parent is already terminal at L584. Refuse before WATCH so
+		// Fast-path: parent is already terminal. Refuse before WATCH so
 		// we record the abort and avoid a needless TX round-trip. The inside-TX
 		// re-check below catches the racier case where EndSession lands between
-		// L584 and the WATCH commit.
+		// this read and the WATCH commit.
 		s.recorder.RecordCreateExecutionAborted("parent_terminal")
 		return fmt.Errorf("%w: parent edge session %s status=%s", ErrParentSessionTerminal, execution.SessionID, parent.Status)
 	}
@@ -768,10 +769,11 @@ func (s *RedisStore) CreateExecution(ctx context.Context, execution AgentExecuti
 	// EDGE-054 — WATCH set includes both the new execution key (existence
 	// guard) AND the parent session key (terminal/missing guard). Before
 	// MULTI/EXEC, re-load the parent under the same TX so any concurrent
-	// EndSession or DeleteSession that landed between the L584 GetSession and
+	// EndSession or DeleteSession that landed between the preflight GetSession and
 	// here forces a TxFailedErr retry where the inside-TX validation refuses.
 	abortReason := ""
-	err = s.client.Watch(ctx, func(tx *redis.Tx) error {
+	err = redisutil.Retry(ctx, s.client, func(tx *redis.Tx) error {
+		abortReason = ""
 		exists, err := tx.Exists(ctx, key).Result()
 		if err != nil {
 			return fmt.Errorf("check agent execution %s existence: %w", execution.ExecutionID, err)
@@ -820,11 +822,11 @@ func (s *RedisStore) CreateExecution(ctx context.Context, execution AgentExecuti
 			return fmt.Errorf("write agent execution %s: %w", execution.ExecutionID, err)
 		}
 		return nil
-	}, key, parentKey, executionIndexKey)
+	}, redisutil.WithKeys(key, parentKey, executionIndexKey), redisutil.WithMaxAttempts(edgeCreateExecutionCASMaxAttempts))
 	if abortReason != "" {
 		s.recorder.RecordCreateExecutionAborted(abortReason)
 	}
-	if errors.Is(err, redis.TxFailedErr) {
+	if errors.Is(err, redis.TxFailedErr) || errors.Is(err, redisutil.ErrMaxAttemptsExceeded) {
 		return fmt.Errorf("create agent execution %s conflict: %w", execution.ExecutionID, err)
 	}
 	return err

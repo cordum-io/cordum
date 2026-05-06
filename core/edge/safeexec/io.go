@@ -30,15 +30,24 @@ func RunCapture(ctx context.Context, argv0 string, args []string, stdin io.Reade
 		return CaptureResult{}, err
 	}
 	var stdout, stderr bytes.Buffer
-	opts.Stdin = bytes.NewReader(input)
-	opts.Stdout = &stdout
-	opts.Stderr = &stderr
-	cmd, err := CommandContext(ctx, argv0, args, opts)
+	stdoutWriter := &limitedWriter{dst: &stdout, remaining: opts.MaxStdoutBytes}
+	stderrWriter := &limitedWriter{dst: &stderr, remaining: opts.MaxStderrBytes}
+	cmdOpts := opts
+	cmdOpts.Stdin = bytes.NewReader(input)
+	cmdOpts.Stdout = stdoutWriter
+	cmdOpts.Stderr = stderrWriter
+	cmdOpts.MaxStdoutBytes = 0
+	cmdOpts.MaxStderrBytes = 0
+	cmd, err := CommandContext(ctx, argv0, args, cmdOpts)
 	if err != nil {
 		return CaptureResult{}, err
 	}
 	err = cmd.Run()
-	return CaptureResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}, err
+	result := CaptureResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
+	if stdoutWriter.exceeded || stderrWriter.exceeded {
+		return result, ErrIOLimitExceeded
+	}
+	return result, err
 }
 
 func captureLimit(configured, fallback int64) int64 {
@@ -58,15 +67,18 @@ func LimitWriter(w io.Writer, maxBytes int64) io.Writer {
 type limitedWriter struct {
 	dst       io.Writer
 	remaining int64
+	exceeded  bool
 }
 
 func (w *limitedWriter) Write(p []byte) (int, error) {
 	if w.remaining <= 0 {
+		w.exceeded = true
 		return 0, ErrIOLimitExceeded
 	}
 	if int64(len(p)) > w.remaining {
 		n, _ := w.dst.Write(p[:w.remaining])
 		w.remaining = 0
+		w.exceeded = true
 		return n, ErrIOLimitExceeded
 	}
 	n, err := w.dst.Write(p)

@@ -343,19 +343,11 @@ func TestRedisStoreCreateExecutionSucceedsWhenParentActive(t *testing.T) {
 
 // EDGE-054 — Concurrent invariant: under simultaneous CreateExecution +
 // EndSession bursts on the same parent, every CreateExecution outcome
-// must either (a) succeed while parent is active, or (b) refuse with
-// ErrParentSessionTerminal/ErrNotFound. The invariant we assert is the
-// negative one: no execution row may exist whose parent is in a terminal
-// status at the moment the test inspects state. This exercises the WATCH
-// set widening on the redis-CAS path (executions and parent session keys
-// are now both watched, so EndSession bumping the parent key forces a
-// CreateExecution retry where the inside-TX re-validation refuses).
-//
-// miniredis serializes commands so the race may not manifest on every
-// run; the test runs many iterations to make the orphan-leak case
-// statistically observable on UNFIXED code while staying deterministic
-// on fixed code (the WATCH+revalidate pair makes orphan creation
-// impossible regardless of interleaving).
+// must either (a) succeed and persist exactly one execution, or (b) refuse
+// with ErrParentSessionTerminal/ErrNotFound and leave no execution row.
+// A successful create followed by a successful session end is normal
+// session history, not an orphan; the regression this guards is a failed
+// create path that still leaks a child execution.
 func TestRedisStoreCreateExecutionRefusesOrphanWhenParentEndedConcurrently(t *testing.T) {
 	ctx := context.Background()
 	store, _, _, cleanup := newRedisEdgeStore(t)
@@ -399,13 +391,16 @@ func TestRedisStoreCreateExecutionRefusesOrphanWhenParentEndedConcurrently(t *te
 		if err != nil {
 			t.Fatalf("iter %d GetExecution: %v", i, err)
 		}
-		if isTerminalSessionStatus(parent.Status) && childExists {
-			t.Fatalf("iter %d ORPHAN: parent status=%s + child execution %s exists (createErr=%v)",
-				i, parent.Status, executionID, createErr)
-		}
 		if createErr != nil && !errors.Is(createErr, ErrParentSessionTerminal) && !errors.Is(createErr, ErrNotFound) {
 			// Any other error suggests an unrelated bug — surface it loudly.
 			t.Fatalf("iter %d CreateExecution returned unexpected error: %v", i, createErr)
+		}
+		if createErr == nil && !childExists {
+			t.Fatalf("iter %d CreateExecution succeeded but child execution %s is missing", i, executionID)
+		}
+		if createErr != nil && childExists {
+			t.Fatalf("iter %d CreateExecution failed with %v but child execution %s exists (parent status=%s)",
+				i, createErr, executionID, parent.Status)
 		}
 	}
 }

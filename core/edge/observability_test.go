@@ -434,18 +434,18 @@ func TestEDGE072PrometheusReviewerGapMetricsRegistered(t *testing.T) {
 	for _, family := range families {
 		text.WriteString(family.String())
 	}
-	metricsText := text.String()
+	metricsText := strings.Join(strings.Fields(text.String()), " ")
 	for _, want := range []string{
 		`name:"cordum_edge_event_persisted_total"`,
 		`name:"cordum_edge_event_redacted_total"`,
 		`name:"cordum_edge_ws_events_sent_total"`,
 		`name:"cordum_edge_hook_timeout_total"`,
-		`name:"layer"  value:"hook"`,
-		`name:"kind"  value:"hook.pre_tool_use"`,
-		`name:"decision"  value:"allow"`,
-		`name:"outcome"  value:"applied"`,
-		`name:"tenant_present"  value:"true"`,
-		`name:"phase"  value:"request"`,
+		`name:"layer" value:"hook"`,
+		`name:"kind" value:"hook.pre_tool_use"`,
+		`name:"decision" value:"allow"`,
+		`name:"outcome" value:"applied"`,
+		`name:"tenant_present" value:"true"`,
+		`name:"phase" value:"request"`,
 	} {
 		if !strings.Contains(metricsText, want) {
 			t.Fatalf("gathered metrics missing %s in:\n%s", want, metricsText)

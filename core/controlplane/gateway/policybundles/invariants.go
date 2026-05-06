@@ -44,7 +44,7 @@ func ApplyInvariants(base, inv *config.SafetyPolicy) *config.SafetyPolicy {
 	if len(denies) > 0 {
 		// Prepend invariant DENY rules so first-match evaluators short-
 		// circuit before any pack/studio ALLOW with overlapping match.
-		prepended := make([]config.PolicyRule, 0, len(denies)+len(out.Rules))
+		prepended := make([]config.PolicyRule, 0, len(denies))
 		prepended = append(prepended, denies...)
 		prepended = append(prepended, out.Rules...)
 		out.Rules = prepended
@@ -60,7 +60,7 @@ func ApplyInvariants(base, inv *config.SafetyPolicy) *config.SafetyPolicy {
 		// order and return on first match, so quarantine/redact at the
 		// front cannot be overridden by an allow-mode pack rule.
 		invOutputs := CloneOutputPolicyRules(inv.OutputRules)
-		merged := make([]config.OutputPolicyRule, 0, len(invOutputs)+len(out.OutputRules))
+		merged := make([]config.OutputPolicyRule, 0, len(invOutputs))
 		merged = append(merged, invOutputs...)
 		merged = append(merged, out.OutputRules...)
 		out.OutputRules = merged

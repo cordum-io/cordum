@@ -176,11 +176,6 @@ var reservedPolicyLabelPrefixes = []string{
 	"classifier.",
 }
 
-func isReservedPolicyLabel(key string) bool {
-	_, reserved := reservedPolicyLabelPrefix(key)
-	return reserved
-}
-
 // reservedPolicyLabelPrefix reports whether key is in a reserved
 // namespace and returns the matching prefix (without trailing dot)
 // so callers can label observability metrics by namespace.

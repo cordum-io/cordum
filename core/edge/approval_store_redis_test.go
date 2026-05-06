@@ -1090,36 +1090,23 @@ func TestRedisStoreApprovalListWithoutFilterReturnsOnlyActive(t *testing.T) {
 	defer cleanup()
 
 	tenantID := "tenant-a"
-	type seeded struct {
-		ref      string
-		shouldBe string // "expired" or "active"
-	}
-	all := make([]seeded, 0, 5)
 	for i := 0; i < 5; i++ {
 		suffix := fmt.Sprintf("list-%d", i)
 		createApprovalParents(t, ctx, store, tenantID, "sess-"+suffix, "exec-"+suffix, "event-"+suffix, base)
 		req := validApprovalRequest(tenantID, "sess-"+suffix, "exec-"+suffix, "event-"+suffix, base)
-		approval, err := store.EnqueueApproval(ctx, req)
-		if err != nil {
+		if _, err := store.EnqueueApproval(ctx, req); err != nil {
 			t.Fatalf("EnqueueApproval %s: %v", suffix, err)
 		}
-		role := "active"
-		if i < 3 {
-			role = "expired"
-		}
-		all = append(all, seeded{ref: approval.ApprovalRef, shouldBe: role})
 	}
 
-	// Expire the first 3 by advancing past their 5m TTL.
+	// Expire the original approvals by advancing past their 5m TTL.
 	expireAt := base.Add(10 * time.Minute)
 	expired, err := store.ExpireApprovals(ctx, tenantID, expireAt)
 	if err != nil {
 		t.Fatalf("ExpireApprovals: %v", err)
 	}
 	if expired != 5 {
-		// All 5 expire because validApprovalRequest sets a 5-minute TTL on each.
-		// Adjust by re-enqueueing 2 fresh approvals with later TTLs so the
-		// list-without-filter test has 3 expired + 2 active to differentiate.
+		t.Fatalf("ExpireApprovals expired %d approvals, want 5", expired)
 	}
 
 	// Re-seed 2 active approvals AFTER the expire pass so they survive.

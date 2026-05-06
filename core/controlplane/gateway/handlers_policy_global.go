@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -308,24 +307,6 @@ func readSectionFromBundles(bundles map[string]any, bundleID string) (string, st
 		sha = hex.EncodeToString(sum[:])
 	}
 	return content, sha, policybundles.BundleEnabled(bundle)
-}
-
-// getConfigDocOrEmpty returns the policy config doc, creating a new
-// empty *configsvc.Document on Redis-Nil. Centralised so both the
-// existing handlers and the new global endpoint use the same shape.
-func getConfigDocOrEmpty(ctx context.Context, svc *configsvc.Service, scope, id string) (*configsvc.Document, error) {
-	doc, err := getConfigDoc(ctx, svc, scope, id)
-	if err == nil {
-		return doc, nil
-	}
-	if errors.Is(err, redis.Nil) {
-		return &configsvc.Document{
-			Scope:   configsvc.Scope(scope),
-			ScopeID: id,
-			Data:    map[string]any{},
-		}, nil
-	}
-	return nil, err
 }
 
 // sortedBundleKeys returns the bundles map keys in stable order — used
