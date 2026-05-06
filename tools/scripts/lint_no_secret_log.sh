@@ -122,13 +122,93 @@ done < <(audit_event_fixture_candidates)
 
 # --- Phase 4: EDGE-068 argv-only exec guard ----------------------------------
 # Hook-boundary subprocesses must never route untrusted payloads through a
-# shell interpreter. Keep the check intentionally grep-based so it works in
-# local Git Bash/CI without extra tooling. Suppress audited false positives
-# with "# no-shell-exec-lint".
-SHELL_EXEC_PATTERN='exec\.Command(Context)?\(.*"(sh|bash|cmd|cmd\.exe|powershell|powershell\.exe|pwsh|pwsh\.exe)".*("-c"|"/[cC]"|"-Command")'
+# shell interpreter. Keep the check awk-based so it catches gofmt-style
+# multi-line calls while still working in local Git Bash/CI without extra
+# tooling. Suppress audited false positives with "# no-shell-exec-lint".
+shell_exec_matches() {
+  local f="$1"
+  awk '
+    function paren_delta(s,    i,c,delta,in_string,escaped) {
+      for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (in_string) {
+          if (escaped) {
+            escaped = 0
+          } else if (c == "\\") {
+            escaped = 1
+          } else if (c == "\"") {
+            in_string = 0
+          }
+          continue
+        }
+        if (c == "\"") {
+          in_string = 1
+        } else if (c == "(") {
+          delta++
+        } else if (c == ")") {
+          delta--
+        }
+      }
+      return delta
+    }
+
+    function emit_if_shell_exec(    flat,snippet) {
+      flat = buf
+      gsub(/[[:space:]]+/, " ", flat)
+      if (flat ~ /no-shell-exec-lint/) {
+        return
+      }
+      if (flat !~ /exec[.]Command(Context)?[[:space:]]*[(]/) {
+        return
+      }
+      if (flat !~ /"([^"]*[/\\])?(sh|bash|cmd|cmd[.]exe|powershell|powershell[.]exe|pwsh|pwsh[.]exe)"/) {
+        return
+      }
+      if (flat !~ /("-[cC]"|"\/[cC]"|"-[cC][oO][mM][mM][aA][nN][dD]")/) {
+        return
+      }
+      snippet = flat
+      if (length(snippet) > 240) {
+        snippet = substr(snippet, 1, 240) "..."
+      }
+      print start_line ":" snippet
+    }
+
+    {
+      if (!in_call) {
+        if ($0 ~ /exec[.]Command(Context)?[[:space:]]*[(]/) {
+          in_call = 1
+          start_line = NR
+          buf = $0
+          depth = paren_delta($0)
+          if (depth <= 0) {
+            emit_if_shell_exec()
+            in_call = 0
+            buf = ""
+          }
+        }
+        next
+      }
+
+      buf = buf "\n" $0
+      depth += paren_delta($0)
+      if (depth <= 0) {
+        emit_if_shell_exec()
+        in_call = 0
+        buf = ""
+      }
+    }
+
+    END {
+      if (in_call) {
+        emit_if_shell_exec()
+      }
+    }
+  ' "$f"
+}
 
 while IFS= read -r f; do
-  matches=$(grep -nE "$SHELL_EXEC_PATTERN" "$f" 2>/dev/null | grep -v 'no-shell-exec-lint' || true)
+  matches=$(shell_exec_matches "$f" 2>/dev/null || true)
   if [[ -n "$matches" ]]; then
     echo "FAIL: $f may spawn a shell interpreter via exec.Command; use argv-only safeexec:"
     echo "$matches"
