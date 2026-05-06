@@ -28,6 +28,11 @@ heartbeat, and Gateway/Safety Kernel own tenant-aware policy decisions. Edge
 actions are **not** modeled as Cordum Jobs; jobs remain production work units
 and are only linked when a real workflow/job exists.
 
+CordClaw belongs to Cordum Edge. Treat CordClaw as the Edge
+execution-firewall/OpenClaw adapter capability; legacy `cordclaw-*`,
+`job.cordclaw.*`, `CORDCLAW_*`, and package/binary names are compatibility
+identifiers within Edge, not a separate product namespace.
+
 ## Data hierarchy
 
 | Level | Meaning | Stored evidence |

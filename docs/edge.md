@@ -24,6 +24,12 @@ agent action into a Cordum Job; Edge records `EdgeSession` -> `AgentExecution` -
 `AgentActionEvent` evidence and links to a job or workflow run only when there is
 a real production job.
 
+CordClaw is part of Cordum Edge: it is the Edge execution-firewall/OpenClaw
+adapter capability, not a separate product surface. Existing `cordclaw-*` rule
+IDs, `job.cordclaw.*` policy topics, `CORDCLAW_*` environment variables, and
+package/binary names remain stable compatibility identifiers under the Edge
+umbrella.
+
 ## Data hierarchy
 
 - **Tenant:** isolation boundary for all `/api/v1/edge/*` routes.

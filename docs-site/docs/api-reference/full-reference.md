@@ -1831,6 +1831,10 @@ curl -sS -X POST http://localhost:8081/api/v1/policy/evaluate \
 
 ### Policy governance endpoints
 
+CordClaw is part of Cordum Edge. The `job.cordclaw.*` topic namespace and
+`cordclaw-*` rule IDs shown below are stable Edge policy identifiers kept for
+wire compatibility; do not treat CordClaw as a separate product surface.
+
 ### POST `/api/v1/policy/replay`
 
 - Auth: required + admin

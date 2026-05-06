@@ -162,7 +162,8 @@ rules:
     reason: "Workflow approval gates require explicit human authorization."
 
   # =========================================================================
-  # CordClaw — only keep base fallback rules that are not shipped by the
+  # Cordum Edge / CordClaw — CordClaw is the Edge execution-firewall
+  # capability. Only keep base fallback rules that are not shipped by the
   # signed cordclaw/safety bundle. The bundle provides the deny/approval/
   # constraint/read/search rules; duplicating them here caused noisy
   # duplicate-ID warnings on every policy reload.

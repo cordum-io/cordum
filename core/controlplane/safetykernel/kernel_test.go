@@ -2666,7 +2666,9 @@ func TestRiskTagSpoofing_TopicWithoutDeriver(t *testing.T) {
 	srv := &server{tagDeriverRegistry: tagRegistry}
 	_ = srv.setPolicyWithBundleCount(context.Background(), policy, "test-snapshot", 0)
 
-	// No deriver for job.cordclaw.exec → client tags used as-is.
+	// CordClaw is a Cordum Edge capability; job.cordclaw.* remains the
+	// stable policy topic namespace. No deriver for job.cordclaw.exec →
+	// client tags used as-is.
 	req := &pb.PolicyCheckRequest{
 		JobId:  "job-claw-1",
 		Topic:  "job.cordclaw.exec",
