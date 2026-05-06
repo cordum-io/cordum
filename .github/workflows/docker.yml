@@ -440,13 +440,15 @@ jobs:
                 docker rm -f "smoke-${name}" >/dev/null 2>&1 || true
               fi
             else
-              # All Cordum CLI/service binaries respond to --help with exit
-              # 0 or 1 and emit usage. We accept either exit code; we fail
-              # only when the container itself cannot start.
-              if ! docker run --rm "${image}" --help >/dev/null 2>&1; then
-                if ! docker run --rm "${image}" version >/dev/null 2>&1; then
-                  failed+=("${name}: --help and version both failed")
-                fi
+              # Control-plane images are long-running services built from the
+              # shared root Dockerfile, which installs the selected service as
+              # /usr/local/bin/app. They are not CLI tools and may correctly
+              # reject --help/version without their runtime config. A post-pull
+              # smoke should verify that the image starts a shell and contains
+              # the expected executable; service boot is covered by the earlier
+              # per-image verify step before push.
+              if ! docker run --rm --entrypoint sh "${image}" -c "test -x /usr/local/bin/app"; then
+                failed+=("${name}: /usr/local/bin/app missing or not executable")
               fi
             fi
             echo "::endgroup::"
@@ -475,10 +477,18 @@ jobs:
           set -euo pipefail
           body=$(printf 'Release smoke test failed for **%s**.\n\nFailures:\n%s\n\nWorkflow run: %s/%s/actions/runs/%s' \
             "${TAG}" "${FAILED}" "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}")
+          gh label create release-break \
+            --repo "${GITHUB_REPOSITORY}" \
+            --color D73A4A \
+            --description "Release smoke test failure" >/dev/null 2>&1 || true
           gh issue create \
             --repo "${GITHUB_REPOSITORY}" \
             --title "release-break: ${TAG} smoke test failed" \
             --label "release-break" \
+            --body "${body}" || \
+          gh issue create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "release-break: ${TAG} smoke test failed" \
             --body "${body}"
 
   helm-chart:
