@@ -472,7 +472,7 @@ services:
       - ./demo/mock-bank:/usr/share/nginx/html:ro
       - ./demo/mock-bank/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     ports:
-      - "3000:80"
+      - "${MOCK_BANK_UI_PORT:-3000}:80"
     deploy:
       resources:
         limits:

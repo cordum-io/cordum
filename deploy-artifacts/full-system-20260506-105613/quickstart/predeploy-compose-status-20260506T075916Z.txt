@@ -1,0 +1,11 @@
+NAME                              STATUS                PORTS
+cordum-api-gateway-1              Up 2 days (healthy)   0.0.0.0:8081->8081/tcp, [::]:8081->8081/tcp, 0.0.0.0:9092->9092/tcp, [::]:9092->9092/tcp, 0.0.0.0:9080->8080/tcp, [::]:9080->8080/tcp
+cordum-context-engine-1           Up 2 days (healthy)   0.0.0.0:50400->50070/tcp, [::]:50400->50070/tcp
+cordum-dashboard-1                Up 2 days (healthy)   0.0.0.0:8082->8080/tcp, [::]:8082->8080/tcp
+cordum-demo-quickstart-worker-1   Up 3 days (healthy)   9091/tcp
+cordum-mock-bank-worker-1         Up 3 days             
+cordum-nats-1                     Up 2 days (healthy)   0.0.0.0:4222->4222/tcp, [::]:4222->4222/tcp
+cordum-redis-1                    Up 2 days (healthy)   0.0.0.0:6379->6379/tcp, [::]:6379->6379/tcp
+cordum-safety-kernel-1            Up 2 days (healthy)   0.0.0.0:50051->50051/tcp, [::]:50051->50051/tcp
+cordum-scheduler-1                Up 2 days (healthy)   
+cordum-workflow-engine-1          Up 2 days (healthy)   0.0.0.0:9093->9093/tcp, [::]:9093->9093/tcp

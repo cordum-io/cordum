@@ -47,6 +47,7 @@ type mcpRuntimeState struct {
 	approvalStore    *MCPApprovalStore
 	approvalHandler  *mcpApprovalHandler
 	sweeperStop      chan struct{}
+	stopOnce         sync.Once
 }
 
 var gatewayMCPState sync.Map // map[*server]*mcpRuntimeState
@@ -63,12 +64,42 @@ func (s *server) registerMCPRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "GET /mcp/status", s.instrumented("/mcp/status", s.mcpAuth(s.handleMCPStatus)))
 
 	cfg := s.loadMCPConfig(context.Background())
+	return s.startMCPRuntimeFromConfig(cfg)
+}
+
+func mcpTransportSupportsHTTP(transport string) bool {
+	switch strings.ToLower(strings.TrimSpace(transport)) {
+	case "", "http", "both":
+		return true
+	default:
+		return false
+	}
+}
+
+func mcpHTTPRuntimeWanted(cfg mcpGatewayConfig) bool {
+	return cfg.Enabled && mcpTransportSupportsHTTP(cfg.Transport)
+}
+
+func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
+	if s == nil {
+		return nil
+	}
 	if !cfg.Enabled {
 		slog.Info("mcp runtime disabled by config")
 		return nil
 	}
-	if cfg.Transport != "http" {
+	if !mcpTransportSupportsHTTP(cfg.Transport) {
 		slog.Info("mcp http runtime disabled", "transport", cfg.Transport)
+		return nil
+	}
+	if runtime := s.getMCPRuntime(); runtime != nil && runtime.server != nil && runtime.httpTransport != nil && !runtime.httpTransport.IsClosed() {
+		if runtime.toolRegistry != nil {
+			runtime.toolRegistry.SetConfig(cfg.Raw)
+		}
+		if runtime.resourceRegistry != nil {
+			runtime.resourceRegistry.SetConfig(cfg.Raw)
+		}
+		runtime.server.ReloadConfig(cfg.Raw)
 		return nil
 	}
 
@@ -207,7 +238,7 @@ func (s *server) registerMCPRoutes(mux *http.ServeMux) error {
 	if approvalStore != nil {
 		go runMCPApprovalSweeper(approvalStore, sweeperStop)
 	}
-	s.setMCPRuntime(&mcpRuntimeState{
+	state := &mcpRuntimeState{
 		startedAt:        time.Now().UTC(),
 		transport:        cfg.Transport,
 		httpTransport:    transport,
@@ -218,7 +249,8 @@ func (s *server) registerMCPRoutes(mux *http.ServeMux) error {
 		approvalStore:    approvalStore,
 		approvalHandler:  approvalHandler,
 		sweeperStop:      sweeperStop,
-	})
+	}
+	s.setMCPRuntime(state)
 	go func() {
 		if err := mcpServer.Serve(); err != nil {
 			slog.Error("mcp server loop failed", "error", err)
@@ -227,11 +259,7 @@ func (s *server) registerMCPRoutes(mux *http.ServeMux) error {
 	if s.shutdownCh != nil {
 		go func() {
 			<-s.shutdownCh
-			close(sweeperStop)
-			if err := transport.Close(); err != nil {
-				slog.Warn("mcp transport close failed", "error", err)
-			}
-			s.clearMCPRuntime()
+			s.stopMCPRuntime(state)
 		}()
 	}
 
@@ -437,7 +465,7 @@ func (s *server) loadMCPConfig(ctx context.Context) mcpGatewayConfig {
 
 func (s *server) mcpHTTPTransport() *mcp.HTTPTransport {
 	runtime := s.getMCPRuntime()
-	if runtime == nil || runtime.transport != "http" || runtime.httpTransport == nil || runtime.httpTransport.IsClosed() {
+	if runtime == nil || !mcpTransportSupportsHTTP(runtime.transport) || runtime.httpTransport == nil || runtime.httpTransport.IsClosed() {
 		return nil
 	}
 	return runtime.httpTransport
@@ -682,6 +710,25 @@ func (s *server) setMCPRuntime(state *mcpRuntimeState) {
 	gatewayMCPState.Store(s, state)
 }
 
+func (s *server) stopMCPRuntime(state *mcpRuntimeState) {
+	if s == nil || state == nil {
+		return
+	}
+	state.stopOnce.Do(func() {
+		if state.sweeperStop != nil {
+			close(state.sweeperStop)
+		}
+		if state.httpTransport != nil {
+			if err := state.httpTransport.Close(); err != nil {
+				slog.Warn("mcp transport close failed", "error", err)
+			}
+		}
+		if current := s.getMCPRuntime(); current == state {
+			s.clearMCPRuntime()
+		}
+	})
+}
+
 func (s *server) getMCPRuntime() *mcpRuntimeState {
 	if s == nil {
 		return nil
@@ -721,11 +768,20 @@ func mcpConfigTouched(data map[string]any) bool {
 }
 
 func (s *server) reloadMCPConfig(ctx context.Context) {
+	cfg := s.loadMCPConfig(ctx)
 	runtime := s.getMCPRuntime()
-	if runtime == nil || runtime.server == nil {
+	if !mcpHTTPRuntimeWanted(cfg) {
+		if runtime != nil {
+			s.stopMCPRuntime(runtime)
+		}
 		return
 	}
-	cfg := s.loadMCPConfig(ctx)
+	if runtime == nil || runtime.server == nil || (runtime.httpTransport != nil && runtime.httpTransport.IsClosed()) {
+		if err := s.startMCPRuntimeFromConfig(cfg); err != nil {
+			slog.Error("mcp runtime start after config change failed", "error", err)
+		}
+		return
+	}
 	if runtime.toolRegistry != nil {
 		runtime.toolRegistry.SetConfig(cfg.Raw)
 	}

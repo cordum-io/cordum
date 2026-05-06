@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../../api/client";
 import type { McpApproval } from "../../hooks/useMcpApprovals";
 import { McpApprovalsSection } from "./McpApprovalsSection";
 
@@ -97,6 +98,17 @@ describe("McpApprovalsSection", () => {
     hookState.error = new Error("boom");
     const { container, root } = render(<McpApprovalsSection />);
     expect(container.querySelector('[data-testid="mcp-approvals-error"]')).not.toBeNull();
+    cleanup({ container, root });
+  });
+
+  it("renders MCP-unavailable as a disabled state rather than a load failure", () => {
+    hookState.error = new ApiError(503, "unavailable", {
+      code: "mcp_approvals_unavailable",
+      status: 503,
+    });
+    const { container, root } = render(<McpApprovalsSection />);
+    expect(container.querySelector('[data-testid="mcp-approvals-unavailable"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="mcp-approvals-error"]')).toBeNull();
     cleanup({ container, root });
   });
 

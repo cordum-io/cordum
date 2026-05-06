@@ -15,6 +15,7 @@ import { McpSummaryTiles } from "@/components/settings/McpSummaryTiles";
 import {
   useMcpStatus,
   useMcpConfig,
+  useSetMcpConfig,
   useMcpTools,
   useMcpResources,
 } from "@/hooks/useSettings";
@@ -33,6 +34,7 @@ export default function SettingsMcpPage() {
   const { data: mcpStatus } = useMcpStatus();
   const { data: tools = [], isLoading: toolsLoading } = useMcpTools();
   const { data: resources = [], isLoading: resourcesLoading } = useMcpResources();
+  const setMcpConfig = useSetMcpConfig();
 
   const isLoading = configLoading || toolsLoading || resourcesLoading;
   const uptimeLabel = formatUptime(mcpStatus?.uptime);
@@ -54,6 +56,19 @@ export default function SettingsMcpPage() {
     } catch {
       toast.error("Failed to copy MCP URL");
     }
+  };
+
+  const handleToggleRuntime = () => {
+    if (!mcpConfig) return;
+    const nextEnabled = !mcpConfig.enabled;
+    setMcpConfig.mutate(
+      { enabled: nextEnabled },
+      {
+        onSuccess: () => {
+          toast.success(nextEnabled ? "MCP runtime enabled" : "MCP runtime disabled");
+        },
+      },
+    );
   };
 
   return (
@@ -114,6 +129,8 @@ export default function SettingsMcpPage() {
             serverUrl={serverUrl}
             uptimeLabel={uptimeLabel}
             onCopyUrl={handleCopyUrl}
+            onToggleRuntime={handleToggleRuntime}
+            runtimeTogglePending={setMcpConfig.isPending}
           />
         </>
       )}

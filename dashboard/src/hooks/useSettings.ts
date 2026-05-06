@@ -711,6 +711,7 @@ export function useMcpConfig() {
 }
 
 export function useSetMcpConfig() {
+  const queryClient = useQueryClient();
   const setConfig = useSetConfig();
   const { data: currentMcp } = useMcpConfig();
 
@@ -722,6 +723,9 @@ export function useSetMcpConfig() {
         transport: merged.transport,
       });
       return setConfig.mutateAsync(toMcpPayload(merged));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["mcp-status"] });
     },
   });
 }

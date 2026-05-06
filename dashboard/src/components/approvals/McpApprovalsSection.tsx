@@ -2,7 +2,10 @@
 // section on the ApprovalsPage. Kept as its own component so the main
 // page file doesn't grow again; the page imports this and drops it in
 // above/below the existing job-approval queue.
-import { useMcpApprovals } from "../../hooks/useMcpApprovals";
+import {
+  isMcpApprovalsUnavailableError,
+  useMcpApprovals,
+} from "../../hooks/useMcpApprovals";
 import { McpApprovalCard } from "./McpApprovalCard";
 
 interface Props {
@@ -11,6 +14,7 @@ interface Props {
 
 export function McpApprovalsSection({ statusFilter = "pending" }: Props) {
   const { data, isLoading, error } = useMcpApprovals(statusFilter);
+  const approvalsUnavailable = isMcpApprovalsUnavailableError(error);
 
   return (
     <section
@@ -31,7 +35,12 @@ export function McpApprovalsSection({ statusFilter = "pending" }: Props) {
           Loading MCP approvals…
         </div>
       )}
-      {error && (
+      {approvalsUnavailable && (
+        <div className="text-sm text-gray-500" data-testid="mcp-approvals-unavailable">
+          MCP approval engine is disabled for this deployment. Job approvals are unaffected.
+        </div>
+      )}
+      {error && !approvalsUnavailable && (
         <div className="text-sm text-red-600" data-testid="mcp-approvals-error">
           Failed to load MCP approvals.
         </div>

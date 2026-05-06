@@ -331,7 +331,7 @@ func TestProbeServiceReadyz_OK(t *testing.T) {
 	t.Cleanup(srv.Close)
 	env := newEnv(t, "http://ignored", "k")
 	p := serviceProbe{id: "scheduler", defaultURL: srv.URL + "/readyz", fix: "docker compose logs scheduler"}
-	got := probeServiceReadyz(context.Background(), env, p, p.defaultURL)
+	got := probeServiceReadyz(context.Background(), env, p, p.defaultURL, false)
 	if got.State != stateOK {
 		t.Fatalf("expected ok, got %+v", got)
 	}
@@ -345,7 +345,7 @@ func TestProbeServiceReadyz_FailOnNon2xx(t *testing.T) {
 	t.Cleanup(srv.Close)
 	env := newEnv(t, "http://ignored", "k")
 	p := serviceProbe{id: "mcp", defaultURL: srv.URL + "/readyz", fix: "docker compose logs mcp"}
-	got := probeServiceReadyz(context.Background(), env, p, p.defaultURL)
+	got := probeServiceReadyz(context.Background(), env, p, p.defaultURL, false)
 	if got.State != stateFail {
 		t.Fatalf("expected fail, got %+v", got)
 	}
@@ -362,12 +362,13 @@ func TestProbeServiceReadyz_SkipWhenPortUnboundButGatewayHealthy(t *testing.T) {
 	env := newEnv(t, "http://ignored", "k")
 	env.status = &gatewayStatusResponse{Build: gatewayBuildResponse{Version: "1.2.3"}}
 	p := serviceProbe{
-		id:          "scheduler",
-		defaultURL:  "http://127.0.0.1:1/readyz",
-		portMessage: "scheduler host port 9090",
-		fix:         "unused",
+		id:               "scheduler",
+		defaultURL:       "http://127.0.0.1:1/readyz",
+		portMessage:      "scheduler host port 9090",
+		fix:              "unused",
+		optionalHostPort: true,
 	}
-	got := probeServiceReadyz(context.Background(), env, p, p.defaultURL)
+	got := probeServiceReadyz(context.Background(), env, p, p.defaultURL, false)
 	if got.State != stateSkip {
 		t.Fatalf("expected skip when gateway healthy + port unbound, got %+v", got)
 	}
@@ -380,14 +381,63 @@ func TestProbeServiceReadyz_FailWhenPortUnboundAndGatewayUnknown(t *testing.T) {
 	t.Parallel()
 	env := newEnv(t, "http://ignored", "k") // env.status stays nil
 	p := serviceProbe{
-		id:          "scheduler",
-		defaultURL:  "http://127.0.0.1:1/readyz",
-		portMessage: "scheduler host port 9090",
-		fix:         "docker compose logs scheduler",
+		id:               "scheduler",
+		defaultURL:       "http://127.0.0.1:1/readyz",
+		portMessage:      "scheduler host port 9090",
+		fix:              "docker compose logs scheduler",
+		optionalHostPort: true,
 	}
-	got := probeServiceReadyz(context.Background(), env, p, p.defaultURL)
+	got := probeServiceReadyz(context.Background(), env, p, p.defaultURL, false)
 	if got.State != stateFail {
 		t.Fatalf("expected fail when gateway state unknown, got %+v", got)
+	}
+}
+
+func TestProbeServiceReadyz_SkipOptionalHostPortNon2xxWhenGatewayHealthy(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	env := newEnv(t, "http://ignored", "k")
+	env.status = &gatewayStatusResponse{Build: gatewayBuildResponse{Version: "1.2.3"}}
+	p := serviceProbe{
+		id:               "scheduler",
+		defaultURL:       srv.URL + "/readyz",
+		portMessage:      "scheduler host port 9090",
+		fix:              "docker compose logs scheduler",
+		optionalHostPort: true,
+	}
+	got := probeServiceReadyz(context.Background(), env, p, p.defaultURL, false)
+	if got.State != stateSkip {
+		t.Fatalf("expected skip when optional host port returns non-2xx + gateway healthy, got %+v", got)
+	}
+	if !strings.Contains(got.Detail, "returned 404") || !strings.Contains(got.Detail, "reports deploy up") {
+		t.Errorf("skip detail should explain occupied/incorrect optional port semantics: %q", got.Detail)
+	}
+}
+
+func TestProbeServiceReadyz_FailOptionalHostPortNon2xxWhenOverridden(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	env := newEnv(t, "http://ignored", "k")
+	env.status = &gatewayStatusResponse{Build: gatewayBuildResponse{Version: "1.2.3"}}
+	p := serviceProbe{
+		id:               "scheduler",
+		defaultURL:       srv.URL + "/readyz",
+		portMessage:      "scheduler host port 9090",
+		fix:              "docker compose logs scheduler",
+		optionalHostPort: true,
+	}
+	got := probeServiceReadyz(context.Background(), env, p, p.defaultURL, true)
+	if got.State != stateFail {
+		t.Fatalf("expected fail when explicit optional service override returns non-2xx, got %+v", got)
+	}
+	if !strings.Contains(got.Detail, "returned 404") {
+		t.Errorf("detail missing status code: %q", got.Detail)
 	}
 }
 
@@ -615,9 +665,9 @@ func TestCheckPolicyBundleLoaded_WarnOnPartialDemoRuleset(t *testing.T) {
 	t.Parallel()
 	bundles := `{"items":[{"id":"default","enabled":true,"rules_count":1}]}`
 	cases := []struct {
-		name      string
-		rules     string
-		wantMiss  []string
+		name     string
+		rules    string
+		wantMiss []string
 	}{
 		{
 			name:     "only_allow_rule_present",
@@ -752,9 +802,9 @@ func TestCheckVersionSkew_SkipWhenNoStatus(t *testing.T) {
 func TestSplitMajorMinor(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		in         string
-		maj, min   int
-		ok         bool
+		in       string
+		maj, min int
+		ok       bool
 	}{
 		{"1.2.3", 1, 2, true},
 		{"v1.2.3", 1, 2, true},
@@ -778,13 +828,13 @@ func TestSplitMajorMinor(t *testing.T) {
 func TestIsDestructiveFix(t *testing.T) {
 	t.Parallel()
 	cases := map[string]bool{
-		"docker compose logs scheduler":          false,
-		"cordumctl pack install ./demo":          false,
-		"cordumctl generate-certs --force":       true,
-		"docker compose down -v":                 true,
-		"git reset --hard HEAD":                  true,
-		"rm -rf /var/lib/redis":                  true,
-		"cordumctl policy activate demo":         false,
+		"docker compose logs scheduler":    false,
+		"cordumctl pack install ./demo":    false,
+		"cordumctl generate-certs --force": true,
+		"docker compose down -v":           true,
+		"git reset --hard HEAD":            true,
+		"rm -rf /var/lib/redis":            true,
+		"cordumctl policy activate demo":   false,
 	}
 	for in, want := range cases {
 		if got := isDestructiveFix(in); got != want {
@@ -1151,11 +1201,11 @@ func TestRunDoctorChecks_EndToEnd_AllGreen(t *testing.T) {
 func TestParseServiceURLOverrides_Table(t *testing.T) {
 	t.Parallel()
 	cases := map[string]map[string]string{
-		"":                                      {},
-		"scheduler=http://a":                    {"scheduler": "http://a"},
-		"scheduler=http://a,mcp=http://b":       {"scheduler": "http://a", "mcp": "http://b"},
+		"":                                {},
+		"scheduler=http://a":              {"scheduler": "http://a"},
+		"scheduler=http://a,mcp=http://b": {"scheduler": "http://a", "mcp": "http://b"},
 		"scheduler=http://a,malformed,mcp=http://b": {"scheduler": "http://a", "mcp": "http://b"},
-		" scheduler = http://a ":                {"scheduler": "http://a"},
+		" scheduler = http://a ":                    {"scheduler": "http://a"},
 	}
 	for in, want := range cases {
 		got := parseServiceURLOverrides(in)
@@ -1211,9 +1261,9 @@ func TestEmitJSON_WritesEnvelopeToStdout(t *testing.T) {
 func TestHumanDuration_Format(t *testing.T) {
 	t.Parallel()
 	cases := map[time.Duration]string{
-		-time.Hour:        "expired",
-		30 * time.Minute:  "30m",
-		3 * time.Hour:     "3h",
+		-time.Hour:         "expired",
+		30 * time.Minute:   "30m",
+		3 * time.Hour:      "3h",
 		2 * 24 * time.Hour: "2d",
 		7 * 24 * time.Hour: "7d",
 	}

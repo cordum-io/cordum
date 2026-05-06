@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MCPApprovalQueue } from "./MCPApprovalQueue";
+import { ApiError } from "../../api/client";
 import type { McpApproval } from "../../hooks/useMcpApprovals";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -11,6 +12,7 @@ const { hookState } = vi.hoisted(() => ({
     items: [] as McpApproval[],
     isLoading: false,
     isError: false,
+    error: null as unknown,
     refetchCalls: 0,
     approveMutate: vi.fn(),
     rejectMutate: vi.fn(),
@@ -29,6 +31,7 @@ vi.mock("../../hooks/useMcp", async () => {
       data: hookState.items,
       isLoading: hookState.isLoading,
       isError: hookState.isError,
+      error: hookState.error,
       refetch: () => {
         hookState.refetchCalls += 1;
       },
@@ -73,6 +76,7 @@ beforeEach(() => {
   hookState.items = [];
   hookState.isLoading = false;
   hookState.isError = false;
+  hookState.error = null;
   hookState.approvePending = false;
   hookState.rejectPending = false;
   hookState.approveMutate.mockReset();
@@ -191,6 +195,7 @@ describe("MCPApprovalQueue", () => {
 
   it("renders an error state with a retry that calls refetch", () => {
     hookState.isError = true;
+    hookState.error = new Error("boom");
     render(<MCPApprovalQueue status="pending" />);
     const err = container.querySelector('[data-testid="mcp-approval-queue-error"]');
     expect(err).toBeTruthy();
@@ -199,6 +204,17 @@ describe("MCPApprovalQueue", () => {
       retry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(hookState.refetchCalls).toBe(1);
+  });
+
+  it("renders MCP-unavailable as a disabled state instead of retryable error", () => {
+    hookState.isError = true;
+    hookState.error = new ApiError(503, "unavailable", {
+      code: "mcp_approvals_unavailable",
+      status: 503,
+    });
+    render(<MCPApprovalQueue status="pending" />);
+    expect(container.querySelector('[data-testid="mcp-approval-queue-unavailable"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="mcp-approval-queue-error"]')).toBeFalsy();
   });
 
   it("renders status-only cells (no actions) for resolved approvals", () => {

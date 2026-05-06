@@ -7,12 +7,14 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  ShieldCheck,
+  CheckCircle2,
   Activity,
   ShieldAlert,
   Inbox,
+  FileText,
   Clock,
   Search,
+  type LucideIcon,
 } from "lucide-react";
 import type { EdgeSession, EdgeSessionListParams } from "@/api/types";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -82,6 +84,10 @@ function buildHookParams(filter: PageFilter): EdgeSessionListParams {
   return params;
 }
 
+function isActiveSession(status: string): boolean {
+  return ["starting", "running", "waiting_for_approval", "degraded"].includes(status);
+}
+
 export default function EdgeSessionsPage() {
   const [filter, setFilter] = useState<PageFilter>(EMPTY_FILTER);
   const navigate = useNavigate();
@@ -91,16 +97,15 @@ export default function EdgeSessionsPage() {
   const visibleSessions = useMemo(() => applyClientFilter(sessions, filter), [sessions, filter]);
 
   const summary = useMemo(() => {
-    const active = sessions.filter((session) =>
-      ["starting", "running", "waiting_for_approval"].includes(session.status),
-    ).length;
+    const active = sessions.filter((session) => isActiveSession(session.status)).length;
+    const closed = sessions.length - active;
     const waiting = sessions.filter((session) => session.status === "waiting_for_approval").length;
     const denied = sessions.reduce((acc, session) => acc + (session.riskSummary?.deniedCount ?? 0), 0);
-    const artifacts = sessions.reduce(
+    const evidenceFiles = sessions.reduce(
       (acc, session) => acc + (session.riskSummary?.artifactCount ?? 0),
       0,
     );
-    return { active, waiting, denied, artifacts };
+    return { active, closed, waiting, denied, evidenceFiles };
   }, [sessions]);
 
   return (
@@ -110,20 +115,51 @@ export default function EdgeSessionsPage() {
           <p className="text-xs font-medium uppercase tracking-[0.2em] text-cordum">Cordum Edge</p>
           <h1 className="mt-1 text-2xl font-semibold font-display text-foreground">Edge sessions</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Governed Claude Code hook sessions across this tenant. Click a row to inspect the
-            chronological event timeline.
+            Governed Claude Code hook sessions across this tenant. Review open and closed
+            sessions, pending approvals, denied actions, and attached evidence files.
           </p>
         </div>
       </header>
 
       <section
-        className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+        className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"
         data-testid="edge-sessions-summary"
       >
-        <SummaryCard label="Active" value={summary.active} icon={Activity} variant="info" />
-        <SummaryCard label="Waiting on approval" value={summary.waiting} icon={Inbox} variant="governance" />
-        <SummaryCard label="Denied actions" value={summary.denied} icon={ShieldAlert} variant="danger" />
-        <SummaryCard label="Artifacts" value={summary.artifacts} icon={ShieldCheck} variant="healthy" />
+        <SummaryCard
+          label="Active sessions"
+          value={summary.active}
+          description="Running or approval-paused"
+          icon={Activity}
+          variant="info"
+        />
+        <SummaryCard
+          label="Closed sessions"
+          value={summary.closed}
+          description="Ended or failed sessions"
+          icon={CheckCircle2}
+          variant="healthy"
+        />
+        <SummaryCard
+          label="Pending approvals"
+          value={summary.waiting}
+          description="Sessions waiting for review"
+          icon={Inbox}
+          variant="governance"
+        />
+        <SummaryCard
+          label="Denied actions"
+          value={summary.denied}
+          description="Policy-blocked tool actions"
+          icon={ShieldAlert}
+          variant="danger"
+        />
+        <SummaryCard
+          label="Evidence files"
+          value={summary.evidenceFiles}
+          description="Audit artifacts attached"
+          icon={FileText}
+          variant="healthy"
+        />
       </section>
 
       <SessionsFilters filter={filter} setFilter={setFilter} />
@@ -183,26 +219,43 @@ export default function EdgeSessionsPage() {
 function SummaryCard({
   label,
   value,
+  description,
   icon: Icon,
   variant,
 }: {
   label: string;
   value: number;
-  icon: typeof Activity;
+  description: string;
+  icon: LucideIcon;
   variant: BadgeVariant;
 }) {
   return (
     <div className="rounded-3xl border border-border bg-surface-1/80 p-4 shadow-soft">
       <div className="flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">{label}</span>
-        <Icon className="h-4 w-4 text-muted-foreground" />
+        <Icon className={cn("h-4 w-4", summaryIconClass(variant))} />
       </div>
-      <div className="mt-2 flex items-baseline gap-2">
+      <div className="mt-2">
         <span className="font-display text-2xl text-foreground">{value}</span>
-        <StatusBadge variant={variant}>edge</StatusBadge>
+        <p className="mt-1 text-xs leading-snug text-muted-foreground">{description}</p>
       </div>
     </div>
   );
+}
+
+function summaryIconClass(variant: BadgeVariant): string {
+  switch (variant) {
+    case "danger":
+      return "text-danger";
+    case "governance":
+      return "text-cordum";
+    case "healthy":
+      return "text-success";
+    case "warning":
+      return "text-warning";
+    default:
+      return "text-muted-foreground";
+  }
 }
 
 function SessionsFilters({

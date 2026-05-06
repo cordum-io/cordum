@@ -54,7 +54,7 @@ if [[ "${MODE}" == "docker" ]]; then
 
   echo ""
   echo "=== Mock Bank Demo Ready ==="
-  echo "Mock Bank UI:  http://localhost:3000"
+  echo "Mock Bank UI:  http://localhost:${MOCK_BANK_UI_PORT:-3000}"
   echo "Dashboard:     http://localhost:8082"
   echo "API Gateway:   ${API_BASE}"
   echo ""

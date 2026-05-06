@@ -1,0 +1,26 @@
+
+cordum-mock-bank-ui-1                               Up 46 minutes             0.0.0.0:13000->80/tcp, [::]:13000->80/tcp
+cordum-dashboard-1                                  Up 47 minutes (healthy)   0.0.0.0:8082->8080/tcp, [::]:8082->8080/tcp
+cordum-api-gateway-1                                Up 47 minutes (healthy)   0.0.0.0:8081->8081/tcp, [::]:8081->8081/tcp, 0.0.0.0:9092->9092/tcp, [::]:9092->9092/tcp, 0.0.0.0:9080->8080/tcp, [::]:9080->8080/tcp
+cordum-workflow-engine-1                            Up 47 minutes (healthy)   0.0.0.0:9093->9093/tcp, [::]:9093->9093/tcp
+cordum-mock-bank-worker-1                           Up 47 minutes             
+cordum-demo-quickstart-worker-1                     Up 47 minutes (healthy)   9091/tcp
+cordum-scheduler-1                                  Up 47 minutes (healthy)   
+cordum-safety-kernel-1                              Up 47 minutes (healthy)   0.0.0.0:50051->50051/tcp, [::]:50051->50051/tcp
+cordum-context-engine-1                             Up 47 minutes (healthy)   0.0.0.0:50400->50070/tcp, [::]:50400->50070/tcp
+cordum-redis-1                                      Up 51 minutes (healthy)   0.0.0.0:6379->6379/tcp, [::]:6379->6379/tcp
+cordum-nats-1                                       Up 51 minutes (healthy)   0.0.0.0:4222->4222/tcp, [::]:4222->4222/tcp
+cordum-visa-visa-demo-server-1                      Up 3 days                 0.0.0.0:8190->8090/tcp, [::]:8190->8090/tcp
+cordum-visa-visa-payment-processor-1                Up 3 days                 
+cordum-visa-b2b-it-inventory-1                      Up 3 days                 
+cordum-visa-b2b-vendor-email-1                      Up 3 days                 
+cordum-visa-b2b-orchestrator-1                      Up 3 days                 
+cordum-visa-b2b-procurement-1                       Up 3 days                 
+cordum-visa-b2b-hr-agent-1                          Up 3 days                 
+cordum-visa-visa-governance-evaluator-1             Up 3 days                 
+cordum-visa-peax-payment-processor-1                Up 3 days                 
+cordum-visa-peax-governance-evaluator-1             Up 3 days                 
+cordum-visa-visa-mock-api-1                         Up 3 days (healthy)       0.0.0.0:9090->9090/tcp, [::]:9090->9090/tcp
+cordum-directlab-directlab-governance-evaluator-1   Up 3 days                 
+cordum-directlab-directlab-demo-server-1            Up 3 days                 0.0.0.0:8290->8090/tcp, [::]:8290->8090/tcp
+

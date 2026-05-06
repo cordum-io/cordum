@@ -60,16 +60,40 @@ if [[ ! -f "${pack_dir}/pack.yaml" ]]; then
   exit 2
 fi
 
+gateway="${CORDUM_GATEWAY:-}"
+tls_ca="${CORDUM_TLS_CA:-}"
+if [[ -z "${tls_ca}" && -f "${repo_root}/certs/ca/ca.crt" ]]; then
+  tls_ca="${repo_root}/certs/ca/ca.crt"
+fi
+if [[ -z "${gateway}" ]]; then
+  if [[ -n "${tls_ca}" ]]; then
+    gateway="https://127.0.0.1:8081"
+  else
+    gateway="http://127.0.0.1:8081"
+  fi
+fi
+
+cordumctl_flags=(--gateway "${gateway}" --tenant "${CORDUM_TENANT_ID:-default}")
+if [[ -n "${CORDUM_API_KEY:-}" ]]; then
+  cordumctl_flags+=(--api-key "${CORDUM_API_KEY}")
+fi
+if [[ -n "${tls_ca}" ]]; then
+  cordumctl_flags+=(--cacert "$(to_cordumctl_path "${tls_ca}")")
+fi
+if [[ "${CORDUM_TLS_INSECURE:-}" == "1" || "${CORDUM_TLS_INSECURE:-}" == "true" ]]; then
+  cordumctl_flags+=(--insecure)
+fi
+
 log_file="$(mktemp -t demo-quickstart-XXXXXX.log)"
 trap 'echo "[integration] artifacts at ${log_file}"' EXIT
 
 echo "[integration] installing pack ..."
-"${cordumctl_bin}" pack install "$(to_cordumctl_path "${pack_dir}")" --upgrade
+"${cordumctl_bin}" pack install "${cordumctl_flags[@]}" "$(to_cordumctl_path "${pack_dir}")" --upgrade
 
 echo "[integration] running demo ..."
 start_epoch="$(date +%s)"
 set +e
-"${cordumctl_bin}" demo run quickstart --timeout 30 2>&1 | tee "${log_file}"
+"${cordumctl_bin}" demo run quickstart "${cordumctl_flags[@]}" --timeout 30 2>&1 | tee "${log_file}"
 demo_rc=$?
 set -e
 elapsed=$(( $(date +%s) - start_epoch ))

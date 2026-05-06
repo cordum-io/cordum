@@ -291,6 +291,18 @@ func TestRegisterMCPRoutesStatusEndpointWhenMCPDisabled(t *testing.T) {
 func TestHandleSetConfigReloadsMCPRuntimeConfig(t *testing.T) {
 	t.Parallel()
 	s, _, _ := newTestGateway(t)
+	if err := s.configSvc.Set(context.Background(), &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data: map[string]any{
+			"mcp": map[string]any{
+				"enabled":   true,
+				"transport": "http",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
 	tools := mcp.NewToolRegistry()
 	if err := tools.Register(mcp.Tool{Name: "demo.tool"}, func(_ context.Context, _ json.RawMessage) (*mcp.ToolCallResult, error) {
 		return &mcp.ToolCallResult{}, nil
@@ -341,6 +353,104 @@ func TestHandleSetConfigReloadsMCPRuntimeConfig(t *testing.T) {
 	}
 	if got := len(resources.List()); got != 0 {
 		t.Fatalf("expected resource disabled after mcp reload, got %d", got)
+	}
+}
+
+func TestHandleSetConfigStartsMCPRuntimeWhenEnabled(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestGateway(t)
+	s.auth = mcpTestAuth{apiKey: "test-key", tenant: "default"}
+	s.shutdownCh = make(chan struct{})
+	t.Cleanup(func() {
+		close(s.shutdownCh)
+	})
+
+	mux := http.NewServeMux()
+	if err := s.registerMCPRoutes(mux); err != nil {
+		t.Fatalf("register mcp routes: %v", err)
+	}
+	if runtime := s.getMCPRuntime(); runtime != nil {
+		t.Fatalf("expected MCP runtime disabled before config patch, got %#v", runtime)
+	}
+
+	body := strings.NewReader(`{"mcp":{"enabled":true,"transport":"http","port":3001,"requireAuth":true,"tools":{},"resources":{}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/config", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "test-key")
+	req.Header.Set("X-Tenant-ID", "default")
+	rr := httptest.NewRecorder()
+	s.handleSetConfig(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("set config failed: %d %s", rr.Code, rr.Body.String())
+	}
+
+	runtime := s.getMCPRuntime()
+	if runtime == nil || runtime.approvalHandler == nil || runtime.httpTransport == nil {
+		t.Fatalf("expected live MCP runtime with approvals after enable, got %#v", runtime)
+	}
+
+	httpSrv := httptest.NewServer(mux)
+	defer httpSrv.Close()
+	statusReq, _ := http.NewRequest(http.MethodGet, httpSrv.URL+"/mcp/status", nil)
+	statusReq.Header.Set("X-API-Key", "test-key")
+	statusReq.Header.Set("X-Tenant-ID", "default")
+	statusResp, err := http.DefaultClient.Do(statusReq)
+	if err != nil {
+		t.Fatalf("status request failed: %v", err)
+	}
+	defer func() { _ = statusResp.Body.Close() }()
+	if statusResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200 after dynamic enable, got %d", statusResp.StatusCode)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(statusResp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode status payload: %v", err)
+	}
+	if running, ok := payload["running"].(bool); !ok || !running {
+		t.Fatalf("expected running=true after dynamic enable, got %#v", payload["running"])
+	}
+}
+
+func TestHandleSetConfigStopsMCPRuntimeWhenDisabled(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newTestGateway(t)
+	s.auth = mcpTestAuth{apiKey: "test-key", tenant: "default"}
+	s.shutdownCh = make(chan struct{})
+	t.Cleanup(func() {
+		close(s.shutdownCh)
+	})
+	if err := s.configSvc.Set(context.Background(), &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data: map[string]any{
+			"mcp": map[string]any{
+				"enabled":   true,
+				"transport": "http",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("set config: %v", err)
+	}
+	mux := http.NewServeMux()
+	if err := s.registerMCPRoutes(mux); err != nil {
+		t.Fatalf("register mcp routes: %v", err)
+	}
+	if runtime := s.getMCPRuntime(); runtime == nil {
+		t.Fatal("expected MCP runtime before disable")
+	}
+
+	body := strings.NewReader(`{"mcp":{"enabled":false,"transport":"http","port":3001,"requireAuth":true,"tools":{},"resources":{}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/config", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", "test-key")
+	req.Header.Set("X-Tenant-ID", "default")
+	rr := httptest.NewRecorder()
+	s.handleSetConfig(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("set config failed: %d %s", rr.Code, rr.Body.String())
+	}
+	if runtime := s.getMCPRuntime(); runtime != nil {
+		t.Fatalf("expected MCP runtime stopped after disable, got %#v", runtime)
 	}
 }
 

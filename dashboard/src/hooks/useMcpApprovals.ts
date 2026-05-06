@@ -56,6 +56,8 @@ export function useMcpApprovals(status?: McpApprovalStatus) {
       const res = await get<{ items?: McpApproval[] }>(`/mcp/approvals${qs}`);
       return res.items ?? [];
     },
+    retry: (failureCount, err) =>
+      !isMcpApprovalsUnavailableError(err) && failureCount < 2,
     staleTime: 5_000,
     refetchInterval: 5_000,
     refetchIntervalInBackground: false,
@@ -142,6 +144,14 @@ function errorCode(body: unknown): string {
     if (typeof c === "string") return c;
   }
   return "";
+}
+
+export function isMcpApprovalsUnavailableError(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    err.status === 503 &&
+    errorCode(err.body) === "mcp_approvals_unavailable"
+  );
 }
 
 // Shortened args hash for tabular display — 8-char prefix is enough

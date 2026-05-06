@@ -63,6 +63,13 @@ One-command runner (installs pack + starts worker + serves UI):
 ./tools/scripts/demo_mock_bank.sh
 ```
 
+The Docker demo publishes the Mock Bank UI on host port `3000` by default.
+If another local service is already using that port, choose a different one:
+
+```bash
+MOCK_BANK_UI_PORT=13000 ./tools/scripts/demo_mock_bank.sh
+```
+
 ## 5) Run the flow
 
 1. Send a $40 transfer request in the chat. It auto-executes.

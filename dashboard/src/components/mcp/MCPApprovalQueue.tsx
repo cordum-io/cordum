@@ -18,6 +18,7 @@ import { useMemo, useState } from "react";
 import { useConfigStore } from "../../state/config";
 import { useDialogA11y } from "../../hooks/useDialogA11y";
 import {
+  isMcpApprovalsUnavailableError,
   shortArgsHash,
   useApproveMcp,
   useMcpPendingApprovals,
@@ -54,6 +55,7 @@ export function MCPApprovalQueue(props: MCPApprovalQueueProps) {
   const principalId = useConfigStore((s) => s.principalId ?? "");
   const query = useMcpPendingApprovals(status);
   const items = query.data ?? [];
+  const approvalsUnavailable = isMcpApprovalsUnavailableError(query.error);
 
   const [pendingDecision, setPendingDecision] = useState<
     | { id: string; tool: string; verb: "approve" | "reject" }
@@ -98,7 +100,17 @@ export function MCPApprovalQueue(props: MCPApprovalQueueProps) {
         </div>
       )}
 
-      {isError && (
+      {isError && approvalsUnavailable && (
+        <div
+          role="status"
+          className="rounded-xl border border-[color:var(--border-color,#27272a)] bg-[color:var(--surface,#0b0b0e)] px-4 py-3 text-sm text-[color:var(--text-muted,#a1a1aa)]"
+          data-testid="mcp-approval-queue-unavailable"
+        >
+          MCP approval engine is disabled for this deployment. No MCP tool approvals are queued.
+        </div>
+      )}
+
+      {isError && !approvalsUnavailable && (
         <div
           role="alert"
           className="flex items-center justify-between rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-300"
@@ -373,4 +385,3 @@ function formatRelative(unixSeconds: number): string {
 }
 
 export default MCPApprovalQueue;
-

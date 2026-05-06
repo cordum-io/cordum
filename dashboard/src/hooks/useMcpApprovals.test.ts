@@ -3,7 +3,13 @@
 // interaction (render → click Approve → server call → list refresh) is
 // covered by the integration tests in step 12.
 import { describe, expect, it } from "vitest";
-import { shortArgsHash, type McpApproval, type McpApprovalStatus } from "./useMcpApprovals";
+import { ApiError } from "../api/client";
+import {
+  isMcpApprovalsUnavailableError,
+  shortArgsHash,
+  type McpApproval,
+  type McpApprovalStatus,
+} from "./useMcpApprovals";
 
 describe("shortArgsHash", () => {
   it("truncates long hashes with an ellipsis", () => {
@@ -20,6 +26,28 @@ describe("shortArgsHash", () => {
 
   it("returns full value at the 10-char boundary", () => {
     expect(shortArgsHash("abcdefghij")).toBe("abcdefghij");
+  });
+});
+
+describe("isMcpApprovalsUnavailableError", () => {
+  it("matches the gateway's MCP approval-engine unavailable envelope", () => {
+    expect(
+      isMcpApprovalsUnavailableError(
+        new ApiError(503, "unavailable", {
+          code: "mcp_approvals_unavailable",
+          status: 503,
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not hide unrelated MCP/load errors", () => {
+    expect(isMcpApprovalsUnavailableError(new Error("boom"))).toBe(false);
+    expect(
+      isMcpApprovalsUnavailableError(
+        new ApiError(503, "down", { code: "internal_error", status: 503 }),
+      ),
+    ).toBe(false);
   });
 });
 

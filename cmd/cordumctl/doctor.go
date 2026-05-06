@@ -192,26 +192,29 @@ func parseServiceURLOverrides(raw string) map[string]string {
 
 // serviceProbe describes one backend service's readyz endpoint. The
 // URL can be overridden via --service-url KEY=URL so k8s + port-forward
-// deploys can re-target each probe. Default URLs match the compose
-// published-port layout documented in docker-compose.yml.
+// deploys can re-target each probe. Default URLs match service-local
+// readyz endpoints documented by docker-compose.yml healthchecks; not all
+// of those ports are published on the host in the default compose stack.
 type serviceProbe struct {
-	id          string // stable identifier — also the --service-url KEY and check id.
-	label       string
-	defaultURL  string
-	fix         string // service-specific fix hint for fail/skip output.
-	portMessage string // short name used in the skip-when-port-not-exposed detail.
+	id               string // stable identifier — also the --service-url KEY and check id.
+	label            string
+	defaultURL       string
+	fix              string // service-specific fix hint for fail/skip output.
+	portMessage      string // short name used in the skip-when-port-not-exposed detail.
+	optionalHostPort bool   // default compose keeps this service's readyz endpoint container-local.
 }
 
 // defaultServiceProbes enumerates the backend services doctor probes.
-// Ports track `docker-compose.yml` published-port mappings; the
-// planning notes in task-55166dbf confirm these bindings and the
-// compose file is the source of truth.
+// Default URLs track the container-local readyz ports. optionalHostPort=true
+// marks services whose default compose deployment does not publish that
+// readyz port to the host; operators can still force strict probing with
+// --service-url KEY=URL.
 var defaultServiceProbes = []serviceProbe{
-	{id: "scheduler", label: "Scheduler readyz", defaultURL: "http://127.0.0.1:9090/readyz", fix: "docker compose logs scheduler  (verify nats + redis reachable from scheduler)", portMessage: "scheduler host port 9090"},
-	{id: "safety-kernel", label: "Safety kernel readyz", defaultURL: "http://127.0.0.1:9095/readyz", fix: "docker compose logs safety-kernel  (kernel rejects gateway traffic until ready)", portMessage: "safety-kernel host port 9095"},
-	{id: "context-engine", label: "Context engine readyz", defaultURL: "http://127.0.0.1:9094/readyz", fix: "docker compose logs context-engine  (verify redis + grpc bootstrap)", portMessage: "context-engine host port 9094"},
+	{id: "scheduler", label: "Scheduler readyz", defaultURL: "http://127.0.0.1:9090/readyz", fix: "docker compose logs scheduler  (verify nats + redis reachable from scheduler)", portMessage: "scheduler host port 9090", optionalHostPort: true},
+	{id: "safety-kernel", label: "Safety kernel readyz", defaultURL: "http://127.0.0.1:9095/readyz", fix: "docker compose logs safety-kernel  (kernel rejects gateway traffic until ready)", portMessage: "safety-kernel host port 9095", optionalHostPort: true},
+	{id: "context-engine", label: "Context engine readyz", defaultURL: "http://127.0.0.1:9094/readyz", fix: "docker compose logs context-engine  (verify redis + grpc bootstrap)", portMessage: "context-engine host port 9094", optionalHostPort: true},
 	{id: "workflow-engine", label: "Workflow engine readyz", defaultURL: "http://127.0.0.1:9093/readyz", fix: "docker compose logs workflow-engine  (verify NATS subscriptions came up)", portMessage: "workflow-engine host port 9093"},
-	{id: "mcp", label: "MCP readyz", defaultURL: "http://127.0.0.1:8090/readyz", fix: "docker compose logs mcp  (check gateway_addr inside the mcp container)", portMessage: "mcp host port 8090"},
+	{id: "mcp", label: "MCP readyz", defaultURL: "http://127.0.0.1:8090/readyz", fix: "docker compose logs mcp  (check gateway_addr inside the mcp container)", portMessage: "mcp host port 8090", optionalHostPort: true},
 	{id: "dashboard", label: "Dashboard reachable", defaultURL: "http://127.0.0.1:8082/", fix: "docker compose logs dashboard  (dashboard serves static build; re-pull image if missing)", portMessage: "dashboard host port 8082"},
 }
 
@@ -251,10 +254,12 @@ func defaultChecks() []doctorCheck {
 func makeServiceProbeCheck(p serviceProbe) func(ctx context.Context, env *doctorEnv) checkResult {
 	return func(ctx context.Context, env *doctorEnv) checkResult {
 		url := p.defaultURL
+		overridden := false
 		if override, ok := env.serviceURL[p.id]; ok && strings.TrimSpace(override) != "" {
 			url = strings.TrimSpace(override)
+			overridden = true
 		}
-		return probeServiceReadyz(ctx, env, p, url)
+		return probeServiceReadyz(ctx, env, p, url, overridden)
 	}
 }
 
@@ -265,14 +270,14 @@ func makeServiceProbeCheck(p serviceProbe) func(ctx context.Context, env *doctor
 // port is published. Non-200 responses stay as fail with service-
 // specific fix hints so operators can skip straight to `docker compose
 // logs <service>`.
-func probeServiceReadyz(ctx context.Context, env *doctorEnv, p serviceProbe, url string) checkResult {
+func probeServiceReadyz(ctx context.Context, env *doctorEnv, p serviceProbe, url string, overridden bool) checkResult {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return checkResult{State: stateFail, Detail: fmt.Sprintf("invalid probe URL %q: %v", url, err), Fix: p.fix}
 	}
 	resp, err := env.httpClient.Do(req)
 	if err != nil {
-		if env.status != nil {
+		if p.optionalHostPort && !overridden && env.status != nil {
 			return checkResult{
 				State:  stateSkip,
 				Detail: fmt.Sprintf("%s not exposed (expected in release compose); gateway /api/v1/status reports deploy up", p.portMessage),
@@ -287,6 +292,12 @@ func probeServiceReadyz(ctx context.Context, env *doctorEnv, p serviceProbe, url
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return checkResult{State: stateOK, Detail: fmt.Sprintf("GET %s %d", url, resp.StatusCode)}
+	}
+	if p.optionalHostPort && !overridden && env.status != nil {
+		return checkResult{
+			State:  stateSkip,
+			Detail: fmt.Sprintf("%s returned %d or is owned by another local service; gateway /api/v1/status reports deploy up", p.portMessage, resp.StatusCode),
+		}
 	}
 	return checkResult{
 		State:  stateFail,

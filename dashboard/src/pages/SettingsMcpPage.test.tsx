@@ -11,6 +11,7 @@ const { hookState, toastState } = vi.hoisted(() => ({
     mcpStatus: { data: undefined as unknown },
     mcpTools: { data: [] as unknown[], isLoading: false },
     mcpResources: { data: [] as unknown[], isLoading: false },
+    setMcpConfig: { mutate: vi.fn(), isPending: false },
   },
   toastState: {
     success: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock("@/hooks/useSettings", () => ({
   useMcpStatus: () => hookState.mcpStatus,
   useMcpTools: () => hookState.mcpTools,
   useMcpResources: () => hookState.mcpResources,
+  useSetMcpConfig: () => hookState.setMcpConfig,
 }));
 
 let container: HTMLDivElement;
@@ -88,6 +90,8 @@ beforeEach(() => {
   };
   toastState.success.mockReset();
   toastState.error.mockReset();
+  hookState.setMcpConfig.mutate.mockReset();
+  hookState.setMcpConfig.isPending = false;
   Object.defineProperty(window, "location", {
     configurable: true,
     value: { hostname: "dashboard.local" },
@@ -156,6 +160,38 @@ describe("SettingsMcpPage", () => {
 
     renderPage();
     expect(container.textContent).toContain("MCP server is disabled");
+    expect(container.textContent).toContain("Enable runtime");
+  });
+
+  it("enables MCP runtime from the server panel action", () => {
+    hookState.mcpConfig = {
+      data: {
+        enabled: false,
+        transport: "http",
+        port: 8787,
+        requireAuth: true,
+        allowedOrigins: [],
+        tools: {},
+        resources: {},
+      },
+      isLoading: false,
+    };
+
+    renderPage();
+    clickByText("Enable runtime");
+    expect(hookState.setMcpConfig.mutate).toHaveBeenCalledWith(
+      { enabled: true },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("disables MCP runtime from the server panel action", () => {
+    renderPage();
+    clickByText("Disable runtime");
+    expect(hookState.setMcpConfig.mutate).toHaveBeenCalledWith(
+      { enabled: false },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
   });
 
   it("toggles the server panel details", () => {

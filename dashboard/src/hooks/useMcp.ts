@@ -18,6 +18,7 @@ import type {
 } from "../api/types";
 
 export {
+  isMcpApprovalsUnavailableError,
   useApproveMcp,
   useMcpApproval,
   useMcpApprovals as useMcpPendingApprovals,

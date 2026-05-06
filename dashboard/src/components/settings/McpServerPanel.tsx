@@ -1,4 +1,4 @@
-import { Globe, Plug, Wrench, Copy } from "lucide-react";
+import { Globe, Plug, Wrench, Copy, Power } from "lucide-react";
 import type { McpConfig, McpResource, McpStatus, McpTool } from "@/api/types";
 import { Button } from "@/components/ui/Button";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
@@ -14,6 +14,8 @@ interface McpServerPanelProps {
   serverUrl: string;
   uptimeLabel: string;
   onCopyUrl: () => void;
+  onToggleRuntime?: () => void;
+  runtimeTogglePending?: boolean;
 }
 
 function DetailItem({ label, value }: { label: string; value: string | number }) {
@@ -100,6 +102,8 @@ export function McpServerPanel({
   serverUrl,
   uptimeLabel,
   onCopyUrl,
+  onToggleRuntime,
+  runtimeTogglePending = false,
 }: McpServerPanelProps) {
   const connected = Boolean(status?.running);
 
@@ -155,6 +159,18 @@ export function McpServerPanel({
       </InstrumentCardBody>
 
       <InstrumentCardFooter className="flex flex-wrap items-center gap-2">
+        {onToggleRuntime && (
+          <Button
+            variant={config.enabled ? "outline" : "primary"}
+            size="sm"
+            onClick={onToggleRuntime}
+            disabled={runtimeTogglePending}
+            loading={runtimeTogglePending}
+          >
+            <Power className="mr-1 h-3 w-3" />
+            {config.enabled ? "Disable runtime" : "Enable runtime"}
+          </Button>
+        )}
         <Button variant="ghost" size="sm" onClick={onCopyUrl}>
           <Copy className="mr-1 h-3 w-3" />
           Copy URL

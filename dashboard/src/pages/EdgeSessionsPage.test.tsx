@@ -110,10 +110,11 @@ describe("EdgeSessionsPage", () => {
     });
     renderPage();
     const summary = screen.getByTestId("edge-sessions-summary");
-    expect(summary.textContent).toContain("Active");
-    expect(summary.textContent).toContain("Waiting on approval");
+    expect(summary.textContent).toContain("Active sessions");
+    expect(summary.textContent).toContain("Closed sessions");
+    expect(summary.textContent).toContain("Pending approvals");
     expect(summary.textContent).toContain("Denied actions");
-    expect(summary.textContent).toContain("Artifacts");
+    expect(summary.textContent).toContain("Evidence files");
     // 3 denied + 5 artifacts come from the second session
     expect(summary.textContent).toContain("3");
     expect(summary.textContent).toContain("5");

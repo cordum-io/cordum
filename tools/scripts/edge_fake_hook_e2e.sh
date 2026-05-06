@@ -252,14 +252,49 @@ have_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+to_curl_path() {
+  local path=${1:-}
+  if [[ -n "${path}" && "${path}" == /* ]] && have_cmd cygpath && curl --version 2>/dev/null | grep -qi schannel; then
+    cygpath -w "${path}"
+    return 0
+  fi
+  printf '%s' "${path}"
+}
+
 JQ_BIN=""
+JQ_NEEDS_NATIVE_PATH=0
+
+mark_jq_path_mode() {
+  JQ_NEEDS_NATIVE_PATH=0
+  local resolved="${JQ_BIN}"
+  if have_cmd "${JQ_BIN}"; then
+    resolved=$(command -v "${JQ_BIN}" 2>/dev/null || printf '%s' "${JQ_BIN}")
+  fi
+  case "${resolved}" in
+    *.exe|/[A-Za-z]/*|/c/*|/d/*)
+      JQ_NEEDS_NATIVE_PATH=1
+      ;;
+  esac
+}
+
+to_jq_path() {
+  local path=${1:-}
+  if [[ "${JQ_NEEDS_NATIVE_PATH}" == "1" && -n "${path}" && "${path}" == /* ]] && have_cmd cygpath; then
+    cygpath -w "${path}"
+    return 0
+  fi
+  printf '%s' "${path}"
+}
+
 detect_jq() {
   if [[ -n "${CORDUM_JQ:-}" && -x "${CORDUM_JQ}" ]]; then
     JQ_BIN="${CORDUM_JQ}"
+    mark_jq_path_mode
     return 0
   fi
   if have_cmd jq; then
     JQ_BIN="jq"
+    mark_jq_path_mode
     return 0
   fi
   # Windows/MSYS fallback: tools/scripts/jq.exe is a documented hook in the
@@ -267,6 +302,7 @@ detect_jq() {
   # we'll find it; otherwise rely on system jq.
   if [[ -x "tools/scripts/jq.exe" ]]; then
     JQ_BIN="tools/scripts/jq.exe"
+    mark_jq_path_mode
     return 0
   fi
   return 1
@@ -307,7 +343,7 @@ init_curl_opts() {
     ca="./certs/ca/ca.crt"
   fi
   if [[ -n "${ca}" ]]; then
-    CURL_OPTS+=(--cacert "${ca}")
+    CURL_OPTS+=(--cacert "$(to_curl_path "${ca}")")
   fi
   if curl --version 2>/dev/null | grep -qi schannel; then
     CURL_OPTS+=(--ssl-no-revoke)
@@ -344,6 +380,8 @@ curl_request() {
   body_file=$(mktemp -p "${TMP_ROOT:-/tmp}" curl_body.XXXXXX)
   CURL_LAST_BODY_FILE="${body_file}"
   printf '%s' "${body_file}" > "${CURL_LAST_BODY_SENTINEL}"
+  local curl_body_file
+  curl_body_file="$(to_curl_path "${body_file}")"
   local code
   # EDGE-051: Windows-schannel curl 8.16 exits non-zero on a non-fatal cert
   # diagnostic even when --write-out wrote a valid HTTP code to stdout. The
@@ -356,12 +394,12 @@ curl_request() {
     code=$(curl "${CURL_OPTS[@]}" "${AUTH_HEADERS[@]}" \
       -H 'Content-Type: application/json' \
       -X "${method}" -d "${body}" \
-      -o "${body_file}" -w '%{http_code}' \
+      -o "${curl_body_file}" -w '%{http_code}' \
       "${url}" 2>/dev/null) || true
   else
     code=$(curl "${CURL_OPTS[@]}" "${AUTH_HEADERS[@]}" \
       -X "${method}" \
-      -o "${body_file}" -w '%{http_code}' \
+      -o "${curl_body_file}" -w '%{http_code}' \
       "${url}" 2>/dev/null) || true
   fi
   [[ "${code}" =~ ^[0-9]{3}$ ]] || code="000"
@@ -394,7 +432,9 @@ assert_json() {
   if [[ -z "${body_file}" || ! -f "${body_file}" ]]; then
     fail "${gate}" "no JSON body to assert (${desc})"
   fi
-  if ! "${JQ_BIN}" -e "${expr}" "${body_file}" >/dev/null 2>&1; then
+  local jq_body_file
+  jq_body_file="$(to_jq_path "${body_file}")"
+  if ! "${JQ_BIN}" -e "${expr}" "${jq_body_file}" >/dev/null 2>&1; then
     fail "${gate}" "${desc} (jq expr: ${expr})"
   fi
 }
@@ -415,9 +455,11 @@ assert_reason_contains() {
   if [[ -z "${body_file}" || ! -f "${body_file}" ]]; then
     fail "${gate}" "no JSON body to assert (.reason contains '${substr}')"
   fi
+  local jq_body_file
+  jq_body_file="$(to_jq_path "${body_file}")"
   if ! "${JQ_BIN}" -e --arg s "${substr}" \
     '(.reason | type == "string") and (.reason | test($s; "i"))' \
-    "${body_file}" >/dev/null 2>&1; then
+    "${jq_body_file}" >/dev/null 2>&1; then
     fail "${gate}" ".reason field missing or does not contain '${substr}' (case-insensitive)"
   fi
 }
@@ -438,7 +480,9 @@ extract_json() {
     printf ''
     return 0
   fi
-  "${JQ_BIN}" -r "${expr}" "${body_file}" 2>/dev/null || printf ''
+  local jq_body_file
+  jq_body_file="$(to_jq_path "${body_file}")"
+  "${JQ_BIN}" -r "${expr}" "${jq_body_file}" 2>/dev/null || printf ''
 }
 
 # Negative assertion — body MUST NOT contain the given byte sequence.
@@ -592,7 +636,20 @@ locate_or_build_binaries() {
   local gate=${1:-edge_fake_hook_e2e}
   HOOK_BIN="./bin/cordum-hook"
   AGENTD_BIN="./bin/cordum-agentd"
+  local needs_build=0
+
   if [[ ! -x "${HOOK_BIN}" || ! -x "${AGENTD_BIN}" ]]; then
+    needs_build=1
+  elif have_cmd find && {
+    find ./cmd/cordum-hook ./cmd/cordum-agentd ./core/edge ./core/controlplane/gateway \
+      -type f \( -name '*.go' -o -name '*.json' -o -name '*.yaml' -o -name '*.yml' \) \
+      \( -newer "${HOOK_BIN}" -o -newer "${AGENTD_BIN}" \) -print -quit 2>/dev/null | grep -q .
+  }; then
+    needs_build=1
+    log 'existing ./bin/cordum-hook or ./bin/cordum-agentd is older than Edge source; rebuilding'
+  fi
+
+  if [[ "${needs_build}" == "1" ]]; then
     if ! have_cmd go; then
       if is_integration_mode; then
         printf 'FAIL %s: cordum-hook/cordum-agentd binaries missing and `go` not on PATH (build them or set CORDUM_EDGE_E2E_BYPASS_HOOK=1)\n' "${gate}" >&2
@@ -667,6 +724,9 @@ start_agentd() {
   elif [[ -f "./certs/ca/ca.crt" ]]; then
     agentd_ssl_cert_file="$(pwd)/certs/ca/ca.crt"
   fi
+  if [[ -n "${agentd_ssl_cert_file}" ]]; then
+    agentd_ssl_cert_file="$(to_curl_path "${agentd_ssl_cert_file}")"
+  fi
   # GODEBUG x509usefallbackroots=1 forces Go's TLS layer to honor
   # SSL_CERT_FILE / SSL_CERT_DIR on Windows where it would otherwise use
   # the platform certificate store. Required when the local Gateway uses
@@ -701,8 +761,9 @@ wait_agentd_ready() {
     fi
     code=$(curl --silent --show-error --max-time 1 \
       -X POST -H 'Content-Type: application/json' -d '{}' \
-      -o /dev/null -w '%{http_code}' \
-      "${probe_url}" 2>/dev/null || printf '000')
+      -o "$(to_curl_path /dev/null)" -w '%{http_code}' \
+      "${probe_url}" 2>/dev/null) || true
+    [[ "${code}" =~ ^[0-9]{3}$ ]] || code="000"
     case "${code}" in
       401|400|405|413) return 0 ;;  # server is up; auth/body error proves handler reachable
     esac
@@ -747,7 +808,9 @@ assert_json_file() {
   if [[ -z "${file}" || ! -f "${file}" ]]; then
     fail "${gate}" "no JSON body to assert (${desc})"
   fi
-  if ! "${JQ_BIN}" -e "${expr}" "${file}" >/dev/null 2>&1; then
+  local jq_file
+  jq_file="$(to_jq_path "${file}")"
+  if ! "${JQ_BIN}" -e "${expr}" "${jq_file}" >/dev/null 2>&1; then
     local hint=""
     if [[ -n "${HOOK_LAST_STDERR_FILE}" && -f "${HOOK_LAST_STDERR_FILE}" ]]; then
       hint=$(head -c 240 "${HOOK_LAST_STDERR_FILE}" | tr '\n' ' ')
@@ -762,7 +825,9 @@ extract_json_file() {
     printf ''
     return 0
   fi
-  "${JQ_BIN}" -r "${expr}" "${file}" 2>/dev/null || printf ''
+  local jq_file
+  jq_file="$(to_jq_path "${file}")"
+  "${JQ_BIN}" -r "${expr}" "${jq_file}" 2>/dev/null || printf ''
 }
 
 # ---------------------------------------------------------------------------
@@ -853,10 +918,10 @@ detect_api_base() {
 probe_api_base_reachable() {
   local api_base=$1
   command -v curl >/dev/null 2>&1 || return 1
-  local curl_opts=(--silent --show-error --max-time 3 --output /dev/null --write-out '%{http_code}')
+  local curl_opts=(--silent --show-error --max-time 3 --output "$(to_curl_path /dev/null)" --write-out '%{http_code}')
   if [[ -n "${CORDUM_TLS_CA}" ]] || [[ -f "./certs/ca/ca.crt" ]]; then
     local ca=${CORDUM_TLS_CA:-./certs/ca/ca.crt}
-    curl_opts+=(--cacert "${ca}")
+    curl_opts+=(--cacert "$(to_curl_path "${ca}")")
   fi
   # Match init_curl_opts behavior: Windows schannel curl can fail TLS
   # revocation checks against locally-issued CAs even though the cert is
@@ -1466,13 +1531,16 @@ JSON
   assert_json "${gate}" '.status == "pending"' 'pre-reject status != pending'
   assert_json "${gate}" '.session_id == "'"${EDGE_SESSION_ID}"'"' 'approval bound to wrong session'
 
-  # 3. Resolve as rejected. Use a separate synthetic resolver principal so
+  # 3. Resolve as rejected. Keep the literal word "rejected" in the
+  # resolver's free-text reason because the evaluate path may surface that
+  # reason verbatim instead of a generated "approval rejected" phrase.
+  # Use a separate synthetic resolver principal so
   # the requester != resolver check at handlers_edge_approvals.go:335 does
   # not 403 the call as self_approval_denied (mirrors the approve gate's
   # dance at gate_approval_flow_bypass:L1207-1213, but here we override
   # AUTH_HEADERS in-place since the bypass gate already showed it works
   # without saving/restoring around a single call).
-  local reject_body='{"reason":"edge_fake_hook_e2e synthetic rejection"}'
+  local reject_body='{"reason":"edge_fake_hook_e2e synthetic approval rejected"}'
   local saved_headers=("${AUTH_HEADERS[@]}")
   AUTH_HEADERS=(
     -H "X-API-Key: ${CORDUM_API_KEY}"
