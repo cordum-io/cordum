@@ -410,7 +410,7 @@ function AgentIdentityTab() {
                 <motion.tr
                   key={agent.id}
                   variants={tableRowVariants}
-                  {...clickableRowProps(() => navigate(`/agents/identity/${agent.id}`))}
+                  {...clickableRowProps(() => navigate(`/agents/${agent.id}?tab=identity`))}
                   className="border-b border-border/50 hover:bg-surface-2 transition-colors cursor-pointer"
                 >
                   <td className="px-5 py-3">

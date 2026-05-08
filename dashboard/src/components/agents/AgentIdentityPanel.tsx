@@ -1,17 +1,15 @@
 /*
- * DESIGN: "Control Surface" — Agent Identity Detail
- * OPERATE / Agents / Identity / :id
- * Identity profile: risk tier, permissions, activity, linked credentials
+ * AgentIdentityPanel — agent identity profile (risk tier, permissions,
+ * activity, metadata). Hosted as the "Identity" tab inside AgentDetailPage.
+ * Was a standalone route at /agents/identity/:id until the v2.5 IA cut
+ * folded it into the agent detail surface.
  */
-import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { Button } from "@/components/ui/Button";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import {
-  ArrowLeft, Shield, Fingerprint, Tag, Clock, AlertTriangle, Activity,
+  Shield, Fingerprint, Tag, Clock, AlertTriangle, Activity,
 } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { useAgentIdentity, useAgentStats } from "@/hooks/useAgentIdentities";
@@ -46,11 +44,13 @@ function TagList({ items, label }: { items?: string[]; label: string }) {
   );
 }
 
-export default function AgentIdentityDetailPage() {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  const { data: agent, isLoading, isError, error } = useAgentIdentity(id);
-  const { data: stats, isLoading: statsLoading, isError: statsError } = useAgentStats(id);
+interface AgentIdentityPanelProps {
+  agentId: string;
+}
+
+export default function AgentIdentityPanel({ agentId }: AgentIdentityPanelProps) {
+  const { data: agent, isLoading, isError, error } = useAgentIdentity(agentId);
+  const { data: stats, isLoading: statsLoading, isError: statsError } = useAgentStats(agentId);
 
   if (isError) {
     return <ErrorBanner message={error instanceof Error ? error.message : "Failed to load agent identity"} />;
@@ -58,11 +58,8 @@ export default function AgentIdentityDetailPage() {
 
   if (isLoading || !agent) {
     return (
-      <div className="space-y-6">
-        <PageHeader label="Identity" title="Loading..." />
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
-        </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
       </div>
     );
   }
@@ -71,18 +68,6 @@ export default function AgentIdentityDetailPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        label="Identity"
-        title={agent.name}
-        subtitle={agent.description || `Agent identity owned by ${agent.owner}`}
-        actions={
-          <Button variant="outline" size="sm" onClick={() => navigate("/agents")}>
-            <ArrowLeft className="w-3 h-3 mr-1" />
-            Back to Fleet
-          </Button>
-        }
-      />
-
       {/* Header card with risk tier + status */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
@@ -279,4 +264,3 @@ export default function AgentIdentityDetailPage() {
     </div>
   );
 }
-

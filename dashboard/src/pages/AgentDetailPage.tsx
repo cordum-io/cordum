@@ -3,8 +3,8 @@
  * OPERATE / Agents / :id
  * Agent-specific view: metrics, safety breakdown, policy bindings, recent jobs
  */
-import { useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useMemo, useCallback } from "react";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -26,7 +26,15 @@ import { usePolicyBundles } from "@/hooks/usePolicies";
 import { ChartTooltipCompact as ChartTooltip } from "@/components/ui/ChartTooltip";
 import type { Job } from "@/api/types";
 import { AgentDelegationsPanel } from "@/components/delegations/AgentDelegationsPanel";
+import AgentIdentityPanel from "@/components/agents/AgentIdentityPanel";
 import { FEATURE_FLAGS } from "@/config/flags";
+
+const VALID_TABS = new Set(["overview", "activity", "identity", "delegations"]);
+
+function tabFromSearch(value: string | null): string {
+  if (!value || !VALID_TABS.has(value)) return "overview";
+  return value;
+}
 
 function SafetyBadge({ decision }: { decision: string }) {
   const config: Record<string, { color: string; bg: string; label: string }> = {
@@ -106,7 +114,25 @@ export default function AgentDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState("overview");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = tabFromSearch(searchParams.get("tab"));
+  const setActiveTab = useCallback(
+    (next: string) => {
+      setSearchParams(
+        (prev) => {
+          const out = new URLSearchParams(prev);
+          if (next === "overview") {
+            out.delete("tab");
+          } else {
+            out.set("tab", next);
+          }
+          return out;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   const { data: agent, isLoading: agentLoading, error: agentError } = useWorker(id);
   const { data: jobs, isLoading: jobsLoading, isError: jobsError, error: jobsErr, refetch: refetchJobs } = useWorkerJobs(id);
@@ -120,6 +146,7 @@ export default function AgentDetailPage() {
   const tabs = [
     { id: "overview", label: "Overview" },
     { id: "activity", label: "Activity", count: jobs?.length ?? 0 },
+    { id: "identity", label: "Identity" },
     ...(FEATURE_FLAGS.delegationDashboard
       ? [{ id: "delegations", label: "Delegations" }]
       : []),
@@ -498,6 +525,10 @@ export default function AgentDetailPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {activeTab === "identity" && id && (
+        <AgentIdentityPanel agentId={id} />
+      )}
 
       {FEATURE_FLAGS.delegationDashboard && activeTab === "delegations" && id && (
         <AgentDelegationsPanel agentId={id} />
