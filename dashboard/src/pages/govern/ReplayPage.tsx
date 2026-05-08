@@ -394,7 +394,7 @@ function ChangesTable({ changes }: { changes: PolicyReplayChange[] }) {
                 <td className="py-2 px-3 font-mono text-xs">
                   <Link
                     to={`/jobs/${change.job_id}`}
-                    className="text-[var(--color-cordum)] hover:underline"
+                    className="text-cordum hover:underline"
                   >
                     {change.job_id.length > 16
                       ? change.job_id.slice(0, 16) + "..."
