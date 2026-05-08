@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Cordum HTTP API
-  version: '2026-04-21.2'
+  version: '2026-05-08.1'
   description: Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
   contact:
     name: Cordum Team
@@ -9205,6 +9205,19 @@ components:
               type: integer
             backoff_sec:
               type: integer
+        policy_gate:
+          type: string
+          enum:
+          - allow
+          - deny
+          - require_approval
+          description: |
+            Optional design-time policy hint. Populated at workflow-save
+            time when the policy engine resolves a hint for this step.
+            Unset means "no hint" — clients render no design-time icon
+            and defer to runtime safety decision. NEVER defaults to
+            "allow" when unset.
+          example: allow
       required:
       - id
       - type

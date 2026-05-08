@@ -198,6 +198,23 @@ type Step struct {
 	DelaySec       int64             `json:"delay_sec,omitempty"`
 	DelayUntil     string            `json:"delay_until,omitempty"`
 	RouteLabels    map[string]string `json:"route_labels,omitempty"` // routing hints to workers/pools
+
+	// PolicyGate is an optional design-time policy hint for this step:
+	// "allow" | "deny" | "require_approval". Populated at workflow-save time
+	// when the policy engine resolves a hint; unset when no hint applies.
+	// Surfaced on the WorkflowStudio governance overlay before any run.
+	// NEVER defaults to "allow" — unset means "unknown" and the UI should
+	// render no design-time icon, deferring to runtime safetyDecision.
+	PolicyGate string `json:"policy_gate,omitempty"`
+}
+
+// ValidPolicyGate enumerates the accepted PolicyGate values. Empty string
+// (zero value, "no hint") is also valid and bypasses this check at the
+// validation entry point.
+var ValidPolicyGate = map[string]struct{}{
+	"allow":            {},
+	"deny":             {},
+	"require_approval": {},
 }
 
 // WorkflowRun represents one execution.
@@ -246,6 +263,16 @@ type StepRun struct {
 	// from shifting indexes on subsequent scheduleReady calls.
 	ResolvedItems []any  `json:"resolved_items,omitempty"`
 	SkipReason    string `json:"skip_reason,omitempty"`
+
+	// AuditHash is the per-step audit-chain event hash (SHA-256 hex, 64 chars)
+	// matching the SIEMEvent emitted for this step's job. Populated when the
+	// audit-chain entry is available at run-record build/finalize time;
+	// nil/empty for skipped, upstream-failed, or never-emitted steps. Drives
+	// the WorkflowStudio governance overlay's runtime audit chip. Producers:
+	// the run-record builder joins on StepRun.JobID → SIEMEvent.JobID and
+	// copies SIEMEvent.EventHash here. Consumers MUST NOT re-derive — this is
+	// the audit-chain's authoritative hash, not a UI-side recomputation.
+	AuditHash string `json:"audit_hash,omitempty"`
 }
 
 // TimelineEvent captures append-only run events for audit/replay.
