@@ -44,6 +44,18 @@ Decided 2026-04-24 · task-c154ff08 · epic-2e0ed1ee.
 - Pages already depending on `MetricValue`: **5**
 - Pages already depending on `Tabs` or custom tablist markup: **6**
 
+## v3-overlay close-out (task-dd5e1d8f → task-6fccc637, 2026-05-09)
+
+`WorkflowNodeGovernanceOverlay` ships with all three indicators populated end-to-end:
+
+1. **policy-gate Shield icon** — `step.policyGate` flows from `BackendWorkflowStep.policy_gate` (cordum-core task-913b6c6c) through `mapWorkflowStep` (task-6fccc637 commit `85f0f1e3`) into `UnifiedNodeData.policyGate`. Renders muted in design-time, saturated when the node has a run overlay.
+2. **safety-decision badge** — `step.output.safetyDecision` flows through `graphBridge` (task-dd5e1d8f reopen #2 commit `8fe1d412`). Already in service.
+3. **audit-hash chip** — `step.auditHash` flows from `BackendStepRun.audit_hash` (cordum-core task-913b6c6c) through `mapWorkflowRunStep` (task-6fccc637 commit `85f0f1e3`). Click-to-copy, 8-char preview. Renders muted placeholder when the run-step record's audit_hash is `null` (e.g. older runs pre-task-913b6c6c or before task-a45b8eb1 backfills the SIEMEvent join).
+
+Initial component shape was carved out in task-dd5e1d8f as "safetyDecision-only ships now; policyGate + auditHash placeholders mark `data-pending-api='task-913b6c6c'` until the cordum-core API additions land". That carve-out is now closed.
+
+Test coverage: `WorkflowNodeGovernanceOverlay.test.tsx` covers component render contract (3 policyGate variants, auditHash render+copy, design-time vs runtime saturation). `transform.test.ts` covers wire-format → dashboard-shape mapping (3 audit_hash cases + 4 policy_gate cases) — locks the contract that closed the loop in task-6fccc637.
+
 ## v2.5 drift sweep close-out (task-100cc89c, 2026-05-08)
 
 Seven pages newly converged in this sweep, removing **~28 page-local `var(--color-*)` literals**. Commits on PR #249: `b5013067`, `bd9cf670`, `10ff0af1` (mid-sweep correction — see lesson below), `27b658e3`, `b5488d6f`. Each newly converged page has a regression case in `dashboard/src/pages/DesignSystemConvergence.test.ts` asserting `not.toMatch(/var\(--color-/)`.
