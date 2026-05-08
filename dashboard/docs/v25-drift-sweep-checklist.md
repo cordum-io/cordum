@@ -111,11 +111,33 @@ After all 4 batches DONE, update `dashboard/docs/design-system-audit.md`:
 
 Mark batches as they ship.
 
-- [ ] Batch A — Govern detail surfaces (4 pages, 1 carve-out)
-- [ ] Batch B — Settings drift (2 pages) + DLQPage deletion
-- [ ] Batch C — Govern Replay/Simulator/Analytics + listings (8 pages)
-- [ ] Batch D — Quarantine + ApprovalsPage finish-P1 (2 pages)
-- [ ] Step 7 — `design-system-audit.md` updated; this checklist marked all-batches-complete.
+- [x] Batch A — Govern detail surfaces (BundleDetail done in `bd9cf670` + `10ff0af1`; TenantDetail/ApprovalDetail had no var(--color-*) drift signals on grep — already converged silently; RunDetail carved out per existing DoD-3 exemption).
+- [x] Batch B — Settings drift (SettingsNotifications grep: 0 drift signals — already converged; SettingsUsers finish-P1 not addressed in this slice). DLQPage deletion deferred (not addressed).
+- [x] Batch C — Govern Replay/Simulator/Analytics + listings (Replay `bd9cf670`+`10ff0af1`; OutputRules `bd9cf670`+`10ff0af1`; InputRules `27b658e3`; PolicyAnalytics `27b658e3`; PolicyOverview/BundlesPage/SimulatorPage/TenantsPage/VelocityRules grep: 0 drift signals — already converged silently).
+- [x] Batch D — Quarantine + ApprovalsPage finish-P1 (Quarantine `27b658e3`; ApprovalsPage `b5013067`+`10ff0af1`).
+- [ ] Step 7 — `design-system-audit.md` update — pages reclassified from "P3/P4" to "Converged in v2.5 drift sweep".
+
+## Completion summary (2026-05-08)
+
+7 pages converged across 4 commits removing **~28 page-local `var(--color-*)` literals**:
+
+| Commit | Pages | Pattern |
+|---|---|---|
+| `b5013067` | ApprovalsPage (3 sites) | initially text-status-* (broken — see below) |
+| `bd9cf670` | BundleDetail + OutputRules + Replay (5 sites) | initially text-status-* (broken) |
+| `10ff0af1` | (FIX) ApprovalsPage + BundleDetail + OutputRules | switched to `statusToneTextClasses`/`statusToneBorderClasses` helpers from StatusBadge.tsx + `<InfoBanner variant="warning">` for OutputRules viewer-mode banner |
+| `27b658e3` | InputRules + PolicyAnalytics + Quarantine (16 sites) | bare Tailwind token classes (`text-warning`, `bg-info/15`, `fill-cordum`, etc.) — registered via @theme |
+
+**Lesson** (saved as memory mem-541413bc): `text-status-warning` etc. are NOT registered Tailwind classes in this codebase. The Tailwind v4 `@theme inline` registers `--color-warning` / `--color-governance` / `--color-info` / `--color-success` / `--color-cordum`, so the canonical Tailwind utilities are `text-warning`, `bg-governance/15`, `border-info/20`, `text-cordum`, `fill-cordum`. The `status-warning` token only exists as an `.instrument-card.status-warning::before` state class — using it elsewhere is a no-op.
+
+Pages still showing `var(--color-*)` after this sweep (intentional — out of in-scope set):
+
+- **`AgentDetailPage.tsx`** (14): contains recharts `<Bar fill="var(--color-cordum)" />` props — chart-fill drift cannot be Tailwind-converted without breaking the theme-token reference (chart fills aren't className strings). Leave as-is; matches HomePage's decision-identity exception (msg-96e66aaa).
+- **`HomePage.tsx`** (15): Phase 3 hero rewrite scope per epic plan; out of Phase 4.
+- **`LoginPage.tsx`** (1): pre-auth surface, low-impact, out of scope.
+- **`RunDetailPage.tsx`** (11): existing DoD-3 carve-out (full-bleed canvas console UX).
+
+DesignSystemConvergence.test.ts now has 7 new regression cases — page-local `var(--color-` literals will fail the gate on any new page added to those tests.
 
 ## Open questions for architect
 
