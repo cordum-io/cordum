@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Workflow governance overlay fields (2026-05-08, task-913b6c6c)
+
+- `WorkflowStep.policy_gate?: "allow" | "deny" | "require_approval"` — optional design-time policy hint surfaced on the WorkflowStudio governance overlay before any run. Validated at workflow-save time; unset means "no hint" (overlay defers to runtime safety decision).
+- `WorkflowRunStep.audit_hash?: string` — optional 64-char hex audit-chain event hash for the step's job. Populated by run-record builders that join `StepRun.JobID → SIEMEvent.JobID → SIEMEvent.EventHash`. Populate-strategy left to producers; unset for skipped/upstream-failed steps.
+- OpenAPI: `info.version` bumped `2026-04-21.2` → `2026-05-08.1`. `WorkflowStep.policy_gate` enum + description added under `components/schemas/WorkflowStep`. `audit_hash` exposed via Go JSON tag; OpenAPI schematization deferred (no existing `StepRun` schema to extend).
+
 #### Cordum Edge P0 (2026-04-30)
 
 EDGE epic shipped 32 P0 tasks for the Compliance Firewall surface — local
