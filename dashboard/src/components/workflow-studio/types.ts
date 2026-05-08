@@ -51,6 +51,12 @@ export interface UnifiedNodeData {
   error?: string;
   safetyDecision?: { type: string };
   conditionResult?: boolean;
+  /** Design-time policy gate hint. Source: WorkflowStep.policyGate (cordum-core
+   *  field tracked in task-913b6c6c). Renders in the governance overlay. */
+  policyGate?: "allow" | "deny" | "require_approval";
+  /** Audit-chain hash for the runtime decision. Source: WorkflowRunStep.auditHash
+   *  (cordum-core field tracked in task-913b6c6c). Renders as a copy chip. */
+  auditHash?: string;
 
   // --- Mode awareness ---
   /** Current studio mode — nodes render differently based on this */

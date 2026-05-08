@@ -793,6 +793,12 @@ export interface WorkflowStep {
   error?: string;
   startedAt?: string;
   completedAt?: string;
+  /** Design-time policy gate hint for the WorkflowStudio governance overlay.
+   *  Sourced from cordum-core `WorkflowStep.policyGate` (task-913b6c6c). */
+  policyGate?: "allow" | "deny" | "require_approval";
+  /** Audit-chain hash for the runtime safety decision applied to this step.
+   *  Sourced from cordum-core `WorkflowRunStep.auditHash` (task-913b6c6c). */
+  auditHash?: string;
 }
 
 export interface Workflow {

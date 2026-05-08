@@ -3,6 +3,7 @@ import { Handle, Position, type NodeProps } from "reactflow";
 import { CheckCircle, Loader2, XCircle, Clock, Slash, UserCheck, ShieldAlert } from "lucide-react";
 import { cn, formatDuration, truncate } from "@/lib/utils";
 import type { UnifiedNodeData } from "../types";
+import { WorkflowNodeGovernanceOverlay } from "../WorkflowNodeGovernanceOverlay";
 import {
   getStepMeta,
   getStatusVisual,
@@ -210,8 +211,24 @@ function UnifiedNodeInner({ data, selected }: NodeProps<UnifiedNodeData>) {
         />
       )}
 
-      {/* Safety decision corner badge */}
-      {safetyBadge && (
+      {/* Governance overlay — three indicators (policy gate, safety decision,
+          audit hash). policyGate + auditHash render muted "data pending"
+          placeholders until task-913b6c6c (cordum-core API additions) lands.
+          On runtime nodes (hasRunOverlay) the indicators render saturated. */}
+      {isJobType(data.stepType) && (
+        <div className="absolute -right-1.5 -top-2.5 z-10">
+          <WorkflowNodeGovernanceOverlay
+            policyGate={data.policyGate}
+            safetyDecision={data.safetyDecision?.type}
+            auditHash={data.auditHash}
+            runtime={hasRunOverlay}
+          />
+        </div>
+      )}
+      {/* Legacy single-glyph corner badge — kept ONLY for non-job step types
+          where the governance overlay does not apply (condition, parallel, etc).
+          Job types now use the overlay above. */}
+      {safetyBadge && !isJobType(data.stepType) && (
         <span
           className={cn(
             "absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold shadow-sm z-10",
