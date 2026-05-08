@@ -208,13 +208,30 @@ type Step struct {
 	PolicyGate string `json:"policy_gate,omitempty"`
 }
 
-// ValidPolicyGate enumerates the accepted PolicyGate values. Empty string
-// (zero value, "no hint") is also valid and bypasses this check at the
-// validation entry point.
-var ValidPolicyGate = map[string]struct{}{
-	"allow":            {},
-	"deny":             {},
-	"require_approval": {},
+// PolicyGate canonical values. Use these constants when programmatically
+// setting Step.PolicyGate so callers don't reach for string literals.
+const (
+	PolicyGateAllow           = "allow"
+	PolicyGateDeny            = "deny"
+	PolicyGateRequireApproval = "require_approval"
+)
+
+// validPolicyGate is the immutable allowlist of accepted PolicyGate values.
+// Unexported so external packages cannot mutate the set at runtime; use
+// IsValidPolicyGate to test membership. Empty string ("no hint") is accepted
+// only by validation entry points that short-circuit before this allowlist.
+var validPolicyGate = map[string]struct{}{
+	PolicyGateAllow:           {},
+	PolicyGateDeny:            {},
+	PolicyGateRequireApproval: {},
+}
+
+// IsValidPolicyGate reports whether value is one of the canonical PolicyGate
+// values. Empty string is NOT considered valid here — callers that treat
+// empty as "no hint" should short-circuit before invoking this predicate.
+func IsValidPolicyGate(value string) bool {
+	_, ok := validPolicyGate[value]
+	return ok
 }
 
 // WorkflowRun represents one execution.
