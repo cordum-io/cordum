@@ -137,10 +137,6 @@ export function wsUrl(path?: string, params?: Record<string, string | undefined>
   return `${base}${p}${qs}`;
 }
 
-export function wsProtocols(apiKey?: string | null): string[] {
-  return apiKey ? [`cordum-api-key.${btoa(apiKey)}`] : [];
-}
-
 export const api = {
   getSession(): Promise<SessionResponse> {
     return get<SessionResponse>("/auth/session");

@@ -52,18 +52,6 @@ export const gridProps = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Tooltip surface
-// ---------------------------------------------------------------------------
-
-export const tooltipStyle = {
-  background: "var(--surface-2, #1f2a2e)",
-  border: "1px solid var(--border-color, #1f2a2e)",
-  borderRadius: 8,
-  padding: 12,
-  boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
-} as const;
-
-// ---------------------------------------------------------------------------
 // Bar chart shared defaults
 // ---------------------------------------------------------------------------
 
