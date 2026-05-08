@@ -2,6 +2,7 @@ import { Suspense, useEffect, type ReactNode } from "react";
 import { safeLazy as lazy } from "./lib/safeLazy";
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { NuqsAdapter } from "nuqs/adapters/react-router/v7";
 import { MotionConfig } from "framer-motion";
 import { Toaster } from "sonner";
 import { registerQueryClient } from "./state/config";
@@ -214,24 +215,26 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <MotionConfig reducedMotion="user">
         <BrowserRouter>
-          <ThemeSync />
-          <Toaster
-            position="top-right"
-            toastOptions={{
-              style: {
-                background: "var(--surface)",
-                color: "var(--text)",
-                border: "1px solid var(--border-color)",
-                fontFamily: "var(--font-sans)",
-              },
-            }}
-          />
-          <Suspense fallback={<LoadingScreen />}>
-            <Routes>
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/*" element={<ProtectedRoutes />} />
-            </Routes>
-          </Suspense>
+          <NuqsAdapter>
+            <ThemeSync />
+            <Toaster
+              position="top-right"
+              toastOptions={{
+                style: {
+                  background: "var(--surface)",
+                  color: "var(--text)",
+                  border: "1px solid var(--border-color)",
+                  fontFamily: "var(--font-sans)",
+                },
+              }}
+            />
+            <Suspense fallback={<LoadingScreen />}>
+              <Routes>
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/*" element={<ProtectedRoutes />} />
+              </Routes>
+            </Suspense>
+          </NuqsAdapter>
         </BrowserRouter>
       </MotionConfig>
     </QueryClientProvider>
