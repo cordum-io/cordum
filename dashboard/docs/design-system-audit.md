@@ -86,7 +86,7 @@ Each entry below carries a concrete checklist so the next worker can continue th
 | Govern | `pages/govern/TenantDetailPage.tsx` | PageHeader, EmptyState, Raw inputs | P3/P4 |
 | Govern | `pages/govern/TenantsPage.tsx` | PageHeader, InstrumentCard, MetricValue, EmptyState, Raw inputs | P3/P4 |
 | Govern | `pages/govern/VelocityRulesPage.tsx` | PageHeader, InstrumentCard, EmptyState, ErrorBanner, Raw inputs | P3/P4 |
-| Operate | `pages/HomePage.tsx` | PageHeader, InstrumentCard, MetricValue, ErrorBanner, CollapsibleSection, Raw CSS vars, Motion | P3/P4 |
+| Operate | `pages/HomePage.tsx` | PageHeader, StatTile, primitives/DataTable, InstrumentCard, ErrorBanner, CollapsibleSection, Motion, --chart-1..5 tokens | Converged in Phase 3 wk5 (task-5101a23c) |
 | Operate | `pages/JobDetailPage.tsx` | InstrumentCard, EmptyState, InfoBanner, StatusBadge, CollapsibleSection, Motion | Converged in detail/admin sweep |
 | Operate | `pages/JobsPage.tsx` | PageHeader, Tabs, Input, Textarea, LabeledField, EmptyState, ErrorBanner, Motion | Converged in priority P2 sweep |
 | Support | `pages/LoginPage.tsx` | Raw inputs, Raw CSS vars, Motion | P3/P4 |

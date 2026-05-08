@@ -39,4 +39,33 @@ describe("StatTile", () => {
     expect(container.textContent).toContain("2 connected");
     expect(container.querySelector("svg")).not.toBeNull();
   });
+
+  it("wraps helperText in a <p> for the simple-text path", () => {
+    act(() => {
+      root.render(<StatTile label="Servers" value={3} helperText="2 connected" />);
+    });
+
+    const paragraph = Array.from(container.querySelectorAll("p")).find((p) =>
+      p.textContent?.includes("2 connected"),
+    );
+    expect(paragraph).toBeDefined();
+  });
+
+  it("renders rich children without a <p> wrap so flex/div helpers stay valid HTML", () => {
+    act(() => {
+      root.render(
+        <StatTile label="Servers" value={3}>
+          <div data-testid="rich-helper" className="flex gap-3">
+            <span>4 idle</span>
+            <span>2 busy</span>
+          </div>
+        </StatTile>,
+      );
+    });
+
+    const helper = container.querySelector<HTMLDivElement>('[data-testid="rich-helper"]');
+    expect(helper).not.toBeNull();
+    // `<p><div>` would be invalid HTML; assert the div is NOT a descendant of any <p>.
+    expect(helper?.closest("p")).toBeNull();
+  });
 });
