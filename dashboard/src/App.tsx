@@ -47,10 +47,8 @@ const SchemasPage = lazy(() => import("./pages/SchemasPage"));
 const SchemaDetailPage = lazy(() => import("./pages/SchemaDetailPage"));
 const TopicsPage = lazy(() => import("./pages/TopicsPage"));
 const AuditLogPage = lazy(() => import("./pages/AuditLogPage"));
-// DLQPage import removed in task-0bcb9411 — /dlq folds into JobsPage as
-// ?status=dlq via the Navigate redirect below. The DLQPage.tsx file itself
-// stays alive (deletion deferred to task-100cc89c drift sweep); it is just no
-// longer mounted as a route.
+// DLQPage was deleted in task-100cc89c step 5 — /dlq folds into JobsPage
+// as ?status=dlq via the DlqRouteRedirect below.
 const SettingsHealthPage = lazy(() => import("./pages/SettingsHealthPage"));
 const SettingsKeysPage = lazy(() => import("./pages/SettingsKeysPage"));
 const SettingsUsersPage = lazy(() => import("./pages/SettingsUsersPage"));
@@ -190,10 +188,9 @@ function ProtectedRoutes() {
 
           {/* OBSERVE */}
           <Route path="/audit" element={<AuditLogPage />} />
-          {/* /dlq is folded into JobsPage via ?status=dlq (task-0bcb9411).
-              The redirect keeps existing bookmarks + sidebar entries working
-              without breaking the DLQPage import (page-file deletion is
-              deferred to task-100cc89c per the original plan). */}
+          {/* /dlq folds into JobsPage via ?status=dlq (task-0bcb9411 + page-
+              deletion in task-100cc89c step 5). The redirect keeps existing
+              bookmarks + sidebar entries working. */}
           <Route path="/dlq" element={<DlqRouteRedirect />} />
 
           {/* SETTINGS — single shell with grouped left sub-nav (v2.5 IA cut). */}
