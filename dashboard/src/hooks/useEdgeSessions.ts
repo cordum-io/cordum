@@ -300,37 +300,10 @@ export function useEdgeExecutions(params: EdgeExecutionListParams = {}) {
   });
 }
 
-export function useEdgeExecution(executionId?: string | null) {
-  return useQuery<AgentExecution, ApiError>({
-    queryKey: queryKeys.edge.executions.detail(executionId),
-    queryFn: () => fetchEdgeExecution(executionId ?? ""),
-    enabled: Boolean(executionId),
-    staleTime: 5_000,
-  });
-}
-
-export function useEdgeExecutionEvents(executionId?: string | null, params: EdgeEventListParams = {}) {
-  return useQuery<AgentActionEventPage, ApiError>({
-    queryKey: queryKeys.edge.executions.events(executionId, params),
-    queryFn: () => fetchEdgeExecutionEvents(executionId ?? "", params),
-    enabled: Boolean(executionId),
-    staleTime: 5_000,
-  });
-}
-
 export function useEdgeApprovals(params: EdgeApprovalListParams = {}) {
   return useQuery<EdgeApprovalPage, ApiError>({
     queryKey: queryKeys.edge.approvals.list(params),
     queryFn: () => fetchEdgeApprovals(params),
-    staleTime: 5_000,
-  });
-}
-
-export function useEdgeApproval(approvalRef?: string | null) {
-  return useQuery<EdgeApproval, ApiError>({
-    queryKey: queryKeys.edge.approvals.detail(approvalRef),
-    queryFn: () => fetchEdgeApproval(approvalRef ?? ""),
-    enabled: Boolean(approvalRef),
     staleTime: 5_000,
   });
 }
