@@ -63,7 +63,7 @@ const SCOPE_PILL_STYLES: Record<ScopeFilter, string> = {
   all: "bg-surface-2 text-foreground",
   global: "bg-cordum/15 text-cordum",
   tenant: "bg-primary/15 text-primary",
-  workflow: "bg-[var(--color-info)]/15 text-[var(--color-info)]",
+  workflow: "bg-info/15 text-info",
 };
 
 const DECISION_OPTIONS = [
@@ -723,7 +723,7 @@ const SCOPE_BADGE: Record<
     text: "text-primary",
     label: "Tenant",
   },
-  workflow: { bg: "bg-[var(--color-info)]/15", text: "text-[var(--color-info)]", label: "Workflow" },
+  workflow: { bg: "bg-info/15", text: "text-info", label: "Workflow" },
 };
 
 function RuleCard({

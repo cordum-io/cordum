@@ -120,7 +120,7 @@ function Sparkline({ data }: { data: number[] }) {
             width={4}
             height={h}
             rx={1}
-            className="fill-[var(--color-cordum)]"
+            className="fill-cordum"
             opacity={0.7 + 0.3 * (v / max)}
           />
         );
@@ -236,13 +236,13 @@ function RuleTable({ rules }: { rules: RuleAnalytics[] }) {
                 <tr
                   key={rule.rule_id}
                   className={`border-b border-border/20 last:border-0 hover:bg-muted/10 ${
-                    highOverride ? "bg-[var(--color-warning)]/5" : ""
+                    highOverride ? "bg-warning/5" : ""
                   }`}
                 >
                   <td className="py-2 px-3 font-mono text-xs text-foreground/90">
                     {rule.rule_id}
                     {highOverride && (
-                      <AlertTriangle className="inline h-3 w-3 ml-1.5 text-[var(--color-warning)]" />
+                      <AlertTriangle className="inline h-3 w-3 ml-1.5 text-warning" />
                     )}
                   </td>
                   <td className="py-2 px-3 tabular-nums">{rule.hit_count}</td>
@@ -270,7 +270,7 @@ function RuleTable({ rules }: { rules: RuleAnalytics[] }) {
                   <td className="py-2 px-3 text-right">
                     <Link
                       to={REPLAY_COMPARE_LINK}
-                      className="inline-flex items-center gap-1 text-xs text-[var(--color-cordum)] hover:underline"
+                      className="inline-flex items-center gap-1 text-xs text-cordum hover:underline"
                     >
                       What-if
                       <ExternalLink className="h-3 w-3" />
@@ -363,11 +363,11 @@ function FalsePositiveHighlights({ rules }: { rules: RuleAnalytics[] }) {
       {fpRules.map((rule) => (
         <div
           key={rule.rule_id}
-          className="rounded-xl border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 p-4 space-y-2"
+          className="rounded-xl border border-warning/30 bg-warning/5 p-4 space-y-2"
         >
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 text-[var(--color-warning)] shrink-0" />
+              <AlertTriangle className="h-4 w-4 text-warning shrink-0" />
               <span className="font-mono text-sm font-medium">{rule.rule_id}</span>
               <StatusBadge variant="warning">
                 {formatRate(rule.override_rate)} override rate
@@ -375,7 +375,7 @@ function FalsePositiveHighlights({ rules }: { rules: RuleAnalytics[] }) {
             </div>
             <Link
               to={REPLAY_COMPARE_LINK}
-              className="text-xs text-[var(--color-cordum)] hover:underline shrink-0"
+              className="text-xs text-cordum hover:underline shrink-0"
             >
               Test with replay &rarr;
             </Link>

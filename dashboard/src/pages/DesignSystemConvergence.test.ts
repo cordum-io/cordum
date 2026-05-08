@@ -24,6 +24,9 @@ import approvalsPageSource from "./ApprovalsPage.tsx?raw";
 import bundleDetailGovernSource from "./govern/BundleDetailPage.tsx?raw";
 import outputRulesPageSource from "./govern/OutputRulesPage.tsx?raw";
 import replayPageSource from "./govern/ReplayPage.tsx?raw";
+import inputRulesPageSource from "./govern/InputRulesPage.tsx?raw";
+import policyAnalyticsPageSource from "./govern/PolicyAnalyticsPage.tsx?raw";
+import quarantinePageSource from "./govern/QuarantinePage.tsx?raw";
 import buttonSource from "../components/ui/Button.tsx?raw";
 import cardSource from "../components/ui/Card.tsx?raw";
 
@@ -61,6 +64,18 @@ describe("design-system convergence regressions", () => {
 
   it("keeps govern replay page styling on shared tokens instead of page-local CSS vars", () => {
     expect(replayPageSource).not.toMatch(/var\(--color-/);
+  });
+
+  it("keeps govern input rules page styling on shared tokens instead of page-local CSS vars", () => {
+    expect(inputRulesPageSource).not.toMatch(/var\(--color-/);
+  });
+
+  it("keeps govern policy analytics page styling on shared tokens instead of page-local CSS vars", () => {
+    expect(policyAnalyticsPageSource).not.toMatch(/var\(--color-/);
+  });
+
+  it("keeps govern quarantine page styling on shared tokens instead of page-local CSS vars", () => {
+    expect(quarantinePageSource).not.toMatch(/var\(--color-/);
   });
 });
 
