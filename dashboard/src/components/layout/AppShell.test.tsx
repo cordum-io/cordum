@@ -135,6 +135,11 @@ describe("AppShell findActiveSection", () => {
     expect(findActiveSection("/dlq", APP_SHELL_NAV_SECTIONS)).toBe("Audit");
   });
 
+  it("matches canonical /jobs?status=dlq to Audit without stealing other Jobs filters", () => {
+    expect(findActiveSection("/jobs?status=dlq", APP_SHELL_NAV_SECTIONS)).toBe("Audit");
+    expect(findActiveSection("/jobs?status=failed", APP_SHELL_NAV_SECTIONS)).toBe("Run");
+  });
+
   it("matches /settings/* sub-routes to Settings", () => {
     expect(findActiveSection("/settings", APP_SHELL_NAV_SECTIONS)).toBe("Settings");
     expect(findActiveSection("/settings/users", APP_SHELL_NAV_SECTIONS)).toBe("Settings");
@@ -167,6 +172,13 @@ describe("AppShell sidebar accordion structure", () => {
       "Workflows",
       "Approvals",
     ]);
+  });
+
+  it("repoints Dead Letters to JobsPage DLQ status filter", () => {
+    const audit = APP_SHELL_NAV_SECTIONS.find((s) => s.label === "Audit");
+    expect(audit?.items.find((i) => i.label === "Dead Letters")?.path).toBe(
+      "/jobs?status=dlq",
+    );
   });
 
   it("Settings section has the Hub item with end:true to avoid prefix-matching sub-routes", () => {
