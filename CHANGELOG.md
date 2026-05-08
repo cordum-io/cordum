@@ -13,12 +13,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - `WorkflowRunStep.audit_hash?: string` — optional 64-char hex audit-chain event hash for the step's job. Populated by run-record builders that join `StepRun.JobID → SIEMEvent.JobID → SIEMEvent.EventHash`. Populate-strategy left to producers; unset for skipped/upstream-failed steps.
 - OpenAPI: `info.version` bumped `2026-04-21.2` → `2026-05-08.2` (reopen #1: `2026-05-08.1` shipped only `WorkflowStep.policy_gate`; `2026-05-08.2` adds `RunStepStatus.audit_hash` so the dashboard governance overlay's audit-hash chip data path is fully contracted). `WorkflowStep.policy_gate` enum + description added under `components/schemas/WorkflowStep`. `RunStepStatus.audit_hash` (nullable string, audit-chain event hash) added under `components/schemas/RunStepStatus`.
 
-#### Audit consumer write-back hook for WorkflowRunStep.AuditHash (2026-05-08, task-a45b8eb1 part 1)
+#### Runtime WorkflowRunStep.AuditHash population (2026-05-08, task-a45b8eb1)
 
 - New `audit.StepHashSink` interface + `audit.WithStepHashSink` ConsumerOption: optional dependency the audit consumer uses to back-fill `StepRun.AuditHash` after a successful `chainer.Append`. Architectural choice per Option A scope-split (eventual-consistency write-back from the audit-consumer goroutine; the workflow engine cannot synchronously compute the chain hash because `PrevHash` depends on the chain head held by the chainer).
 - Post-Append hook in `core/audit/consumer.go handle()`: when chain Append succeeds AND a sink is wired AND the SIEMEvent has both `EventHash` and `JobID`, the consumer calls `sink.UpdateAuditHash(ctx, jobID, eventHash)`. Sink errors are non-fatal (logged + swallowed) — the audit chain entry is durable; the workflow store can be back-filled offline if the sink misses transiently.
-- Sink-less deployments (no `WithStepHashSink` wired) see zero behavior change.
-- Workflow-store-side implementation (`RedisStore.UpdateAuditHash` + JobID→step Redis index + runner.go wiring) tracked as task-75f910a7.
+- `workflow.RedisStore` now implements the sink: run writes maintain a `StepRun.JobID → run/step` Redis lookup, `UpdateAuditHash` idempotently persists the first audit-chain hash on matching top-level and nested step records, and pending hashes are applied on the next run write if the audit event arrives before the step's JobID index.
+- Gateway audit pipeline wiring passes the workflow store into both NATS consumer mode (`audit.WithStepHashSink`) and direct/chain-only senders, so new workflow runs populate the dashboard governance overlay's audit-hash chip as soon as their SIEMEvent is appended to the chain. Skipped/upstream-failed/no-entry steps remain unset.
 
 #### Cordum Edge P0 (2026-04-30)
 
