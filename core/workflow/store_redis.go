@@ -3,8 +3,10 @@ package workflow
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/cordum/cordum/core/infra/redisutil"
@@ -14,7 +16,19 @@ import (
 const (
 	defaultWorkflowRedisURL = "redis://localhost:6379"
 	timelineMaxEntries      = 1000
+	pendingAuditHashTTL     = 24 * time.Hour
 )
+
+type runJobRef struct {
+	RunID    string   `json:"run_id"`
+	StepPath []string `json:"step_path,omitempty"`
+}
+
+type auditHashUpdateResult struct {
+	matched    bool
+	changed    bool
+	missingRun bool
+}
 
 // RedisStore persists workflow definitions and runs in Redis.
 type RedisStore struct {
@@ -186,10 +200,16 @@ func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
 	if run.Status == "" {
 		run.Status = RunStatusPending
 	}
+	pendingDeletes := s.applyPendingAuditHashes(ctx, run)
 
 	payload, err := json.Marshal(run)
 	if err != nil {
 		return fmt.Errorf("marshal run: %w", err)
+	}
+	jobRefs := collectRunJobRefs(run)
+	jobRefPayloads, err := marshalJobRefs(jobRefs)
+	if err != nil {
+		return fmt.Errorf("marshal run job index: %w", err)
 	}
 
 	pipe := s.client.TxPipeline()
@@ -197,6 +217,8 @@ func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
 	pipe.ZAdd(ctx, runIndexKey(run.WorkflowID), redis.Z{Score: float64(now.Unix()), Member: run.ID})
 	pipe.ZAdd(ctx, runAllIndexKey(), redis.Z{Score: float64(now.Unix()), Member: run.ID})
 	pipe.ZAdd(ctx, runStatusIndexKey(run.Status), redis.Z{Score: float64(now.Unix()), Member: run.ID})
+	enqueueRunJobIndexWrites(ctx, pipe, jobRefPayloads)
+	enqueuePendingAuditDeletes(ctx, pipe, pendingDeletes)
 	if run.OrgID != "" {
 		activeKey := runOrgActiveKey(run.OrgID)
 		if isActiveRunStatus(run.Status) {
@@ -247,12 +269,21 @@ func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 	if run == nil || run.ID == "" || run.WorkflowID == "" {
 		return fmt.Errorf("run id and workflow id required")
 	}
+	persistedRun := s.loadRunSnapshot(ctx, run.ID)
+	oldJobRefs := collectRunJobRefs(persistedRun)
+	mergePersistedAuditHashes(run, persistedRun)
 	now := time.Now().UTC()
 	run.UpdatedAt = now
+	pendingDeletes := s.applyPendingAuditHashes(ctx, run)
 
 	payload, err := json.Marshal(run)
 	if err != nil {
 		return fmt.Errorf("marshal run: %w", err)
+	}
+	jobRefs := collectRunJobRefs(run)
+	jobRefPayloads, err := marshalJobRefs(jobRefs)
+	if err != nil {
+		return fmt.Errorf("marshal run job index: %w", err)
 	}
 
 	// Atomic GET prev status + SET new run doc (single key — cluster-safe).
@@ -268,6 +299,9 @@ func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 	pipe.ZAdd(ctx, runIndexKey(run.WorkflowID), redis.Z{Score: score, Member: run.ID})
 	pipe.ZAdd(ctx, runAllIndexKey(), redis.Z{Score: score, Member: run.ID})
 	pipe.ZAdd(ctx, runStatusIndexKey(run.Status), redis.Z{Score: score, Member: run.ID})
+	enqueueRunJobIndexWrites(ctx, pipe, jobRefPayloads)
+	enqueueRunJobIndexDeletes(ctx, pipe, oldJobRefs, jobRefs)
+	enqueuePendingAuditDeletes(ctx, pipe, pendingDeletes)
 
 	if prevStatus != "" && prevStatus != string(run.Status) {
 		pipe.ZRem(ctx, runStatusIndexKey(RunStatus(prevStatus)), run.ID)
@@ -316,6 +350,7 @@ func (s *RedisStore) DeleteRun(ctx context.Context, runID string) error {
 	pipe := s.client.TxPipeline()
 	pipe.Del(ctx, runKey(runID))
 	pipe.ZRem(ctx, runAllIndexKey(), runID)
+	enqueueRunJobIndexDeletes(ctx, pipe, collectRunJobRefs(run), nil)
 	if run.WorkflowID != "" {
 		pipe.ZRem(ctx, runIndexKey(run.WorkflowID), runID)
 	}
@@ -514,6 +549,307 @@ func (s *RedisStore) ListRunIDsByStatus(ctx context.Context, status RunStatus, l
 	return ids, nil
 }
 
+// UpdateAuditHash implements audit.StepHashSink for workflow runs. It stores
+// auditHash on every StepRun whose JobID matches jobID. Missing workflow jobs
+// are a no-op; if the job looks like a workflow job but the step has not been
+// persisted yet, the hash is held briefly and applied by the next Create/UpdateRun.
+func (s *RedisStore) UpdateAuditHash(ctx context.Context, jobID, auditHash string) error {
+	jobID = strings.TrimSpace(jobID)
+	auditHash = strings.TrimSpace(auditHash)
+	if jobID == "" || auditHash == "" {
+		return nil
+	}
+
+	ref, found, err := s.lookupRunJobRef(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	runID := ref.RunID
+	parsedRunID, _ := splitJobID(jobID)
+	if runID == "" {
+		runID = parsedRunID
+	}
+	if runID == "" {
+		return nil
+	}
+
+	res, err := s.updateAuditHashInRun(ctx, runID, jobID, auditHash)
+	if err != nil {
+		return err
+	}
+	if res.matched {
+		_ = s.client.Del(ctx, pendingAuditHashKey(jobID)).Err()
+		if !found {
+			_ = s.indexSingleRunJobRef(ctx, jobID, runJobRef{RunID: runID})
+		}
+		return nil
+	}
+	if found || parsedRunID != "" || res.missingRun {
+		if err := s.storePendingAuditHash(ctx, jobID, auditHash); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *RedisStore) lookupRunJobRef(ctx context.Context, jobID string) (runJobRef, bool, error) {
+	raw, err := s.client.Get(ctx, runJobIndexKey(jobID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return runJobRef{}, false, nil
+	}
+	if err != nil {
+		return runJobRef{}, false, fmt.Errorf("lookup workflow job index: %w", err)
+	}
+	var ref runJobRef
+	if err := json.Unmarshal(raw, &ref); err != nil {
+		return runJobRef{}, false, fmt.Errorf("unmarshal workflow job index: %w", err)
+	}
+	return ref, ref.RunID != "", nil
+}
+
+func (s *RedisStore) updateAuditHashInRun(ctx context.Context, runID, jobID, auditHash string) (auditHashUpdateResult, error) {
+	key := runKey(runID)
+	var result auditHashUpdateResult
+	for attempt := 0; attempt < 5; attempt++ {
+		err := s.client.Watch(ctx, func(tx *redis.Tx) error {
+			next, loadErr := loadRunForAuditHash(ctx, tx, key)
+			if errors.Is(loadErr, redis.Nil) {
+				result = auditHashUpdateResult{missingRun: true}
+				return nil
+			}
+			if loadErr != nil {
+				return loadErr
+			}
+			result = mutateRunAuditHash(next, jobID, auditHash)
+			if !result.changed {
+				return nil
+			}
+			payload, err := json.Marshal(next)
+			if err != nil {
+				return fmt.Errorf("marshal run audit hash update: %w", err)
+			}
+			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+				pipe.Set(ctx, key, payload, 0)
+				return nil
+			})
+			return err
+		}, key)
+		if errors.Is(err, redis.TxFailedErr) {
+			continue
+		}
+		return result, err
+	}
+	return result, fmt.Errorf("update audit hash for job %s: redis transaction retries exhausted", jobID)
+}
+
+func loadRunForAuditHash(ctx context.Context, tx *redis.Tx, key string) (*WorkflowRun, error) {
+	data, err := tx.Get(ctx, key).Bytes()
+	if err != nil {
+		return nil, err
+	}
+	var run WorkflowRun
+	if err := json.Unmarshal(data, &run); err != nil {
+		return nil, fmt.Errorf("unmarshal run for audit hash update: %w", err)
+	}
+	return &run, nil
+}
+
+func mutateRunAuditHash(run *WorkflowRun, jobID, auditHash string) auditHashUpdateResult {
+	if run == nil || run.Steps == nil {
+		return auditHashUpdateResult{}
+	}
+	matches, changed := setStepAuditHashForJob(run.Steps, jobID, auditHash)
+	return auditHashUpdateResult{
+		matched: matches > 0,
+		changed: changed > 0,
+	}
+}
+
+func setStepAuditHashForJob(steps map[string]*StepRun, jobID, auditHash string) (matches, changed int) {
+	for _, sr := range steps {
+		m, c := setStepRunAuditHashForJob(sr, jobID, auditHash)
+		matches += m
+		changed += c
+	}
+	return matches, changed
+}
+
+func setStepRunAuditHashForJob(sr *StepRun, jobID, auditHash string) (matches, changed int) {
+	if sr == nil {
+		return 0, 0
+	}
+	if sr.JobID == jobID {
+		matches++
+		if sr.AuditHash == "" {
+			sr.AuditHash = auditHash
+			changed++
+		}
+	}
+	if len(sr.Children) > 0 {
+		m, c := setStepAuditHashForJob(sr.Children, jobID, auditHash)
+		matches += m
+		changed += c
+	}
+	return matches, changed
+}
+
+func (s *RedisStore) applyPendingAuditHashes(ctx context.Context, run *WorkflowRun) []string {
+	if run == nil || run.Steps == nil {
+		return nil
+	}
+	refs := collectRunJobRefs(run)
+	deletes := make([]string, 0)
+	for jobID := range refs {
+		hash, err := s.client.Get(ctx, pendingAuditHashKey(jobID)).Result()
+		if errors.Is(err, redis.Nil) {
+			continue
+		}
+		if err != nil {
+			slog.Warn("workflow: pending audit hash lookup failed", "run_id", run.ID, "job_id", jobID, "error", err)
+			continue
+		}
+		if strings.TrimSpace(hash) == "" {
+			continue
+		}
+		res := mutateRunAuditHash(run, jobID, hash)
+		if res.matched {
+			deletes = append(deletes, pendingAuditHashKey(jobID))
+		}
+	}
+	return deletes
+}
+
+func (s *RedisStore) storePendingAuditHash(ctx context.Context, jobID, auditHash string) error {
+	return s.client.Set(ctx, pendingAuditHashKey(jobID), auditHash, pendingAuditHashTTL).Err()
+}
+
+func (s *RedisStore) indexSingleRunJobRef(ctx context.Context, jobID string, ref runJobRef) error {
+	raw, err := json.Marshal(ref)
+	if err != nil {
+		return fmt.Errorf("marshal workflow job index: %w", err)
+	}
+	return s.client.Set(ctx, runJobIndexKey(jobID), raw, 0).Err()
+}
+
+func (s *RedisStore) loadRunSnapshot(ctx context.Context, runID string) *WorkflowRun {
+	data, err := s.client.Get(ctx, runKey(runID)).Bytes()
+	if err != nil {
+		return nil
+	}
+	var run WorkflowRun
+	if err := json.Unmarshal(data, &run); err != nil {
+		slog.Warn("workflow: corrupt run snapshot skipped", "run_id", runID, "error", err)
+		return nil
+	}
+	return &run
+}
+
+func marshalJobRefs(refs map[string]runJobRef) (map[string][]byte, error) {
+	out := make(map[string][]byte, len(refs))
+	for jobID, ref := range refs {
+		raw, err := json.Marshal(ref)
+		if err != nil {
+			return nil, err
+		}
+		out[jobID] = raw
+	}
+	return out, nil
+}
+
+func mergePersistedAuditHashes(run, persisted *WorkflowRun) {
+	if run == nil || persisted == nil || run.Steps == nil || persisted.Steps == nil {
+		return
+	}
+	hashes := collectAuditHashesByJobID(persisted.Steps)
+	applyAuditHashesByJobID(run.Steps, hashes)
+}
+
+func collectAuditHashesByJobID(steps map[string]*StepRun) map[string]string {
+	hashes := map[string]string{}
+	for _, sr := range steps {
+		collectStepAuditHashesByJobID(hashes, sr)
+	}
+	return hashes
+}
+
+func collectStepAuditHashesByJobID(hashes map[string]string, sr *StepRun) {
+	if sr == nil {
+		return
+	}
+	if sr.JobID != "" && sr.AuditHash != "" {
+		hashes[sr.JobID] = sr.AuditHash
+	}
+	for _, child := range sr.Children {
+		collectStepAuditHashesByJobID(hashes, child)
+	}
+}
+
+func applyAuditHashesByJobID(steps map[string]*StepRun, hashes map[string]string) {
+	for _, sr := range steps {
+		applyStepAuditHashByJobID(sr, hashes)
+	}
+}
+
+func applyStepAuditHashByJobID(sr *StepRun, hashes map[string]string) {
+	if sr == nil {
+		return
+	}
+	if sr.JobID != "" && sr.AuditHash == "" {
+		sr.AuditHash = hashes[sr.JobID]
+	}
+	for _, child := range sr.Children {
+		applyStepAuditHashByJobID(child, hashes)
+	}
+}
+
+func collectRunJobRefs(run *WorkflowRun) map[string]runJobRef {
+	refs := map[string]runJobRef{}
+	if run == nil || run.Steps == nil {
+		return refs
+	}
+	for mapID, sr := range run.Steps {
+		stepID := mapID
+		if sr != nil && sr.StepID != "" {
+			stepID = sr.StepID
+		}
+		collectStepRunJobRefs(refs, run.ID, []string{stepID}, sr)
+	}
+	return refs
+}
+
+func collectStepRunJobRefs(refs map[string]runJobRef, runID string, path []string, sr *StepRun) {
+	if sr == nil {
+		return
+	}
+	if sr.JobID != "" {
+		refs[sr.JobID] = runJobRef{RunID: runID, StepPath: append([]string(nil), path...)}
+	}
+	for childID, child := range sr.Children {
+		nextPath := append(append([]string(nil), path...), childID)
+		collectStepRunJobRefs(refs, runID, nextPath, child)
+	}
+}
+
+func enqueueRunJobIndexWrites(ctx context.Context, pipe redis.Pipeliner, refs map[string][]byte) {
+	for jobID, raw := range refs {
+		pipe.Set(ctx, runJobIndexKey(jobID), raw, 0)
+	}
+}
+
+func enqueueRunJobIndexDeletes(ctx context.Context, pipe redis.Pipeliner, oldRefs, newRefs map[string]runJobRef) {
+	for jobID := range oldRefs {
+		if _, ok := newRefs[jobID]; !ok {
+			pipe.Del(ctx, runJobIndexKey(jobID))
+		}
+	}
+}
+
+func enqueuePendingAuditDeletes(ctx context.Context, pipe redis.Pipeliner, keys []string) {
+	for _, key := range keys {
+		pipe.Del(ctx, key)
+	}
+}
+
 func workflowKey(id string) string {
 	return "wf:def:" + id
 }
@@ -548,6 +884,14 @@ func runOrgActiveKey(orgID string) string {
 
 func runTimelineKey(runID string) string {
 	return "wf:run:timeline:" + runID
+}
+
+func runJobIndexKey(jobID string) string {
+	return "wf:run:job:" + jobID
+}
+
+func pendingAuditHashKey(jobID string) string {
+	return "wf:run:pending_audit_hash:" + jobID
 }
 
 func (s *RedisStore) TrySetRunIdempotencyKey(ctx context.Context, key, runID string) (bool, error) {

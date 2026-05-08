@@ -9,6 +9,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -138,13 +139,13 @@ func TestNATSAuditConsumer_ChainFailPermissiveExports(t *testing.T) {
 func TestParseChainFailMode(t *testing.T) {
 	t.Parallel()
 	cases := map[string]ChainFailMode{
-		"":            ChainFailStrict,
-		"strict":      ChainFailStrict,
-		"STRICT":      ChainFailStrict,
-		"permissive":  ChainFailPermissive,
-		"Permissive":  ChainFailPermissive,
+		"":             ChainFailStrict,
+		"strict":       ChainFailStrict,
+		"STRICT":       ChainFailStrict,
+		"permissive":   ChainFailPermissive,
+		"Permissive":   ChainFailPermissive,
 		" permissive ": ChainFailPermissive,
-		"garbage":     ChainFailStrict,
+		"garbage":      ChainFailStrict,
 	}
 	for input, want := range cases {
 		if got := ParseChainFailMode(input); got != want {
@@ -277,6 +278,160 @@ func TestNATSAuditConsumer_StepHashSinkErrorIsNonFatal(t *testing.T) {
 	}
 	if len(sink.calls) != 1 {
 		t.Errorf("UpdateAuditHash calls = %d, want 1 (must still attempt the write-back)", len(sink.calls))
+	}
+}
+
+func TestNATSAuditConsumer_PopulatesWorkflowRunStepAuditHash(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+
+	workflowStore, err := wf.NewRedisWorkflowStore("redis://" + mr.Addr())
+	if err != nil {
+		t.Fatalf("workflow store: %v", err)
+	}
+	t.Cleanup(func() { _ = workflowStore.Close() })
+
+	chainClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = chainClient.Close() })
+	chainer := NewChainer(chainClient, "consumer:workflow-chain:")
+
+	run := &wf.WorkflowRun{
+		ID:         "run-consumer-audit",
+		WorkflowID: "wf-consumer-audit",
+		Status:     wf.RunStatusRunning,
+		Steps: map[string]*wf.StepRun{
+			"step-1":  {StepID: "step-1", Status: wf.StepStatusRunning, JobID: "run-consumer-audit:step-1@1"},
+			"skipped": {StepID: "skipped", Status: wf.StepStatusSkipped, SkipReason: "upstream failed"},
+			"noevent": {StepID: "noevent", Status: wf.StepStatusRunning, JobID: "run-consumer-audit:noevent@1"},
+		},
+	}
+	if err := workflowStore.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	bus := &mockAuditBus{}
+	mock := &mockExporter{}
+	_, err = NewNATSAuditConsumer(bus, mock, WithChainer(chainer), WithStepHashSink(workflowStore))
+	if err != nil {
+		t.Fatalf("NewNATSAuditConsumer: %v", err)
+	}
+	handler := subscribedHandler(t, bus)
+
+	ev := testEvent()
+	ev.JobID = run.Steps["step-1"].JobID
+	if err := handler(packetFor(t, ev)); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	exported := exportedEvent(t, mock, 0)
+
+	got, err := workflowStore.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if got.Steps["step-1"].AuditHash != exported.EventHash {
+		t.Fatalf("audit hash = %q, want exported event hash %q", got.Steps["step-1"].AuditHash, exported.EventHash)
+	}
+	if got.Steps["skipped"].AuditHash != "" {
+		t.Fatalf("skipped step audit hash = %q, want empty", got.Steps["skipped"].AuditHash)
+	}
+	if got.Steps["noevent"].AuditHash != "" {
+		t.Fatalf("no-event step audit hash = %q, want empty", got.Steps["noevent"].AuditHash)
+	}
+}
+
+func TestNATSAuditConsumer_StepHashSinkNoMatchAndReplayAreNonFatal(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(mr.Close)
+
+	workflowStore, err := wf.NewRedisWorkflowStore("redis://" + mr.Addr())
+	if err != nil {
+		t.Fatalf("workflow store: %v", err)
+	}
+	t.Cleanup(func() { _ = workflowStore.Close() })
+	chainClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = chainClient.Close() })
+
+	run := &wf.WorkflowRun{
+		ID:         "run-consumer-replay",
+		WorkflowID: "wf-consumer-audit",
+		Status:     wf.RunStatusRunning,
+		Steps: map[string]*wf.StepRun{
+			"step-1": {StepID: "step-1", Status: wf.StepStatusRunning, JobID: "run-consumer-replay:step-1@1"},
+		},
+	}
+	if err := workflowStore.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	bus := &mockAuditBus{}
+	mock := &mockExporter{}
+	_, err = NewNATSAuditConsumer(bus, mock,
+		WithChainer(NewChainer(chainClient, "consumer:workflow-replay-chain:")),
+		WithStepHashSink(workflowStore),
+	)
+	if err != nil {
+		t.Fatalf("NewNATSAuditConsumer: %v", err)
+	}
+	handler := subscribedHandler(t, bus)
+
+	missing := testEvent()
+	missing.JobID = "run-consumer-replay:missing@1"
+	if err := handler(packetFor(t, missing)); err != nil {
+		t.Fatalf("missing-step handler: %v", err)
+	}
+	assertWorkflowAuditHash(t, workflowStore, run.ID, "step-1", "")
+
+	ev := testEvent()
+	ev.JobID = run.Steps["step-1"].JobID
+	if err := handler(packetFor(t, ev)); err != nil {
+		t.Fatalf("first handler: %v", err)
+	}
+	first := exportedEvent(t, mock, 1)
+	assertWorkflowAuditHash(t, workflowStore, run.ID, "step-1", first.EventHash)
+
+	if err := handler(packetFor(t, ev)); err != nil {
+		t.Fatalf("replay handler: %v", err)
+	}
+	assertWorkflowAuditHash(t, workflowStore, run.ID, "step-1", first.EventHash)
+	if got := mock.totalEvents(); got != 3 {
+		t.Fatalf("exported events = %d, want 3", got)
+	}
+}
+
+func subscribedHandler(t *testing.T, bus *mockAuditBus) func(*pb.BusPacket) error {
+	t.Helper()
+	bus.mu.Lock()
+	defer bus.mu.Unlock()
+	if bus.handler == nil {
+		t.Fatal("expected subscribed audit handler")
+	}
+	return bus.handler
+}
+
+func exportedEvent(t *testing.T, mock *mockExporter, index int) SIEMEvent {
+	t.Helper()
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+	if len(mock.batches) <= index || len(mock.batches[index]) == 0 {
+		t.Fatalf("missing exported event at batch %d", index)
+	}
+	return mock.batches[index][0]
+}
+
+func assertWorkflowAuditHash(t *testing.T, store *wf.RedisStore, runID, stepID, want string) {
+	t.Helper()
+	got, err := store.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get run %s: %v", runID, err)
+	}
+	if got.Steps[stepID].AuditHash != want {
+		t.Fatalf("step %s audit hash = %q, want %q", stepID, got.Steps[stepID].AuditHash, want)
 	}
 }
 

@@ -18,15 +18,21 @@ const auditChainAppendTimeout = 5 * time.Second
 type auditChainSender struct {
 	chainer    *audit.Chainer
 	downstream audit.AuditSender
+	stepSink   audit.StepHashSink
 }
 
-func newAuditChainSender(chainer *audit.Chainer, downstream audit.AuditSender) audit.AuditSender {
+func newAuditChainSender(chainer *audit.Chainer, downstream audit.AuditSender, stepSink ...audit.StepHashSink) audit.AuditSender {
 	if chainer == nil {
 		return downstream
+	}
+	var sink audit.StepHashSink
+	if len(stepSink) > 0 {
+		sink = stepSink[0]
 	}
 	return &auditChainSender{
 		chainer:    chainer,
 		downstream: downstream,
+		stepSink:   sink,
 	}
 }
 
@@ -44,6 +50,15 @@ func (s *auditChainSender) Send(event audit.SIEMEvent) {
 				"job_id", event.JobID,
 				"error", err,
 			)
+		} else if s.stepSink != nil && event.EventHash != "" && event.JobID != "" {
+			if err := s.stepSink.UpdateAuditHash(ctx, event.JobID, event.EventHash); err != nil {
+				slog.Warn("audit chain sender step-hash write-back failed",
+					"event_type", event.EventType,
+					"tenant_id", event.TenantID,
+					"job_id", event.JobID,
+					"error", err,
+				)
+			}
 		}
 	}
 	if s.downstream != nil {

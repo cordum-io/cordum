@@ -629,7 +629,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		}
 	}
 
-	auditSender, auditChainer, err := initAuditPipeline(jobStore.Client(), natsBus, entitlementResolver)
+	auditSender, auditChainer, err := initAuditPipeline(jobStore.Client(), natsBus, entitlementResolver, workflowStore)
 	if err != nil {
 		return fmt.Errorf("init audit exporter: %w", err)
 	}
@@ -938,7 +938,7 @@ func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, entitlementResolver *licensing.EntitlementResolver) (audit.AuditSender, *audit.Chainer, error) {
+func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, entitlementResolver *licensing.EntitlementResolver, stepHashSink ...audit.StepHashSink) (audit.AuditSender, *audit.Chainer, error) {
 	// The Redis-backed audit chain is the tamper-evident primary record. It
 	// runs unconditionally at boot so a blocked SIEM entitlement or an
 	// operator who explicitly opts out of external SIEM export cannot
@@ -957,6 +957,10 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 		chainerOpts = append(chainerOpts, audit.WithHMACKey(key))
 	}
 	auditChainer := audit.NewChainer(client, "", chainerOpts...)
+	var workflowStepSink audit.StepHashSink
+	if len(stepHashSink) > 0 {
+		workflowStepSink = stepHashSink[0]
+	}
 	chainFailMode := audit.ParseChainFailMode(os.Getenv(audit.EnvChainFailMode))
 	slog.Info("audit chain enabled",
 		"stream_prefix", audit.ChainKeyPrefix,
@@ -974,7 +978,7 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 		slog.Info("audit chain active, no external SIEM export",
 			"reason", "export type empty/none or SIEM entitlement blocked for plan",
 		)
-		return newAuditChainSender(auditChainer, nil), auditChainer, nil
+		return newAuditChainSender(auditChainer, nil, workflowStepSink), auditChainer, nil
 	}
 
 	transport := strings.ToLower(strings.TrimSpace(os.Getenv("AUDIT_TRANSPORT")))
@@ -989,6 +993,7 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 			bufExporter.Backend(),
 			audit.WithChainer(auditChainer),
 			audit.WithChainFailMode(chainFailMode),
+			audit.WithStepHashSink(workflowStepSink),
 		); err != nil {
 			slog.Warn("audit NATS consumer failed to start; events will publish to NATS but local chain verification may lag", "error", err)
 		}
@@ -999,7 +1004,7 @@ func initAuditPipeline(client redis.UniversalClient, natsBus audit.AuditBus, ent
 	// forward to the buffered exporter. This fixes a latent bug where
 	// direct-mode gateways only saw chain appends when a NATS consumer
 	// happened to be reading the stream.
-	return newAuditChainSender(auditChainer, bufExporter), auditChainer, nil
+	return newAuditChainSender(auditChainer, bufExporter, workflowStepSink), auditChainer, nil
 }
 
 func newHTTPHandler(s *server) (http.Handler, error) {
