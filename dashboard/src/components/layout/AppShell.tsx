@@ -119,15 +119,26 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
   },
 ];
 
-/** Match the sidebar section that owns the given pathname. */
+/**
+ * Match the sidebar section that owns the given pathname.
+ *
+ * Note: this intentionally ignores the per-item `end` flag (which exists to
+ * keep NavLink's visual active state from leaking onto sub-routes — e.g.
+ * Dashboard "/" or Settings Hub "/settings"). For SECTION detection we want
+ * any sub-route to count, so /settings/users opens Settings even though the
+ * Hub item is end-flagged. The single special case is root "/", which must
+ * stay exact-match — otherwise every path would also match the Run section
+ * via its Dashboard item.
+ */
 export function findActiveSection(
   pathname: string,
   sections: NavSection[],
 ): string | null {
   for (const section of sections) {
-    const match = section.items.some((item) =>
-      item.end ? pathname === item.path : pathname === item.path || pathname.startsWith(`${item.path}/`),
-    );
+    const match = section.items.some((item) => {
+      if (item.path === "/") return pathname === "/";
+      return pathname === item.path || pathname.startsWith(`${item.path}/`);
+    });
     if (match) return section.label;
   }
   return null;

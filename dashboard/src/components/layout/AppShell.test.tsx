@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { APP_SHELL_G_KEY_MAP, APP_SHELL_NAV_SECTIONS, deriveSystemStatus, statusColorMap } from "./AppShell";
+import {
+  APP_SHELL_G_KEY_MAP,
+  APP_SHELL_NAV_SECTIONS,
+  deriveSystemStatus,
+  findActiveSection,
+  statusColorMap,
+} from "./AppShell";
 
 describe("AppShell systemStatus derivation", () => {
   it("returns 'loading' with grey indicator when status data is undefined and still loading", () => {
@@ -83,6 +89,92 @@ describe("AppShell GOVERN navigation", () => {
     expect(APP_SHELL_G_KEY_MAP.t).toBe("/govern/overview?tab=scope");
     expect(APP_SHELL_G_KEY_MAP.q).toBe("/govern/quarantine");
     expect(APP_SHELL_G_KEY_MAP.b).toBe("/govern/overview?tab=bundles");
+  });
+});
+
+describe("AppShell findActiveSection", () => {
+  it("matches root '/' to Run via the end-flagged Dashboard item", () => {
+    expect(findActiveSection("/", APP_SHELL_NAV_SECTIONS)).toBe("Run");
+  });
+
+  it("does NOT match /agents-foo to Run (avoids /agents prefix collision)", () => {
+    expect(findActiveSection("/agents-foo", APP_SHELL_NAV_SECTIONS)).toBe(null);
+  });
+
+  it("matches /agents/abc to Run via /agents prefix", () => {
+    expect(findActiveSection("/agents/abc", APP_SHELL_NAV_SECTIONS)).toBe("Run");
+  });
+
+  it("matches /edge/sessions to Run", () => {
+    expect(findActiveSection("/edge/sessions", APP_SHELL_NAV_SECTIONS)).toBe("Run");
+  });
+
+  it("matches /edge/sessions/abc detail path to Run", () => {
+    expect(findActiveSection("/edge/sessions/abc", APP_SHELL_NAV_SECTIONS)).toBe("Run");
+  });
+
+  it("matches /govern/overview to Govern", () => {
+    expect(findActiveSection("/govern/overview", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
+  });
+
+  it("matches /govern/quarantine to Govern (badge route)", () => {
+    expect(findActiveSection("/govern/quarantine", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
+  });
+
+  it("matches /packs/abc to Catalog", () => {
+    expect(findActiveSection("/packs/abc", APP_SHELL_NAV_SECTIONS)).toBe("Catalog");
+  });
+
+  it("matches /audit to Audit", () => {
+    expect(findActiveSection("/audit", APP_SHELL_NAV_SECTIONS)).toBe("Audit");
+  });
+
+  it("matches /dlq to Audit", () => {
+    expect(findActiveSection("/dlq", APP_SHELL_NAV_SECTIONS)).toBe("Audit");
+  });
+
+  it("matches /settings/* sub-routes to Settings", () => {
+    expect(findActiveSection("/settings", APP_SHELL_NAV_SECTIONS)).toBe("Settings");
+    expect(findActiveSection("/settings/users", APP_SHELL_NAV_SECTIONS)).toBe("Settings");
+    expect(findActiveSection("/settings/audit-export", APP_SHELL_NAV_SECTIONS)).toBe("Settings");
+  });
+
+  it("returns null for unknown routes (e.g. /not-a-real-route)", () => {
+    expect(findActiveSection("/not-a-real-route", APP_SHELL_NAV_SECTIONS)).toBe(null);
+  });
+});
+
+describe("AppShell sidebar accordion structure", () => {
+  it("groups items into 5 customer-language sections", () => {
+    expect(APP_SHELL_NAV_SECTIONS.map((s) => s.label)).toEqual([
+      "Run",
+      "Govern",
+      "Catalog",
+      "Audit",
+      "Settings",
+    ]);
+  });
+
+  it("Run section absorbs Workflows and Approvals", () => {
+    const run = APP_SHELL_NAV_SECTIONS.find((s) => s.label === "Run");
+    expect(run?.items.map((i) => i.label)).toEqual([
+      "Dashboard",
+      "Agents",
+      "Jobs",
+      "Edge Sessions",
+      "Workflows",
+      "Approvals",
+    ]);
+  });
+
+  it("Settings section has the Hub item with end:true to avoid prefix-matching sub-routes", () => {
+    const settings = APP_SHELL_NAV_SECTIONS.find((s) => s.label === "Settings");
+    expect(settings).toBeDefined();
+    expect(settings?.items[0]).toMatchObject({
+      path: "/settings",
+      label: "Hub",
+      end: true,
+    });
   });
 });
 
