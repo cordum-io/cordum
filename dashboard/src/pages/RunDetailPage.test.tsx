@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkflowRun } from "@/api/types";
+import { mapWorkflowRun } from "@/api/transform";
 import { renderWithProviders } from "@/test-utils/render";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -378,6 +379,39 @@ describe("WorkflowRunDetailPage governance overlay runtime data path", () => {
       const slot = container.querySelector("[data-slot='safety-decision']");
       expect(slot).not.toBeNull();
       expect(slot?.getAttribute("aria-label")).toBe("Safety decision: deny");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders the audit hash chip from backend-shaped audit_hash after the transform", () => {
+    workflowState.run = {
+      data: mapWorkflowRun({
+        id: "run-backend",
+        workflow_id: "wf-1",
+        status: "succeeded",
+        steps: {
+          "step-audit": {
+            step_id: "step-audit",
+            status: "succeeded",
+            output: { safetyDecision: { type: "allow" } },
+            audit_hash: "abcdef0123456789deadbeefcafebabe",
+          },
+        },
+      }),
+      isLoading: false,
+      error: null,
+    };
+
+    const { container, cleanup } = renderPage();
+    try {
+      const auditSlot = container.querySelector("[data-slot='audit-hash']");
+      expect(auditSlot).not.toBeNull();
+      expect(auditSlot?.textContent).toBe("abcdef01");
+      expect(auditSlot?.getAttribute("aria-label")).toBe(
+        "Copy audit hash abcdef0123456789deadbeefcafebabe",
+      );
+      expect(auditSlot?.getAttribute("data-pending-api")).toBeNull();
     } finally {
       cleanup();
     }
