@@ -392,6 +392,16 @@ export default function AuditLogPage() {
               <Download className="w-3 h-3 mr-1" />
               Export CSV
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled
+              aria-label="Export PDF (coming soon)"
+              title="PDF export — coming soon. Backend endpoint pending."
+            >
+              <FileText className="w-3 h-3 mr-1" />
+              Export PDF
+            </Button>
           </div>
         }
       />
