@@ -3,6 +3,7 @@ package workflow
 import (
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -81,6 +82,42 @@ func TestStep_PolicyGate_ConstantsMatchJSONWireValues(t *testing.T) {
 	}
 	if PolicyGateRequireApproval != "require_approval" {
 		t.Errorf("PolicyGateRequireApproval = %q, want \"require_approval\"", PolicyGateRequireApproval)
+	}
+}
+
+// TestStep_PolicyGate_IsValidPolicyGateConcurrentRead exercises the exported
+// predicate from multiple goroutines; callers share this read-only validator.
+func TestStep_PolicyGate_IsValidPolicyGateConcurrentRead(t *testing.T) {
+	t.Parallel()
+	values := []string{
+		PolicyGateAllow,
+		PolicyGateDeny,
+		PolicyGateRequireApproval,
+		"",
+		"ALLOW",
+		"allow_with_constraints",
+	}
+	var wg sync.WaitGroup
+	errs := make(chan string, len(values)*16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for _, value := range values {
+				got := IsValidPolicyGate(value)
+				want := value == PolicyGateAllow ||
+					value == PolicyGateDeny ||
+					value == PolicyGateRequireApproval
+				if got != want {
+					errs <- value
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for value := range errs {
+		t.Errorf("IsValidPolicyGate(%q) returned unexpected result", value)
 	}
 }
 
