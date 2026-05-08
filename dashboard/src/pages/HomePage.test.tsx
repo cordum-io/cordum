@@ -1,8 +1,13 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
 import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { server } from "@/test-utils/msw";
 import HomePage from "./HomePage";
+
+const unhandledRequests: string[] = [];
+const recordUnhandled = ({ request }: { request: Request }) => {
+  unhandledRequests.push(`${request.method} ${request.url}`);
+};
 
 beforeAll(() => {
   if (typeof globalThis.ResizeObserver === "undefined") {
@@ -14,6 +19,14 @@ beforeAll(() => {
     globalThis.ResizeObserver =
       ResizeObserverMock as unknown as typeof ResizeObserver;
   }
+  // Fail tests on unhandled MSW requests so missing handlers (like
+  // AuditChainCard's /api/v1/audit/verify) surface here instead of as a
+  // silent warn-and-pass.
+  server.events.on("request:unhandled", recordUnhandled);
+});
+
+afterAll(() => {
+  server.events.removeListener("request:unhandled", recordUnhandled);
 });
 
 // Backend job records use `state` (not `status`), `updated_at` in microseconds
@@ -92,11 +105,29 @@ beforeEach(() => {
         chain: { verified_through: 1, head: "0xabc", last_verified_at: 0 },
       }),
     ),
+    // AuditChainCard polls /api/v1/audit/verify (5-min refetch) on every
+    // HomePage mount; without a handler here MSW falls through to its real-fetch
+    // shim and emits unhandled-request warnings.
+    http.get("*/api/v1/audit/verify", () =>
+      HttpResponse.json({
+        status: "ok",
+        total_events: 0,
+        verified_events: 0,
+        gaps: [],
+        retention_boundary_seq: 0,
+      }),
+    ),
   );
 });
 
 afterEach(() => {
+  const drained = unhandledRequests.splice(0);
   server.resetHandlers();
+  if (drained.length > 0) {
+    throw new Error(
+      `Unhandled MSW requests in HomePage test (add handlers in beforeEach):\n${drained.join("\n")}`,
+    );
+  }
 });
 
 async function waitForKpis() {
@@ -132,16 +163,29 @@ describe("HomePage", () => {
     );
   });
 
-  it("emits zero hardcoded chart hex colors — donut consumes only var(--chart-1..5)", async () => {
+  it("emits no raw chart colors — donut path[fill] is var(--chart-N) only, never hex/rgb/rgba", async () => {
     const { container } = renderWithProviders(<HomePage />, {
       initialEntries: ["/"],
     });
     await waitForKpis();
     const cells = container.querySelectorAll("path[fill]");
-    const fills = Array.from(cells).map((c) => c.getAttribute("fill") ?? "");
-    // No hex literal of any chart color should appear; donut cells use var(--chart-N).
-    const hexFills = fills.filter((f) => /^#[0-9a-fA-F]{3,8}$/.test(f));
-    expect(hexFills).toEqual([]);
+    const fills = Array.from(cells)
+      .map((c) => c.getAttribute("fill") ?? "")
+      .filter((f) => f && f !== "none" && !f.startsWith("url("));
+    // Reject ANY raw color literal (hex, rgb(), rgba(), hsl()) — donut cells
+    // must consume `var(--chart-N)` so palette swaps land via the token system.
+    const rawColors = fills.filter((f) =>
+      /^#[0-9a-fA-F]{3,8}$/.test(f) ||
+      /^rgba?\(/.test(f) ||
+      /^hsla?\(/.test(f),
+    );
+    expect(rawColors).toEqual([]);
+    // The legend chips below the chart use inline `style.backgroundColor` set
+    // from the same DECISION_PALETTE constant — assert at least one CSS-var
+    // chart token is emitted to the DOM somewhere, so the assertion above is
+    // not vacuous if recharts itself hasn't painted the SVG paths yet in jsdom.
+    const html = container.innerHTML;
+    expect(html).toMatch(/var\(--chart-[1-5]\)/);
   });
 
   it("toggles live mode via aria-pressed when the Live button is clicked", async () => {
