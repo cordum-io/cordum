@@ -48,6 +48,7 @@ import {
 } from "@/hooks/useWorkflows";
 import { GovernanceTimeline } from "@/components/governance/GovernanceTimeline";
 import { AgentExecutionsPanel } from "@/components/edge/AgentExecutionsPanel";
+import { WorkflowNodeGovernanceOverlay } from "@/components/workflow-studio/WorkflowNodeGovernanceOverlay";
 
 interface ChatMessage {
   id: string;
@@ -70,6 +71,13 @@ interface RunStep {
     | "quarantined";
   duration?: string;
   output?: string;
+  /** Inputs to the WorkflowNodeGovernanceOverlay rendered next to each step.
+   *  policyGate + auditHash come from the cordum-core API additions tracked
+   *  in task-913b6c6c; until that ships these are `undefined` and the
+   *  overlay slots render as muted "data pending" placeholders. */
+  policyGate?: "allow" | "deny" | "require_approval";
+  safetyDecision?: string;
+  auditHash?: string;
 }
 
 function mapStepType(type: string): RunStep["type"] {
@@ -302,6 +310,25 @@ export default function WorkflowRunDetailPage() {
       const stepStatus =
         step.status ?? events.filter((e) => e.status).pop()?.status;
 
+      // Surface the governance indicators if the run-step record carries them.
+      // safetyDecision lives on the timeline event payload today; policyGate +
+      // auditHash come from task-913b6c6c when that ships. Until then these
+      // are `undefined` and the overlay falls back to its muted "data pending"
+      // placeholders — UX contract is preserved either way.
+      const safetyEvent = events.find(
+        (e): e is RunTimelineEvent & { data: { safetyDecision?: { type?: string } } } => {
+          const data = (e as { data?: unknown }).data;
+          return (
+            !!data &&
+            typeof data === "object" &&
+            "safetyDecision" in (data as Record<string, unknown>)
+          );
+        },
+      );
+      const safetyDecision =
+        safetyEvent?.data?.safetyDecision?.type ??
+        ((step as { safetyDecision?: { type?: string } }).safetyDecision?.type);
+
       return {
         id: step.id,
         label: step.name,
@@ -314,6 +341,9 @@ export default function WorkflowRunDetailPage() {
               : undefined
             : duration,
         output,
+        policyGate: step.policyGate,
+        safetyDecision,
+        auditHash: step.auditHash,
       };
     });
   }, [run, timeline]);
@@ -731,6 +761,20 @@ export default function WorkflowRunDetailPage() {
                               </span>
                             )}
                           </div>
+                          {/* Governance overlay — shared with WorkflowStudio's
+                              UnifiedNode so the visual contract stays identical
+                              across design-time and run-time surfaces. */}
+                          {step.type === "worker" && (
+                            <div className="mt-1.5">
+                              <WorkflowNodeGovernanceOverlay
+                                policyGate={step.policyGate}
+                                safetyDecision={step.safetyDecision}
+                                auditHash={step.auditHash}
+                                runtime
+                                ariaLabel={`Governance indicators for step ${step.label}`}
+                              />
+                            </div>
+                          )}
                         </div>
                         <span className="text-xs font-mono text-muted-foreground">
                           {i + 1}
