@@ -21,20 +21,43 @@ function run(label, cmd, args) {
   }
 }
 
+// Pre-regen check: orval runs with `clean: true` and would silently wipe any
+// uncommitted hand-edits in src/api/generated/. Refuse to run if the working
+// tree is dirty so a developer doesn't lose work without seeing the warning.
+const preStatus = spawnSync(
+  "git",
+  ["status", "--porcelain", "--", "src/api/generated/"],
+  { encoding: "utf8", shell: process.platform === "win32" },
+);
+const preDrift = (preStatus.stdout || "").trim();
+if (preDrift.length > 0) {
+  console.error(
+    "[check-api-codegen] uncommitted changes in src/api/generated/:\n" +
+      preDrift +
+      "\n  Commit or revert first — `pnpm run generate-api` would overwrite them.",
+  );
+  process.exit(1);
+}
+
 console.log("[check-api-codegen] regenerating src/api/generated/");
 run("generate-api", "pnpm", ["run", "generate-api"]);
 
 console.log("[check-api-codegen] checking generated tree against committed state");
-const diff = spawnSync(
+// `git status --porcelain` covers modifications, deletions, AND untracked
+// files — important when the spec adds a new tag and orval emits a
+// previously-uncommitted file.
+const status = spawnSync(
   "git",
-  ["diff", "--exit-code", "--", "src/api/generated/"],
-  { stdio: "inherit", shell: process.platform === "win32" },
+  ["status", "--porcelain", "--", "src/api/generated/"],
+  { encoding: "utf8", shell: process.platform === "win32" },
 );
+const drift = (status.stdout || "").trim();
 
-if (diff.status !== 0) {
+if (drift.length > 0) {
+  console.error("[check-api-codegen] DRIFT detected in src/api/generated/:");
+  console.error(drift);
   console.error(
-    "[check-api-codegen] DRIFT: src/api/generated/ differs from regenerated output.\n" +
-      "  Run `pnpm run generate-api` locally, commit the updated generated/ tree, and re-push.",
+    "\n  Run `pnpm run generate-api` locally, commit the updated generated/ tree, and re-push.",
   );
   process.exit(1);
 }

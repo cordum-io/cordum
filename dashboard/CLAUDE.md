@@ -38,6 +38,35 @@ CI enforces both rules via `tools/scripts/check_dashboard_deps.sh`
 `pnpm install --frozen-lockfile` and fails the PR on pnpm dependency errors or
 lockfile drift.
 
+## Generated API hooks
+
+`src/api/generated/` is produced by [orval](https://orval.dev/) from
+`cordum/docs/api/openapi/cordum-api.yaml`. Generated React Query hooks call
+the `apiClient` mutator exported from `src/api/client.ts`, so auth headers,
+tenant routing, the 30s request timeout, structured logging, and 401-redirect
+behavior remain centralized in the existing http layer.
+
+Regenerate after any spec edit:
+
+```bash
+cd dashboard
+pnpm run generate-api
+git add src/api/generated/
+```
+
+Rules:
+
+- **Do not hand-edit `src/api/generated/`.** orval runs with `clean: true` and
+  will overwrite local edits on the next regen.
+- The orval config lives at `dashboard/orval.config.ts`. The mutator override
+  points at `./src/api/client.ts` (`apiClient`); changing the mutator path
+  requires also updating that export.
+- CI runs `pnpm run check-api-codegen` in the `dashboard-test` job (after
+  `pnpm install`, before `tsc --noEmit`). Drift between the committed tree and
+  what the spec would regenerate fails the PR.
+- The check refuses to run with uncommitted changes in `src/api/generated/` —
+  commit or revert first, since regen would otherwise silently wipe the edits.
+
 ## Testing
 
 Page-level tests that render a page composing React Query hooks must use the
