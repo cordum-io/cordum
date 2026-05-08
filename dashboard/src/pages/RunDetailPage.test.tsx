@@ -408,8 +408,46 @@ describe("WorkflowRunDetailPage governance overlay runtime data path", () => {
       const auditSlot = container.querySelector("[data-slot='audit-hash']");
       expect(auditSlot).not.toBeNull();
       expect(auditSlot?.textContent).toBe("abcdef01");
-      expect(auditSlot?.getAttribute("aria-label")).toBe(
+      // The aria-label lives on the inner CodeBlock button (post-task-6fccc637
+      // reopen — chip migrated to the shared CodeBlock primitive).
+      const chip = auditSlot?.querySelector("button");
+      expect(chip).not.toBeNull();
+      expect(chip?.getAttribute("aria-label")).toBe(
         "Copy audit hash abcdef0123456789deadbeefcafebabe",
+      );
+      expect(auditSlot?.getAttribute("data-pending-api")).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders the policy-gate Shield with the runtime tone from step.policyGate (DoD #3 — task-6fccc637 reopen RunDetail smoke)", () => {
+    // Already seeded by parent beforeEach: policyGate = "require_approval".
+    const { container, cleanup } = renderPage();
+    try {
+      const policySlot = container.querySelector("[data-slot='policy-gate']");
+      expect(policySlot).not.toBeNull();
+      expect(policySlot?.getAttribute("data-policy-gate")).toBe("require_approval");
+      // No data-pending-api marker because the value flowed through the
+      // transform.ts mapping (task-6fccc637 commit 85f0f1e3) and reached the
+      // overlay populated.
+      expect(policySlot?.getAttribute("data-pending-api")).toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders the audit hash chip from the parent-beforeEach seed (DoD #3 — page-level smoke proves end-to-end wiring)", () => {
+    // Parent beforeEach seeds auditHash = "f".repeat(64). The chip should
+    // render the 8-char prefix and carry the full hash in aria-label.
+    const { container, cleanup } = renderPage();
+    try {
+      const auditSlot = container.querySelector("[data-slot='audit-hash']");
+      expect(auditSlot).not.toBeNull();
+      expect(auditSlot?.textContent).toBe("ffffffff");
+      const chip = auditSlot?.querySelector<HTMLButtonElement>("button");
+      expect(chip?.getAttribute("aria-label")).toBe(
+        `Copy audit hash ${"f".repeat(64)}`,
       );
       expect(auditSlot?.getAttribute("data-pending-api")).toBeNull();
     } finally {

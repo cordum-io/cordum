@@ -30,6 +30,7 @@
  */
 import { Shield, ShieldAlert, ShieldCheck, ShieldQuestion } from "lucide-react";
 import type { ReactNode } from "react";
+import { CodeBlock } from "@/components/ui/CodeBlock";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { cn } from "@/lib/utils";
 
@@ -94,28 +95,26 @@ function AuditHashChip({ hash, runtime }: { hash?: string; runtime: boolean }) {
       </span>
     );
   }
-  const truncated = hash.length > 8 ? hash.slice(0, 8) : hash;
-  const onClick = (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(hash);
-    }
-  };
+  // The chip is the shared CodeBlock primitive in compact-inline form. The
+  // wrapper span carries the data-slot + opacity + hover cursor + click stopPropagation
+  // so the canvas drag-handler doesn't fire when the user copies the hash.
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "inline-flex h-4 items-center rounded font-mono text-[10px] tracking-tight px-1 text-foreground bg-surface-2 hover:bg-surface-3 focus:outline-none focus:ring-1 focus:ring-cordum",
-        !runtime && "opacity-60",
-      )}
-      title={`Audit hash ${hash} — click to copy`}
+    <span
       data-slot="audit-hash"
       data-row-action
-      aria-label={`Copy audit hash ${hash}`}
+      onClick={(event) => event.stopPropagation()}
+      className={cn("inline-flex", !runtime && "opacity-60")}
     >
-      {truncated}
-    </button>
+      <CodeBlock
+        inline
+        copyable
+        inlineMaxLength={8}
+        ariaLabel={`Copy audit hash ${hash}`}
+        inlineTitle={`Audit hash ${hash} — click to copy`}
+      >
+        {hash}
+      </CodeBlock>
+    </span>
   );
 }
 
