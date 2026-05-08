@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-04-21.2
+ * OpenAPI spec version: 2026-05-08.2
  */
 
 export * from './aPIKeyInfo';
@@ -470,4 +470,5 @@ export * from './workflowDefinitionConfig';
 export * from './workflowDefinitionSteps';
 export * from './workflowStep';
 export * from './workflowStepConfig';
+export * from './workflowStepPolicyGate';
 export * from './workflowStepRetry';

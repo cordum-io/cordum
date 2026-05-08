@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Cordum HTTP API
-  version: '2026-05-08.1'
+  version: '2026-05-08.2'
   description: Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
   contact:
     name: Cordum Team
@@ -9298,6 +9298,16 @@ components:
           type: object
           additionalProperties: true
           nullable: true
+        audit_hash:
+          type: string
+          nullable: true
+          description: |
+            Audit-chain hash for the safety decision applied to this step,
+            joined from the audit-chain entry produced when the step ran.
+            Unset for skipped or upstream-failed steps where no decision
+            was emitted. Dashboard surfaces this as a copy-on-click chip
+            in the WorkflowNodeGovernanceOverlay.
+          example: 0x9f3a8b2c4d5e6f70
     TimelineEvent:
       type: object
       properties:

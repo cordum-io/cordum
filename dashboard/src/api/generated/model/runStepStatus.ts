@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-04-21.2
+ * OpenAPI spec version: 2026-05-08.2
  */
 import type { RunStepStatusOutput } from './runStepStatusOutput';
 
@@ -20,4 +20,14 @@ export interface RunStepStatus {
   error?: string | null;
   /** @nullable */
   output?: RunStepStatusOutput;
+  /**
+   * Audit-chain hash for the safety decision applied to this step,
+joined from the audit-chain entry produced when the step ran.
+Unset for skipped or upstream-failed steps where no decision
+was emitted. Dashboard surfaces this as a copy-on-click chip
+in the WorkflowNodeGovernanceOverlay.
+
+   * @nullable
+   */
+  audit_hash?: string | null;
 }
