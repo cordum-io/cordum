@@ -35,36 +35,51 @@ Decided 2026-04-24 · task-c154ff08 · epic-2e0ed1ee.
 - State + disclosure: `EmptyState`, `ErrorBanner`, `SkeletonCard`, `CollapsibleSection`, `StatusBadge`
 - Metrics/navigation: `MetricValue`, `StatTile`, `Tabs`, `Pagination`, `DataTable`
 - Field wrappers: `LabeledField`
-
-### A11y test status (Phase 5a — task-bf55ddbd, 2026-05-09)
-
-`renderWithProviders` now accepts an opt-in `runAxe: true` option that
-delegates to `assertNoSeriousAxeViolations` and asserts no critical/serious
-WCAG 2 AA violations on the rendered container. The dedicated
-`*.a11y.test.tsx` files (HomePage, SettingsHubPage, PolicyOverviewPage,
-InputRuleEditorDrawer) remain the canonical pattern for pages whose first
-paint depends on async data; the new opt-in is a sugar layer for primitive +
-component tests that don't need a `waitFor` preamble.
-
-| Primitive / surface | A11y status | Source |
-| --- | --- | --- |
-| `HomePage` | PASS (light + dark) | `pages/HomePage.a11y.test.tsx` |
-| `SettingsHubPage` | PASS (light + dark) | `pages/SettingsHubPage.a11y.test.tsx` |
-| `PolicyOverviewPage` | PASS (light + dark) | `pages/govern/PolicyOverviewPage.a11y.test.tsx` |
-| `InputRuleEditorDrawer` (read-only) | PASS (Escape closes) | `components/policy/input-rules/InputRuleEditorDrawer.a11y.test.tsx` |
-| `UserMenu` (closed-menu) | PASS (axe via `runAxe: true`) | `components/UserMenu.test.tsx` (Phase 5a opt-in demo) |
-| Other shared primitives | PENDING | extend with `runAxe: true` in their existing test files |
-
-CI gate: `pnpm run lint:a11y` (uses `eslint.a11y.config.mjs`) — must exit 0
-on every dashboard PR.
 ## Audit summary
 - Page components reviewed: **46**
 - Pages using `PageHeader`: **37**
 - Pages already using `InstrumentCard` or the `.instrument-card` surface: **34**
 - Pages still containing raw `<input>/<select>/<textarea>` markup: **27**
-- Pages still carrying raw CSS-var styling / fallback color strings: **27**
+- Pages still carrying raw CSS-var styling / fallback color strings: **6** (down from 27 after the v2.5 drift sweep — only AgentDetailPage, HomePage, RunDetailPage, LoginPage, plus two unrelated low-impact carriers remain; see "v2.5 drift sweep close-out" section below).
 - Pages already depending on `MetricValue`: **5**
 - Pages already depending on `Tabs` or custom tablist markup: **6**
+
+## v3-overlay close-out (task-dd5e1d8f → task-6fccc637, 2026-05-09)
+
+`WorkflowNodeGovernanceOverlay` ships with all three indicators populated end-to-end:
+
+1. **policy-gate Shield icon** — `step.policyGate` flows from `BackendWorkflowStep.policy_gate` (cordum-core task-913b6c6c) through `mapWorkflowStep` (task-6fccc637 commit `85f0f1e3`) into `UnifiedNodeData.policyGate`. Renders muted in design-time, saturated when the node has a run overlay.
+2. **safety-decision badge** — `step.output.safetyDecision` flows through `graphBridge` (task-dd5e1d8f reopen #2 commit `8fe1d412`). Already in service.
+3. **audit-hash chip** — `step.auditHash` flows from `BackendStepRun.audit_hash` (cordum-core task-913b6c6c) through `mapWorkflowRunStep` (task-6fccc637 commit `85f0f1e3`). Click-to-copy, 8-char preview. Renders muted placeholder when the run-step record's audit_hash is `null` (e.g. older runs pre-task-913b6c6c or before task-a45b8eb1 backfills the SIEMEvent join).
+
+Initial component shape was carved out in task-dd5e1d8f as "safetyDecision-only ships now; policyGate + auditHash placeholders mark `data-pending-api='task-913b6c6c'` until the cordum-core API additions land". That carve-out is now closed.
+
+Test coverage: `WorkflowNodeGovernanceOverlay.test.tsx` covers component render contract (3 policyGate variants, auditHash render+copy, design-time vs runtime saturation). `transform.test.ts` covers wire-format → dashboard-shape mapping (3 audit_hash cases + 4 policy_gate cases) — locks the contract that closed the loop in task-6fccc637.
+
+## v2.5 drift sweep close-out (task-100cc89c, 2026-05-08)
+
+Seven pages newly converged in this sweep, removing **~28 page-local `var(--color-*)` literals**. Commits on PR #249: `b5013067`, `bd9cf670`, `10ff0af1` (mid-sweep correction — see lesson below), `27b658e3`, `b5488d6f`. Each newly converged page has a regression case in `dashboard/src/pages/DesignSystemConvergence.test.ts` asserting `not.toMatch(/var\(--color-/)`.
+
+**Converged in v2.5 drift sweep:**
+- `pages/ApprovalsPage.tsx` — gated card borders + denied-icon → `statusToneTextClasses.governance` / `statusToneBorderClasses.warning|.governance` helpers from `StatusBadge.tsx`.
+- `pages/govern/BundleDetailPage.tsx` — unsaved-changes indicator → `statusToneTextClasses.warning` helper.
+- `pages/govern/OutputRulesPage.tsx` — viewer-mode banner → `<InfoBanner variant="warning">` primitive.
+- `pages/govern/ReplayPage.tsx` — replay link → `text-cordum`.
+- `pages/govern/InputRulesPage.tsx` — workflow scope-pill + scope-card → `bg-info/15 text-info`.
+- `pages/govern/PolicyAnalyticsPage.tsx` — bar fill, override highlights, false-positive banner → `fill-cordum`, `text-warning`, `bg-warning/5`, `text-cordum` bare-token classes.
+- `pages/govern/QuarantinePage.tsx` — severity-tone helpers, finding-dot indicator, medium-tier card border → `text-warning`, `text-info`, `bg-warning`, `bg-info`, `border-warning/20`.
+
+**Pages discovered already silently converged on grep (audit text was stale)**: `pages/govern/TenantDetailPage.tsx`, `pages/approvals/ApprovalDetailPage.tsx`, `pages/SettingsNotificationsPage.tsx`, `pages/govern/SimulatorPage.tsx`, `pages/govern/BundlesPage.tsx`, `pages/govern/TenantsPage.tsx`, `pages/govern/VelocityRulesPage.tsx`, `pages/govern/PolicyOverviewPage.tsx`.
+
+**Pages deliberately retained with `var(--color-*)`:**
+- `pages/AgentDetailPage.tsx` — recharts `<Bar fill="var(--color-cordum)" />` props are theme-bound (chart-fill drift cannot be Tailwind-converted without breaking the theme reference). Decision-identity exception, mirrors HomePage's chart palette discipline (msg-96e66aaa).
+- `pages/HomePage.tsx` — Phase 3 hero rewrite scope per epic plan; the AreaChart kept decision-identity tokens (success/governance/warning/danger) by design.
+- `pages/LoginPage.tsx` — pre-auth surface, low-impact, out of v2.5 scope.
+- `pages/RunDetailPage.tsx` — existing DoD-3 carve-out (full-bleed canvas console UX); the carve-out now extends to its raw-controls/raw-vars signals as well.
+
+**Lesson saved as memory mem-541413bc**: the codebase's Tailwind `@theme inline` block in `src/styles/index.css` registers `--color-warning` / `--color-governance` / `--color-info` / `--color-success` / `--color-cordum` (no `status-` prefix). The canonical Tailwind utilities are `text-warning`, `bg-info/15`, `border-governance/20`, `fill-cordum`, etc. `text-status-warning` only exists as a `.instrument-card.status-warning::before` state class — using it on other elements is a no-op visually (Tailwind silently ignores). Two batches of this sweep initially used `text-status-*` and produced visually-broken output; commit `10ff0af1` corrected by switching to `statusToneTextClasses` / `statusToneBorderClasses` helpers from `StatusBadge.tsx` plus the `<InfoBanner>` primitive.
+
+**Remaining drift line item** (not Phase 4 scope): `DLQPage.tsx` deletion is gated on Phase 3 wk4 (`task-2c3c8a04` — JobsPage rewrite + DLQ fold) landing the `/dlq` → `/jobs?status=dlq` redirect AND the DLQ filter on JobsPage. Worker-b6c8 reported BLOCKED on task-100cc89c step 5 pending that prerequisite (2026-05-08).
 ## Drift signals used in this audit
 - **Raw inputs** — page renders native form fields instead of central control primitives.
 - **Raw CSS vars** — page uses fallback `var(--...)` styling or hard-coded surface wrappers instead of design-system primitives.
@@ -78,12 +93,14 @@ Each entry below carries a concrete checklist so the next worker can continue th
 
 - **`pages/DLQPage.tsx`** — KPI row + search + error state + bulk actions are now on shared primitives, and row selection now uses the shared `Checkbox` primitive. Remaining work:
   - Replace the bespoke `instrument-card status-danger` table wrapper with a composition of `InstrumentCard` + an internal `DataTable` once the floating-action-bar rail fits the new primitive.
-- **`pages/ApprovalsPage.tsx`** — KPI row, search, tabs, and denial note now use `StatTile`, `Input`, `Tabs`, and `Textarea`. Remaining drift: convert the legacy drawer shell to `Drawer`/`CollapsibleSection` primitives and replace the raw lifecycle-note warning block with a reusable info/warning banner pattern.
+- **`pages/ApprovalsPage.tsx`** — KPI row, search, tabs, and denial note now use `StatTile`, `Input`, `Tabs`, and `Textarea`. v2.5 drift sweep (commit `b5013067` + `10ff0af1`) converged the gated card borders + denied-icon onto `statusToneTextClasses` / `statusToneBorderClasses` helpers. Remaining drift: convert the legacy drawer shell to `Drawer`/`CollapsibleSection` primitives and replace the raw lifecycle-note warning block with a reusable info/warning banner pattern (deferred to a follow-up — drawer migration is a11y-sensitive).
 - **`pages/AuditLogPage.tsx`** — filter row and action chips now use `Input`, `Select`, `LabeledField`, `Button`, and `StatusBadge`. Remaining drift: convert the table shell to `DataTable`/`Pagination` once the infinite-scroll behaviour is abstracted.
 - **`pages/SettingsUsersPage.tsx`** — summary row, tab switcher, search, dialog forms, and permission toggles now use `StatTile`, `Tabs`, `Input`, `Select`, `LabeledField`, and `Checkbox`. Remaining drift: decide whether the role cards should converge on `CollapsibleSection` or intentionally stay card-based.
 ### P2 — medium-priority convergence
 - DONE in the detail/admin sweep: `pages/JobDetailPage.tsx`, `pages/settings/SettingsSSOPage.tsx`, `pages/settings/SettingsSCIMPage.tsx`, `pages/settings/LicensePage.tsx`, `pages/SchemaDetailPage.tsx`, `pages/SchemasPage.tsx`
-- Next backlog concentration: `pages/approvals/ApprovalDetailPage.tsx`, `pages/govern/BundleDetailPage.tsx`, `pages/govern/TenantDetailPage.tsx`, `pages/RunDetailPage.tsx`, and the remaining govern/listing surfaces still carrying raw controls or token-only state wrappers.
+- DONE in the v2.5 drift sweep (task-100cc89c, 2026-05-08): `pages/govern/BundleDetailPage.tsx`, `pages/govern/OutputRulesPage.tsx`, `pages/govern/ReplayPage.tsx`, `pages/govern/InputRulesPage.tsx`, `pages/govern/PolicyAnalyticsPage.tsx`, `pages/govern/QuarantinePage.tsx`. See "v2.5 drift sweep close-out" section above.
+- Already silently converged (audit text was stale, grep on 2026-05-08 returned 0 drift signals): `pages/approvals/ApprovalDetailPage.tsx`, `pages/govern/TenantDetailPage.tsx`, `pages/SettingsNotificationsPage.tsx`, `pages/govern/SimulatorPage.tsx`, `pages/govern/BundlesPage.tsx`, `pages/govern/TenantsPage.tsx`, `pages/govern/VelocityRulesPage.tsx`, `pages/govern/PolicyOverviewPage.tsx`.
+- `pages/RunDetailPage.tsx` carve-out: existing DoD-3 exemption now extends to raw-controls/raw-vars signals (full-bleed canvas console UX).
 ### Bugs / cleanup notes noticed during the audit
 - `components/settings/SettingsLayout.tsx` and `components/KeyboardShortcutsHelp.tsx` were flagged early in the audit for old token naming. Re-check these files before close-out to ensure no stale `surface2` references remain after the broader sweep is merged.
 ## Full page matrix
