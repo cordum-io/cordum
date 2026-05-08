@@ -22,8 +22,8 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { Skeleton } from "@/components/ui/Skeleton";
 import {
-  ArrowLeft, Copy, Check, Clock, Shield, ShieldCheck, ShieldX, ShieldAlert,
-  AlertTriangle, Eye, Tag, Zap, CheckCircle2, XCircle, Timer,
+  ArrowLeft, Copy, Clock, Shield, ShieldCheck, ShieldX, ShieldAlert,
+  AlertTriangle, Eye, ExternalLink, Tag, Zap, CheckCircle2, XCircle, Timer,
   Store, Package, Users, Building2, CreditCard, ChevronRight, Workflow, MessageSquare, ArrowRight,
 } from "lucide-react";
 import { cn, formatRelativeTime, formatDuration } from "@/lib/utils";
@@ -201,17 +201,6 @@ function HeroBanner({ job, elapsed, isActive }: { job: Job; elapsed: string; isA
   const Icon = config.icon;
   const summary = generateJobSummary(job);
   const rule = job.safetyDecision?.matchedRule;
-  const [copied, setCopied] = useState(false);
-
-  const handleCopyJobId = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(job.id);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      toast.error("Copy failed");
-    }
-  }, [job.id]);
 
   return (
     <motion.div
@@ -280,20 +269,19 @@ function HeroBanner({ job, elapsed, isActive }: { job: Job; elapsed: string; isA
           <span className="text-xs font-mono text-muted-foreground" title={job.createdAt}>
             {formatRelativeTime(job.createdAt)}
           </span>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] font-mono text-muted-foreground/60 tracking-tight">
-              {job.id.slice(0, 12)}\u2026
-            </span>
-            <Button
-              onClick={handleCopyJobId}
-              variant="ghost"
-              size="icon"
-              aria-label="Copy job ID"
-              className="h-7 w-7"
-            >
-              {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-            </Button>
-          </div>
+          {/* Job ID \u2014 shared CodeBlock inline chip with copy-on-click. The
+              click writes the FULL id to clipboard; preview is the first
+              12 chars to match the previous truncation. */}
+          <CodeBlock
+            inline
+            copyable
+            inlineMaxLength={12}
+            ariaLabel={`Copy job ID ${job.id}`}
+            inlineTitle={`Job ID ${job.id} \u2014 click to copy`}
+            className="text-[10px] tracking-tight text-muted-foreground/80"
+          >
+            {job.id}
+          </CodeBlock>
         </div>
       </div>
     </motion.div>
@@ -862,9 +850,22 @@ function BlobViewer({ label, pointer, data, emptyText }: {
     <div className="space-y-3">
       {pointer && (
         <div className="surface-inset p-4 font-mono text-xs flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <span className="text-muted-foreground">{label} pointer: </span>
-            <span className="text-foreground break-all">{pointer}</span>
+          <div className="min-w-0 flex items-center gap-2">
+            <span className="text-muted-foreground">{label} pointer:</span>
+            {/* Pointer is a hash-like reference (e.g. s3://bucket/key); render
+                via shared CodeBlock inline chip with copy-on-click. The full
+                pointer is what gets copied; the visible chip is truncated at
+                48 chars (covers most ptr formats without overflow). */}
+            <CodeBlock
+              inline
+              copyable
+              inlineMaxLength={48}
+              ariaLabel={`Copy ${label} pointer ${pointer}`}
+              inlineTitle={`${pointer} — click to copy`}
+              className="break-all"
+            >
+              {pointer}
+            </CodeBlock>
           </div>
           {formatted && (
             <Button variant="outline" size="sm" className="shrink-0" onClick={() => setExpanded(!expanded)}>
@@ -964,21 +965,54 @@ function MetadataBar({ job, navigate }: { job: Job; navigate: (path: string) => 
   const active = fields.filter(([, v]) => !!v);
   if (active.length === 0) return null;
 
+  // Identity-style fields whose values are hash-like IDs and should render
+  // via the shared CodeBlock inline chip (copy-on-click). Topic/Tenant are
+  // free-form labels (not IDs) and Attempts is a number — those stay inline.
+  const ID_LABELS = new Set(["Workflow", "Run", "Session", "Trace"]);
+
   return (
     <div className="flex flex-wrap gap-x-5 gap-y-1.5 px-1">
       {active.map(([label, value, onClick]) => (
         <div key={label} className="flex items-center gap-1.5">
           <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{label}</span>
           {onClick ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-auto px-0 font-mono text-cordum hover:bg-transparent hover:text-cordum hover:underline"
-              onClick={onClick}
+            // Navigable IDs: render the value as a CodeBlock inline chip
+            // (copy-on-click) PLUS a small navigate link beside it. The chip
+            // primary action is copy; the arrow link is navigate. This keeps
+            // both DoD goals satisfied — every ID is copyable AND navigation
+            // remains discoverable. Per task-90bb5ef3 reopen #1 fix.
+            <span className="flex items-center gap-1">
+              <CodeBlock
+                inline
+                copyable
+                inlineMaxLength={24}
+                ariaLabel={`Copy ${label} ID ${value}`}
+                inlineTitle={`${value} — click to copy`}
+                className="text-cordum"
+              >
+                {value!}
+              </CodeBlock>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5"
+                onClick={onClick}
+                aria-label={`Open ${label}`}
+              >
+                <ExternalLink className="h-3 w-3" />
+              </Button>
+            </span>
+          ) : ID_LABELS.has(label) ? (
+            <CodeBlock
+              inline
+              copyable
+              inlineMaxLength={24}
+              ariaLabel={`Copy ${label} ID ${value}`}
+              inlineTitle={`${value} — click to copy`}
             >
-              {value}
-            </Button>
+              {value!}
+            </CodeBlock>
           ) : (
             <span className="text-xs font-mono text-foreground">{value}</span>
           )}
