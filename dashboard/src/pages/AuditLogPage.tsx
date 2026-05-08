@@ -49,6 +49,19 @@ import {
   type AuditVerifyResult,
 } from "@/hooks/useAuditVerify";
 import { useIsAdmin } from "@/hooks/usePermission";
+import type { PolicyAuditEntry } from "@/api/generated/model/policyAuditEntry";
+
+// Backend response items extend `PolicyAuditEntry` (the openapi-declared
+// shape) with additional fields the gateway emits but the spec does not
+// yet declare: `actor_id`, `role`, `actor`, `resource_type`, `resource_id`,
+// `decision`, `seq`, etc. The generated `useGetPolicyAudit` hook is
+// unusable here because (a) it accepts no query params (spec only declares
+// TenantID), and (b) it types the response as `PolicyAuditEntry[]` instead
+// of the `{items, total, has_more, offset}` envelope the gateway actually
+// returns. Spec enrichment is tracked separately. We adopt the generated
+// type as a base for forward compatibility — when the spec catches up to
+// the backend, the intersection here narrows automatically.
+type AuditResponseItem = PolicyAuditEntry & Record<string, unknown>;
 
 interface AuditEvent {
   id: string;
@@ -64,7 +77,7 @@ interface AuditEvent {
 }
 
 interface AuditResponse {
-  items: Record<string, unknown>[];
+  items: AuditResponseItem[];
   total?: number;
   has_more?: boolean;
   offset?: number;
