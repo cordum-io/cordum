@@ -6,7 +6,10 @@ import type { BadgeVariant } from "@/components/ui/StatusBadge";
 interface StatTileProps {
   label: string;
   value: string | number;
+  /** Single-line helper text rendered as `<p class="text-xs text-muted-foreground">`. Use `children` for richer layouts. */
   helperText?: ReactNode;
+  /** Rich helper content rendered without a wrapping element — use this for flex layouts, multi-color spans, mini-bars, or CTA buttons that would be invalid inside a `<p>`. */
+  children?: ReactNode;
   icon?: ReactNode;
   accent?: BadgeVariant;
   className?: string;
@@ -17,6 +20,7 @@ export function StatTile({
   label,
   value,
   helperText,
+  children,
   icon,
   accent = "cordum",
   className,
@@ -29,6 +33,7 @@ export function StatTile({
           {helperText ? (
             <p className="mt-1 text-xs text-muted-foreground">{helperText}</p>
           ) : null}
+          {children}
         </MetricValue>
       </InstrumentCardBody>
     </InstrumentCard>
