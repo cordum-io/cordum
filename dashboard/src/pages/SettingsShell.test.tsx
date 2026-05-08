@@ -13,7 +13,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { Route, Routes } from "react-router-dom";
 import { http, HttpResponse } from "msw";
-import { renderWithProviders, waitFor } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { server } from "@/test-utils/msw";
 import SettingsShell from "./SettingsShell";
 
@@ -172,6 +172,62 @@ describe("SettingsShell", () => {
     expect(
       licenseLink?.querySelector('[aria-label="Enterprise feature"]'),
     ).toBeNull();
+  });
+
+  it("clicking a locked entry intercepts navigation and opens the upgrade dialog", async () => {
+    server.use(
+      http.get("*/api/v1/license", () => HttpResponse.json(COMMUNITY_LICENSE)),
+    );
+    const { container } = renderWithProviders(<ShellHarness />, {
+      initialEntries: ["/settings"],
+    });
+
+    // Wait for the community license to settle so locks render.
+    await waitFor(() => {
+      expect(
+        container.querySelectorAll('[aria-label="Enterprise feature"]').length,
+      ).toBe(3);
+    });
+
+    const ssoLink = findLinkByText(container, "SSO & SAML")!;
+    fireEvent.click(ssoLink);
+
+    // Dialog appears with the feature name; navigation does not occur (no sso-page stub).
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("SSO & SAML requires an upgraded plan");
+    expect(dialog.textContent).toContain("community");
+    expect(container.querySelector('[data-testid="sso-page"]')).toBeNull();
+    // Hub stub remains rendered — proves we stayed at /settings.
+    expect(
+      container.querySelector(`[data-testid="${HUB_TESTID}"]`),
+    ).not.toBeNull();
+  });
+
+  it("clicking an unlocked entry navigates normally and does not open the upgrade dialog", async () => {
+    server.use(
+      http.get("*/api/v1/license", () => HttpResponse.json(COMMUNITY_LICENSE)),
+    );
+    const { container } = renderWithProviders(<ShellHarness />, {
+      initialEntries: ["/settings"],
+    });
+
+    // Wait for license to settle so the locked-state evaluation is stable.
+    await waitFor(() => {
+      expect(
+        container.querySelectorAll('[aria-label="Enterprise feature"]').length,
+      ).toBe(3);
+    });
+
+    const usersLink = findLinkByText(container, "Users & RBAC")!;
+    fireEvent.click(usersLink);
+
+    await waitFor(() => {
+      expect(
+        container.querySelector('[data-testid="users-page"]'),
+      ).not.toBeNull();
+    });
+    // No dialog should be open after a normal navigation click.
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
   });
 
   it("renders the index Outlet element inside <main> at /settings exactly and not on sub-routes", () => {

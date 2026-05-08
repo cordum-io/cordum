@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { useLicense } from "@/hooks/useLicense";
+import { UpgradeDialog } from "@/components/license/UpgradeDialog";
 import type { LicenseEntitlements } from "@/api/types";
 import { cn } from "@/lib/utils";
 
@@ -48,8 +50,9 @@ function isEntitled(entitlements: LicenseEntitlements | undefined, keys?: (keyof
 
 export default function SettingsHubPage() {
   const navigate = useNavigate();
-  const { data: license } = useLicense();
+  const { data: license, isLoading } = useLicense();
   const entitlements = license?.entitlements;
+  const [lockedFeature, setLockedFeature] = useState<string | null>(null);
 
   return (
     <div className="space-y-6">
@@ -62,7 +65,18 @@ export default function SettingsHubPage() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {settingsCards.map((card, i) => {
           const entitled = isEntitled(entitlements, card.entitlement);
-          const locked = card.entitlement && !entitled;
+          // Fail open while the license is loading so a slow network doesn't
+          // block users from features they actually have. Mirrors
+          // components/EntitlementGate.tsx and pages/SettingsShell.tsx.
+          const locked = !!card.entitlement && !isLoading && !entitled;
+
+          const handleClick = () => {
+            if (locked) {
+              setLockedFeature(card.title);
+              return;
+            }
+            navigate(card.path);
+          };
 
           return (
             <motion.button
@@ -70,7 +84,7 @@ export default function SettingsHubPage() {
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.04, duration: 0.3 }}
-              onClick={() => navigate(card.path)}
+              onClick={handleClick}
               data-locked={locked ? "true" : "false"}
               className="instrument-card text-left transition-all duration-200 group hover:bg-surface-2/50"
             >
@@ -105,6 +119,12 @@ export default function SettingsHubPage() {
           );
         })}
       </div>
+      <UpgradeDialog
+        open={lockedFeature !== null}
+        onClose={() => setLockedFeature(null)}
+        feature={lockedFeature ?? ""}
+        currentPlan={license?.plan}
+      />
     </div>
   );
 }
