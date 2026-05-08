@@ -9,8 +9,6 @@ import {
   Lock,
   Server,
   Settings,
-  ShieldAlert,
-  ShieldCheck,
   Sparkles,
   Users,
 } from "lucide-react";
@@ -40,8 +38,6 @@ const settingsCards: SettingsCard[] = [
   { icon: Key, title: "SCIM Provisioning", description: "Publish the SCIM endpoint, rotate provisioning tokens, and inspect synced users", path: "/settings/scim", entitlement: ["scim"] },
   { icon: Activity, title: "Audit Export", description: "SIEM audit event export — webhook, syslog, Datadog, CloudWatch", path: "/settings/audit-export", entitlement: ["siemExport", "auditExport", "legalHold"] },
   { icon: Sparkles, title: "License & Limits", description: "Current plan, entitlements, telemetry mode, and capacity limits", path: "/settings/license" },
-  { icon: ShieldCheck, title: "Input Safety", description: "Configure input safety policies", path: "/govern/overview?tab=input-rules" },
-  { icon: ShieldAlert, title: "Output Safety", description: "Configure output quarantine settings", path: "/govern/overview?tab=output-rules" },
 ];
 
 function isEntitled(entitlements: LicenseEntitlements | undefined, keys?: (keyof LicenseEntitlements)[]): boolean {
