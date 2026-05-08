@@ -47,24 +47,40 @@ func TestStep_PolicyGate_OmitEmpty(t *testing.T) {
 	}
 }
 
-// TestStep_PolicyGate_InvalidValueRejectedByValidPolicyGate asserts the
-// allowlist captures all accepted values and rejects everything else.
-// The validation entry point at handlers_workflows.go consults
-// ValidPolicyGate; this is the unit-level guard.
-func TestStep_PolicyGate_InvalidValueRejectedByValidPolicyGate(t *testing.T) {
+// TestStep_PolicyGate_InvalidValueRejectedByIsValidPolicyGate asserts the
+// canonical-values predicate accepts all 3 documented values and rejects
+// everything else, including case mismatches and adjacent-but-distinct
+// values like "constrain" or "allow_with_constraints" (which are
+// SafetyDecisionType members, not PolicyGate values). The validation entry
+// point at handlers_workflows.go consults IsValidPolicyGate; this is the
+// unit-level guard.
+func TestStep_PolicyGate_InvalidValueRejectedByIsValidPolicyGate(t *testing.T) {
 	t.Parallel()
-	for _, valid := range []string{"allow", "deny", "require_approval"} {
-		if _, ok := ValidPolicyGate[valid]; !ok {
-			t.Fatalf("ValidPolicyGate missing canonical value %q", valid)
+	for _, valid := range []string{PolicyGateAllow, PolicyGateDeny, PolicyGateRequireApproval} {
+		if !IsValidPolicyGate(valid) {
+			t.Fatalf("IsValidPolicyGate rejected canonical value %q", valid)
 		}
 	}
-	for _, invalid := range []string{"escalate", "ALLOW", "constrain", "throttle", "allow_with_constraints", " allow", "approval"} {
-		if _, ok := ValidPolicyGate[invalid]; ok {
-			t.Fatalf("ValidPolicyGate accepted invalid value %q", invalid)
+	for _, invalid := range []string{"escalate", "ALLOW", "constrain", "throttle", "allow_with_constraints", " allow", "approval", ""} {
+		if IsValidPolicyGate(invalid) {
+			t.Fatalf("IsValidPolicyGate accepted invalid value %q", invalid)
 		}
 	}
-	if len(ValidPolicyGate) != 3 {
-		t.Fatalf("ValidPolicyGate should have exactly 3 entries; got %d", len(ValidPolicyGate))
+}
+
+// TestStep_PolicyGate_ConstantsMatchJSONWireValues asserts the exported
+// constants stay aligned with the snake_case strings the JSON tag emits;
+// changing one without the other would silently break clients.
+func TestStep_PolicyGate_ConstantsMatchJSONWireValues(t *testing.T) {
+	t.Parallel()
+	if PolicyGateAllow != "allow" {
+		t.Errorf("PolicyGateAllow = %q, want \"allow\"", PolicyGateAllow)
+	}
+	if PolicyGateDeny != "deny" {
+		t.Errorf("PolicyGateDeny = %q, want \"deny\"", PolicyGateDeny)
+	}
+	if PolicyGateRequireApproval != "require_approval" {
+		t.Errorf("PolicyGateRequireApproval = %q, want \"require_approval\"", PolicyGateRequireApproval)
 	}
 }
 
