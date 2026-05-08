@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { Upload } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { DataTable } from "@/components/ui/DataTable";
+import { LegacyDataTable } from "@/components/ui/LegacyDataTable";
 import { formatRelativeTime } from "@/lib/utils";
 import type { EvalDataset, EvalRun } from "@/api/types";
 
@@ -135,7 +135,7 @@ export function DatasetList({
           Create from incidents
         </Button>
       </div>
-      <DataTable
+      <LegacyDataTable
         columns={columns}
         data={datasets}
         keyExtractor={(ds) => ds.id}
