@@ -1,6 +1,6 @@
 import { Suspense, useEffect, type ReactNode } from "react";
 import { safeLazy as lazy } from "./lib/safeLazy";
-import { BrowserRouter, Routes, Route, Navigate, useLocation, useSearchParams } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MotionConfig } from "framer-motion";
 import { Toaster } from "sonner";
@@ -34,7 +34,6 @@ const JobsPage = lazy(() => import("./pages/JobsPage"));
 const JobDetailPage = lazy(() => import("./pages/JobDetailPage"));
 const AgentsPage = lazy(() => import("./pages/AgentsPage"));
 const AgentDetailPage = lazy(() => import("./pages/AgentDetailPage"));
-const AgentIdentityDetailPage = lazy(() => import("./pages/AgentIdentityDetailPage"));
 const DelegationsPage = lazy(() => import("./pages/DelegationsPage"));
 const ApprovalsPage = lazy(() => import("./pages/ApprovalsPage"));
 const ApprovalDetailPage = lazy(() => import("./pages/approvals/ApprovalDetailPage"));
@@ -77,6 +76,14 @@ const EdgeSessionsPage = lazy(() => import("./pages/EdgeSessionsPage"));
 // the tabbed overview with the right tab/mode pre-selected. These are not
 // legacy redirects; they are the current public shortcuts operators use
 // to deep-link into a specific Policy Studio tab.
+// Backwards-compat redirect — the standalone /agents/identity/:id route was
+// folded into the agent detail page as a tab during the v2.5 IA cut.
+function AgentIdentityRedirect() {
+  const { id } = useParams<{ id: string }>();
+  if (!id) return <Navigate to="/agents" replace />;
+  return <Navigate to={`/agents/${id}?tab=identity`} replace />;
+}
+
 function PolicyTabRedirect({ tab, mode }: { tab: string; mode?: string }) {
   const [searchParams] = useSearchParams();
   const params = new URLSearchParams(searchParams);
@@ -123,7 +130,7 @@ function ProtectedRoutes() {
           <Route path="/" element={<HomePage />} />
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/agents/:id" element={<AgentDetailPage />} />
-          <Route path="/agents/identity/:id" element={<AgentIdentityDetailPage />} />
+          <Route path="/agents/identity/:id" element={<AgentIdentityRedirect />} />
           {FEATURE_FLAGS.delegationDashboard && (
             <Route path="/delegations" element={<DelegationsPage />} />
           )}
