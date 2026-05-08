@@ -12,7 +12,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src/ --ext .ts,.tsx",
-    "lint:a11y": "eslint src/ --ext .ts,.tsx --rule '{\"jsx-a11y/alt-text\": \"warn\", \"jsx-a11y/aria-props\": \"warn\", \"jsx-a11y/click-events-have-key-events\": \"off\"}'"
+    "lint:a11y": "eslint src/ --ext .ts,.tsx --rule '{\"jsx-a11y/alt-text\": \"warn\", \"jsx-a11y/aria-props\": \"warn\", \"jsx-a11y/click-events-have-key-events\": \"off\"}'",
+    "generate-api": "node ./scripts/generate-api.mjs",
+    "check-api-codegen": "node ./scripts/check-api-codegen.mjs"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",

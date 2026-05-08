@@ -38,7 +38,7 @@ vi.mock("../lib/logger", () => ({
   logger: loggerMock,
 }));
 
-import { ApiError, del, get, patch, post, put } from "./client";
+import { ApiError, apiClient, del, get, patch, post, put } from "./client";
 
 function jsonResponse(status: number, body: unknown, statusText = "OK"): Response {
   return new Response(JSON.stringify(body), {
@@ -483,6 +483,113 @@ describe("api client - baseUrl and auth header edge cases", () => {
       expect(caught).not.toBeInstanceOf(ApiError);
       expect((caught as Error).name).toBe("AbortError");
     });
+  });
+});
+
+describe("apiClient (orval mutator adapter)", () => {
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    mockConfigState = {
+      apiBaseUrl: "https://api.example.test/api/v1/",
+      apiKey: "api-key-1",
+      tenantId: "tenant-1",
+      principalId: "principal-1",
+      principalRole: "admin",
+      user: { id: "user-1" },
+      isLoggingOut: false,
+      logout: vi.fn(),
+    };
+    getStateMock.mockImplementation(() => mockConfigState);
+
+    randomUUIDSpy = vi
+      .spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValue("00000000-0000-0000-0000-000000000123");
+    performanceNowSpy = vi
+      .spyOn(performance, "now")
+      .mockImplementation(() => 100);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    randomUUIDSpy.mockRestore();
+    performanceNowSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("translates JSON data into a stringified body and forwards method + headers", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+
+    await apiClient<{ ok: boolean }>({
+      url: "/jobs",
+      method: "post",
+      data: { topic: "demo", payload: { n: 1 } },
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.example.test/api/v1/jobs");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ topic: "demo", payload: { n: 1 } }));
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe(
+      "application/json",
+    );
+  });
+
+  it("preserves FormData bodies and does NOT force Content-Type (lets the runtime set the multipart boundary)", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { id: "pack-1" }));
+
+    const fd = new FormData();
+    fd.append("bundle", new Blob(["zip-bytes"], { type: "application/zip" }), "pack.tgz");
+
+    await apiClient<{ id: string }>({
+      url: "/packs/install",
+      method: "POST",
+      data: fd,
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.body).toBe(fd);
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Content-Type"]).toBeUndefined();
+    // Auth headers must still be applied — only Content-Type is dropped.
+    expect(headers["X-API-Key"]).toBe("api-key-1");
+    expect(headers["X-Tenant-ID"]).toBe("tenant-1");
+  });
+
+  it("serializes params into a URL query string, repeating array values per key", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [] }));
+
+    await apiClient({
+      url: "/jobs",
+      method: "GET",
+      params: { status: "running", tags: ["a", "b"], skip: undefined },
+    });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
+      "https://api.example.test/api/v1/jobs?status=running&tags=a&tags=b",
+    );
+  });
+
+  it("forwards the provided AbortSignal so React Query cancellation propagates", async () => {
+    const controller = new AbortController();
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+
+    await apiClient({
+      url: "/health",
+      method: "GET",
+      signal: controller.signal,
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    // The internal request() composes our signal with a 30s timeout signal,
+    // so init.signal will be a different (composite) AbortSignal — but it
+    // must be defined and follow our controller's abort.
+    expect(init.signal).toBeDefined();
+    expect(init.signal!.aborted).toBe(false);
+    controller.abort();
+    expect(init.signal!.aborted).toBe(true);
   });
 });
 
