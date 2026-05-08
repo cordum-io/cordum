@@ -133,6 +133,17 @@ const REQUEST_TIMEOUT_MS = 30_000;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = { ...authHeaders(), ...(init?.headers as Record<string, string> | undefined) };
+  // FormData / Blob / URLSearchParams bodies must let the runtime set the
+  // correct Content-Type (multipart boundary, url-encoded marker, etc.).
+  // authHeaders() injects application/json by default, which breaks these.
+  const reqBody = init?.body;
+  if (
+    reqBody instanceof FormData ||
+    reqBody instanceof Blob ||
+    reqBody instanceof URLSearchParams
+  ) {
+    delete headers["Content-Type"];
+  }
   const reqId = headers["X-Request-Id"] ?? "unknown";
   const method = init?.method ?? "GET";
 
@@ -241,4 +252,65 @@ export function patch<T>(path: string, body?: unknown): Promise<T> {
 
 export function del<T = void>(path: string): Promise<T> {
   return request<T>(path, { method: "DELETE" });
+}
+
+// ---------------------------------------------------------------------------
+// orval mutator adapter
+//
+// orval-generated react-query hooks call this with a normalized config object
+// (`{ url, method, params, data, headers, signal }`). Routing the call through
+// `request<T>` keeps auth headers, tenant routing, 30s timeout, structured
+// logging, 401-redirect, and ApiError normalization centralized.
+// ---------------------------------------------------------------------------
+
+export interface ApiClientConfig {
+  url: string;
+  method: string;
+  params?: Record<string, unknown>;
+  data?: unknown;
+  headers?: Record<string, string>;
+  responseType?: string;
+  signal?: AbortSignal;
+}
+
+function buildQueryString(params: Record<string, unknown>): string {
+  const usp = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item === undefined || item === null) continue;
+        usp.append(key, String(item));
+      }
+    } else {
+      usp.append(key, String(value));
+    }
+  }
+  const qs = usp.toString();
+  return qs ? `?${qs}` : "";
+}
+
+function serializeBody(data: unknown): BodyInit | undefined {
+  if (data === undefined || data === null) return undefined;
+  if (
+    data instanceof FormData ||
+    data instanceof Blob ||
+    data instanceof URLSearchParams ||
+    data instanceof ArrayBuffer ||
+    typeof data === "string"
+  ) {
+    return data as BodyInit;
+  }
+  return JSON.stringify(data);
+}
+
+export function apiClient<T>(config: ApiClientConfig): Promise<T> {
+  const queryString = config.params ? buildQueryString(config.params) : "";
+  const path = `${config.url}${queryString}`;
+  return request<T>(path, {
+    method: config.method.toUpperCase(),
+    body: serializeBody(config.data),
+    headers: config.headers,
+    signal: config.signal,
+  });
 }
