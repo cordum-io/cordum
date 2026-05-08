@@ -13,7 +13,7 @@ import {
 } from "@/components/delegations/DelegationChainViz";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
-import { DataTable } from "@/components/ui/DataTable";
+import { LegacyDataTable } from "@/components/ui/LegacyDataTable";
 import { DetailList } from "@/components/ui/DetailList";
 import { Drawer } from "@/components/ui/Drawer";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -247,7 +247,7 @@ export default function DelegationsPage() {
               </div>
             </div>
 
-            <DataTable
+            <LegacyDataTable
               data={filteredDelegations}
               keyExtractor={(row) => row.jti}
               onRowClick={(row) => setSelectedJti(row.jti)}

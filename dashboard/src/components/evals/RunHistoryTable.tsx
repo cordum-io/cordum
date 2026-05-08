@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { DataTable } from "@/components/ui/DataTable";
+import { LegacyDataTable } from "@/components/ui/LegacyDataTable";
 import { formatRelativeTime } from "@/lib/utils";
 import type { EvalRun } from "@/api/types";
 
@@ -84,7 +84,7 @@ export function RunHistoryTable({
 
   return (
     <div className="space-y-3">
-      <DataTable
+      <LegacyDataTable
         columns={columns}
         data={runs}
         keyExtractor={(r) => r.runId}

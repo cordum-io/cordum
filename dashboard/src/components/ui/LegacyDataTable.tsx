@@ -12,7 +12,7 @@ interface Column<T> {
   render: (row: T, index: number) => ReactNode;
 }
 
-interface DataTableProps<T> {
+interface LegacyDataTableProps<T> {
   columns: Column<T>[];
   data: T[];
   keyExtractor: (row: T, index: number) => string;
@@ -32,7 +32,7 @@ function SortIndicator({ active, dir }: { active: boolean; dir?: "asc" | "desc" 
     : <ArrowDown className="w-3 h-3" />;
 }
 
-export function DataTable<T>({
+export function LegacyDataTable<T>({
   columns,
   data,
   keyExtractor,
@@ -43,7 +43,7 @@ export function DataTable<T>({
   sortKey,
   sortDir,
   onSort,
-}: DataTableProps<T>) {
+}: LegacyDataTableProps<T>) {
   return (
     <div className={cn("overflow-x-auto", className)}>
       <table className="w-full">

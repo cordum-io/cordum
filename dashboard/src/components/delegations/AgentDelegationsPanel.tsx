@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { ShieldAlert } from "lucide-react";
 import { DelegationChainViz } from "@/components/delegations/DelegationChainViz";
-import { DataTable } from "@/components/ui/DataTable";
+import { LegacyDataTable } from "@/components/ui/LegacyDataTable";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
@@ -122,7 +122,7 @@ export function AgentDelegationsPanel({ agentId }: AgentDelegationsPanelProps) {
           </p>
         </div>
 
-        <DataTable
+        <LegacyDataTable
           compact
           data={inbound}
           keyExtractor={(row) => row.jti}
