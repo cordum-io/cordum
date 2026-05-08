@@ -20,6 +20,7 @@ import evalRunDetailSource from "./EvalRunDetailPage.tsx?raw";
 import runDetailSource from "./RunDetailPage.tsx?raw";
 import packsPageSource from "./PacksPage.tsx?raw";
 import delegationsPageSource from "./DelegationsPage.tsx?raw";
+import approvalsPageSource from "./ApprovalsPage.tsx?raw";
 import buttonSource from "../components/ui/Button.tsx?raw";
 import cardSource from "../components/ui/Card.tsx?raw";
 
@@ -41,6 +42,10 @@ describe("design-system convergence regressions", () => {
 
   it("keeps job detail status styling on shared tokens instead of page-local CSS vars", () => {
     expect(jobDetailSource).not.toMatch(/var\(--color-/);
+  });
+
+  it("keeps approvals page status styling on shared tokens instead of page-local CSS vars", () => {
+    expect(approvalsPageSource).not.toMatch(/var\(--color-/);
   });
 });
 
