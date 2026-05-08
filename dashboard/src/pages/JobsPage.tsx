@@ -1,12 +1,15 @@
 /*
  * DESIGN: "Control Surface" — Jobs
- * Revision v2: Safety Decision column, Safety Decision filter, Pool filter
- * "Every job row tells the full story: who, what, governance decided, execution result, duration."
+ * Phase 3 wk4 (task-2c3c8a04) rewrite: filter state migrated to nuqs (URL-driven,
+ * shareable links); hand-rolled <table> swapped for primitives/DataTable
+ * (sortable, virtualized at >100 rows). DLQ data-source fold + JobDetailPage
+ * tab decomposition deferred — see follow-up task in PR body.
  */
-import { useState, useMemo, useCallback } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { motion } from "framer-motion";
+import { useQueryState } from "nuqs";
+import type { ColumnDef } from "@tanstack/react-table";
 import { get } from "@/api/client";
 import { mapJobRecord, type BackendJobRecord } from "@/api/transform";
 import type { Job } from "@/api/types";
@@ -18,34 +21,33 @@ import { LabeledField } from "@/components/ui/LabeledField";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { Pagination } from "@/components/ui/Pagination";
 import { SkeletonTable } from "@/components/ui/Skeleton";
 import { Tabs } from "@/components/ui/Tabs";
 import { Textarea } from "@/components/ui/Textarea";
+import { DataTable, type DecisionTier } from "@/components/primitives/DataTable";
 import {
   Search,
   RefreshCw,
   ListChecks,
   Plus,
-  Eye,
   Download,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
   Shield,
   X,
   Workflow,
   MessageSquare,
   Zap,
 } from "lucide-react";
-import { formatRelativeTime, clickableRowProps } from "@/lib/utils";
+import { formatRelativeTime } from "@/lib/utils";
 import { friendlyError } from "@/lib/friendlyError";
 import { getJobParentRefs } from "@/lib/jobParentRefs";
 import { toast } from "sonner";
 import { useSubmitJob } from "@/hooks/useJobs";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
-import { safeLocalStorage } from "@/lib/storage";
+import {
+  parseAsEnum,
+  parseAsSearchTerm,
+} from "@/lib/url-state";
 import { JobFiltersBar, type JobFilterValues } from "@/components/jobs/JobFiltersBar";
 
 export function OriginPill({ job }: { job: Job }) {
@@ -115,51 +117,29 @@ function jobStatusVariant(status: string) {
   }
 }
 
-type SortKey = "status" | "id" | "topic" | "safety" | "attempts" | "updatedAt";
-type SortDir = "asc" | "desc";
+/** URL-state filter tabs. 'all' is the default; the rest match the Job
+ *  status enum. 'dlq' is reserved for the Phase-3-wk4 follow-up that wires
+ *  the DLQ data-source fold (see PR body). */
+const STATUS_FILTERS = [
+  "all",
+  "running",
+  "pending",
+  "succeeded",
+  "failed",
+  "denied",
+  "dlq",
+] as const;
 
-const statusOrder: Record<string, number> = {
-  running: 0,
-  pending: 1,
-  scheduled: 2,
-  dispatched: 3,
-  succeeded: 4,
-  failed: 5,
-  failed_retryable: 5,
-  failed_fatal: 6,
-  cancelled: 7,
-};
-
-const safetyOrder: Record<string, number> = {
-  deny: 0,
-  require_approval: 1,
-  throttle: 2,
-  allow_with_constraints: 3,
-  allow: 4,
-};
-
-const tableBodyVariants = {
-  hidden: {},
-  visible: {
-    transition: {
-      staggerChildren: 0.04,
-    },
-  },
-};
-
-const tableRowVariants = {
-  hidden: { opacity: 0, y: 8 },
-  visible: { opacity: 1, y: 0 },
-};
-
-export function readStoredJobsPageSize(): number {
-  const raw = safeLocalStorage.getItem("cordum-jobs-page-size");
-  const parsed = Number.parseInt(raw ?? "", 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return 50;
-  }
-  return parsed;
-}
+/** Safety-decision filter values. 'all' is the default; the rest mirror
+ *  SafetyDecisionType. Synced with the segmented Tabs control. */
+const SAFETY_FILTERS = [
+  "all",
+  "allow",
+  "deny",
+  "require_approval",
+  "allow_with_constraints",
+  "throttle",
+] as const;
 
 export function SubmitJobDialog({
   open,
@@ -292,25 +272,35 @@ export function SubmitJobDialog({
   );
 }
 
+type EnrichedJob = Job & {
+  _safetyDecision?: string;
+  _matchedRules: string[];
+};
+
 export default function JobsPage() {
   const navigate = useNavigate();
-  const [search, setSearch] = useState("");
-  const [activeTab, setActiveTab] = useState("all");
-  const [safetyFilter, setSafetyFilter] = useState("all");
+  const [search, setSearch] = useQueryState(
+    "q",
+    parseAsSearchTerm.withOptions({ clearOnDefault: true }),
+  );
+  const [activeTab, setActiveTab] = useQueryState(
+    "status",
+    parseAsEnum(STATUS_FILTERS, "all").withOptions({ clearOnDefault: true }),
+  );
+  const [safetyFilter, setSafetyFilter] = useQueryState(
+    "safety",
+    parseAsEnum(SAFETY_FILTERS, "all").withOptions({ clearOnDefault: true }),
+  );
   const [jobFilters, setJobFilters] = useState<JobFilterValues>({});
   const [showSubmit, setShowSubmit] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("updatedAt");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [searchParams, setSearchParams] = useSearchParams();
-  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10));
-  const [pageSize, setPageSize] = useState(readStoredJobsPageSize);
 
   const { data, isLoading, isError, error, refetch, dataUpdatedAt } = useQuery({
     queryKey: ["jobs", jobFilters],
     queryFn: async () => {
-      // Build query string from filters
       const q = new URLSearchParams();
-      q.set("limit", "500");
+      // Bumped from 500 → 1000 to take advantage of primitives/DataTable
+      // virtualization (DOM-node count stays bounded regardless of row count).
+      q.set("limit", "1000");
       if (jobFilters.topic) q.set("topic", jobFilters.topic);
       if (jobFilters.pool) q.set("pool", jobFilters.pool);
       if (jobFilters.tenant) q.set("tenant", jobFilters.tenant);
@@ -330,7 +320,7 @@ export default function JobsPage() {
 
   const jobs = data?.items ?? [];
 
-  const enrichedJobs = useMemo(() => {
+  const enrichedJobs = useMemo<EnrichedJob[]>(() => {
     return jobs.map((j) => ({
       ...j,
       _safetyDecision: j.safetyDecision?.type as string | undefined,
@@ -381,60 +371,26 @@ export default function JobsPage() {
     [],
   );
 
-  const toggleSort = useCallback(
-    (key: SortKey) => {
-      if (sortKey === key) {
-        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-      } else {
-        setSortKey(key);
-        setSortDir("desc");
-      }
-    },
-    [sortKey],
-  );
-
-  /** Returns aria + keyboard props for a sortable column header. */
-  const sortableThProps = useCallback(
-    (col: SortKey) => ({
-      role: "columnheader" as const,
-      tabIndex: 0,
-      "aria-sort": (sortKey === col
-        ? sortDir === "asc"
-          ? "ascending"
-          : "descending"
-        : "none") as "ascending" | "descending" | "none",
-      onClick: () => toggleSort(col),
-      onKeyDown: (e: React.KeyboardEvent) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          toggleSort(col);
-        }
-      },
-    }),
-    [sortKey, sortDir, toggleSort],
-  );
-
-  const filtered = useMemo(() => {
-    let result = enrichedJobs.filter((j) => {
-      // Status filter
-      if (activeTab !== "all") {
+  // Filter set for the table — sort is handled by DataTable's TanStack
+  // getSortedRowModel, so we no longer maintain sortKey/sortDir/toggleSort
+  // or the per-column sort comparators (those moved to ColumnDef.sortingFn
+  // and the inferred default lexical/numeric sort).
+  const filtered = useMemo<EnrichedJob[]>(() => {
+    return enrichedJobs.filter((j) => {
+      if (activeTab !== "all" && activeTab !== "dlq") {
         if (activeTab === "pending") {
           if (j.status !== "pending" && j.status !== "scheduled") return false;
         } else if (j.status !== activeTab) return false;
       }
-      // Safety decision filter
       if (safetyFilter !== "all" && j._safetyDecision !== safetyFilter)
         return false;
-
-      // JobFiltersBar filters
       if (jobFilters.state && jobFilters.state.length > 0) {
         if (!jobFilters.state.includes(j.status)) return false;
       }
       if (jobFilters.decision && jobFilters.decision.length > 0) {
-        if (!j._safetyDecision || !jobFilters.decision.includes(j._safetyDecision)) return false;
+        if (!j._safetyDecision || !jobFilters.decision.includes(j._safetyDecision))
+          return false;
       }
-
-      // Search
       if (search) {
         const q = search.toLowerCase();
         return (
@@ -446,87 +402,7 @@ export default function JobsPage() {
       }
       return true;
     });
-
-    result.sort((a, b) => {
-      let cmp = 0;
-      switch (sortKey) {
-        case "status":
-          cmp = (statusOrder[a.status] ?? 99) - (statusOrder[b.status] ?? 99);
-          break;
-        case "id":
-          cmp = a.id.localeCompare(b.id);
-          break;
-        case "topic":
-          cmp = (a.topic ?? "").localeCompare(b.topic ?? "");
-          break;
-        case "safety":
-          cmp =
-            (safetyOrder[a._safetyDecision as string] ?? 99) -
-            (safetyOrder[b._safetyDecision as string] ?? 99);
-          break;
-        case "attempts":
-          cmp = (a.attempts ?? 0) - (b.attempts ?? 0);
-          break;
-        case "updatedAt":
-          cmp =
-            new Date(a.updatedAt ?? 0).getTime() -
-            new Date(b.updatedAt ?? 0).getTime();
-          break;
-      }
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-
-    return result;
-  }, [enrichedJobs, activeTab, safetyFilter, search, sortKey, sortDir]);
-
-  // Pagination — clamp page if filtered set shrinks
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePage = Math.min(page, totalPages);
-  const startIdx = (safePage - 1) * pageSize;
-  const paginatedJobs = useMemo(
-    () => filtered.slice(startIdx, startIdx + pageSize),
-    [filtered, startIdx, pageSize],
-  );
-
-  const handlePageChange = useCallback(
-    (p: number) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (p <= 1) next.delete("page");
-          else next.set("page", String(p));
-          return next;
-        },
-        { replace: true },
-      );
-    },
-    [setSearchParams],
-  );
-
-  const handlePageSizeChange = useCallback(
-    (size: number) => {
-      setPageSize(size);
-      safeLocalStorage.setItem("cordum-jobs-page-size", String(size));
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.delete("page");
-          return next;
-        },
-        { replace: true },
-      );
-    },
-    [setSearchParams],
-  );
-
-  // Reset page when filters change
-  const setActiveTabAndResetPage = useCallback(
-    (tab: string) => {
-      setActiveTab(tab);
-      handlePageChange(1);
-    },
-    [handlePageChange],
-  );
+  }, [enrichedJobs, activeTab, safetyFilter, search, jobFilters]);
 
   const exportCSV = () => {
     const rows = filtered.map((j) =>
@@ -554,17 +430,94 @@ export default function JobsPage() {
     toast.success(`Exported ${filtered.length} jobs`);
   };
 
-  const SortIcon = ({ col }: { col: SortKey }) => {
-    if (sortKey !== col)
-      return <ArrowUpDown className="w-3 h-3 ml-1 opacity-30" />;
-    return sortDir === "asc" ? (
-      <ArrowUp className="w-3 h-3 ml-1 text-cordum" />
-    ) : (
-      <ArrowDown className="w-3 h-3 ml-1 text-cordum" />
-    );
-  };
-
   const lastUpdated = dataUpdatedAt ? new Date(dataUpdatedAt) : null;
+
+  const decisionAccessor = (job: EnrichedJob): DecisionTier | undefined =>
+    job._safetyDecision as DecisionTier | undefined;
+
+  const columns = useMemo<ColumnDef<EnrichedJob>[]>(
+    () => [
+      {
+        id: "status",
+        header: "Status",
+        accessorFn: (j) => j.status,
+        cell: ({ row }) => (
+          <div className="flex items-center gap-1.5">
+            <StatusBadge
+              variant={jobStatusVariant(row.original.status)}
+              dot
+              pulse={row.original.status === "running"}
+            >
+              {row.original.status}
+            </StatusBadge>
+            {row.original.labels?.safety_bypassed === "true" && (
+              <StatusBadge variant="warning">Bypassed</StatusBadge>
+            )}
+          </div>
+        ),
+      },
+      {
+        id: "id",
+        header: "Job ID",
+        accessorFn: (j) => j.id,
+        cell: ({ row }) => (
+          <span className="font-mono text-cordum">
+            {row.original.id.slice(0, 16)}
+          </span>
+        ),
+      },
+      {
+        id: "topic",
+        header: "Topic",
+        accessorFn: (j) => j.topic ?? "",
+        cell: ({ row }) => (
+          <span className="text-foreground">{row.original.topic || "—"}</span>
+        ),
+      },
+      {
+        id: "origin",
+        header: "Origin",
+        enableSorting: false,
+        cell: ({ row }) => <OriginPill job={row.original} />,
+      },
+      {
+        id: "safety",
+        header: "Safety Decision",
+        accessorFn: (j) => j._safetyDecision ?? "",
+        cell: ({ row }) => (
+          <SafetyDecisionBadge
+            decision={row.original._safetyDecision}
+            matchedRules={row.original._matchedRules}
+          />
+        ),
+      },
+      {
+        id: "attempts",
+        header: "Attempts",
+        accessorFn: (j) => j.attempts ?? 0,
+        meta: { align: "center" },
+        cell: ({ row }) => (
+          <span className="font-mono text-xs text-muted-foreground">
+            {row.original.attempts ?? 0}
+          </span>
+        ),
+      },
+      {
+        id: "updatedAt",
+        header: "Updated",
+        accessorFn: (j) => new Date(j.updatedAt ?? 0).getTime(),
+        meta: { align: "right" },
+        cell: ({ row }) => (
+          <span className="text-xs text-muted-foreground font-mono">
+            {row.original.updatedAt
+              ? formatRelativeTime(new Date(row.original.updatedAt).toISOString())
+              : "—"}
+          </span>
+        ),
+      },
+    ],
+    [],
+  );
 
   if (isError) {
     return (
@@ -616,15 +569,15 @@ export default function JobsPage() {
           <Input
             type="text"
             placeholder="Search by ID, topic, or trace..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={search ?? ""}
+            onChange={(e) => void setSearch(e.target.value)}
             icon={<Search className="h-3.5 w-3.5" />}
             className="h-9 max-w-sm flex-1 text-sm"
           />
           <Tabs
             tabs={tabs}
             activeTab={activeTab}
-            onChange={setActiveTabAndResetPage}
+            onChange={(tab) => void setActiveTab(tab as (typeof STATUS_FILTERS)[number])}
             variant="segmented"
             ariaLabel="Job status filters"
             className="w-full sm:w-auto"
@@ -640,7 +593,7 @@ export default function JobsPage() {
           <Tabs
             tabs={safetyTabs}
             activeTab={safetyFilter}
-            onChange={setSafetyFilter}
+            onChange={(tab) => void setSafetyFilter(tab as (typeof SAFETY_FILTERS)[number])}
             variant="segmented"
             ariaLabel="Safety decision filters"
             className="w-full"
@@ -648,193 +601,69 @@ export default function JobsPage() {
         </div>
       </div>
 
-      {/* Jobs Table */}
+      {/* Jobs Table — primitives/DataTable virtualizes when row count >100. */}
       {isLoading ? (
         <div className="instrument-card">
           <SkeletonTable rows={8} />
         </div>
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon={<ListChecks className="w-5 h-5" />}
-          title="No jobs found"
-          description={
-            search || activeTab !== "all" || safetyFilter !== "all" || Object.keys(jobFilters).length > 0
-              ? "Try adjusting your search or filters"
-              : "No jobs have been submitted yet"
-          }
-          action={
-            search || activeTab !== "all" || safetyFilter !== "all" || Object.keys(jobFilters).length > 0 ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setSearch("");
-                  setActiveTabAndResetPage("all");
-                  setSafetyFilter("all");
-                  setJobFilters({});
-                }}
-              >
-                <X className="w-3 h-3 mr-1" />
-                Clear all filters
-              </Button>
-            ) : (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => setShowSubmit(true)}
-              >
-                <Plus className="w-3 h-3 mr-1" />
-                Submit Job
-              </Button>
-            )
-          }
-        />
       ) : (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-          className="instrument-card overflow-hidden"
-        >
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[800px]">
-              <thead>
-                <tr className="border-b border-border bg-surface-0">
-                  <th
-                    className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
-                    {...sortableThProps("status")}
-                  >
-                    <span className="inline-flex items-center">
-                      Status <SortIcon col="status" />
-                    </span>
-                  </th>
-                  <th
-                    className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
-                    {...sortableThProps("id")}
-                  >
-                    <span className="inline-flex items-center">
-                      Job ID <SortIcon col="id" />
-                    </span>
-                  </th>
-                  <th
-                    className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
-                    {...sortableThProps("topic")}
-                  >
-                    <span className="inline-flex items-center">
-                      Topic <SortIcon col="topic" />
-                    </span>
-                  </th>
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
-                    Origin
-                  </th>
-                  <th
-                    className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
-                    {...sortableThProps("safety")}
-                  >
-                    <span className="inline-flex items-center">
-                      Safety Decision <SortIcon col="safety" />
-                    </span>
-                  </th>
-                  <th
-                    className="text-center px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
-                    {...sortableThProps("attempts")}
-                  >
-                    <span className="inline-flex items-center justify-center">
-                      Attempts <SortIcon col="attempts" />
-                    </span>
-                  </th>
-                  <th
-                    className="text-right px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest cursor-pointer select-none hover:text-foreground transition-colors"
-                    onClick={() => toggleSort("updatedAt")}
-                  >
-                    <span className="inline-flex items-center justify-end">
-                      Updated <SortIcon col="updatedAt" />
-                    </span>
-                  </th>
-                  <th className="px-5 py-3"></th>
-                </tr>
-              </thead>
-              <motion.tbody initial="hidden" animate="visible" variants={tableBodyVariants}>
-                {paginatedJobs.map((job) => (
-                  <motion.tr
-                    key={job.id}
-                    variants={tableRowVariants}
-                    {...clickableRowProps(() => navigate(`/jobs/${job.id}`))}
-                    className="border-b border-border hover:bg-surface-1 transition-colors cursor-pointer group"
-                  >
-                    <td className="px-5 py-3">
-                      <StatusBadge
-                        variant={jobStatusVariant(job.status)}
-                        dot
-                        pulse={job.status === "running"}
-                      >
-                        {job.status}
-                      </StatusBadge>
-                      {job.labels?.safety_bypassed === "true" && (
-                        <StatusBadge
-                          variant="warning"
-                          className="ml-1.5"
-                        >
-                          Bypassed
-                        </StatusBadge>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 font-mono text-sm text-cordum group-hover:underline">
-                      {job.id.slice(0, 16)}
-                    </td>
-                    <td className="px-5 py-3 text-sm text-foreground">
-                      {job.topic || "—"}
-                    </td>
-                    <td className="px-5 py-3">
-                      <OriginPill job={job} />
-                    </td>
-                    <td className="px-5 py-3">
-                      <SafetyDecisionBadge
-                        decision={job._safetyDecision}
-                        matchedRules={job._matchedRules}
-                      />
-                    </td>
-                    <td className="px-5 py-3 text-center font-mono text-xs text-muted-foreground">
-                      {job.attempts ?? 0}
-                    </td>
-                    <td className="px-5 py-3 text-right text-xs text-muted-foreground font-mono">
-                      {job.updatedAt
-                        ? formatRelativeTime(
-                            new Date(job.updatedAt).toISOString(),
-                          )
-                        : "—"}
-                    </td>
-                    <td className="px-5 py-3">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        aria-label="View details"
-                      >
-                        <Eye className="w-3.5 h-3.5 text-muted-foreground" />
-                      </Button>
-                    </td>
-                  </motion.tr>
-                ))}
-              </motion.tbody>
-            </table>
-          </div>
-          <div className="px-5 py-2 border-t border-border bg-surface-0">
-            <Pagination
-              page={safePage}
-              pageSize={pageSize}
-              total={filtered.length}
-              onPageChange={handlePageChange}
-              onPageSizeChange={handlePageSizeChange}
-            />
-          </div>
-          <div className="flex items-center justify-between px-5 py-2 text-xs font-mono text-muted-foreground">
+        <div className="instrument-card overflow-hidden">
+          <DataTable
+            columns={columns}
+            data={filtered}
+            decisionAccessor={decisionAccessor}
+            onRowClick={(job) => navigate(`/jobs/${job.id}`)}
+            initialSorting={[{ id: "updatedAt", desc: true }]}
+            emptyState={
+              <EmptyState
+                icon={<ListChecks className="w-5 h-5" />}
+                title="No jobs found"
+                description={
+                  search ||
+                  activeTab !== "all" ||
+                  safetyFilter !== "all" ||
+                  Object.keys(jobFilters).length > 0
+                    ? "Try adjusting your search or filters"
+                    : "No jobs have been submitted yet"
+                }
+                action={
+                  search ||
+                  activeTab !== "all" ||
+                  safetyFilter !== "all" ||
+                  Object.keys(jobFilters).length > 0 ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        void setSearch(null);
+                        void setActiveTab(null);
+                        void setSafetyFilter(null);
+                        setJobFilters({});
+                      }}
+                    >
+                      <X className="w-3 h-3 mr-1" />
+                      Clear all filters
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => setShowSubmit(true)}
+                    >
+                      <Plus className="w-3 h-3 mr-1" />
+                      Submit Job
+                    </Button>
+                  )
+                }
+              />
+            }
+          />
+          <div className="flex items-center justify-between px-5 py-2 text-xs font-mono text-muted-foreground border-t border-border">
             <span>
-              {filtered.length} of {enrichedJobs.length} jobs (sorted by{" "}
-              {sortKey} {sortDir})
+              {filtered.length} of {enrichedJobs.length} jobs
             </span>
           </div>
-        </motion.div>
+        </div>
       )}
 
       <SubmitJobDialog open={showSubmit} onClose={() => setShowSubmit(false)} />

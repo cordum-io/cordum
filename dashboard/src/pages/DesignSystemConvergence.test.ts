@@ -10,7 +10,6 @@ import agentDetailSource from "./AgentDetailPage.tsx?raw";
 import bundleDetailSource from "./govern/BundleDetailPage.tsx?raw";
 import appShellSource from "../components/layout/AppShell.tsx?raw";
 import settingsHubSource from "./SettingsHubPage.tsx?raw";
-import jobsPageSource from "./JobsPage.tsx?raw";
 import auditLogPageSource from "./AuditLogPage.tsx?raw";
 import agentsPageSource from "./AgentsPage.tsx?raw";
 import packDetailSource from "./PackDetailPage.tsx?raw";
@@ -88,10 +87,15 @@ describe("premium overhaul DoD gates", () => {
   });
 
   it("DoD-2 — core data tables stagger rows (Level 3 claim)", () => {
+    // JobsPage migrated to primitives/DataTable in Phase 3 wk4 (task-2c3c8a04);
+    // per-row `motion.tr` is incompatible with DataTable's virtualizer (which
+    // mounts/unmounts rows on scroll). The DataTable primitive owns its own
+    // row-render contract, so per-row stagger no longer applies to JobsPage
+    // post-rewrite. AuditLogPage + AgentsPage remain on the hand-rolled-table
+    // contract until they migrate too.
     const hasPerRowMotion = (src: string) =>
       /motion\.(tr|li|article)\b/.test(src) ||
       /<AnimatePresence[\s\S]*?<motion\./.test(src);
-    expect(hasPerRowMotion(jobsPageSource)).toBe(true);
     expect(hasPerRowMotion(auditLogPageSource)).toBe(true);
     expect(hasPerRowMotion(agentsPageSource)).toBe(true);
   });
