@@ -14,6 +14,29 @@ export interface CodeBlockProps {
   defaultExpanded?: boolean;
   copyable?: boolean;
   className?: string;
+  /**
+   * Compact inline variant — renders as a single mono-text button (or span)
+   * rather than the full Mac-chrome code block. Used for hash chips, short
+   * IDs, and other places where a one-line copyable token is appropriate.
+   *
+   * When `inline` + `copyable`, clicking the button writes the FULL `children`
+   * value to the clipboard (not the truncated display preview).
+   */
+  inline?: boolean;
+  /**
+   * Inline-only: max characters to display before truncating. The full value
+   * is still what gets copied. Defaults to 8 (the audit-hash chip contract).
+   */
+  inlineMaxLength?: number;
+  /**
+   * Inline-only: a11y label for the button. Pass the full hash so screen
+   * readers can announce what gets copied.
+   */
+  ariaLabel?: string;
+  /**
+   * Inline-only: title attribute (hover tooltip). Defaults to a copy hint.
+   */
+  inlineTitle?: string;
 }
 
 export function CodeBlock({
@@ -25,6 +48,10 @@ export function CodeBlock({
   defaultExpanded = true,
   copyable = true,
   className,
+  inline = false,
+  inlineMaxLength = 8,
+  ariaLabel,
+  inlineTitle,
 }: CodeBlockProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const [copied, setCopied] = useState(false);
@@ -45,6 +72,62 @@ export function CodeBlock({
       toast.error("Copy failed");
     }
   }, [raw]);
+
+  // Inline (compact chip) variant — used for hash chips and other short
+  // copyable tokens. Skips the chrome and renders as a single mono button.
+  if (inline) {
+    if (isEmpty) {
+      return (
+        <span
+          aria-label={ariaLabel}
+          className={cn(
+            "inline-flex h-4 items-center rounded font-mono text-[10px] tracking-tight px-1 text-muted-foreground/60 bg-surface-2/40",
+            className,
+          )}
+        >
+          —
+        </span>
+      );
+    }
+    const previewLength = Math.max(1, inlineMaxLength);
+    const truncated = raw.length > previewLength ? raw.slice(0, previewLength) : raw;
+    if (!copyable) {
+      return (
+        <span
+          aria-label={ariaLabel}
+          title={inlineTitle ?? raw}
+          className={cn(
+            "inline-flex h-4 items-center rounded font-mono text-[10px] tracking-tight px-1 text-foreground bg-surface-2",
+            className,
+          )}
+        >
+          {truncated}
+        </span>
+      );
+    }
+    return (
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          void handleCopy();
+        }}
+        aria-label={ariaLabel ?? `Copy ${raw}`}
+        title={inlineTitle ?? `${raw} — click to copy`}
+        className={cn(
+          "inline-flex h-4 items-center rounded font-mono text-[10px] tracking-tight px-1 text-foreground bg-surface-2 hover:bg-surface-3 focus:outline-none focus:ring-1 focus:ring-cordum",
+          className,
+        )}
+        data-copied={copied || undefined}
+      >
+        {copied ? (
+          <Check className="w-3 h-3" aria-hidden="true" />
+        ) : (
+          truncated
+        )}
+      </button>
+    );
+  }
 
   return (
     <div
