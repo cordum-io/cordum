@@ -8,10 +8,12 @@ import { motion } from "framer-motion";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { EmptyState } from "@/components/ui/EmptyState";
 import {
-  Shield, Fingerprint, Tag, Clock, AlertTriangle, Activity,
+  Shield, Fingerprint, Tag, Clock, AlertTriangle, Activity, FileQuestion,
 } from "lucide-react";
 import { cn, formatRelativeTime } from "@/lib/utils";
+import { ApiError } from "@/api/client";
 import { useAgentIdentity, useAgentStats } from "@/hooks/useAgentIdentities";
 
 const riskTierConfig: Record<string, { color: string; bg: string; border: string }> = {
@@ -53,6 +55,15 @@ export default function AgentIdentityPanel({ agentId }: AgentIdentityPanelProps)
   const { data: stats, isLoading: statsLoading, isError: statsError } = useAgentStats(agentId);
 
   if (isError) {
+    if (error instanceof ApiError && error.status === 404) {
+      return (
+        <EmptyState
+          icon={<FileQuestion className="w-6 h-6" />}
+          title="No identity profile"
+          description="This worker is online but does not have a registered Agent Identity. Identities are created via the /agents catalog or the cordumctl agents identity create CLI."
+        />
+      );
+    }
     return <ErrorBanner message={error instanceof Error ? error.message : "Failed to load agent identity"} />;
   }
 
