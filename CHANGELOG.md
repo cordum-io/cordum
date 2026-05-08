@@ -11,7 +11,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 - `WorkflowStep.policy_gate?: "allow" | "deny" | "require_approval"` — optional design-time policy hint surfaced on the WorkflowStudio governance overlay before any run. Validated at workflow-save time; unset means "no hint" (overlay defers to runtime safety decision).
 - `WorkflowRunStep.audit_hash?: string` — optional 64-char hex audit-chain event hash for the step's job. Populated by run-record builders that join `StepRun.JobID → SIEMEvent.JobID → SIEMEvent.EventHash`. Populate-strategy left to producers; unset for skipped/upstream-failed steps.
-- OpenAPI: `info.version` bumped `2026-04-21.2` → `2026-05-08.1`. `WorkflowStep.policy_gate` enum + description added under `components/schemas/WorkflowStep`. `audit_hash` exposed via Go JSON tag; OpenAPI schematization deferred (no existing `StepRun` schema to extend).
+- OpenAPI: `info.version` bumped `2026-04-21.2` → `2026-05-08.2` (reopen #1: `2026-05-08.1` shipped only `WorkflowStep.policy_gate`; `2026-05-08.2` adds `RunStepStatus.audit_hash` so the dashboard governance overlay's audit-hash chip data path is fully contracted). `WorkflowStep.policy_gate` enum + description added under `components/schemas/WorkflowStep`. `RunStepStatus.audit_hash` (nullable string, audit-chain event hash) added under `components/schemas/RunStepStatus`.
 
 #### Cordum Edge P0 (2026-04-30)
 

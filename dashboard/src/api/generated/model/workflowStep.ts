@@ -3,10 +3,11 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-04-21.2
+ * OpenAPI spec version: 2026-05-08.2
  */
 import type { WorkflowStepConfig } from './workflowStepConfig';
 import type { WorkflowStepRetry } from './workflowStepRetry';
+import type { WorkflowStepPolicyGate } from './workflowStepPolicyGate';
 
 export interface WorkflowStep {
   id: string;
@@ -17,4 +18,11 @@ export interface WorkflowStep {
   config?: WorkflowStepConfig;
   timeout_sec?: number;
   retry?: WorkflowStepRetry;
+  /** Optional design-time policy hint. Populated at workflow-save
+time when the policy engine resolves a hint for this step.
+Unset means "no hint" — clients render no design-time icon
+and defer to runtime safety decision. NEVER defaults to
+"allow" when unset.
+ */
+  policy_gate?: WorkflowStepPolicyGate;
 }
