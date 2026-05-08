@@ -108,6 +108,13 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
     label: "Audit",
     items: [
       { path: "/audit", label: "Audit Log", icon: FileText },
+      // Dead Letters folded into JobsPage as a status filter (task-0bcb9411).
+      // The sidebar entry intentionally keeps `path: "/dlq"` rather than
+      // pointing at `/jobs?status=dlq` directly — the App.tsx Navigate
+      // redirect handles the routing, and keeping `/dlq` here preserves the
+      // active-section match (findActiveSection compares pathnames; pointing
+      // the entry at `/jobs?status=dlq` would either fail to match anything
+      // or conflict with the Run > Jobs entry on `/jobs`).
       { path: "/dlq", label: "Dead Letters", icon: AlertTriangle, badge: "dlq" },
     ],
   },
