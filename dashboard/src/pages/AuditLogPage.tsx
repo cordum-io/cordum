@@ -24,6 +24,7 @@ import { Select } from "@/components/ui/Select";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { InstrumentCard, InstrumentCardBody } from "@/components/ui/InstrumentCard";
 import { Drawer } from "@/components/ui/Drawer";
+import { ChainIntegrityWidget } from "@/components/ChainIntegrityWidget";
 import {
   DataTable,
   type DecisionTier,
@@ -381,6 +382,10 @@ export default function AuditLogPage() {
           </div>
         }
       />
+
+      <div className="sticky top-0 z-10 -mx-4 px-4 pt-2 pb-1 bg-background/80 backdrop-blur-sm sm:mx-0 sm:px-0">
+        <ChainIntegrityWidget tenant={tenantId} compact />
+      </div>
 
       <InstrumentCard className="p-4">
         <InstrumentCardBody className="space-y-4">

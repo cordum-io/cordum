@@ -458,3 +458,66 @@ describe("ChainIntegrityWidget responsive + dark-mode discipline", () => {
     expect(withoutAttrs).not.toMatch(/#[0-9a-fA-F]{6}\b/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Compact variant — added under task-55f813b3 step-6 to support the
+// AuditLogPage sticky integrity bar (DoD #3). The compact bar is a
+// single horizontal row driven by the same state machine as the full
+// card, so all 6 WidgetState branches must render something useful.
+// ---------------------------------------------------------------------------
+
+describe("ChainIntegrityWidget compact variant", () => {
+  it("renders [data-compact='true'] and skips the metric grid + footer", () => {
+    queryState.data = ok();
+    const ctx = render(<ChainIntegrityWidget tenant="acme" compact />);
+    const root = ctx.container.querySelector<HTMLElement>(
+      "[data-testid='chain-integrity-widget']",
+    );
+    expect(root?.getAttribute("data-compact")).toBe("true");
+    // Metric grid is the 3-col primary-metric section in the full card —
+    // confirm it does NOT render in compact mode.
+    expect(
+      ctx.container.querySelector(".grid.grid-cols-1.sm\\:grid-cols-3"),
+    ).toBeNull();
+    expect(ctx.container.textContent).toContain("VERIFIED");
+    expect(ctx.container.textContent).toContain("420 of 420 events");
+  });
+
+  it("compact + state=compromised renders CHAIN COMPROMISED and the danger tone", () => {
+    queryState.data = compromised();
+    const ctx = render(<ChainIntegrityWidget tenant="acme" compact />);
+    const root = ctx.container.querySelector<HTMLElement>(
+      "[data-testid='chain-integrity-widget']",
+    );
+    expect(root?.getAttribute("data-state")).toBe("compromised");
+    expect(ctx.container.textContent).toContain("CHAIN COMPROMISED");
+  });
+
+  it("compact + state=partial renders RETENTION TRIMMED", () => {
+    queryState.data = partial();
+    const ctx = render(<ChainIntegrityWidget tenant="acme" compact />);
+    expect(ctx.container.textContent).toContain("RETENTION TRIMMED");
+  });
+
+  it("compact + non-admin renders 'Admin only' instead of the Re-verify button", () => {
+    isAdminRef.value = false;
+    queryState.data = ok();
+    const ctx = render(<ChainIntegrityWidget tenant="acme" compact />);
+    expect(ctx.container.textContent).toContain("Admin only");
+    const reVerifyBtn = Array.from(
+      ctx.container.querySelectorAll("button"),
+    ).find((b) => b.textContent?.includes("Re-verify"));
+    expect(reVerifyBtn).toBeUndefined();
+  });
+
+  it("compact + state=not_checked renders NOT VERIFIED and offers Run chain check for admin", () => {
+    queryState.data = undefined;
+    isAdminRef.value = true;
+    const ctx = render(<ChainIntegrityWidget tenant="acme" compact />);
+    expect(ctx.container.textContent).toContain("NOT VERIFIED");
+    const runBtn = Array.from(ctx.container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("Run chain check"),
+    );
+    expect(runBtn).not.toBeUndefined();
+  });
+});
