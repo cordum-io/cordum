@@ -76,4 +76,10 @@ export const baseHandlers = [
   // Workers default — empty list. Pages consuming useWorkers (AgentsPage)
   // render the empty grid; tests that need worker fixtures override.
   http.get("*/api/v1/workers", () => HttpResponse.json({ items: [] })),
+  // Policy audit default — empty page so AuditLogPage renders EmptyState
+  // without per-test handler. Per-test overrides via server.use() inject
+  // fixtures, error responses, or 1000-row virtualization stress data.
+  http.get("*/api/v1/policy/audit", () =>
+    HttpResponse.json({ items: [], total: 0, has_more: false, offset: 0 }),
+  ),
 ];
