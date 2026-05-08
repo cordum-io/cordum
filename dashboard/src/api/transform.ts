@@ -212,6 +212,8 @@ export interface BackendWorkflowStep {
   error?: string;
   started_at?: string;
   completed_at?: string;
+  /** Design-time policy gate hint exposed by cordum-core task-913b6c6c. */
+  policy_gate?: "allow" | "deny" | "require_approval";
 }
 
 export interface BackendWorkflow {
@@ -238,6 +240,9 @@ export interface BackendStepRun {
   output?: Record<string, unknown>;
   error?: Record<string, unknown>;
   job_id?: string;
+  /** Audit-chain hash for this run-step's safety decision, exposed by
+   *  cordum-core task-913b6c6c (RunStepStatus.audit_hash). */
+  audit_hash?: string | null;
 }
 
 export interface BackendWorkflowRun {
@@ -891,6 +896,9 @@ export function mapWorkflowStep(step: BackendWorkflowStep, fallbackId: string): 
     error: step.error,
     startedAt: step.started_at,
     completedAt: step.completed_at,
+    // Design-time policy gate hint from cordum-core task-913b6c6c. Drives
+    // the Shield icon in WorkflowNodeGovernanceOverlay (governance studio).
+    policyGate: step.policy_gate,
   };
 }
 
@@ -943,6 +951,9 @@ export function mapWorkflowRunStep(step: BackendStepRun, fallbackId: string): Wo
     error: step.error ? JSON.stringify(step.error) : undefined,
     startedAt: step.started_at || undefined,
     completedAt: step.completed_at || undefined,
+    // Audit-chain hash from cordum-core task-913b6c6c. Drives the audit-hash
+    // chip in WorkflowNodeGovernanceOverlay on RunDetailPage.
+    auditHash: step.audit_hash ?? undefined,
   };
 }
 

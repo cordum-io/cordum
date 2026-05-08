@@ -28,6 +28,7 @@ import {
   mapWorkflow,
   mapWorkflowRun,
   mapWorkflowRunStep,
+  mapWorkflowStep,
   microsToISO,
   normalizeGovernanceVerdict,
   normalizeDecisionType,
@@ -694,6 +695,52 @@ describe("transform contract hardening", () => {
     it("uses fallback ID when step_id is missing", () => {
       const step = mapWorkflowRunStep({}, "fallback-id");
       expect(step.id).toBe("fallback-id");
+    });
+
+    it("carries audit_hash from the backend run-step into auditHash (task-913b6c6c)", () => {
+      const step = mapWorkflowRunStep(
+        { step_id: "s1", status: "succeeded", audit_hash: "abcdef0123456789deadbeefcafebabe" },
+        "f",
+      );
+      expect(step.auditHash).toBe("abcdef0123456789deadbeefcafebabe");
+    });
+
+    it("collapses null audit_hash to undefined so the overlay falls back to the muted placeholder", () => {
+      const step = mapWorkflowRunStep(
+        { step_id: "s1", status: "succeeded", audit_hash: null },
+        "f",
+      );
+      expect(step.auditHash).toBeUndefined();
+    });
+
+    it("leaves auditHash undefined when the backend omits the field entirely", () => {
+      const step = mapWorkflowRunStep({ step_id: "s1", status: "pending" }, "f");
+      expect(step.auditHash).toBeUndefined();
+    });
+  });
+
+  describe("mapWorkflowStep policy gate threading (task-913b6c6c)", () => {
+    it("carries policy_gate=allow from the backend def-step into policyGate", () => {
+      const step = mapWorkflowStep({ id: "s1", name: "step", type: "job", policy_gate: "allow" }, "f");
+      expect(step.policyGate).toBe("allow");
+    });
+
+    it("carries policy_gate=deny from the backend def-step into policyGate", () => {
+      const step = mapWorkflowStep({ id: "s1", name: "step", type: "job", policy_gate: "deny" }, "f");
+      expect(step.policyGate).toBe("deny");
+    });
+
+    it("carries policy_gate=require_approval from the backend def-step into policyGate", () => {
+      const step = mapWorkflowStep(
+        { id: "s1", name: "step", type: "job", policy_gate: "require_approval" },
+        "f",
+      );
+      expect(step.policyGate).toBe("require_approval");
+    });
+
+    it("leaves policyGate undefined when the backend omits the field", () => {
+      const step = mapWorkflowStep({ id: "s1", name: "step", type: "job" }, "f");
+      expect(step.policyGate).toBeUndefined();
     });
   });
 
