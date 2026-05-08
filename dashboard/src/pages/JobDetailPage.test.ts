@@ -428,6 +428,56 @@ describe("JobDetailPage policy trace tab integration", () => {
     }
   });
 
+  it("renders the parent runId via CodeBlock inline chip with copy-on-click (task-90bb5ef3 reopen #2)", () => {
+    queryState.current.data = makeJob({
+      workflowRunId: "wfr-banner-001",
+      workflowId: "wf-1",
+    });
+    const { container, cleanup } = renderPage();
+    try {
+      // ParentContextBanner is rendered inside the Overview tab's
+      // SmartContext block. Scope to that subtree so the assertion isn't
+      // confused by the MetadataBar Run chip (different inlineMaxLength).
+      const banner = Array.from(container.querySelectorAll("p")).find(
+        (p) => p.textContent === "Part of Workflow Run",
+      )?.parentElement?.parentElement;
+      expect(banner).toBeTruthy();
+      const chip = banner?.querySelector<HTMLButtonElement>(
+        `button[aria-label="Copy Run ID wfr-banner-001"]`,
+      );
+      expect(chip).not.toBeNull();
+      expect(chip?.textContent).toBe("wfr-banner-0"); // inlineMaxLength=12
+      expect(chip?.tagName).toBe("BUTTON");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders the SmartContext agent ID via CodeBlock inline chip with copy-on-click (task-90bb5ef3 reopen #2)", () => {
+    // SmartContext's agent block lives in PaymentContext, which renders
+    // only when context has merchant + total. Seed a payment-shaped job.
+    queryState.current.data = makeJob({
+      context: {
+        merchant: { name: "Acme Co", mcc: "5411" },
+        total: 4200,
+        currency: "USD",
+        agent: { id: "agent-fraud-detector-001", tap_verified: true },
+      },
+    });
+    const { container, cleanup } = renderPage();
+    try {
+      const chip = container.querySelector<HTMLButtonElement>(
+        `button[aria-label="Copy Agent ID agent-fraud-detector-001"]`,
+      );
+      expect(chip).not.toBeNull();
+      expect(chip?.tagName).toBe("BUTTON");
+      // inlineMaxLength=48 > id length, so chip shows full ID.
+      expect(chip?.textContent).toBe("agent-fraud-detector-001");
+    } finally {
+      cleanup();
+    }
+  });
+
   it("clicking Overview tab clears the ?tab param when leaving another tab (task-90bb5ef3)", () => {
     const { container, cleanup } = renderPage();
     try {
@@ -469,8 +519,20 @@ describe("JobDetailPage 4-surface agreement (task-dc086833)", () => {
       // ParentContextBanner: "Part of Workflow Run" header (Run card, not Session fallback)
       expect(container.textContent).toContain("Part of Workflow Run");
       expect(container.textContent).not.toContain("Part of Copilot Session");
-      // ParentContextBanner Run line: "Run: wfr-meta-onl..." (slice(0,12) of "wfr-meta-only" is "wfr-meta-onl")
-      expect(container.textContent).toContain("Run: wfr-meta-onl");
+      // ParentContextBanner Run line: "Run:" label + CodeBlock chip with
+      // the 12-char preview. Post-task-90bb5ef3 reopen #2: the runId value
+      // is now rendered via the shared CodeBlock primitive (copy-on-click)
+      // not as a `${runId.slice(0,12)}...` inline string.
+      expect(container.textContent).toContain("Run:");
+      const banner = Array.from(container.querySelectorAll("p")).find(
+        (p) => p.textContent === "Part of Workflow Run",
+      )?.parentElement?.parentElement;
+      expect(banner).toBeTruthy();
+      const runChip = banner?.querySelector<HTMLButtonElement>(
+        `button[aria-label="Copy Run ID wfr-meta-only"]`,
+      );
+      expect(runChip).not.toBeNull();
+      expect(runChip?.textContent).toBe("wfr-meta-onl");
 
       // MetadataBar Run row PRESENT (the bug-fix surface): label "Run" with the runId value displayed
       const metaLabels = Array.from(
@@ -521,7 +583,20 @@ describe("JobDetailPage 4-surface agreement (task-dc086833)", () => {
     try {
       expect(container.textContent).toContain("Part of Workflow Run");
       expect(container.textContent).not.toContain("Part of Copilot Session");
-      expect(container.textContent).toContain("Run: wfr-label-on");
+      expect(container.textContent).toContain("Run:");
+      // Post-task-90bb5ef3 reopen #2: runId rendered via CodeBlock chip
+      // inside the ParentContextBanner. Scope the chip lookup to the banner
+      // subtree so we don't mis-match the MetadataBar Run chip (which uses
+      // inlineMaxLength=24 and shows the full ID).
+      const banner = Array.from(container.querySelectorAll("p")).find(
+        (p) => p.textContent === "Part of Workflow Run",
+      )?.parentElement?.parentElement;
+      expect(banner).toBeTruthy();
+      const labelChip = banner?.querySelector<HTMLButtonElement>(
+        `button[aria-label="Copy Run ID wfr-label-only"]`,
+      );
+      expect(labelChip).not.toBeNull();
+      expect(labelChip?.textContent).toBe("wfr-label-on");
 
       const metaLabels = Array.from(
         container.querySelectorAll("span.text-\\[10px\\]"),
