@@ -99,6 +99,13 @@ const TONES: Record<Tone["tone"], Tone> = {
 export interface ChainIntegrityWidgetProps {
   tenant: string;
   className?: string;
+  /**
+   * When true, renders a single horizontal bar (badge + tenant +
+   * verified-count + last-verified + re-verify button) for use in a
+   * page header context (e.g. the Audit Log top bar). Defaults to
+   * false (full card).
+   */
+  compact?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,6 +257,7 @@ function formatLastVerified(ms: number | undefined): {
 export function ChainIntegrityWidget({
   tenant,
   className,
+  compact = false,
 }: ChainIntegrityWidgetProps) {
   const isAdmin = useIsAdmin();
 
@@ -292,6 +300,22 @@ export function ChainIntegrityWidget({
     setSessionTriggered(true);
     triggerVerify();
   };
+
+  if (compact) {
+    return (
+      <CompactView
+        state={state}
+        data={query.data}
+        tenant={tenant}
+        isAdmin={isAdmin}
+        isBusy={reVerifyDisabled}
+        onAction={handleReverify}
+        lastVerifiedLabel={lastVerified.label}
+        lastVerifiedTitle={lastVerified.title}
+        className={className}
+      />
+    );
+  }
 
   if (state === "loading") {
     return (
@@ -517,6 +541,111 @@ export function ChainIntegrityWidget({
 // ---------------------------------------------------------------------------
 // Subviews
 // ---------------------------------------------------------------------------
+
+interface CompactViewProps {
+  state: WidgetState;
+  data: AuditVerifyResult | undefined;
+  tenant: string;
+  isAdmin: boolean;
+  isBusy: boolean;
+  onAction: () => void;
+  lastVerifiedLabel: string;
+  lastVerifiedTitle: string;
+  className?: string;
+}
+
+function CompactView({
+  state,
+  data,
+  tenant,
+  isAdmin,
+  isBusy,
+  onAction,
+  lastVerifiedLabel,
+  lastVerifiedTitle,
+  className,
+}: CompactViewProps) {
+  const toneKey: Tone["tone"] =
+    state === "ok"
+      ? "success"
+      : state === "partial"
+        ? "warning"
+        : state === "compromised"
+          ? "danger"
+          : "muted";
+  const tone = TONES[toneKey];
+  const stateLabel: string =
+    state === "loading"
+      ? "CHECKING…"
+      : state === "error"
+        ? "VERIFICATION UNAVAILABLE"
+        : tone.badge;
+  const actionLabel = state === "not_checked" ? "Run chain check" : "Re-verify";
+
+  return (
+    <div
+      data-testid="chain-integrity-widget"
+      data-state={state}
+      data-compact="true"
+      className={cn(
+        "instrument-card flex flex-wrap items-center gap-3 px-4 py-2.5",
+        className,
+      )}
+      role="status"
+    >
+      <span
+        aria-hidden="true"
+        className={cn("h-2 w-2 shrink-0 rounded-full", tone.accentClass)}
+      />
+      <span
+        className={cn(
+          "shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-mono font-semibold uppercase tracking-[0.14em]",
+          tone.badgeClass,
+        )}
+      >
+        {stateLabel}
+      </span>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        {data && (
+          <span className="font-mono tabular-nums text-foreground">
+            {data.verified_events} of {data.total_events} events
+          </span>
+        )}
+        <span>
+          Tenant{" "}
+          <span className="font-mono text-foreground">
+            {tenant || "default"}
+          </span>
+        </span>
+        <span title={lastVerifiedTitle}>
+          Last verified{" "}
+          <span className="font-medium text-foreground">
+            {lastVerifiedLabel}
+          </span>
+        </span>
+      </div>
+      {isAdmin ? (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onAction}
+          disabled={isBusy}
+          aria-label={actionLabel}
+        >
+          <RefreshCw
+            className={cn("h-3 w-3", isBusy && "animate-spin")}
+            aria-hidden="true"
+          />
+          {actionLabel}
+        </Button>
+      ) : (
+        <span className="shrink-0 text-[11px] text-muted-foreground">
+          Admin only
+        </span>
+      )}
+    </div>
+  );
+}
 
 function LoadingView({
   tenant,
