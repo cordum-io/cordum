@@ -102,6 +102,32 @@ describe("AuditLogPage nuqs URL roundtrip", () => {
     expect(lastUrlUpdate!.searchParams.get("to")).toBeNull();
   });
 
+  it("malformed ?from= URL value defaults cleanly without throwing the query (adversarial item a)", async () => {
+    let capturedUrl: URL | null = null;
+    server.use(
+      http.get("*/api/v1/policy/audit", ({ request }) => {
+        capturedUrl = new URL(request.url);
+        return emptyAuditPage();
+      }),
+    );
+
+    const { container } = renderWithProviders(
+      <NuqsTestingAdapter searchParams="?from=banana&action=job.failed">
+        <AuditLogPage />
+      </NuqsTestingAdapter>,
+    );
+
+    // Page renders, query fires, no Invalid Date crash. Action filter is
+    // still forwarded; malformed `from` is silently dropped so the rest
+    // of the filter set survives.
+    await waitFor(() => {
+      expect(capturedUrl).not.toBeNull();
+    });
+    expect(capturedUrl!.searchParams.get("action")).toBe("job.failed");
+    expect(capturedUrl!.searchParams.get("after")).toBeNull();
+    expect(container.textContent).not.toContain("Failed to load audit log");
+  });
+
   it("selecting an action option pushes ?action= to URL", async () => {
     let lastUrlUpdate: UrlUpdateEvent | null = null;
 

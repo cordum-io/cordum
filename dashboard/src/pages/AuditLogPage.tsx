@@ -219,9 +219,18 @@ export default function AuditLogPage() {
       });
       if (actionFilter) params.set("action", actionFilter);
       if (agentFilter) params.set("agent_id", agentFilter);
-      if (dateFrom) params.set("after", new Date(dateFrom).toISOString());
-      if (dateTo)
-        params.set("before", new Date(dateTo + "T23:59:59").toISOString());
+      // Defensive ISO conversion: malformed `?from=banana` URL values
+      // would throw at toISOString() and break the whole query. Validate
+      // the parsed Date before forwarding; silently drop unparseable
+      // input so the rest of the filter set still applies.
+      if (dateFrom) {
+        const d = new Date(dateFrom);
+        if (!Number.isNaN(d.getTime())) params.set("after", d.toISOString());
+      }
+      if (dateTo) {
+        const d = new Date(dateTo + "T23:59:59");
+        if (!Number.isNaN(d.getTime())) params.set("before", d.toISOString());
+      }
       if (search) params.set("search", search);
       return get<AuditResponse>(`/policy/audit?${params}`);
     },
