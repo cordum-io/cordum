@@ -361,9 +361,12 @@ describe("JobDetailPage policy trace tab integration", () => {
     }
   });
 
-  it("clicking Audit Chain tab updates URL to ?tab=audit-chain (task-90bb5ef3)", () => {
+  it("clicking Audit Chain tab updates URL to ?tab=audit-chain AND renders the audit-chain panel (task-90bb5ef3 reopen #1)", () => {
     const { container, cleanup } = renderPage();
     try {
+      // Pre-condition: not on audit-chain yet — Audit Chain heading is not in DOM.
+      expect(container.textContent).not.toContain("Execution Log");
+
       const auditTab = Array.from(container.querySelectorAll("button")).find(
         (button) => button.textContent?.trim() === "Audit Chain",
       );
@@ -373,7 +376,17 @@ describe("JobDetailPage policy trace tab integration", () => {
           new MouseEvent("click", { bubbles: true, cancelable: true }),
         );
       });
+      // URL roundtrip
       expect(searchState.current).toBe("tab=audit-chain");
+      // Panel content render — the Audit Chain section header lives in the
+      // panel body. Asserting its presence proves the panel mounted, not
+      // just that the URL changed.
+      const auditHeadings = Array.from(container.querySelectorAll("h2"));
+      expect(
+        auditHeadings.some((h) => h.textContent?.trim() === "Audit Chain"),
+      ).toBe(true);
+      // Execution Log subheading is rendered in the audit-chain tab body.
+      expect(container.textContent).toContain("Execution Log");
     } finally {
       cleanup();
     }
