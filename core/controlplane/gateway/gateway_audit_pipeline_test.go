@@ -7,6 +7,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/licensing"
+	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -136,8 +137,19 @@ func TestInitAuditPipeline_DirectTransportFeedsChain(t *testing.T) {
 		licensing.DefaultEntitlements(licensing.PlanEnterprise),
 		nil,
 	)
+	run := &wf.WorkflowRun{
+		ID:         "run-direct-audit",
+		WorkflowID: "wf-direct-audit",
+		Status:     wf.RunStatusRunning,
+		Steps: map[string]*wf.StepRun{
+			"step-1": {StepID: "step-1", Status: wf.StepStatusRunning, JobID: "run-direct-audit:step-1@1"},
+		},
+	}
+	if err := s.workflowStore.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
 
-	sender, chainer, err := initAuditPipeline(s.redisClient(), nil, s.entitlements)
+	sender, chainer, err := initAuditPipeline(s.redisClient(), nil, s.entitlements, s.workflowStore)
 	if err != nil {
 		t.Fatalf("initAuditPipeline: %v", err)
 	}
@@ -155,8 +167,15 @@ func TestInitAuditPipeline_DirectTransportFeedsChain(t *testing.T) {
 		Severity:  audit.SeverityInfo,
 		TenantID:  "default",
 		Action:    "direct-transport-chain",
-		JobID:     "job-direct-transport",
+		JobID:     run.Steps["step-1"].JobID,
 	})
 
 	requireChainHas(t, s.redisClient(), chainer, "default", 1)
+	updated, err := s.workflowStore.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if updated.Steps["step-1"].AuditHash == "" {
+		t.Fatal("expected direct audit chain sender to populate workflow step audit hash")
+	}
 }

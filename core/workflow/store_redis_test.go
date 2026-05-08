@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -402,6 +403,138 @@ func TestRunTimelineAppendAndList(t *testing.T) {
 	}
 	if events[0].Type != "run_created" || events[1].Type != "run_status" {
 		t.Fatalf("unexpected timeline events: %+v", events)
+	}
+}
+
+func TestRedisStoreUpdateAuditHashPersistsByJobIndex(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	jobID := "run-audit-idx:step-1@1"
+	hash := strings.Repeat("a", 64)
+	replacement := strings.Repeat("b", 64)
+	run := &WorkflowRun{
+		ID:         "run-audit-idx",
+		WorkflowID: "wf-audit",
+		Status:     RunStatusRunning,
+		Steps: map[string]*StepRun{
+			"step-1":  {StepID: "step-1", Status: StepStatusRunning, JobID: jobID},
+			"skipped": {StepID: "skipped", Status: StepStatusSkipped, SkipReason: "upstream failed"},
+			"nohash":  {StepID: "nohash", Status: StepStatusRunning, JobID: "run-audit-idx:nohash@1"},
+		},
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	ref, ok, err := store.lookupRunJobRef(ctx, jobID)
+	if err != nil {
+		t.Fatalf("lookup job ref: %v", err)
+	}
+	if !ok || ref.RunID != run.ID || len(ref.StepPath) == 0 || ref.StepPath[0] != "step-1" {
+		t.Fatalf("unexpected job ref: ref=%+v ok=%v", ref, ok)
+	}
+
+	if err := store.UpdateAuditHash(ctx, jobID, hash); err != nil {
+		t.Fatalf("update audit hash: %v", err)
+	}
+	assertRunAuditHash(t, store, run.ID, "step-1", hash)
+	assertRunAuditHash(t, store, run.ID, "skipped", "")
+	assertRunAuditHash(t, store, run.ID, "nohash", "")
+
+	if err := store.UpdateAuditHash(ctx, jobID, hash); err != nil {
+		t.Fatalf("idempotent update: %v", err)
+	}
+	if err := store.UpdateAuditHash(ctx, jobID, replacement); err != nil {
+		t.Fatalf("conflicting update should be non-fatal: %v", err)
+	}
+	assertRunAuditHash(t, store, run.ID, "step-1", hash)
+
+	run.Status = RunStatusSucceeded
+	if err := store.UpdateRun(ctx, run); err != nil {
+		t.Fatalf("stale UpdateRun should preserve audit hash: %v", err)
+	}
+	assertRunAuditHash(t, store, run.ID, "step-1", hash)
+
+	if err := store.UpdateAuditHash(ctx, "not-a-workflow-job", hash); err != nil {
+		t.Fatalf("non-workflow job should be a no-op: %v", err)
+	}
+	if err := store.UpdateAuditHash(ctx, jobID, ""); err != nil {
+		t.Fatalf("empty hash should be a no-op: %v", err)
+	}
+	assertRunAuditHash(t, store, run.ID, "step-1", hash)
+}
+
+func TestRedisStoreUpdateAuditHashAppliesPendingOnNextRunWrite(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	jobID := "run-pending-audit:step-1@1"
+	hash := strings.Repeat("c", 64)
+	if err := store.UpdateAuditHash(ctx, jobID, hash); err != nil {
+		t.Fatalf("pending update: %v", err)
+	}
+
+	run := &WorkflowRun{
+		ID:         "run-pending-audit",
+		WorkflowID: "wf-audit",
+		Status:     RunStatusRunning,
+		Steps: map[string]*StepRun{
+			"step-1": {StepID: "step-1", Status: StepStatusRunning, JobID: jobID},
+		},
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	assertRunAuditHash(t, store, run.ID, "step-1", hash)
+}
+
+func TestRedisStoreUpdateAuditHashUpdatesNestedDuplicateStepRuns(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	jobID := "run-nested-audit:fanout[0]@1"
+	hash := strings.Repeat("d", 64)
+	child := &StepRun{StepID: "fanout[0]", Status: StepStatusRunning, JobID: jobID}
+	run := &WorkflowRun{
+		ID:         "run-nested-audit",
+		WorkflowID: "wf-audit",
+		Status:     RunStatusRunning,
+		Steps: map[string]*StepRun{
+			"fanout":    {StepID: "fanout", Status: StepStatusRunning, Children: map[string]*StepRun{"fanout[0]": child}},
+			"fanout[0]": {StepID: "fanout[0]", Status: StepStatusRunning, JobID: jobID},
+		},
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	if err := store.UpdateAuditHash(ctx, jobID, hash); err != nil {
+		t.Fatalf("update audit hash: %v", err)
+	}
+
+	got, err := store.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if got.Steps["fanout[0]"].AuditHash != hash {
+		t.Fatalf("top-level child hash = %q, want %q", got.Steps["fanout[0]"].AuditHash, hash)
+	}
+	if got.Steps["fanout"].Children["fanout[0]"].AuditHash != hash {
+		t.Fatalf("nested child hash = %q, want %q", got.Steps["fanout"].Children["fanout[0]"].AuditHash, hash)
+	}
+}
+
+func assertRunAuditHash(t *testing.T, store *RedisStore, runID, stepID, want string) {
+	t.Helper()
+	got, err := store.GetRun(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("get run %s: %v", runID, err)
+	}
+	if got.Steps[stepID].AuditHash != want {
+		t.Fatalf("step %s audit hash = %q, want %q", stepID, got.Steps[stepID].AuditHash, want)
 	}
 }
 

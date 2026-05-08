@@ -8,6 +8,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	wf "github.com/cordum/cordum/core/workflow"
 )
 
 type auditBusLoopback struct {
@@ -44,8 +45,19 @@ func TestInitAuditPipeline_NullBackendChainsEvents(t *testing.T) {
 
 	s, _, _ := newTestGateway(t)
 	bus := newAuditBusLoopback()
+	run := &wf.WorkflowRun{
+		ID:         "run-pipeline-test",
+		WorkflowID: "wf-pipeline-test",
+		Status:     wf.RunStatusRunning,
+		Steps: map[string]*wf.StepRun{
+			"step-1": {StepID: "step-1", Status: wf.StepStatusRunning, JobID: "run-pipeline-test:step-1@1"},
+		},
+	}
+	if err := s.workflowStore.CreateRun(context.Background(), run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
 
-	sender, chainer, err := initAuditPipeline(s.jobStore.Client(), bus, nil)
+	sender, chainer, err := initAuditPipeline(s.jobStore.Client(), bus, nil, s.workflowStore)
 	if err != nil {
 		t.Fatalf("initAuditPipeline: %v", err)
 	}
@@ -62,7 +74,7 @@ func TestInitAuditPipeline_NullBackendChainsEvents(t *testing.T) {
 		Severity:  audit.SeverityInfo,
 		TenantID:  "default",
 		Action:    "pipeline-test",
-		JobID:     "job-pipeline-test",
+		JobID:     run.Steps["step-1"].JobID,
 	})
 
 	streamKey := chainer.StreamKey("default")
@@ -73,6 +85,13 @@ func TestInitAuditPipeline_NullBackendChainsEvents(t *testing.T) {
 			t.Fatalf("VerifyChain: %v", err)
 		}
 		if result.Status == audit.VerifyStatusOK && result.TotalEvents >= 1 && len(result.Gaps) == 0 {
+			updated, err := s.workflowStore.GetRun(context.Background(), run.ID)
+			if err != nil {
+				t.Fatalf("get run: %v", err)
+			}
+			if updated.Steps["step-1"].AuditHash == "" {
+				t.Fatal("expected NATS audit consumer wiring to populate workflow step audit hash")
+			}
 			return
 		}
 		time.Sleep(25 * time.Millisecond)
