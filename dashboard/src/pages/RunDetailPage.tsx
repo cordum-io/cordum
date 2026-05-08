@@ -325,8 +325,12 @@ export default function WorkflowRunDetailPage() {
           );
         },
       );
+      // Source order: live timeline event → step.output.safetyDecision (the
+      // canonical run-step output path that graphBridge.ts also reads) →
+      // legacy step.safetyDecision cast (fallback for older run records).
       const safetyDecision =
         safetyEvent?.data?.safetyDecision?.type ??
+        (step.output as { safetyDecision?: { type?: string } } | undefined)?.safetyDecision?.type ??
         ((step as { safetyDecision?: { type?: string } }).safetyDecision?.type);
 
       return {

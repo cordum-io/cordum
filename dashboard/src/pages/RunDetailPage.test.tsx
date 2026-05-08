@@ -323,3 +323,63 @@ describe("WorkflowRunDetailPage step list accessibility", () => {
     }
   });
 });
+
+// Regression for task-dd5e1d8f reopen #2: QA's DoD #3 finding was that
+// RunDetailPage rendered the governance overlay but never read the
+// canonical `step.output.safetyDecision.type` source path that
+// graphBridge.ts already uses. Result: real run records always showed
+// the muted "decision pending" placeholder. Fixed in commit <next>.
+describe("WorkflowRunDetailPage governance overlay runtime data path", () => {
+  beforeEach(() => {
+    workflowState.run = {
+      data: makeRun({
+        steps: [
+          {
+            id: "step-deny",
+            name: "Denied step",
+            type: "worker",
+            status: "denied",
+            // Canonical run-time decision path — what graphBridge reads.
+            output: { safetyDecision: { type: "deny" } } as Record<
+              string,
+              unknown
+            >,
+            // policyGate from cordum-core task-913b6c6c — design-time hint.
+            policyGate: "require_approval",
+            // auditHash from cordum-core task-913b6c6c — runtime hash.
+            auditHash: "f".repeat(64),
+          },
+        ],
+      }),
+      isLoading: false,
+      error: null,
+    };
+  });
+
+  it("renders the governance overlay for worker-type steps", () => {
+    const { container, cleanup } = renderPage();
+    try {
+      // The shared WorkflowNodeGovernanceOverlay component marks itself
+      // with data-governance-overlay so consumers (WorkflowStudio nodes
+      // + RunDetailPage step list) can be smoke-tested at this surface.
+      const overlay = container.querySelector("[data-governance-overlay]");
+      expect(overlay).not.toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("colors the safety-decision slot from step.output.safetyDecision.type (the canonical path graphBridge uses)", () => {
+    const { container, cleanup } = renderPage();
+    try {
+      // The safety-decision slot inside the overlay carries the decision
+      // type via its aria-label so a colored badge is present even in
+      // jsdom where computed styles are unreliable.
+      const slot = container.querySelector("[data-slot='safety-decision']");
+      expect(slot).not.toBeNull();
+      expect(slot?.getAttribute("aria-label")).toBe("Safety decision: deny");
+    } finally {
+      cleanup();
+    }
+  });
+});
