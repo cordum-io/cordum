@@ -96,15 +96,47 @@ func ParseChainFailMode(raw string) ChainFailMode {
 // would orphan its timeout from context.Background() and could hang past
 // the NATS ack deadline during shutdown, leaving messages re-delivered.
 type NATSAuditConsumer struct {
-	exporter Exporter
-	chainer  *Chainer
-	failMode ChainFailMode
+	exporter     Exporter
+	chainer      *Chainer
+	failMode     ChainFailMode
+	stepHashSink StepHashSink
 
 	// lifecycleCtx is cancelled by Close(); handle() derives per-message
 	// timeouts from it so in-flight chain-append and Export calls observe
 	// shutdown promptly and return within the JetStream ack window.
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
+}
+
+// StepHashSink is the optional dependency the audit consumer uses to write
+// per-step audit-chain hashes back into the workflow store after a
+// successful Append. Workflow runs already store JobID per StepRun
+// (see core/workflow engine.go where stepRun.JobID = res.JobId is set
+// when a JobResult bus message returns). This interface lets the audit
+// consumer populate StepRun.AuditHash without core/audit importing
+// core/workflow directly — keeps the dependency one-way.
+//
+// Architectural choice per task-a45b8eb1 architect msg-dc9ac33d (Option A):
+// eventual-consistency write-back from the audit consumer goroutine.
+// Workflow engine cannot synchronously compute the chain hash at
+// applyResult time because PrevHash depends on the chain head held by
+// the chainer; that's why the population path lives here, post-Append,
+// not in the workflow engine.
+//
+// Implementations live in core/workflow (RedisStore-backed). The
+// nil-sink case (no implementation wired) is a no-op — every audit
+// chain Append still produces a durable EventHash; only the
+// dashboard governance overlay's runtime audit-hash chip stays
+// unpopulated until a sink is wired.
+type StepHashSink interface {
+	// UpdateAuditHash finds the workflow-run step whose JobID matches the
+	// supplied jobID and persists auditHash on it. Implementations MUST
+	// be idempotent (JetStream redelivery may invoke this twice for the
+	// same SIEMEvent) and SHOULD treat "no matching step" as a no-op
+	// (returns nil) — many SIEMEvents are emitted for non-workflow jobs
+	// (edge sessions, MCP approvals, ad-hoc safety decisions) and do not
+	// have a corresponding StepRun.
+	UpdateAuditHash(ctx context.Context, jobID, auditHash string) error
 }
 
 // ConsumerOption configures a NATSAuditConsumer.
@@ -119,6 +151,17 @@ func WithChainer(c *Chainer) ConsumerOption {
 // WithChainFailMode overrides the default strict fail mode.
 func WithChainFailMode(m ChainFailMode) ConsumerOption {
 	return func(n *NATSAuditConsumer) { n.failMode = m }
+}
+
+// WithStepHashSink installs an optional sink that receives the populated
+// SIEMEvent.EventHash after a successful chainer.Append. Used to
+// back-fill the dashboard governance overlay's runtime audit-hash chip
+// per task-a45b8eb1 (Option A).
+//
+// Nil means no write-back; default. Wiring is done in runner.go where
+// the audit consumer is constructed alongside the workflow store.
+func WithStepHashSink(sink StepHashSink) ConsumerOption {
+	return func(n *NATSAuditConsumer) { n.stepHashSink = sink }
 }
 
 // NewNATSAuditConsumer creates a consumer and subscribes to sys.audit.export.
@@ -224,6 +267,24 @@ func (c *NATSAuditConsumer) handle(packet *pb.BusPacket) error {
 				return nil
 			}
 			// Permissive: fall through to export with empty chain fields.
+		} else if c.stepHashSink != nil && event.EventHash != "" && event.JobID != "" {
+			// Option A write-back per task-a45b8eb1 (architect msg-dc9ac33d):
+			// the chain Append just produced EventHash; if a workflow-store
+			// sink is wired AND the event corresponds to a job (most safety
+			// decisions do, but tenant-level events e.g. SSO login do not),
+			// back-fill the matching StepRun.AuditHash. Eventual consistency:
+			// the dashboard governance overlay's audit-hash chip lights up
+			// the moment this returns. Errors are intentionally non-fatal —
+			// the audit chain entry is durable; the workflow store can be
+			// back-filled by an offline tool if the sink misses transiently.
+			if err := c.stepHashSink.UpdateAuditHash(ctx, event.JobID, event.EventHash); err != nil {
+				slog.Warn("audit step-hash write-back failed",
+					"event_type", event.EventType,
+					"tenant_id", event.TenantID,
+					"job_id", event.JobID,
+					"error", err,
+				)
+			}
 		}
 	}
 

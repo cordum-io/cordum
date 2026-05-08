@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -164,6 +165,118 @@ func TestNATSAuditConsumer_EnvDrivesFailMode(t *testing.T) {
 	}
 	if c.failMode != ChainFailPermissive {
 		t.Errorf("failMode = %v, want permissive", c.failMode)
+	}
+}
+
+// realRecordingSink captures every UpdateAuditHash invocation so tests
+// can assert the audit consumer's Option A write-back fires exactly when
+// the chain Append succeeds and never on Append-failure or no-job paths.
+type realRecordingSink struct {
+	calls     []recordedSinkCall
+	returnErr error
+}
+
+type recordedSinkCall struct {
+	jobID     string
+	auditHash string
+}
+
+func (r *realRecordingSink) UpdateAuditHash(_ context.Context, jobID, auditHash string) error {
+	r.calls = append(r.calls, recordedSinkCall{jobID: jobID, auditHash: auditHash})
+	return r.returnErr
+}
+
+// TestNATSAuditConsumer_StepHashSinkReceivesPostAppendHash verifies the
+// Option A write-back per task-a45b8eb1 (architect msg-dc9ac33d): after a
+// successful chainer.Append the consumer hands the populated EventHash +
+// JobID to a wired sink so the workflow store can back-fill StepRun.AuditHash.
+func TestNATSAuditConsumer_StepHashSinkReceivesPostAppendHash(t *testing.T) {
+	bus := &mockAuditBus{}
+	mock := &mockExporter{}
+	chainer, _ := newConsumerChainer(t)
+	sink := &realRecordingSink{}
+
+	_, err := NewNATSAuditConsumer(bus, mock, WithChainer(chainer), WithStepHashSink(sink))
+	if err != nil {
+		t.Fatalf("NewNATSAuditConsumer: %v", err)
+	}
+
+	bus.mu.Lock()
+	handler := bus.handler
+	bus.mu.Unlock()
+
+	ev := testEvent()
+	if err := handler(packetFor(t, ev)); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	if len(sink.calls) != 1 {
+		t.Fatalf("UpdateAuditHash calls = %d, want 1", len(sink.calls))
+	}
+	if sink.calls[0].jobID != ev.JobID {
+		t.Errorf("UpdateAuditHash jobID = %q, want %q", sink.calls[0].jobID, ev.JobID)
+	}
+	if len(sink.calls[0].auditHash) != chainHashHexLen {
+		t.Errorf("UpdateAuditHash auditHash length = %d, want %d", len(sink.calls[0].auditHash), chainHashHexLen)
+	}
+}
+
+// TestNATSAuditConsumer_StepHashSinkSkippedWhenNoJobID verifies that
+// SIEMEvents without a JobID (tenant-level events like SSO login) do
+// NOT invoke the sink — there's no workflow step to back-fill.
+func TestNATSAuditConsumer_StepHashSinkSkippedWhenNoJobID(t *testing.T) {
+	bus := &mockAuditBus{}
+	mock := &mockExporter{}
+	chainer, _ := newConsumerChainer(t)
+	sink := &realRecordingSink{}
+
+	_, err := NewNATSAuditConsumer(bus, mock, WithChainer(chainer), WithStepHashSink(sink))
+	if err != nil {
+		t.Fatalf("NewNATSAuditConsumer: %v", err)
+	}
+
+	bus.mu.Lock()
+	handler := bus.handler
+	bus.mu.Unlock()
+
+	ev := testEvent()
+	ev.JobID = "" // tenant-level event, not workflow-scoped
+	if err := handler(packetFor(t, ev)); err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+
+	if len(sink.calls) != 0 {
+		t.Errorf("UpdateAuditHash calls = %d, want 0 for empty-JobID event", len(sink.calls))
+	}
+}
+
+// TestNATSAuditConsumer_StepHashSinkErrorIsNonFatal verifies that a sink
+// failure (e.g. transient Redis error during write-back) does NOT break
+// the export pipeline — the event still reaches the exporter and the
+// audit chain entry is durable. Error logged + swallowed.
+func TestNATSAuditConsumer_StepHashSinkErrorIsNonFatal(t *testing.T) {
+	bus := &mockAuditBus{}
+	mock := &mockExporter{}
+	chainer, _ := newConsumerChainer(t)
+	sink := &realRecordingSink{returnErr: fmt.Errorf("redis: connection refused")}
+
+	_, err := NewNATSAuditConsumer(bus, mock, WithChainer(chainer), WithStepHashSink(sink))
+	if err != nil {
+		t.Fatalf("NewNATSAuditConsumer: %v", err)
+	}
+
+	bus.mu.Lock()
+	handler := bus.handler
+	bus.mu.Unlock()
+
+	if err := handler(packetFor(t, testEvent())); err != nil {
+		t.Fatalf("handler: %v (sink error must not propagate)", err)
+	}
+	if got := mock.totalEvents(); got != 1 {
+		t.Errorf("exported events = %d, want 1 (sink error must not block export)", got)
+	}
+	if len(sink.calls) != 1 {
+		t.Errorf("UpdateAuditHash calls = %d, want 1 (must still attempt the write-back)", len(sink.calls))
 	}
 }
 
