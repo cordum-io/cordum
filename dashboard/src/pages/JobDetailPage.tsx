@@ -310,10 +310,23 @@ export function ParentContextBanner({ job }: { job: Job }) {
             <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-1">
               Part of {runId ? "Workflow Run" : "Copilot Session"}
             </p>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-foreground truncate">
-                {runId ? `Run: ${runId.slice(0, 12)}...` : `Session: ${sessionId?.slice(0, 12) ?? ""}...`}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-semibold text-foreground">
+                {runId ? "Run:" : "Session:"}
               </span>
+              {/* Parent ID — copy-on-click via shared CodeBlock primitive
+                  per task-90bb5ef3 reopen #2. The ID is also navigable via
+                  the View Parent button below; this chip exposes the
+                  copy-the-ID action that was previously missing. */}
+              <CodeBlock
+                inline
+                copyable
+                inlineMaxLength={12}
+                ariaLabel={`Copy ${runId ? "Run ID" : "Session ID"} ${runId ?? sessionId ?? ""}`}
+                inlineTitle={`${runId ?? sessionId ?? ""} — click to copy`}
+              >
+                {runId ?? sessionId ?? ""}
+              </CodeBlock>
               {untrustedPrompt && (
                 <span className="text-xs text-muted-foreground border-l border-border pl-2 italic truncate max-w-md hidden sm:inline">
                   &ldquo;{untrustedPrompt}&rdquo;
@@ -421,7 +434,18 @@ function PaymentContext({ ctx }: { ctx: Record<string, unknown> }) {
         {agent && (
           <div className="space-y-1">
             <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider">Agent</p>
-            <p className="text-sm font-mono text-foreground">{String(agent.id)}</p>
+            {/* SmartContext agent ID — copy-on-click via shared CodeBlock
+                primitive per task-90bb5ef3 reopen #2 / Phase 4c plan note. */}
+            <CodeBlock
+              inline
+              copyable
+              inlineMaxLength={48}
+              ariaLabel={`Copy Agent ID ${String(agent.id)}`}
+              inlineTitle={`${String(agent.id)} — click to copy`}
+              className="text-sm"
+            >
+              {String(agent.id)}
+            </CodeBlock>
             {!!agent.tap_verified && <StatusBadge variant="cordum">TAP Verified</StatusBadge>}
           </div>
         )}
