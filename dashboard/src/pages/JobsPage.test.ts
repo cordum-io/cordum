@@ -2,7 +2,7 @@ import React, { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { readStoredJobsPageSize, SubmitJobDialog } from "./JobsPage";
+import { SubmitJobDialog } from "./JobsPage";
 
 const { hookState } = vi.hoisted(() => ({
   hookState: {
@@ -17,30 +17,10 @@ vi.mock("@/hooks/useJobs", () => ({
   useSubmitJob: () => hookState.submitJob,
 }));
 
-describe("readStoredJobsPageSize", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-    window.localStorage.clear();
-  });
-
-  it("returns the stored page size when valid", () => {
-    window.localStorage.setItem("cordum-jobs-page-size", "100");
-    expect(readStoredJobsPageSize()).toBe(100);
-  });
-
-  it("falls back to the default when storage throws", () => {
-    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-      throw new Error("blocked");
-    });
-
-    expect(readStoredJobsPageSize()).toBe(50);
-  });
-
-  it("falls back to the default when the stored value is invalid", () => {
-    window.localStorage.setItem("cordum-jobs-page-size", "not-a-number");
-    expect(readStoredJobsPageSize()).toBe(50);
-  });
-});
+// `readStoredJobsPageSize` was deleted in the Phase 3 wk4 rewrite (task-2c3c8a04):
+// pagination state migrated from local-storage page-size + URL ?page= to
+// primitives/DataTable virtualization (DOM-node count stays bounded regardless
+// of row count) + nuqs-driven URL filter state.
 
 describe("SubmitJobDialog accessibility", () => {
   beforeEach(() => {
