@@ -3,7 +3,7 @@
  * Narrative-driven: what the agent tried → what the platform decided → why.
  * Story in 5 seconds. Bloomberg terminal precision, Apple Keynote clarity.
  */
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { get } from "@/api/client";
@@ -39,6 +39,22 @@ import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Tabs } from "@/components/ui/Tabs";
 import { GovernanceTimeline } from "@/components/governance/GovernanceTimeline";
 import { AgentExecutionsPanel } from "@/components/edge/AgentExecutionsPanel";
+
+const JOB_DETAIL_TABS = [
+  "overview",
+  "audit-chain",
+  "inputs",
+  "outputs",
+  "policy-trace",
+] as const;
+
+type JobDetailTab = (typeof JOB_DETAIL_TABS)[number];
+
+function resolveJobDetailTab(value: string | null): JobDetailTab {
+  return JOB_DETAIL_TABS.includes(value as JobDetailTab)
+    ? (value as JobDetailTab)
+    : "overview";
+}
 
 // ---------------------------------------------------------------------------
 // Status configuration — colors, icons, labels for each outcome
@@ -997,6 +1013,7 @@ const item = {
 export default function JobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: job, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["job", id],
@@ -1017,7 +1034,25 @@ export default function JobDetailPage() {
   const copyId = () => {
     if (id) { navigator.clipboard.writeText(id); toast.success("Job ID copied"); }
   };
-  const [activeTab, setActiveTab] = useState("overview");
+  const activeTab = resolveJobDetailTab(searchParams.get("tab"));
+  const setActiveTab = useCallback(
+    (tab: string) => {
+      const nextTab = resolveJobDetailTab(tab);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (nextTab === "overview") {
+            next.delete("tab");
+          } else {
+            next.set("tab", nextTab);
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   // --- Error state ---
   if (isError) {
@@ -1108,9 +1143,10 @@ export default function JobDetailPage() {
           <Tabs
             tabs={[
               { id: "overview", label: "Overview" },
-              { id: "payload", label: "Payload" },
-              { id: "activity", label: "Activity" },
-              { id: "governance", label: "Governance" },
+              { id: "audit-chain", label: "Audit Chain" },
+              { id: "inputs", label: "Inputs" },
+              { id: "outputs", label: "Outputs" },
+              { id: "policy-trace", label: "Policy Trace" },
             ]}
             activeTab={activeTab}
             onChange={setActiveTab}
@@ -1166,9 +1202,9 @@ export default function JobDetailPage() {
             </motion.div>
           )}
 
-          {activeTab === "activity" && (
+          {activeTab === "audit-chain" && (
             <motion.div
-              key="activity"
+              key="audit-chain"
               variants={container}
               initial="hidden"
               animate="visible"
@@ -1179,8 +1215,15 @@ export default function JobDetailPage() {
                 <div className="instrument-card">
                   <div className="flex items-center gap-2 mb-4">
                     <Clock className="w-4 h-4 text-cordum" />
-                    <h2 className="font-display font-semibold text-sm text-foreground">Activity Timeline</h2>
+                    <h2 className="font-display font-semibold text-sm text-foreground">Audit Chain</h2>
                   </div>
+                  {job.output_safety && (
+                    <div className="mb-4">
+                      <CodeBlock title="Output safety record" language="json" copyable>
+                        {JSON.stringify(job.output_safety, null, 2)}
+                      </CodeBlock>
+                    </div>
+                  )}
                   <CompactTimeline job={job} />
                 </div>
               </motion.div>
@@ -1198,9 +1241,9 @@ export default function JobDetailPage() {
             </motion.div>
           )}
 
-          {activeTab === "payload" && (
+          {activeTab === "inputs" && (
             <motion.div
-              key="payload"
+              key="inputs"
               variants={container}
               initial="hidden"
               animate="visible"
@@ -1214,7 +1257,18 @@ export default function JobDetailPage() {
                   </div>
                 </CollapsibleSection>
               </motion.div>
+            </motion.div>
+          )}
 
+          {activeTab === "outputs" && (
+            <motion.div
+              key="outputs"
+              variants={container}
+              initial="hidden"
+              animate="visible"
+              exit={{ opacity: 0, y: -8 }}
+              className="space-y-6"
+            >
               <motion.div variants={item}>
                 <CollapsibleSection title="Raw output" defaultOpen={true}>
                   <div className="instrument-card">
@@ -1230,9 +1284,9 @@ export default function JobDetailPage() {
             </motion.div>
           )}
 
-          {activeTab === "governance" && (
+          {activeTab === "policy-trace" && (
             <motion.div
-              key="governance"
+              key="policy-trace"
               variants={item}
               initial="hidden"
               animate="visible"
