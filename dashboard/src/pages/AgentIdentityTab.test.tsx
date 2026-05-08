@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentIdentity, AgentStats } from "@/api/types";
+import { ApiError } from "@/api/client";
 import AgentsPage from "./AgentsPage";
 import AgentIdentityPanel from "@/components/agents/AgentIdentityPanel";
 
@@ -375,6 +376,55 @@ describe("AgentIdentityPanel rendered", () => {
       expect(container.textContent).toContain("job.fraud.scan");
       expect(container.textContent).toContain("pool-risk");
       expect(container.textContent).toContain("pii");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders EmptyState (not ErrorBanner) when useAgentIdentity returns 404", () => {
+    hookState.identity = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError(404, "Not Found"),
+    };
+    const { container, cleanup } = renderIdentityPanel();
+    try {
+      expect(container.textContent).toContain("No identity profile");
+      expect(container.textContent).toContain("cordumctl agents identity create");
+      expect(container.textContent).not.toContain("Failed to load agent identity");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders ErrorBanner (not EmptyState) for ApiError 500", () => {
+    hookState.identity = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new ApiError(500, "Internal Server Error"),
+    };
+    const { container, cleanup } = renderIdentityPanel();
+    try {
+      expect(container.textContent).toContain("Internal Server Error");
+      expect(container.textContent).not.toContain("No identity profile");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders ErrorBanner (not EmptyState) for a non-ApiError network error", () => {
+    hookState.identity = {
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: new Error("Network failure"),
+    };
+    const { container, cleanup } = renderIdentityPanel();
+    try {
+      expect(container.textContent).toContain("Network failure");
+      expect(container.textContent).not.toContain("No identity profile");
     } finally {
       cleanup();
     }
