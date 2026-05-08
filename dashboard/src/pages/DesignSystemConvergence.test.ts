@@ -21,6 +21,9 @@ import runDetailSource from "./RunDetailPage.tsx?raw";
 import packsPageSource from "./PacksPage.tsx?raw";
 import delegationsPageSource from "./DelegationsPage.tsx?raw";
 import approvalsPageSource from "./ApprovalsPage.tsx?raw";
+import bundleDetailGovernSource from "./govern/BundleDetailPage.tsx?raw";
+import outputRulesPageSource from "./govern/OutputRulesPage.tsx?raw";
+import replayPageSource from "./govern/ReplayPage.tsx?raw";
 import buttonSource from "../components/ui/Button.tsx?raw";
 import cardSource from "../components/ui/Card.tsx?raw";
 
@@ -46,6 +49,18 @@ describe("design-system convergence regressions", () => {
 
   it("keeps approvals page status styling on shared tokens instead of page-local CSS vars", () => {
     expect(approvalsPageSource).not.toMatch(/var\(--color-/);
+  });
+
+  it("keeps govern bundle detail page styling on shared tokens instead of page-local CSS vars", () => {
+    expect(bundleDetailGovernSource).not.toMatch(/var\(--color-/);
+  });
+
+  it("keeps govern output rules page styling on shared tokens instead of page-local CSS vars", () => {
+    expect(outputRulesPageSource).not.toMatch(/var\(--color-/);
+  });
+
+  it("keeps govern replay page styling on shared tokens instead of page-local CSS vars", () => {
+    expect(replayPageSource).not.toMatch(/var\(--color-/);
   });
 });
 

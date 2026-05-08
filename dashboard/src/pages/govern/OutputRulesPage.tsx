@@ -168,7 +168,7 @@ export default function OutputRulesPage({ hideHeader }: { hideHeader?: boolean }
         outputRules={outputRules}
       />
       {!canWriteOutputRules && (
-        <div className="rounded-2xl border border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10 px-3 py-2 text-xs text-[var(--color-warning)]">
+        <div className="rounded-2xl border border-status-warning/30 bg-status-warning/10 px-3 py-2 text-xs text-status-warning">
           Viewer mode: output policy controls are read-only. You can inspect rules and open read-only details.
         </div>
       )}
