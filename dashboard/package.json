@@ -76,6 +76,7 @@
     "axe-core": "^4.11.3",
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "jsdom": "^28.1.0",
+    "knip": "^6.12.1",
     "msw": "^2.13.5",
     "orval": "^7",
     "postcss": "^8.5.10",

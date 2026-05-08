@@ -1,0 +1,29 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/main.tsx",
+    "src/App.tsx",
+    "src/api/generated/**/*.ts",
+    "src/test-utils/**/*.{ts,tsx}",
+    "*.config.{ts,js,mjs,cjs}",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "scripts/**/*.{js,mjs,cjs}",
+    "src/**/*.test.{ts,tsx}"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "scripts/**/*.{js,mjs,cjs}"
+  ],
+  "ignore": [
+    "src/api/generated/**",
+    "src/test-utils/**",
+    "**/*.test.{ts,tsx}",
+    "**/*.stories.{ts,tsx}"
+  ],
+  "ignoreDependencies": [
+    "@types/*",
+    "tw-animate-css"
+  ],
+  "ignoreExportsUsedInFile": true
+}
