@@ -360,6 +360,85 @@ describe("JobDetailPage policy trace tab integration", () => {
       cleanup();
     }
   });
+
+  it("clicking Audit Chain tab updates URL to ?tab=audit-chain (task-90bb5ef3)", () => {
+    const { container, cleanup } = renderPage();
+    try {
+      const auditTab = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Audit Chain",
+      );
+      expect(auditTab).toBeTruthy();
+      act(() => {
+        auditTab?.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true }),
+        );
+      });
+      expect(searchState.current).toBe("tab=audit-chain");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("clicking Inputs tab updates URL to ?tab=inputs (task-90bb5ef3)", () => {
+    const { container, cleanup } = renderPage();
+    try {
+      const inputsTab = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Inputs",
+      );
+      expect(inputsTab).toBeTruthy();
+      act(() => {
+        inputsTab?.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true }),
+        );
+      });
+      expect(searchState.current).toBe("tab=inputs");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("clicking Outputs tab updates URL to ?tab=outputs (task-90bb5ef3)", () => {
+    const { container, cleanup } = renderPage();
+    try {
+      const outputsTab = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Outputs",
+      );
+      expect(outputsTab).toBeTruthy();
+      act(() => {
+        outputsTab?.dispatchEvent(
+          new MouseEvent("click", { bubbles: true, cancelable: true }),
+        );
+      });
+      expect(searchState.current).toBe("tab=outputs");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("clicking Overview tab clears the ?tab param when leaving another tab (task-90bb5ef3)", () => {
+    const { container, cleanup } = renderPage();
+    try {
+      // First navigate away from Overview.
+      const inputsTab = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Inputs",
+      );
+      act(() => {
+        inputsTab?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      expect(searchState.current).toBe("tab=inputs");
+
+      // Now click Overview — URL should drop the param (default tab is implicit).
+      const overviewTab = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.trim() === "Overview",
+      );
+      act(() => {
+        overviewTab?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      expect(searchState.current).toBe("");
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 describe("JobDetailPage 4-surface agreement (task-dc086833)", () => {
