@@ -1,12 +1,19 @@
 /*
  * DESIGN: "Control Surface" — Audit Log
- * Matches cordumds-gj5mw4zm.manus.space showcase patterns
+ *
+ * v2.5 hero rewrite (task-55f813b3):
+ *  - Filters serialised to URL via nuqs (URL roundtrip restores state).
+ *  - Hand-rolled <table> swapped for primitives/DataTable (auto-virtualizes
+ *    when row count > 100; decision-identity 3px left edge).
+ *  - Row-click opens a Drawer with event detail + chain-signature drilldown
+ *    (DoD #4 amended via comment-832277b0 — drilldown derives per-event
+ *    chain status from the cached /audit/verify result, no N+1).
  */
-import { useState, useRef, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryState, parseAsString } from "nuqs";
 import { parseAsSearchTerm } from "@/lib/url-state";
-import { useInfiniteQuery } from "@tanstack/react-query";
-import { motion } from "framer-motion";
+import { useQuery } from "@tanstack/react-query";
+import type { ColumnDef } from "@tanstack/react-table";
 import { get } from "@/api/client";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -16,6 +23,11 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { LabeledField } from "@/components/ui/LabeledField";
 import { InstrumentCard, InstrumentCardBody } from "@/components/ui/InstrumentCard";
+import { Drawer } from "@/components/ui/Drawer";
+import {
+  DataTable,
+  type DecisionTier,
+} from "@/components/primitives/DataTable";
 import {
   Search,
   RefreshCw,
@@ -24,11 +36,18 @@ import {
   Calendar,
   Bot,
   X,
+  Copy,
 } from "lucide-react";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { useConfigStore } from "@/state/config";
+import {
+  useAuditVerify,
+  type AuditVerifyResult,
+} from "@/hooks/useAuditVerify";
+import { useIsAdmin } from "@/hooks/usePermission";
 
 interface AuditEvent {
   id: string;
@@ -39,6 +58,8 @@ interface AuditEvent {
   detail?: string;
   timestamp: string;
   ip?: string;
+  decision?: string;
+  seq?: number;
 }
 
 interface AuditResponse {
@@ -48,27 +69,15 @@ interface AuditResponse {
   offset?: number;
 }
 
-interface AuditObserverState {
-  hasNextPage: boolean;
-  isFetchingNextPage: boolean;
-  fetchNextPage: () => Promise<unknown>;
-}
+const PAGE_LIMIT = 1000;
 
-const PAGE_SIZE = 50;
-
-const tableBodyVariants = {
-  hidden: {},
-  visible: {
-    transition: {
-      staggerChildren: 0.04,
-    },
-  },
-};
-
-const tableRowVariants = {
-  hidden: { opacity: 0, y: 8 },
-  visible: { opacity: 1, y: 0 },
-};
+const DECISION_TIERS: ReadonlySet<DecisionTier> = new Set([
+  "allow",
+  "deny",
+  "require_approval",
+  "allow_with_constraints",
+  "throttle",
+]);
 
 export function parseSeqParam(raw?: string | null): number | undefined {
   if (typeof raw !== "string") return undefined;
@@ -104,6 +113,8 @@ export function shouldFetchNextAuditPage(
 }
 
 function mapEvent(e: Record<string, unknown>): AuditEvent {
+  const seqRaw = e.seq;
+  const decisionRaw = e.decision;
   return {
     id: (e.id as string) ?? "",
     action: (e.action as string) ?? "",
@@ -117,6 +128,8 @@ function mapEvent(e: Record<string, unknown>): AuditEvent {
       (e.resource_id as string) || (e.resourceId as string) || undefined,
     detail: (e.message as string) || (e.detail as string) || undefined,
     timestamp: (e.created_at as string) || (e.timestamp as string) || "",
+    decision: typeof decisionRaw === "string" ? decisionRaw : undefined,
+    seq: typeof seqRaw === "number" ? seqRaw : undefined,
   };
 }
 
@@ -133,12 +146,21 @@ function actionVariant(action: string): BadgeVariant {
   return "cordum";
 }
 
+function decisionAccessor(event: AuditEvent): DecisionTier | undefined {
+  const d = event.decision;
+  if (!d) return undefined;
+  return DECISION_TIERS.has(d as DecisionTier) ? (d as DecisionTier) : undefined;
+}
+
 interface AgentOption {
   id: string;
   name: string;
 }
 
 export default function AuditLogPage() {
+  const tenantId = useConfigStore((s) => s.tenantId);
+  const isAdmin = useIsAdmin();
+
   const [search, setSearch] = useQueryState(
     "search",
     parseAsSearchTerm.withOptions({ clearOnDefault: true }),
@@ -160,6 +182,7 @@ export default function AuditLogPage() {
     parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
   );
   const [agents, setAgents] = useState<AgentOption[]>([]);
+  const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
 
   useEffect(() => {
     get<{ items?: Array<{ id: string; name: string }> }>("/agents")
@@ -172,29 +195,13 @@ export default function AuditLogPage() {
         /* agent list not available — filter hidden */
       });
   }, []);
-  const loadMoreRef = useRef<HTMLDivElement>(null);
-  const observerStateRef = useRef<AuditObserverState>({
-    hasNextPage: false,
-    isFetchingNextPage: false,
-    fetchNextPage: () => Promise.resolve(),
-  });
-  const handleObserverRef = useRef<IntersectionObserverCallback | null>(null);
 
-  const {
-    data,
-    isLoading,
-    isError,
-    error,
-    refetch,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = useInfiniteQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["audit", actionFilter, agentFilter, dateFrom, dateTo, search],
-    queryFn: async ({ pageParam = 0 }) => {
+    queryFn: async () => {
       const params = new URLSearchParams({
-        limit: String(PAGE_SIZE),
-        offset: String(pageParam),
+        limit: String(PAGE_LIMIT),
+        offset: "0",
       });
       if (actionFilter) params.set("action", actionFilter);
       if (agentFilter) params.set("agent_id", agentFilter);
@@ -204,50 +211,17 @@ export default function AuditLogPage() {
       if (search) params.set("search", search);
       return get<AuditResponse>(`/policy/audit?${params}`);
     },
-    getNextPageParam: (lastPage, allPages) => {
-      if (!lastPage.has_more) return undefined;
-      return allPages.reduce((sum, p) => sum + (p.items?.length ?? 0), 0);
-    },
-    initialPageParam: 0,
   });
 
-  const events: AuditEvent[] = (data?.pages ?? []).flatMap((p) =>
-    (p.items ?? []).map(mapEvent),
+  const events: AuditEvent[] = useMemo(
+    () => (data?.items ?? []).map(mapEvent),
+    [data],
   );
-  const total = data?.pages?.[0]?.total;
-
-  observerStateRef.current = {
-    hasNextPage: !!hasNextPage,
-    isFetchingNextPage,
-    fetchNextPage,
-  };
-  if (!handleObserverRef.current) {
-    handleObserverRef.current = (entries) => {
-      const {
-        hasNextPage: canFetchNextPage,
-        isFetchingNextPage: fetchingNextPage,
-        fetchNextPage: fetchNextPagePage,
-      } = observerStateRef.current;
-      if (
-        shouldFetchNextAuditPage(entries, canFetchNextPage, fetchingNextPage)
-      ) {
-        void fetchNextPagePage();
-      }
-    };
-  }
-
-  useEffect(() => {
-    const el = loadMoreRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      (entries, currentObserver) => {
-        handleObserverRef.current?.(entries, currentObserver);
-      },
-      { threshold: 0.1 },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
+  const total = data?.total;
+  const expandedEvent = useMemo(
+    () => events.find((e) => e.id === expandedEventId) ?? null,
+    [events, expandedEventId],
+  );
 
   const filtersActive =
     !!actionFilter || !!agentFilter || !!dateFrom || !!dateTo || !!search;
@@ -290,6 +264,92 @@ export default function AuditLogPage() {
     URL.revokeObjectURL(url);
     toast.success(`Exported ${events.length} events`);
   };
+
+  const columns = useMemo<ColumnDef<AuditEvent>[]>(
+    () => [
+      {
+        id: "time",
+        header: "Time",
+        accessorFn: (e) => e.timestamp,
+        cell: ({ row }) => (
+          <span className="font-mono text-xs text-muted-foreground whitespace-nowrap">
+            {formatRelativeTime(row.original.timestamp)}
+          </span>
+        ),
+      },
+      {
+        id: "action",
+        header: "Action",
+        accessorFn: (e) => e.action,
+        cell: ({ row }) => (
+          <StatusBadge
+            variant={actionVariant(row.original.action)}
+            className="font-mono"
+          >
+            {row.original.action}
+          </StatusBadge>
+        ),
+      },
+      {
+        id: "actor",
+        header: "Actor",
+        accessorFn: (e) => e.actor,
+        cell: ({ row }) => (
+          <span className="font-mono text-cordum">
+            {row.original.actor.slice(0, 16)}
+          </span>
+        ),
+      },
+      {
+        id: "resource",
+        header: "Resource",
+        accessorFn: (e) => e.resource,
+        cell: ({ row }) => (
+          <span className="text-sm text-foreground">
+            {row.original.resource || "—"}
+            {row.original.resourceId && (
+              <span className="text-xs text-muted-foreground font-mono ml-1">
+                ({row.original.resourceId.slice(0, 12)})
+              </span>
+            )}
+          </span>
+        ),
+      },
+      {
+        id: "decision",
+        header: "Decision",
+        accessorFn: (e) => e.decision ?? "",
+        cell: ({ row }) => {
+          const d = row.original.decision;
+          if (!d) {
+            return <span className="text-xs text-muted-foreground">—</span>;
+          }
+          const variant: BadgeVariant =
+            d === "allow"
+              ? "healthy"
+              : d === "deny"
+                ? "danger"
+                : "warning";
+          return (
+            <StatusBadge variant={variant} className="font-mono">
+              {d}
+            </StatusBadge>
+          );
+        },
+      },
+      {
+        id: "detail",
+        header: "Detail",
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span className="text-xs text-muted-foreground truncate max-w-[260px] inline-block align-middle">
+            {row.original.detail ?? "—"}
+          </span>
+        ),
+      },
+    ],
+    [],
+  );
 
   if (isError) {
     return (
@@ -454,112 +514,299 @@ export default function AuditLogPage() {
         </InstrumentCardBody>
       </InstrumentCard>
 
-      {/* Table */}
       {isLoading ? (
         <div className="instrument-card">
           <SkeletonTable rows={10} />
         </div>
-      ) : events.length === 0 ? (
-        <EmptyState
-          icon={<FileText className="w-5 h-5" />}
-          title="No audit events"
-          description={
-            filtersActive
-              ? "No events match your filters"
-              : "Events will appear as actions occur in the system"
-          }
-        />
       ) : (
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-          className="instrument-card overflow-hidden"
-        >
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[700px]">
-              <thead>
-                <tr className="border-b border-border bg-surface-0">
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
-                    Time
-                  </th>
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
-                    Action
-                  </th>
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
-                    Actor
-                  </th>
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
-                    Resource
-                  </th>
-                  <th className="text-left px-5 py-3 text-xs font-mono font-medium text-muted-foreground uppercase tracking-widest">
-                    Detail
-                  </th>
-                </tr>
-              </thead>
-              <motion.tbody initial="hidden" animate="visible" variants={tableBodyVariants}>
-                {events.map((e) => (
-                  <motion.tr
-                    key={e.id}
-                    variants={tableRowVariants}
-                    className="border-b border-border hover:bg-surface-1 transition-colors"
-                  >
-                    <td className="px-5 py-3 font-mono text-xs text-muted-foreground whitespace-nowrap">
-                      {formatRelativeTime(e.timestamp)}
-                    </td>
-                    <td className="px-5 py-3">
-                      <StatusBadge
-                        variant={actionVariant(e.action)}
-                        className="font-mono"
-                      >
-                        {e.action}
-                      </StatusBadge>
-                    </td>
-                    <td className="px-5 py-3 text-sm text-foreground">
-                      {e.actor}
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className="text-sm text-foreground">
-                        {e.resource}
-                      </span>
-                      {e.resourceId && (
-                        <span className="text-xs text-muted-foreground font-mono ml-1">
-                          ({e.resourceId.slice(0, 12)})
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-xs text-muted-foreground truncate max-w-[200px]">
-                      {e.detail ?? "\u2014"}
-                    </td>
-                  </motion.tr>
-                ))}
-              </motion.tbody>
-            </table>
-          </div>
-
-          {/* Load More / Infinite scroll trigger */}
-          <div ref={loadMoreRef} className="px-5 py-3 text-center">
-            {isFetchingNextPage ? (
-              <span className="text-xs text-muted-foreground">
-                Loading more...
-              </span>
-            ) : hasNextPage ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => void fetchNextPage()}
-              >
-                Load more
-                {total != null ? ` (${events.length} of ${total})` : ""}
-              </Button>
-            ) : events.length > PAGE_SIZE ? (
-              <span className="text-xs text-muted-foreground">
-                All events loaded
-              </span>
-            ) : null}
-          </div>
-        </motion.div>
+        <div className="instrument-card overflow-hidden">
+          <DataTable
+            columns={columns}
+            data={events}
+            decisionAccessor={decisionAccessor}
+            onRowClick={(event) => setExpandedEventId(event.id)}
+            emptyState={
+              <EmptyState
+                icon={<FileText className="w-5 h-5" />}
+                title="No audit events"
+                description={
+                  filtersActive
+                    ? "No events match your filters"
+                    : "Events will appear as actions occur in the system"
+                }
+              />
+            }
+          />
+        </div>
       )}
+
+      <Drawer
+        open={expandedEvent !== null}
+        onClose={() => setExpandedEventId(null)}
+        size="lg"
+        label="Audit event detail"
+      >
+        {expandedEvent && (
+          <AuditEventDrilldown
+            event={expandedEvent}
+            tenantId={tenantId}
+            isAdmin={isAdmin}
+            onClose={() => setExpandedEventId(null)}
+          />
+        )}
+      </Drawer>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AuditEventDrilldown
+//
+// Renders inside the Drawer when the user clicks an audit row. Top half
+// shows event metadata; bottom half is the chain-signature drilldown
+// (DoD #4 amended via comment-832277b0). The drilldown gates on isAdmin
+// per the /audit/verify backend RBAC; non-admin viewers see a hint
+// pointing at /govern/verification instead of triggering a 403.
+//
+// The drilldown derives per-event verdict from the cached chain-wide
+// verification result — opening 1000 different drawers fires at most
+// one /audit/verify request because React Query shares the cache via
+// queryKey ["audit-chain-verify", tenant].
+// ---------------------------------------------------------------------------
+
+interface AuditEventDrilldownProps {
+  event: AuditEvent;
+  tenantId: string;
+  isAdmin: boolean;
+  onClose: () => void;
+}
+
+function AuditEventDrilldown({
+  event,
+  tenantId,
+  isAdmin,
+  onClose,
+}: AuditEventDrilldownProps) {
+  return (
+    <div className="space-y-6">
+      <header className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            Audit event
+          </p>
+          <h2 className="font-display text-lg font-semibold text-foreground truncate">
+            {event.action || "(no action)"}
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground font-mono">
+            {event.id}
+          </p>
+        </div>
+        <button
+          type="button"
+          aria-label="Close drilldown"
+          onClick={onClose}
+          className="rounded-full border border-border p-1.5 text-muted-foreground hover:bg-surface-1"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </header>
+
+      <dl className="grid grid-cols-2 gap-3 text-xs">
+        <DrillRow label="Time" value={event.timestamp || "—"} mono />
+        <DrillRow label="Actor" value={event.actor} mono />
+        <DrillRow label="Resource" value={event.resource || "—"} />
+        {event.resourceId && (
+          <DrillRow label="Resource ID" value={event.resourceId} mono />
+        )}
+        {event.decision && (
+          <DrillRow label="Decision" value={event.decision} mono />
+        )}
+        {event.seq !== undefined && (
+          <DrillRow label="Chain seq" value={`#${event.seq}`} mono />
+        )}
+      </dl>
+
+      {event.detail && (
+        <section>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            Detail
+          </p>
+          <p className="mt-1 text-sm text-foreground whitespace-pre-wrap">
+            {event.detail}
+          </p>
+        </section>
+      )}
+
+      <ChainSignatureSection
+        event={event}
+        tenantId={tenantId}
+        isAdmin={isAdmin}
+      />
+    </div>
+  );
+}
+
+interface DrillRowProps {
+  label: string;
+  value: string;
+  mono?: boolean;
+}
+
+function DrillRow({ label, value, mono }: DrillRowProps) {
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success(`Copied ${label.toLowerCase()}`);
+    } catch {
+      toast.error("Copy failed");
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <dt className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+      </dt>
+      <dd
+        className={cn(
+          "flex items-center gap-1.5 text-sm",
+          mono && "font-mono",
+        )}
+      >
+        <span className="truncate">{value}</span>
+        {value && value !== "—" && (
+          <button
+            type="button"
+            aria-label={`Copy ${label}`}
+            onClick={handleCopy}
+            className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-surface-1 hover:text-foreground"
+            data-row-action
+          >
+            <Copy className="h-3 w-3" />
+          </button>
+        )}
+      </dd>
+    </div>
+  );
+}
+
+interface ChainSignatureSectionProps {
+  event: AuditEvent;
+  tenantId: string;
+  isAdmin: boolean;
+}
+
+function ChainSignatureSection({
+  event,
+  tenantId,
+  isAdmin,
+}: ChainSignatureSectionProps) {
+  // The drawer-open event is the explicit user opt-in, so we enable the
+  // verify query here. useAuditVerify gates on isAdmin internally so
+  // viewer users don't fire a 403; we mirror that gate at this section
+  // to render a helpful hint instead of a silent no-op.
+  const verify = useAuditVerify({ tenant: tenantId, enabled: isAdmin });
+
+  if (!isAdmin) {
+    return (
+      <section className="rounded-2xl border border-border bg-surface-1 p-4">
+        <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          Chain signature
+        </p>
+        <p className="mt-2 text-sm text-foreground">
+          Chain integrity verification requires admin role.
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          See <span className="font-mono">/govern/verification</span> for
+          read-only chain status.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-2xl border border-border bg-surface-1 p-4 space-y-2">
+      <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+        Chain signature
+      </p>
+      {verify.isLoading && (
+        <p className="text-sm text-muted-foreground">
+          Loading chain verification…
+        </p>
+      )}
+      {verify.isError && (
+        <p className="text-sm text-danger">
+          Chain verification unavailable.
+        </p>
+      )}
+      {verify.data && <ChainSignatureVerdict event={event} chain={verify.data} />}
+    </section>
+  );
+}
+
+interface ChainSignatureVerdictProps {
+  event: AuditEvent;
+  chain: AuditVerifyResult;
+}
+
+function ChainSignatureVerdict({ event, chain }: ChainSignatureVerdictProps) {
+  if (event.seq === undefined) {
+    return (
+      <div className="space-y-1">
+        <StatusBadge variant="info">Not chain-signed</StatusBadge>
+        <p className="text-xs text-muted-foreground">
+          This entry has no chain seq — policy-only audit entries are not
+          included in the Merkle chain.
+        </p>
+      </div>
+    );
+  }
+
+  if (event.seq < chain.retention_boundary_seq) {
+    return (
+      <div className="space-y-1">
+        <StatusBadge variant="warning">Retention-trimmed</StatusBadge>
+        <p className="text-xs text-muted-foreground">
+          Chain seq #{event.seq} is older than the retention window
+          ({chain.retention_window_hours ?? "?"}h). Signature evidence has
+          been pruned.
+        </p>
+      </div>
+    );
+  }
+
+  const tamperGap = chain.gaps.find(
+    (g) =>
+      g.at_seq === event.seq &&
+      (g.type === "missing" ||
+        g.type === "hash_mismatch" ||
+        g.type === "out_of_order"),
+  );
+
+  if (tamperGap) {
+    return (
+      <div className="space-y-1">
+        <StatusBadge variant="danger" dot>
+          Tamper detected ({tamperGap.type.replace(/_/g, " ")})
+        </StatusBadge>
+        <p className="text-xs text-muted-foreground">
+          Chain seq #{event.seq} failed verification. Investigate via
+          /govern/verification before relying on this entry for compliance
+          export.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      <StatusBadge variant="healthy" dot>
+        Verified
+      </StatusBadge>
+      <p className="text-xs text-muted-foreground">
+        Chain seq #{event.seq} is signed and present in the verified Merkle
+        window ({chain.verified_events} of {chain.total_events} events).
+      </p>
     </div>
   );
 }
