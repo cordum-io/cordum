@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { Job } from "@/api/types";
 
-const { queryState, routerState, governanceState } = vi.hoisted(() => ({
+const { queryState, routerState, searchState, governanceState } = vi.hoisted(() => ({
   queryState: {
     current: {
       data: null as Job | null,
@@ -17,6 +17,9 @@ const { queryState, routerState, governanceState } = vi.hoisted(() => ({
     params: { id: "job-123" },
     navigate: vi.fn(),
   },
+  searchState: {
+    current: "",
+  },
   governanceState: {
     render: vi.fn(),
   },
@@ -29,6 +32,24 @@ vi.mock("@tanstack/react-query", () => ({
 vi.mock("react-router-dom", () => ({
   useParams: () => routerState.params,
   useNavigate: () => routerState.navigate,
+  useSearchParams: () => {
+    const [params, setParams] = React.useState(
+      () => new URLSearchParams(searchState.current),
+    );
+    const setSearchParams = (
+      nextInit:
+        | URLSearchParams
+        | ((prev: URLSearchParams) => URLSearchParams),
+    ) => {
+      setParams((prev) => {
+        const next =
+          typeof nextInit === "function" ? nextInit(prev) : nextInit;
+        searchState.current = next.toString();
+        return new URLSearchParams(next);
+      });
+    };
+    return [params, setSearchParams] as const;
+  },
 }));
 
 vi.mock("framer-motion", () => {
@@ -122,6 +143,7 @@ beforeEach(() => {
     refetch: vi.fn(),
   };
   routerState.params = { id: "job-123" };
+  searchState.current = "";
   routerState.navigate.mockReset();
   governanceState.render.mockReset();
 });
@@ -299,7 +321,7 @@ describe("Job status variant mapping", () => {
   });
 });
 
-describe("JobDetailPage governance tab integration", () => {
+describe("JobDetailPage policy trace tab integration", () => {
   it("renders the Agent Executions panel placeholder with the current job id", () => {
     const { container, cleanup } = renderPage();
 
@@ -310,27 +332,30 @@ describe("JobDetailPage governance tab integration", () => {
     }
   });
 
-  it("renders the governance tab and lazy-mounts the timeline on activation", () => {
+  it("renders the required tab set and lazy-mounts the policy trace timeline", () => {
     const { container, cleanup } = renderPage();
 
     try {
-      expect(container.textContent).toContain("Governance");
+      for (const label of ["Overview", "Audit Chain", "Inputs", "Outputs", "Policy Trace"]) {
+        expect(container.textContent).toContain(label);
+      }
       expect(governanceState.render).not.toHaveBeenCalled();
       expect(container.querySelector('[data-testid="governance-timeline"]')).toBeNull();
 
-      const governanceTab = Array.from(container.querySelectorAll("button")).find(
-        (button) => button.textContent?.includes("Governance"),
+      const policyTraceTab = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.includes("Policy Trace"),
       );
-      expect(governanceTab).toBeTruthy();
+      expect(policyTraceTab).toBeTruthy();
 
       act(() => {
-        governanceTab?.dispatchEvent(
+        policyTraceTab?.dispatchEvent(
           new MouseEvent("click", { bubbles: true, cancelable: true }),
         );
       });
 
       expect(governanceState.render).toHaveBeenCalledTimes(1);
       expect(container.querySelector('[data-testid="governance-timeline"]')?.textContent).toContain('"jobId":"job-123"');
+      expect(searchState.current).toBe("tab=policy-trace");
     } finally {
       cleanup();
     }
