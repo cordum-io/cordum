@@ -16,7 +16,12 @@ import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { McpApprovalsSection } from "@/components/approvals/McpApprovalsSection";
 import { WorkflowContext } from "@/components/approvals/WorkflowContext";
-import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
+import {
+  StatusBadge,
+  statusToneBorderClasses,
+  statusToneTextClasses,
+  type BadgeVariant,
+} from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCard, SkeletonTable } from "@/components/ui/Skeleton";
@@ -671,7 +676,7 @@ export default function ApprovalsPage() {
                   className={cn(
                     "h-4 w-4",
                     denied.length > 0
-                      ? "text-status-governance"
+                      ? statusToneTextClasses.governance
                       : "text-muted-foreground",
                   )}
                 />
@@ -833,10 +838,13 @@ export default function ApprovalsPage() {
                   transition={{ duration: 0.3 }}
                   className={cn(
                     "instrument-card group cursor-pointer overflow-hidden border-border/70 bg-surface-1/95 focus:outline-none focus:ring-1 focus:ring-cordum",
+                    // statusToneBorderClasses encodes /20 opacity — slight
+                    // visual reduction from the previous /30 inline literal,
+                    // accepted in exchange for centralizing the token.
                     approval.status === "pending" &&
-                      "border-status-warning/30",
+                      statusToneBorderClasses.warning,
                     approval.status === "rejected" &&
-                      "border-status-governance/30",
+                      statusToneBorderClasses.governance,
                     approval.status === "invalidated" &&
                       "border-destructive/30",
                     approval.status === "repaired" &&

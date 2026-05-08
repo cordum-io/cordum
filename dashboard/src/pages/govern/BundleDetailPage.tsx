@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCard } from "@/components/ui/Skeleton";
-import { StatusBadge } from "@/components/ui/StatusBadge";
+import { StatusBadge, statusToneTextClasses } from "@/components/ui/StatusBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { BundleDetailTabs, type BundleTab } from "@/components/policy/bundles/BundleDetailTabs";
 import { BundleYamlEditor } from "@/components/policy/bundles/BundleYamlEditor";
@@ -176,7 +176,7 @@ export default function BundleDetailPage() {
             Bundles
           </Button>
           {isDirty && (
-            <span className="text-xs font-mono text-status-warning">unsaved changes</span>
+            <span className={`text-xs font-mono ${statusToneTextClasses.warning}`}>unsaved changes</span>
           )}
         </div>
 
