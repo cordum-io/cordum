@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   APP_SHELL_G_KEY_MAP,
   APP_SHELL_NAV_SECTIONS,
+  aggregateBadgeClassMap,
+  aggregateSectionBadgeSeverity,
   deriveSystemStatus,
   findActiveSection,
   statusColorMap,
@@ -191,5 +193,86 @@ describe("AppShell g-key map completeness", () => {
   it("maps both h and o to home", () => {
     expect(APP_SHELL_G_KEY_MAP.h).toBe("/");
     expect(APP_SHELL_G_KEY_MAP.o).toBe("/");
+  });
+});
+
+describe("aggregateSectionBadgeSeverity", () => {
+  const counts: Record<string, number> = {
+    approvals: 0,
+    dlq: 0,
+    quarantine: 0,
+  };
+  const getCount = (badge?: string) => (badge ? (counts[badge] ?? 0) : 0);
+
+  it("returns 'warning' for an approvals-only section with non-zero count", () => {
+    counts.approvals = 3;
+    counts.dlq = 0;
+    counts.quarantine = 0;
+    const severity = aggregateSectionBadgeSeverity(
+      [{ badge: "approvals" }],
+      getCount,
+    );
+    expect(severity).toBe("warning");
+    expect(aggregateBadgeClassMap.warning).toBe("bg-status-warning/20 text-status-warning");
+  });
+
+  it("returns 'error' for a quarantine-only section with non-zero count", () => {
+    counts.approvals = 0;
+    counts.dlq = 0;
+    counts.quarantine = 5;
+    const severity = aggregateSectionBadgeSeverity(
+      [{ badge: "quarantine" }],
+      getCount,
+    );
+    expect(severity).toBe("error");
+    expect(aggregateBadgeClassMap.error).toBe("bg-status-error/20 text-status-error");
+  });
+
+  it("returns 'error' (highest tier) for a mixed approvals + dlq section", () => {
+    counts.approvals = 2;
+    counts.dlq = 4;
+    counts.quarantine = 0;
+    const severity = aggregateSectionBadgeSeverity(
+      [{ badge: "approvals" }, { badge: "dlq" }],
+      getCount,
+    );
+    expect(severity).toBe("error");
+  });
+
+  it("returns null when items have badges but all counts are zero", () => {
+    counts.approvals = 0;
+    counts.dlq = 0;
+    counts.quarantine = 0;
+    const severity = aggregateSectionBadgeSeverity(
+      [{ badge: "dlq" }, { badge: "approvals" }],
+      getCount,
+    );
+    expect(severity).toBeNull();
+  });
+
+  it("returns null when no items carry a badge prop", () => {
+    counts.approvals = 99;
+    const severity = aggregateSectionBadgeSeverity(
+      [{}, { badge: undefined }],
+      getCount,
+    );
+    expect(severity).toBeNull();
+  });
+
+  it("ignores items whose badge type is outside the known severity map", () => {
+    // A future caller could pass a string outside the NavItem union (e.g.
+    // via raw cast). The helper must NOT promote unknown badges to a
+    // severity tier — the type system already covers the closed union, so
+    // this guards against runtime drift.
+    counts.approvals = 0;
+    counts.dlq = 0;
+    counts.quarantine = 0;
+    const unknownBadge = "info" as unknown as NonNullable<{ badge?: "approvals" | "dlq" | "quarantine" }["badge"]>;
+    const getInfoCount = (badge?: string) => (badge === "info" ? 7 : 0);
+    const severity = aggregateSectionBadgeSeverity(
+      [{ badge: unknownBadge }],
+      getInfoCount,
+    );
+    expect(severity).toBeNull();
   });
 });
