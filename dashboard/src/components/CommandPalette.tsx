@@ -39,7 +39,7 @@ export const COMMAND_PALETTE_COMMANDS: CommandItem[] = [
   { id: "packs", label: "Packs", section: "Navigate", icon: Boxes, path: "/packs", keywords: ["packs", "marketplace", "plugins"] },
   { id: "topics", label: "Topics", section: "Navigate", icon: Hash, path: "/topics", keywords: ["topics", "registry", "routing", "pool mappings"] },
   { id: "schemas", label: "Schemas", section: "Navigate", icon: Monitor, path: "/schemas", keywords: ["schemas", "types", "definitions"] },
-  { id: "dlq", label: "Dead Letter Queue", section: "Navigate", icon: AlertTriangle, path: "/dlq", keywords: ["dlq", "dead letter", "failed", "retry"] },
+  { id: "dlq", label: "Dead Letter Queue", section: "Navigate", icon: AlertTriangle, path: "/jobs?status=dlq", keywords: ["dlq", "dead letter", "failed", "retry"] },
   { id: "audit", label: "Audit Log", section: "Navigate", icon: FileText, path: "/audit", keywords: ["audit", "log", "events", "history"] },
   { id: "settings", label: "Settings Hub", section: "Settings", icon: Settings, path: "/settings", keywords: ["settings", "config"] },
   { id: "settings-config", label: "System Config", section: "Settings", icon: Settings, path: "/settings/config", keywords: ["config", "configuration", "system"] },
