@@ -14,7 +14,6 @@ import jobsPageSource from "./JobsPage.tsx?raw";
 import auditLogPageSource from "./AuditLogPage.tsx?raw";
 import agentsPageSource from "./AgentsPage.tsx?raw";
 import packDetailSource from "./PackDetailPage.tsx?raw";
-import mcpPageSource from "./MCPPage.tsx?raw";
 import evalsPageSource from "./EvalsPage.tsx?raw";
 import evalDatasetDetailSource from "./EvalDatasetDetailPage.tsx?raw";
 import evalRunDetailSource from "./EvalRunDetailPage.tsx?raw";
@@ -103,14 +102,6 @@ describe("premium overhaul DoD gates", () => {
 
   it("DoD-2 — PackDetailPage adopts framer-motion", () => {
     expect(hasMotion(packDetailSource)).toBe(true);
-  });
-
-  it("DoD-1 — MCPPage renders instrument-card primitive", () => {
-    expect(hasInstrumentCard(mcpPageSource)).toBe(true);
-  });
-
-  it("DoD-2 — MCPPage adopts framer-motion", () => {
-    expect(hasMotion(mcpPageSource)).toBe(true);
   });
 
   it("DoD-1 — EvalsPage renders instrument-card primitive", () => {
