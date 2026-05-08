@@ -591,5 +591,68 @@ describe("apiClient (orval mutator adapter)", () => {
     controller.abort();
     expect(init.signal!.aborted).toBe(true);
   });
+
+  it("strips the leading /api/v1 from orval-emitted URLs so the final fetch is single-prefixed", async () => {
+    // Reproduces QA reopen finding (msg-580c1422 / task-7cde446c rejectionDetails):
+    // generated hooks pass `url: "/api/v1/jobs"` but request() prepends baseUrl()
+    // (`/api/v1/`), so without normalization the fetch URL would be
+    // `https://api.example.test/api/v1/api/v1/jobs` and 404 in production.
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [] }));
+
+    await apiClient<{ items: unknown[] }>({
+      url: "/api/v1/jobs",
+      method: "GET",
+    });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.example.test/api/v1/jobs");
+    expect(url).not.toMatch(/\/api\/v1\/api\/v1\//);
+  });
+});
+
+describe("apiClient — generated hook integration", () => {
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    mockConfigState = {
+      apiBaseUrl: "https://api.example.test/api/v1/",
+      apiKey: "api-key-1",
+      tenantId: "tenant-1",
+      principalId: "principal-1",
+      principalRole: "admin",
+      user: { id: "user-1" },
+      isLoggingOut: false,
+      logout: vi.fn(),
+    };
+    getStateMock.mockImplementation(() => mockConfigState);
+
+    randomUUIDSpy = vi
+      .spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValue("00000000-0000-0000-0000-000000000123");
+    performanceNowSpy = vi
+      .spyOn(performance, "now")
+      .mockImplementation(() => 100);
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    randomUUIDSpy.mockRestore();
+    performanceNowSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("invokes a real generated function (listJobs) without double-prefixing /api/v1", async () => {
+    // Imports a real orval-emitted hook so this regression cannot be bypassed
+    // by future refactors of the apiClient adapter that stop normalizing URLs.
+    const { listJobs } = await import("./generated/jobs/jobs");
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { items: [] }));
+
+    await listJobs();
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.example.test/api/v1/jobs");
+    expect(url).not.toMatch(/\/api\/v1\/api\/v1\//);
+  });
 });
 

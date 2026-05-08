@@ -306,7 +306,12 @@ function serializeBody(data: unknown): BodyInit | undefined {
 
 export function apiClient<T>(config: ApiClientConfig): Promise<T> {
   const queryString = config.params ? buildQueryString(config.params) : "";
-  const path = `${config.url}${queryString}`;
+  // orval emits absolute URLs that already start with `/api/v1` (the spec's
+  // server prefix). `request()` re-prepends `baseUrl()` which is also
+  // `/api/v1`, so a naive concat fetches `/api/v1/api/v1/...` and 404s.
+  // Strip the leading prefix before handing the path to request().
+  const normalizedUrl = config.url.replace(/^\/api\/v1/, "");
+  const path = `${normalizedUrl}${queryString}`;
   return request<T>(path, {
     method: config.method.toUpperCase(),
     body: serializeBody(config.data),
