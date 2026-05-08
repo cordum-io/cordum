@@ -69,6 +69,9 @@ interface RunStepInfo {
   duration?: number;
   error?: string;
   output?: Record<string, unknown>;
+  /** Audit-chain event hash from cordum-core `WorkflowRunStep.audit_hash`
+   *  (task-913b6c6c). Threaded through to the governance overlay. */
+  auditHash?: string;
 }
 
 function buildRunStepMap(run?: WorkflowRun | null): Map<string, RunStepInfo> {
@@ -80,7 +83,13 @@ function buildRunStepMap(run?: WorkflowRun | null): Map<string, RunStepInfo> {
     if (rs.startedAt && rs.completedAt) {
       duration = new Date(rs.completedAt).getTime() - new Date(rs.startedAt).getTime();
     }
-    map.set(rs.id, { status: rs.status, duration, error: rs.error, output: rs.output });
+    map.set(rs.id, {
+      status: rs.status,
+      duration,
+      error: rs.error,
+      output: rs.output,
+      auditHash: rs.auditHash,
+    });
   }
   return map;
 }
@@ -199,6 +208,13 @@ export function definitionToGraph(
       runStep?.output?.safetyDecision
         ? (runStep.output.safetyDecision as { type: string })
         : undefined;
+    // auditHash sources: prefer the run-step record's own field (cordum-core
+    // task-913b6c6c populates StepRun.audit_hash directly when available);
+    // fall back to a nested output.audit_hash for forward-compat with any
+    // run-record builder that surfaces it via the output bag.
+    const auditHash =
+      runStep?.auditHash ??
+      (runStep?.output as { auditHash?: string } | undefined)?.auditHash;
 
     const data: UnifiedNodeData = {
       label: step.name || step.id,
@@ -225,12 +241,16 @@ export function definitionToGraph(
       delay_until: step.delay_until,
       route_labels: step.route_labels,
       config: step.config,
+      // Design-time policy hint (cordum-core task-913b6c6c). Threads through
+      // for both view + edit modes; UnifiedNode renders the icon when set.
+      policyGate: step.policyGate,
       // Run overlay
       ...(run ? {
         runStatus: runStep?.status,
         duration: runStep?.duration,
         error: runStep?.error,
         safetyDecision,
+        auditHash,
       } : {}),
     };
 
