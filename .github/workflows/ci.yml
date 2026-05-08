@@ -176,6 +176,10 @@ jobs:
       working-directory: dashboard
       run: pnpm install --frozen-lockfile
 
+    - name: Check API codegen drift
+      working-directory: dashboard
+      run: pnpm run check-api-codegen
+
     - name: Typecheck dashboard (noUnusedLocals + noUnusedParameters gate, task-dd1a5934)
       working-directory: dashboard
       run: pnpm exec tsc --noEmit
