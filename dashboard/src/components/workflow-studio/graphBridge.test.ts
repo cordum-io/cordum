@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { mapWorkflow, mapWorkflowRun } from "@/api/transform";
 import { definitionToGraph } from "./graphBridge";
 import type { Workflow, WorkflowRun, WorkflowStep } from "@/api/types";
 
@@ -104,5 +105,39 @@ describe("graphBridge.definitionToGraph governance threading", () => {
     // s2/s3 have no matching run-step → all run-time fields undefined.
     expect(graph.nodes[1]?.data.auditHash).toBeUndefined();
     expect(graph.nodes[2]?.data.auditHash).toBeUndefined();
+  });
+
+  it("threads backend-shaped policy_gate and audit_hash through transforms into UnifiedNodeData", () => {
+    const workflow = mapWorkflow({
+      id: "wf-backend",
+      name: "Backend-shaped workflow",
+      steps: {
+        review: {
+          id: "review",
+          name: "Review",
+          type: "job",
+          policy_gate: "require_approval",
+        },
+      },
+    });
+    const run = mapWorkflowRun({
+      id: "run-backend",
+      workflow_id: "wf-backend",
+      status: "succeeded",
+      steps: {
+        review: {
+          step_id: "review",
+          status: "succeeded",
+          output: { safetyDecision: { type: "deny" } },
+          audit_hash: "c".repeat(64),
+        },
+      },
+    });
+
+    const graph = definitionToGraph(workflow, "view", run);
+
+    expect(graph.nodes[0]?.data.policyGate).toBe("require_approval");
+    expect(graph.nodes[0]?.data.safetyDecision).toEqual({ type: "deny" });
+    expect(graph.nodes[0]?.data.auditHash).toBe("c".repeat(64));
   });
 });
