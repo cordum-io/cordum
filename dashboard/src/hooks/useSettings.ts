@@ -184,25 +184,6 @@ export function useCreateApiKey() {
   });
 }
 
-export function useRevokeApiKey() {
-  const queryClient = useQueryClient();
-  return useMutation<void, Error, string>({
-    mutationFn: (id) => {
-      logger.info("settings", "Revoking API key", { id });
-      return del(`/auth/keys/${id}`);
-    },
-    onSuccess: (_, id) => {
-      logger.info("settings", "API key revoked", { id });
-      useToastStore.getState().addToast({ type: "success", title: "API key revoked" });
-      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-    },
-    onError: (err, id) => {
-      logger.error("settings", "API key revocation failed", { id, error: err.message });
-      useToastStore.getState().addToast({ type: "error", title: "Failed to revoke key", description: err.message });
-    },
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Users
 // ---------------------------------------------------------------------------
@@ -447,25 +428,6 @@ export function useEnvironments() {
   }, [config]);
 
   return { data: environments, isLoading, isError, error, refetch };
-}
-
-export function useSaveEnvironment() {
-  const setConfig = useSetConfig();
-  const { data: environments } = useEnvironments();
-  const environmentsRef = useRef(environments);
-  environmentsRef.current = environments;
-
-  return useMutation<void, Error, Environment>({
-    mutationFn: (env) => {
-      const existing = environmentsRef.current ?? [];
-      const idx = existing.findIndex((e) => e.id === env.id);
-      const updated = idx >= 0
-        ? existing.map((e, i) => (i === idx ? env : e))
-        : [...existing, env];
-      logger.info("settings", "Saving environment", { id: env.id });
-      return setConfig.mutateAsync({ environments: updated });
-    },
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -847,17 +809,6 @@ export function useGeneralConfig() {
   }, [config]);
 
   return { data: generalConfig, isLoading, isError, refetch };
-}
-
-export function useSetGeneralConfig() {
-  const setConfig = useSetConfig();
-
-  return useMutation<void, Error, Partial<GeneralConfig>>({
-    mutationFn: (patch) => {
-      logger.info("settings", "Updating general config");
-      return setConfig.mutateAsync(patch as Partial<SystemConfig>);
-    },
-  });
 }
 
 /** @internal exported for unit tests */

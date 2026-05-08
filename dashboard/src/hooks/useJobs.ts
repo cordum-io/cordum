@@ -6,7 +6,6 @@ import { useToastStore } from "../state/toast";
 import type {
   Job,
   JobStatus,
-  SafetyDecision,
   ApiResponse,
   RemediateJobInput,
   RemediateJobResponse,
@@ -14,10 +13,7 @@ import type {
   SubmitJobResponse,
 } from "../api/types";
 import {
-  mapJobDetail,
   mapJobRecord,
-  mapSafetyDecision,
-  type BackendJobDetail,
   type BackendJobRecord,
 } from "../api/transform";
 
@@ -182,36 +178,6 @@ export function useJobs(filters: JobFilters = {}) {
       };
     },
     staleTime: 10_000,
-  });
-}
-
-export function useJob(id: string) {
-  return useQuery<Job>({
-    queryKey: queryKeys.jobs.detail(id),
-    queryFn: async () => {
-      const res = await get<BackendJobDetail>(`/jobs/${encodeURIComponent(id)}`);
-      return mapJobDetail(res);
-    },
-    enabled: !!id,
-    staleTime: 5_000,
-  });
-}
-
-export function useJobDecisions(id: string) {
-  return useQuery<SafetyDecision[]>({
-    queryKey: queryKeys.jobs.decisions(id),
-    queryFn: async () => {
-      const res = await get<Array<Record<string, unknown>>>(`/jobs/${encodeURIComponent(id)}/decisions`);
-      return (res ?? []).map((r) =>
-        mapSafetyDecision(
-          typeof r.decision === "string" ? r.decision : undefined,
-          typeof r.reason === "string" ? r.reason : undefined,
-          typeof r.rule_id === "string" ? r.rule_id : undefined,
-        ),
-      ).filter((v): v is SafetyDecision => !!v);
-    },
-    enabled: !!id,
-    staleTime: 30_000,
   });
 }
 

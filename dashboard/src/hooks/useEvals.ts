@@ -4,7 +4,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { del, get, post, put } from "../api/client";
+import { del, get, post } from "../api/client";
 import {
   mapEvalDataset,
   mapEvalRun,
@@ -67,24 +67,6 @@ export function useEvalDataset(id: string | undefined) {
     queryFn: async () => {
       const res = await get<BackendEvalDataset>(`/evals/datasets/${encodeURIComponent(id!)}`);
       return mapEvalDataset(res);
-    },
-    staleTime: 60_000,
-  });
-}
-
-interface BackendDatasetVersionsResponse {
-  items?: BackendEvalDataset[];
-}
-
-export function useEvalDatasetVersions(name: string | undefined) {
-  return useQuery<EvalDataset[], Error>({
-    queryKey: ["evals", "dataset-versions", name],
-    enabled: !!name,
-    queryFn: async () => {
-      const res = await get<BackendDatasetVersionsResponse>(
-        `/evals/datasets/by-name/${encodeURIComponent(name!)}`,
-      );
-      return (res.items ?? []).map(mapEvalDataset);
     },
     staleTime: 60_000,
   });
@@ -294,31 +276,6 @@ export function useDeleteEvalDataset() {
     onSuccess: (_void, vars) => {
       qc.invalidateQueries({ queryKey: ["evals", "datasets"] });
       qc.removeQueries({ queryKey: ["evals", "dataset", vars.datasetId] });
-    },
-  });
-}
-
-export interface CreateDatasetVersionInput {
-  baseDatasetId: string;
-  version?: number;
-  description?: string;
-}
-
-export function useCreateDatasetVersion() {
-  const qc = useQueryClient();
-  return useMutation<EvalDataset, Error, CreateDatasetVersionInput>({
-    mutationFn: async ({ baseDatasetId, version, description }) => {
-      const body: Record<string, unknown> = {};
-      if (version !== undefined) body.version = version;
-      if (description !== undefined) body.description = description;
-      const res = await put<BackendEvalDataset>(
-        `/evals/datasets/${encodeURIComponent(baseDatasetId)}`,
-        body,
-      );
-      return mapEvalDataset(res);
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["evals", "datasets"] });
     },
   });
 }
