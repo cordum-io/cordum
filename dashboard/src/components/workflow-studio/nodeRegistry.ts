@@ -381,6 +381,7 @@ const SAFETY_BADGES: Record<string, SafetyBadgeConfig> = {
   allow: { label: "Allowed", className: "bg-[var(--color-success)] text-primary-foreground", glyph: "\u2713" },
   deny: { label: "Denied", className: "bg-[var(--color-governance)] text-primary-foreground", glyph: "\u2717" },
   require_approval: { label: "Approval required", className: "bg-[var(--color-warning)] text-primary-foreground", glyph: "\u270B" },
+  allow_with_constraints: { label: "Allowed with constraints", className: "bg-[var(--color-warning)] text-primary-foreground", glyph: "\u26A0" },
   throttle: { label: "Throttled", className: "bg-[var(--color-info)] text-primary-foreground", glyph: "\u23F3" },
 };
 
