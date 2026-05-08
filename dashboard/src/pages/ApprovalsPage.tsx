@@ -671,7 +671,7 @@ export default function ApprovalsPage() {
                   className={cn(
                     "h-4 w-4",
                     denied.length > 0
-                      ? "text-[var(--color-governance)]"
+                      ? "text-status-governance"
                       : "text-muted-foreground",
                   )}
                 />
@@ -834,9 +834,9 @@ export default function ApprovalsPage() {
                   className={cn(
                     "instrument-card group cursor-pointer overflow-hidden border-border/70 bg-surface-1/95 focus:outline-none focus:ring-1 focus:ring-cordum",
                     approval.status === "pending" &&
-                      "border-[var(--color-warning)]/30",
+                      "border-status-warning/30",
                     approval.status === "rejected" &&
-                      "border-[var(--color-governance)]/30",
+                      "border-status-governance/30",
                     approval.status === "invalidated" &&
                       "border-destructive/30",
                     approval.status === "repaired" &&
