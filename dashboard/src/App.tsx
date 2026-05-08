@@ -59,6 +59,7 @@ const SettingsSSOPage = lazy(() => import("./pages/settings/SettingsSSOPage"));
 const SettingsSCIMPage = lazy(() => import("./pages/settings/SettingsSCIMPage"));
 const SettingsAuditExportPage = lazy(() => import("./pages/settings/SettingsAuditExportPage"));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
+const SettingsShell = lazy(() => import("./pages/SettingsShell"));
 const SettingsHubPage = lazy(() => import("./pages/SettingsHubPage"));
 const GovernPolicyOverviewPage = lazy(() => import("./pages/govern/PolicyOverviewPage"));
 const GovernTenantDetailPage = lazy(() => import("./pages/govern/TenantDetailPage"));
@@ -183,19 +184,21 @@ function ProtectedRoutes() {
           <Route path="/audit" element={<AuditLogPage />} />
           <Route path="/dlq" element={<DLQPage />} />
 
-          {/* SETTINGS */}
-          <Route path="/settings" element={<SettingsHubPage />} />
-          <Route path="/settings/health" element={<SettingsHealthPage />} />
-          <Route path="/settings/keys" element={<SettingsKeysPage />} />
-          <Route path="/settings/users" element={<SettingsUsersPage />} />
-          <Route path="/settings/notifications" element={<SettingsNotificationsPage />} />
-          <Route path="/settings/environments" element={<SettingsEnvironmentsPage />} />
-          <Route path="/settings/config" element={<SettingsConfigPage />} />
-          <Route path="/settings/mcp" element={<SettingsMcpPage />} />
-          <Route path="/settings/sso" element={<SettingsSSOPage />} />
-          <Route path="/settings/scim" element={<SettingsSCIMPage />} />
-          <Route path="/settings/audit-export" element={<SettingsAuditExportPage />} />
-          <Route path="/settings/license" element={<SettingsLicensePage />} />
+          {/* SETTINGS — single shell with grouped left sub-nav (v2.5 IA cut). */}
+          <Route path="/settings" element={<SettingsShell />}>
+            <Route index element={<SettingsHubPage />} />
+            <Route path="health" element={<SettingsHealthPage />} />
+            <Route path="keys" element={<SettingsKeysPage />} />
+            <Route path="users" element={<SettingsUsersPage />} />
+            <Route path="notifications" element={<SettingsNotificationsPage />} />
+            <Route path="environments" element={<SettingsEnvironmentsPage />} />
+            <Route path="config" element={<SettingsConfigPage />} />
+            <Route path="mcp" element={<SettingsMcpPage />} />
+            <Route path="sso" element={<SettingsSSOPage />} />
+            <Route path="scim" element={<SettingsSCIMPage />} />
+            <Route path="audit-export" element={<SettingsAuditExportPage />} />
+            <Route path="license" element={<SettingsLicensePage />} />
+          </Route>
 
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
