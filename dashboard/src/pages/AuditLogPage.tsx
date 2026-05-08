@@ -3,6 +3,8 @@
  * Matches cordumds-gj5mw4zm.manus.space showcase patterns
  */
 import { useState, useRef, useEffect } from "react";
+import { useQueryState, parseAsString } from "nuqs";
+import { parseAsSearchTerm } from "@/lib/url-state";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { get } from "@/api/client";
@@ -137,11 +139,26 @@ interface AgentOption {
 }
 
 export default function AuditLogPage() {
-  const [search, setSearch] = useState("");
-  const [actionFilter, setActionFilter] = useState("");
-  const [agentFilter, setAgentFilter] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [search, setSearch] = useQueryState(
+    "search",
+    parseAsSearchTerm.withOptions({ clearOnDefault: true }),
+  );
+  const [actionFilter, setActionFilter] = useQueryState(
+    "action",
+    parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
+  );
+  const [agentFilter, setAgentFilter] = useQueryState(
+    "agent",
+    parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
+  );
+  const [dateFrom, setDateFrom] = useQueryState(
+    "from",
+    parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
+  );
+  const [dateTo, setDateTo] = useQueryState(
+    "to",
+    parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
+  );
   const [agents, setAgents] = useState<AgentOption[]>([]);
 
   useEffect(() => {
@@ -322,7 +339,7 @@ export default function AuditLogPage() {
                   icon={<Search className="h-3.5 w-3.5" />}
                   placeholder="Search events..."
                   value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  onChange={(e) => void setSearch(e.target.value || null)}
                   aria-label="Search audit events"
                   className="bg-surface-1"
                 />
@@ -331,7 +348,7 @@ export default function AuditLogPage() {
               <LabeledField label="Action">
                 <Select
                   value={actionFilter}
-                  onChange={(e) => setActionFilter(e.target.value)}
+                  onChange={(e) => void setActionFilter(e.target.value || null)}
                   aria-label="Filter by action"
                   className="bg-surface-1"
                 >
@@ -353,7 +370,7 @@ export default function AuditLogPage() {
                 >
                   <Select
                     value={agentFilter}
-                    onChange={(e) => setAgentFilter(e.target.value)}
+                    onChange={(e) => void setAgentFilter(e.target.value || null)}
                     aria-label="Filter by agent"
                     className="bg-surface-1"
                   >
@@ -376,7 +393,7 @@ export default function AuditLogPage() {
                   <Input
                     type="date"
                     value={dateFrom}
-                    onChange={(e) => setDateFrom(e.target.value)}
+                    onChange={(e) => void setDateFrom(e.target.value || null)}
                     aria-label="From date"
                     className="bg-surface-1"
                   />
@@ -386,7 +403,7 @@ export default function AuditLogPage() {
                   <Input
                     type="date"
                     value={dateTo}
-                    onChange={(e) => setDateTo(e.target.value)}
+                    onChange={(e) => void setDateTo(e.target.value || null)}
                     aria-label="To date"
                     className="bg-surface-1"
                   />
@@ -405,11 +422,11 @@ export default function AuditLogPage() {
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  setSearch("");
-                  setActionFilter("");
-                  setAgentFilter("");
-                  setDateFrom("");
-                  setDateTo("");
+                  void setSearch(null);
+                  void setActionFilter(null);
+                  void setAgentFilter(null);
+                  void setDateFrom(null);
+                  void setDateTo(null);
                 }}
                 disabled={!filtersActive}
               >
