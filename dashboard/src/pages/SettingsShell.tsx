@@ -12,11 +12,16 @@
  * deep links, and tests survive the consolidation. The shell only owns the
  * nav rail + outlet wiring; each child page still renders its own
  * <PageHeader> + content.
+ *
+ * Locked entries (entitlement-gated) intercept the click and surface
+ * UpgradeDialog instead of letting the user land on a half-functional page.
  */
+import { useState, type MouseEvent } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useLicense } from "@/hooks/useLicense";
 import type { LicenseEntitlements } from "@/api/types";
+import { UpgradeDialog } from "@/components/license/UpgradeDialog";
 import {
   Activity,
   Bell,
@@ -101,8 +106,9 @@ function isEntitled(
 }
 
 export default function SettingsShell() {
-  const { data: license } = useLicense();
+  const { data: license, isLoading } = useLicense();
   const entitlements = license?.entitlements;
+  const [lockedFeature, setLockedFeature] = useState<string | null>(null);
 
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[14rem_1fr]">
@@ -115,13 +121,34 @@ export default function SettingsShell() {
             <nav className="space-y-0.5">
               {group.items.map((item) => {
                 const entitled = isEntitled(entitlements, item.entitlement);
-                const locked = !!item.entitlement && !entitled;
+                // Fail open while the license is still loading so a slow
+                // network doesn't briefly block users from features they
+                // actually have. Mirrors components/EntitlementGate.tsx.
+                const locked = !!item.entitlement && !isLoading && !entitled;
+
+                const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
+                  if (locked) {
+                    event.preventDefault();
+                    setLockedFeature(item.label);
+                  }
+                };
+
                 return (
                   <NavLink
                     key={item.path}
                     to={item.path}
                     end={item.end}
                     aria-disabled={locked || undefined}
+                    onClick={handleClick}
+                    onKeyDown={(event) => {
+                      // NavLink renders an <a> — Enter triggers click on
+                      // anchors automatically, so onClick covers keyboard
+                      // activation. Space does not, so handle it here.
+                      if (locked && event.key === " ") {
+                        event.preventDefault();
+                        setLockedFeature(item.label);
+                      }
+                    }}
                     className={({ isActive }) =>
                       cn(
                         "flex items-center gap-2 px-3 py-2 rounded-xl text-sm transition-colors",
@@ -149,6 +176,12 @@ export default function SettingsShell() {
       <main className="min-w-0">
         <Outlet />
       </main>
+      <UpgradeDialog
+        open={lockedFeature !== null}
+        onClose={() => setLockedFeature(null)}
+        feature={lockedFeature ?? ""}
+        currentPlan={license?.plan}
+      />
     </div>
   );
 }
