@@ -47,6 +47,10 @@ tools/private/
 /secrets/
 .home
 .moe/
+# Lighthouse local report output dropped into dashboard/ when running
+# `npx lighthouse http://localhost:4173/ ...` for DoD evidence — never
+# committed; the canonical CI gate lives in task-11bac02c (Phase 5 polish).
+dashboard/lh-*.json
 *.exe
 *.tgz
 /cordum-api-gateway
