@@ -173,6 +173,37 @@ export const statusColorMap: Record<SystemStatus, string> = {
   down: "bg-status-error",
 };
 
+export type AggregateBadgeSeverity = "warning" | "error";
+
+const ITEM_BADGE_SEVERITY: Record<NonNullable<NavItem["badge"]>, AggregateBadgeSeverity> = {
+  approvals: "warning",
+  dlq: "error",
+  quarantine: "error",
+};
+
+export const aggregateBadgeClassMap: Record<AggregateBadgeSeverity, string> = {
+  warning: "bg-status-warning/20 text-status-warning",
+  error: "bg-status-error/20 text-status-error",
+};
+
+// aggregateSectionBadgeSeverity returns the highest-severity tier among items
+// whose badge has a non-zero count. error > warning. Returns null when no
+// item contributes (no badge, count is zero, or unknown badge type).
+export function aggregateSectionBadgeSeverity(
+  items: readonly { badge?: NavItem["badge"] }[],
+  getCount: (badge?: string) => number,
+): AggregateBadgeSeverity | null {
+  let result: AggregateBadgeSeverity | null = null;
+  for (const item of items) {
+    if (!item.badge) continue;
+    if (getCount(item.badge) <= 0) continue;
+    const severity = ITEM_BADGE_SEVERITY[item.badge];
+    if (severity === "error") return "error";
+    if (severity === "warning") result = "warning";
+  }
+  return result;
+}
+
 export function AppShell({ children }: AppShellProps) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -329,6 +360,7 @@ export function AppShell({ children }: AppShellProps) {
                     (sum, item) => sum + getBadgeCount(item.badge),
                     0,
                   );
+                  const sectionBadgeSeverity = aggregateSectionBadgeSeverity(section.items, getBadgeCount);
                   return (
                     <div key={section.label}>
                       <button
@@ -345,8 +377,8 @@ export function AppShell({ children }: AppShellProps) {
                           )}
                         />
                         <span className="flex-1 text-left">{section.label}</span>
-                        {!isOpen && sectionBadgeCount > 0 && (
-                          <span aria-live="polite" aria-atomic="true" className="text-xs font-mono font-bold px-1.5 py-0.5 rounded-full bg-status-warning/20 text-status-warning">
+                        {!isOpen && sectionBadgeCount > 0 && sectionBadgeSeverity && (
+                          <span aria-live="polite" aria-atomic="true" className={cn("text-xs font-mono font-bold px-1.5 py-0.5 rounded-full", aggregateBadgeClassMap[sectionBadgeSeverity])}>
                             {sectionBadgeCount}
                           </span>
                         )}
@@ -446,6 +478,7 @@ export function AppShell({ children }: AppShellProps) {
               (sum, item) => sum + getBadgeCount(item.badge),
               0,
             );
+            const sectionBadgeSeverity = aggregateSectionBadgeSeverity(section.items, getBadgeCount);
             const renderItems = collapsed || isOpen;
             return (
               <div key={section.label}>
@@ -464,8 +497,8 @@ export function AppShell({ children }: AppShellProps) {
                       )}
                     />
                     <span className="flex-1 text-left">{section.label}</span>
-                    {!isOpen && sectionBadgeCount > 0 && (
-                      <span aria-live="polite" aria-atomic="true" className="text-xs font-mono font-bold px-1.5 py-0.5 rounded-full bg-status-warning/20 text-status-warning">
+                    {!isOpen && sectionBadgeCount > 0 && sectionBadgeSeverity && (
+                      <span aria-live="polite" aria-atomic="true" className={cn("text-xs font-mono font-bold px-1.5 py-0.5 rounded-full", aggregateBadgeClassMap[sectionBadgeSeverity])}>
                         {sectionBadgeCount}
                       </span>
                     )}
