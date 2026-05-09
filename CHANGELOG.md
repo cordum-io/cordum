@@ -7,6 +7,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Policy Studio Rewrite — Backend 1 (epic-d9a6c0a1)
+
+Foundation shapes for the Job + Edge unified policy surface. New shared
+`Rule` / `Decision` / `Bundle` types subsume today's split
+`InputPolicyRule`/`OutputPolicyRule`/`PolicyRule(velocity)` plus the
+`EdgeDecision`/`ActionClassification` edge surface, with a `RuleType`
+discriminator and per-type `Match`/`Decide` payloads carried as raw JSON
+for lossless roundtrip with the orval-generated dashboard types and the
+proto `google.protobuf.Struct` carriers.
+
+**Additive only.** No existing types are modified or removed:
+`core/infra/config.SafetyPolicy`, `InputPolicyRule`, `InputPolicyMatch`,
+`OutputPolicyRule`, `OutputPolicyMatch`, `PolicyRule`, `PolicyMatch`,
+`PolicyDecision`, `MCPPolicy`, `TenantPolicy`, `core/edge.EdgeDecision`,
+`ActionClassification`, and the OpenAPI `OutputRule` / `VelocityRule` /
+`PolicyBundleSummary` schemas all remain in place during the migration
+window. Backwards-compat is locked in by
+`core/policy/backwards_compat_test.go` against pre-recorded golden JSON in
+`core/policy/testdata/`.
+
+- New Go package `core/policy/` with `Rule`, `Decision`, `TraceStep`,
+  `Bundle`, `BundleMetadata`, `BundleVersion`, `RuleScope`,
+  `AuditMetadata` structs and six typed enums (`RuleType`, `RuleStatus`,
+  `DecisionType`, `DecisionSource`, `RuleScopeKind`, `EdgeMode`).
+- New proto file `cap/proto/cordum/agent/v1/policy.proto` carrying the
+  unified shapes; references `safety.proto`'s existing `DecisionType` enum
+  rather than redeclaring it.
+- **[WIRE]** `safety.proto`'s `DecisionType` enum extended with
+  `DECISION_TYPE_QUARANTINE = 6` and `DECISION_TYPE_REDACT = 7` (CAP
+  append-only rule preserved; values 0–5 unchanged). Cap PR carries the
+  matching spec/CHANGELOG/conformance-fixture updates separately.
+- OpenAPI `info.version` bumped to `'2026-05-09.1'`; 14 new schema entries
+  appended under `components.schemas` (`Rule`, `Decision`, `TraceStep`,
+  `Bundle`, `BundleVersion`, `BundleMetadata`, `RuleScope`,
+  `AuditMetadata` + six enum schemas).
+
+The unified evaluator entry-points and the migration of
+`core/safetykernel` and `core/edge` to consume `Rule` + emit `Decision`
+land in follow-up Backend tasks (see the epic decomposition in
+[docs/specs/policy-studio-rewrite.md](docs/specs/policy-studio-rewrite.md)).
+
 #### Cordum Edge P0 (2026-04-30)
 
 EDGE epic shipped 32 P0 tasks for the Compliance Firewall surface — local

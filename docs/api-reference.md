@@ -3110,3 +3110,28 @@ The following routes are registered in gateway route setup.
 | GET | `/mcp/sse` |
 | POST | `/mcp/message` |
 | GET | `/mcp/status` |
+
+## Policy Studio (Backend 1 foundation, epic-d9a6c0a1)
+
+The OpenAPI spec at `docs/api/openapi/cordum-api.yaml` adds the unified
+`Rule`, `Decision`, `Bundle`, `BundleVersion`, `BundleMetadata`,
+`RuleScope`, `AuditMetadata`, and `TraceStep` schemas, plus the
+`RuleType` / `RuleStatus` / `DecisionType` / `DecisionSource` /
+`RuleScopeKind` / `EdgeMode` enum schemas. These coexist alongside the
+legacy `OutputRule`, `VelocityRule`, and `PolicyBundleSummary` schemas
+during the migration window — DoD #3 of task-3bf37e32 verifies the legacy
+schemas are byte-identical to pre-edit.
+
+Path operations that consume the new schemas (`/policies`,
+`/policies/bundles`, `/policies/decisions`, etc.) land in Backend 5 (the
+unified evaluator entry-point task). The Backend 1 PR ships the type
+definitions only; orval-generated dashboard hooks therefore have no new
+operations to wire until Backend 5 merges.
+
+The full design is documented in
+[docs/specs/policy-studio-rewrite.md](specs/policy-studio-rewrite.md).
+The corresponding Go types live in
+[core/policy/README.md](../core/policy/README.md), and the wire-level
+proto changes (including the `DECISION_TYPE_QUARANTINE = 6` and
+`DECISION_TYPE_REDACT = 7` append to the existing `DecisionType` enum in
+`safety.proto`) ship via a parallel cap PR per the CAP append-only rule.

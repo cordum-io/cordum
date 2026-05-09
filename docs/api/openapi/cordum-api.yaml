@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Cordum HTTP API
-  version: '2026-04-21.2'
+  version: '2026-05-09.1'
   description: Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
   contact:
     name: Cordum Team
@@ -10986,3 +10986,271 @@ components:
       - holder
       - ttl_remaining_ms
       - type
+    RuleType:
+      type: string
+      description: Discriminator for a Rule's match/decide payload schema.
+      enum:
+      - input
+      - output
+      - velocity
+      - edge
+    RuleStatus:
+      type: string
+      description: |
+        Lifecycle state of a Rule. `draft` rules are author-only; `published`
+        rules participate in evaluation; `deprecated` rules remain queryable
+        for audit and rollback but are skipped by evaluators.
+      enum:
+      - draft
+      - published
+      - deprecated
+    DecisionType:
+      type: string
+      description: |
+        Unified decision outcome emitted by either evaluator. The seven values
+        mirror the wire-format DecisionType enum in
+        cap/proto/cordum/agent/v1/safety.proto (epic-d9a6c0a1 appended
+        QUARANTINE and REDACT to the existing five values).
+      enum:
+      - allow
+      - deny
+      - require_human
+      - throttle
+      - allow_with_constraints
+      - quarantine
+      - redact
+    DecisionSource:
+      type: string
+      description: |
+        Identifies which evaluator produced a Decision: the safetykernel job
+        pipeline (`job`) or the edge classifier path (`edge`).
+      enum:
+      - job
+      - edge
+    RuleScopeKind:
+      type: string
+      description: |
+        Narrows where a rule (or bundle) applies. `global` covers an entire
+        deployment; `tenant`/`workflow` scope to job-side bindings;
+        `edge_fleet`/`edge_user` scope to edge-side bindings.
+      enum:
+      - global
+      - tenant
+      - workflow
+      - edge_fleet
+      - edge_user
+    EdgeMode:
+      type: string
+      description: |
+        Per-bundle enforcement posture for the edge evaluator. Migrates the
+        legacy global EdgePolicyMode switch onto bundle metadata so different
+        fleets and users can run at different modes simultaneously. See spec
+        cordum/docs/specs/policy-studio-rewrite.md "Edge bundle metadata".
+      enum:
+      - observe
+      - enforce
+      - enterprise-strict
+    RuleScope:
+      type: object
+      description: |
+        Narrows where a rule (or bundle) applies. When `kind` is `global`,
+        `value` is unused and may be empty; for the other kinds, `value`
+        carries the corresponding identifier (tenant id, workflow id, edge
+        fleet name, edge user id).
+      properties:
+        kind:
+          $ref: '#/components/schemas/RuleScopeKind'
+        value:
+          type: string
+      required:
+      - kind
+    AuditMetadata:
+      type: object
+      description: |
+        Records who created or last updated a Rule or Bundle. The `updated_*`
+        fields are zero-valued on first creation and populated by the first
+        subsequent edit.
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        updated_by:
+          type: string
+      required:
+      - created_at
+      - created_by
+    TraceStep:
+      type: object
+      description: |
+        Records one rule evaluation contributing to a Decision. Multiple
+        TraceSteps are emitted when a rule chain or bundle composition
+        produces a final decision through ordered evaluation. `constraints`
+        carries the raw constraints payload (e.g. the existing safetykernel
+        BudgetConstraints/SandboxProfile JSON) when the evaluator applied an
+        allow_with_constraints path; downstream consumers parse it per
+        RuleType.
+      properties:
+        rule_id:
+          type: string
+        bundle_id:
+          type: string
+        decision_type:
+          $ref: '#/components/schemas/DecisionType'
+        reason:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        constraints:
+          type: object
+          additionalProperties: true
+      required:
+      - rule_id
+      - decision_type
+      - timestamp
+    Rule:
+      type: object
+      description: |
+        Unified authoring surface for both job-side and edge-side policy. The
+        envelope (id, name, type, scope, status, version, audit) is shared
+        across all rule types; type-specific match/decide payloads carry the
+        per-RuleType schema as free-form objects to preserve lossless
+        roundtrip with the Go json.RawMessage and protobuf
+        google.protobuf.Struct transport. Coexists alongside the legacy
+        OutputRule/VelocityRule schemas during the migration window.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          $ref: '#/components/schemas/RuleType'
+        scope:
+          $ref: '#/components/schemas/RuleScope'
+        status:
+          $ref: '#/components/schemas/RuleStatus'
+        version:
+          type: string
+        audit:
+          $ref: '#/components/schemas/AuditMetadata'
+        match:
+          type: object
+          additionalProperties: true
+        decide:
+          type: object
+          additionalProperties: true
+        description:
+          type: string
+      required:
+      - id
+      - name
+      - type
+      - scope
+      - status
+      - version
+      - audit
+      - match
+      - decide
+    Decision:
+      type: object
+      description: |
+        Unified evaluator output. A single Decision may aggregate multiple
+        rule evaluations via `trace`; `type` holds the final outcome the
+        evaluator derived from the trace. `source` distinguishes the
+        producing evaluator. `input_ref`/`output_ref` are pointers into the
+        blob store rather than embedded payloads.
+      properties:
+        source:
+          $ref: '#/components/schemas/DecisionSource'
+        rule_id:
+          type: string
+        bundle_id:
+          type: string
+        bundle_version:
+          type: string
+        type:
+          $ref: '#/components/schemas/DecisionType'
+        trace:
+          type: array
+          items:
+            $ref: '#/components/schemas/TraceStep'
+        input_ref:
+          type: string
+        output_ref:
+          type: string
+        audit_hash:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+      required:
+      - source
+      - rule_id
+      - type
+      - timestamp
+    BundleMetadata:
+      type: object
+      description: |
+        Per-bundle authoring metadata that does not affect match/decide
+        payloads. `edge_mode` is the per-bundle enforcement posture for
+        edge-scoped bundles, replacing the legacy global EdgePolicyMode
+        switch.
+      properties:
+        edge_mode:
+          $ref: '#/components/schemas/EdgeMode'
+    BundleVersion:
+      type: object
+      description: |
+        Immutable record of a Bundle deploy. `rule_snapshot` captures the
+        full Rule contents at deploy time so rollback and audit do not depend
+        on the live rule store; `audit_hash` chains the version into the
+        audit chain.
+      properties:
+        version:
+          type: string
+        rule_snapshot:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rule'
+        deployed_at:
+          type: string
+          format: date-time
+        audit_hash:
+          type: string
+      required:
+      - version
+      - deployed_at
+    Bundle:
+      type: object
+      description: |
+        Deployable set of rules with a deployment scope. Rules are referenced
+        by id rather than embedded so a bundle can rotate its members without
+        forcing rule duplication; the snapshot at deploy time lives in
+        `versions[].rule_snapshot` for tamper-evident rollback. Coexists
+        alongside the legacy PolicyBundleSummary schema.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        rule_ids:
+          type: array
+          items:
+            type: string
+        scope_binding:
+          $ref: '#/components/schemas/RuleScope'
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/BundleVersion'
+        metadata:
+          $ref: '#/components/schemas/BundleMetadata'
+      required:
+      - id
+      - name
+      - scope_binding
