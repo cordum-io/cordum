@@ -7,7 +7,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/model"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -222,6 +225,192 @@ func TestPolicyBundleHandlers(t *testing.T) {
 	}
 	if resp.GetDecision() != pb.DecisionType_DECISION_TYPE_ALLOW {
 		t.Fatalf("unexpected decision: %v", resp.GetDecision())
+	}
+}
+
+type policyRulesListTestResponse struct {
+	Items []map[string]any `json:"items"`
+}
+
+type jobRecentRangeCounter struct {
+	calls atomic.Int64
+}
+
+func (h *jobRecentRangeCounter) DialHook(next redis.DialHook) redis.DialHook {
+	return next
+}
+
+func (h *jobRecentRangeCounter) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		h.count(cmd)
+		return next(ctx, cmd)
+	}
+}
+
+func (h *jobRecentRangeCounter) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, cmd := range cmds {
+			h.count(cmd)
+		}
+		return next(ctx, cmds)
+	}
+}
+
+func (h *jobRecentRangeCounter) count(cmd redis.Cmder) {
+	name := strings.ToLower(cmd.Name())
+	if (name == "zrangebyscore" || name == "zrange") && redisCommandTouchesKey(cmd, "job:recent") {
+		h.calls.Add(1)
+	}
+}
+
+func redisCommandTouchesKey(cmd redis.Cmder, key string) bool {
+	for _, arg := range cmd.Args() {
+		if value, ok := arg.(string); ok && value == key {
+			return true
+		}
+	}
+	return false
+}
+
+func getPolicyRulesList(t *testing.T, s *server, tenant string) policyRulesListTestResponse {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/policy/rules", nil)
+	req.Header.Set("X-Tenant-ID", tenant)
+	req = withAuth(req, &auth.AuthContext{Tenant: tenant, Role: "admin", PrincipalID: "admin-1"})
+	rec := httptest.NewRecorder()
+	s.handlePolicyRules(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("policy rules status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var resp policyRulesListTestResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode policy rules response: %v", err)
+	}
+	return resp
+}
+
+func seedPolicyRuleFiringJob(t *testing.T, s *server, jobID, tenant, ruleID string, updatedAt time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	req := &pb.JobRequest{JobId: jobID, Topic: "job.deploy", TenantId: tenant, PrincipalId: "principal-1", Meta: &pb.JobMetadata{TenantId: tenant}}
+	if err := s.jobStore.SetJobMeta(ctx, req); err != nil {
+		t.Fatalf("set job meta %s: %v", jobID, err)
+	}
+	if err := s.jobStore.SetJobRequest(ctx, req); err != nil {
+		t.Fatalf("set job request %s: %v", jobID, err)
+	}
+	if err := s.jobStore.SetState(ctx, jobID, model.JobStatePending); err != nil {
+		t.Fatalf("set job state %s: %v", jobID, err)
+	}
+	ts := updatedAt.UTC().UnixMicro()
+	record := model.SafetyDecisionRecord{Decision: model.SafetyAllow, RuleID: ruleID, CheckedAt: ts}
+	if err := s.jobStore.SetSafetyDecision(ctx, jobID, record); err != nil {
+		t.Fatalf("set safety decision %s: %v", jobID, err)
+	}
+	fields := map[string]any{"updated_at": ts, "tenant": tenant, "safety_rule_id": ruleID, "safety_checked_at": ts}
+	if err := s.jobStore.Client().HSet(ctx, "job:meta:"+jobID, fields).Err(); err != nil {
+		t.Fatalf("override job meta timestamp %s: %v", jobID, err)
+	}
+	if err := s.jobStore.Client().ZAdd(ctx, "job:recent", redis.Z{Score: float64(ts), Member: jobID}).Err(); err != nil {
+		t.Fatalf("override job recent timestamp %s: %v", jobID, err)
+	}
+}
+
+func policyRuleItemByID(t *testing.T, resp policyRulesListTestResponse, id string) map[string]any {
+	t.Helper()
+	for _, item := range resp.Items {
+		if item["id"] == id {
+			return item
+		}
+	}
+	t.Fatalf("rule %q not found in %v", id, resp.Items)
+	return nil
+}
+
+func intSliceField(t *testing.T, item map[string]any, field string) []int {
+	t.Helper()
+	raw, ok := item[field].([]any)
+	if !ok {
+		t.Fatalf("rule %v missing %s array, got %#v", item["id"], field, item[field])
+	}
+	out := make([]int, 0, len(raw))
+	for _, value := range raw {
+		number, ok := value.(float64)
+		if !ok {
+			t.Fatalf("rule %v %s contains non-number %#v", item["id"], field, value)
+		}
+		out = append(out, int(number))
+	}
+	return out
+}
+
+func assertIntSliceEqual(t *testing.T, name string, got, want []int) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s length = %d (%v), want %d (%v)", name, len(got), got, len(want), want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("%s[%d] = %d in %v, want %d in %v", name, i, got[i], got, want[i], want)
+		}
+	}
+}
+
+func TestPolicyRulesFiringLast7dBucketsAndTenantIsolation(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = &policyReplayAuth{}
+	seedPolicyBundle(t, s, "secops/firing", `rules:
+  - id: rule-hot
+    match: {topics: ["job.*"]}
+    decision: allow
+  - id: rule-cold
+    match: {topics: ["job.*"]}
+    decision: deny
+`)
+	baseDay := time.Now().UTC().Truncate(24 * time.Hour)
+	want := []int{1, 0, 2, 0, 3, 0, 4}
+	for day, count := range want {
+		for n := 0; n < count; n++ {
+			ts := baseDay.AddDate(0, 0, day-6).Add(12*time.Hour + time.Duration(n)*time.Minute)
+			seedPolicyRuleFiringJob(t, s, "job-hot-"+strconv.Itoa(day)+"-"+strconv.Itoa(n), "acme", "rule-hot", ts)
+		}
+	}
+	seedPolicyRuleFiringJob(t, s, "job-beta-leak", "beta", "rule-hot", baseDay.Add(12*time.Hour))
+
+	resp := getPolicyRulesList(t, s, "acme")
+	assertIntSliceEqual(t, "rule-hot firing_last_7d", intSliceField(t, policyRuleItemByID(t, resp, "rule-hot"), "firing_last_7d"), want)
+	assertIntSliceEqual(t, "rule-cold firing_last_7d", intSliceField(t, policyRuleItemByID(t, resp, "rule-cold"), "firing_last_7d"), []int{0, 0, 0, 0, 0, 0, 0})
+}
+
+func TestPolicyRulesFiringLast7dUsesBulkJobHistoryScan(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = &policyReplayAuth{}
+	seedPolicyBundle(t, s, "secops/bulk", `rules:
+  - id: rule-one
+    match: {topics: ["job.*"]}
+    decision: allow
+  - id: rule-two
+    match: {topics: ["job.*"]}
+    decision: deny
+  - id: rule-three
+    match: {topics: ["job.*"]}
+    decision: require_approval
+`)
+	baseDay := time.Now().UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
+	for _, ruleID := range []string{"rule-one", "rule-two", "rule-three"} {
+		seedPolicyRuleFiringJob(t, s, "job-"+ruleID, "acme", ruleID, baseDay)
+	}
+	counter := &jobRecentRangeCounter{}
+	s.jobStore.Client().AddHook(counter)
+
+	resp := getPolicyRulesList(t, s, "acme")
+	if calls := counter.calls.Load(); calls != 1 {
+		t.Fatalf("job:recent range scans = %d, want 1 bulk scan for all %d rules", calls, len(resp.Items))
+	}
+	for _, ruleID := range []string{"rule-one", "rule-two", "rule-three"} {
+		if got := intSliceField(t, policyRuleItemByID(t, resp, ruleID), "firing_last_7d"); len(got) != 7 {
+			t.Fatalf("%s firing_last_7d length = %d, want 7", ruleID, len(got))
+		}
 	}
 }
 

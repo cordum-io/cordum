@@ -2542,6 +2542,10 @@ paths:
     get:
       operationId: listPolicyRules
       summary: List policy rules
+      description: >
+        Lists policy rules and includes `firing_last_7d`, a tenant-scoped
+        seven-day UTC firing histogram computed in one bulk history scan for
+        all returned rules. Rules with no matching events are zero-filled.
       tags:
       - Policy
       parameters:
@@ -9605,6 +9609,14 @@ components:
           additionalProperties: true
         priority:
           type: integer
+        firing_last_7d:
+          type: array
+          description: Last seven UTC daily firing counts, oldest-to-newest, tenant-scoped and zero-filled when no matching events exist.
+          minItems: 7
+          maxItems: 7
+          items:
+            type: integer
+            minimum: 0
         source:
           type: string
           description: Bundle or file that defines this rule

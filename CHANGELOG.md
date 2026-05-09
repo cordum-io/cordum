@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 
+#### Policy Studio Backend 8 — rules-list firing summaries (2026-05-09, task-d2a55ae2)
+
+- Integrated tenant-safe bulk `firing_last_7d` summaries on the rules-list path, with no per-rule N+1 query pattern and exact seven-bucket output for dashboard sparkline consumption.
+- Updated OpenAPI/API docs and SDK TypeScript schema artifact for the rules-list summary field.
+
+
 #### Policy Studio Backend 4 — edge unified rules + decisions (2026-05-09, task-50a912c1)
 
 - Integrated edge/gateway adapters that consume unified edge `policy.Rule` objects and emit unified edge `policy.Decision` audit records alongside legacy behavior.
