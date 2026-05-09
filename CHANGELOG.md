@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Dashboard 1 — Policy Studio foundation routes + type adapters (2026-05-09, task-5d354964)
+
+- Three new lazy-loaded routes wire up the Policy Studio v3 IA per epic-d9a6c0a1 spec: `/policies` (PoliciesPage — Rules surface), `/policies/bundles` (BundlesPage), `/policies/decisions` (DecisionsPage). Each shell renders only `PageHeader` + `EmptyState` from existing primitives — Dashboards 2/5/8 fill the bodies.
+- `/govern/overview` becomes a redirect handler (`GovernOverviewRedirect` inline in App.tsx). Reads `?tab=` + `?mode=` and navigates to the new IA: input/output/velocity → `/policies?type=…`; bundles → `/policies/bundles`; scope → `/policies/bundles?view=scope`; evaluation → `/policies/decisions` (preserves `mode`); unknown/missing → `/policies` (Rules default). The existing `/govern/<tab>` PolicyTabRedirect chains through here, so all legacy bookmarks stay valid.
+- New `src/lib/policy-studio/` package adds 4 type adapters used across the unified shapes: `ruleTypeLabel` + `ruleTypeIcon` (lucide), `decisionTypeLabel`, `decisionTone` (5-tone palette), `edgeModeLabel`. Co-located test exhaustively iterates every `Object.values(Enum)` variant so missing enum values fail at test time.
+- Stale `GovernPolicyOverviewPage` lazy import dropped (TS6133); component file retained on disk for Dashboard 11 cut-over deletion.
+- No new shared primitives. No new colors. Routing remains on `react-router-dom` per v2.5 rail.
+
 #### Phase 5d — bundle-size visualizer + soft CI gate (2026-05-09, task-50bbfd7d)
 
 - Installed `rollup-plugin-visualizer@7.0.1` and wired it into `dashboard/vite.config.ts` so every `pnpm run build` emits `dist/stats.html` (treemap, raw + gzip + brotli). `emitFile: true` keeps the file inside `dist/`.
