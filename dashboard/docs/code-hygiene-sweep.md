@@ -136,6 +136,32 @@ findings and exits cleanly:
 - `npx vitest run` → **EXIT=0** (237 files / 1964 tests; clean tree with unrelated Dashboard 6 work temporarily stashed and restored)
 - `npm run build` → **EXIT=0** (built in 5.53s; initial `index-*.js` 317.43 KB raw / 96.45 KB gzip, still under the 400 KB / 120 KB soft thresholds)
 
+## Pass A v3 residual export/type confirmation — task-ec7bcb78 (2026-05-09)
+
+This follow-up rechecked the residual unused-export and unused-exported-type
+list called out in the reopen #1 fix wave. At branch-tip validation time the
+listed residuals were already absent from the target files, so this pass did
+not delete code. The reproducible final knip report remains clean:
+
+```text
+<no output>
+```
+
+`pnpm exec knip --reporter compact` from `cordum/dashboard` → **EXIT=0**.
+
+### task-ec7bcb78 group audit
+
+| Group | Result |
+|---|---|
+| Scalar exports (`errorCodeLabel`, `errorCodeCategory`, `wsUrl`, `decisionTypeMeta`, `shadowTabIcon`) | No target exported dead symbols remained. Only a live local `wsUrl` helper exists in `src/hooks/useEventStream.ts`. |
+| Component/export barrels (`JobStatusBadge`, `ApprovalStatusBadge`, Lazy* tabs, settings/workflow named exports) | No target exported dead symbols remained. Lazy* matches are live local constants in `src/pages/govern/PolicyOverviewPage.tsx`. |
+| Hook group A (`useMemory`, artifact hooks, workflow run/delete/dry-run hooks) | No exact target hook definitions or importers remained. |
+| Hook group B (`useApprovalHistory`, Edge detail fetchers, eval/job/settings hooks) | No exact target hook definitions or importers remained. Generated API hook names under `src/api/generated/**` were left untouched. |
+| Type-only residuals | No target exported dead types remained. Remaining exact-name matches are live/non-target local or consumed types (`LicenseInfo`, local `BusPacket`, local `DLQResponse`). |
+
+No retained item is a knip residual finding; the remaining exact-name matches
+above are live code or generated code outside this task's deletion scope.
+
 ## Baseline (HEAD `f0aa6aa4`, before any deletions)
 
 `pnpm exec knip --reporter compact` from `dashboard/` after the orval +
