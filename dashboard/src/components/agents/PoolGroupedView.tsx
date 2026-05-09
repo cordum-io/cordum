@@ -3,27 +3,11 @@ import { Card, CardHeader, CardTitle } from "../ui/Card";
 import { Badge } from "../ui/Badge";
 import { ProgressBar } from "../ProgressBar";
 import type { Worker } from "../../api/types";
+import { workerStatusVariant } from "@/lib/badgeVariants";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function statusVariant(
-  status: string,
-): "success" | "warning" | "danger" | "default" {
-  switch (status) {
-    case "online":
-    case "active":
-      return "success";
-    case "draining":
-      return "warning";
-    case "offline":
-    case "error":
-      return "danger";
-    default:
-      return "default";
-  }
-}
 
 function relativeTime(iso?: string): string {
   if (!iso) return "\u2014";
@@ -53,7 +37,7 @@ function WorkerCard({ worker, onClick }: { worker: Worker; onClick?: () => void 
     <Card className={onClick ? "cursor-pointer" : undefined} onClick={onClick}>
       <CardHeader>
         <CardTitle className="text-sm">{worker.name}</CardTitle>
-        <Badge variant={statusVariant(worker.status)}>{worker.status}</Badge>
+        <Badge variant={workerStatusVariant(worker.status)}>{worker.status}</Badge>
       </CardHeader>
       <div className="space-y-2 text-xs text-muted-foreground">
         <div className="flex items-center justify-between">

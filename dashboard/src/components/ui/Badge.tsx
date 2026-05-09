@@ -1,6 +1,15 @@
 import type { HTMLAttributes } from "react";
 import { cn } from "../../lib/utils";
 
+export type BadgeColorVariant =
+  | "default"
+  | "success"
+  | "warning"
+  | "danger"
+  | "info"
+  | "enterprise"
+  | "governance";
+
 const variants: Record<string, string> = {
   default: "bg-surface2 text-ink",
   success: "bg-[color:rgba(31,122,87,0.12)] text-success",

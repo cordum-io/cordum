@@ -5,44 +5,11 @@ import { Button } from "../ui/Button";
 import { useWorker, useWorkerJobs } from "../../hooks/useWorkers";
 import { formatDuration } from "@/lib/utils";
 import type { Job } from "../../api/types";
+import { workerStatusVariant, jobStatusVariant } from "@/lib/badgeVariants";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function statusVariant(status: string): "success" | "warning" | "danger" | "default" {
-  switch (status) {
-    case "online":
-    case "active":
-      return "success";
-    case "draining":
-      return "warning";
-    case "offline":
-    case "error":
-      return "danger";
-    default:
-      return "default";
-  }
-}
-
-function jobStatusVariant(status: string): "success" | "warning" | "danger" | "info" | "default" | "governance" {
-  switch (status) {
-    case "succeeded":
-      return "success";
-    case "running":
-    case "dispatched":
-      return "info";
-    case "failed":
-      return "danger";
-    case "denied":
-      return "governance";
-    case "pending":
-      return "warning";
-    default:
-      return "default";
-  }
-}
-
 
 function formatUptime(seconds?: number): string {
   if (seconds == null) return "--";
@@ -126,7 +93,7 @@ export function WorkerDetailDrawer({
             <div className="space-y-1">
               <div className="flex items-center gap-3">
                 <h3 className="text-lg font-semibold text-ink">{worker.name}</h3>
-                <Badge variant={statusVariant(worker.status)}>{worker.status}</Badge>
+                <Badge variant={workerStatusVariant(worker.status)}>{worker.status}</Badge>
               </div>
               <p className="text-sm text-muted-foreground">Pool: {worker.pool}</p>
             </div>

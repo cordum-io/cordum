@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { LegacyDataTable } from "@/components/ui/LegacyDataTable";
 import { formatRelativeTime } from "@/lib/utils";
+import { evalScoreVariant } from "@/lib/badgeVariants";
 import type { EvalDataset, EvalRun } from "@/api/types";
 
 export interface DatasetListEntry {
@@ -20,15 +21,8 @@ export interface DatasetListProps {
   onCreateFromIncidents: () => void;
 }
 
-function scoreBadgeVariant(score: number | null | undefined): "success" | "warning" | "danger" | "default" {
-  if (score === null || score === undefined) return "default";
-  if (score >= 95) return "success";
-  if (score >= 80) return "warning";
-  return "danger";
-}
-
 function ScoreBadge({ score }: { score: number | null | undefined }) {
-  const variant = scoreBadgeVariant(score);
+  const variant = evalScoreVariant(score);
   const label = score === null || score === undefined ? "—" : `${Math.round(score)}%`;
   return (
     <Badge variant={variant} aria-label={`last run score ${label}`}>

@@ -3,15 +3,8 @@ import { cn } from "@/lib/utils";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { formatRelative } from "../../lib/format";
+import { decisionVariant } from "@/lib/badgeVariants";
 import type { ActivityItem } from "../../types/activity";
-
-const decisionVariant: Record<string, "success" | "danger" | "warning" | "info" | "governance"> = {
-  ALLOW: "success",
-  DENY: "governance",
-  REQUIRE_APPROVAL: "warning",
-  CONSTRAIN: "info",
-  PENDING: "info",
-};
 
 type Props = {
   activity: ActivityItem;
@@ -21,7 +14,10 @@ type Props = {
 
 export function SafetyAlertBlock({ activity, onApprove, onReject }: Props) {
   const decision = activity.payload?.decision || "PENDING";
-  const variant = decisionVariant[decision] || "info";
+  // Safety-alert UX: unknown decisions render as "info" rather than gray —
+  // an alert block should never look like inert metadata.
+  const computedVariant = decisionVariant(decision);
+  const variant = computedVariant === "default" ? "info" : computedVariant;
   const jobId = activity.metadata?.job_id;
   const requiresAction = activity.payload?.requires_action && decision === "REQUIRE_APPROVAL";
 

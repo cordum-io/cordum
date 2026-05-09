@@ -4,6 +4,7 @@ import { Badge } from "../ui/Badge";
 import { Card } from "../ui/Card";
 import { HighlightText } from "../ui/HighlightText";
 import { cn } from "../../lib/utils";
+import { decisionVariant } from "@/lib/badgeVariants";
 import { useState } from "react";
 import type { AuditEntry } from "../../api/types";
 import { AlertSeverity } from "../../api/types";
@@ -124,28 +125,12 @@ function resourceLink(resourceType: string, resourceId: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Decision badge color
-// ---------------------------------------------------------------------------
-
-const decisionVariant: Record<string, string> = {
-  allow: "success",
-  safety_allow: "success",
-  deny: "governance",
-  safety_deny: "governance",
-  require_approval: "warning",
-  safety_require_approval: "warning",
-  throttle: "info",
-  safety_throttle: "info",
-  evaluate: "info",
-};
-
-// ---------------------------------------------------------------------------
 // Category-specific content renderers
 // ---------------------------------------------------------------------------
 
 function SafetyDecisionContent({ entry, searchQuery }: { entry: AuditEntry; searchQuery?: string }) {
   const action = (entry.action || entry.eventType || "").toLowerCase();
-  const variant = (decisionVariant[action] ?? "default") as "success" | "warning" | "danger" | "info" | "default";
+  const variant = decisionVariant(action);
   const riskTags = Array.isArray(entry.payload?.risk_tags)
     ? (entry.payload.risk_tags as string[])
     : [];
