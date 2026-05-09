@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-05-09.2
+ * OpenAPI spec version: 2026-05-09.3
  */
 
 export * from './aPIKeyInfo';
@@ -20,6 +20,7 @@ export * from './approveMcpApproval200';
 export * from './artifactDetail';
 export * from './artifactDetailMetadata';
 export * from './artifactDetailMetadataLabels';
+export * from './auditMetadata';
 export * from './auditVerifyGap';
 export * from './auditVerifyGapType';
 export * from './auditVerifyResult';
@@ -30,6 +31,9 @@ export * from './authSource';
 export * from './authUser';
 export * from './badGatewayResponse';
 export * from './badRequestResponse';
+export * from './bundle';
+export * from './bundleMetadata';
+export * from './bundleVersion';
 export * from './cancelJob200';
 export * from './changePasswordRequest';
 export * from './chatMessage';
@@ -74,6 +78,9 @@ export * from './createUserRequest';
 export * from './createWorkerCredentialBody';
 export * from './createWorkflow201';
 export * from './dLQEntry';
+export * from './decision';
+export * from './decisionSource';
+export * from './decisionType';
 export * from './delegationChainLink';
 export * from './delegationLineageChainLink';
 export * from './delegationLineageView';
@@ -148,6 +155,7 @@ export * from './edgeHeartbeatResponse';
 export * from './edgeInternalServerErrorResponse';
 export * from './edgeLabels';
 export * from './edgeMaxExecutionsExceededResponse';
+export * from './edgeMode';
 export * from './edgeNotFoundResponse';
 export * from './edgePayloadTooLargeResponse';
 export * from './edgeRiskSummary';
@@ -401,6 +409,13 @@ export * from './roleDetailResponse';
 export * from './roleListResponse';
 export * from './roleRequest';
 export * from './rollbackPolicyRequest';
+export * from './rule';
+export * from './ruleDecide';
+export * from './ruleMatch';
+export * from './ruleScope';
+export * from './ruleScopeKind';
+export * from './ruleStatus';
+export * from './ruleType';
 export * from './runDetail';
 export * from './runDetailAllOf';
 export * from './runDetailAllOfInput';
@@ -446,6 +461,8 @@ export * from './tierLimitResponse';
 export * from './timelineEvent';
 export * from './timelineEventData';
 export * from './topicResponse';
+export * from './traceStep';
+export * from './traceStepConstraints';
 export * from './unauthorizedResponse';
 export * from './uninstallPackBody';
 export * from './updateAgent200';
