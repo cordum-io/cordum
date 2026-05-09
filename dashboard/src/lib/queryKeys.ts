@@ -156,6 +156,7 @@ export const queryKeys = {
         scalarKey(filters.cursor, "first"),
         scalarKey(filters.limit, "default"),
       ] as const,
+    detail: (id: string) => ["policy-studio-rules", "detail", id] as const,
   },
 
   // ── Policies ──────────────────────────────────────────────────────

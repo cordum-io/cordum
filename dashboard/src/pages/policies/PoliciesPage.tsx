@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { ColumnDef } from "@tanstack/react-table";
-import { MoreHorizontal, Shield, Sparkles } from "lucide-react";
+import { MoreHorizontal, Plus, Shield, Sparkles } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type DecisionTier } from "@/components/primitives/DataTable";
 import { RuleFiringSparkline } from "@/components/charts/RuleFiringSparkline";
@@ -9,7 +9,9 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { PoliciesFilterBar } from "./PoliciesFilterBar";
+import { RuleEditorDrawer } from "./RuleEditorDrawer";
 import { RuleStatus } from "@/api/generated/model/ruleStatus";
+import { RuleType } from "@/api/generated/model/ruleType";
 import { formatRelativeTime } from "@/lib/utils";
 import { ruleTypeIcon, ruleTypeLabel } from "@/lib/policy-studio/rule-type";
 import {
@@ -241,9 +243,20 @@ export default function PoliciesPage() {
         label="Policy Studio"
         title="Policy Rules"
         subtitle="Author and manage rules across job + edge surfaces"
+        actions={
+          <Link
+            to={`/policies?rule=new&open=editor&type=${RuleType.input}`}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-cordum px-3 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-cordum/90"
+            data-row-action
+          >
+            <Plus aria-hidden className="h-3.5 w-3.5" />
+            New rule
+          </Link>
+        }
       />
 
       <PoliciesFilterBar onFiltersChange={setRawFilters} />
+      <RuleEditorDrawer />
 
       {isError ? (
         <EmptyState

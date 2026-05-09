@@ -7,6 +7,12 @@ export const baseHandlers = [
   http.get("*/api/v1/policy/rules", () =>
     HttpResponse.json({ items: [], total: 0 }),
   ),
+  // Dashboard 3A — Rules surface single-rule detail. Default 404 so the
+  // drawer's not-found state renders without per-test setup; tests
+  // override with populated rule responses or 5xx via server.use(...).
+  http.get("*/api/v1/policy/rules/:id", () =>
+    HttpResponse.json({ error: "rule not found" }, { status: 404 }),
+  ),
   // Dashboard 5 — Bundle Studio list (unified Backend-1.5 Bundle shape).
   // Default empty so BundlesPage renders the empty-state CTA without
   // per-test setup; tests override with `server.use(...)` as needed.
