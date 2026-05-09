@@ -155,7 +155,7 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 	}
 	safetyResp, err := s.evaluateEdgeSafety(r.Context(), policyInput.policyRequest)
 	if err != nil {
-		outcome := edgeEvaluateOutcomeFromSafetyUnavailable(policyInput.event.EventID, evalCtx.session.PolicyMode, policyInput.classification)
+		outcome := edgeEvaluateOutcomeFromSafetyUnavailable(policyInput.event.EventID, evalCtx.policyMode, policyInput.classification)
 		appended, appendErr := s.appendEdgeEvaluateOutcome(r.Context(), evalCtx.store, policyInput.event, outcome, edgeEvaluateDurationMS(started))
 		if appendErr != nil {
 			writeEdgeEventStoreError(w, r, appendErr, "append edge evaluate degraded event")
@@ -301,6 +301,9 @@ type edgeEvaluateContext struct {
 	principalID string
 	session     *edgecore.EdgeSession
 	execution   *edgecore.AgentExecution
+	policyMode  edgecore.PolicyMode
+	modeSource  string
+	modeBundle  string
 }
 
 func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Request) (edgeEvaluateContext, bool) {
@@ -382,6 +385,14 @@ func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Reque
 	req.ExecutionID = executionID
 	req.TenantID = tenantID
 	req.PrincipalID = principalID
+	mode := s.resolveEdgeEvaluatePolicyMode(r.Context(), *session)
+	slog.Debug("edge evaluate policy mode resolved",
+		"tenant_id", tenantID,
+		"session_id", sessionID,
+		"mode", string(mode.Mode),
+		"source", mode.Source,
+		"bundle_id", mode.BundleID,
+	)
 	return edgeEvaluateContext{
 		req:         req,
 		store:       store,
@@ -390,6 +401,9 @@ func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Reque
 		principalID: principalID,
 		session:     session,
 		execution:   execution,
+		policyMode:  mode.Mode,
+		modeSource:  mode.Source,
+		modeBundle:  mode.BundleID,
 	}, true
 }
 
@@ -1224,7 +1238,7 @@ func (s *server) appendEdgeEvaluateOutcome(ctx context.Context, store edgecore.S
 	// require_approval -> approval_requested, throttle -> action_denied
 	// medium). Best-effort: nil-safe + panic-recovering, so audit
 	// failures never change the response.
-	edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForAction(appended))
+	s.emitEdgeDecisionAuditEvents(appended)
 	return appended, nil
 }
 

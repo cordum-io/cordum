@@ -21,6 +21,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Policy Studio Rewrite — Backend 4 (epic-d9a6c0a1)
+
+Cordum Edge now participates in the unified Policy Studio decision stream
+without removing the legacy Edge evidence path:
+
+- Added a pure `policy.Rule{Type: edge}` adapter that compiles unified edge
+  Match/Decide JSON into the existing legacy Edge/Safety Kernel policy rule
+  shape.
+- Added an additive `policy.Decision{Source: edge}` emitter for Edge
+  decisions, mapping legacy Edge outcomes into unified decision types:
+  `ALLOW -> allow`, `DENY -> deny`, `REQUIRE_APPROVAL -> require_human`,
+  `THROTTLE -> throttle`, `CONSTRAIN -> redact`, and `RECORDED -> allow`
+  with an observation trace marker.
+- Edge evaluate and agentd decision-evidence paths now use Backend 3's shared
+  `AUDIT_UNIFIED_DECISION_MODE` transition helper. Default `dual` mode writes
+  legacy Edge audit first and `policy.decision.v2` second; `legacy` and
+  `unified` modes are honored by the same parser used for job decisions.
+- Edge policy mode resolution can read per-bundle `metadata.edge_mode` when a
+  session is bound to a policy bundle, while preserving the existing
+  session/global `EdgePolicyMode` fallback for operators that have not yet run
+  migration tooling.
+
+
 #### Policy Studio Rewrite — Backend 3 (epic-d9a6c0a1)
 
 Safety Kernel now has an additive unified-policy boundary for the Policy
