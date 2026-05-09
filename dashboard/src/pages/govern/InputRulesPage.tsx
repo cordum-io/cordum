@@ -22,6 +22,8 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { SafetyDecisionBadge } from "@/components/ui/SafetyDecisionBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { InstrumentCard } from "@/components/ui/InstrumentCard";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
 import { getDecisionDisplayVariant } from "@/components/policy/simulator/SimulatorDecisionSummary";
 import { usePolicyRules, usePolicyBundles } from "@/hooks/usePolicies";
 import { usePolicyAccess } from "@/hooks/usePolicyAccess";
@@ -458,24 +460,26 @@ export default function InputRulesPage({ hideHeader }: { hideHeader?: boolean } 
           <span className="mx-1 h-4 w-px bg-border" />
 
           {/* Decision filter */}
-          <select
-            className="h-7 rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground"
+          <Select
+            className="h-7 px-2 text-xs"
             value={decisionFilter}
             onChange={(e) => setFilter("decision", e.target.value)}
+            aria-label="Filter by decision"
           >
             {DECISION_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
               </option>
             ))}
-          </select>
+          </Select>
 
           {/* Bundle filter */}
           {availableBundles.length > 1 && (
-            <select
-              className="h-7 rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground"
+            <Select
+              className="h-7 px-2 text-xs"
               value={bundleFilter}
               onChange={(e) => setFilter("bundle", e.target.value)}
+              aria-label="Filter by bundle"
             >
               <option value="">All bundles</option>
               {availableBundles.map((b) => (
@@ -483,19 +487,20 @@ export default function InputRulesPage({ hideHeader }: { hideHeader?: boolean } 
                   {bundleNameMap.get(b) ?? b}
                 </option>
               ))}
-            </select>
+            </Select>
           )}
 
           {/* Search */}
-          <div className="relative ml-auto">
-            <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-            <input
+          <div className="relative ml-auto w-48">
+            <Input
               ref={searchRef}
               type="text"
+              icon={<Search className="h-3 w-3" />}
               placeholder="Search rules..."
               defaultValue={searchText}
               onChange={(e) => onSearchChange(e.target.value)}
-              className="h-7 w-48 rounded-2xl border border-border bg-surface-2 pl-7 pr-2 text-xs text-foreground placeholder:text-muted-foreground"
+              className="h-7 text-xs"
+              aria-label="Search rules"
             />
           </div>
         </div>
@@ -552,35 +557,37 @@ export default function InputRulesPage({ hideHeader }: { hideHeader?: boolean } 
                 <span className="text-xs font-mono text-muted-foreground uppercase">
                   Tenant
                 </span>
-                <input
+                <Input
                   type="text"
                   placeholder="e.g. default"
                   value={contextInputs.tenant}
                   onChange={(e) =>
                     setContextInputs((p) => ({ ...p, tenant: e.target.value }))
                   }
-                  className="h-8 w-full rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground placeholder:text-muted-foreground"
+                  className="h-8 text-xs"
+                  aria-label="Context tenant"
                 />
               </label>
               <label className="space-y-1">
                 <span className="text-xs font-mono text-muted-foreground uppercase">
                   Topic
                 </span>
-                <input
+                <Input
                   type="text"
                   placeholder="e.g. job.fraud-detection.*"
                   value={contextInputs.topic}
                   onChange={(e) =>
                     setContextInputs((p) => ({ ...p, topic: e.target.value }))
                   }
-                  className="h-8 w-full rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground placeholder:text-muted-foreground"
+                  className="h-8 text-xs"
+                  aria-label="Context topic"
                 />
               </label>
               <label className="space-y-1">
                 <span className="text-xs font-mono text-muted-foreground uppercase">
                   Capability
                 </span>
-                <input
+                <Input
                   type="text"
                   placeholder="e.g. code_exec"
                   value={contextInputs.capability}
@@ -590,7 +597,8 @@ export default function InputRulesPage({ hideHeader }: { hideHeader?: boolean } 
                       capability: e.target.value,
                     }))
                   }
-                  className="h-8 w-full rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground placeholder:text-muted-foreground"
+                  className="h-8 text-xs"
+                  aria-label="Context capability"
                 />
               </label>
             </div>

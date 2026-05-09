@@ -10,7 +10,6 @@ import agentDetailSource from "./AgentDetailPage.tsx?raw";
 import bundleDetailSource from "./govern/BundleDetailPage.tsx?raw";
 import appShellSource from "../components/layout/AppShell.tsx?raw";
 import settingsHubSource from "./SettingsHubPage.tsx?raw";
-import auditLogPageSource from "./AuditLogPage.tsx?raw";
 import agentsPageSource from "./AgentsPage.tsx?raw";
 import packDetailSource from "./PackDetailPage.tsx?raw";
 import evalsPageSource from "./EvalsPage.tsx?raw";
@@ -19,6 +18,13 @@ import evalRunDetailSource from "./EvalRunDetailPage.tsx?raw";
 import runDetailSource from "./RunDetailPage.tsx?raw";
 import packsPageSource from "./PacksPage.tsx?raw";
 import delegationsPageSource from "./DelegationsPage.tsx?raw";
+import approvalsPageSource from "./ApprovalsPage.tsx?raw";
+import bundleDetailGovernSource from "./govern/BundleDetailPage.tsx?raw";
+import outputRulesPageSource from "./govern/OutputRulesPage.tsx?raw";
+import replayPageSource from "./govern/ReplayPage.tsx?raw";
+import inputRulesPageSource from "./govern/InputRulesPage.tsx?raw";
+import policyAnalyticsPageSource from "./govern/PolicyAnalyticsPage.tsx?raw";
+import quarantinePageSource from "./govern/QuarantinePage.tsx?raw";
 import buttonSource from "../components/ui/Button.tsx?raw";
 import cardSource from "../components/ui/Card.tsx?raw";
 
@@ -40,6 +46,62 @@ describe("design-system convergence regressions", () => {
 
   it("keeps job detail status styling on shared tokens instead of page-local CSS vars", () => {
     expect(jobDetailSource).not.toMatch(/var\(--color-/);
+  });
+
+  it("keeps approvals page status styling on shared tokens instead of page-local CSS vars", () => {
+    expect(approvalsPageSource).not.toMatch(/var\(--color-/);
+  });
+
+  it("keeps govern bundle detail page styling on shared tokens instead of page-local CSS vars", () => {
+    expect(bundleDetailGovernSource).not.toMatch(/var\(--color-/);
+  });
+
+  it("keeps govern output rules page styling on shared tokens instead of page-local CSS vars", () => {
+    expect(outputRulesPageSource).not.toMatch(/var\(--color-/);
+  });
+
+  it("keeps govern replay page styling on shared tokens instead of page-local CSS vars", () => {
+    expect(replayPageSource).not.toMatch(/var\(--color-/);
+  });
+
+  it("keeps govern input rules page styling on shared tokens instead of page-local CSS vars", () => {
+    expect(inputRulesPageSource).not.toMatch(/var\(--color-/);
+  });
+
+  it("keeps govern policy analytics page styling on shared tokens instead of page-local CSS vars", () => {
+    expect(policyAnalyticsPageSource).not.toMatch(/var\(--color-/);
+  });
+
+  it("keeps govern quarantine page styling on shared tokens instead of page-local CSS vars", () => {
+    expect(quarantinePageSource).not.toMatch(/var\(--color-/);
+  });
+
+  // Raw-control convergence regressions — the v2.5 drift sweep DoD #2 requires
+  // each newly converged page to use the canonical Input / Select / Textarea /
+  // Checkbox primitives instead of raw native controls. The regex is anchored
+  // on a word boundary so JSX tags like `<input ` or `<select\n` match while
+  // the literal words "input" / "select" / "textarea" inside identifiers
+  // (component names, prop names, comments) do NOT trigger.
+  const RAW_CONTROL_RE = /<(input|select|textarea)\b/;
+
+  it("v2.5 drift sweep — ReplayPage uses primitives, no raw native controls", () => {
+    expect(replayPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep — InputRulesPage uses primitives, no raw native controls", () => {
+    expect(inputRulesPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep — OutputRulesPage uses primitives, no raw native controls", () => {
+    expect(outputRulesPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep — PolicyAnalyticsPage uses primitives, no raw native controls", () => {
+    expect(policyAnalyticsPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep — QuarantinePage uses primitives, no raw native controls", () => {
+    expect(quarantinePageSource).not.toMatch(RAW_CONTROL_RE);
   });
 });
 
@@ -88,15 +150,15 @@ describe("premium overhaul DoD gates", () => {
 
   it("DoD-2 — core data tables stagger rows (Level 3 claim)", () => {
     // JobsPage migrated to primitives/DataTable in Phase 3 wk4 (task-2c3c8a04);
-    // per-row `motion.tr` is incompatible with DataTable's virtualizer (which
-    // mounts/unmounts rows on scroll). The DataTable primitive owns its own
-    // row-render contract, so per-row stagger no longer applies to JobsPage
-    // post-rewrite. AuditLogPage + AgentsPage remain on the hand-rolled-table
-    // contract until they migrate too.
+    // AuditLogPage migrated in commit fe057848 (filter URL state via nuqs +
+    // DataTable swap). Per-row `motion.tr` is incompatible with DataTable's
+    // virtualizer which mounts/unmounts rows on scroll, so per-row stagger
+    // no longer applies on those surfaces — the DataTable primitive owns its
+    // own row-render contract. AgentsPage remains on the hand-rolled-table
+    // contract until it migrates too.
     const hasPerRowMotion = (src: string) =>
       /motion\.(tr|li|article)\b/.test(src) ||
       /<AnimatePresence[\s\S]*?<motion\./.test(src);
-    expect(hasPerRowMotion(auditLogPageSource)).toBe(true);
     expect(hasPerRowMotion(agentsPageSource)).toBe(true);
   });
 
