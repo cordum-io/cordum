@@ -3,9 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { Clock, Copy, GitBranch } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Select } from "@/components/ui/Select";
+import { Button } from "@/components/ui/Button";
 import { formatRelativeTime } from "@/lib/utils";
 import { useBundleVersions } from "@/hooks/useBundle";
 import type { BundleVersion } from "@/api/generated/model/bundleVersion";
+import DeployBundleModal from "./DeployBundleModal";
 
 interface BundleVersionsTabProps {
   bundleId: string;
@@ -25,6 +27,10 @@ interface BundleVersionsTabProps {
 export default function BundleVersionsTab({ bundleId }: BundleVersionsTabProps) {
   const { data, isPending } = useBundleVersions(bundleId);
   const versions = data?.items ?? [];
+  // Mounted-once modal opens for whichever version's "Deploy…" button
+  // was clicked. Per Dashboard 7 step 4b, the modal is shared across
+  // the tab — not duplicated per row — to avoid state-sync bugs.
+  const [deployFor, setDeployFor] = useState<string | null>(null);
 
   // Sort newest-first by deployed_at; defensive copy so callers' arrays
   // aren't mutated.
@@ -51,16 +57,27 @@ export default function BundleVersionsTab({ bundleId }: BundleVersionsTabProps) 
   }
 
   return (
-    <ol className="space-y-3" aria-label="Bundle versions newest first">
-      {sorted.map((version, idx) => (
-        <VersionRow
-          key={version.version}
-          version={version}
-          allVersions={sorted}
-          isLatest={idx === 0}
+    <>
+      <ol className="space-y-3" aria-label="Bundle versions newest first">
+        {sorted.map((version, idx) => (
+          <VersionRow
+            key={version.version}
+            version={version}
+            allVersions={sorted}
+            isLatest={idx === 0}
+            onDeploy={() => setDeployFor(version.version)}
+          />
+        ))}
+      </ol>
+      {deployFor && (
+        <DeployBundleModal
+          bundleId={bundleId}
+          version={deployFor}
+          open
+          onClose={() => setDeployFor(null)}
         />
-      ))}
-    </ol>
+      )}
+    </>
   );
 }
 
@@ -68,10 +85,12 @@ function VersionRow({
   version,
   allVersions,
   isLatest,
+  onDeploy,
 }: {
   version: BundleVersion;
   allVersions: BundleVersion[];
   isLatest: boolean;
+  onDeploy: () => void;
 }) {
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
@@ -140,6 +159,16 @@ function VersionRow({
           }}
         />
       )}
+
+      <Button
+        type="button"
+        variant="default"
+        size="sm"
+        onClick={onDeploy}
+        aria-label={`Deploy version ${version.version} to a scope`}
+      >
+        Deploy…
+      </Button>
     </li>
   );
 }

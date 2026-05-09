@@ -8,6 +8,13 @@ export interface DeployBundleInput {
   bundleId: string;
   version: string;
   scope: { kind: string; value?: string };
+  /**
+   * Optional edge-mode override for the bundle's metadata applied
+   * atomically with the deploy. Valid only when scope.kind starts with
+   * `edge_`. Backend 5 propagates this onto Bundle.Metadata.EdgeMode if
+   * set, leaving metadata untouched if undefined.
+   */
+  edge_mode?: "observe" | "enforce" | "enterprise-strict";
 }
 
 /**
@@ -19,16 +26,21 @@ export function useDeployBundle() {
   const queryClient = useQueryClient();
   return useMutation<void, Error, DeployBundleInput>({
     mutationKey: ["deploy-bundle"],
-    mutationFn: ({ bundleId, version, scope }) => {
-      logger.info("bundle-studio", "Deploying bundle version", { bundleId, version, scope });
+    mutationFn: ({ bundleId, version, scope, edge_mode }) => {
+      logger.info("bundle-studio", "Deploying bundle version", { bundleId, version, scope, edge_mode });
       return post<void>(
         `/policy/bundles/${encodeURIComponent(bundleId)}/deploy`,
-        { version, scope },
+        { version, scope, ...(edge_mode ? { edge_mode } : {}) },
       );
     },
     onSuccess: (_data, { bundleId, version, scope }) => {
       void queryClient.invalidateQueries({
         queryKey: queryKeys.bundleStudio.deployments(bundleId),
+      });
+      // Bundle.Metadata.EdgeMode may have changed atomically with the
+      // deploy — invalidate the bundle detail too so the UI re-fetches.
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.bundleStudio.detail(bundleId),
       });
       useToastStore.getState().addToast({
         type: "success",
