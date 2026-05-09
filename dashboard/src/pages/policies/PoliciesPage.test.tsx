@@ -279,25 +279,35 @@ describe("Policy Studio foundation page shells", () => {
     expect(screen.getAllByText("tenant:acme").length).toBe(4);
 
     // Type cells now resolve to icons + meaningful labels per legacy hint.
-    // Two rows map to RuleType.input (legacy-input + the unmapped fallback),
-    // one to output, one to edge.
-    expect(screen.getAllByTestId("rule-type-icon-input")).toHaveLength(2);
+    // The 3 known legacy rows map to input/output/edge; the legacy-mystery row
+    // (type: "totally_made_up") is correctly classified as the safe Unknown
+    // fallback instead of being silently coerced into RuleType.input.
+    expect(screen.getAllByTestId("rule-type-icon-input")).toHaveLength(1);
     expect(screen.getAllByTestId("rule-type-icon-output")).toHaveLength(1);
     expect(screen.getAllByTestId("rule-type-icon-edge")).toHaveLength(1);
+    expect(screen.getAllByTestId("rule-type-icon-unknown")).toHaveLength(1);
+
+    // Known legacy rows render their mapped type label; only the truly
+    // unmapped row shows "Unknown".
+    expect(screen.getByText(/^Unknown$/)).toBeTruthy();
+    expect(screen.queryAllByText(/^Input$/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryAllByText(/^Output$/).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryAllByText(/^Edge$/).length).toBeGreaterThanOrEqual(1);
 
     // Status badges show published/deprecated mapped from legacy enabled/status.
     // "published" / "deprecated" also appear as filter <option> text, so the
     // row-level count is ≥ filter+rows.
     expect(screen.getAllByText("published").length).toBeGreaterThanOrEqual(3);
     expect(screen.getAllByText("deprecated").length).toBeGreaterThanOrEqual(2);
-    expect(screen.queryAllByText("unknown")).toHaveLength(0);
   });
 
-  it("PoliciesPage renders the safe Unknown fallback for truly unmapped rule types without crashing", async () => {
-    // Direct rule.scope.kind / undefined-icon assumptions are forbidden by
-    // task-fd25f310 comment-beeedc8e/-58bb8361. This test guards that an
-    // out-of-enum status plus a missing scope plus an unmapped type still
-    // renders a row instead of throwing.
+  it("PoliciesPage renders the safe Unknown fallback for missing/unmapped rule types without crashing", async () => {
+    // DoD #2: Unknown is the safe fallback ONLY for truly unmapped/missing
+    // type values. This test feeds two rows — one missing `type` entirely,
+    // one with `type: "totally_made_up"` (no legacy hint match) — and asserts
+    // both render the Unknown label + Shield icon (data-testid carries the
+    // `unknown` sentinel) without throwing on missing scope/audit/type/status.
+    // Guards task-fd25f310 comment-beeedc8e/-58bb8361.
     server.use(
       http.get("*/api/v1/policy/rules", () =>
         HttpResponse.json({
@@ -308,8 +318,13 @@ describe("Policy Studio foundation page shells", () => {
               status: "active", // out-of-enum → falls back to draft
               audit: null,
             },
+            {
+              id: "unsupported-type",
+              name: "Unsupported type",
+              type: "totally_made_up",
+            },
           ],
-          total: 1,
+          total: 2,
         }),
       ),
     );
@@ -317,15 +332,24 @@ describe("Policy Studio foundation page shells", () => {
     renderPoliciesPage();
 
     expect(await screen.findByRole("link", { name: /fully malformed/i })).toBeTruthy();
-    // Default scope is global; default status is draft; default type is input
-    // (Unknown label only emerges from rule-type fallback when ruleTypeIcon
-    // receives a value not in the RuleType enum, which the normalizer prevents
-    // for unsalvageable rows by mapping unmapped hints into RuleType.input).
-    // "draft" appears as both the filter <option> text and the StatusBadge.
-    expect(screen.getByText("global")).toBeTruthy();
-    expect(screen.getAllByText("draft").length).toBeGreaterThanOrEqual(1);
-    // Updated cell + Last 7d cell both fall back to "—" for malformed rows.
-    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("link", { name: /unsupported type/i })).toBeTruthy();
+
+    // Both rows render the Unknown safe fallback rather than being silently
+    // coerced into Input/Output/etc. The data-testid uses the `unknown`
+    // sentinel so QA can grep for the fallback path explicitly.
+    expect(screen.getAllByTestId("rule-type-icon-unknown")).toHaveLength(2);
+    expect(screen.queryAllByTestId("rule-type-icon-input")).toHaveLength(0);
+    // Type label cell shows "Unknown" (capital — the rule-type.ts fallback);
+    // there's no "Unknown" filter option, so both row labels are unique.
+    expect(screen.getAllByText("Unknown")).toHaveLength(2);
+
+    // Default scope is global; default status is draft; "draft" also appears
+    // as the Status filter option, so the row-level count is ≥ 2.
+    expect(screen.getAllByText("global")).toHaveLength(2);
+    expect(screen.getAllByText("draft").length).toBeGreaterThanOrEqual(2);
+    // Updated cell falls back to "—" for the audit:null row; Last 7d cell
+    // also falls back to "—" when firing data is absent.
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
   });
 
   it("DecisionsPage renders the canonical PageHeader title (axe-clean on initial render)", async () => {

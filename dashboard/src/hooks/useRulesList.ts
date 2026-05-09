@@ -17,10 +17,24 @@ export interface RuleFilters {
   limit?: number;
 }
 
+// Sentinel used when a row's type field is missing or doesn't match any known
+// legacy/unified hint. The page renders this through `ruleTypeLabel` /
+// `ruleTypeIcon` as the safe "Unknown" + Shield fallback. DoD #2 requires that
+// only truly unmapped/missing types reach this state — known legacy hints
+// (input_rule, OutputRule, velocity_rule, edge_policy, classifier, ...) keep
+// mapping to the unified RuleType.
+export const UNKNOWN_RULE_TYPE = "unknown" as const;
+export type RuleTypeOrUnknown = RuleType | typeof UNKNOWN_RULE_TYPE;
+
 // Backend may attach `firing_last_7d` (legacy histogram) onto rule rows even
 // after the unified Rule envelope. Preserve it as an extension field so
-// PoliciesPage can render the sparkline column without per-row casts.
-export type NormalizedRule = Rule & { firing_last_7d?: unknown };
+// PoliciesPage can render the sparkline column without per-row casts. The
+// `type` field is widened to admit the UNKNOWN_RULE_TYPE sentinel for rows
+// the normalizer cannot classify.
+export type NormalizedRule = Omit<Rule, "type"> & {
+  type: RuleTypeOrUnknown;
+  firing_last_7d?: unknown;
+};
 
 export interface RulesListResult {
   rules: NormalizedRule[];
@@ -77,7 +91,7 @@ function pickArray(o: Record<string, unknown>, ...keys: string[]): unknown[] {
   return [];
 }
 
-export function normalizeRuleType(row: Record<string, unknown>): RuleType {
+export function normalizeRuleType(row: Record<string, unknown>): RuleTypeOrUnknown {
   const candidates = [
     pickString(row, "type", "rule_type", "ruleType", "kind", "category"),
     pickString(row, "classifier"),
@@ -90,7 +104,11 @@ export function normalizeRuleType(row: Record<string, unknown>): RuleType {
       if (pattern.test(candidate)) return mapped;
     }
   }
-  return RuleType.input;
+  // No known legacy/unified hint matched and no type-shaped fields were
+  // present — render the safe Unknown fallback rather than silently coercing
+  // to RuleType.input (DoD #2: Unknown is the safe fallback ONLY for truly
+  // unmapped/missing type values).
+  return UNKNOWN_RULE_TYPE;
 }
 
 export function normalizeRuleScope(row: Record<string, unknown>): RuleScope {

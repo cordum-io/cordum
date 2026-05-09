@@ -6,6 +6,7 @@ import { RuleStatus } from "@/api/generated/model/ruleStatus";
 import { RuleType } from "@/api/generated/model/ruleType";
 import type { Rule } from "@/api/generated/model/rule";
 import {
+  UNKNOWN_RULE_TYPE,
   normalizeRule,
   normalizeRuleScope,
   normalizeRuleStatus,
@@ -190,10 +191,11 @@ describe("useRulesList", () => {
     expect(byId.get("legacy-edge-1")?.type).toBe(RuleType.edge);
     expect(byId.get("legacy-edge-2")?.type).toBe(RuleType.edge);
     expect(byId.get("legacy-edge-2")?.status).toBe(RuleStatus.published);
-    // Unmapped type → safe default RuleType.input (page renders Unknown label
-    // via rule-type fallback only when the value is outside the enum entirely;
-    // unsupported_kind is not in any hint pattern so it falls through to input)
-    expect(byId.get("legacy-mystery")?.type).toBe(RuleType.input);
+    // Truly unmapped type — `unsupported_kind` matches no legacy hint, so the
+    // normalizer returns the UNKNOWN_RULE_TYPE sentinel (DoD #2: Unknown is
+    // the safe fallback ONLY for truly unmapped/missing type values; known
+    // legacy mappings like InputRule/output_rule above keep their RuleType).
+    expect(byId.get("legacy-mystery")?.type).toBe(UNKNOWN_RULE_TYPE);
     expect(byId.get("legacy-mystery")?.status).toBe(RuleStatus.draft);
     // firing_last_7d preserved verbatim where present
     expect(byId.get("legacy-input-1")?.firing_last_7d).toEqual([0, 1, 0, 1, 0, 1, 0]);
@@ -206,7 +208,8 @@ describe("useRulesList", () => {
 
 describe("useRulesList — pure normalizers (table-driven)", () => {
   describe("normalizeRuleType", () => {
-    const cases: Array<[string, Record<string, unknown>, RuleType]> = [
+    type Expected = RuleType | typeof UNKNOWN_RULE_TYPE;
+    const cases: Array<[string, Record<string, unknown>, Expected]> = [
       ["unified input enum", { type: "input" }, RuleType.input],
       ["unified output enum", { type: "output" }, RuleType.output],
       ["unified velocity enum", { type: "velocity" }, RuleType.velocity],
@@ -219,8 +222,9 @@ describe("useRulesList — pure normalizers (table-driven)", () => {
       ["EdgeRule via category", { category: "EdgeRule" }, RuleType.edge],
       ["classifier hint", { classifier: "edge_action" }, RuleType.edge],
       ["action_classification object", { action_classification: { mode: "block" } }, RuleType.edge],
-      ["unmapped value defaults to input", { type: "totally_made_up" }, RuleType.input],
-      ["empty row defaults to input", {}, RuleType.input],
+      ["unmapped non-empty value falls back to Unknown", { type: "totally_made_up" }, UNKNOWN_RULE_TYPE],
+      ["completely empty row falls back to Unknown", {}, UNKNOWN_RULE_TYPE],
+      ["non-string type field falls back to Unknown", { type: 42 }, UNKNOWN_RULE_TYPE],
     ];
     it.each(cases)("%s", (_label, row, expected) => {
       expect(normalizeRuleType(row)).toBe(expected);
