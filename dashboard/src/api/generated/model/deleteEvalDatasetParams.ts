@@ -7,5 +7,5 @@
  */
 
 export type DeleteEvalDatasetParams = {
-force?: boolean;
+  force?: boolean;
 };

@@ -9,4 +9,4 @@
 /**
  * Arbitrary operator-supplied key/value pairs; optional.
  */
-export type PolicyShadowUpsertRequestMetadata = {[key: string]: string};
+export type PolicyShadowUpsertRequestMetadata = { [key: string]: string };

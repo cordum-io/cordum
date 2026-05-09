@@ -11,11 +11,11 @@
 pipeline (`job`) or the edge classifier path (`edge`).
 
  */
-export type DecisionSource = typeof DecisionSource[keyof typeof DecisionSource];
-
+export type DecisionSource =
+  (typeof DecisionSource)[keyof typeof DecisionSource];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const DecisionSource = {
-  job: 'job',
-  edge: 'edge',
+  job: "job",
+  edge: "edge",
 } as const;

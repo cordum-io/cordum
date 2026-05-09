@@ -7,5 +7,5 @@
  */
 
 export type CreateEvalDatasetFromIncidentsParams = {
-dry_run?: boolean;
+  dry_run?: boolean;
 };

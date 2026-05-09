@@ -10,4 +10,6 @@
  * Bounded redacted input summary safe to persist and return.
  * @nullable
  */
-export type EdgeAgentActionEventInputRedacted = { [key: string]: unknown } | null;
+export type EdgeAgentActionEventInputRedacted = {
+  [key: string]: unknown;
+} | null;

@@ -9,14 +9,14 @@
 /**
  * Bucket width as the caller requested (e.g. `1m`, `5m`).
  */
-export type ShadowTimeseriesResponseBucket = typeof ShadowTimeseriesResponseBucket[keyof typeof ShadowTimeseriesResponseBucket];
-
+export type ShadowTimeseriesResponseBucket =
+  (typeof ShadowTimeseriesResponseBucket)[keyof typeof ShadowTimeseriesResponseBucket];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const ShadowTimeseriesResponseBucket = {
-  '1m': '1m',
-  '5m': '5m',
-  '15m': '15m',
-  '1h': '1h',
-  '1d': '1d',
+  "1m": "1m",
+  "5m": "5m",
+  "15m": "15m",
+  "1h": "1h",
+  "1d": "1d",
 } as const;

@@ -9,4 +9,4 @@
 /**
  * Arbitrary key-value labels for filtering and blast radius
  */
-export type SubmitJobRequestLabels = {[key: string]: string};
+export type SubmitJobRequestLabels = { [key: string]: string };

@@ -14,12 +14,12 @@ and defer to runtime safety decision. NEVER defaults to
 "allow" when unset.
 
  */
-export type WorkflowStepPolicyGate = typeof WorkflowStepPolicyGate[keyof typeof WorkflowStepPolicyGate];
-
+export type WorkflowStepPolicyGate =
+  (typeof WorkflowStepPolicyGate)[keyof typeof WorkflowStepPolicyGate];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const WorkflowStepPolicyGate = {
-  allow: 'allow',
-  deny: 'deny',
-  require_approval: 'require_approval',
+  allow: "allow",
+  deny: "deny",
+  require_approval: "require_approval",
 } as const;

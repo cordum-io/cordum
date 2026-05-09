@@ -7,13 +7,13 @@
  */
 
 export type ListAgentsParams = {
-cursor?: string;
-/**
- * @minimum 1
- * @maximum 200
- */
-limit?: number;
-status?: string;
-risk_tier?: string;
-team?: string;
+  cursor?: string;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+  status?: string;
+  risk_tier?: string;
+  team?: string;
 };

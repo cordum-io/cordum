@@ -63,6 +63,7 @@
     "knip": "^6.12.1",
     "msw": "^2.13.5",
     "orval": "^7",
+    "prettier": "^3.8.3",
     "rollup-plugin-visualizer": "^7.0.1",
     "start-server-and-test": "^3.0.2",
     "tailwindcss": "^4.1.14",

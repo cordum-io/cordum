@@ -7,24 +7,24 @@
  */
 
 export type VerifyAuditChainParams = {
-/**
- * Tenant id to verify; must match caller scope and defaults to the authenticated/request tenant.
- */
-tenant?: string;
-/**
- * Inclusive lower bound on event time (unix ms)
- * @minimum 0
- */
-since?: number;
-/**
- * Inclusive upper bound on event time (unix ms)
- * @minimum 0
- */
-until?: number;
-/**
- * Max events to read (default 10000, max 100000)
- * @minimum 1
- * @maximum 100000
- */
-limit?: number;
+  /**
+   * Tenant id to verify; must match caller scope and defaults to the authenticated/request tenant.
+   */
+  tenant?: string;
+  /**
+   * Inclusive lower bound on event time (unix ms)
+   * @minimum 0
+   */
+  since?: number;
+  /**
+   * Inclusive upper bound on event time (unix ms)
+   * @minimum 0
+   */
+  until?: number;
+  /**
+   * Max events to read (default 10000, max 100000)
+   * @minimum 1
+   * @maximum 100000
+   */
+  limit?: number;
 };
