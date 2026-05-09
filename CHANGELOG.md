@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Dashboard 7 — Bundle deploy modal + scope picker + edgeMode override (2026-05-09, task-758788ea)
+
+- New `dashboard/src/pages/policies/DeployBundleModal.tsx` — Drawer-mounted modal launched from BundleVersionsTab's per-row "Deploy…" Button. Scope picker covers all 5 kinds (`global` / `tenant` / `workflow` / `edge_fleet` / `edge_user`); scopeValue Input auto-disabled + cleared for global; EdgeMode picker (`observe` / `enforce` / `enterprise-strict`) appears only for edge_fleet/edge_user with `bundle.metadata.edge_mode` preselected as default.
+- ConfirmDialog (destructive variant) gates the mutation; when the operator changes EdgeMode away from current bundle metadata, the dialog message renders a dual-effect warning: *"Bundle edge mode will also change to <new>"*.
+- `dashboard/src/hooks/useDeployBundle.ts` extended with optional `edge_mode?: "observe" | "enforce" | "enterprise-strict"`. Body conditionally includes the field; non-edge deploys omit it so Backend leaves metadata untouched. onSuccess invalidates `bundleStudio.deployments(id)` AND `bundleStudio.detail(id)` since metadata may change atomically.
+- `BundleVersionsTab.tsx` wires per-row "Deploy…" button; modal mounted-once at tab level (single `useState<string | null>(deployFor)` shared across rows — avoids state-sync bugs).
+- 5/5 new tests in `DeployBundleModal.test.tsx`: all 5 scope kinds, value-disabled-for-global, EdgeMode visibility on edge/non-edge swap, happy-path Deploy → ConfirmDialog → mutation, Cancel-without-firing.
+- DASHBOARD VERIFICATION RAIL: tsc 0 / vitest 242 files / 2069 tests / build 0. NO new shared primitive (reused Drawer/Select/Input/Button/ConfirmDialog).
+
 #### Dashboard Phase 5e — per-route error boundaries with route-scoped fallback (2026-05-09, task-adc04293)
 
 - `dashboard/src/components/RouteErrorFallback.tsx`: route-scoped error UI composed from existing `ErrorBanner` primitive plus a Bug-icon mailto "Report bug" link. The mailto body URL-encodes the route name, error message, full stack, and user-agent so the bug report is actionable on first read.
