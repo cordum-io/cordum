@@ -174,10 +174,154 @@ forbids speculation.
 
 A2's residual 9 unused-export entries are concentrated in `useWorkflows.ts` (6 hooks bound to `__workflowsInternal` test bag, kept until a Pass B factoring decides their fate) and a long tail of single-export utilities not worth a focused-removal commit. Re-run `pnpm exec knip --reporter compact` post-Pass-B to capture the post-factoring delta.
 
-## DoD reminder (per task-1acf9c07)
+## Pass B — factored primitives
 
-- Pass A: knip report committed; all dead code findings removed in batched commits. ✅ A1+A2(slices 1-3)+A3+A4 shipped; residual 9 entries explained above.
-- Pass B: at least 3 duplicated patterns factored to shared.
-- Pass C: zero `console.*` in production `src/` paths; logger consistent; ESLint rule prevents regression.
-- All 3 passes documented in this file with before/after metrics.
-- tsc + vitest + build green; bundle size unchanged or smaller.
+DoD #2 requires "at least 3 duplicated patterns factored to shared". Three
+slices shipped, each with a co-located test and ≥2 active consumers
+migrated in the same batch (per the SHARED CODE FIRST rail).
+
+### Slice 1 — `src/lib/badgeVariants.ts` (commit `ba2e5390`)
+
+Consolidates 4 hand-rolled `*Variant` mapper functions that were
+duplicated across 7+ files (~95 LOC of duplicated switch/case logic).
+
+| Helper | Returns | Consumers migrated |
+|---|---|---|
+| `workerStatusVariant(status)` | `BadgeColorVariant` | PoolGroupedView, WorkerDetailDrawer |
+| `jobStatusVariant(status)` | `BadgeColorVariant` | WorkerDetailDrawer |
+| `evalScoreVariant(score)` | `BadgeColorVariant` | DatasetList, RunHistoryTable |
+| `decisionVariant(decision)` | `BadgeColorVariant` (case-insensitive) | SafetyAlertBlock, AuditEventCard |
+
+Also added `export type BadgeColorVariant` to `src/components/ui/Badge.tsx`
+so consumers can type their callbacks against the canonical Badge enum.
+Co-located test: `src/lib/badgeVariants.test.ts` (23 tests).
+
+### Slice 2 — `src/hooks/useCopyToClipboard.ts` (commit `361c5dfe`)
+
+Consolidates the duplicated `useState(false) + try/await/setCopied(true)/setTimeout`
+clipboard-write pattern. The pattern was hand-rolled in 17 files; this
+slice migrates 3 isolated CopyButton subcomponents and ships the hook
+for future adoptions.
+
+```ts
+const { copied, copy } = useCopyToClipboard({
+  resetMs: 1500,                  // default 1500ms; pass 0 to disable auto-reset
+  onSuccess: () => toast.success("Copied"),  // optional
+  onError: (err) => logger.warn("scope", "clipboard copy failed", { err }),  // optional
+});
+```
+
+Failure semantics: silent by default (matches existing inline
+swallow-and-stay-quiet pattern); caller passes `onError` for toast/log.
+Never throws — `copy()` always returns a settled promise.
+
+| Consumer migrated | Pre-existing pattern | Notes |
+|---|---|---|
+| `AuditDetailPanel.CopyButton` | inline `useState + try/catch` | resetMs=1500 |
+| `EdgeEventInspector.CopyButton` | inline `useState + try/catch` | resetMs=1500; also dropped now-unused `useState` import |
+| `BundleSignatureSection.Field` | inline `useState + try/catch` | resetMs=1500; renamed hook `copy` to `copyToClipboard` to avoid shadowing Field's existing `copy?: boolean` prop |
+
+Co-located test: `src/hooks/useCopyToClipboard.test.ts` (8 tests, fake-timer
++ `navigator.clipboard.writeText` spy). 14+ additional consumers (e.g.
+JobDetailPage, AuditLogPage:DrillRow, RuleEditor, BundleOverviewCard,
+GlobalYamlPane, BundleYamlEditor, SamlConfigPanel) can adopt the hook in
+follow-up slices without coordination.
+
+`CodeBlock` (the canonical block/inline primitive) keeps its inline
+implementation since it owns extra concerns (truncation, mac-chrome
+rendering, two-mode block/inline toggle) — a separate refactor.
+
+### Slice 3 — `formatBytes` extension to `src/lib/format.ts` (commit `3931d479`)
+
+Consolidates 3 hand-rolled `formatBytes` copies (a 4th in
+`edgeArtifactUtils.ts` is carved out — see below).
+
+```ts
+formatBytes(value, {
+  fallback?: string;       // default "—"
+  iec?: boolean;           // default false (KB/MB/GB; pass true for KiB/MiB/GiB)
+  includeGB?: boolean;     // default false (caps at MB tier)
+  zeroAsBytes?: boolean;   // default false (0 -> fallback; pass true for "0 B")
+});
+```
+
+Tiers: `B` / `KB` (1 decimal) / `MB` (2 decimals) / `GB` (1 decimal, opt-in
+via `includeGB`). Tier boundaries at 1024 each (binary kilobytes).
+
+| Consumer migrated | Options |
+|---|---|
+| `ArtifactPanel.tsx` | `{ fallback: "-" }` |
+| `EdgeEventInspector.tsx` | `{ iec: true, zeroAsBytes: true }` |
+| `LicensePage.tsx` | `{ includeGB: true }` |
+
+**Carve-out**: `src/components/edge/edgeArtifactUtils.ts` retains its inline
+implementation (with a documenting comment) because it uses `Math.round`
+at the KB tier (no decimals), and adopting the shared 1-decimal renderer
+would render `64.0 KB` where `EdgeArtifactsPanel.test.tsx:90` asserts
+`64 KB`. A 3-consumer migration with the carve-out documented is
+preferable to baking a `kbPrecision` option into the shared API for one
+caller.
+
+Co-located tests added to `src/lib/format.test.ts` (12 new `formatBytes`
+tests, alongside existing 4 `formatCount` tests + 1 `formatDateTime`
+test = 17 total).
+
+## Pass C — logs audit (commit `99701e4e`)
+
+Only one production `console.*` call existed (per Phase 2 baseline):
+
+| File:line | Before | After |
+|---|---|---|
+| `src/api/transform.ts:601` | `console.warn(\`[transform] Unknown governance verdict "${raw}", defaulting to deny\`)` | `logger.warn("transform", "unknown governance verdict, defaulting to deny", { raw })` |
+
+The corresponding test in `src/api/transform.test.ts` was updated to spy
+on `logger.warn` directly with the structured-arg shape (component +
+msg + fields), so future logger wire-format migrations don't silently
+break observability.
+
+`src/lib/logger.ts` itself contains 3 `console[fn](...)` calls — the
+logger's write-out primitive. Each annotated with
+`// eslint-disable-next-line no-console` plus a block comment explaining
+the carve-out. The rule's purpose is to catch consumers using console
+directly, not the logger implementation.
+
+### ESLint `no-console` rule
+
+Added to `dashboard/eslint.config.mjs` as a separate flat-config block:
+
+```mjs
+{
+  files: ["src/**/*.{ts,tsx}"],
+  ignores: [
+    "src/test-utils/**",
+    "src/**/*.test.{ts,tsx}",
+    "src/**/__tests__/**",
+    "src/**/*.stories.{ts,tsx}",
+  ],
+  rules: { "no-console": "error" },
+}
+```
+
+Also referenced from `dashboard/CLAUDE.md` § Logging so future
+contributors see it.
+
+### Fixture verification protocol
+
+Per the Phase 3 plan, the rule was verified in-place before commit:
+
+1. Created `src/__lint-fixtures__/no-console.fixture.ts` containing
+   `console.log("violates rule")`.
+2. `npx eslint src/__lint-fixtures__/` → EXIT=1 with the `no-console`
+   violation cited at line 6:3.
+3. Fixture deleted before commit (the rule is what ships, not the fixture).
+4. Post-migration `npx eslint src/ | grep no-console` → 0 matches.
+
+## Final DoD evidence (per task-1acf9c07)
+
+| DoD item | Evidence |
+|---|---|
+| Pass A: knip report committed; all dead code removed in batched commits | ✅ A1+A2(3 slices)+A3+A4 shipped (commits 907bd034, e0dfdd1e, 4ca88b14, a17f0c52, ca9e22e7, 67f97468, efca78a0, cb93b04d). Residual 9 unused exports + 11 unused types documented. |
+| Pass B: ≥3 duplicated patterns factored to shared | ✅ 3 slices shipped (badgeVariants, useCopyToClipboard, formatBytes). Each migrated ≥2 consumers in the same batch with co-located test. |
+| Pass C: zero `console.*` in production `src/` paths; logger consistent; ESLint rule prevents regression | ✅ 1 console.warn migrated; ESLint `no-console` rule active; fixture-verified. |
+| All 3 passes documented in this file with before/after metrics | ✅ this document. |
+| tsc + vitest + build green; bundle size unchanged or smaller | ✅ tsc EXIT=0; vitest 228 files / 2005 tests; build 629ms; bundle stable at 38 assets / ~308 KB main index.js (Pass A removed already-unused code that tree-shaking already excluded — bundle size reflects post-tree-shake reality). |
