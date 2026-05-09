@@ -63,7 +63,9 @@ const SettingsAuditExportPage = lazy(() => import("./pages/settings/SettingsAudi
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const SettingsShell = lazy(() => import("./pages/SettingsShell"));
 const SettingsHubPage = lazy(() => import("./pages/SettingsHubPage"));
-const GovernPolicyOverviewPage = lazy(() => import("./pages/govern/PolicyOverviewPage"));
+// PolicyOverviewPage is no longer routed; /govern/overview redirects to /policies
+// (epic-d9a6c0a1 Dashboard 1). The component file remains until Dashboard 2-4
+// hero rewrites land + the file is deleted in Dashboard 11 cut-over.
 const GovernTenantDetailPage = lazy(() => import("./pages/govern/TenantDetailPage"));
 const GovernBundleDetailPage = lazy(() => import("./pages/govern/BundleDetailPage"));
 const GovernQuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"));
@@ -74,6 +76,10 @@ const EvalRunDetailPage = lazy(() => import("./pages/EvalRunDetailPage"));
 const CopilotSessionPage = lazy(() => import("./pages/CopilotSessionPage"));
 const EdgeSessionDetailPage = lazy(() => import("./pages/EdgeSessionDetailPage"));
 const EdgeSessionsPage = lazy(() => import("./pages/EdgeSessionsPage"));
+// Policy Studio v3 surfaces (epic-d9a6c0a1 Dashboard 1 foundation).
+const PoliciesPage = lazy(() => import("./pages/policies/PoliciesPage"));
+const PoliciesBundlesPage = lazy(() => import("./pages/policies/BundlesPage"));
+const PoliciesDecisionsPage = lazy(() => import("./pages/policies/DecisionsPage"));
 
 // Policy Studio tab redirects — canonical `/govern/<tab>` aliases land on
 // the tabbed overview with the right tab/mode pre-selected. These are not
@@ -101,6 +107,53 @@ function PolicyTabRedirect({ tab, mode }: { tab: string; mode?: string }) {
     params.delete("mode");
   }
   return <Navigate to={`/govern/overview?${params.toString()}`} replace />;
+}
+
+/**
+ * /govern/overview → /policies/* redirect (epic-d9a6c0a1 Dashboard 1).
+ * Maps the legacy `?tab=` + `?mode=` query params onto the new three-surface IA.
+ * Preserves any unrelated query params for bookmark compatibility.
+ */
+function GovernOverviewRedirect() {
+  const [searchParams] = useSearchParams();
+  const tab = searchParams.get("tab") ?? "";
+  const mode = searchParams.get("mode") ?? "";
+
+  // Compute target path + querystring per the spec mapping.
+  const params = new URLSearchParams(searchParams);
+  params.delete("tab");
+  params.delete("mode");
+
+  let target = "/policies";
+  switch (tab) {
+    case "input-rules":
+      params.set("type", "input");
+      break;
+    case "output-rules":
+      params.set("type", "output");
+      break;
+    case "velocity":
+    case "velocity-rules":
+      params.set("type", "velocity");
+      break;
+    case "bundles":
+      target = "/policies/bundles";
+      break;
+    case "scope":
+      target = "/policies/bundles";
+      params.set("view", "scope");
+      break;
+    case "evaluation":
+      target = "/policies/decisions";
+      if (mode) params.set("mode", mode);
+      break;
+    default:
+      // Unknown / missing tab → land on /policies (Rules surface) per spec default.
+      break;
+  }
+
+  const qs = params.toString();
+  return <Navigate to={qs ? `${target}?${qs}` : target} replace />;
 }
 
 function ThemeSync() {
@@ -154,8 +207,13 @@ function ProtectedRoutes() {
           <Route path="/approvals" element={<ApprovalsPage />} />
           <Route path="/approvals/:jobId" element={<ApprovalDetailPage />} />
 
-          {/* GOVERN */}
-          <Route path="/govern/overview" element={<GovernPolicyOverviewPage />} />
+          {/* POLICY STUDIO (epic-d9a6c0a1 v3 IA) — three top-level surfaces */}
+          <Route path="/policies" element={<PoliciesPage />} />
+          <Route path="/policies/bundles" element={<PoliciesBundlesPage />} />
+          <Route path="/policies/decisions" element={<PoliciesDecisionsPage />} />
+
+          {/* GOVERN — legacy redirects preserve bookmarks; canonical surfaces are /policies/* */}
+          <Route path="/govern/overview" element={<GovernOverviewRedirect />} />
           <Route path="/govern/input-rules" element={<PolicyTabRedirect tab="input-rules" />} />
           <Route path="/govern/output-rules" element={<PolicyTabRedirect tab="output-rules" />} />
           <Route path="/govern/velocity-rules" element={<PolicyTabRedirect tab="velocity" />} />
