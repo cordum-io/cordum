@@ -44,8 +44,10 @@ import { cn, formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { useConfigStore } from "@/state/config";
-import { useAuditEventVerify } from "@/hooks/useAuditEventVerify";
-import type { AuditVerifyResult } from "@/hooks/useAuditChainVerify";
+import {
+  useAuditVerify,
+  type AuditVerifyResult,
+} from "@/hooks/useAuditVerify";
 import { useIsAdmin } from "@/hooks/usePermission";
 import type { PolicyAuditEntry } from "@/api/generated/model/policyAuditEntry";
 
@@ -736,17 +738,15 @@ function ChainSignatureSection({
   tenantId,
   isAdmin,
 }: ChainSignatureSectionProps) {
-  // Per amended DoD #4 (comment-832277b0): each row's drilldown fires its
-  // own /audit/verify request scoped to that event ID — no shared chain-
-  // wide cached read. The drawer-open mount is the explicit user opt-in.
-  // useAuditEventVerify gates on isAdmin internally so viewer users don't
-  // fire a 403; we mirror that gate at this section to render a helpful
-  // hint instead of a silent no-op.
-  const verify = useAuditEventVerify({
-    tenant: tenantId,
-    eventId: event.id,
-    enabled: isAdmin,
-  });
+  // Per amended DoD #4 (comment-7419de07, third amendment, supersedes
+  // comment-832277b0): use the chain-wide /audit/verify endpoint and
+  // derive the per-row verdict from the cached result. The signature
+  // display must NOT block the row from rendering — pending is the safe
+  // default while the chain verdict is in flight or absent.
+  // useAuditVerify gates on isAdmin internally so viewer users don't fire
+  // a 403; we mirror that gate at this section to render a helpful hint
+  // instead of a silent no-op.
+  const verify = useAuditVerify({ tenant: tenantId, enabled: isAdmin });
 
   if (!isAdmin) {
     return (
@@ -784,37 +784,47 @@ interface ChainSignatureVerdictProps {
   };
 }
 
+// ChainSignatureVerdict implements the three-state badge contract from the
+// task-55f813b3 third DoD amendment (comment-7419de07):
+//
+//   verified   (healthy / green) — chain verdict found AND row's seq is in
+//                                  the verified Merkle window with no gap.
+//   unverified (danger / red)    — chain verdict found AND row's seq is in
+//                                  gaps as missing / hash_mismatch /
+//                                  out_of_order.
+//   pending    (muted)           — chain verdict not yet loaded (in-flight,
+//                                  errored, or no data) OR row's seq is
+//                                  absent from the cached result (no seq on
+//                                  the row, or seq pruned by retention).
+//
+// The descriptive subtext below the badge preserves the granular reason
+// (Retention-trimmed / no chain seq / hash_mismatch label) so operators
+// can tell why a row is pending or unverified without losing information.
 function ChainSignatureVerdict({
   event,
   verify,
 }: ChainSignatureVerdictProps) {
-  // Pending state per amended DoD #4: in-flight single-event verify
-  // request renders a muted "Pending" badge so users don't see a blank
-  // signature panel during the request. Distinguishes "not yet verified
-  // by this drilldown" from "chain says unverified".
+  // Pending: chain verdict not yet loaded.
   if (verify.isLoading) {
     return (
       <div className="space-y-1">
         <StatusBadge variant="muted">Pending</StatusBadge>
         <p className="text-xs text-muted-foreground">
-          Verifying chain signature for event{" "}
+          Loading chain verification for event{" "}
           <span className="font-mono">{event.id}</span>…
         </p>
       </div>
     );
   }
 
-  // Network/admin/upstream failures surface as an explicit "Unverified"
-  // signal — the chain backend did not return a verdict, so we cannot
-  // claim the entry is chain-signed.
+  // Pending: chain verdict request errored or no data — we cannot claim
+  // verified or unverified without a result.
   if (verify.isError || !verify.data) {
     return (
       <div className="space-y-1">
-        <StatusBadge variant="danger" dot>
-          Unverified
-        </StatusBadge>
+        <StatusBadge variant="muted">Pending</StatusBadge>
         <p className="text-xs text-muted-foreground">
-          Chain verification request failed for event{" "}
+          Chain verification result unavailable for event{" "}
           <span className="font-mono">{event.id}</span>. Try again or check{" "}
           <span className="font-mono">/govern/verification</span>.
         </p>
@@ -824,10 +834,12 @@ function ChainSignatureVerdict({
 
   const chain = verify.data;
 
+  // Pending: row's seq absent from the cached result — policy-only audit
+  // entries are not in the Merkle chain at all.
   if (event.seq === undefined) {
     return (
       <div className="space-y-1">
-        <StatusBadge variant="info">Not chain-signed</StatusBadge>
+        <StatusBadge variant="muted">Pending</StatusBadge>
         <p className="text-xs text-muted-foreground">
           This entry has no chain seq — policy-only audit entries are not
           included in the Merkle chain.
@@ -836,19 +848,22 @@ function ChainSignatureVerdict({
     );
   }
 
+  // Pending: row's seq pruned by retention — verdict cannot be derived
+  // because the signature evidence is gone.
   if (event.seq < chain.retention_boundary_seq) {
     return (
       <div className="space-y-1">
-        <StatusBadge variant="warning">Retention-trimmed</StatusBadge>
+        <StatusBadge variant="muted">Pending</StatusBadge>
         <p className="text-xs text-muted-foreground">
           Chain seq #{event.seq} is older than the retention window
           ({chain.retention_window_hours ?? "?"}h). Signature evidence has
-          been pruned.
+          been pruned (retention-trimmed).
         </p>
       </div>
     );
   }
 
+  // Unverified: row's seq matches a tampered / missing / out-of-order gap.
   const tamperGap = chain.gaps.find(
     (g) =>
       g.at_seq === event.seq &&
@@ -861,10 +876,11 @@ function ChainSignatureVerdict({
     return (
       <div className="space-y-1">
         <StatusBadge variant="danger" dot>
-          Tamper detected ({tamperGap.type.replace(/_/g, " ")})
+          Unverified
         </StatusBadge>
         <p className="text-xs text-muted-foreground">
-          Chain seq #{event.seq} failed verification. Investigate via
+          Chain seq #{event.seq} failed verification — tamper detected
+          ({tamperGap.type.replace(/_/g, " ")}). Investigate via
           /govern/verification before relying on this entry for compliance
           export.
         </p>
@@ -872,6 +888,7 @@ function ChainSignatureVerdict({
     );
   }
 
+  // Verified: seq is in the verified Merkle window and not in any gap.
   return (
     <div className="space-y-1">
       <StatusBadge variant="healthy" dot>
