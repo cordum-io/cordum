@@ -174,3 +174,63 @@ iframe-has-title) to `error`. The default `pnpm run lint` keeps lower-impact
 rules at `warn` so existing surfaces don't block unrelated PRs; the strict
 gate is the one CI should fail on. The narrow config ignores
 `src/api/generated/**` (orval-emitted, hand-edits forbidden).
+## Lighthouse CI (Phase 5b)
+
+CI runs Lighthouse against `http://127.0.0.1:4173/login` on every PR
+via the `lhci-login` job in `.github/workflows/ci.yml`. Scores are
+posted as a PR comment; assertions are warn-only (perf ≥ 0.7, a11y ≥
+0.9, best-practices ≥ 0.85, SEO off) so the gate surfaces regressions
+without blocking merges.
+
+Run locally from `dashboard/`:
+
+```bash
+pnpm run lhci
+```
+
+This boots `vite preview` on port 4173 via `start-server-and-test`,
+runs `lhci autorun` (3 runs averaged, desktop preset), and tears the
+preview server down cleanly. `pnpm exec lhci healthcheck` validates the
+config + Chrome installation without running a full audit. Local runs on
+Windows hosts can hit chrome-launcher tmp-cleanup races (`EPERM`) that
+do not occur on the Linux CI runner — use `healthcheck` for local
+validation if the autorun fails.
+
+Configuration lives in `dashboard/lighthouserc.json`. Authenticated
+surfaces (`/`, `/jobs`, `/audit`, `/policies`, `/agents`) are
+deferred to follow-up task **task-63603c2e** (cookie-bridge + test
+credentials required); current /login-only gate catches login regressions
+but does not measure the customer-value surfaces.
+
+## Bundle size (Phase 5d)
+
+`pnpm run build` emits `dist/stats.html` (a treemap visualizer from
+`rollup-plugin-visualizer`) on every build. CI parses `dist/assets/*.js`
+via `scripts/parse-bundle-stats.mjs` and posts a per-chunk size table as
+a PR comment (`peter-evans/create-or-update-comment@v4`, body-tag
+`<!-- bundle-size-report -->` so subsequent pushes update the same
+comment instead of appending).
+
+**Soft thresholds** (warn-only; parser exits 0 even on breach):
+
+- Initial chunk (`index-*.js`): ≤ 400 KB raw / 120 KB gzip
+- Total (all `.js` in `dist/assets/`): ≤ 3100 KB raw / 950 KB gzip
+
+Threshold values live in `scripts/parse-bundle-stats.mjs`. Set
+~25-30% above the 2026-05-09 baseline (initial 305 KB / 92 KB gzip;
+total 2533 KB / 759 KB gzip) so PRs have headroom without losing
+regression signal. See
+[`docs/code-hygiene-sweep.md`](./docs/code-hygiene-sweep.md#bundle-size-baseline-phase-5d-task-50bbfd7d-2026-05-09)
+for the full baseline table and tightening guidance.
+
+**Reading `dist/stats.html`** locally:
+
+```bash
+pnpm run build
+# Then open dist/stats.html in a browser. The treemap shows source-file
+# contribution to each chunk; click a chunk to drill in.
+```
+
+Stats.html is also uploaded by the `dashboard-test` CI job as the
+`dashboard-bundle-stats` artifact (14-day retention) so reviewers can
+download the rich visualizer when the PR-comment summary isn't enough.
