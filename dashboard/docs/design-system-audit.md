@@ -24,6 +24,7 @@ Decided 2026-04-24 · task-c154ff08 · epic-2e0ed1ee.
 
 ## Governance surfaces
 - **Chain integrity monitoring** is mounted at `/govern/verification` (admin-only, gated by `<RequireRole roles={["admin"]}>`). The PolicyOverviewPage was simplified on 2026-04-24 (Level 3 sweep, commit 046914d9); the chain-integrity widget is no longer embedded in the Overview tab but remains reachable via the Verification route in the Govern nav section. Non-admin viewers see a friendly EmptyState fallback on the Verification page (not a blank card). Restored under task-14d012e6.
+- **Policy Studio Rules surface** at `/policies` is DONE for the Dashboard 2 table + filters slice (task-f339eead, 2026-05-09). `pages/policies/PoliciesPage.tsx` now composes `PageHeader`, page-local `PoliciesFilterBar` on `Input`/`Select`/`Button`, `primitives/DataTable` with virtualization above 100 rows, `StatusBadge`, `EmptyState`, nuqs URL state, and a small Recharts sparkline component. Drawer/editor authoring remains Dashboard 3 scope; template gallery remains Dashboard 4 scope.
 
 ## Scope
 - Reviewed `cordum/dashboard/src/pages/**/*.tsx` (non-test page components only) and cross-checked against the current route surface in `src/App.tsx`.
@@ -164,6 +165,7 @@ Each entry below carries a concrete checklist so the next worker can continue th
 | Govern | `pages/govern/TenantDetailPage.tsx` | PageHeader, Input, Select, LabeledField, EmptyState | Converged in v2.5 drift sweep reopen #2 |
 | Govern | `pages/govern/TenantsPage.tsx` | PageHeader, InstrumentCard, MetricValue, Select, EmptyState | Converged in v2.5 drift sweep reopen #2 |
 | Govern | `pages/govern/VelocityRulesPage.tsx` | PageHeader, InstrumentCard, Input, Select, Checkbox, Textarea, EmptyState, ErrorBanner | Converged in v2.5 drift sweep reopen #2 |
+| Govern | `pages/policies/PoliciesPage.tsx` | PageHeader, DataTable, Input, Select, Button, StatusBadge, EmptyState, nuqs URL state, Recharts sparkline | DONE for table + filters (Dashboard 2, task-f339eead; drawer/editor remains Dashboard 3) |
 | Operate | `pages/HomePage.tsx` | PageHeader, StatTile, primitives/DataTable, InstrumentCard, ErrorBanner, CollapsibleSection, Motion, --chart-1..5 tokens | Converged in Phase 3 wk5 (task-5101a23c) |
 | Operate | `pages/JobDetailPage.tsx` | InstrumentCard, EmptyState, InfoBanner, StatusBadge, CollapsibleSection, Motion | Converged in detail/admin sweep |
 | Operate | `pages/JobsPage.tsx` | PageHeader, Tabs, Input, Textarea, LabeledField, EmptyState, ErrorBanner, Motion | Converged in priority P2 sweep |

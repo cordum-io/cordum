@@ -22,6 +22,7 @@ import type {
   EdgeExecutionListParams,
   EdgeSessionListParams,
 } from "../api/types";
+import type { RuleFilters } from "../hooks/useRulesList";
 
 const scalarKey = (value: string | number | null | undefined, fallback = "all") =>
   value === null || value === undefined || value === "" ? fallback : value;
@@ -136,6 +137,25 @@ export const queryKeys = {
     version: (id: string, version: string) =>
       ["bundle-studio", "version", id, version] as const,
     deployments: (id: string) => ["bundle-studio", "deployments", id] as const,
+  },
+
+  // ── Policy Studio Rules (unified Rule shape) ──────────────────────
+  // Separate from policies.rules() (legacy PolicyRule cache) so the
+  // Dashboard 2 surface can target the unified rule envelope without
+  // polluting the older /govern pages during the migration window.
+  policyStudioRules: {
+    all: () => ["policy-studio-rules"] as const,
+    list: (filters: RuleFilters = {}) =>
+      [
+        "policy-studio-rules",
+        "list",
+        scalarKey(filters.type),
+        scalarKey(filters.scope),
+        scalarKey(filters.status),
+        scalarKey(filters.search),
+        scalarKey(filters.cursor, "first"),
+        scalarKey(filters.limit, "default"),
+      ] as const,
   },
 
   // ── Policies ──────────────────────────────────────────────────────

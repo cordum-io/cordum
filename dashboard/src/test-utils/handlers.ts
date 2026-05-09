@@ -1,6 +1,12 @@
 import { http, HttpResponse } from "msw";
 
 export const baseHandlers = [
+  // Dashboard 2 — Rules surface list (unified Backend-1 Rule shape).
+  // Default empty so PoliciesPage renders the empty-state CTA without
+  // per-test setup; tests override with populated/paginated responses.
+  http.get("*/api/v1/policy/rules", () =>
+    HttpResponse.json({ items: [], total: 0 }),
+  ),
   // Dashboard 5 — Bundle Studio list (unified Backend-1.5 Bundle shape).
   // Default empty so BundlesPage renders the empty-state CTA without
   // per-test setup; tests override with `server.use(...)` as needed.

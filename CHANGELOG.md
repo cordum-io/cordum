@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Dashboard 2 — Rules surface table + filters (2026-05-09, task-f339eead)
+
+- `/policies` now renders the Rules surface table shell: `PoliciesFilterBar` with nuqs URL state (`type`, `scope`, `status`, `search`), `primitives/DataTable` virtualization at >100 rows, type icons from `src/lib/policy-studio/rule-type.ts`, status badges, decision-tone left edge, and a last-7d firing sparkline when the rules-list response includes `firing_last_7d`.
+- New `useRulesList(filters)` React Query hook targets `/api/v1/policy/rules` without hand-editing generated API files; default MSW handler returns an empty unified rules page and tests assert filter-param serialization.
+- Empty-table states distinguish first-run (`No rules yet`) from filtered no-match (`No rules match these filters`) and deep-link the placeholder template CTA to `/policies?templates=1` for the Dashboard 4 template gallery.
+- Page tests cover MSW-backed table rendering, filter URL roundtrip into request params, filtered empty state, DataTable virtualization at 150 rows, all RuleType icon variants, and 300ms debounced search refetching. Drawer/editor behavior remains Dashboard 3 scope; Backend firing-count summary follow-up filed as `task-d2a55ae2`.
+
 #### AgentShield benchmark scope-boundary doc (2026-05-09, task-f4519eab)
 
 - New `cordum/docs/agentshield-scope-boundary.md` establishes honest framing for AgentShield-related public messaging from Cordum: public-corpus = smoke test (not a generalization metric), while the verified current Cordum adapter/config result is narrower — `/api/v1/policy/simulate` with benchmark-signaling metadata and `job.agentshield.benchmark` default-topic deny before input rules inspect prompt content. Private holdout (task-7fbc245d) is the real coverage gate; Cordum's differentiator is action-layer governance with backend-verified provenance, not content-policy classification. Doc includes explicit do-claim / don't-claim list per epic-f3da4017 rails + an upstream-content-classifier boundary section recommending that deep jailbreak / content classification sit upstream of Cordum.
