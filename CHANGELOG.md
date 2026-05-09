@@ -7,6 +7,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Policy Studio Rewrite — Backend 2: bundle store (epic-d9a6c0a1, task-b349524a)
+
+Redis-backed `BundleStore` for the unified Policy Studio bundles
+introduced in Backend 1. Built additively under `core/policy/`; no
+existing stores modified.
+
+- `core/policy/bundle_store.go` — BundleStore interface (10 ops: Bundle
+  CRUD + version CRUD + Deploy/Rollback/GetActive/ListHistory) +
+  Deployment record + DeploymentAction enum (deploy|rollback) + 6 typed
+  errors.
+- `core/policy/bundle_store_keys.go` — Redis schema constants + 5 key
+  constructors. Confirmed-clean prefix space at
+  `policy:bundle:*` + `policy:scope:*` (no collision with workflow's
+  `cordum:wf:*`, edge's `edge:session:*`, registry's `sys:workers:*`).
+- `core/policy/bundle_store_redis.go` — `BundleRedisStore` impl with
+  atomic Lua scripts for the multi-key Deploy/Rollback paths. Per
+  memory `mem-12f1ceeb` go-redis WATCH+TxPipelined corrupts the
+  connection pool when miniredis returns errors, so single Lua EVAL is
+  the only safe pattern. Chained rollbacks unwind one step per call
+  (v3→v2→v1) by locating the deploy entry that established the current
+  active and walking past it.
+- `core/policy/bundle_store_keys_test.go` + `bundle_store_redis_test.go`
+  — 22 tests (6 key tests + 16 store tests) covering happy-path CRUD,
+  version idempotency, deploy lifecycle, rollback chain, scope
+  isolation, concurrent-deploy serialization, and 8 nil/empty-id
+  branches. miniredis-backed via the canonical pattern from
+  `core/workflow/store_redis_test.go`.
+- `docs/policy-bundle-store.md` — full Redis schema + CRUD/atomicity
+  table + bounded-history rationale + open questions for v3.
+
+`go build ./...` clean; `go test ./core/policy/... -count=3 -cover
+-timeout 240s` clean at coverage 80.2% (clears DoD #3 80% bar).
+
+
 #### Policy Studio Rewrite — Backend 1 (epic-d9a6c0a1)
 
 Foundation shapes for the Job + Edge unified policy surface. New shared
