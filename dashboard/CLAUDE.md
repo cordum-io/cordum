@@ -129,10 +129,10 @@ Rules:
 
 ## Accessibility (Phase 5a)
 
-`renderWithProviders` supports an opt-in `runAxe: true` option that asserts no
-critical or serious WCAG 2 AA violations on the rendered container. The opt-in
-returns a `Promise<RenderWithProvidersResult>` (the helper drives `axe-core`
-asynchronously); the call must be `await`ed:
+`renderWithProviders` supports an opt-in `runAxe: true` option that asserts
+**zero** WCAG 2 A/AA violations (any impact) on the rendered container. The
+opt-in returns a `Promise<RenderWithProvidersResult>` (the helper drives
+`axe-core` asynchronously); the call must be `await`ed:
 
 ```tsx
 const { container } = await renderWithProviders(<MyComponent />, {
@@ -140,13 +140,19 @@ const { container } = await renderWithProviders(<MyComponent />, {
 });
 ```
 
-`axeMode: "dark"` is also accepted to test the dark theme. The opt-in delegates
-to `assertNoSeriousAxeViolations` from `src/test-utils/a11y.ts`, so the gate
-semantics match the existing dedicated `*.a11y.test.tsx` files: `wcag2a` +
-`wcag2aa` tags, filtered to critical/serious impact only. jsdom does not
-composite `backdrop-filter`, so axe's `color-contrast` rule fires false-
-negatives on glass-panel surfaces; the impact filter absorbs those, and
-structural contrast is the Lighthouse CI gate (Phase 5b).
+`axeMode: "dark"` is also accepted to test the dark theme. The strict gate
+runs `axe.run` directly with `runOnly: { type: "tag", values: ["wcag2a",
+"wcag2aa"] }` and disables ONLY the `color-contrast` rule (jsdom doesn't
+composite `backdrop-filter`, so color-contrast fires false-negatives on
+glass-panel surfaces — Lighthouse CI / Phase 5b is the canonical
+color-contrast gate). Any moderate/minor/serious/critical violation
+throws a descriptive Error with target selectors + failure summaries.
+
+The pre-existing helper `assertNoSeriousAxeViolations` (filters to
+critical/serious only) remains in `src/test-utils/a11y.ts` for the
+dedicated `*.a11y.test.tsx` files that intentionally use the looser
+gate (HomePage / SettingsHubPage / PolicyOverviewPage). New tests
+should prefer `runAxe: true` for the strict gate.
 
 When to use:
 

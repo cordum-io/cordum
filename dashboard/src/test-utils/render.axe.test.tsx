@@ -27,7 +27,7 @@ describe("renderWithProviders runAxe opt-in", () => {
         <img src="x.jpg" />,
         { runAxe: true },
       ),
-    ).rejects.toThrow(/Axe critical\+serious violations/);
+    ).rejects.toThrow(/Axe violations \(any-impact gate\)/);
   });
 
   it("respects axeMode dark and applies the dark class to documentElement", async () => {

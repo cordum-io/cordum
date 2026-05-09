@@ -43,10 +43,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Carve-outs documented inline (linking to `mem-df8a90aa` and `dashboard/docs/design-system-audit.md`): `LoginPage` (native HTML form for browser autofill / password manager interop on auth surface) + `RunDetailPage` (workflow-run console exempted, DoD-3 register).
 - DoD #1 (23 pages migrated) confirmed by re-grep at HEAD: zero pages outside the carve-outs contain raw controls — the migration completed via parallel-worker activity (commits prior to claim). No code changes required for batch migration steps.
 
-#### Phase 5a a11y test gate (2026-05-09, task-bf55ddbd)
+#### Phase 5a a11y test gate (2026-05-09, task-bf55ddbd; reopen #1 fix)
 
-- `renderWithProviders` (`dashboard/src/test-utils/render.tsx`) accepts an opt-in `runAxe: true` option that returns a `Promise<RenderWithProvidersResult>` and asserts no critical/serious WCAG 2 AA violations on the rendered container. Reuses `assertNoSeriousAxeViolations` from `dashboard/src/test-utils/a11y.ts`. Existing callers without `runAxe` stay synchronous and unchanged. Optional `axeMode: "light" | "dark"` selects the theme axe runs against.
-- `dashboard/src/components/UserMenu.test.tsx` first test opted in to demonstrate the pattern.
+- `renderWithProviders` (`dashboard/src/test-utils/render.tsx`) accepts an opt-in `runAxe: true` option that returns a `Promise<RenderWithProvidersResult>` and asserts **zero WCAG 2 A/AA violations of any impact** on the rendered container. Strict gate per DoD: only `color-contrast` is disabled (jsdom can't composite backdrop-filter; Lighthouse CI / Phase 5b owns color-contrast). Existing callers without `runAxe` stay synchronous and unchanged. Optional `axeMode: "light" | "dark"` selects the theme axe runs against.
+- New `dashboard/src/pages/NotFoundPage.test.tsx` page test opts in via `runAxe: true` to demonstrate the strict gate at the page level — NotFoundPage renders fully synchronously (no async data) so the post-render axe pass exercises the actual customer DOM, not a loading skeleton.
+- `dashboard/src/components/UserMenu.test.tsx` first test also opted in (additional component-level coverage; UserMenu's idle render is axe-clean).
 - New `dashboard/eslint.a11y.config.mjs` — narrow flat config that escalates the gate-relevant jsx-a11y rules (alt-text, ARIA correctness, heading-has-content, anchor-has-content, iframe-has-title) to `error`. `pnpm run lint:a11y` rewritten to point at this config; cross-platform safe (replaces the broken JSON-arg form that failed under PowerShell shell-quoting).
 - `dashboard/src/components/ui/Card.tsx` `CardTitle` refactored to render `<h3>{children}</h3>` (was self-closing with spread props) so `jsx-a11y/heading-has-content` can statically verify content. No behavior change.
 
