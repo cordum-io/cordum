@@ -168,6 +168,46 @@ land in follow-up Backend tasks (see the epic decomposition in
 
 ### Fixed
 
+#### Policy Studio Rewrite — Backend 2 reopen #1 (epic-d9a6c0a1, task-b349524a)
+
+QA caught two correctness defects + two test gaps in the initial Backend
+2 ship; this entry covers the fix landed on top of PR #252.
+
+- `core/policy/bundle_store_redis.go` rollback semantics — the original
+  rollback walked history for "next deploy entry after the deploy
+  matching current active". After `deploy v1, deploy v2, rollback (→
+  v1), deploy v3, rollback`, the second rollback returned **v2** (the
+  raw second-most-recent deploy) instead of the active state
+  immediately before v3 was deployed (v1). Fix: each deploy event now
+  records the active pair at deploy-time as `prev_bundle_id` +
+  `prev_version` (read inside the same Lua script that writes the
+  event, so concurrent deploys serialize correctly). Rollback locates
+  the deploy event matching the current active pair and restores from
+  its `prev_*` fields. The `Deployment` Go struct gains matching
+  `PrevBundleID` + `PrevVersion` fields with `omitempty` JSON tags
+  so old golden fixtures continue to deserialize.
+- `core/policy/bundle_store_redis.go` `CreateBundleVersion` parent check
+  — the original `SETNX` pipeline accepted writes for non-existent
+  parent bundles, allowing orphan version blobs +
+  `policy:bundle:{id}:versions` index entries. Fix: `EXISTS
+  policy:bundle:{id}` precheck before the `SETNX`+`ZADD` pipeline
+  returns `ErrBundleNotFound` for missing parents. Safe non-atomic
+  precheck because the interface defines no `DeleteBundle`, so a
+  parent that exists at check-time still exists at write-time.
+- `core/policy/bundle_store_redis_test.go` — added
+  `TestDeployAfterRollback` (the QA repro permanently locked in:
+  asserts the prev-active fields on each deploy + that rollback after
+  deploy-after-rollback restores v1 with explicit regression error
+  text), `TestCreateBundleVersion_OrphanRejected` (orphan write
+  returns `ErrBundleNotFound` and the index ZSET stays empty), and
+  `TestDeploymentHistoryCapEnforced` (105 deploys → `len(hist) == 100`,
+  binding the LTRIM cap inside the deploy Lua).
+
+`go build ./...` clean. `go test ./core/policy/... -count=3 -cover
+-timeout 240s` clean at 80.3% coverage. `go test ./core/workflow/...
+./core/edge/...` clean (no neighboring-store regression).
+
+
 #### UpdateRun lost-update race for concurrent AuditHash writes (2026-05-09, task-a45b8eb1 reopen #2)
 
 - `core/workflow/store_redis.go`: replaced the legacy two-phase Lua-then-Go-merge `UpdateRun` body with an atomic Lua script that performs GET-merge-SET as a single Redis command. The script walks the persisted run's StepRuns (recursively, including `children`) and forwards any populated `audit_hash` into the new payload's StepRuns whose `audit_hash` is empty for the same `job_id`, then SETs the merged payload. This closes the lost-update race the previous reopen left open: a stale UpdateRun whose caller marshaled before a concurrent `UpdateAuditHash` succeeded would otherwise have erased the just-written hash on its SET. With merge baked into the Lua, the GET inside the script always sees the current persisted state, so the race window collapses to zero. Index updates remain in a separate idempotent pipeline (cluster-safe, eventual-consistency tolerant). Removed the now-redundant Go-side `mergePersistedAuditHashes` helper and its tree-walk subroutines; pending-hash recovery (via `wf:run:pending_audit_hash:<jobID>` keys) still runs Go-side for the case where the audit event lands before the run/step is persisted at all.

@@ -62,10 +62,20 @@ type BundleStore interface {
 	DeployVersionToScope(ctx context.Context, bundleID, version string, scope RuleScope) (*Deployment, error)
 
 	// RollbackDeployment reverts the active deployment for scope to the
-	// previous entry in history. Returns ErrNoRollbackTarget when history
-	// has fewer than two entries (i.e. no prior deploy to fall back to).
+	// (bundle, version) pair that was active immediately before the
+	// current binding was established. Each deploy event records its
+	// PrevBundleID + PrevVersion at write time, so rollback restores the
+	// prior active pair regardless of any rollback markers in between
+	// (e.g. deploy v1, deploy v2, rollback to v1, deploy v3, rollback
+	// returns to v1 — the active state just before v3 — not v2). Chained
+	// rollbacks unwind one step per call.
+	//
+	// Returns ErrNoRollbackTarget when no prior deploy exists (e.g. only
+	// the original deploy is in history, or its PrevBundleID is empty).
 	// On success the rollback itself is appended to history as a new
-	// Deployment with Action=DeploymentActionRollback.
+	// Deployment with Action=DeploymentActionRollback whose PrevBundleID
+	// + PrevVersion fields capture the version we rolled away from
+	// (informational; rollback does not consume its own prev fields).
 	RollbackDeployment(ctx context.Context, scope RuleScope) (*Deployment, error)
 
 	// GetActiveDeployment returns the active deployment for scope.
@@ -100,14 +110,25 @@ const (
 // (bundle, version) and a scope. Stored in scope deployment history; the
 // most recent entry whose Action == DeploymentActionDeploy or Rollback
 // determines the active deployment.
+//
+// Each deploy event records PrevBundleID + PrevVersion at write time —
+// the (bundle, version) pair that was active immediately before this
+// event ran. Rollback uses those fields to restore the prior active
+// pair regardless of any deploy/rollback events that landed in between.
+// On a deploy event, the prev pair is the active state just before this
+// deploy. On a rollback event, the prev pair is the active state just
+// before the rollback (i.e. the version we rolled away from); rollback
+// does not consume its own prev fields.
 type Deployment struct {
-	BundleID      string           `json:"bundle_id"`
-	Version       string           `json:"version"`
-	Scope         RuleScope        `json:"scope"`
-	DeployedAt    time.Time        `json:"deployed_at"`
-	DeployedBy    string           `json:"deployed_by,omitempty"`
-	AuditHash     string           `json:"audit_hash,omitempty"`
-	Action        DeploymentAction `json:"action"`
+	BundleID     string           `json:"bundle_id"`
+	Version      string           `json:"version"`
+	Scope        RuleScope        `json:"scope"`
+	DeployedAt   time.Time        `json:"deployed_at"`
+	DeployedBy   string           `json:"deployed_by,omitempty"`
+	AuditHash    string           `json:"audit_hash,omitempty"`
+	Action       DeploymentAction `json:"action"`
+	PrevBundleID string           `json:"prev_bundle_id,omitempty"`
+	PrevVersion  string           `json:"prev_version,omitempty"`
 }
 
 // Typed errors returned by BundleStore implementations. Consumers should
