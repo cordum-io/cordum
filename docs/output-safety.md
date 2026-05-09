@@ -117,3 +117,7 @@ Scheduler exports output safety metrics:
 - Set detector-appropriate confidence thresholds in checker implementations.
 - Prefer targeted `content_patterns` over broad regex.
 - Use `REDACT` for acceptable partial masking cases; reserve `QUARANTINE` for high confidence/high impact findings.
+- Keep output detectors narrow and typed. Broad jailbreak/content moderation is
+  outside Cordum core; see
+  [ADR-011](adr/011-detector-strategy-boundary.md) for the detector strategy
+  boundary and model-in-loop constraints.

@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Detector strategy boundary ADR (2026-05-09, task-3a25ba1f)
+
+- Added `docs/adr/011-detector-strategy-boundary.md` to record Cordum's detector strategy before broad classification work: deterministic action-layer gates and narrow typed scanners are Cordum-native, while generic jailbreak/content moderation stays upstream or optional with explicit latency, privacy, offline, fail-mode, audit-evidence, and deterministic-fallback constraints. Cross-linked the ADR from AgentShield scope-boundary and output-safety docs.
+
 #### AgentShield benchmark scope-boundary doc (2026-05-09, task-f4519eab)
 
 - New `cordum/docs/agentshield-scope-boundary.md` establishes honest framing for AgentShield-related public messaging from Cordum: public-corpus = smoke test (not a generalization metric), while the verified current Cordum adapter/config result is narrower — `/api/v1/policy/simulate` with benchmark-signaling metadata and `job.agentshield.benchmark` default-topic deny before input rules inspect prompt content. Private holdout (task-7fbc245d) is the real coverage gate; Cordum's differentiator is action-layer governance with backend-verified provenance, not content-policy classification. Doc includes explicit do-claim / don't-claim list per epic-f3da4017 rails + an upstream-content-classifier boundary section recommending that deep jailbreak / content classification sit upstream of Cordum.
