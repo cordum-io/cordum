@@ -111,6 +111,7 @@ func TestGatewayEdgeEvaluateDualEmitsLegacyAndUnifiedDecision(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("evaluate status = %d body=%s", rec.Code, rec.Body.String())
 	}
+	requireDeprecatedEndpointHeaders(t, rec, "/api/v1/policy/evaluate")
 	if got := sink.Len() - before; got != 2 {
 		t.Fatalf("audit events emitted = %d, want legacy edge + policy.decision.v2", got)
 	}

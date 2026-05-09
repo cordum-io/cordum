@@ -13,7 +13,7 @@ import (
 )
 
 func (s *server) handlePolicyEvaluate(w http.ResponseWriter, r *http.Request) {
-	s.handlePolicyCheck(w, r, "evaluate")
+	s.handlePolicyEvaluateDispatch(w, r)
 }
 
 func (s *server) handlePolicySimulate(w http.ResponseWriter, r *http.Request) {
@@ -50,6 +50,7 @@ func (s *server) handlePolicySnapshots(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode string) {
+	markDeprecatedEndpoint(w, "/api/v1/policy/evaluate")
 	if !s.requirePermissionOrRole(w, r, auth.PermPolicyWrite, "admin") {
 		return
 	}

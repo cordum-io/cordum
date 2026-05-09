@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 
+#### Policy Studio Backend 5 — unified evaluator entry-point (2026-05-09, task-aadaec4a)
+
+- Integrated `/api/v1/policy/evaluate`, gRPC evaluator conversion helpers, edge/job context dispatch, bundle lifecycle HTTP wiring, and deprecation headers for legacy edge evaluation during the migration window.
+- Added evaluator tests for unified HTTP/gRPC job and edge dispatch, audit output, and policy bundle lifecycle routes.
+
+
 #### Policy Studio Backend 8 — rules-list firing summaries (2026-05-09, task-d2a55ae2)
 
 - Integrated tenant-safe bulk `firing_last_7d` summaries on the rules-list path, with no per-rule N+1 query pattern and exact seven-bucket output for dashboard sparkline consumption.
