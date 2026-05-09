@@ -35,4 +35,26 @@ export default [
       "jsx-a11y/no-noninteractive-element-interactions": "off",
     },
   },
+  // ---------------------------------------------------------------------------
+  // No-console rule — production paths only.
+  //
+  // task-1acf9c07 Pass C: every console.log/warn/error/debug/info in
+  // dashboard/src/ should go through the structured logger at
+  // src/lib/logger.ts (component + message + fields → JSON in prod,
+  // human-readable in dev). The rule fires on production paths and is
+  // explicitly disabled for test infrastructure (test-utils, *.test.*,
+  // *.stories.*) where direct console use is fine.
+  // ---------------------------------------------------------------------------
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: [
+      "src/test-utils/**",
+      "src/**/*.test.{ts,tsx}",
+      "src/**/__tests__/**",
+      "src/**/*.stories.{ts,tsx}",
+    ],
+    rules: {
+      "no-console": "error",
+    },
+  },
 ];

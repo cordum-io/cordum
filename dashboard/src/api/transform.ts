@@ -598,9 +598,7 @@ export function normalizeGovernanceVerdict(raw?: string): GovernanceVerdict {
       return "throttle";
     default:
       if (raw) {
-        console.warn(
-          `[transform] Unknown governance verdict "${raw}", defaulting to deny`,
-        );
+        logger.warn("transform", "unknown governance verdict, defaulting to deny", { raw });
       }
       return "deny";
   }
