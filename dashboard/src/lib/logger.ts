@@ -63,17 +63,24 @@ function createLogger(minLevel: LogLevel) {
 
     const fn = LEVEL_FN[level];
 
+    // logger.ts is the write-out primitive: every other consumer in src/
+    // calls logger.warn/.info/etc rather than console directly (enforced by
+    // the no-console ESLint rule in eslint.config.mjs). The three console
+    // calls below are the implementation — disable the rule for them.
     if (import.meta.env.DEV) {
       // Readable format in development
       const tag = `[${component}]`;
       const lvl = level.toUpperCase().padEnd(5);
       if (fields && Object.keys(fields).length > 0) {
+        // eslint-disable-next-line no-console
         console[fn](`${lvl} ${tag} ${msg}`, fields);
       } else {
+        // eslint-disable-next-line no-console
         console[fn](`${lvl} ${tag} ${msg}`);
       }
     } else {
       // JSON output in production
+      // eslint-disable-next-line no-console
       console[fn](JSON.stringify(entry));
     }
   }

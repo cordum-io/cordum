@@ -755,12 +755,20 @@ describe("transform contract hardening", () => {
   });
 
   describe("governance decision hardening", () => {
-    it("falls back to deny and warns for unknown verdicts", () => {
-      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    it("falls back to deny and warns for unknown verdicts", async () => {
+      // task-1acf9c07 Pass C: production warn paths now go through the
+      // structured logger at src/lib/logger.ts (component + msg + fields)
+      // rather than a free-form console.warn template string. The test
+      // asserts that contract directly so future migrations to the logger
+      // module's wire format don't silently break observability.
+      const { logger } = await import("../lib/logger");
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
 
       expect(normalizeGovernanceVerdict("ESCALATE_LATER")).toBe("deny");
       expect(warn).toHaveBeenCalledWith(
-        '[transform] Unknown governance verdict "ESCALATE_LATER", defaulting to deny',
+        "transform",
+        "unknown governance verdict, defaulting to deny",
+        { raw: "ESCALATE_LATER" },
       );
 
       warn.mockRestore();
