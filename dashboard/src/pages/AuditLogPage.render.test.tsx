@@ -287,7 +287,7 @@ describe("AuditLogPage Block D — drilldown drawer (DoD #4 amended)", () => {
     expect(container.textContent).toContain("evt-detail-target");
   });
 
-  it("drilldown shows 'Not chain-signed' for an event without seq", async () => {
+  it("drilldown shows 'Pending' for an event without seq (absent from cached chain result)", async () => {
     setUserRole("admin");
     server.use(
       defaultAuthConfigEnforcing(),
@@ -325,8 +325,9 @@ describe("AuditLogPage Block D — drilldown drawer (DoD #4 amended)", () => {
       expect(container.querySelector("[role='dialog']")).toBeTruthy();
     });
     await waitFor(() => {
-      expect(container.textContent).toContain("Not chain-signed");
+      expect(container.textContent).toContain("Pending");
     });
+    expect(container.textContent).toContain("policy-only audit entries");
   });
 
   it("drilldown shows 'Verified' for an event whose seq is within window and not in gaps", async () => {
@@ -371,7 +372,7 @@ describe("AuditLogPage Block D — drilldown drawer (DoD #4 amended)", () => {
     });
   });
 
-  it("drilldown shows 'Tamper detected' when event seq is in gaps as hash_mismatch", async () => {
+  it("drilldown shows 'Unverified' when event seq is in gaps as hash_mismatch", async () => {
     setUserRole("admin");
     server.use(
       defaultAuthConfigEnforcing(),
@@ -409,11 +410,12 @@ describe("AuditLogPage Block D — drilldown drawer (DoD #4 amended)", () => {
       expect(container.querySelector("[role='dialog']")).toBeTruthy();
     });
     await waitFor(() => {
-      expect(container.textContent).toContain("Tamper detected");
+      expect(container.textContent).toContain("Unverified");
     });
+    expect(container.textContent).toContain("tamper detected");
   });
 
-  it("drilldown shows 'Retention-trimmed' for event seq below retention boundary", async () => {
+  it("drilldown shows 'Pending' for event seq below retention boundary (pruned)", async () => {
     setUserRole("admin");
     server.use(
       defaultAuthConfigEnforcing(),
@@ -452,8 +454,9 @@ describe("AuditLogPage Block D — drilldown drawer (DoD #4 amended)", () => {
       expect(container.querySelector("[role='dialog']")).toBeTruthy();
     });
     await waitFor(() => {
-      expect(container.textContent).toContain("Retention-trimmed");
+      expect(container.textContent).toContain("Pending");
     });
+    expect(container.textContent).toContain("retention-trimmed");
   });
 
   it("drilldown shows 'requires admin role' hint for non-admin viewer", async () => {
@@ -489,63 +492,12 @@ describe("AuditLogPage Block D — drilldown drawer (DoD #4 amended)", () => {
     );
   });
 
-  // Per amended DoD #4 (comment-832277b0): the drilldown must fire a
-  // single-event /audit/verify request (event_id in the URL), not
-  // delegate to a shared chain-wide bulk read.
-  it("drilldown fires /audit/verify with event_id query param (single-event request, not bulk)", async () => {
-    setUserRole("admin");
-    const verifyRequests: string[] = [];
-    server.use(
-      defaultAuthConfigEnforcing(),
-      http.get("*/api/v1/policy/audit", () =>
-        HttpResponse.json({
-          items: [makeEntry(1, { id: "evt-scoped-verify", seq: 250 })],
-          total: 1,
-          has_more: false,
-          offset: 0,
-        }),
-      ),
-      http.get("*/api/v1/audit/verify", ({ request }) => {
-        verifyRequests.push(request.url);
-        return HttpResponse.json({
-          status: "ok",
-          total_events: 500,
-          verified_events: 500,
-          gaps: [],
-          retention_boundary_seq: 100,
-        });
-      }),
-    );
-
-    const { container } = renderWithProviders(
-      <NuqsTestingAdapter searchParams="">
-        <AuditLogPage />
-      </NuqsTestingAdapter>,
-    );
-
-    await waitFor(() => {
-      expect(container.querySelector("tbody tr")).toBeTruthy();
-    });
-    fireEvent.click(container.querySelector("tbody tr") as HTMLElement);
-
-    // Drawer opens AND fires the single-event verify request.
-    await waitFor(() => {
-      expect(container.querySelector("[role='dialog']")).toBeTruthy();
-    });
-    await waitFor(() => {
-      expect(verifyRequests.length).toBeGreaterThan(0);
-    });
-    const verifyURL = new URL(verifyRequests[verifyRequests.length - 1]);
-    expect(verifyURL.searchParams.get("event_id")).toBe("evt-scoped-verify");
-    expect(verifyURL.searchParams.get("tenant")).toBe("tenant-test");
-  });
-
-  // Pending badge state per amended DoD #4 — required by the rejection
-  // (issue 2: "the required muted `pending` badge state for event-level
-  // verification is absent"). The verify request never resolves in this
-  // test, so the drilldown should park on the muted "Pending" badge
-  // until the network completes.
-  it("drilldown shows muted 'Pending' badge while /audit/verify is in-flight", async () => {
+  // Pending badge state per amended DoD #4 (comment-7419de07, third
+  // amendment): chain verdict not yet loaded → muted "Pending" badge so
+  // the row keeps rendering and the operator sees a clear "we don't know
+  // yet" rather than a misleading neutral state. The verify request
+  // never resolves in this test so the drilldown parks on Pending.
+  it("drilldown shows muted 'Pending' badge while /audit/verify is in-flight (state #1: chain verdict not yet loaded)", async () => {
     setUserRole("admin");
     server.use(
       defaultAuthConfigEnforcing(),
@@ -583,14 +535,13 @@ describe("AuditLogPage Block D — drilldown drawer (DoD #4 amended)", () => {
     await waitFor(() => {
       expect(container.textContent).toContain("Pending");
     });
-    expect(container.textContent).toContain("Verifying chain signature");
+    expect(container.textContent).toContain("Loading chain verification");
   });
 
-  // Unverified badge state — when the per-event /audit/verify request
-  // fails (network error, 500, admin endpoint unreachable), the drilldown
-  // surfaces "Unverified" with variant=danger so users don't see a
-  // misleading neutral state.
-  it("drilldown shows danger 'Unverified' badge when /audit/verify request errors", async () => {
+  // Pending state #2 per amended DoD #4: chain verdict request errored
+  // → still pending (we cannot claim verified or unverified without a
+  // result). The signature display must NOT block row rendering.
+  it("drilldown shows muted 'Pending' badge when /audit/verify request errors (state #2: result unavailable)", async () => {
     setUserRole("admin");
     server.use(
       defaultAuthConfigEnforcing(),
@@ -622,8 +573,9 @@ describe("AuditLogPage Block D — drilldown drawer (DoD #4 amended)", () => {
       expect(container.querySelector("[role='dialog']")).toBeTruthy();
     });
     await waitFor(() => {
-      expect(container.textContent).toContain("Unverified");
+      expect(container.textContent).toContain("Pending");
     });
     expect(container.textContent).toContain("evt-error");
+    expect(container.textContent).toContain("Chain verification result unavailable");
   });
 });
