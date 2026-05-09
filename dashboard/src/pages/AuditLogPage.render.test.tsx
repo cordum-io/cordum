@@ -488,4 +488,142 @@ describe("AuditLogPage Block D — drilldown drawer (DoD #4 amended)", () => {
       /requires admin role|admin role|govern\/verification/i,
     );
   });
+
+  // Per amended DoD #4 (comment-832277b0): the drilldown must fire a
+  // single-event /audit/verify request (event_id in the URL), not
+  // delegate to a shared chain-wide bulk read.
+  it("drilldown fires /audit/verify with event_id query param (single-event request, not bulk)", async () => {
+    setUserRole("admin");
+    const verifyRequests: string[] = [];
+    server.use(
+      defaultAuthConfigEnforcing(),
+      http.get("*/api/v1/policy/audit", () =>
+        HttpResponse.json({
+          items: [makeEntry(1, { id: "evt-scoped-verify", seq: 250 })],
+          total: 1,
+          has_more: false,
+          offset: 0,
+        }),
+      ),
+      http.get("*/api/v1/audit/verify", ({ request }) => {
+        verifyRequests.push(request.url);
+        return HttpResponse.json({
+          status: "ok",
+          total_events: 500,
+          verified_events: 500,
+          gaps: [],
+          retention_boundary_seq: 100,
+        });
+      }),
+    );
+
+    const { container } = renderWithProviders(
+      <NuqsTestingAdapter searchParams="">
+        <AuditLogPage />
+      </NuqsTestingAdapter>,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("tbody tr")).toBeTruthy();
+    });
+    fireEvent.click(container.querySelector("tbody tr") as HTMLElement);
+
+    // Drawer opens AND fires the single-event verify request.
+    await waitFor(() => {
+      expect(container.querySelector("[role='dialog']")).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(verifyRequests.length).toBeGreaterThan(0);
+    });
+    const verifyURL = new URL(verifyRequests[verifyRequests.length - 1]);
+    expect(verifyURL.searchParams.get("event_id")).toBe("evt-scoped-verify");
+    expect(verifyURL.searchParams.get("tenant")).toBe("tenant-test");
+  });
+
+  // Pending badge state per amended DoD #4 — required by the rejection
+  // (issue 2: "the required muted `pending` badge state for event-level
+  // verification is absent"). The verify request never resolves in this
+  // test, so the drilldown should park on the muted "Pending" badge
+  // until the network completes.
+  it("drilldown shows muted 'Pending' badge while /audit/verify is in-flight", async () => {
+    setUserRole("admin");
+    server.use(
+      defaultAuthConfigEnforcing(),
+      http.get("*/api/v1/policy/audit", () =>
+        HttpResponse.json({
+          items: [makeEntry(1, { id: "evt-pending", seq: 300 })],
+          total: 1,
+          has_more: false,
+          offset: 0,
+        }),
+      ),
+      http.get(
+        "*/api/v1/audit/verify",
+        () =>
+          // Never resolves — keeps the query in the loading state so the
+          // drilldown parks on the Pending badge.
+          new Promise<Response>(() => {}),
+      ),
+    );
+
+    const { container } = renderWithProviders(
+      <NuqsTestingAdapter searchParams="">
+        <AuditLogPage />
+      </NuqsTestingAdapter>,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("tbody tr")).toBeTruthy();
+    });
+    fireEvent.click(container.querySelector("tbody tr") as HTMLElement);
+
+    await waitFor(() => {
+      expect(container.querySelector("[role='dialog']")).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(container.textContent).toContain("Pending");
+    });
+    expect(container.textContent).toContain("Verifying chain signature");
+  });
+
+  // Unverified badge state — when the per-event /audit/verify request
+  // fails (network error, 500, admin endpoint unreachable), the drilldown
+  // surfaces "Unverified" with variant=danger so users don't see a
+  // misleading neutral state.
+  it("drilldown shows danger 'Unverified' badge when /audit/verify request errors", async () => {
+    setUserRole("admin");
+    server.use(
+      defaultAuthConfigEnforcing(),
+      http.get("*/api/v1/policy/audit", () =>
+        HttpResponse.json({
+          items: [makeEntry(1, { id: "evt-error", seq: 400 })],
+          total: 1,
+          has_more: false,
+          offset: 0,
+        }),
+      ),
+      http.get("*/api/v1/audit/verify", () =>
+        HttpResponse.json({ error: "verify unavailable" }, { status: 500 }),
+      ),
+    );
+
+    const { container } = renderWithProviders(
+      <NuqsTestingAdapter searchParams="">
+        <AuditLogPage />
+      </NuqsTestingAdapter>,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("tbody tr")).toBeTruthy();
+    });
+    fireEvent.click(container.querySelector("tbody tr") as HTMLElement);
+
+    await waitFor(() => {
+      expect(container.querySelector("[role='dialog']")).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(container.textContent).toContain("Unverified");
+    });
+    expect(container.textContent).toContain("evt-error");
+  });
 });
