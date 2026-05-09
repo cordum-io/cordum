@@ -21,6 +21,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Policy Studio Rewrite — Backend 3 (epic-d9a6c0a1)
+
+Safety Kernel now has an additive unified-policy boundary for the Policy
+Studio migration:
+
+- Added pure adapters that validate unified `core/policy.Rule` values and
+  compile them into today's input/output/velocity evaluator structs without
+  mutating or removing the legacy `core/infra/config` policy types.
+- Added a stateless unified `policy.Decision` emitter for job-side decisions,
+  including UTC timestamps, source=`job`, rule id, trace, and optional bundle
+  binding metadata while preserving existing Safety Kernel gRPC responses.
+- Added audit transition-window dual emission for job policy decisions:
+  `AUDIT_UNIFIED_DECISION_MODE=dual` writes legacy `safety.decision` followed
+  by unified `policy.decision.v2`; `legacy` writes only the old shape; and
+  `unified` writes only the new shape for matched-rule decisions.
+
+
 #### Policy Studio Backend 5d — unified GET /api/v1/policy/rules with type field (2026-05-10, task-025a6ad9)
 
 - Replaced the legacy `GET /api/v1/policy/rules` per-row shape `{decision, match, reason, tier, source, firing_last_7d}` with the canonical `policy.Rule` envelope (`{id, name, type, scope, status, version, audit, match, decide, description}`). Every item now carries `type` (input | output | velocity | edge) discriminated by source bucket — fixes the Yaron-reported 2026-05-10 dashboard bug where every /policies row rendered as Type=Unknown because the legacy shape had no type field.
