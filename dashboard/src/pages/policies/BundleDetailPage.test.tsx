@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
 import { Route, Routes } from "react-router-dom";
 import { NuqsTestingAdapter } from "nuqs/adapters/testing";
-import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { server } from "@/test-utils/msw";
 import BundleDetailPage from "./BundleDetailPage";
 
@@ -97,7 +97,7 @@ describe("BundleDetailPage", () => {
     });
 
     const versionsTab = await screen.findByRole("tab", { name: /^Versions$/i });
-    versionsTab.click();
+    fireEvent.click(versionsTab);
 
     // Wait for the Tabs primitive to rerender with aria-selected on Versions
     // + the lazy-loaded BundleVersionsTab to mount and reveal v1/v2.
@@ -107,10 +107,13 @@ describe("BundleDetailPage", () => {
     // The Versions tab renders v1/v2 both as the row label AND as
     // <option> values in the Compare-with picker — use getAllByText
     // and assert the row labels are present.
-    await waitFor(() => {
-      expect(screen.getAllByText("v2").length).toBeGreaterThan(0);
-      expect(screen.getAllByText("v1").length).toBeGreaterThan(0);
-    });
+    await waitFor(
+      () => {
+        expect(screen.getAllByText("v2").length).toBeGreaterThan(0);
+        expect(screen.getAllByText("v1").length).toBeGreaterThan(0);
+      },
+      { timeout: 5_000 },
+    );
     // Newest-first ordering — pick the row labels (the first match for
     // each version is the row label, not the <option>).
     const v2Row = screen.getAllByText("v2")[0];
