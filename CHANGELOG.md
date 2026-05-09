@@ -95,6 +95,24 @@ without removing the legacy Edge evidence path:
   session/global `EdgePolicyMode` fallback for operators that have not yet run
   migration tooling.
 
+#### Policy Studio Rewrite — Backend 8 (epic-d9a6c0a1)
+
+Rules-list responses now carry the sparkline data needed by the unified Rules
+surface without per-rule analytics requests:
+
+- `GET /api/v1/policy/rules` additively returns `firing_last_7d` on each rule:
+  seven UTC daily firing counts, oldest-to-newest, ending with the current UTC
+  day.
+- Counts are tenant-scoped before rule aggregation, so another tenant's event
+  with the same rule ID does not leak into the caller's summary.
+- Rules with no matching firing history remain visible and receive
+  `[0, 0, 0, 0, 0, 0, 0]`.
+- The gateway computes the summary with one bulk job-history scan for all
+  returned rule IDs plus batched metadata reads, preserving the no-N+1 contract
+  for dashboard sparklines.
+- OpenAPI documents the new field and the existing generated TypeScript SDK
+  schema has been regenerated from the canonical spec.
+
 #### Cordum Edge P0 (2026-04-30)
 
 EDGE epic shipped 32 P0 tasks for the Compliance Firewall surface — local

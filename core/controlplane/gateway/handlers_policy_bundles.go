@@ -106,6 +106,19 @@ func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, rules...)
 	}
+	if len(items) > 0 {
+		tenant, err := s.resolveTenant(r, "")
+		if err != nil {
+			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
+			return
+		}
+		firingLast7d, err := s.ruleFiringLast7d(r.Context(), tenant, policyRuleIDs(items), time.Now().UTC())
+		if err != nil {
+			writeInternalError(w, r, "policy operation", err)
+			return
+		}
+		attachPolicyRuleFiringLast7d(items, firingLast7d)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	resp := map[string]any{"items": items}
@@ -113,6 +126,28 @@ func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 		resp["errors"] = parseErrors
 	}
 	writeJSON(w, resp)
+}
+
+func policyRuleIDs(items []map[string]any) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		id := strings.TrimSpace(policybundles.StringFromAny(item["id"]))
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func attachPolicyRuleFiringLast7d(items []map[string]any, firingLast7d map[string][]int) {
+	for _, item := range items {
+		id := strings.TrimSpace(policybundles.StringFromAny(item["id"]))
+		buckets := firingLast7d[id]
+		if len(buckets) != policyRuleFiringLast7dBuckets {
+			buckets = make([]int, policyRuleFiringLast7dBuckets)
+		}
+		item["firing_last_7d"] = append([]int(nil), buckets...)
+	}
 }
 
 func (s *server) handlePolicyOutputRules(w http.ResponseWriter, r *http.Request) {

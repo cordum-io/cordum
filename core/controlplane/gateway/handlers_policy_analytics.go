@@ -1,12 +1,14 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,6 +59,99 @@ const (
 	analyticsMaxJobs   = 1000
 	analyticsBatchSize = 200
 )
+
+const policyRuleFiringLast7dBuckets = 7
+
+func (s *server) ruleFiringLast7d(ctx context.Context, tenant string, ruleIDs []string, now time.Time) (map[string][]int, error) {
+	result, wanted := initializeRuleFiringBuckets(ruleIDs)
+	if len(wanted) == 0 {
+		return result, nil
+	}
+	if s == nil || s.jobStore == nil {
+		return nil, fmt.Errorf("job store unavailable")
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	startDay := now.UTC().Truncate(24*time.Hour).AddDate(0, 0, -(policyRuleFiringLast7dBuckets - 1))
+	endDay := startDay.AddDate(0, 0, policyRuleFiringLast7dBuckets)
+
+	var cursor int64
+	scanned := 0
+	for scanned < analyticsMaxJobs {
+		limit := analyticsBatchSize
+		if remaining := analyticsMaxJobs - scanned; remaining < limit {
+			limit = remaining
+		}
+		batch, err := s.jobStore.ListRecentJobsByTimeRange(ctx, startDay.UnixMicro(), endDay.UnixMicro(), cursor, int64(limit))
+		if err != nil {
+			return nil, fmt.Errorf("list recent jobs: %w", err)
+		}
+		if len(batch) == 0 {
+			break
+		}
+		cursor += int64(len(batch))
+		scanned += len(batch)
+		if err := s.addRuleFiringBatchCounts(ctx, tenant, wanted, result, batch, startDay); err != nil {
+			return nil, err
+		}
+		if len(batch) < limit {
+			break
+		}
+	}
+	return result, nil
+}
+
+func initializeRuleFiringBuckets(ruleIDs []string) (map[string][]int, map[string]struct{}) {
+	result := make(map[string][]int, len(ruleIDs))
+	wanted := make(map[string]struct{}, len(ruleIDs))
+	for _, raw := range ruleIDs {
+		ruleID := strings.TrimSpace(raw)
+		if ruleID == "" {
+			continue
+		}
+		if _, exists := wanted[ruleID]; exists {
+			continue
+		}
+		wanted[ruleID] = struct{}{}
+		result[ruleID] = make([]int, policyRuleFiringLast7dBuckets)
+	}
+	return result, wanted
+}
+
+func (s *server) addRuleFiringBatchCounts(ctx context.Context, tenant string, wanted map[string]struct{}, result map[string][]int, jobIDs []string, startDay time.Time) error {
+	metas, err := s.jobStore.GetJobMetas(ctx, jobIDs)
+	if err != nil {
+		return fmt.Errorf("get job metas: %w", err)
+	}
+	for _, jobID := range jobIDs {
+		meta := metas[jobID]
+		if meta == nil || !strings.EqualFold(strings.TrimSpace(meta[metaFieldTenant]), tenant) {
+			continue
+		}
+		ruleID := strings.TrimSpace(meta["safety_rule_id"])
+		if _, ok := wanted[ruleID]; !ok {
+			continue
+		}
+		updatedAt, ok := parseMicrosMeta(meta["updated_at"])
+		if !ok {
+			continue
+		}
+		dayIndex := int(time.UnixMicro(updatedAt).UTC().Truncate(24*time.Hour).Sub(startDay).Hours() / 24)
+		if dayIndex >= 0 && dayIndex < policyRuleFiringLast7dBuckets {
+			result[ruleID][dayIndex]++
+		}
+	}
+	return nil
+}
+
+func parseMicrosMeta(raw string) (int64, bool) {
+	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || value <= 0 {
+		return 0, false
+	}
+	return value, true
+}
 
 func (s *server) handlePolicyAnalytics(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermPolicyRead, "admin") {
