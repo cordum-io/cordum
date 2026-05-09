@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Dashboard 5 — Bundles surface: list + detail-with-tabs (2026-05-09, task-220d263a)
+
+- `dashboard/src/pages/policies/BundlesPage.tsx`: filter bar + DataTable list at `/policies/bundles` with scope/search nuqs URL state, status dot, "+ New bundle" CTA. Row-click navigates to detail page. (Step 3, by worker-6b22 commit `22da3212`.)
+- `dashboard/src/pages/policies/BundleDetailPage.tsx`: detail page at `/policies/bundles/:id` with the unified `Tabs` primitive and 4 panels — Rules / Versions / Deployments / Diff. Active tab in URL via nuqs (`?tab=rules|versions|deployments|diff`). Each tab is a separate lazy-loaded chunk. Per-tab status badge + back link in PageHeader. (Step 4, worker-6b22 `f064a55b`.)
+- `BundleRulesTab.tsx`: rules-in-bundle list reusing the Rules surface row format; "Add rule…" + "+ New rule in this bundle" affordances. (Step 5, worker-6b22 `f064a55b`.)
+- `BundleVersionsTab.tsx`: vertical timeline of versions newest-first with author + commit hash + rule-count delta; per-row "Compare with…" picker that sets `?tab=diff&from=...&to=...`. (Step 6, worker-6b22 `f064a55b`.)
+- `BundleDeploymentsTab.tsx`: scope×version matrix consuming Backend 2's `GetActiveDeployment` grouping. Click-to-Promote (empty cells) / click-to-Rollback (active cells) gated by `ConfirmDialog`. New `useDeployBundle` + `useRollbackBundle` mutations call Backend 2's `POST /policy/bundles/:id/deploy` + `/rollback`. a11y: row/columnheader scoping + per-cell aria-labels naming the action verb + scope. (Step 7 by worker-c1cf, commit `fa13f3ad`.)
+- `BundleDiffTab.tsx`: read-only Monaco DiffEditor side-by-side comparison of two version snapshots' YAML-serialized rule sets, with a summary row "X added · Y removed · Z modified" computed from id-keyed comparison. nuqs URL state `?from=&to=` for deep-link compatibility with the Versions-tab "Compare with…" picker; pickers when unset. DiffEditor lazy-loaded so monaco-editor only ships when the Diff tab is activated. (Step 8 by worker-c1cf, commit `6e3d5a72`.)
+- New `dashboard/src/hooks/useBundle.ts` exporting `useBundle/useBundleVersions/useBundleDeployments`; `dashboard/src/hooks/useBundleVersion.ts` (single-version fetch); `useDeployBundle.ts` + `useRollbackBundle.ts` (mutations with cache-invalidation + toast wiring).
+- New MSW defaults in `dashboard/src/test-utils/handlers.ts` for every Backend 2 endpoint the new tabs consume (`/policy/bundles`, `/:id`, `/:id/versions`, `/:id/versions/:version`, `/:id/deployments`, `/:id/deploy`, `/:id/rollback`).
+- Page tests covering DoD #5: `BundlesPage.test.tsx` (list + filter URL), `BundleDetailPage.test.tsx` (tab navigation), `BundleDeploymentsTab.test.tsx` (matrix + ConfirmDialog wiring), `BundleDiffTab.test.tsx` (Monaco props + summary). DASHBOARD VERIFICATION RAIL: tsc 0 / vitest 238 files / 2052 tests / build 0.
+- Note: deployment-timeline Gantt visualization is task Dashboard 6 (`task-7b2862f8`); the matrix is the v1 view.
+
 #### Dashboard verification rail finalization (2026-05-09, task-347388c0 reopen #1)
 
 - Updated `dashboard/docs/process/rail-vitest-green-verification.md` with the approved-rail excerpts post Yaron 2026-05-09 sign-off. Three rails now live in `project.globalRails.customRules` (verbatim text in the doc): DASHBOARD VERIFICATION RAIL (prop-8cc95268), DASHBOARD QA REJECTION FORMAT (prop-5a162a16), and PRE-SUBMIT DOD CHECKLIST (Yaron-2026-05-09). PENDING block annotated with the resolution; original placeholder retained as audit trail. Field-correction note added: rails live in `project.globalRails.customRules`, NOT `allRails.global` (the latter is empty in fetched contexts; the prior reopen mistakenly cited that field).
