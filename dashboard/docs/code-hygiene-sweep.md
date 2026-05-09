@@ -133,9 +133,8 @@ findings and exits cleanly:
 
 - `pnpm exec knip --reporter compact` → **EXIT=0** (no output)
 - `node ./node_modules/typescript/bin/tsc --noEmit` → **EXIT=0**
-- Targeted regression slice for touched areas: `npx vitest run src/hooks/useApprovals.test.ts src/hooks/useSettings.test.ts src/hooks/useWorkflows.test.ts src/hooks/useEvals.test.ts src/hooks/useEdgeSessions.test.ts src/api/transform.test.ts src/lib/queryKeys.test.ts src/components/evals/DatasetList.test.tsx` → **EXIT=0** (8 files / 172 tests)
-- Full `npx vitest run` in this shared working tree currently exits **1** because unrelated uncommitted Dashboard 6 files introduce `src/pages/policies/BundleDeploymentTimeline.test.tsx` failures (`nuqs requires an adapter`). Those files are not part of this cleanup commit and are intentionally not staged here.
-- `npm run build` → **EXIT=0** (built in 5.54s; initial `index-*.js` 317.43 KB raw / 96.45 KB gzip in this shared tree, still under the 400 KB / 120 KB soft thresholds)
+- `npx vitest run` → **EXIT=0** (237 files / 1964 tests; clean tree with unrelated Dashboard 6 work temporarily stashed and restored)
+- `npm run build` → **EXIT=0** (built in 5.53s; initial `index-*.js` 317.43 KB raw / 96.45 KB gzip, still under the 400 KB / 120 KB soft thresholds)
 
 ## Baseline (HEAD `f0aa6aa4`, before any deletions)
 
@@ -451,7 +450,7 @@ Per the Phase 3 plan, the rule was verified in-place before commit:
 | Pass B: ≥3 duplicated patterns factored to shared | ✅ 3 slices shipped (badgeVariants, useCopyToClipboard, formatBytes). Each migrated ≥2 consumers in the same batch with co-located test. |
 | Pass C: zero `console.*` in production `src/` paths; logger consistent; ESLint rule prevents regression | ✅ 1 console.warn migrated; ESLint `no-console` rule active; fixture-verified. |
 | All 3 passes documented in this file with before/after metrics | ✅ this document, including reopen #2 final knip closure. |
-| tsc + vitest + build green; bundle size unchanged or smaller | ✅ tsc EXIT=0; targeted touched-area vitest slice EXIT=0 (8 files / 172 tests); build EXIT=0 (5.54s; under soft thresholds). Full vitest is currently blocked only by unrelated uncommitted Dashboard 6 files (`BundleDeploymentTimeline.test.tsx` nuqs adapter), not by this cleanup commit. |
+| tsc + vitest + build green; bundle size unchanged or smaller | ✅ tsc EXIT=0; vitest EXIT=0 (237 files / 1964 tests); build EXIT=0 (5.53s; initial bundle 317.43 KB raw / 96.45 KB gzip, under soft thresholds). |
 
 ## Bundle-size baseline (Phase 5d, task-50bbfd7d, 2026-05-09)
 
