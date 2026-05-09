@@ -182,10 +182,9 @@ function ProtectedRoutes() {
   if (!isAuthenticated) return null;
 
   return (
-    <>
+    <ErrorBoundaryWrapper>
     <ToastBridge />
     <AppShell>
-      <ErrorBoundaryWrapper>
       <Suspense fallback={<LoadingScreen />}>
         <Routes>
           {/* OPERATE */}
@@ -275,9 +274,8 @@ function ProtectedRoutes() {
           <Route path="*" element={<RouteBoundary name="Page not found"><NotFoundPage /></RouteBoundary>} />
         </Routes>
       </Suspense>
-      </ErrorBoundaryWrapper>
     </AppShell>
-    </>
+    </ErrorBoundaryWrapper>
   );
 }
 
@@ -301,7 +299,14 @@ export default function App() {
             />
             <Suspense fallback={<LoadingScreen />}>
               <Routes>
-                <Route path="/login" element={<LoginPage />} />
+                <Route
+                  path="/login"
+                  element={
+                    <RouteBoundary name="Login">
+                      <LoginPage />
+                    </RouteBoundary>
+                  }
+                />
                 <Route path="/*" element={<ProtectedRoutes />} />
               </Routes>
             </Suspense>
