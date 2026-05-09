@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cordum/cordum/core/policy"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -66,6 +67,28 @@ func MapEventToPolicyCheckRequest(event AgentActionEvent, classification ActionC
 		InputContentType: strings.TrimSpace(classification.InputContentType),
 		InputSizeBytes:   classification.InputSizeBytes,
 	}, nil
+}
+
+// MapEventToPolicyCheckRequestWithDecision preserves the legacy Safety Kernel
+// request while also constructing the additive unified edge decision.
+func MapEventToPolicyCheckRequestWithDecision(
+	event AgentActionEvent,
+	classification ActionClassification,
+	opts PolicyMappingOptions,
+	emitOpts EdgeDecisionEmitOptions,
+) (*pb.PolicyCheckRequest, policy.Decision, error) {
+	req, err := MapEventToPolicyCheckRequest(event, classification, opts)
+	if err != nil {
+		return nil, policy.Decision{}, err
+	}
+	if emitOpts.Classification == nil {
+		emitOpts.Classification = &classification
+	}
+	decision, err := EmitDecisionForEdgeEvent(event, emitOpts)
+	if err != nil {
+		return nil, policy.Decision{}, err
+	}
+	return req, decision, nil
 }
 
 func mapLabelsForPolicy(event AgentActionEvent, classification ActionClassification) map[string]string {

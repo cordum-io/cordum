@@ -33,18 +33,19 @@ and migration helpers in `core/audit/config.go`):
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `EventSafetyDecision` | `safety.decision` | Safety kernel allow/deny/throttle decisions |
-| `EventPolicyDecisionV2` | `policy.decision.v2` | Unified Policy Studio `Decision` event emitted during the job-policy migration window |
+| `EventPolicyDecisionV2` | `policy.decision.v2` | Unified Policy Studio `Decision` event emitted during the job/edge policy migration window |
 | `EventSafetyApproval` | `safety.approval` | Human approval or rejection of gated jobs |
 | `EventPolicyChange` | `safety.policy_change` | Policy configuration changes |
 | `EventSafetyViolation` | `safety.violation` | Safety policy violations |
 | `EventSystemAuth` | `system.auth` | Authentication events (login, key creation, user management) |
 
-### Policy Studio unified decisions (Backend 3)
+### Policy Studio unified decisions (Backend 3 + Backend 4)
 
-Job-side Safety Kernel decisions are migrating from the legacy
-`safety.decision` shape to the unified `core/policy.Decision` shape used by
-Policy Studio. During the transition, matched-rule job decisions can be
-written in both shapes through the existing SIEM and hash-chain machinery.
+Job-side Safety Kernel decisions and Edge policy decisions are migrating from
+their legacy shapes (`safety.decision` and `edge.*`) to the unified
+`core/policy.Decision` shape used by Policy Studio. During the transition,
+matched-rule decisions can be written in both shapes through the existing SIEM
+and hash-chain machinery.
 
 `policy.decision.v2` uses the same `SIEMEvent` envelope so existing exporters
 and chain verification continue to work. The normalized fields are:
@@ -56,7 +57,7 @@ and chain verification continue to work. The normalized fields are:
 | `matched_rule` | Unified `Decision.RuleID` |
 | `policy_version` | Unified `Decision.BundleVersion` when present, otherwise the legacy policy snapshot |
 | `reason` | First trace reason, falling back to the legacy reason |
-| `extra.source` | Unified `Decision.Source` (`job` for Safety Kernel decisions) |
+| `extra.source` | Unified `Decision.Source` (`job` for Safety Kernel decisions, `edge` for Edge classifier decisions) |
 | `extra.bundle_id` / `extra.bundle_version` | Optional bundle binding metadata |
 | `extra.input_ref` / `extra.output_ref` | Optional blob references for inputs/outputs |
 | `extra.audit_hash` | Optional unified decision audit hash |
@@ -65,14 +66,16 @@ Emission mode is controlled by `AUDIT_UNIFIED_DECISION_MODE`:
 
 | Value | Behavior |
 |-------|----------|
-| unset / `dual` | Default. Emit legacy `safety.decision` first, then `policy.decision.v2` for matched-rule job decisions. |
-| `legacy` | Emit only the legacy `safety.decision` shape. Use for rollback if downstream SIEM rules are not ready for v2. |
-| `unified` | Emit only `policy.decision.v2` for matched-rule job decisions. Use after downstream consumers cut over. |
+| unset / `dual` | Default. Emit the legacy decision event first (`safety.decision` for jobs or the matching `edge.*` event for Edge), then `policy.decision.v2` for matched-rule decisions. |
+| `legacy` | Emit only the legacy decision shape. Use for rollback if downstream SIEM rules are not ready for v2. |
+| `unified` | Emit only `policy.decision.v2` for matched-rule decisions. Use after downstream consumers cut over. |
 
 Values are case-insensitive. Invalid values safely default to `dual` and are
 logged once. Decisions without a matched rule remain legacy-only until the
 unified evaluator can provide a stable rule/default identifier; this avoids
-inventing unverifiable rule ids in the audit chain.
+inventing unverifiable rule ids in the audit chain. The shared reader helper
+folds job and Edge `policy.decision.v2` events into one stream by parsing
+`extra.source`.
 
 Rollback/cutover guidance:
 
@@ -84,6 +87,16 @@ Rollback/cutover guidance:
 3. After all consumers read v2, set `AUDIT_UNIFIED_DECISION_MODE=unified`.
    Keep legacy parsing code for at least one retention window so historical
    audit-chain verification can still display old events.
+
+Edge-specific notes:
+
+- `ALLOW`, `DENY`, `REQUIRE_APPROVAL`, `THROTTLE`, `CONSTRAIN`, and
+  `RECORDED` continue to be persisted on `AgentActionEvent` for compatibility.
+- Unified Edge decisions use `extra.source=edge`; `RECORDED` maps to
+  `Decision.Type=allow` with a trace marker that it was observation-only.
+- Gateway evaluate decisions and agentd local/cache/degraded decision evidence
+  both bridge into this shared transition path, while non-decision Edge events
+  remain outside the policy decision stream.
 
 ### Output Policy events (added 2026-04)
 
@@ -142,6 +155,10 @@ kind, tool name, hashes, policy snapshot, approval ref, artifact type/result,
 mode/component, and stable reason codes. Raw prompts, tool payloads, signed URLs,
 approval reason text, `InputRedacted` maps, arbitrary labels, bearer tokens, and
 API keys must never be placed in SIEM `extra`.
+
+Matched Edge decisions additionally emit `policy.decision.v2` according to
+`AUDIT_UNIFIED_DECISION_MODE`; legacy Edge event ordering is preserved in dual
+mode.
 
 See [Edge observability](edge-observability.md) for the full metric, log, and
 audit contract.
