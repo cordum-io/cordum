@@ -21,6 +21,13 @@ export const baseHandlers = [
   http.get("*/api/v1/policy/bundles/:id/versions", () =>
     HttpResponse.json({ items: [] }),
   ),
+  http.get("*/api/v1/policy/bundles/:id/versions/:version", ({ params }) =>
+    HttpResponse.json({
+      version: String(params.version),
+      rule_snapshot: [],
+      deployed_at: "2026-05-09T10:00:00Z",
+    }),
+  ),
   http.get("*/api/v1/policy/bundles/:id/deployments", () =>
     HttpResponse.json({ items: [] }),
   ),

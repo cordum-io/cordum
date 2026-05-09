@@ -135,6 +135,8 @@ export const queryKeys = {
       ] as const,
     detail: (id: string) => ["bundle-studio", "detail", id] as const,
     versions: (id: string) => ["bundle-studio", "versions", id] as const,
+    version: (id: string, version: string) =>
+      ["bundle-studio", "version", id, version] as const,
     deployments: (id: string) => ["bundle-studio", "deployments", id] as const,
   },
 
