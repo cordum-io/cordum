@@ -33,6 +33,11 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
+import { Textarea } from "@/components/ui/Textarea";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { LabeledField } from "@/components/ui/LabeledField";
 import { ChartTooltipCompact as ChartTooltip } from "@/components/ui/ChartTooltip";
 import { useReplayPolicy } from "@/hooks/usePolicies";
 import type {
@@ -317,18 +322,17 @@ function ChangesTable({ changes }: { changes: PolicyReplayChange[] }) {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <input
+          <Input
             type="text"
+            icon={<Search className="h-3.5 w-3.5" />}
             placeholder="Search job ID, topic, tenant..."
-            className="w-full rounded-xl border border-border bg-background pl-8 pr-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             aria-label="Search changes"
           />
         </div>
-        <select
-          className="rounded-xl border border-border bg-background px-2 py-1.5 text-sm"
+        <Select
+          className="px-2"
           value={dirFilter}
           onChange={(e) => setDirFilter(e.target.value)}
           aria-label="Filter by direction"
@@ -336,7 +340,7 @@ function ChangesTable({ changes }: { changes: PolicyReplayChange[] }) {
           <option value="">All changes</option>
           <option value="escalated">Escalated</option>
           <option value="relaxed">Relaxed</option>
-        </select>
+        </Select>
       </div>
       <div className="overflow-x-auto rounded-xl border border-border/60">
         <table className="w-full text-sm" role="table">
@@ -573,49 +577,29 @@ export default function ReplayPage({
               Time range
             </label>
             <div className="flex flex-wrap items-center gap-3">
-              <div className="space-y-1">
-                <label
-                  htmlFor="replay-from"
-                  className="text-[11px] text-muted-foreground"
-                >
-                  From
-                </label>
-                <input
+              <LabeledField label="From">
+                <Input
                   id="replay-from"
                   type="datetime-local"
-                  className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   value={from}
                   onChange={(e) => setFrom(e.target.value)}
                 />
-              </div>
-              <div className="space-y-1">
-                <label
-                  htmlFor="replay-to"
-                  className="text-[11px] text-muted-foreground"
-                >
-                  To
-                </label>
-                <input
+              </LabeledField>
+              <LabeledField label="To">
+                <Input
                   id="replay-to"
                   type="datetime-local"
-                  className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   value={to}
                   onChange={(e) => setTo(e.target.value)}
                 />
-              </div>
-              <div className="space-y-1">
-                <label
-                  htmlFor="replay-max-jobs"
-                  className="text-[11px] text-muted-foreground"
-                >
-                  Max jobs
-                </label>
-                <input
+              </LabeledField>
+              <LabeledField label="Max jobs">
+                <Input
                   id="replay-max-jobs"
                   type="number"
                   min={1}
                   max={MAX_JOBS_LIMIT}
-                  className="w-24 rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-24"
                   value={maxJobs}
                   onChange={(e) =>
                     setMaxJobs(
@@ -626,7 +610,7 @@ export default function ReplayPage({
                     )
                   }
                 />
-              </div>
+              </LabeledField>
             </div>
             {rangeError && (
               <p className="mt-1.5 text-xs text-destructive">{rangeError}</p>
@@ -640,24 +624,23 @@ export default function ReplayPage({
               Filters
             </label>
             <div className="flex flex-wrap items-center gap-3">
-              <input
+              <Input
                 type="text"
                 placeholder="Tenant"
-                className="w-40 rounded-xl border border-border bg-background px-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-40"
                 value={tenant}
                 onChange={(e) => setTenant(e.target.value)}
                 aria-label="Tenant filter"
               />
-              <input
+              <Input
                 type="text"
                 placeholder="Topic pattern (glob)"
-                className="w-52 rounded-xl border border-border bg-background px-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-52"
                 value={topicPattern}
                 onChange={(e) => setTopicPattern(e.target.value)}
                 aria-label="Topic pattern filter"
               />
-              <select
-                className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm"
+              <Select
                 value={originalDecision}
                 onChange={(e) => setOriginalDecision(e.target.value)}
                 aria-label="Original decision filter"
@@ -667,7 +650,7 @@ export default function ReplayPage({
                     {opt.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </div>
 
@@ -676,15 +659,11 @@ export default function ReplayPage({
             <label className="block text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
               Candidate policy
             </label>
-            <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
-                checked={useCurrentPolicy}
-                onChange={(e) => setUseCurrentPolicy(e.target.checked)}
-                className="rounded border-border"
-              />
-              Use current published policy
-            </label>
+            <Checkbox
+              label="Use current published policy"
+              checked={useCurrentPolicy}
+              onChange={(e) => setUseCurrentPolicy(e.target.checked)}
+            />
             <AnimatePresence>
               {!useCurrentPolicy && (
                 <motion.div
@@ -694,9 +673,9 @@ export default function ReplayPage({
                   className="mt-3 overflow-hidden"
                 >
                   <div className="instrument-card p-0">
-                    <textarea
+                    <Textarea
                       aria-label="Candidate policy YAML"
-                      className="h-[280px] w-full resize-none rounded-xl bg-surface-0 p-4 font-mono text-xs text-foreground outline-none focus:ring-2 focus:ring-cordum/30"
+                      className="h-[280px] resize-none rounded-xl bg-surface-0 p-4 font-mono text-xs"
                       placeholder="# Paste candidate policy YAML here..."
                       value={candidateYaml}
                       onChange={(e) => setCandidateYaml(e.target.value)}
