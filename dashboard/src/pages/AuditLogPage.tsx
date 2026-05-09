@@ -44,10 +44,8 @@ import { cn, formatRelativeTime } from "@/lib/utils";
 import { toast } from "sonner";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { useConfigStore } from "@/state/config";
-import {
-  useAuditVerify,
-  type AuditVerifyResult,
-} from "@/hooks/useAuditVerify";
+import { useAuditEventVerify } from "@/hooks/useAuditEventVerify";
+import type { AuditVerifyResult } from "@/hooks/useAuditChainVerify";
 import { useIsAdmin } from "@/hooks/usePermission";
 import type { PolicyAuditEntry } from "@/api/generated/model/policyAuditEntry";
 
@@ -738,11 +736,17 @@ function ChainSignatureSection({
   tenantId,
   isAdmin,
 }: ChainSignatureSectionProps) {
-  // The drawer-open event is the explicit user opt-in, so we enable the
-  // verify query here. useAuditVerify gates on isAdmin internally so
-  // viewer users don't fire a 403; we mirror that gate at this section
-  // to render a helpful hint instead of a silent no-op.
-  const verify = useAuditVerify({ tenant: tenantId, enabled: isAdmin });
+  // Per amended DoD #4 (comment-832277b0): each row's drilldown fires its
+  // own /audit/verify request scoped to that event ID — no shared chain-
+  // wide cached read. The drawer-open mount is the explicit user opt-in.
+  // useAuditEventVerify gates on isAdmin internally so viewer users don't
+  // fire a 403; we mirror that gate at this section to render a helpful
+  // hint instead of a silent no-op.
+  const verify = useAuditEventVerify({
+    tenant: tenantId,
+    eventId: event.id,
+    enabled: isAdmin,
+  });
 
   if (!isAdmin) {
     return (
@@ -766,27 +770,60 @@ function ChainSignatureSection({
       <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
         Chain signature
       </p>
-      {verify.isLoading && (
-        <p className="text-sm text-muted-foreground">
-          Loading chain verification…
-        </p>
-      )}
-      {verify.isError && (
-        <p className="text-sm text-danger">
-          Chain verification unavailable.
-        </p>
-      )}
-      {verify.data && <ChainSignatureVerdict event={event} chain={verify.data} />}
+      <ChainSignatureVerdict event={event} verify={verify} />
     </section>
   );
 }
 
 interface ChainSignatureVerdictProps {
   event: AuditEvent;
-  chain: AuditVerifyResult;
+  verify: {
+    data: AuditVerifyResult | undefined;
+    isLoading: boolean;
+    isError: boolean;
+  };
 }
 
-function ChainSignatureVerdict({ event, chain }: ChainSignatureVerdictProps) {
+function ChainSignatureVerdict({
+  event,
+  verify,
+}: ChainSignatureVerdictProps) {
+  // Pending state per amended DoD #4: in-flight single-event verify
+  // request renders a muted "Pending" badge so users don't see a blank
+  // signature panel during the request. Distinguishes "not yet verified
+  // by this drilldown" from "chain says unverified".
+  if (verify.isLoading) {
+    return (
+      <div className="space-y-1">
+        <StatusBadge variant="muted">Pending</StatusBadge>
+        <p className="text-xs text-muted-foreground">
+          Verifying chain signature for event{" "}
+          <span className="font-mono">{event.id}</span>…
+        </p>
+      </div>
+    );
+  }
+
+  // Network/admin/upstream failures surface as an explicit "Unverified"
+  // signal — the chain backend did not return a verdict, so we cannot
+  // claim the entry is chain-signed.
+  if (verify.isError || !verify.data) {
+    return (
+      <div className="space-y-1">
+        <StatusBadge variant="danger" dot>
+          Unverified
+        </StatusBadge>
+        <p className="text-xs text-muted-foreground">
+          Chain verification request failed for event{" "}
+          <span className="font-mono">{event.id}</span>. Try again or check{" "}
+          <span className="font-mono">/govern/verification</span>.
+        </p>
+      </div>
+    );
+  }
+
+  const chain = verify.data;
+
   if (event.seq === undefined) {
     return (
       <div className="space-y-1">
