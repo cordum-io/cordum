@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-05-08.2
+ * OpenAPI spec version: 2026-05-09.2
  */
 
 export * from './aPIKeyInfo';
@@ -26,6 +26,7 @@ export * from './auditVerifyResult';
 export * from './auditVerifyResultStatus';
 export * from './authConfig';
 export * from './authConfigOidcGroupRoleMapping';
+export * from './authSource';
 export * from './authUser';
 export * from './badGatewayResponse';
 export * from './badRequestResponse';
@@ -213,6 +214,7 @@ export * from './getMemory200';
 export * from './getMemoryParams';
 export * from './getOutputPolicyStats200';
 export * from './getOutputPolicyStatsParams';
+export * from './getPolicyAuditParams';
 export * from './getPolicyShadowResultsComparisonsDiff';
 export * from './getPolicyShadowResultsComparisonsParams';
 export * from './getPolicyShadowResultsSummaryParams';
@@ -345,6 +347,8 @@ export * from './policyAnalytics200Summary';
 export * from './policyAnalytics200TimeRange';
 export * from './policyAnalyticsBody';
 export * from './policyAuditEntry';
+export * from './policyAuditEntryExtra';
+export * from './policyAuditEnvelope';
 export * from './policyBundleDetail';
 export * from './policyBundleDetailAllOf';
 export * from './policyBundleSummary';

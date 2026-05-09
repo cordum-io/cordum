@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Phase 4 drift sweep follow-up #2 closure (2026-05-09, task-82593815)
+
+- `dashboard/src/pages/DesignSystemConvergence.test.ts` extended with a comprehensive sweep test using `import.meta.glob('./**/*.tsx', { query: '?raw', import: 'default', eager: true })` (test files excluded at the glob level). Asserts `RAW_CONTROL_RE` (/<(input|select|textarea)\b/) does not match across `src/pages/**/*.tsx` outside the documented carve-out set. Forward-compatible — catches new pages that introduce raw native form controls without manual list maintenance.
+- Companion regression detector: `carve-out pages still hold raw controls` test asserts `LoginPage` + `RunDetailPage` continue to contain raw controls; if a future migration accidentally rewrites them, this test fails forcing a coordinated docs + carve-out-set update rather than silent drift.
+- Carve-outs documented inline (linking to `mem-df8a90aa` and `dashboard/docs/design-system-audit.md`): `LoginPage` (native HTML form for browser autofill / password manager interop on auth surface) + `RunDetailPage` (workflow-run console exempted, DoD-3 register).
+- DoD #1 (23 pages migrated) confirmed by re-grep at HEAD: zero pages outside the carve-outs contain raw controls — the migration completed via parallel-worker activity (commits prior to claim). No code changes required for batch migration steps.
+
+#### Phase 5a a11y test gate (2026-05-09, task-bf55ddbd)
+
+- `renderWithProviders` (`dashboard/src/test-utils/render.tsx`) accepts an opt-in `runAxe: true` option that returns a `Promise<RenderWithProvidersResult>` and asserts no critical/serious WCAG 2 AA violations on the rendered container. Reuses `assertNoSeriousAxeViolations` from `dashboard/src/test-utils/a11y.ts`. Existing callers without `runAxe` stay synchronous and unchanged. Optional `axeMode: "light" | "dark"` selects the theme axe runs against.
+- `dashboard/src/components/UserMenu.test.tsx` first test opted in to demonstrate the pattern.
+- New `dashboard/eslint.a11y.config.mjs` — narrow flat config that escalates the gate-relevant jsx-a11y rules (alt-text, ARIA correctness, heading-has-content, anchor-has-content, iframe-has-title) to `error`. `pnpm run lint:a11y` rewritten to point at this config; cross-platform safe (replaces the broken JSON-arg form that failed under PowerShell shell-quoting).
+- `dashboard/src/components/ui/Card.tsx` `CardTitle` refactored to render `<h3>{children}</h3>` (was self-closing with spread props) so `jsx-a11y/heading-has-content` can statically verify content. No behavior change.
+
 #### Workflow governance overlay fields (2026-05-08, task-913b6c6c)
 
 - `WorkflowStep.policy_gate?: "allow" | "deny" | "require_approval"` — optional design-time policy hint surfaced on the WorkflowStudio governance overlay before any run. Validated at workflow-save time; unset means "no hint" (overlay defers to runtime safety decision).
@@ -84,6 +98,33 @@ under EDGE-032 on 2026-04-30; product, API, CLI, and demo docs are at
 - EDGE-030: Demo polish and operator runbook
 - EDGE-031: Security review and threat-model closure for P0
 - EDGE-032: P0 final acceptance, demo signoff, and release readiness
+
+#### OpenAPI /policy/audit enrichment (epic-252d2c07 follow-up to task-55f813b3)
+
+Closes the spec drift between the gateway handler and the OpenAPI spec for
+`GET /api/v1/policy/audit`:
+
+- 9 query params declared (`limit`, `offset`, `action`, `agent_id`,
+  `after`, `before`, `search`, `rule_id`, `type`) matching the
+  gateway handler at
+  `core/controlplane/gateway/handlers_policy_bundles.go:805`.
+- Response shape changed from bare `PolicyAuditEntry[]` to a typed
+  `PolicyAuditEnvelope` (`{items, total, has_more, offset}`) matching
+  the actual handler payload.
+- `PolicyAuditEntry` schema enriched from 7 fields to 25 fields
+  (existing 7 stay; 4 of them now `deprecated: true` since the backend
+  doesn't populate them; 18 backend-only fields added — `resource_*`,
+  `actor_id`, `role`, `auth_source` (new `AuthSource` enum),
+  `agent_*`, `bundle_ids` plural, `reason`, `decision`,
+  `matched_rule`, `policy_version`, `extra`, `snapshot_before` /
+  `snapshot_after`, `created_at`).
+- `info.version` bumped to `2026-05-09.2`.
+
+Dashboard: `dashboard/src/pages/AuditLogPage.tsx` swapped from a manual
+`get<AuditResponse>('/policy/audit?...')` call to the regenerated
+`useGetPolicyAudit` hook. The previous `PolicyAuditEntry &
+Record<string, unknown>` bridge intersection (added in task-55f813b3
+step-7) is removed; the page now consumes the typed shape directly.
 
 #### Cordum Edge P0 cleanup (2026-05-03)
 

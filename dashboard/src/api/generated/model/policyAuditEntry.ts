@@ -3,18 +3,116 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-05-08.2
+ * OpenAPI spec version: 2026-05-09.2
  */
+import type { AuthSource } from './authSource';
+import type { PolicyAuditEntryExtra } from './policyAuditEntryExtra';
 
+/**
+ * One entry in the policy audit log. Mirrors `policybundles.PolicyAuditEntry`
+in `core/controlplane/gateway/policybundles/types.go`. The legacy
+`author` / `timestamp` / `bundle_id` (singular) / `snapshot_id`
+fields are preserved for backwards-compat with consumers of the
+v1 spec but are not populated by the current backend handler;
+prefer `actor_id` / `created_at` / `bundle_ids` (plural) /
+`snapshot_before` + `snapshot_after`.
+
+ */
 export interface PolicyAuditEntry {
-  id?: string;
-  action?: string;
+  id: string;
+  action: string;
+  /**
+   * Deprecated. The current backend handler does not populate this
+field; it remains in the schema only to avoid breaking
+consumers that read the v1 type.
+
+   * @deprecated
+   */
   author?: string;
+  /**
+   * Deprecated. Use `created_at`. The current backend handler
+does not populate this field.
+
+   * @deprecated
+   */
   timestamp?: string;
-  /** @nullable */
+  /**
+   * Deprecated. Use `bundle_ids` (plural). The current backend
+handler does not populate this field.
+
+   * @deprecated
+   * @nullable
+   */
   bundle_id?: string | null;
-  /** @nullable */
+  /**
+   * Deprecated. Use `snapshot_before` and `snapshot_after`. The
+current backend handler does not populate this field.
+
+   * @deprecated
+   * @nullable
+   */
   snapshot_id?: string | null;
   /** @nullable */
   message?: string | null;
+  /**
+   * Audited resource kind, e.g. `rule`, `bundle`, `input`, `output`.
+   * @nullable
+   */
+  resource_type?: string | null;
+  /** @nullable */
+  resource_id?: string | null;
+  /** @nullable */
+  resource_name?: string | null;
+  /**
+   * Identifier of the principal who performed the action.
+   * @nullable
+   */
+  actor_id?: string | null;
+  /** @nullable */
+  role?: string | null;
+  auth_source?: AuthSource;
+  /** @nullable */
+  agent_id?: string | null;
+  /** @nullable */
+  agent_name?: string | null;
+  /** @nullable */
+  agent_risk_tier?: string | null;
+  /**
+   * Bundles affected by this audit event. Replaces the legacy
+singular `bundle_id` field.
+
+   * @nullable
+   */
+  bundle_ids?: string[] | null;
+  /** @nullable */
+  reason?: string | null;
+  /** @nullable */
+  decision?: string | null;
+  /** @nullable */
+  matched_rule?: string | null;
+  /** @nullable */
+  policy_version?: string | null;
+  /**
+   * Free-form per-event metadata. Keys and values are emitted
+verbatim from the gateway handler's audit-construction site.
+
+   * @nullable
+   */
+  extra?: PolicyAuditEntryExtra;
+  /**
+   * Audit-chain hash of the resource state before the action.
+   * @nullable
+   */
+  snapshot_before?: string | null;
+  /**
+   * Audit-chain hash of the resource state after the action.
+   * @nullable
+   */
+  snapshot_after?: string | null;
+  /** RFC3339 timestamp when the audit entry was created. Plain
+string (not `format: date-time`) because the backend stores
+the raw value and lex-compares it against `after` / `before`
+query params.
+ */
+  created_at: string;
 }
