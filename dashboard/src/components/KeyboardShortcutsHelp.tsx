@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { Keyboard } from "lucide-react";
+import { useCallback, useEffect, useRef } from "react";
+import { Keyboard, X } from "lucide-react";
 import { useUiStore } from "../state/ui";
 import { SHORTCUTS } from "../hooks/useKeyboardShortcuts";
 
@@ -7,6 +7,13 @@ export function KeyboardShortcutsHelp() {
   const open = useUiStore((s) => s.shortcutsHelpOpen);
   const setOpen = useUiStore((s) => s.setShortcutsHelpOpen);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  const closeDialog = useCallback(() => setOpen(false), [setOpen]);
+
+  useEffect(() => {
+    if (open) closeButtonRef.current?.focus();
+  }, [open]);
 
   // Close on Escape
   useEffect(() => {
@@ -14,12 +21,12 @@ export function KeyboardShortcutsHelp() {
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         e.preventDefault();
-        setOpen(false);
+        closeDialog();
       }
     }
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [open, setOpen]);
+  }, [closeDialog, open]);
 
   if (!open) return null;
 
@@ -30,17 +37,36 @@ export function KeyboardShortcutsHelp() {
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
       onClick={(e) => {
-        if (e.target === e.currentTarget) setOpen(false);
+        if (e.target === e.currentTarget) closeDialog();
       }}
     >
       <div
         ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="keyboard-shortcuts-help-title"
         className="mx-4 w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl"
       >
         {/* Header */}
-        <div className="mb-4 flex items-center gap-2">
-          <Keyboard className="h-5 w-5 text-accent" />
-          <h2 className="text-lg font-semibold text-ink">Keyboard Shortcuts</h2>
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Keyboard className="h-5 w-5 text-accent" />
+            <h2
+              id="keyboard-shortcuts-help-title"
+              className="text-lg font-semibold text-ink"
+            >
+              Keyboard Shortcuts
+            </h2>
+          </div>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            aria-label="Close keyboard shortcuts"
+            onClick={closeDialog}
+            className="flex min-h-[36px] min-w-[36px] items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-surface-2 hover:text-ink"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
 
         {/* Navigation shortcuts */}

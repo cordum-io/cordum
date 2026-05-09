@@ -14,10 +14,10 @@ import { useKeyboardShortcuts, G_KEY_MAP } from "@/hooks/useKeyboardShortcuts";
 import { useDialogA11y } from "@/hooks/useDialogA11y";
 import { useReducedMotion } from "framer-motion";
 import { CommandPalette } from "@/components/CommandPalette";
+import { KeyboardShortcutsHelp } from "@/components/KeyboardShortcutsHelp";
 import { NotificationPopover } from "@/components/NotificationPopover";
 import { UserMenu } from "@/components/UserMenu";
 import { ConnectionIndicator } from "@/components/ConnectionIndicator";
-import { KeyboardShortcutsDialog } from "@/components/KeyboardShortcuts";
 import { TierBadge } from "@/components/TierBadge";
 import { TelemetryConsentBanner } from "@/components/TelemetryConsentBanner";
 import {
@@ -313,7 +313,7 @@ export function AppShell({ children }: AppShellProps) {
         Skip to main content
       </a>
       <CommandPalette />
-      <KeyboardShortcutsDialog />
+      <KeyboardShortcutsHelp />
 
       {/* Mobile hamburger */}
       <button type="button"
