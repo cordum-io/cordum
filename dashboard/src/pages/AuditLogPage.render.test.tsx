@@ -349,6 +349,8 @@ describe("AuditLogPage Block D — drilldown drawer (DoD #4 amended)", () => {
           verified_events: 500,
           gaps: [],
           retention_boundary_seq: 100,
+          first_seq: 100,
+          last_seq: 500,
         }),
       ),
     );
@@ -577,5 +579,104 @@ describe("AuditLogPage Block D — drilldown drawer (DoD #4 amended)", () => {
     });
     expect(container.textContent).toContain("evt-error");
     expect(container.textContent).toContain("Chain verification result unavailable");
+  });
+
+  // Pending state #5 per amended DoD #4 — QA reopen #3 finding (msg-1947335a):
+  // a row's seq above the cached chain's last_seq is "absent from the cached
+  // result" by the architect's pending definition (comment-7419de07). Without
+  // this guard, a bounded/limited verify window would default-pass an out-of-
+  // range seq as Verified.
+  it("drilldown shows 'Pending' when event seq is above chain.last_seq (outside cached range)", async () => {
+    setUserRole("admin");
+    server.use(
+      defaultAuthConfigEnforcing(),
+      http.get("*/api/v1/policy/audit", () =>
+        HttpResponse.json({
+          items: [makeEntry(1, { id: "evt-out-of-range", seq: 999 })],
+          total: 1,
+          has_more: false,
+          offset: 0,
+        }),
+      ),
+      http.get("*/api/v1/audit/verify", () =>
+        HttpResponse.json({
+          status: "ok",
+          total_events: 500,
+          verified_events: 500,
+          gaps: [],
+          retention_boundary_seq: 100,
+          first_seq: 100,
+          last_seq: 500,
+        }),
+      ),
+    );
+
+    const { container } = renderWithProviders(
+      <NuqsTestingAdapter searchParams="">
+        <AuditLogPage />
+      </NuqsTestingAdapter>,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("tbody tr")).toBeTruthy();
+    });
+    fireEvent.click(container.querySelector("tbody tr") as HTMLElement);
+
+    await waitFor(() => {
+      expect(container.querySelector("[role='dialog']")).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(container.textContent).toContain("Pending");
+    });
+    expect(container.textContent).toContain("outside the cached verification range");
+    expect(container.textContent).toContain("100");
+    expect(container.textContent).toContain("500");
+  });
+
+  // Pending state #6 per amended DoD #4 — QA reopen #3 finding: an empty
+  // verify result (verified_events=0) means the chain has not verified any
+  // event yet; every row's seq is "absent from the cached result" per the
+  // architect's pending definition.
+  it("drilldown shows 'Pending' when chain returns empty verified result (verified_events=0)", async () => {
+    setUserRole("admin");
+    server.use(
+      defaultAuthConfigEnforcing(),
+      http.get("*/api/v1/policy/audit", () =>
+        HttpResponse.json({
+          items: [makeEntry(1, { id: "evt-empty-chain", seq: 250 })],
+          total: 1,
+          has_more: false,
+          offset: 0,
+        }),
+      ),
+      http.get("*/api/v1/audit/verify", () =>
+        HttpResponse.json({
+          status: "ok",
+          total_events: 0,
+          verified_events: 0,
+          gaps: [],
+          retention_boundary_seq: 0,
+        }),
+      ),
+    );
+
+    const { container } = renderWithProviders(
+      <NuqsTestingAdapter searchParams="">
+        <AuditLogPage />
+      </NuqsTestingAdapter>,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector("tbody tr")).toBeTruthy();
+    });
+    fireEvent.click(container.querySelector("tbody tr") as HTMLElement);
+
+    await waitFor(() => {
+      expect(container.querySelector("[role='dialog']")).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(container.textContent).toContain("Pending");
+    });
+    expect(container.textContent).toContain("no events verified yet");
   });
 });
