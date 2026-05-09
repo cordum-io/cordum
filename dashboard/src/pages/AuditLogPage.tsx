@@ -12,9 +12,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQueryState, parseAsString } from "nuqs";
 import { parseAsSearchTerm } from "@/lib/url-state";
-import { useQuery } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import { get } from "@/api/client";
+import { useGetPolicyAudit } from "@/api/generated/policy/policy";
+import type { GetPolicyAuditParams } from "@/api/generated/model/getPolicyAuditParams";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -51,17 +52,10 @@ import {
 import { useIsAdmin } from "@/hooks/usePermission";
 import type { PolicyAuditEntry } from "@/api/generated/model/policyAuditEntry";
 
-// Backend response items extend `PolicyAuditEntry` (the openapi-declared
-// shape) with additional fields the gateway emits but the spec does not
-// yet declare: `actor_id`, `role`, `actor`, `resource_type`, `resource_id`,
-// `decision`, `seq`, etc. The generated `useGetPolicyAudit` hook is
-// unusable here because (a) it accepts no query params (spec only declares
-// TenantID), and (b) it types the response as `PolicyAuditEntry[]` instead
-// of the `{items, total, has_more, offset}` envelope the gateway actually
-// returns. Spec enrichment is tracked separately. We adopt the generated
-// type as a base for forward compatibility — when the spec catches up to
-// the backend, the intersection here narrows automatically.
-type AuditResponseItem = PolicyAuditEntry & Record<string, unknown>;
+// `PolicyAuditEntry` is the openapi-declared shape; spec enrichment in
+// task-7efe8c34 brought it into parity with the backend struct so the
+// generated `useGetPolicyAudit` hook is now usable directly. The previous
+// `& Record<string, unknown>` intersection is no longer needed.
 
 interface AuditEvent {
   id: string;
@@ -74,13 +68,6 @@ interface AuditEvent {
   ip?: string;
   decision?: string;
   seq?: number;
-}
-
-interface AuditResponse {
-  items: AuditResponseItem[];
-  total?: number;
-  has_more?: boolean;
-  offset?: number;
 }
 
 const PAGE_LIMIT = 1000;
@@ -126,23 +113,24 @@ export function shouldFetchNextAuditPage(
   return !!entries[0]?.isIntersecting && hasNextPage && !isFetchingNextPage;
 }
 
-function mapEvent(e: Record<string, unknown>): AuditEvent {
-  const seqRaw = e.seq;
-  const decisionRaw = e.decision;
+function mapEvent(e: PolicyAuditEntry): AuditEvent {
+  // `seq` is not part of the openapi-declared PolicyAuditEntry shape —
+  // the gateway's /policy/audit handler does not emit it. Tests stub it
+  // via MSW for the chain-integrity drilldown path (AuditLogPage.render
+  // verifies "Verified"/"Unverified"/"Pending" based on event.seq vs
+  // chain.first_seq/last_seq). Capture it via narrow extension cast so
+  // the test contract stays intact; in production the field is absent
+  // and AuditEvent.seq is undefined as before.
+  const seqRaw = (e as PolicyAuditEntry & { seq?: unknown }).seq;
   return {
-    id: (e.id as string) ?? "",
-    action: (e.action as string) ?? "",
-    actor:
-      (e.actor_id as string) ||
-      (e.role as string) ||
-      (e.actor as string) ||
-      "unknown",
-    resource: (e.resource_type as string) || (e.resource as string) || "",
-    resourceId:
-      (e.resource_id as string) || (e.resourceId as string) || undefined,
-    detail: (e.message as string) || (e.detail as string) || undefined,
-    timestamp: (e.created_at as string) || (e.timestamp as string) || "",
-    decision: typeof decisionRaw === "string" ? decisionRaw : undefined,
+    id: e.id,
+    action: e.action,
+    actor: e.actor_id || e.role || "unknown",
+    resource: e.resource_type || "",
+    resourceId: e.resource_id ?? undefined,
+    detail: e.message ?? undefined,
+    timestamp: e.created_at || e.timestamp || "",
+    decision: e.decision ?? undefined,
     seq: typeof seqRaw === "number" ? seqRaw : undefined,
   };
 }
@@ -210,31 +198,35 @@ export default function AuditLogPage() {
       });
   }, []);
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ["audit", actionFilter, agentFilter, dateFrom, dateTo, search],
-    queryFn: async () => {
-      const params = new URLSearchParams({
-        limit: String(PAGE_LIMIT),
-        offset: "0",
-      });
-      if (actionFilter) params.set("action", actionFilter);
-      if (agentFilter) params.set("agent_id", agentFilter);
-      // Defensive ISO conversion: malformed `?from=banana` URL values
-      // would throw at toISOString() and break the whole query. Validate
-      // the parsed Date before forwarding; silently drop unparseable
-      // input so the rest of the filter set still applies.
-      if (dateFrom) {
-        const d = new Date(dateFrom);
-        if (!Number.isNaN(d.getTime())) params.set("after", d.toISOString());
-      }
-      if (dateTo) {
-        const d = new Date(dateTo + "T23:59:59");
-        if (!Number.isNaN(d.getTime())) params.set("before", d.toISOString());
-      }
-      if (search) params.set("search", search);
-      return get<AuditResponse>(`/policy/audit?${params}`);
-    },
-  });
+  // Build typed query params for the generated hook. Unset filters drop
+  // out (orval omits undefined values from the query string), so the
+  // produced URL matches the previous manual construction.
+  const auditParams = useMemo<GetPolicyAuditParams>(() => {
+    const p: GetPolicyAuditParams = {
+      limit: PAGE_LIMIT,
+      offset: 0,
+    };
+    if (actionFilter) p.action = actionFilter;
+    if (agentFilter) p.agent_id = agentFilter;
+    // Defensive ISO conversion: malformed `?from=banana` URL values
+    // would throw at toISOString() and break the whole query. Validate
+    // the parsed Date before forwarding; silently drop unparseable
+    // input so the rest of the filter set still applies.
+    if (dateFrom) {
+      const d = new Date(dateFrom);
+      if (!Number.isNaN(d.getTime())) p.after = d.toISOString();
+    }
+    if (dateTo) {
+      const d = new Date(dateTo + "T23:59:59");
+      if (!Number.isNaN(d.getTime())) p.before = d.toISOString();
+    }
+    if (search) p.search = search;
+    return p;
+  }, [actionFilter, agentFilter, dateFrom, dateTo, search]);
+
+  const { data, isLoading, isError, error, refetch } = useGetPolicyAudit(
+    auditParams,
+  );
 
   const events: AuditEvent[] = useMemo(
     () => (data?.items ?? []).map(mapEvent),

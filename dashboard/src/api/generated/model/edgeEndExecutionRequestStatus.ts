@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-05-08.2
+ * OpenAPI spec version: 2026-05-09.2
  */
 
 export type EdgeEndExecutionRequestStatus = typeof EdgeEndExecutionRequestStatus[keyof typeof EdgeEndExecutionRequestStatus];

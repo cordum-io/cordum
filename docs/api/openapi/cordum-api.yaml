@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Cordum HTTP API
-  version: '2026-05-08.2'
+  version: '2026-05-09.2'
   description: Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
   contact:
     name: Cordum Team
@@ -3266,19 +3266,109 @@ paths:
     get:
       operationId: getPolicyAudit
       summary: Get policy audit log
+      description: |
+        Returns a filtered, paginated list of policy audit events. Filters
+        match the gateway handler `handleListPolicyAudit` semantics: `action`
+        / `agent_id` / `rule_id` / `type` are case-insensitive exact matches;
+        `after` / `before` are lexicographic compares against `created_at`;
+        `search` is a substring match across `action + actor_id +
+        resource_type + resource_id + message` lowercased.
       tags:
       - Policy
       parameters:
       - $ref: '#/components/parameters/TenantID'
+      - name: limit
+        in: query
+        required: false
+        description: Maximum number of entries to return (default 100).
+        schema:
+          type: integer
+          format: int64
+          default: 100
+          minimum: 1
+        example: 50
+      - name: offset
+        in: query
+        required: false
+        description: Number of entries to skip (default 0).
+        schema:
+          type: integer
+          format: int64
+          default: 0
+          minimum: 0
+        example: 0
+      - name: action
+        in: query
+        required: false
+        description: Case-insensitive exact match against the entry action verb.
+        schema:
+          type: string
+        example: rule.created
+      - name: agent_id
+        in: query
+        required: false
+        description: Case-insensitive exact match against the entry's agent_id.
+        schema:
+          type: string
+        example: agent-claims-triage
+      - name: after
+        in: query
+        required: false
+        description: |
+          Inclusive lower-bound on `created_at`. Lexicographic compare on
+          the raw string the backend stores (typically RFC3339).
+        schema:
+          type: string
+          format: date-time
+        example: '2026-05-01T00:00:00Z'
+      - name: before
+        in: query
+        required: false
+        description: |
+          Exclusive upper-bound on `created_at`. Lexicographic compare on
+          the raw string the backend stores (typically RFC3339).
+        schema:
+          type: string
+          format: date-time
+        example: '2026-05-09T00:00:00Z'
+      - name: search
+        in: query
+        required: false
+        description: |
+          Case-insensitive substring search across the lowercased
+          concatenation of `action + actor_id + resource_type + resource_id
+          + message`.
+        schema:
+          type: string
+        example: rule.created
+      - name: rule_id
+        in: query
+        required: false
+        description: |
+          Case-insensitive exact match against the entry's `resource_id`.
+          Named `rule_id` for the common case where the audited resource is
+          a policy rule.
+        schema:
+          type: string
+        example: rule-input-secrets
+      - name: type
+        in: query
+        required: false
+        description: |
+          Case-insensitive exact match against the entry's `resource_type`.
+          The special value `output` returns only the legacy output-rule
+          audit log via a separate code path that omits `total` / `has_more`
+          / `offset` from the response envelope.
+        schema:
+          type: string
+        example: input
       responses:
         '200':
-          description: Audit items
+          description: Audit items envelope
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/PolicyAuditEntry'
+                $ref: '#/components/schemas/PolicyAuditEnvelope'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '500':
@@ -9876,6 +9966,14 @@ components:
       - author
     PolicyAuditEntry:
       type: object
+      description: |
+        One entry in the policy audit log. Mirrors `policybundles.PolicyAuditEntry`
+        in `core/controlplane/gateway/policybundles/types.go`. The legacy
+        `author` / `timestamp` / `bundle_id` (singular) / `snapshot_id`
+        fields are preserved for backwards-compat with consumers of the
+        v1 spec but are not populated by the current backend handler;
+        prefer `actor_id` / `created_at` / `bundle_ids` (plural) /
+        `snapshot_before` + `snapshot_after`.
       properties:
         id:
           type: string
@@ -9883,18 +9981,147 @@ components:
           type: string
         author:
           type: string
+          deprecated: true
+          description: |
+            Deprecated. The current backend handler does not populate this
+            field; it remains in the schema only to avoid breaking
+            consumers that read the v1 type.
         timestamp:
           type: string
           format: date-time
+          deprecated: true
+          description: |
+            Deprecated. Use `created_at`. The current backend handler
+            does not populate this field.
         bundle_id:
           type: string
           nullable: true
+          deprecated: true
+          description: |
+            Deprecated. Use `bundle_ids` (plural). The current backend
+            handler does not populate this field.
         snapshot_id:
           type: string
           nullable: true
+          deprecated: true
+          description: |
+            Deprecated. Use `snapshot_before` and `snapshot_after`. The
+            current backend handler does not populate this field.
         message:
           type: string
           nullable: true
+        resource_type:
+          type: string
+          nullable: true
+          description: Audited resource kind, e.g. `rule`, `bundle`, `input`, `output`.
+        resource_id:
+          type: string
+          nullable: true
+        resource_name:
+          type: string
+          nullable: true
+        actor_id:
+          type: string
+          nullable: true
+          description: Identifier of the principal who performed the action.
+        role:
+          type: string
+          nullable: true
+        auth_source:
+          $ref: '#/components/schemas/AuthSource'
+        agent_id:
+          type: string
+          nullable: true
+        agent_name:
+          type: string
+          nullable: true
+        agent_risk_tier:
+          type: string
+          nullable: true
+        bundle_ids:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: |
+            Bundles affected by this audit event. Replaces the legacy
+            singular `bundle_id` field.
+        reason:
+          type: string
+          nullable: true
+        decision:
+          type: string
+          nullable: true
+        matched_rule:
+          type: string
+          nullable: true
+        policy_version:
+          type: string
+          nullable: true
+        extra:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: string
+          description: |
+            Free-form per-event metadata. Keys and values are emitted
+            verbatim from the gateway handler's audit-construction site.
+        snapshot_before:
+          type: string
+          nullable: true
+          description: Audit-chain hash of the resource state before the action.
+        snapshot_after:
+          type: string
+          nullable: true
+          description: Audit-chain hash of the resource state after the action.
+        created_at:
+          type: string
+          description: |
+            RFC3339 timestamp when the audit entry was created. Plain
+            string (not `format: date-time`) because the backend stores
+            the raw value and lex-compares it against `after` / `before`
+            query params.
+      required:
+      - id
+      - action
+      - created_at
+    PolicyAuditEnvelope:
+      type: object
+      description: |
+        Paginated envelope returned by `GET /api/v1/policy/audit`. The
+        `type=output` special path on the same endpoint returns only the
+        `items` field; consumers should treat `total` / `has_more` /
+        `offset` as optional when filtering by that type.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyAuditEntry'
+        total:
+          type: integer
+          format: int64
+          description: Total entries matching the filter (pre-pagination).
+        has_more:
+          type: boolean
+          description: True when more entries are available past the current window.
+        offset:
+          type: integer
+          format: int64
+          description: Echo of the requested offset (default 0).
+      required:
+      - items
+    AuthSource:
+      type: string
+      nullable: true
+      description: |
+        Authentication mechanism that validated the request. Mirrors the
+        `auth.AuthSource` typed enum at
+        `core/controlplane/gateway/auth/types.go`.
+      enum:
+      - api_key
+      - jwt
+      - oidc
+      - session
     ConfigDocument:
       type: object
       properties:
