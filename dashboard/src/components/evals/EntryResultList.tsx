@@ -113,7 +113,3 @@ export function EntryResultList({ run }: { run: EvalRun }) {
     </div>
   );
 }
-
-export const __entryListInternal = {
-  VIRTUALIZATION_THRESHOLD,
-};

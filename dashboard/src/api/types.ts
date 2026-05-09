@@ -974,24 +974,6 @@ export interface PolicyPublishRequest {
   dry_run?: boolean;
 }
 
-export interface PolicyPublishResult {
-  version: number;
-  published_at: string;
-  published_by: string;
-  rule_count: number;
-  bundle_count: number;
-  diff?: {
-    added: number;
-    removed: number;
-    modified: number;
-  };
-}
-
-export interface PolicyRollbackRequest {
-  target_version: number;
-  note?: string;
-}
-
 // ---------------------------------------------------------------------------
 // Policy Replay
 // ---------------------------------------------------------------------------
@@ -1869,37 +1851,6 @@ export interface TraceSpan {
   error_message?: string;
 }
 
-export interface Trace {
-  trace_id: string;
-  job_id?: string;
-  agent_id?: string;
-  spans: TraceSpan[];
-  start_time: string;
-  end_time?: string;
-  total_duration_ms?: number;
-  service_count?: number;
-}
-
-// ---------------------------------------------------------------------------
-// Agent Registry
-// ---------------------------------------------------------------------------
-
-export interface AgentRegistryEntry {
-  agent_id: string;
-  name?: string;
-  total_jobs: number;
-  safety_breakdown: {
-    allow: number;
-    deny: number;
-    require_approval: number;
-    allow_with_constraints: number;
-    throttle: number;
-  };
-  active_policy_bindings?: string[];
-  last_activity?: string;
-  metadata?: Record<string, unknown>;
-}
-
 // ---------------------------------------------------------------------------
 // Setup Wizard
 // ---------------------------------------------------------------------------
@@ -2041,17 +1992,6 @@ export interface MCPOutboundResponse {
   entries: MCPOutboundEntry[];
   next_cursor?: string;
   truncated_at_max: boolean;
-}
-
-export interface SetupStatus {
-  setup_complete: boolean;
-  steps: {
-    admin_created: boolean;
-    api_key_configured: boolean;
-    safety_kernel_connected: boolean;
-    first_agent_registered: boolean;
-    first_job_submitted: boolean;
-  };
 }
 
 // ---------------------------------------------------------------------------

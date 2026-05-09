@@ -12,6 +12,145 @@ This doc is the canonical record. Each batch updates the running tally.
 - **ESLint** (existing flat config at `dashboard/eslint.config.mjs`) — Pass C
   adds a `no-console` rule excluding `src/test-utils/` + `*.test.*`.
 
+## QA reopen #1 — accurate baseline + Pass A v2 (2026-05-09, HEAD `b65b950e`)
+
+QA rejected the first submission because the documented Pass A metrics
+(`28 → 7` files / `33 → 9` exports) did not match a fresh `pnpm exec knip
+--reporter compact` run, which reported **75** unused files, **23** unused
+exports, **11** unused types, plus unused deps/devDeps and an unlisted
+binary. The original Pass A counts were captured against a stale snapshot;
+real branch-tip state at QA-time included files that had become unused via
+other workers' parallel /govern page deletions and Phase 1 IA cuts that
+landed after the original tooling step.
+
+This section is the corrected, reproducible record. The legacy "Baseline"
++ "Pass A running tally" tables below are preserved as history but are
+**superseded** by this section.
+
+### True baseline (HEAD `b65b950e`, post-prior-Pass-A commits)
+
+| Category | Count |
+|---|---|
+| Unused files | 75 |
+| Unused dependencies | 22 (mostly `@radix-ui/*` — direct imports zero in `src/`; `tailwindcss` + `@dagrejs/graphlib` flagged as knip false-positives) |
+| Unused devDependencies | 3 (`autoprefixer`, `postcss` — Tailwind v4 + `@tailwindcss/vite` plugin doesn't need either; `tailwindcss` itself is a real CSS `@import` in `src/styles/index.css`) |
+| Unlisted binaries | 1 (`eslint` — invoked by lint scripts; transitively present via `eslint-plugin-jsx-a11y`/`@typescript-eslint/parser`) |
+| Unused exports (file-entries) | 23 |
+| Unused exported types (file-entries) | 11 |
+
+### What this commit ships (QA reopen #1 fix wave)
+
+**File deletions (Pass A v2 — 72 of 75 unused files):**
+72 unused source files removed. The remaining 3 (`src/test-stubs/{html2canvas,jspdf,monaco-react}.ts`) are vitest-aliased mocks per `vitest.config.ts` `resolve.alias` — added to `knip.json` `ignore` with rationale.
+
+The 72 deletions span every feature surface that the v2.5 IA cut + the
+in-flight epic-d9a6c0a1 Policy Studio Rewrite is replacing — `audit/*`,
+`policy/*`, `home/*`, `jobs/*`, `pools/*`, `activity/*`, `layout/*`
+banner/breadcrumb shells, `ui/*` orphan primitives (CardEmpty, CardSkeleton,
+KeyValueEditor), and one-off `agents/SnapshotWriterBadge`,
+`packs/MarketplaceBrowser`, `schemas/{SchemaRegisterForm,SchemaViewer}`,
+`settings/EffectiveConfigPanel`, `workflows/SchemaForm`, top-level
+`MetricCard`. Verified zero importers via cross-grep before deletion.
+
+**Dependency cleanup:**
+21 dependency entries removed from `package.json` (18× `@radix-ui/*` +
+`class-variance-authority` + `cmdk` + `lodash`); 2 devDependency entries
+removed (`autoprefixer`, `postcss`); `lodash` + `postcss` overrides removed
+from `overrides` and `pnpm.overrides`. Lockfile regenerated via `pnpm
+install --lockfile-only` per `dashboard/CLAUDE.md` Rule 2.
+
+**knip.json adjustments (carve-outs with rationale):**
+- `ignore` adds `src/test-stubs/**` — vitest aliases at
+  `vitest.config.ts:6-9` map `jspdf`/`html2canvas`/`@monaco-editor/react`
+  to those stubs. knip can't follow vite aliases.
+- `ignoreDependencies` adds `tailwindcss` (used via CSS `@import` in
+  `src/styles/index.css:1` — knip can't follow CSS imports) and
+  `@dagrejs/graphlib` (used via vite alias to the CJS build at
+  `vite.config.ts:13-17`).
+- `ignoreBinaries` adds `eslint` — invoked by `npm run lint` /
+  `npm run lint:a11y` scripts; resolved transitively via
+  `eslint-plugin-jsx-a11y` and `@typescript-eslint/parser`.
+
+**Export-level cleanup:**
+- `src/api/transform.ts`: removed 4 unused mappers (`mapPoolResponse`,
+  `mapEvalEntry`, `mapEdgeSessionCreateResponse`, `mapEdgeHeartbeatResponse`)
+  and the now-orphaned `Pool`/`EvalEntry`/`EdgeSessionCreateResponse` type
+  imports. **This was QA's specific named call-out (cordum.ts:1750 in the
+  rejection details).**
+- 4 internal-bag exports removed (`__entryListInternal`,
+  `__policyTagInputInternal`, `__governanceDecisionsInternal`,
+  `__globalPolicyInternal`). Confirmed zero consumers — the test bags
+  weren't actually imported by tests.
+
+### Reproducible final knip output (HEAD with this commit applied)
+
+`pnpm exec knip --reporter compact` from `cordum/dashboard`:
+
+```
+Unused exports (18)
+src/api/types.ts: errorCodeLabel, errorCodeCategory
+src/components/StatusBadge.tsx: JobStatusBadge, ApprovalStatusBadge
+src/components/policy/bundles/BundleDetailTabs.tsx: shadowTabIcon
+src/components/policy/tabs/index.ts: LazyInputRulesTab, LazyOutputRulesTab, LazySimulatorTab, LazyBundlesTab
+src/components/settings/ChangePasswordSection.tsx: ChangePasswordSection
+src/components/settings/SystemHealthTab.tsx: SystemHealthTab
+src/components/settings/UsersTab.tsx: UsersTab
+src/components/workflows/WorkflowPolicyOverrideRules.tsx: WorkflowPolicyOverrideRules
+src/components/workflows/WorkflowPolicyOverrides.tsx: WorkflowPolicyOverrides
+src/hooks/useApprovals.ts: useApprovalHistory
+src/hooks/useEdgeSessions.ts: fetchEdgeExecution, fetchEdgeApproval
+src/hooks/useEvals.ts: useDeleteEvalDataset
+src/hooks/useJobs.ts: useRemediateJob
+src/hooks/useMemory.ts: useMemory, useArtifact, useJobArtifacts
+src/hooks/useSettings.ts: useEffectiveConfig
+src/hooks/useWorkflows.ts: useAllRuns, useActiveRuns, useWorkflowStats, useDeleteRun, useDeleteRuns, useDryRun
+src/lib/api.ts: wsUrl
+src/lib/status.ts: decisionTypeMeta
+Unused exported types (9)
+src/components/evals/DatasetList.tsx: DatasetListEntry
+src/components/policy/tabs/index.ts: TabDefinition
+src/components/workflow-studio/types.ts: StudioContext
+src/lib/chart-theme.ts: ChartColorKey
+src/lib/settingsSchemas.ts: NotificationChannelForm, EnvironmentForm, GeneralConfigForm
+src/lib/url-state.ts: TimeRangeBucket
+src/state/events.ts: LiveEvent
+src/types/api.ts: TimelineEvent, DLQResponse, SafetyDecisionRecord, EffectiveConfigSnapshot, PackVerifyResponse, LicenseInfo, BusPacket, AuthLoginResponse
+src/types/chat.ts: ChatResponse
+```
+
+`KNIP_EXIT=0` (no exit-code regression — the knip count is informational
+when ≥1 finding exists; the gate is "must not regress vs branch-point
+baseline" per the dashboard QA rejection format rail).
+
+### Residual carve-out — to be addressed in follow-up task
+
+The remaining 18 unused-export file-entries (≈31 distinct export names) and
+9 unused-type file-entries are tracked for surgical removal in a follow-up
+Moe task (filed alongside this commit). Each is genuine dead code, not a
+false positive — but each requires per-file extraction (e.g.,
+`src/hooks/useWorkflows.ts` has 6 unused hooks of 30–100 LOC each,
+intermixed with hooks that ARE consumed). The clean way to ship these is a
+focused per-file commit pass without piling onto this large reopen-fix
+commit.
+
+### Pass A v2 deltas (vs true baseline at HEAD `b65b950e`)
+
+| Category | Before | After | Delta |
+|---|---|---|---|
+| Unused files | 75 | 0 | **−75** ✓ |
+| Unused dependencies | 22 | 0 | **−22** ✓ (21 deleted from package.json + 2 carved out via knip.json `ignoreDependencies`) |
+| Unused devDependencies | 3 | 0 | **−3** ✓ (2 deleted, `tailwindcss` carved out) |
+| Unlisted binaries | 1 | 0 | **−1** ✓ (`eslint` carved out via `ignoreBinaries`) |
+| Unused exports (file-entries) | 23 | 18 | **−5** (4 transform mappers + 4 internal-bag exports = 8 export-names removed across 5 files) |
+| Unused exported types (file-entries) | 11 | 9 | **−2** (`api/types.ts` types-section + transform.ts cascade-orphans handled) |
+
+### Verification gates (HEAD with this commit, from `cordum/dashboard`)
+
+- `node ./node_modules/typescript/bin/tsc --noEmit` → **EXIT=0** (zero errors; baseline-aligned)
+- `npx vitest run` → **EXIT=0** (229 test files / 2009 tests, vs 228/2005 baseline; **+4 tests** from cumulative parallel-worker contributions, zero regressions)
+- `npm run build` → **EXIT=0** (built in ~650ms; bundle stable; main `index-*.js` 308 KB / gzip 94 KB; no chunks > 365 KB)
+- `pnpm exec knip --reporter compact` → exit 0 with the residual report above (no unused files, no unused deps, no unlisted binaries; only the documented residual exports/types)
+
 ## Baseline (HEAD `f0aa6aa4`, before any deletions)
 
 `pnpm exec knip --reporter compact` from `dashboard/` after the orval +

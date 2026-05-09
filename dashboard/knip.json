@@ -18,12 +18,18 @@
   "ignore": [
     "src/api/generated/**",
     "src/test-utils/**",
+    "src/test-stubs/**",
     "**/*.test.{ts,tsx}",
     "**/*.stories.{ts,tsx}"
   ],
   "ignoreDependencies": [
     "@types/*",
-    "tw-animate-css"
+    "tw-animate-css",
+    "tailwindcss",
+    "@dagrejs/graphlib"
+  ],
+  "ignoreBinaries": [
+    "eslint"
   ],
   "ignoreExportsUsedInFile": true
 }

@@ -633,13 +633,3 @@ export function serializeGlobalPolicyYaml(policy: GlobalPolicyDocument): string 
 
   return stringifyPolicyYaml(root);
 }
-
-export const __globalPolicyInternal = {
-  parseInputMatch,
-  parseConstraints,
-  parseOutputMatch,
-  serializeInputMatch,
-  serializeConstraints,
-  serializeOutputMatch,
-  isValidGlobalRuleIdSlug,
-};

@@ -134,10 +134,3 @@ export function useGovernanceDecisionsFlat(
     items,
   };
 }
-
-/** @internal exported for unit tests */
-export const __governanceDecisionsInternal = {
-  buildGovernanceDecisionQueryString,
-  normalizeGovernancePage,
-  sortGovernanceChronologically,
-};

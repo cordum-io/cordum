@@ -60,9 +60,3 @@ export function PolicyTagInput({
     </PolicyField>
   );
 }
-
-export const __policyTagInputInternal = {
-  parseCsv,
-  toCsv,
-};
-
