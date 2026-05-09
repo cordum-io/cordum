@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Dashboard Phase 5e — per-route error boundaries with route-scoped fallback (2026-05-09, task-adc04293)
+
+- `dashboard/src/components/RouteErrorFallback.tsx`: route-scoped error UI composed from existing `ErrorBanner` primitive plus a Bug-icon mailto "Report bug" link. The mailto body URL-encodes the route name, error message, full stack, and user-agent so the bug report is actionable on first read.
+- `dashboard/src/components/RouteBoundary.tsx`: thin wrapper that pairs `ErrorBoundary` with `RouteErrorFallback`, using `useLocation().pathname` as the boundary's `resetKey` so the user navigating away from a broken route auto-clears the boundary state.
+- `dashboard/src/components/ErrorBoundary.tsx`: extended with an optional `fallback?: (props: { error, reset }) => ReactNode` render prop. When supplied, the boundary defers to the consumer's UI instead of rendering its built-in "Something went wrong" full-page card. Public type `ErrorBoundaryFallbackProps` is exported for downstream typings.
+- `dashboard/src/App.tsx`: every leaf-page route is now wrapped in `<RouteBoundary name="…">`, surfacing a route-specific error UI instead of the generic fallback. Pure-redirect routes (`<Navigate>`-returning components) are not wrapped — they don't render UI. The outermost `ErrorBoundaryWrapper` is retained as the last-resort safety net for AppShell-/Suspense-level render failures that bypass any specific Route.
+- Tests: 12 new tests added (5 covering the ErrorBoundary primitive's fallback + reset behavior; 3 integration tests exercising RouteBoundary for throw/navigate-clears/Retry semantics; 4 covering RouteErrorFallback's title + Retry + mailto + generic-message fallback). One pre-existing `App.copilot-session-route.test.tsx` registration-guard regex was loosened from `/element=\{<CopilotSessionPage\b/` to `/<CopilotSessionPage\b/` so the per-route boundary wrap doesn't break a future-friendly drift check.
+- DoD #1 (designed empty states across 9 list pages) was fully met by existing code per the inventory in step-1: AgentsPage / JobsPage / ApprovalsPage / AuditLogPage / EdgeSessionsPage / TopicsPage / SchemasPage / PacksPage / govern/QuarantinePage all already render `<EmptyState icon=… title=… description=… action=…>` from `components/ui/EmptyState`. No page redesign needed; the audit table is captured in the task's complete_step note for step-2.
+
 #### Dashboard 5 — Bundles surface: list + detail-with-tabs (2026-05-09, task-220d263a)
 
 - `dashboard/src/pages/policies/BundlesPage.tsx`: filter bar + DataTable list at `/policies/bundles` with scope/search nuqs URL state, status dot, "+ New bundle" CTA. Row-click navigates to detail page. (Step 3, by worker-6b22 commit `22da3212`.)
