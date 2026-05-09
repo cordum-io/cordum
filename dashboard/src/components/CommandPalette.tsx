@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDialogA11y } from "@/hooks/useDialogA11y";
+import { useJobs } from "@/hooks/useJobs";
+import { useWorkers } from "@/hooks/useWorkers";
 import {
   LayoutGrid, ListChecks, Workflow, Cpu, UserCheck, Shield, ShieldCheck, ShieldAlert, Boxes,
   AlertTriangle, FileText, Settings, Search, Activity, Key, Bell,
@@ -17,6 +19,8 @@ interface CommandItem {
   path: string;
   keywords?: string[];
 }
+
+const RECENT_LIMIT = 50;
 
 /** @internal exported for unit tests */
 export const COMMAND_PALETTE_COMMANDS: CommandItem[] = [
@@ -60,6 +64,49 @@ export function CommandPalette() {
   const navigate = useNavigate();
   const dialogRef = useDialogA11y(() => setOpen(false), { enabled: open });
 
+  // Recent jobs + agents fetched lazily — React Query caches handle staleness.
+  // Both queries auto-deduplicate against page-level usage.
+  const jobsQuery = useJobs({ limit: RECENT_LIMIT });
+  const workersQuery = useWorkers();
+
+  const recentCommands = useMemo<CommandItem[]>(() => {
+    const items: CommandItem[] = [];
+    const jobs = jobsQuery.data?.items ?? [];
+    for (const j of jobs.slice(0, RECENT_LIMIT)) {
+      const label = j.topic ? `${j.topic} · ${j.id.slice(0, 8)}` : j.id;
+      items.push({
+        id: `recent-job:${j.id}`,
+        label,
+        section: "Recent Jobs",
+        icon: ListChecks,
+        path: `/jobs/${j.id}`,
+        keywords: [j.id, j.topic, j.status, ...(j.capabilities ?? [])].filter(
+          (v): v is string => typeof v === "string" && v.length > 0,
+        ),
+      });
+    }
+    const workers = workersQuery.data ?? [];
+    for (const w of workers.slice(0, RECENT_LIMIT)) {
+      const label = w.name && w.name.trim() !== "" ? w.name : w.id;
+      items.push({
+        id: `recent-agent:${w.id}`,
+        label,
+        section: "Recent Agents",
+        icon: Cpu,
+        path: `/agents/${w.id}`,
+        keywords: [w.id, w.name, w.pool, w.status, ...(w.capabilities ?? [])].filter(
+          (v): v is string => typeof v === "string" && v.length > 0,
+        ),
+      });
+    }
+    return items;
+  }, [jobsQuery.data, workersQuery.data]);
+
+  const allCommands = useMemo(
+    () => [...COMMAND_PALETTE_COMMANDS, ...recentCommands],
+    [recentCommands],
+  );
+
   // Cmd+K to open
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -85,15 +132,15 @@ export function CommandPalette() {
   }, [open]);
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return COMMAND_PALETTE_COMMANDS;
+    if (!query.trim()) return allCommands;
     const q = query.toLowerCase();
-    return COMMAND_PALETTE_COMMANDS.filter(
+    return allCommands.filter(
       (c) =>
         c.label.toLowerCase().includes(q) ||
         c.section.toLowerCase().includes(q) ||
-        c.keywords?.some((k) => k.includes(q))
+        c.keywords?.some((k) => k.toLowerCase().includes(q))
     );
-  }, [query]);
+  }, [allCommands, query]);
 
   const grouped = useMemo(() => {
     const groups: Record<string, CommandItem[]> = {};

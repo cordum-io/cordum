@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Phase 5c command palette recent jobs/agents (2026-05-09, task-095927f8)
+
+- `dashboard/src/components/CommandPalette.tsx` now appends two dynamic groups to the `cmd+k` palette: **Recent Jobs** (top 50, label `${topic} · ${id-prefix}`, deep-link `/jobs/:id`, keywords include id/topic/status/capabilities) and **Recent Agents** (top 50, label `name||id`, deep-link `/agents/:id`, keywords include id/name/pool/status/capabilities). Data sourced from existing `useJobs({ limit: 50 })` and `useWorkers()` React Query hooks; cache-aware so palette open shows last-known recent without an extra fetch.
+- Existing static commands (Navigate / Govern / Settings) render unchanged; new sections render below them.
+- Fuzzy keyword match is now case-insensitive (`k.toLowerCase().includes(q)`) so mixed-case dynamic keywords (job ids, names) match consistently with the lowercase static keywords.
+- `?` keybind to open `KeyboardShortcutsHelp` modal already wired via `dashboard/src/hooks/useKeyboardShortcuts.ts:102-108` with `isEditableTarget` guard at L77-83 (skips when target is INPUT/TEXTAREA/SELECT/contentEditable). Confirmed during inventory; no code change needed for that DoD item.
+- New tests: 3 render-based cases in `CommandPalette.recent.test.tsx` covering the two dynamic groups + the empty-state path.
+
 #### Phase 4 drift sweep follow-up #2 closure (2026-05-09, task-82593815)
 
 - `dashboard/src/pages/DesignSystemConvergence.test.ts` extended with a comprehensive sweep test using `import.meta.glob('./**/*.tsx', { query: '?raw', import: 'default', eager: true })` (test files excluded at the glob level). Asserts `RAW_CONTROL_RE` (/<(input|select|textarea)\b/) does not match across `src/pages/**/*.tsx` outside the documented carve-out set. Forward-compatible — catches new pages that introduce raw native form controls without manual list maintenance.
