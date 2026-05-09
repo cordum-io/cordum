@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 
+#### Policy Studio Backend 2 — Redis bundle store (2026-05-09, task-b349524a)
+
+- Integrated `core/policy` bundle-store interfaces and Redis-backed CRUD/deploy/rollback storage for unified policy bundles, versions, deployments, and scope indexes.
+- Added bundle-store key/unit coverage and `docs/policy-bundle-store.md` for storage semantics and operator notes.
+
+
 #### Policy Studio Rewrite — Backend 1 unified shapes (2026-05-09, task-3bf37e32)
 
 - Integrated the Cordum-core `core/policy/` foundation package for unified `Rule`, `Decision`, `Bundle`, scope, audit, metadata, and enum shapes shared by job and edge policy surfaces. Existing legacy safety/edge policy types remain additive during the migration window.
