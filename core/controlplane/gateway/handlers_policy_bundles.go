@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/packs"
@@ -1269,7 +1270,14 @@ func (s *server) appendPolicyAudit(ctx context.Context, entry policybundles.Poli
 
 	// Fan-out to SIEM exporter (non-blocking) after persistence.
 	if s.auditExporter != nil {
-		s.auditExporter.Send(policybundles.AuditEntryToSIEM(entry, s.tenant))
+		events, err := policybundles.AuditEntryToSIEMEvents(entry, s.tenant, audit.UnifiedDecisionModeFromEnv())
+		if err != nil {
+			slog.Warn("policy audit SIEM dual emission failed; falling back to legacy event", "error", err)
+			events = []audit.SIEMEvent{policybundles.AuditEntryToSIEM(entry, s.tenant)}
+		}
+		for _, event := range events {
+			s.auditExporter.Send(event)
+		}
 	}
 
 	return nil

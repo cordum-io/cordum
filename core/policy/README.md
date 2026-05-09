@@ -5,10 +5,11 @@ Unified Rule, Decision, and Bundle shapes for Cordum's Policy Studio surface
 (input/output/velocity) and edge-side authoring surfaces under one envelope
 with a `RuleType` discriminator and per-type `Match`/`Decide` payloads.
 
-## Consumers (in follow-up tasks)
+## Consumers
 
-- `core/safetykernel/` — will consume `Rule` and emit `Decision` for job
-  evaluation paths (Backend 3 + Backend 5).
+- `core/controlplane/safetykernel/` — consumes `Rule` through adapter
+  functions and emits job-source `Decision` values alongside the legacy Safety
+  Kernel responses during Backend 3's transition window.
 - `core/edge/` — same migration; joins the unified audit-chain (Backend 4).
 - `core/controlplane/gateway/` — exposes `/policies/*` HTTP routes (Backend 5).
 
