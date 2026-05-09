@@ -27,15 +27,63 @@ via one of four configurable backends.
 
 ## 2. Event Types
 
-The audit subsystem defines these event types (from `core/audit/exporter.go`):
+The audit subsystem defines these event types (from `core/audit/exporter.go`
+and migration helpers in `core/audit/config.go`):
 
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `EventSafetyDecision` | `safety.decision` | Safety kernel allow/deny/throttle decisions |
+| `EventPolicyDecisionV2` | `policy.decision.v2` | Unified Policy Studio `Decision` event emitted during the job-policy migration window |
 | `EventSafetyApproval` | `safety.approval` | Human approval or rejection of gated jobs |
 | `EventPolicyChange` | `safety.policy_change` | Policy configuration changes |
 | `EventSafetyViolation` | `safety.violation` | Safety policy violations |
 | `EventSystemAuth` | `system.auth` | Authentication events (login, key creation, user management) |
+
+### Policy Studio unified decisions (Backend 3)
+
+Job-side Safety Kernel decisions are migrating from the legacy
+`safety.decision` shape to the unified `core/policy.Decision` shape used by
+Policy Studio. During the transition, matched-rule job decisions can be
+written in both shapes through the existing SIEM and hash-chain machinery.
+
+`policy.decision.v2` uses the same `SIEMEvent` envelope so existing exporters
+and chain verification continue to work. The normalized fields are:
+
+| Field | Mapping |
+|-------|---------|
+| `event_type` | `policy.decision.v2` |
+| `decision` | Unified `Decision.Type` (`allow`, `deny`, `require_human`, `throttle`, `allow_with_constraints`, `quarantine`, `redact`) |
+| `matched_rule` | Unified `Decision.RuleID` |
+| `policy_version` | Unified `Decision.BundleVersion` when present, otherwise the legacy policy snapshot |
+| `reason` | First trace reason, falling back to the legacy reason |
+| `extra.source` | Unified `Decision.Source` (`job` for Safety Kernel decisions) |
+| `extra.bundle_id` / `extra.bundle_version` | Optional bundle binding metadata |
+| `extra.input_ref` / `extra.output_ref` | Optional blob references for inputs/outputs |
+| `extra.audit_hash` | Optional unified decision audit hash |
+
+Emission mode is controlled by `AUDIT_UNIFIED_DECISION_MODE`:
+
+| Value | Behavior |
+|-------|----------|
+| unset / `dual` | Default. Emit legacy `safety.decision` first, then `policy.decision.v2` for matched-rule job decisions. |
+| `legacy` | Emit only the legacy `safety.decision` shape. Use for rollback if downstream SIEM rules are not ready for v2. |
+| `unified` | Emit only `policy.decision.v2` for matched-rule job decisions. Use after downstream consumers cut over. |
+
+Values are case-insensitive. Invalid values safely default to `dual` and are
+logged once. Decisions without a matched rule remain legacy-only until the
+unified evaluator can provide a stable rule/default identifier; this avoids
+inventing unverifiable rule ids in the audit chain.
+
+Rollback/cutover guidance:
+
+1. Start with the default `dual` mode and update SIEM dashboards/alerts to read
+   `policy.decision.v2` while keeping legacy queries active.
+2. If a downstream consumer breaks, set `AUDIT_UNIFIED_DECISION_MODE=legacy`
+   and restart the affected producer; no data migration is required because
+   both shapes use the same chain/export pipeline.
+3. After all consumers read v2, set `AUDIT_UNIFIED_DECISION_MODE=unified`.
+   Keep legacy parsing code for at least one retention window so historical
+   audit-chain verification can still display old events.
 
 ### Output Policy events (added 2026-04)
 
@@ -157,6 +205,7 @@ The gateway records fine-grained audit entries via `appendAuditEntryNamed` for:
 | `CORDUM_AUDIT_EXPORT_TYPE` | Export backend: `webhook`, `syslog`, `datadog`, `cloudwatch`, or `none` |
 | `CORDUM_AUDIT_BUFFER_SIZE` | Async buffer size for export batching |
 | `CORDUM_AUDIT_EXPORT_MAX_RETRIES` | Max retry attempts for failed exports |
+| `AUDIT_UNIFIED_DECISION_MODE` | Job-policy decision shape: `dual` (default), `legacy`, or `unified` |
 
 ### Webhook
 

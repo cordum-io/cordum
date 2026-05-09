@@ -7,6 +7,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/policy"
 )
 
 // AuditEntryToSIEM converts a PolicyAuditEntry to a SIEM-compatible event.
@@ -65,6 +66,61 @@ func AuditEntryToSIEM(entry PolicyAuditEntry, tenantID string) audit.SIEMEvent {
 		Identity:      entry.ActorID,
 		Reason:        firstNonEmpty(strings.TrimSpace(entry.Reason), strings.TrimSpace(entry.Message)),
 		Extra:         extra,
+	}
+}
+
+// AuditEntryToSIEMEvents converts policy-audit entries into transition-window
+// SIEM events. Job safety decisions can dual-write legacy + unified v2 shapes.
+func AuditEntryToSIEMEvents(
+	entry PolicyAuditEntry,
+	tenantID string,
+	mode audit.UnifiedDecisionMode,
+) ([]audit.SIEMEvent, error) {
+	legacy := AuditEntryToSIEM(entry, tenantID)
+	if legacy.EventType != audit.EventSafetyDecision {
+		return []audit.SIEMEvent{legacy}, nil
+	}
+	decision := unifiedDecisionFromSIEM(legacy)
+	if decision.RuleID == "" {
+		return []audit.SIEMEvent{legacy}, nil
+	}
+	return audit.DecisionEventsForMode(mode, legacy, decision)
+}
+
+func unifiedDecisionFromSIEM(event audit.SIEMEvent) policy.Decision {
+	return policy.Decision{
+		Source:        policy.DecisionSourceJob,
+		RuleID:        strings.TrimSpace(event.MatchedRule),
+		BundleID:      strings.TrimSpace(event.Extra["bundle_id"]),
+		BundleVersion: strings.TrimSpace(event.PolicyVersion),
+		Type:          unifiedDecisionType(event.Decision),
+		AuditHash:     strings.TrimSpace(event.EventHash),
+		Timestamp:     event.Timestamp,
+		Trace: []policy.TraceStep{{
+			RuleID:       strings.TrimSpace(event.MatchedRule),
+			DecisionType: unifiedDecisionType(event.Decision),
+			Reason:       strings.TrimSpace(event.Reason),
+			Timestamp:    event.Timestamp,
+		}},
+	}
+}
+
+func unifiedDecisionType(decision string) policy.DecisionType {
+	switch strings.ToLower(strings.TrimSpace(decision)) {
+	case "deny", "block":
+		return policy.DecisionDeny
+	case "require_approval", "require_human":
+		return policy.DecisionRequireHuman
+	case "throttle":
+		return policy.DecisionThrottle
+	case "constrain", "allow_with_constraints":
+		return policy.DecisionAllowWithConstraints
+	case "quarantine":
+		return policy.DecisionQuarantine
+	case "redact":
+		return policy.DecisionRedact
+	default:
+		return policy.DecisionAllow
 	}
 }
 
