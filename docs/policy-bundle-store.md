@@ -63,11 +63,26 @@ All multi-key mutations execute inside a single Redis Lua script:
   scripts in-process to completion).
 
 - `rollbackScript` — reads the current active pointer, locates the
-  deploy entry that established it (skipping rollback markers), walks
-  backward to the immediately-prior deploy entry, SETs active to that
-  pair, and LPUSHes a rollback marker. Chained rollbacks unwind one
-  step per call (`v3 → v2 → v1`); this is the test
-  `TestRollbackChain` invariant.
+  deploy entry that established it (skipping rollback markers), reads
+  the `prev_bundle_id` + `prev_version` fields recorded ON that deploy
+  event at deploy-time, SETs active to that prior pair, and LPUSHes a
+  rollback marker. Chained rollbacks unwind one step per call
+  (`v3 → v2 → v1`); the test `TestRollbackChain` pins this. After a
+  deploy-after-rollback (`v1 → v2 → rollback → v3 → rollback`) the
+  final rollback restores v1 — the active state immediately before
+  v3 was deployed — because that pair was captured on the v3 deploy
+  event. The test `TestDeployAfterRollback` pins this regression
+  closed (was QA reopen #1 on 2026-05-09).
+
+### Why prev-active is recorded on each deploy event
+
+Without per-event prev-active fields, rollback can only inspect raw
+history order, which loses information after a deploy-after-rollback:
+the second-most-recent deploy event (v2) is no longer the active
+state immediately before the current deploy (v1, post-rollback). The
+script reads the current active pointer and writes the deploy event
+inside the same Lua execution, so concurrent deploys to the same scope
+produce a totally-ordered prev-active chain.
 
 The Lua-EVAL choice is load-bearing: per memory `mem-12f1ceeb`,
 go-redis's WATCH+TxPipelined sequence corrupts the connection pool when

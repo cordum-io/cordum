@@ -161,14 +161,24 @@ func scopeBindingMatches(have, want RuleScope) bool {
 // ---------------------------------------------------------------------------
 
 // CreateBundleVersion appends a new immutable version to bundleID.
-// SETNX on the version blob + ZADD on the index. Idempotent on
-// duplicate version numbers — returns ErrBundleVersionExists.
+// Verifies the parent bundle exists (returns ErrBundleNotFound if not)
+// to prevent orphan versions, then SETNX on the version blob + ZADD on
+// the index. Idempotent on duplicate version numbers — returns
+// ErrBundleVersionExists. There is no DeleteBundle on the interface, so
+// the EXISTS-then-SETNX sequence cannot race with a parent removal.
 func (s *BundleRedisStore) CreateBundleVersion(ctx context.Context, bundleID string, v *BundleVersion) error {
 	if v == nil {
 		return fmt.Errorf("bundle version: nil version")
 	}
 	if strings.TrimSpace(bundleID) == "" || strings.TrimSpace(v.Version) == "" {
 		return fmt.Errorf("bundle version: bundle id and version required")
+	}
+	exists, err := s.client.Exists(ctx, bundleKey(bundleID)).Result()
+	if err != nil {
+		return fmt.Errorf("check parent bundle: %w", err)
+	}
+	if exists == 0 {
+		return ErrBundleNotFound
 	}
 	if v.DeployedAt.IsZero() {
 		v.DeployedAt = time.Now().UTC()
@@ -257,42 +267,67 @@ func (s *BundleRedisStore) GetBundleVersion(ctx context.Context, bundleID, versi
 
 // deployScript atomically:
 //  1. Validates the requested (bundle_id, version) version blob exists.
-//  2. SETs `policy:scope:{kind}:{value}:active` to "{bundleID}:{version}".
-//  3. LPUSH a new Deployment{Action:deploy} JSON into the history list.
-//  4. LTRIM the history to the last 100 entries.
+//  2. Reads the current active "{bundleID}:{version}" pointer (may be empty).
+//  3. Decodes the incoming deploy JSON, baking the prior active pair
+//     into prev_bundle_id + prev_version so future rollbacks can restore
+//     this exact prior state.
+//  4. SETs `policy:scope:{kind}:{value}:active` to the new "{bundleID}:{version}".
+//  5. LPUSHes the populated deploy JSON into the history list.
+//  6. LTRIMs the history to the last deploymentHistoryCap entries.
 //
 // KEYS: [1]=scopeActiveKey [2]=scopeHistoryKey [3]=bundleVersionKey
-// ARGV: [1]=bundleID [2]=version [3]=deploymentJSON
+// ARGV: [1]=bundleID [2]=version [3]=deploymentJSON [4]=historyCap
 //
-// Returns: empty string on success; "ERR_VERSION_NOT_FOUND" if KEYS[3]
-// doesn't exist (caller maps to ErrBundleVersionNotFound).
+// Returns: the populated deployment JSON (with prev_bundle_id +
+// prev_version filled in) on success, or the literal sentinel string
+// "ERR_VERSION_NOT_FOUND" if KEYS[3] doesn't exist (caller maps to
+// ErrBundleVersionNotFound). The two cases are distinguishable by
+// prefix — JSON starts with '{', the sentinel starts with 'E'.
 var deployScript = redis.NewScript(`
 local exists = redis.call('EXISTS', KEYS[3])
 if exists == 0 then
   return 'ERR_VERSION_NOT_FOUND'
 end
+local prev = redis.call('GET', KEYS[1])
+local prev_bid = ''
+local prev_ver = ''
+if prev and prev ~= false and prev ~= '' then
+  local sep = string.find(prev, ':')
+  if sep then
+    prev_bid = string.sub(prev, 1, sep - 1)
+    prev_ver = string.sub(prev, sep + 1)
+  end
+end
+local dep = cjson.decode(ARGV[3])
+dep.prev_bundle_id = prev_bid
+dep.prev_version = prev_ver
+local dep_json = cjson.encode(dep)
 redis.call('SET', KEYS[1], ARGV[1] .. ':' .. ARGV[2])
-redis.call('LPUSH', KEYS[2], ARGV[3])
-redis.call('LTRIM', KEYS[2], 0, 99)
-return ''
+redis.call('LPUSH', KEYS[2], dep_json)
+redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[4]) - 1)
+return dep_json
 `)
 
 // rollbackScript atomically:
-//  1. Reads the current active (bundle_id, version) from KEYS[1].
-//  2. Walks history newest-first to find the most-recent deploy whose
-//     (bundle_id, version) differs from the current active. This skips
-//     any rollback markers AND skips the deploy entry that established
-//     the current active, so chained rollbacks unwind one step per call.
-//  3. SETs active to that prior deploy's (bundle_id, version).
-//  4. LPUSH a Deployment{Action:rollback} entry pointing at that prior pair.
-//  5. LTRIM history to last 100.
+//  1. Reads the current active "{bundle_id}:{version}" pointer.
+//  2. Walks history newest-first to find the most-recent deploy event
+//     matching the current active pair (skipping rollback markers).
+//  3. Reads that deploy event's prev_bundle_id + prev_version — the
+//     pair that was active immediately before this deploy ran.
+//  4. SETs active to that prior pair.
+//  5. LPUSHes a Deployment{Action:rollback} entry pointing at the
+//     restored pair, with prev_* fields capturing the pair we rolled
+//     away from (informational; rollback never reads its own prev_*).
+//  6. LTRIMs history to deploymentHistoryCap.
 //
 // KEYS: [1]=scopeActiveKey [2]=scopeHistoryKey
-// ARGV: [1]=deployedAtRFC3339Nano [2]=deployedBy [3]=auditHash
+// ARGV: [1]=deployedAtRFC3339Nano [2]=deployedBy [3]=auditHash [4]=scopeJSON [5]=historyCap
 //
 // Returns: a 3-element array [bundleID, version, deploymentJSON] on
-// success, or "ERR_NO_ROLLBACK_TARGET" when no prior deploy with a
-// different (bundle_id, version) exists.
+// success, or the literal sentinel string "ERR_NO_ROLLBACK_TARGET"
+// when there's no current active OR no matching deploy event OR the
+// matching deploy event has empty prev_* fields (i.e. the original
+// first deploy with no prior state).
 var rollbackScript = redis.NewScript(`
 local active = redis.call('GET', KEYS[1])
 if not active or active == false or active == '' then
@@ -307,55 +342,54 @@ local cur_ver = string.sub(active, sep + 1)
 
 local hist = redis.call('LRANGE', KEYS[2], 0, -1)
 
--- Locate the most-recent deploy entry matching the current active.
--- This is the original deploy that introduced the current binding;
--- we walk backwards from there to find the immediately-prior deploy.
-local cur_deploy_idx = -1
+-- Find the most-recent deploy event matching the current active pair.
+-- That entry's prev_bundle_id + prev_version are the pair to restore.
+local prev_bid = ''
+local prev_ver = ''
+local found = false
 for i, raw in ipairs(hist) do
   local ok, dec = pcall(cjson.decode, raw)
   if ok and type(dec) == 'table' and dec.action == 'deploy' then
     if dec.bundle_id == cur_bid and dec.version == cur_ver then
-      cur_deploy_idx = i
+      prev_bid = dec.prev_bundle_id or ''
+      prev_ver = dec.prev_version or ''
+      found = true
       break
     end
   end
 end
-if cur_deploy_idx == -1 then
+if not found then
+  return 'ERR_NO_ROLLBACK_TARGET'
+end
+if prev_bid == '' or prev_ver == '' then
+  -- Rolling back the original first deploy: no prior state to restore.
   return 'ERR_NO_ROLLBACK_TARGET'
 end
 
--- Find the next deploy entry strictly older than the current binding.
-local prior_idx = -1
-for i = cur_deploy_idx + 1, #hist do
-  local ok, dec = pcall(cjson.decode, hist[i])
-  if ok and type(dec) == 'table' and dec.action == 'deploy' then
-    prior_idx = i
-    break
-  end
-end
-if prior_idx == -1 then
-  return 'ERR_NO_ROLLBACK_TARGET'
-end
-local prior = cjson.decode(hist[prior_idx])
-local bundle_id = prior.bundle_id
-local version = prior.version
-redis.call('SET', KEYS[1], bundle_id .. ':' .. version)
-local rollback_json = cjson.encode({
-  bundle_id = bundle_id,
-  version = version,
-  scope = prior.scope,
+local scope = cjson.decode(ARGV[4])
+redis.call('SET', KEYS[1], prev_bid .. ':' .. prev_ver)
+local marker = {
+  bundle_id = prev_bid,
+  version = prev_ver,
+  scope = scope,
   deployed_at = ARGV[1],
   deployed_by = ARGV[2],
   audit_hash = ARGV[3],
-  action = 'rollback'
-})
-redis.call('LPUSH', KEYS[2], rollback_json)
-redis.call('LTRIM', KEYS[2], 0, 99)
-return {bundle_id, version, rollback_json}
+  action = 'rollback',
+  prev_bundle_id = cur_bid,
+  prev_version = cur_ver,
+}
+local marker_json = cjson.encode(marker)
+redis.call('LPUSH', KEYS[2], marker_json)
+redis.call('LTRIM', KEYS[2], 0, tonumber(ARGV[5]) - 1)
+return {prev_bid, prev_ver, marker_json}
 `)
 
 // DeployVersionToScope atomically rebinds the active deployment for
 // scope to (bundleID, version) and appends the deploy event to history.
+// The returned Deployment carries PrevBundleID + PrevVersion populated
+// from the active state at script-execution time (read inside Lua so
+// concurrent deploys on the same scope serialize correctly).
 func (s *BundleRedisStore) DeployVersionToScope(ctx context.Context, bundleID, version string, scope RuleScope) (*Deployment, error) {
 	if strings.TrimSpace(bundleID) == "" || strings.TrimSpace(version) == "" {
 		return nil, fmt.Errorf("deploy: bundle id and version required")
@@ -376,34 +410,46 @@ func (s *BundleRedisStore) DeployVersionToScope(ctx context.Context, bundleID, v
 		scopeDeploymentHistoryKey(scope),
 		bundleVersionKey(bundleID, version),
 	}
-	res, err := deployScript.Run(ctx, s.client, keys, bundleID, version, string(depJSON)).Text()
+	res, err := deployScript.Run(ctx, s.client, keys, bundleID, version, string(depJSON), deploymentHistoryCap).Text()
 	if err != nil {
 		return nil, fmt.Errorf("deploy: %w", err)
 	}
 	if res == "ERR_VERSION_NOT_FOUND" {
 		return nil, ErrBundleVersionNotFound
 	}
-	return &dep, nil
+	var populated Deployment
+	if err := json.Unmarshal([]byte(res), &populated); err != nil {
+		return nil, fmt.Errorf("unmarshal deploy result: %w", err)
+	}
+	return &populated, nil
 }
 
 // RollbackDeployment reverts the active deployment for scope to the
-// most-recent prior deploy (skipping rollback entries themselves so
-// chained rollbacks unwind cleanly). Returns ErrNoRollbackTarget when
-// no prior deploy exists.
+// (bundle, version) pair that was active immediately before the current
+// binding was established. Per the rollbackScript contract, this reads
+// the matching deploy event's prev_* fields so rollback after a
+// deploy-after-rollback restores the correct prior state. Returns
+// ErrNoRollbackTarget when no current active exists, no matching deploy
+// event is found in bounded history, or the matching deploy has empty
+// prev_* fields (the first-ever deploy).
 func (s *BundleRedisStore) RollbackDeployment(ctx context.Context, scope RuleScope) (*Deployment, error) {
 	keys := []string{
 		scopeActiveKey(scope),
 		scopeDeploymentHistoryKey(scope),
 	}
 	now := time.Now().UTC()
-	res, err := rollbackScript.Run(ctx, s.client, keys, now.Format(time.RFC3339Nano), "", "").Result()
+	scopeJSON, err := json.Marshal(scope)
+	if err != nil {
+		return nil, fmt.Errorf("marshal rollback scope: %w", err)
+	}
+	res, err := rollbackScript.Run(ctx, s.client, keys, now.Format(time.RFC3339Nano), "", "", string(scopeJSON), deploymentHistoryCap).Result()
 	if err != nil {
 		return nil, fmt.Errorf("rollback: %w", err)
 	}
 	if errStr, ok := res.(string); ok && errStr == "ERR_NO_ROLLBACK_TARGET" {
 		return nil, ErrNoRollbackTarget
 	}
-	arr, ok := res.([]interface{})
+	arr, ok := res.([]any)
 	if !ok || len(arr) != 3 {
 		return nil, fmt.Errorf("rollback: unexpected script result %T", res)
 	}
