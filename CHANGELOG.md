@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 
+#### Policy Studio Backend 4 — edge unified rules + decisions (2026-05-09, task-50a912c1)
+
+- Integrated edge/gateway adapters that consume unified edge `policy.Rule` objects and emit unified edge `policy.Decision` audit records alongside legacy behavior.
+- Added edge-mode metadata fallback, fresh-agentd audit dedupe/regression coverage, and edge policy adapter tests.
+
+
 #### Policy Studio Backend 3 — safetykernel unified rules + dual decision emission (2026-05-09, task-14aa8783)
 
 - Integrated safetykernel adapters for unified `policy.Rule` consumption, unified `policy.Decision` helpers, and dual audit/decision emission during the migration window.

@@ -147,22 +147,26 @@ func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	policyInput, err := buildEdgeEvaluatePolicyInput(evalCtx)
+	policyInput, err := s.buildEdgeEvaluatePolicyInput(r.Context(), evalCtx)
 	if err != nil {
 		writeEdgeEventRequestError(w, r, err, "invalid edge evaluate request")
 		return
 	}
-	safetyResp, err := s.evaluateEdgeSafety(r.Context(), policyInput.policyRequest)
-	if err != nil {
-		outcome := edgeEvaluateOutcomeFromSafetyUnavailable(policyInput.event.EventID, evalCtx.session.PolicyMode, policyInput.classification)
-		appended, appendErr := s.appendEdgeEvaluateOutcome(r.Context(), evalCtx.store, policyInput.event, outcome, edgeEvaluateDurationMS(started))
-		if appendErr != nil {
-			writeEdgeEventStoreError(w, r, appendErr, "append edge evaluate degraded event")
+	safetyResp := policyInput.unifiedPolicyResponse
+	if safetyResp == nil {
+		var err error
+		safetyResp, err = s.evaluateEdgeSafety(r.Context(), policyInput.policyRequest)
+		if err != nil {
+			outcome := edgeEvaluateOutcomeFromSafetyUnavailable(policyInput.event.EventID, evalCtx.policyMode, policyInput.classification)
+			appended, appendErr := s.appendEdgeEvaluateOutcome(r.Context(), evalCtx.store, policyInput.event, outcome, edgeEvaluateDurationMS(started))
+			if appendErr != nil {
+				writeEdgeEventStoreError(w, r, appendErr, "append edge evaluate degraded event")
+				return
+			}
+			outcome.response.EventID = appended.EventID
+			writeJSON(w, outcome.response)
 			return
 		}
-		outcome.response.EventID = appended.EventID
-		writeJSON(w, outcome.response)
-		return
 	}
 	outcome := edgeEvaluateOutcomeFromSafety(policyInput.event.EventID, safetyResp)
 	outcome = s.decorateEdgeEvaluateTierEvidence(r.Context(), policyInput.event.Labels, outcome)
@@ -300,6 +304,9 @@ type edgeEvaluateContext struct {
 	principalID string
 	session     *edgecore.EdgeSession
 	execution   *edgecore.AgentExecution
+	policyMode  edgecore.PolicyMode
+	modeSource  string
+	modeBundle  string
 }
 
 func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Request) (edgeEvaluateContext, bool) {
@@ -381,6 +388,14 @@ func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Reque
 	req.ExecutionID = executionID
 	req.TenantID = tenantID
 	req.PrincipalID = principalID
+	mode := s.resolveEdgeEvaluatePolicyMode(r.Context(), *session)
+	slog.Debug("edge evaluate policy mode resolved",
+		"tenant_id", tenantID,
+		"session_id", sessionID,
+		"mode", string(mode.Mode),
+		"source", mode.Source,
+		"bundle_id", mode.BundleID,
+	)
 	return edgeEvaluateContext{
 		req:         req,
 		store:       store,
@@ -389,6 +404,9 @@ func (s *server) prepareEdgeEvaluateContext(w http.ResponseWriter, r *http.Reque
 		principalID: principalID,
 		session:     session,
 		execution:   execution,
+		policyMode:  mode.Mode,
+		modeSource:  mode.Source,
+		modeBundle:  mode.BundleID,
 	}, true
 }
 
@@ -402,9 +420,10 @@ func isTerminalEdgeSessionStatus(status edgecore.SessionStatus) bool {
 }
 
 type edgeEvaluatePolicyInput struct {
-	event          edgecore.AgentActionEvent
-	classification edgecore.ActionClassification
-	policyRequest  *pb.PolicyCheckRequest
+	event                 edgecore.AgentActionEvent
+	classification        edgecore.ActionClassification
+	policyRequest         *pb.PolicyCheckRequest
+	unifiedPolicyResponse *pb.PolicyCheckResponse
 }
 
 type edgeEvaluateDecisionOutcome struct {
@@ -1223,7 +1242,7 @@ func (s *server) appendEdgeEvaluateOutcome(ctx context.Context, store edgecore.S
 	// require_approval -> approval_requested, throttle -> action_denied
 	// medium). Best-effort: nil-safe + panic-recovering, so audit
 	// failures never change the response.
-	edgecore.SendSIEMEvent(s.auditExporter, edgecore.SIEMEventForAction(appended))
+	s.emitEdgeDecisionAuditEvents(ctx, store, appended)
 	return appended, nil
 }
 
@@ -1245,7 +1264,7 @@ func defaultEdgeEvaluateReason(value, fallback string) string {
 	return fallback
 }
 
-func buildEdgeEvaluatePolicyInput(evalCtx edgeEvaluateContext) (edgeEvaluatePolicyInput, error) {
+func (s *server) buildEdgeEvaluatePolicyInput(ctx context.Context, evalCtx edgeEvaluateContext) (edgeEvaluatePolicyInput, error) {
 	req := evalCtx.req
 	if err := rejectRawEdgeEventPayload(edgeEventWriteRequest{
 		ToolInput:     req.ToolInput,
@@ -1325,11 +1344,13 @@ func buildEdgeEvaluatePolicyInput(evalCtx edgeEvaluateContext) (edgeEvaluatePoli
 	if err != nil {
 		return edgeEvaluatePolicyInput{}, edgeEventRequestError{status: http.StatusBadRequest, message: "invalid edge evaluate request"}
 	}
+	unifiedPolicyResponse := s.evaluateBoundUnifiedEdgeRules(ctx, evalCtx, &event, policyRequest)
 
 	return edgeEvaluatePolicyInput{
-		event:          event,
-		classification: classification,
-		policyRequest:  policyRequest,
+		event:                 event,
+		classification:        classification,
+		policyRequest:         policyRequest,
+		unifiedPolicyResponse: unifiedPolicyResponse,
 	}, nil
 }
 

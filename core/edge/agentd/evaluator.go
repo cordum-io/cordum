@@ -163,13 +163,16 @@ func (e *Evaluator) evaluateFreshDecision(evalCtx context.Context, req claude.Ag
 	// record — reusing resp.EventID would collide with the gateway-written
 	// event when the events/batch flush hits loadEventByIDInTx.
 	freshResp := *resp
+	gatewayEventID := strings.TrimSpace(freshResp.EventID)
 	freshResp.EventID = ""
 	if err := e.recordDecisionEvidence(writer, requireEvidence, decision, evalReq, DecisionEvidence{
-		State:      e.state,
-		Request:    req,
-		Response:   freshResp,
-		CacheMiss:  e.cache != nil,
-		DurationMS: req.DurationMS,
+		State:               e.state,
+		Request:             req,
+		Response:            freshResp,
+		CacheMiss:           e.cache != nil,
+		DurationMS:          req.DurationMS,
+		GatewayEventID:      gatewayEventID,
+		GatewayAuditEmitted: gatewayEventID != "",
 	}); err != nil {
 		return decision, err
 	}

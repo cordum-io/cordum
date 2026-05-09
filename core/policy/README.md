@@ -10,7 +10,10 @@ with a `RuleType` discriminator and per-type `Match`/`Decide` payloads.
 - `core/controlplane/safetykernel/` — consumes `Rule` through adapter
   functions and emits job-source `Decision` values alongside the legacy Safety
   Kernel responses during Backend 3's transition window.
-- `core/edge/` — same migration; joins the unified audit-chain (Backend 4).
+- `core/edge/` and Gateway `/edge/evaluate` — consume bound bundle
+  `Rule{Type: edge}` snapshots through the Edge adapter, keep legacy
+  `EdgeDecision` persistence for compatibility, and emit
+  `Decision{Source: edge}` into the shared audit-chain stream (Backend 4).
 - `core/controlplane/gateway/` — exposes `/policies/*` HTTP routes (Backend 5).
 - `BundleRedisStore` (`bundle_store_redis.go`) — Redis-backed shared
   bundle storage for job + edge consumers; Backend 5+ wires this into

@@ -64,8 +64,32 @@ decision; it does not edit command content.
 | `enforce` | Allow known-safe degraded actions only; deny risky/unknown actions. |
 | `enterprise-strict` | Fail closed when Cordum governance is unavailable. |
 
+For Policy Studio v2 bundles, Gateway may resolve the fail mode from the bound
+bundle's `metadata.edge_mode` before applying the degraded-path logic. If no
+bundle is bound, or if the bundle omits Edge mode metadata, the existing
+session/global `CORDUM_EDGE_POLICY_MODE` behavior is unchanged. The local
+agentd still sends its configured mode during session creation so older
+gateways and non-bundled sessions keep the same fallback semantics.
+
+Bound unified Edge bundles also participate in fresh evaluate calls. Gateway
+consumes the latest published `Rule{Type: edge}` snapshot for the bound bundle,
+scope-checks it against the Edge session/action context, adapts it to the
+legacy policy evaluator shape, and only calls the legacy Safety Kernel path
+when no unified Edge rule matches.
+
 Malformed hook input fails closed with redacted stderr. Hook timeout must stay
 below Claude Code's 5s command-hook deadline.
+
+## Audit stream
+
+Claude Code decisions remain visible as Edge session/execution/action events.
+Matched policy decisions also enter the unified Policy Studio audit stream as
+`policy.decision.v2` with `extra.source=edge`. During the default dual-write
+transition, SIEM/export consumers see the legacy Edge audit event first and the
+unified decision second, preserving chain order while dashboards migrate.
+Fresh agentd evidence for that same Gateway evaluate response is still
+persisted, but it carries the verified Gateway event id so `/edge/events` does
+not emit a second pair of policy-decision audit records for one action.
 
 ## Token tradeoffs
 
