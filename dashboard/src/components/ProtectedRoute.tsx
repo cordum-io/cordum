@@ -7,10 +7,8 @@ import { AppShell } from "./layout/AppShell";
 import { CommandPalette } from "./CommandPalette";
 import { get } from "../api/client";
 import { ApiError } from "../api/client";
-import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useAuthConfig } from "../hooks/useAuthConfig";
 import { useCrossTabSync } from "../hooks/useCrossTabSync";
-import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
 import { SessionTimeoutWarning } from "./SessionTimeoutWarning";
 import type { User } from "../api/types";
 
@@ -69,9 +67,6 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
     }
   }, [sessionQuery.error, logout, addToast]);
 
-  // Register global keyboard shortcuts
-  useKeyboardShortcuts();
-
   // Sync auth & theme across browser tabs
   useCrossTabSync();
 
@@ -84,7 +79,6 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
       <SessionTimeoutWarning />
       <AppShell>{children}</AppShell>
       <CommandPalette />
-      <KeyboardShortcutsHelp />
     </>
   );
 }
