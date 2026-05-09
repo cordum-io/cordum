@@ -121,6 +121,23 @@ export const queryKeys = {
       ["workflow-run", runId, "timeline", limit ?? "default"] as const,
   },
 
+  // ── Bundle Studio (unified Backend-1.5 Bundle shape) ──────────────
+  // Separate key tree from policies.bundles() (legacy PolicyBundleSummary)
+  // so the two coexist without cache pollution while Backend 2 lands.
+  bundleStudio: {
+    all: () => ["bundle-studio"] as const,
+    list: (filters: { scope?: string; search?: string }) =>
+      [
+        "bundle-studio",
+        "list",
+        scalarKey(filters.scope),
+        scalarKey(filters.search),
+      ] as const,
+    detail: (id: string) => ["bundle-studio", "detail", id] as const,
+    versions: (id: string) => ["bundle-studio", "versions", id] as const,
+    deployments: (id: string) => ["bundle-studio", "deployments", id] as const,
+  },
+
   // ── Policies ──────────────────────────────────────────────────────
   policies: {
     bundles: () => ["policy-bundles"] as const,

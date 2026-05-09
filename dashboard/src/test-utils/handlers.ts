@@ -1,6 +1,12 @@
 import { http, HttpResponse } from "msw";
 
 export const baseHandlers = [
+  // Dashboard 5 — Bundle Studio list (unified Backend-1.5 Bundle shape).
+  // Default empty so BundlesPage renders the empty-state CTA without
+  // per-test setup; tests override with `server.use(...)` as needed.
+  http.get("*/api/v1/policy/bundles", () =>
+    HttpResponse.json({ items: [], total: 0 }),
+  ),
   http.get("*/api/v1/approvals", () =>
     HttpResponse.json({ items: [], next_cursor: null }),
   ),

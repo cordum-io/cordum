@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { NuqsTestingAdapter } from "nuqs/adapters/testing";
 import { renderWithProviders } from "../../test-utils/render";
 import PoliciesPage from "./PoliciesPage";
 import BundlesPage from "./BundlesPage";
@@ -14,11 +15,18 @@ describe("Policy Studio foundation page shells", () => {
     expect(getByText("Rules surface coming online")).toBeTruthy();
   });
 
-  it("BundlesPage renders the canonical PageHeader title", () => {
-    const { getByText } = renderWithProviders(<BundlesPage />);
+  it("BundlesPage renders the canonical PageHeader title + empty state", async () => {
+    // Dashboard 5 step 4a evolved BundlesPage from a static shell into the
+    // filter+DataTable list. The empty-state text now reflects the
+    // unified Bundle Studio. Header copy stays canonical.
+    const { findByText, getByText } = renderWithProviders(
+      <NuqsTestingAdapter searchParams="">
+        <BundlesPage />
+      </NuqsTestingAdapter>,
+    );
     expect(getByText("Policy Bundles")).toBeTruthy();
     expect(getByText("Group rules + deploy to scopes")).toBeTruthy();
-    expect(getByText("Bundles surface coming online")).toBeTruthy();
+    expect(await findByText("No bundles yet")).toBeTruthy();
   });
 
   it("DecisionsPage renders the canonical PageHeader title", () => {
