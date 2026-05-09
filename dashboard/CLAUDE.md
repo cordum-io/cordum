@@ -67,6 +67,37 @@ Rules:
 - The check refuses to run with uncommitted changes in `src/api/generated/` —
   commit or revert first, since regen would otherwise silently wipe the edits.
 
+## Logging
+
+Production paths in `dashboard/src/` must use the structured logger at
+`src/lib/logger.ts` rather than `console.*` directly. The logger emits
+structured entries (`component`, `msg`, `fields`) with level filtering
+(`VITE_LOG_LEVEL`) and category filtering (`VITE_DEBUG_CATEGORIES`);
+plain `console.log/warn/error/debug/info` bypasses both. The `no-console`
+ESLint rule (in `eslint.config.mjs`, added by task-1acf9c07 Pass C)
+enforces this on all files matching `src/**/*.{ts,tsx}` except:
+
+- `src/test-utils/**`
+- `src/**/*.test.{ts,tsx}`
+- `src/**/__tests__/**`
+- `src/**/*.stories.{ts,tsx}`
+
+Those paths can call `console.*` directly without restriction.
+
+```ts
+import { logger } from "@/lib/logger";
+
+logger.warn("transform", "unknown governance verdict, defaulting to deny", { raw });
+//          ^component   ^short message                                    ^optional fields
+```
+
+`src/lib/logger.ts` itself is the write-out primitive — its three
+`console[fn](...)` call sites carry `// eslint-disable-next-line no-console`
+comments documenting the carve-out. Do NOT add similar disable comments
+elsewhere unless the use case is genuinely below the logger (e.g. a
+critical-error-only fallback when the logger module itself fails to
+load); document the rationale on the same line.
+
 ## Testing
 
 Page-level tests that render a page composing React Query hooks must use the
