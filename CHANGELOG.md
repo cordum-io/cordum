@@ -8,6 +8,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 
+#### Policy Studio Backend 3 — safetykernel unified rules + dual decision emission (2026-05-09, task-14aa8783)
+
+- Integrated safetykernel adapters for unified `policy.Rule` consumption, unified `policy.Decision` helpers, and dual audit/decision emission during the migration window.
+- Added regression coverage for adapter mappings, unified-rule evaluation helpers, and audit dual-emission wiring.
+
+
 #### Policy Studio Backend 2 — Redis bundle store (2026-05-09, task-b349524a)
 
 - Integrated `core/policy` bundle-store interfaces and Redis-backed CRUD/deploy/rollback storage for unified policy bundles, versions, deployments, and scope indexes.
