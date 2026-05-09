@@ -20,7 +20,8 @@ claims after the fact._
   integrity. None of these are scored by AgentShield.
 - Deep jailbreak / content classification is **out-of-category** for
   Cordum core; an upstream content-classifier integration is a
-  PRD-level consideration (deferred).
+  PRD-level consideration (deferred). The durable strategy boundary is
+  recorded in [ADR-011](adr/011-detector-strategy-boundary.md).
 
 ## Verified Cordum adapter/config findings
 
@@ -187,6 +188,10 @@ score.
   (secret leak / PII / injection finding types) — these are
   finding-class detectors at the OUTPUT boundary, distinct from
   AgentShield-style input-prompt detection.
+- [`docs/adr/011-detector-strategy-boundary.md`](adr/011-detector-strategy-boundary.md)
+  — accepted detector strategy: deterministic action-layer gates and narrow
+  typed scanners are Cordum-native; broad jailbreak/content classification
+  stays upstream or optional with explicit model-in-loop constraints.
 - AgentShield benchmark hardening epic (`epic-f3da4017`): the
   follow-up sequence — verify adapter, build action-layer gates,
   multi-agent governance, private holdout, normalization hygiene,
@@ -201,7 +206,7 @@ score.
 | `task-d369286c` | Yaron sign-off on GO/DEFER/REORDER decisions for follow-up hardening tasks. |
 | `task-7fbc245d` | Establish private holdout + mutation regression suite — the real generalization gate. |
 | `task-184457f7` | Multi-agent governance gates. |
-| `task-3a25ba1f` | Detector strategy decision (regex vs model-in-loop tradeoff). |
+| `task-3a25ba1f` | Detector strategy decision (regex vs model-in-loop tradeoff); see ADR-011. |
 | `task-f4519eab` | _This doc._ Public messaging + scope boundary. |
 
 ## Update policy for this doc

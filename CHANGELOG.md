@@ -8,6 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 
+#### AgentShield detector strategy boundary ADR (2026-05-09, task-3a25ba1f)
+
+- Added ADR-011 documenting deterministic normalizers/cheap detectors vs upstream classifier boundaries, and linked the boundary from AgentShield/output-safety docs.
+
+
 #### Policy Studio Backend 5 — unified evaluator entry-point (2026-05-09, task-aadaec4a)
 
 - Integrated `/api/v1/policy/evaluate`, gRPC evaluator conversion helpers, edge/job context dispatch, bundle lifecycle HTTP wiring, and deprecation headers for legacy edge evaluation during the migration window.
