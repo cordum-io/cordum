@@ -1649,10 +1649,10 @@ func TestGatewayEdgeEvaluateRejectsBodyOverMaxBytesWithoutOrphanKeys(t *testing.
 }
 
 func TestBuildEdgeEvaluatePolicyInputUsesClassifierAndMapper(t *testing.T) {
-	_, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}})
+	s, handler := newEdgeEvaluateTestServer(t, &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{Decision: pb.DecisionType_DECISION_TYPE_ALLOW}})
 	session := createEdgeRouteSession(t, handler)
 
-	input, err := buildEdgeEvaluatePolicyInput(edgeEvaluateContext{
+	input, err := s.buildEdgeEvaluatePolicyInput(context.Background(), edgeEvaluateContext{
 		req: edgeEvaluateRequest{
 			TenantID:          edgeRouteTenant,
 			PrincipalID:       "principal-edge-a",

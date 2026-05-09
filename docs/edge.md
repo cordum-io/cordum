@@ -97,6 +97,13 @@ existing session/global `EdgePolicyMode` behavior exactly. Backend migration
 tooling owns populating bundle bindings; operators without an Edge bundle do
 not need to change configuration.
 
+When a session is bound to a unified Edge bundle, `/api/v1/edge/evaluate`
+loads the latest `versions[].rule_snapshot`, filters published
+`Rule{Type: edge}` entries by Edge scope, adapts their `Match`/`Decide`
+payloads to the legacy evaluator shape, and evaluates them before falling back
+to the existing Safety Kernel path. Unmatched or unbound sessions keep the
+pre-migration behavior.
+
 ## Unified policy decisions
 
 Edge continues to persist legacy `AgentActionEvent.Decision` values for
@@ -120,6 +127,12 @@ Legacy-to-unified outcome mapping is:
 legacy Edge audit followed by `policy.decision.v2`, `legacy` emits only the
 old Edge shape, and `unified` emits only `policy.decision.v2` when a stable
 rule id is present.
+
+Fresh agentd evidence events remain persisted separately so local cache/timing
+metadata is not lost. Agentd marks evidence produced from a fresh Gateway
+evaluate response with the Gateway event id; `/edge/events` verifies the
+referenced event in the same execution before suppressing duplicate audit
+emission. Cache/degraded/local-only agentd evidence still emits audit normally.
 
 ## Retention and artifacts
 
