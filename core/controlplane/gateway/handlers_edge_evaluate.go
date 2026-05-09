@@ -143,6 +143,7 @@ type edgeEvaluateResponse struct {
 
 func (s *server) handleEdgeEvaluate(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
+	markDeprecatedEndpoint(w, "/api/v1/policy/evaluate")
 	evalCtx, ok := s.prepareEdgeEvaluateContext(w, r)
 	if !ok {
 		return

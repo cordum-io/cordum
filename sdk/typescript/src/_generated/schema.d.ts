@@ -926,7 +926,8 @@ export interface paths {
         put?: never;
         /**
          * Evaluate an Edge action with Safety Kernel policy
-         * @description Classifies a bounded, redacted agent action for an existing Edge session/execution, calls the Safety Kernel using the Edge policy topic, persists a redacted policy decision or degraded event, and returns hook-friendly allow/deny fields. Raw `tool_input`, raw transcripts, and unredacted payloads are rejected; large evidence must use artifact pointers.
+         * @deprecated
+         * @description Deprecated during the Policy Studio migration window. Use `POST /api/v1/policy/evaluate` with an edge `PolicyEvaluateRequest` for new integrations. This legacy endpoint still classifies a bounded, redacted agent action for an existing Edge session/execution, calls the Safety Kernel using the Edge policy topic, persists a redacted policy decision or degraded event, and returns hook-friendly allow/deny fields. Raw `tool_input`, raw transcripts, and unredacted payloads are rejected; large evidence must use artifact pointers.
          */
         post: operations["evaluateEdgeAction"];
         delete?: never;
@@ -2009,6 +2010,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/policy/bundles/{id}/deploy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deploy a policy bundle version to a rule scope
+         * @description Rebinds the active BundleStore deployment for the supplied scope and preserves the previous binding in deployment history.
+         */
+        post: operations["deployPolicyBundleVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/policy/bundles/{id}/simulate": {
         parameters: {
             query?: never;
@@ -2020,6 +2041,92 @@ export interface paths {
         put?: never;
         /** Simulate a policy bundle against a request */
         post: operations["simulatePolicyBundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/bundles/{id}/versions": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * List immutable versions for a policy bundle
+         * @description Returns the BundleStore versions for the bundle in chronological order.
+         */
+        get: operations["listPolicyBundleVersions"];
+        put?: never;
+        /**
+         * Create an immutable policy bundle version
+         * @description Persists a versioned rule snapshot in the BundleStore; versions are immutable and duplicate version ids return 409.
+         */
+        post: operations["createPolicyBundleVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/bundles/{id}/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one immutable policy bundle version */
+        get: operations["getPolicyBundleVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/bundles/deployments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List policy bundle deployment history for a scope
+         * @description Returns the BundleStore deployment history for one rule scope, newest first.
+         */
+        get: operations["listPolicyBundleDeployments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/bundles/deployments/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Roll back the active policy bundle deployment for a scope
+         * @description Restores the previous active (bundle, version) pair for the supplied scope and appends a rollback deployment marker.
+         */
+        post: operations["rollbackPolicyBundleDeployment"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2070,7 +2177,16 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Evaluate safety policy against a request */
+        /**
+         * Evaluate unified policy against a job or edge context
+         * @description Unified Policy Studio evaluator. New callers send
+         *     `PolicyEvaluateRequest` with either an inline `rule` or
+         *     `bundle_id` + `scope`, plus exactly one of `job_context` or
+         *     `edge_context`. During the migration window this endpoint also accepts
+         *     the legacy `PolicyCheckRequest` shape and returns the legacy
+         *     `PolicyCheckResponse` so existing clients keep working. Legacy-shape
+         *     responses include `Deprecation` and successor `Link` headers.
+         */
         post: operations["evaluatePolicy"];
         delete?: never;
         options?: never;
@@ -2087,7 +2203,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Explain policy evaluation reasoning */
+        /**
+         * Explain policy evaluation reasoning
+         * @deprecated
+         * @description Deprecated during the Policy Studio migration window. Use `POST /api/v1/policy/evaluate` with `PolicyEvaluateRequest`; this endpoint keeps the legacy `PolicyCheckRequest`/`PolicyCheckResponse` schema until the cut-over.
+         */
         post: operations["explainPolicy"];
         delete?: never;
         options?: never;
@@ -2235,10 +2355,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List policy rules
-         * @description Lists policy rules and includes `firing_last_7d`, a tenant-scoped seven-day UTC firing histogram computed in one bulk history scan for all returned rules. Rules with no matching events are zero-filled.
-         */
+        /** List policy rules */
         get: operations["listPolicyRules"];
         put?: never;
         post?: never;
@@ -2378,7 +2495,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Simulate policy evaluation (no side effects) */
+        /**
+         * Simulate policy evaluation (no side effects)
+         * @deprecated
+         * @description Deprecated during the Policy Studio migration window. Use `POST /api/v1/policy/evaluate` with `PolicyEvaluateRequest`; this endpoint keeps the legacy `PolicyCheckRequest`/`PolicyCheckResponse` schema until the cut-over.
+         */
         post: operations["simulatePolicy"];
         delete?: never;
         options?: never;
@@ -3415,6 +3536,21 @@ export interface components {
             scope_binding: components["schemas"]["RuleScope"];
             versions?: components["schemas"]["BundleVersion"][];
         };
+        /** @description Audit-ready BundleStore binding event for one rule scope. */
+        BundleDeployment: {
+            action: components["schemas"]["BundleDeploymentAction"];
+            audit_hash?: string;
+            bundle_id: string;
+            /** Format: date-time */
+            deployed_at: string;
+            deployed_by?: string;
+            prev_bundle_id?: string;
+            prev_version?: string;
+            scope: components["schemas"]["RuleScope"];
+            version: string;
+        };
+        /** @enum {string} */
+        BundleDeploymentAction: "deploy" | "rollback";
         /**
          * @description Per-bundle authoring metadata that does not affect match/decide
          *     payloads. `edge_mode` is the per-bundle enforcement posture for
@@ -3989,6 +4125,27 @@ export interface components {
             /** @enum {string} */
             wait_strategy?: "manual_approval" | "backoff" | "retry";
         };
+        /**
+         * @description Edge-side action snapshot for the unified evaluator. Raw tool input is
+         *     intentionally absent; callers provide only redacted input and labels.
+         */
+        EdgeEvaluationContext: {
+            agent_product?: string;
+            execution_id?: string;
+            input_hash?: string;
+            labels?: {
+                [key: string]: string;
+            };
+            principal_id: string;
+            risk_tags?: string[];
+            session_id?: string;
+            tenant_id: string;
+            tool_input_hash?: string;
+            tool_input_redacted?: {
+                [key: string]: unknown;
+            };
+            tool_name?: string;
+        };
         EdgeExecutionCreateRequest: {
             /** @enum {string} */
             adapter?: "claude-code-hook" | "mcp-gateway" | "llm-proxy" | "runtime-sidecar" | "sdk-runner";
@@ -4281,6 +4438,34 @@ export interface components {
             started_at?: string | null;
             trace_id?: string;
         };
+        /**
+         * @description Job-side context for the unified evaluator. Used with input, output,
+         *     and velocity rules and dispatched to the safetykernel path.
+         */
+        JobEvaluationContext: {
+            capability?: string;
+            input?: components["schemas"]["JobEvaluationInput"];
+            job_id?: string;
+            labels?: {
+                [key: string]: string;
+            };
+            memory_id?: string;
+            principal_id?: string;
+            risk_tags?: string[];
+            tenant_id: string;
+            topic: string;
+            workflow_id?: string;
+        };
+        /**
+         * @description Job-side content snapshot evaluated by a unified job Rule. `content`
+         *     may be truncated by callers; `size_bytes` records the original size.
+         */
+        JobEvaluationInput: {
+            content?: string;
+            content_type?: string;
+            /** Format: int64 */
+            size_bytes?: number;
+        };
         JobRecord: {
             actor_id?: string;
             actor_type?: string;
@@ -4492,10 +4677,24 @@ export interface components {
             /** Format: date-time */
             timestamp?: string;
         };
+        PolicyBundleDeploymentHistoryResponse: {
+            items: components["schemas"]["BundleDeployment"][];
+            scope: components["schemas"]["RuleScope"];
+        };
+        PolicyBundleDeploymentResponse: {
+            deployment: components["schemas"]["BundleDeployment"];
+        };
+        PolicyBundleDeployRequest: {
+            scope: components["schemas"]["RuleScope"];
+            version: string;
+        };
         PolicyBundleDetail: components["schemas"]["PolicyBundleSummary"] & {
             /** @description Raw YAML content of the bundle */
             content?: string;
             rules?: components["schemas"]["PolicyRule"][];
+        };
+        PolicyBundleRollbackRequest: {
+            scope: components["schemas"]["RuleScope"];
         };
         PolicyBundleSummary: {
             author?: string;
@@ -4506,6 +4705,22 @@ export interface components {
             source?: string;
             /** Format: date-time */
             updated_at?: string;
+        };
+        /** @description Request to append an immutable BundleStore version. */
+        PolicyBundleVersionCreateRequest: {
+            audit_hash?: string;
+            /** Format: date-time */
+            deployed_at?: string;
+            rule_snapshot: components["schemas"]["Rule"][];
+            version: string;
+        };
+        PolicyBundleVersionResponse: {
+            bundle_id: string;
+            version: components["schemas"]["BundleVersion"];
+        };
+        PolicyBundleVersionsResponse: {
+            bundle_id: string;
+            items: components["schemas"]["BundleVersion"][];
         };
         PolicyCheckRequest: {
             capability?: string;
@@ -4531,6 +4746,23 @@ export interface components {
             evaluations?: components["schemas"]["SafetyDecision"][] | null;
             reason?: string;
             rule_id?: string | null;
+        };
+        /**
+         * @description Unified Policy Studio evaluator request. Provide either `rule` or
+         *     `bundle_id` + `scope`, and exactly one of `job_context` or
+         *     `edge_context`. Job contexts are valid for input/output/velocity
+         *     rules; edge contexts are valid only for edge rules.
+         */
+        PolicyEvaluateRequest: ({
+            bundle_id?: string;
+            edge_context?: components["schemas"]["EdgeEvaluationContext"];
+            job_context?: components["schemas"]["JobEvaluationContext"];
+            rule?: components["schemas"]["Rule"];
+            scope?: components["schemas"]["RuleScope"];
+        } | unknown | unknown) & (unknown | unknown);
+        /** @description Unified evaluator response containing the shared Decision. */
+        PolicyEvaluateResponse: {
+            decision: components["schemas"]["Decision"];
         };
         /**
          * @description EDGE-052 — five-section view of the Global policy authority. The
@@ -4620,8 +4852,6 @@ export interface components {
             };
             description?: string;
             enabled?: boolean;
-            /** @description Last seven UTC daily firing counts, oldest-to-newest, tenant-scoped and zero-filled when no matching events exist. */
-            firing_last_7d?: number[];
             id?: string;
             name?: string;
             priority?: number;
@@ -7404,6 +7634,10 @@ export interface operations {
             /** @description Hook-friendly Edge policy decision. Safety outages may still return 200 with `degraded=true` when policy mode permits and degraded evidence was persisted. */
             200: {
                 headers: {
+                    /** @description Set to `true` during the migration window. */
+                    Deprecation?: string;
+                    /** @description Successor relation pointing to `/api/v1/policy/evaluate`. */
+                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -9719,6 +9953,40 @@ export interface operations {
             500: components["responses"]["InternalServerError"];
         };
     };
+    deployPolicyBundleVersion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyBundleDeployRequest"];
+            };
+        };
+        responses: {
+            /** @description Deployment record */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyBundleDeploymentResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
     simulatePolicyBundle: {
         parameters: {
             query?: never;
@@ -9752,6 +10020,163 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
+    listPolicyBundleVersions: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bundle versions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyBundleVersionsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
+    createPolicyBundleVersion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyBundleVersionCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Bundle version created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyBundleVersionResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
+    getPolicyBundleVersion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bundle version */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyBundleVersionResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
+    listPolicyBundleDeployments: {
+        parameters: {
+            query: {
+                limit?: number;
+                scope_kind: components["schemas"]["RuleScopeKind"];
+                scope_value?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deployment history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyBundleDeploymentHistoryResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
+    rollbackPolicyBundleDeployment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyBundleRollbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Rollback deployment record */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyBundleDeploymentResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalServerError"];
         };
@@ -9854,21 +10279,27 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PolicyCheckRequest"];
+                "application/json": components["schemas"]["PolicyEvaluateRequest"] | components["schemas"]["PolicyCheckRequest"];
             };
         };
         responses: {
             /** @description Policy evaluation result */
             200: {
                 headers: {
+                    /** @description Present and set to `true` only when a legacy `PolicyCheckRequest` shape is evaluated. */
+                    Deprecation?: string;
+                    /** @description Successor relation pointing to `/api/v1/policy/evaluate` for legacy-shape callers. */
+                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PolicyCheckResponse"];
+                    "application/json": components["schemas"]["PolicyEvaluateResponse"] | components["schemas"]["PolicyCheckResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalServerError"];
         };
     };
@@ -9891,6 +10322,10 @@ export interface operations {
             /** @description Explanation result */
             200: {
                 headers: {
+                    /** @description Set to `true` during the migration window. */
+                    Deprecation?: string;
+                    /** @description Successor relation pointing to `/api/v1/policy/evaluate`. */
+                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -10425,6 +10860,10 @@ export interface operations {
             /** @description Simulation result */
             200: {
                 headers: {
+                    /** @description Set to `true` during the migration window. */
+                    Deprecation?: string;
+                    /** @description Successor relation pointing to `/api/v1/policy/evaluate`. */
+                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -12318,9 +12757,15 @@ export enum ApiPaths {
     getPolicyGlobal = "/api/v1/policy/global",
     updatePolicyGlobal = "/api/v1/policy/global",
     listPolicyBundles = "/api/v1/policy/bundles",
+    listPolicyBundleDeployments = "/api/v1/policy/bundles/deployments",
+    rollbackPolicyBundleDeployment = "/api/v1/policy/bundles/deployments/rollback",
     getPolicyBundle = "/api/v1/policy/bundles/{id}",
     updatePolicyBundle = "/api/v1/policy/bundles/{id}",
     deletePolicyBundle = "/api/v1/policy/bundles/{id}",
+    listPolicyBundleVersions = "/api/v1/policy/bundles/{id}/versions",
+    createPolicyBundleVersion = "/api/v1/policy/bundles/{id}/versions",
+    getPolicyBundleVersion = "/api/v1/policy/bundles/{id}/versions/{version}",
+    deployPolicyBundleVersion = "/api/v1/policy/bundles/{id}/deploy",
     simulatePolicyBundle = "/api/v1/policy/bundles/{id}/simulate",
     listBundleSnapshots = "/api/v1/policy/bundles/snapshots",
     createBundleSnapshot = "/api/v1/policy/bundles/snapshots",

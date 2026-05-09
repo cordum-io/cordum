@@ -43,6 +43,29 @@ type (
 	SafetyKernelClient              = agentv1.SafetyKernelClient
 	SafetyKernelServer              = agentv1.SafetyKernelServer
 	UnimplementedSafetyKernelServer = agentv1.UnimplementedSafetyKernelServer
+
+	// Unified Policy Studio types.
+	Rule                               = agentv1.Rule
+	RuleScope                          = agentv1.RuleScope
+	AuditMetadata                      = agentv1.AuditMetadata
+	TraceStep                          = agentv1.TraceStep
+	Decision                           = agentv1.Decision
+	BundleMetadata                     = agentv1.BundleMetadata
+	BundleVersion                      = agentv1.BundleVersion
+	Bundle                             = agentv1.Bundle
+	JobEvaluationContext               = agentv1.JobEvaluationContext
+	EdgeEvaluationContext              = agentv1.EdgeEvaluationContext
+	PolicyEvaluateRequest              = agentv1.PolicyEvaluateRequest
+	PolicyEvaluateResponse             = agentv1.PolicyEvaluateResponse
+	PolicyEvaluatorClient              = agentv1.PolicyEvaluatorClient
+	PolicyEvaluatorServer              = agentv1.PolicyEvaluatorServer
+	UnimplementedPolicyEvaluatorServer = agentv1.UnimplementedPolicyEvaluatorServer
+
+	RuleType       = agentv1.RuleType
+	RuleStatus     = agentv1.RuleStatus
+	DecisionSource = agentv1.DecisionSource
+	RuleScopeKind  = agentv1.RuleScopeKind
+	EdgeMode       = agentv1.EdgeMode
 )
 
 const (
@@ -72,16 +95,45 @@ const (
 	DecisionType_DECISION_TYPE_REQUIRE_HUMAN          = agentv1.DecisionType_DECISION_TYPE_REQUIRE_HUMAN
 	DecisionType_DECISION_TYPE_THROTTLE               = agentv1.DecisionType_DECISION_TYPE_THROTTLE
 	DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS = agentv1.DecisionType_DECISION_TYPE_ALLOW_WITH_CONSTRAINTS
+	DecisionType_DECISION_TYPE_QUARANTINE             = agentv1.DecisionType_DECISION_TYPE_QUARANTINE
+	DecisionType_DECISION_TYPE_REDACT                 = agentv1.DecisionType_DECISION_TYPE_REDACT
+
+	RuleType_RULE_TYPE_UNSPECIFIED = agentv1.RuleType_RULE_TYPE_UNSPECIFIED
+	RuleType_RULE_TYPE_INPUT       = agentv1.RuleType_RULE_TYPE_INPUT
+	RuleType_RULE_TYPE_OUTPUT      = agentv1.RuleType_RULE_TYPE_OUTPUT
+	RuleType_RULE_TYPE_VELOCITY    = agentv1.RuleType_RULE_TYPE_VELOCITY
+	RuleType_RULE_TYPE_EDGE        = agentv1.RuleType_RULE_TYPE_EDGE
+
+	RuleStatus_RULE_STATUS_UNSPECIFIED = agentv1.RuleStatus_RULE_STATUS_UNSPECIFIED
+	RuleStatus_RULE_STATUS_DRAFT       = agentv1.RuleStatus_RULE_STATUS_DRAFT
+	RuleStatus_RULE_STATUS_PUBLISHED   = agentv1.RuleStatus_RULE_STATUS_PUBLISHED
+	RuleStatus_RULE_STATUS_DEPRECATED  = agentv1.RuleStatus_RULE_STATUS_DEPRECATED
+
+	DecisionSource_DECISION_SOURCE_UNSPECIFIED = agentv1.DecisionSource_DECISION_SOURCE_UNSPECIFIED
+	DecisionSource_DECISION_SOURCE_JOB         = agentv1.DecisionSource_DECISION_SOURCE_JOB
+	DecisionSource_DECISION_SOURCE_EDGE        = agentv1.DecisionSource_DECISION_SOURCE_EDGE
+
+	RuleScopeKind_RULE_SCOPE_KIND_UNSPECIFIED = agentv1.RuleScopeKind_RULE_SCOPE_KIND_UNSPECIFIED
+	RuleScopeKind_RULE_SCOPE_KIND_GLOBAL      = agentv1.RuleScopeKind_RULE_SCOPE_KIND_GLOBAL
+	RuleScopeKind_RULE_SCOPE_KIND_TENANT      = agentv1.RuleScopeKind_RULE_SCOPE_KIND_TENANT
+	RuleScopeKind_RULE_SCOPE_KIND_WORKFLOW    = agentv1.RuleScopeKind_RULE_SCOPE_KIND_WORKFLOW
+	RuleScopeKind_RULE_SCOPE_KIND_EDGE_FLEET  = agentv1.RuleScopeKind_RULE_SCOPE_KIND_EDGE_FLEET
+	RuleScopeKind_RULE_SCOPE_KIND_EDGE_USER   = agentv1.RuleScopeKind_RULE_SCOPE_KIND_EDGE_USER
+
+	EdgeMode_EDGE_MODE_UNSPECIFIED       = agentv1.EdgeMode_EDGE_MODE_UNSPECIFIED
+	EdgeMode_EDGE_MODE_OBSERVE           = agentv1.EdgeMode_EDGE_MODE_OBSERVE
+	EdgeMode_EDGE_MODE_ENFORCE           = agentv1.EdgeMode_EDGE_MODE_ENFORCE
+	EdgeMode_EDGE_MODE_ENTERPRISE_STRICT = agentv1.EdgeMode_EDGE_MODE_ENTERPRISE_STRICT
 
 	ActorType_ACTOR_TYPE_UNSPECIFIED = agentv1.ActorType_ACTOR_TYPE_UNSPECIFIED
 	ActorType_ACTOR_TYPE_HUMAN       = agentv1.ActorType_ACTOR_TYPE_HUMAN
 	ActorType_ACTOR_TYPE_SERVICE     = agentv1.ActorType_ACTOR_TYPE_SERVICE
 
 	// ErrorCode enum values — protocol errors (100-199)
-	ErrorCode_ERROR_CODE_UNSPECIFIED              = agentv1.ErrorCode_ERROR_CODE_UNSPECIFIED
-	ErrorCode_ERROR_CODE_PROTOCOL_VERSION_MISMATCH = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_VERSION_MISMATCH
-	ErrorCode_ERROR_CODE_PROTOCOL_MALFORMED_PACKET = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_MALFORMED_PACKET
-	ErrorCode_ERROR_CODE_PROTOCOL_UNKNOWN_PAYLOAD  = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_UNKNOWN_PAYLOAD
+	ErrorCode_ERROR_CODE_UNSPECIFIED                = agentv1.ErrorCode_ERROR_CODE_UNSPECIFIED
+	ErrorCode_ERROR_CODE_PROTOCOL_VERSION_MISMATCH  = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_VERSION_MISMATCH
+	ErrorCode_ERROR_CODE_PROTOCOL_MALFORMED_PACKET  = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_MALFORMED_PACKET
+	ErrorCode_ERROR_CODE_PROTOCOL_UNKNOWN_PAYLOAD   = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_UNKNOWN_PAYLOAD
 	ErrorCode_ERROR_CODE_PROTOCOL_SIGNATURE_INVALID = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_SIGNATURE_INVALID
 	ErrorCode_ERROR_CODE_PROTOCOL_SIGNATURE_MISSING = agentv1.ErrorCode_ERROR_CODE_PROTOCOL_SIGNATURE_MISSING
 	// ErrorCode — job errors (200-299)
@@ -118,6 +170,8 @@ const (
 )
 
 var (
-	RegisterSafetyKernelServer = agentv1.RegisterSafetyKernelServer
-	NewSafetyKernelClient      = agentv1.NewSafetyKernelClient
+	RegisterSafetyKernelServer    = agentv1.RegisterSafetyKernelServer
+	NewSafetyKernelClient         = agentv1.NewSafetyKernelClient
+	RegisterPolicyEvaluatorServer = agentv1.RegisterPolicyEvaluatorServer
+	NewPolicyEvaluatorClient      = agentv1.NewPolicyEvaluatorClient
 )

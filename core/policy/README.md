@@ -7,10 +7,17 @@ with a `RuleType` discriminator and per-type `Match`/`Decide` payloads.
 
 ## Consumers (in follow-up tasks)
 
-- `core/safetykernel/` — will consume `Rule` and emit `Decision` for job
-  evaluation paths (Backend 3 + Backend 5).
-- `core/edge/` — same migration; joins the unified audit-chain (Backend 4).
-- `core/controlplane/gateway/` — exposes `/policies/*` HTTP routes (Backend 5).
+- `core/controlplane/safetykernel/` — consumes `Rule` through adapter
+  functions and emits job-source `Decision` values alongside the legacy Safety
+  Kernel responses during Backend 3's transition window.
+- `core/edge/` and Gateway `/edge/evaluate` — consume bound bundle
+  `Rule{Type: edge}` snapshots through the Edge adapter, keep legacy
+  `EdgeDecision` persistence for compatibility, and emit
+  `Decision{Source: edge}` into the shared audit-chain stream (Backend 4).
+- `core/controlplane/gateway/` — exposes the unified evaluator
+  `POST /api/v1/policy/evaluate`, gRPC `PolicyEvaluator.EvaluateUnified`, and
+  BundleStore lifecycle HTTP routes (Backend 5). See
+  [`docs/policy-evaluate-api.md`](../../docs/policy-evaluate-api.md).
 - `BundleRedisStore` (`bundle_store_redis.go`) — Redis-backed shared
   bundle storage for job + edge consumers; Backend 5+ wires this into
   the unified evaluator entry-point. Schema documented in
@@ -32,3 +39,26 @@ preserves bit-for-bit fidelity and maps cleanly onto the proto-side
 `require_human` / `throttle` / `allow_with_constraints` / `quarantine` /
 `redact`. The last two were appended for the unified surface per CAP's
 append-only protobuf-evolution rule.
+
+## Evaluator contract
+
+The gateway evaluator accepts exactly one rule source and one context:
+
+- Inline `Rule`, or `bundle_id` + `RuleScope` active deployment.
+- `job_context`, or `edge_context`.
+
+Dispatch is driven only by `Rule.Type`:
+
+| Rule type | Context | Consumer |
+| --- | --- | --- |
+| `input` | job | Safety Kernel input adapter |
+| `output` | job | Safety Kernel output adapter |
+| `velocity` | job | Safety Kernel velocity adapter |
+| `edge` | edge | Edge classifier adapter |
+
+Requests that mix `RuleTypeEdge` with job context, or job-side rule types with
+Edge context, fail validation before downstream dispatch. Bundle evaluation
+loads the active deployment for the requested `RuleScope`, verifies the active
+bundle matches `bundle_id`, scans the active version's published
+`RuleSnapshot`, and stamps the returned `Decision` with `BundleID` +
+`BundleVersion`.

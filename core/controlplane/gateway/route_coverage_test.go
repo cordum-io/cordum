@@ -214,11 +214,16 @@ func routeCoverageOpName(op openAPIOperation) string {
 }
 
 func isDeprecatedRouteCoverageOp(node *yaml.Node) bool {
+	return routeCoverageBoolField(node, "deprecated") && !routeCoverageBoolField(node, "x-live-route")
+}
+
+func routeCoverageBoolField(node *yaml.Node, key string) bool {
 	if node == nil || node.Kind != yaml.MappingNode {
 		return false
 	}
 	for i := 0; i+1 < len(node.Content); i += 2 {
-		if strings.EqualFold(node.Content[i].Value, "deprecated") && strings.EqualFold(node.Content[i+1].Value, "true") {
+		if strings.EqualFold(node.Content[i].Value, key) &&
+			strings.EqualFold(node.Content[i+1].Value, "true") {
 			return true
 		}
 	}

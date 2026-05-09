@@ -291,7 +291,7 @@ paths:
 	}
 }
 
-func TestLoadSpecOps_DeprecatedOpsSkipped(t *testing.T) {
+func TestLoadSpecOps_DeprecatedOpsSkippedUnlessLiveRoute(t *testing.T) {
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "spec.yaml")
 	mustWrite(t, specPath, `
@@ -300,6 +300,11 @@ info: {title: t, version: "1"}
 paths:
   /live:
     get: {summary: live}
+  /live-deprecated:
+    get:
+      deprecated: true
+      x-live-route: true
+      summary: migration window
   /gone:
     get:
       deprecated: true
@@ -309,8 +314,8 @@ paths:
 	if err != nil {
 		t.Fatalf("loadSpecOps: %v", err)
 	}
-	if len(ops) != 1 || ops[0].Path != "/live" {
-		t.Fatalf("expected only /live to survive deprecated filter, got %+v", ops)
+	if len(ops) != 2 || ops[0].Path != "/live" || ops[1].Path != "/live-deprecated" {
+		t.Fatalf("expected /live and /live-deprecated to survive deprecated filter, got %+v", ops)
 	}
 }
 
