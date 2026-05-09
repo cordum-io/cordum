@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-05-08.2
+ * OpenAPI spec version: 2026-05-09.2
  */
 import {
   useMutation,
@@ -31,6 +31,7 @@ import type {
   ForbiddenResponse,
   GetOutputPolicyStats200,
   GetOutputPolicyStatsParams,
+  GetPolicyAuditParams,
   GetPolicyShadowResultsComparisonsParams,
   GetPolicyShadowResultsSummaryParams,
   GetPolicyShadowResultsTimeseriesParams,
@@ -45,7 +46,7 @@ import type {
   OutputRule,
   PolicyAnalytics200,
   PolicyAnalyticsBody,
-  PolicyAuditEntry,
+  PolicyAuditEnvelope,
   PolicyBundleDetail,
   PolicyCheckRequest,
   PolicyCheckResponse,
@@ -2070,16 +2071,24 @@ export const useRollbackPolicy = <TError = BadRequestResponse | UnauthorizedResp
       return useMutation(mutationOptions, queryClient);
     }
     /**
+ * Returns a filtered, paginated list of policy audit events. Filters
+match the gateway handler `handleListPolicyAudit` semantics: `action`
+/ `agent_id` / `rule_id` / `type` are case-insensitive exact matches;
+`after` / `before` are lexicographic compares against `created_at`;
+`search` is a substring match across `action + actor_id +
+resource_type + resource_id + message` lowercased.
+
  * @summary Get policy audit log
  */
 export const getPolicyAudit = (
-    
+    params?: GetPolicyAuditParams,
  signal?: AbortSignal
 ) => {
       
       
-      return apiClient<PolicyAuditEntry[]>(
-      {url: `/api/v1/policy/audit`, method: 'GET', signal
+      return apiClient<PolicyAuditEnvelope>(
+      {url: `/api/v1/policy/audit`, method: 'GET',
+        params, signal
     },
       );
     }
@@ -2087,23 +2096,23 @@ export const getPolicyAudit = (
 
 
 
-export const getGetPolicyAuditQueryKey = () => {
+export const getGetPolicyAuditQueryKey = (params?: GetPolicyAuditParams,) => {
     return [
-    `/api/v1/policy/audit`
+    `/api/v1/policy/audit`, ...(params ? [params]: [])
     ] as const;
     }
 
     
-export const getGetPolicyAuditQueryOptions = <TData = Awaited<ReturnType<typeof getPolicyAudit>>, TError = UnauthorizedResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>>, }
+export const getGetPolicyAuditQueryOptions = <TData = Awaited<ReturnType<typeof getPolicyAudit>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(params?: GetPolicyAuditParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>>, }
 ) => {
 
 const {query: queryOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetPolicyAuditQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getGetPolicyAuditQueryKey(params);
 
   
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPolicyAudit>>> = ({ signal }) => getPolicyAudit(signal);
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPolicyAudit>>> = ({ signal }) => getPolicyAudit(params, signal);
 
       
 
@@ -2117,7 +2126,7 @@ export type GetPolicyAuditQueryError = UnauthorizedResponse | InternalServerErro
 
 
 export function useGetPolicyAudit<TData = Awaited<ReturnType<typeof getPolicyAudit>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>> & Pick<
+ params: undefined |  GetPolicyAuditParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyAudit>>,
           TError,
@@ -2127,7 +2136,7 @@ export function useGetPolicyAudit<TData = Awaited<ReturnType<typeof getPolicyAud
  , queryClient?: QueryClient
   ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 export function useGetPolicyAudit<TData = Awaited<ReturnType<typeof getPolicyAudit>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>> & Pick<
+ params?: GetPolicyAuditParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPolicyAudit>>,
           TError,
@@ -2137,7 +2146,7 @@ export function useGetPolicyAudit<TData = Awaited<ReturnType<typeof getPolicyAud
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 export function useGetPolicyAudit<TData = Awaited<ReturnType<typeof getPolicyAudit>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>>, }
+ params?: GetPolicyAuditParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>>, }
  , queryClient?: QueryClient
   ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
@@ -2145,11 +2154,11 @@ export function useGetPolicyAudit<TData = Awaited<ReturnType<typeof getPolicyAud
  */
 
 export function useGetPolicyAudit<TData = Awaited<ReturnType<typeof getPolicyAudit>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>>, }
+ params?: GetPolicyAuditParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPolicyAudit>>, TError, TData>>, }
  , queryClient?: QueryClient 
  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const queryOptions = getGetPolicyAuditQueryOptions(options)
+  const queryOptions = getGetPolicyAuditQueryOptions(params,options)
 
   const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 
