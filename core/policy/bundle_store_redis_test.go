@@ -430,6 +430,152 @@ func TestRollbackChain(t *testing.T) {
 	}
 }
 
+// TestDeployAfterRollback locks in the regression that originally
+// shipped to QA in PR #252 reopen #1 (task-b349524a). Sequence:
+//
+//	deploy v1, deploy v2, rollback (-> v1), deploy v3, rollback
+//
+// The final rollback must restore v1 — the active state immediately
+// before v3 was deployed — NOT v2 (the second-most-recent deploy in
+// raw event order). The original implementation walked history for
+// "next deploy after the matching deploy" and returned v2; the fix
+// stores prev_bundle_id + prev_version on each deploy event inside
+// Lua so rollback restores from the matching deploy's prev fields.
+func TestDeployAfterRollback(t *testing.T) {
+	store := newTestBundleStore(t)
+	ctx := context.Background()
+	scope := RuleScope{Kind: RuleScopeTenant, Value: "acme"}
+
+	mustCreateBundle(t, store, &Bundle{ID: "b1", Name: "B", ScopeBinding: RuleScope{Kind: RuleScopeGlobal}})
+	mustCreateVersion(t, store, "b1", &BundleVersion{Version: "v1", DeployedAt: time.Now().UTC()})
+	mustCreateVersion(t, store, "b1", &BundleVersion{Version: "v2", DeployedAt: time.Now().UTC().Add(time.Second)})
+	mustCreateVersion(t, store, "b1", &BundleVersion{Version: "v3", DeployedAt: time.Now().UTC().Add(2 * time.Second)})
+
+	// Step 1+2: deploy v1, deploy v2.
+	d1, err := store.DeployVersionToScope(ctx, "b1", "v1", scope)
+	if err != nil {
+		t.Fatalf("deploy v1: %v", err)
+	}
+	if d1.PrevBundleID != "" || d1.PrevVersion != "" {
+		t.Errorf("first deploy should record empty prev pair, got %s:%s", d1.PrevBundleID, d1.PrevVersion)
+	}
+	d2, err := store.DeployVersionToScope(ctx, "b1", "v2", scope)
+	if err != nil {
+		t.Fatalf("deploy v2: %v", err)
+	}
+	if d2.PrevBundleID != "b1" || d2.PrevVersion != "v1" {
+		t.Errorf("v2 deploy should record prev=b1:v1, got %s:%s", d2.PrevBundleID, d2.PrevVersion)
+	}
+
+	// Step 3: rollback v2 → v1.
+	rb1, err := store.RollbackDeployment(ctx, scope)
+	if err != nil {
+		t.Fatalf("rollback after v2: %v", err)
+	}
+	if rb1.Version != "v1" {
+		t.Fatalf("rollback after v2 should restore v1, got %q", rb1.Version)
+	}
+	active, err := store.GetActiveDeployment(ctx, scope)
+	if err != nil {
+		t.Fatalf("active after rb1: %v", err)
+	}
+	if active.Version != "v1" {
+		t.Fatalf("active after rb1 = %q, want v1", active.Version)
+	}
+
+	// Step 4: deploy v3 (active state immediately before this deploy is v1).
+	d3, err := store.DeployVersionToScope(ctx, "b1", "v3", scope)
+	if err != nil {
+		t.Fatalf("deploy v3: %v", err)
+	}
+	if d3.PrevBundleID != "b1" || d3.PrevVersion != "v1" {
+		t.Errorf("v3 deploy should record prev=b1:v1 (post-rollback active), got %s:%s", d3.PrevBundleID, d3.PrevVersion)
+	}
+
+	// Step 5: final rollback must restore v1, NOT v2 (the prior deploy
+	// in raw history order).
+	rb2, err := store.RollbackDeployment(ctx, scope)
+	if err != nil {
+		t.Fatalf("rollback after v3: %v", err)
+	}
+	if rb2.Version != "v1" {
+		t.Fatalf("rollback after deploy-after-rollback should restore v1, got %q (regression: returns the second-most-recent raw deploy v2 instead of the active state before v3)", rb2.Version)
+	}
+	active, err = store.GetActiveDeployment(ctx, scope)
+	if err != nil {
+		t.Fatalf("active after rb2: %v", err)
+	}
+	if active.Version != "v1" {
+		t.Fatalf("active after rb2 = %q, want v1", active.Version)
+	}
+}
+
+// TestCreateBundleVersion_OrphanRejected verifies CreateBundleVersion
+// refuses to write a version for a non-existent parent bundle. Without
+// this check the store could accumulate orphan version blobs +
+// deployment records that point at a bundle envelope nothing owns.
+func TestCreateBundleVersion_OrphanRejected(t *testing.T) {
+	store := newTestBundleStore(t)
+	ctx := context.Background()
+
+	// No CreateBundle call — parent is absent.
+	err := store.CreateBundleVersion(ctx, "ghost", &BundleVersion{Version: "v1", DeployedAt: time.Now().UTC()})
+	if !errors.Is(err, ErrBundleNotFound) {
+		t.Fatalf("orphan version creation should return ErrBundleNotFound, got %v", err)
+	}
+
+	// And the version blob must NOT have been written. Reading it back
+	// is the cleanest proof; ListBundleVersions on the same bundle ID
+	// must return an empty slice (the index ZSET also stays empty).
+	got, err := store.ListBundleVersions(ctx, "ghost")
+	if err != nil {
+		t.Fatalf("list versions for orphan parent: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("orphan parent should have no versions, got %d", len(got))
+	}
+}
+
+// TestDeploymentHistoryCapEnforced verifies the LTRIM-based history
+// cap inside the deploy Lua script. After 105 deploys to the same
+// scope, history must hold exactly 100 entries (the cap from
+// deploymentHistoryCap) and the 5 oldest deploy events must have been
+// dropped.
+func TestDeploymentHistoryCapEnforced(t *testing.T) {
+	store := newTestBundleStore(t)
+	ctx := context.Background()
+	scope := RuleScope{Kind: RuleScopeTenant, Value: "acme"}
+
+	mustCreateBundle(t, store, &Bundle{ID: "b1", Name: "B", ScopeBinding: RuleScope{Kind: RuleScopeGlobal}})
+	mustCreateVersion(t, store, "b1", &BundleVersion{Version: "v1", DeployedAt: time.Now().UTC()})
+
+	const total = 105
+	for i := range total {
+		if _, err := store.DeployVersionToScope(ctx, "b1", "v1", scope); err != nil {
+			t.Fatalf("deploy %d: %v", i, err)
+		}
+	}
+
+	hist, err := store.ListDeploymentHistory(ctx, scope, deploymentHistoryCap+50)
+	if err != nil {
+		t.Fatalf("list history: %v", err)
+	}
+	if len(hist) != deploymentHistoryCap {
+		t.Fatalf("history len = %d, want %d (LTRIM cap)", len(hist), deploymentHistoryCap)
+	}
+	// Newest 100 entries are kept; the 5 oldest dropped. Every entry
+	// is a deploy of v1, so we can't distinguish "oldest" by version,
+	// but len(hist) == cap is the binding assertion that LTRIM ran.
+	for i, dep := range hist {
+		if dep.Action != DeploymentActionDeploy {
+			t.Errorf("history[%d].Action = %s, want deploy", i, dep.Action)
+		}
+		if dep.Version != "v1" {
+			t.Errorf("history[%d].Version = %s, want v1", i, dep.Version)
+		}
+	}
+}
+
 func TestConcurrentDeploy(t *testing.T) {
 	store := newTestBundleStore(t)
 	ctx := context.Background()
