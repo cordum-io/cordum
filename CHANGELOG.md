@@ -7,6 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### AgentShield benchmark scope-boundary doc (2026-05-09, task-f4519eab)
+
+- New `cordum/docs/agentshield-scope-boundary.md` establishes honest framing for AgentShield-related public messaging from Cordum: public-corpus = smoke test (not a generalization metric); private holdout (task-7fbc245d) is the real coverage gate; Cordum's differentiator is action-layer governance with backend-verified provenance, not content-policy classification. Doc includes explicit do-claim / don't-claim list per epic-f3da4017 rails + an upstream-content-classifier boundary section recommending that deep jailbreak / content classification sit upstream of Cordum.
+- Authored proactively per Yaron 2026-05-09 Q3 sign-off — there are zero existing AgentShield mentions in cordum/, Cordum-site/, or cordum-marketing/ (verified via grep across all three repos). The doc establishes the framing BEFORE public claims are made rather than walking back overstated claims later. Update policy: future public surfaces citing an AgentShield score MUST link to this doc instead of stating numbers in isolation.
+
 #### Dashboard 7 — Bundle deploy modal + scope picker + edgeMode override (2026-05-09, task-758788ea)
 
 - New `dashboard/src/pages/policies/DeployBundleModal.tsx` — Drawer-mounted modal launched from BundleVersionsTab's per-row "Deploy…" Button. Scope picker covers all 5 kinds (`global` / `tenant` / `workflow` / `edge_fleet` / `edge_user`); scopeValue Input auto-disabled + cleared for global; EdgeMode picker (`observe` / `enforce` / `enterprise-strict`) appears only for edge_fleet/edge_user with `bundle.metadata.edge_mode` preselected as default.
