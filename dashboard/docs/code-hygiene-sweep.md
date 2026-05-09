@@ -464,3 +464,46 @@ Per the Phase 3 plan, the rule was verified in-place before commit:
 | Pass C: zero `console.*` in production `src/` paths; logger consistent; ESLint rule prevents regression | ✅ 1 console.warn migrated; ESLint `no-console` rule active; fixture-verified. |
 | All 3 passes documented in this file with before/after metrics | ✅ this document. |
 | tsc + vitest + build green; bundle size unchanged or smaller | ✅ tsc EXIT=0; vitest 228 files / 2005 tests; build 629ms; bundle stable at 38 assets / ~308 KB main index.js (Pass A removed already-unused code that tree-shaking already excluded — bundle size reflects post-tree-shake reality). |
+
+## Bundle-size baseline (Phase 5d, task-50bbfd7d, 2026-05-09)
+
+`pnpm run build` now emits `dist/stats.html` via `rollup-plugin-visualizer`,
+and `scripts/parse-bundle-stats.mjs` posts a per-chunk size table on every
+PR (CI workflow `ci.yml` `dashboard-test` job). Soft thresholds are
+warn-only — the parser always exits 0; warnings surface as `::warning::`
+lines in the workflow run UI and as a `⚠ Soft-threshold warnings` section
+in the PR comment.
+
+**Baseline captured 2026-05-09 (dashboard branch HEAD)**
+
+| Bucket | Raw | Gzip | Brotli |
+| --- | ---: | ---: | ---: |
+| Initial (`index-*.js`) | 305.4 KB | 92.2 KB | 79.8 KB |
+| Total (183 chunks) | 2532.7 KB | 759.3 KB | _n/a_ |
+
+**Top 5 route chunks by raw size**
+
+| Chunk | Raw | Gzip |
+| --- | ---: | ---: |
+| `generateCategoricalChart-*.js` (recharts) | 355.6 KB | 92.6 KB |
+| `WorkflowStudioPage-*.js` (ReactFlow) | 284.4 KB | 80.9 KB |
+| `transform-*.js` (api transforms) | 131.3 KB | 39.5 KB |
+| `proxy-*.js` (api client mutator) | 117.8 KB | 37.8 KB |
+| `types-*.js` (api types index) | 91.2 KB | 24.5 KB |
+
+**Soft thresholds** (set in `scripts/parse-bundle-stats.mjs`)
+
+| Bucket | Threshold |
+| --- | ---: |
+| Initial raw | 400 KB |
+| Initial gzip | 120 KB |
+| Total raw | 3100 KB |
+| Total gzip | 950 KB |
+
+Chosen ~25-30% above baseline so PRs have headroom for normal feature
+growth while still catching real regressions (a single page-component
+mistakenly importing a 200 KB dep would trip).
+
+**When to tighten**: revisit after ~20 PRs of trend data, OR when a
+future bundle audit shows the buffer is excessive. Tightening a
+threshold is a one-line edit in the parser.

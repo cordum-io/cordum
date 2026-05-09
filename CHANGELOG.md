@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Phase 5d — bundle-size visualizer + soft CI gate (2026-05-09, task-50bbfd7d)
+
+- Installed `rollup-plugin-visualizer@7.0.1` and wired it into `dashboard/vite.config.ts` so every `pnpm run build` emits `dist/stats.html` (treemap, raw + gzip + brotli). `emitFile: true` keeps the file inside `dist/`.
+- New `dashboard/scripts/parse-bundle-stats.mjs` reads `dist/assets/*.js` and prints a per-chunk markdown table (raw + gzip + brotli) with totals and the initial-chunk highlight. Soft thresholds (warn-only; always exits 0): initial ≤ 400 KB raw / 120 KB gzip, total ≤ 3100 KB raw / 950 KB gzip — sized ~25-30% above the 2026-05-09 baseline (initial 305 KB / 92 KB gzip; total 2533 KB / 759 KB gzip captured in `dashboard/docs/code-hygiene-sweep.md`).
+- `.github/workflows/ci.yml` `dashboard-test` job now: (a) declares `pull-requests: write` permission, (b) runs `pnpm run build` after vitest, (c) computes the bundle-size markdown via the parser, (d) uploads `dist/stats.html` + the markdown as the `dashboard-bundle-stats` artifact (14-day retention), (e) on `pull_request` events posts the markdown via `peter-evans/create-or-update-comment@v4` with `body-includes: "<!-- bundle-size-report -->"` so subsequent pushes update the same comment instead of appending. Main pushes still build + parse but skip the comment step.
+- `dashboard/CLAUDE.md` "Bundle size (Phase 5d)" section documents the threshold values, how to read `dist/stats.html` locally, and where to find the baseline.
+
 #### Backend 1.5 — policy-studio yaml additions on dashboard branch + regenerated dashboard TS (2026-05-09, task-e38d99a5)
 
 - `docs/api/openapi/cordum-api.yaml`: surgically extracted Backend 1's 14 unified Rule/Decision/Bundle schemas (lines 10989–11256 of `origin/policy-studio-backend`) and appended them to dashboard branch's yaml so the orval pipeline can regenerate dashboard TS for downstream Dashboard 1+ tasks. Bumped `info.version` `2026-05-09.2` → `2026-05-09.3` (next-after worker-dac4's /policy/audit enrichment .2). worker-dac4's existing /policy/audit edits at lines 1, 3266, 9876, 9883 untouched (disjoint regions).
@@ -112,6 +119,29 @@ under EDGE-032 on 2026-04-30; product, API, CLI, and demo docs are at
 - EDGE-030: Demo polish and operator runbook
 - EDGE-031: Security review and threat-model closure for P0
 - EDGE-032: P0 final acceptance, demo signoff, and release readiness
+
+#### Lighthouse CI gate for /login (epic-252d2c07 Phase 5b)
+
+CI now runs Lighthouse against the unauth `/login` surface on every PR
+and posts performance / accessibility / best-practices / SEO scores as a
+PR comment.
+
+- **`@lhci/cli` 0.15.1** added to `dashboard/devDependencies`.
+- **`dashboard/lighthouserc.json`** — desktop preset, 3 runs averaged,
+  `temporary-public-storage` upload target. All assertions `warn`-mode
+  (perf ≥ 0.7, a11y ≥ 0.9, best-practices ≥ 0.85, SEO off) — no
+  PR-blocking yet.
+- **`.github/workflows/ci.yml` new `lhci-login` job** — PR-only,
+  `continue-on-error: true`, `pull-requests: write` permission for
+  comment posting. Reads `.lighthouseci/manifest.json` to format a
+  markdown score table via `actions/github-script@v7`.
+- **Local run**: `pnpm run lhci` from `dashboard/` (uses
+  `start-server-and-test` to boot `vite preview` and tear it down
+  cleanly after `lhci autorun`).
+
+Authenticated-surface lhci (HomePage / JobsPage / AuditLogPage / etc.)
+deferred to follow-up task **task-63603c2e** (cookie-bridge + test
+credentials required).
 
 #### OpenAPI /policy/audit enrichment (epic-252d2c07 follow-up to task-55f813b3)
 
