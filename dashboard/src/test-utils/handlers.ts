@@ -24,6 +24,10 @@ export const baseHandlers = [
   http.get("*/api/v1/policy/bundles/:id/deployments", () =>
     HttpResponse.json({ items: [] }),
   ),
+  // Promote / Rollback default OK for Dashboard 5 step-7 Deployments tab
+  // tests; per-test overrides via `server.use(...)` inject 4xx/5xx paths.
+  http.post("*/api/v1/policy/bundles/:id/deploy", () => HttpResponse.json({})),
+  http.post("*/api/v1/policy/bundles/:id/rollback", () => HttpResponse.json({})),
   http.get("*/api/v1/approvals", () =>
     HttpResponse.json({ items: [], next_cursor: null }),
   ),
