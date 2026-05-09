@@ -240,3 +240,53 @@ pnpm run build
 Stats.html is also uploaded by the `dashboard-test` CI job as the
 `dashboard-bundle-stats` artifact (14-day retention) so reviewers can
 download the rich visualizer when the PR-comment summary isn't enough.
+
+## Error boundaries (Phase 5e)
+
+Render errors inside a Route are caught by a per-route `RouteBoundary`
+defined in `src/components/RouteBoundary.tsx`. It pairs the primitive
+`ErrorBoundary` (`src/components/ErrorBoundary.tsx`) with
+`RouteErrorFallback` (`src/components/RouteErrorFallback.tsx`) and uses
+`useLocation().pathname` as the boundary's `resetKey` so the boundary
+auto-clears when the user navigates away.
+
+Wiring pattern in `App.tsx`:
+
+```tsx
+<Route
+  path="/jobs"
+  element={
+    <RouteBoundary name="Jobs">
+      <JobsPage />
+    </RouteBoundary>
+  }
+/>
+```
+
+The `name` prop is the human-readable route label that surfaces in the
+"Couldn't load X" header + bug-report mailto subject. Use a phrase a
+non-engineer would recognize ("Approvals", "Bundle details") rather
+than the URL slug.
+
+**When to use a per-route boundary** — every leaf-page route gets one.
+Pure-redirect routes (components that return `<Navigate>`) are NOT
+wrapped because they don't render UI and never throw a render error.
+
+**When to delegate to the outer ErrorBoundaryWrapper instead** — a
+render error in the AppShell layout (sidebar, header, command palette
+mount) bubbles past `RouteBoundary` and lands in the outer
+`ErrorBoundaryWrapper` inside `ProtectedRoutes`. That fallback is the
+default generic "Something went wrong" full-page card. Don't move
+shell-render-time failures into a per-route boundary; they aren't
+scoped to one route.
+
+**Fallback props** — the optional `fallback` render prop on
+`ErrorBoundary` receives `{ error: Error, reset: () => void }`. Calling
+`reset` clears `hasError` so the boundary re-renders its children
+(the typical user flow on Retry). Reset BEFORE updating the underlying
+state will retrigger the throw — fix the root cause first, then reset.
+
+**Logging** — `ErrorBoundary.componentDidCatch` writes a structured
+`logger.error("error-boundary", ...)` entry with the message + stack +
+componentStack. Don't add additional `console.error` next to a
+boundary; the logger already captures it.
