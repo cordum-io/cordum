@@ -36,6 +36,28 @@ Decided 2026-04-24 · task-c154ff08 · epic-2e0ed1ee.
 - State + disclosure: `EmptyState`, `ErrorBanner`, `SkeletonCard`, `CollapsibleSection`, `StatusBadge`
 - Metrics/navigation: `MetricValue`, `StatTile`, `Tabs`, `Pagination`, `DataTable`
 - Field wrappers: `LabeledField`
+
+### A11y test status (Phase 5a — task-bf55ddbd, 2026-05-09)
+
+`renderWithProviders` now accepts an opt-in `runAxe: true` option that
+delegates to `assertNoSeriousAxeViolations` and asserts no critical/serious
+WCAG 2 AA violations on the rendered container. The dedicated
+`*.a11y.test.tsx` files (HomePage, SettingsHubPage, PolicyOverviewPage,
+InputRuleEditorDrawer) remain the canonical pattern for pages whose first
+paint depends on async data; the new opt-in is a sugar layer for primitive +
+component tests that don't need a `waitFor` preamble.
+
+| Primitive / surface | A11y status | Source |
+| --- | --- | --- |
+| `HomePage` | PASS (light + dark) | `pages/HomePage.a11y.test.tsx` |
+| `SettingsHubPage` | PASS (light + dark) | `pages/SettingsHubPage.a11y.test.tsx` |
+| `PolicyOverviewPage` | PASS (light + dark) | `pages/govern/PolicyOverviewPage.a11y.test.tsx` |
+| `InputRuleEditorDrawer` (read-only) | PASS (Escape closes) | `components/policy/input-rules/InputRuleEditorDrawer.a11y.test.tsx` |
+| `UserMenu` (closed-menu) | PASS (axe via `runAxe: true`) | `components/UserMenu.test.tsx` (Phase 5a opt-in demo) |
+| Other shared primitives | PENDING | extend with `runAxe: true` in their existing test files |
+
+CI gate: `pnpm run lint:a11y` (uses `eslint.a11y.config.mjs`) — must exit 0
+on every dashboard PR.
 ## Audit summary
 - Page components reviewed: **46** (45 after DLQPage deletion).
 - Pages using `PageHeader`: **37**

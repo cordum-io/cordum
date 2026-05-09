@@ -51,8 +51,11 @@ beforeEach(() => {
 });
 
 describe("UserMenu", () => {
-  it("renders an avatar button when the user is logged in", () => {
-    renderMenu();
+  it("renders an avatar button when the user is logged in (axe-clean)", async () => {
+    // Phase 5a: opt-in axe gate via renderWithProviders { runAxe: true }.
+    // UserMenu's idle (closed-menu) state is the canonical render — no async
+    // data, no waitFor preamble required.
+    await renderWithProviders(<UserMenu />, { runAxe: true });
     const trigger = screen.getByRole("button", {
       name: /account menu for admin/i,
     });

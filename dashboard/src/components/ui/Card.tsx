@@ -14,12 +14,18 @@ export function CardHeader({ className, ...props }: HTMLAttributes<HTMLDivElemen
   return <div className={cn("mb-4 flex items-center justify-between", className)} {...props} />;
 }
 
-export function CardTitle({ className, ...props }: HTMLAttributes<HTMLHeadingElement>) {
+export function CardTitle({
+  className,
+  children,
+  ...props
+}: HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h3
       className={cn("font-display text-lg font-semibold text-ink", className)}
       {...props}
-    />
+    >
+      {children}
+    </h3>
   );
 }
 

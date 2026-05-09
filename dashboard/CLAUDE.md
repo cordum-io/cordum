@@ -126,3 +126,51 @@ Rules:
   `globalThis.fetch` spies keep their existing isolation.
 - See `docs/adr/0001-page-test-providers.md` for the decision record and
   rejected alternatives.
+
+## Accessibility (Phase 5a)
+
+`renderWithProviders` supports an opt-in `runAxe: true` option that asserts no
+critical or serious WCAG 2 AA violations on the rendered container. The opt-in
+returns a `Promise<RenderWithProvidersResult>` (the helper drives `axe-core`
+asynchronously); the call must be `await`ed:
+
+```tsx
+const { container } = await renderWithProviders(<MyComponent />, {
+  runAxe: true,
+});
+```
+
+`axeMode: "dark"` is also accepted to test the dark theme. The opt-in delegates
+to `assertNoSeriousAxeViolations` from `src/test-utils/a11y.ts`, so the gate
+semantics match the existing dedicated `*.a11y.test.tsx` files: `wcag2a` +
+`wcag2aa` tags, filtered to critical/serious impact only. jsdom does not
+composite `backdrop-filter`, so axe's `color-contrast` rule fires false-
+negatives on glass-panel surfaces; the impact filter absorbs those, and
+structural contrast is the Lighthouse CI gate (Phase 5b).
+
+When to use:
+
+- Component tests for shared primitives (`Button`, `Card`, `EmptyState`,
+  `Drawer`, etc.) where the canonical render is synchronous.
+- New tests for surfaces customers will see, when no `waitFor` preamble is
+  required.
+
+When NOT to use:
+
+- Tests that intentionally render an inaccessible state for negative-test
+  purposes — leave them synchronous (default `runAxe: false`) so axe doesn't
+  run on the deliberate violation.
+- Page tests whose first paint depends on async data — keep using a separate
+  `*.a11y.test.tsx` file that calls `assertNoSeriousAxeViolations(container,
+  { mode })` after `await waitFor(...)`. The `runAxe` opt-in is a sugar layer
+  over the same helper, suited for tests that don't need a `waitFor` preamble.
+
+### Strict a11y CI gate
+
+`pnpm run lint:a11y` runs ESLint with a narrow flat config
+(`eslint.a11y.config.mjs`) that escalates the gate-relevant jsx-a11y rules
+(alt-text, ARIA correctness, heading-has-content, anchor-has-content,
+iframe-has-title) to `error`. The default `pnpm run lint` keeps lower-impact
+rules at `warn` so existing surfaces don't block unrelated PRs; the strict
+gate is the one CI should fail on. The narrow config ignores
+`src/api/generated/**` (orval-emitted, hand-edits forbidden).
