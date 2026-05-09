@@ -32,7 +32,9 @@ describe("AppShell keyboard shortcuts help", () => {
     await waitFor(() => {
       expect(screen.getAllByText("Keyboard Shortcuts")).toHaveLength(1);
     });
-    expect(screen.getByRole("dialog", { name: "Keyboard Shortcuts" })).toBeTruthy();
+    expect(
+      screen.getByRole("dialog", { name: "Keyboard Shortcuts" }),
+    ).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Close keyboard shortcuts" }),
     ).toBeTruthy();
@@ -70,7 +72,9 @@ describe("AppShell keyboard shortcuts help", () => {
     fireEvent.keyDown(document.body, { key: "Escape" });
 
     await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Keyboard Shortcuts" })).toBeNull();
+      expect(
+        screen.queryByRole("dialog", { name: "Keyboard Shortcuts" }),
+      ).toBeNull();
     });
     expect(screen.queryByText("Keyboard Shortcuts")).toBeNull();
   });
