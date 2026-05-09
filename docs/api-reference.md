@@ -1514,10 +1514,30 @@ Notes:
 
 ```json
 {
-  "items": [ { "id": "rule-id", "source": {"fragment_id":"secops/demo"} } ],
+  "items": [
+    {
+      "id": "rule-id",
+      "source": {"fragment_id":"secops/demo"},
+      "firing_last_7d": [0, 1, 0, 2, 0, 0, 3]
+    }
+  ],
   "errors": [ { "fragment_id": "...", "error": "..." } ]
 }
 ```
+
+- Notes:
+  - `firing_last_7d` is exactly seven integer counts for UTC calendar days,
+    oldest-to-newest, ending with the current UTC day.
+  - Counts are tenant-scoped using the request/auth tenant; events for another
+    tenant with the same rule ID are ignored.
+  - Rules with no matching firing history remain in the response and receive
+    `[0, 0, 0, 0, 0, 0, 0]`.
+  - The summary is computed in one bulk job-history scan for all returned rule
+    IDs, then batched metadata reads; clients must not make per-rule analytics
+    calls to render the last-7d sparkline.
+  - During the migration window, the source of truth matches
+    `/api/v1/policy/analytics`: job metadata `safety_rule_id` bucketed by
+    metadata `updated_at` microseconds, not the policy-decision audit stream.
 
 ### GET `/api/v1/policy/velocity-rules`
 
