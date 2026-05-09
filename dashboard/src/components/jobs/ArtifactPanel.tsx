@@ -16,6 +16,7 @@ import { Card, CardHeader, CardTitle } from "../ui/Card";
 import { EmptyState } from "../ui/EmptyState";
 import { useArtifact, useJobArtifacts } from "../../hooks/useMemory";
 import type { JobArtifactRef } from "../../api/types";
+import { formatBytes as formatBytesGeneric } from "@/lib/format";
 
 const MONACO_BASE_PATH = "/monaco/vs";
 loader.config({ paths: { vs: MONACO_BASE_PATH } });
@@ -24,13 +25,8 @@ interface ArtifactPanelProps {
   jobId: string;
 }
 
-function formatBytes(value?: number): string {
-  const bytes = value ?? 0;
-  if (!Number.isFinite(bytes) || bytes <= 0) return "-";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
+const formatBytes = (value?: number): string =>
+  formatBytesGeneric(value, { fallback: "-" });
 
 function formatTimestamp(raw?: string): string {
   if (!raw) return "-";

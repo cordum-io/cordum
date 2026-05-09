@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/Button";
 import { CodeBlock } from "@/components/ui/CodeBlock";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import { formatBytes as formatBytesGeneric } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 interface EdgeEventInspectorProps {
@@ -35,12 +36,8 @@ function decisionVariant(decision: AgentActionEvent["decision"]): BadgeVariant {
   return decisionTone[String(decision).toUpperCase()] ?? "info";
 }
 
-function formatBytes(value?: number): string {
-  if (value === undefined || value === null || Number.isNaN(value)) return "—";
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
-  return `${(value / (1024 * 1024)).toFixed(2)} MiB`;
-}
+const formatBytes = (value?: number): string =>
+  formatBytesGeneric(value, { iec: true, zeroAsBytes: true });
 
 function formatDuration(ms?: number): string {
   if (ms === undefined || ms === null || Number.isNaN(ms)) return "—";

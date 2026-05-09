@@ -28,6 +28,7 @@ import { SkeletonCard } from "@/components/ui/Skeleton";
 import { StatTile } from "@/components/ui/StatTile";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useLicenseOverview, useReloadLicense } from "@/hooks/useLicense";
+import { formatBytes as formatBytesGeneric } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type BackendTelemetryStatus = {
@@ -115,13 +116,8 @@ function formatNumber(value?: number): string {
     : "—";
 }
 
-function formatBytes(value?: number): string {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "—";
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
+const formatBytes = (value?: number): string =>
+  formatBytesGeneric(value, { includeGB: true });
 
 function formatTelemetryMode(mode?: string | null): string {
   switch ((mode ?? "").trim().toLowerCase()) {
