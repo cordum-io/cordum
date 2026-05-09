@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -525,6 +526,172 @@ func TestRedisStoreUpdateAuditHashUpdatesNestedDuplicateStepRuns(t *testing.T) {
 	if got.Steps["fanout"].Children["fanout[0]"].AuditHash != hash {
 		t.Fatalf("nested child hash = %q, want %q", got.Steps["fanout"].Children["fanout[0]"].AuditHash, hash)
 	}
+}
+
+// TestRedisStoreUpdateRunPreservesAuditHashAcrossInFlightRace is the
+// regression for the QA-rejected lost-update race: a stale UpdateRun whose
+// caller marshaled the payload *before* a concurrent UpdateAuditHash wrote
+// its audit_hash must not erase that hash on SET.
+//
+// Determinism: rather than rely on goroutine scheduling, the test reproduces
+// the post-race Redis state directly — UpdateAuditHash is invoked first so the
+// run-key carries the populated hash, then UpdateRun is invoked with a stale
+// payload (no hash) that the caller built before the audit write happened.
+// In the buggy implementation the SET writes the stale payload and the hash
+// is lost; in the fixed implementation the script's GET-merge-SET copies the
+// persisted hash forward into the SET payload before writing.
+//
+// To prove the test catches the race specifically (and is not just covered
+// by the existing "stale UpdateRun after the hash already exists" cases),
+// the stale payload's status is the same as the persisted run's, so the
+// only behavior the test is measuring is whether the audit_hash survives.
+func TestRedisStoreUpdateRunPreservesAuditHashAcrossInFlightRace(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	jobID := "run-race:step-1@1"
+	hash := strings.Repeat("e", 64)
+
+	run := &WorkflowRun{
+		ID:         "run-race",
+		WorkflowID: "wf-race",
+		Status:     RunStatusRunning,
+		Steps: map[string]*StepRun{
+			"step-1": {StepID: "step-1", Status: StepStatusRunning, JobID: jobID},
+		},
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// The audit consumer writes the hash atomically.
+	if err := store.UpdateAuditHash(ctx, jobID, hash); err != nil {
+		t.Fatalf("update audit hash: %v", err)
+	}
+	assertRunAuditHash(t, store, run.ID, "step-1", hash)
+
+	// Caller's stale payload — built before the audit consumer landed the hash.
+	// Identical to the persisted run except the in-memory copy never received
+	// the audit_hash. Marshaling this and sending SET would erase the hash
+	// without the script's atomic merge.
+	staleCopy := &WorkflowRun{
+		ID:         run.ID,
+		WorkflowID: run.WorkflowID,
+		Status:     RunStatusSucceeded,
+		Steps: map[string]*StepRun{
+			"step-1": {StepID: "step-1", Status: StepStatusRunning, JobID: jobID},
+		},
+	}
+	if err := store.UpdateRun(ctx, staleCopy); err != nil {
+		t.Fatalf("update run: %v", err)
+	}
+
+	// Atomically merged: the hash from the persisted run survived the SET.
+	assertRunAuditHash(t, store, run.ID, "step-1", hash)
+
+	// And the caller's status mutation (Running → Succeeded) still lands —
+	// the merge only fills empty audit_hash slots, it does not revert the
+	// caller's intended state on other fields.
+	got, err := store.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if got.Status != RunStatusSucceeded {
+		t.Fatalf("status mutation lost: got %s want %s", got.Status, RunStatusSucceeded)
+	}
+}
+
+// TestRedisStoreUpdateRunPreservesAuditHashUnderConcurrentInFlightAuditWrite
+// stresses the load-bearing claim: across many goroutine orderings of
+// UpdateRun + UpdateAuditHash on the same job, no iteration loses the hash.
+// With the Lua-merge atomic GET-merge-SET, both orderings (audit first, then
+// stale UpdateRun; or stale UpdateRun first, then audit WATCH/MULTI/EXEC) end
+// up with the hash persisted. A regression that drops merge atomicity would
+// statistically lose the hash within a few hundred iterations.
+func TestRedisStoreUpdateRunPreservesAuditHashUnderConcurrentInFlightAuditWrite(t *testing.T) {
+	store := newTestStore(t)
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	const iterations = 200
+	hash := strings.Repeat("f", 64)
+
+	for i := 0; i < iterations; i++ {
+		runID := "run-stress-" + strings.Repeat("x", 1) + itoa(i)
+		jobID := runID + ":step-1@1"
+		run := &WorkflowRun{
+			ID:         runID,
+			WorkflowID: "wf-stress",
+			Status:     RunStatusRunning,
+			Steps: map[string]*StepRun{
+				"step-1": {StepID: "step-1", Status: StepStatusRunning, JobID: jobID},
+			},
+		}
+		if err := store.CreateRun(ctx, run); err != nil {
+			t.Fatalf("iter %d: create run: %v", i, err)
+		}
+
+		staleCopy := &WorkflowRun{
+			ID:         runID,
+			WorkflowID: "wf-stress",
+			Status:     RunStatusSucceeded,
+			Steps: map[string]*StepRun{
+				"step-1": {StepID: "step-1", Status: StepStatusRunning, JobID: jobID},
+			},
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		var updateErr, auditErr error
+		go func() {
+			defer wg.Done()
+			updateErr = store.UpdateRun(ctx, staleCopy)
+		}()
+		go func() {
+			defer wg.Done()
+			auditErr = store.UpdateAuditHash(ctx, jobID, hash)
+		}()
+		wg.Wait()
+
+		if updateErr != nil {
+			t.Fatalf("iter %d: UpdateRun: %v", i, updateErr)
+		}
+		if auditErr != nil {
+			t.Fatalf("iter %d: UpdateAuditHash: %v", i, auditErr)
+		}
+
+		got, err := store.GetRun(ctx, runID)
+		if err != nil {
+			t.Fatalf("iter %d: get run: %v", i, err)
+		}
+		if got.Steps["step-1"].AuditHash != hash {
+			t.Fatalf("iter %d: audit hash lost — got %q, want %q", i, got.Steps["step-1"].AuditHash, hash)
+		}
+	}
+}
+
+// itoa is a small helper that avoids pulling fmt into the hot loop above.
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	neg := i < 0
+	if neg {
+		i = -i
+	}
+	var buf [20]byte
+	pos := len(buf)
+	for i > 0 {
+		pos--
+		buf[pos] = byte('0' + i%10)
+		i /= 10
+	}
+	if neg {
+		pos--
+		buf[pos] = '-'
+	}
+	return string(buf[pos:])
 }
 
 func assertRunAuditHash(t *testing.T, store *RedisStore, runID, stepID, want string) {

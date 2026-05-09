@@ -239,42 +239,114 @@ func (s *RedisStore) CreateRun(ctx context.Context, run *WorkflowRun) error {
 	return nil
 }
 
-// updateRunScript atomically reads the previous status and writes the new run document.
-// Only touches a single key (KEYS[1] = runKey) to avoid CROSSSLOT errors on Redis Cluster.
-// Index updates (ZADD/ZREM/SADD/SREM) are performed in a separate Go pipeline — they are
-// idempotent (ZADD is upsert, ZREM is no-op if missing) so eventual consistency is safe.
+// updateRunScript atomically:
+//  1. Reads the persisted run and extracts its previous status (so the index
+//     update outside the script can ZREM the stale status set when status flips).
+//  2. Merges any populated `audit_hash` from persisted-side StepRuns forward
+//     into the new payload's StepRuns whose `audit_hash` is empty for the same
+//     `job_id` (recursively walks `children`). This is the load-bearing
+//     atomicity guarantee: a concurrent UpdateAuditHash that wrote a hash
+//     between the caller's marshal and this SET cannot be lost because the
+//     GET-merge-SET runs as a single Redis command, eliminating the Go-level
+//     race window the previous Lua-then-Go-merge implementation had.
+//  3. Writes the (possibly merged) payload back.
+//
+// Only touches a single key (KEYS[1] = runKey) so the script is cluster-safe.
+// Index updates (ZADD/ZREM/SADD/SREM) are issued in a separate Go pipeline
+// after this script returns; they are idempotent and eventual-consistency safe.
 //
 // KEYS: [1]=runKey
-// ARGV: [1]=payload
+// ARGV: [1]=payload (JSON-encoded WorkflowRun)
+//
+// Returns: previous status string ("" if the key did not exist).
 var updateRunScript = redis.NewScript(`
-local prev = redis.call('GET', KEYS[1])
-local prevStatus = ''
-if prev then
-  local ok, decoded = pcall(cjson.decode, prev)
-  if ok and decoded and decoded.status then
-    prevStatus = decoded.status
+local prev_raw = redis.call('GET', KEYS[1])
+local prev_status = ''
+local final_payload = ARGV[1]
+
+if prev_raw then
+  local ok_prev, prev_doc = pcall(cjson.decode, prev_raw)
+  if ok_prev and type(prev_doc) == 'table' then
+    if prev_doc.status then
+      prev_status = prev_doc.status
+    end
+
+    local hashes = {}
+    local has_hashes = false
+    local collect
+    collect = function(steps)
+      if type(steps) ~= 'table' then return end
+      for _, sr in pairs(steps) do
+        if type(sr) == 'table' then
+          if sr.job_id and sr.job_id ~= '' and sr.audit_hash and sr.audit_hash ~= '' then
+            hashes[sr.job_id] = sr.audit_hash
+            has_hashes = true
+          end
+          if sr.children then
+            collect(sr.children)
+          end
+        end
+      end
+    end
+    collect(prev_doc.steps)
+
+    if has_hashes then
+      local ok_next, next_doc = pcall(cjson.decode, ARGV[1])
+      if ok_next and type(next_doc) == 'table' then
+        local merged = false
+        local apply
+        apply = function(steps)
+          if type(steps) ~= 'table' then return end
+          for _, sr in pairs(steps) do
+            if type(sr) == 'table' then
+              if sr.job_id and sr.job_id ~= '' and (not sr.audit_hash or sr.audit_hash == '') then
+                local h = hashes[sr.job_id]
+                if h then
+                  sr.audit_hash = h
+                  merged = true
+                end
+              end
+              if sr.children then
+                apply(sr.children)
+              end
+            end
+          end
+        end
+        apply(next_doc.steps)
+
+        if merged then
+          final_payload = cjson.encode(next_doc)
+        end
+      end
+    end
   end
 end
 
-redis.call('SET', KEYS[1], ARGV[1])
-
-return prevStatus
+redis.call('SET', KEYS[1], final_payload)
+return prev_status
 `)
 
 // UpdateRun atomically overwrites an existing run document and updates all indexes.
-// The Lua script handles the atomic GET+SET on the run key (single slot).
-// Index updates are performed in a pipeline afterward — they are idempotent so
-// eventual consistency is acceptable if the pipeline partially fails.
+//
+// The Lua script runs GET-merge-SET as a single atomic Redis command. The merge
+// step copies any `audit_hash` from the persisted run forward into the new
+// payload for matching `job_id`s where the new payload's `audit_hash` is empty.
+// This closes the lost-update race the previous implementation had: when a
+// concurrent UpdateAuditHash wrote an audit hash between the caller's marshal
+// and this SET, that hash is now seen by the script's GET and merged forward
+// into the SET payload. Index updates run in a separate idempotent pipeline
+// after the script. Pending audit-hash recovery (a separate key set by
+// UpdateAuditHash when the run/step was not yet persisted) is applied Go-side
+// before the script — it operates on the wf:run:pending_audit_hash:<jobID> key
+// space, which the Lua merge does not touch.
 func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 	if run == nil || run.ID == "" || run.WorkflowID == "" {
 		return fmt.Errorf("run id and workflow id required")
 	}
-	persistedRun := s.loadRunSnapshot(ctx, run.ID)
-	oldJobRefs := collectRunJobRefs(persistedRun)
-	mergePersistedAuditHashes(run, persistedRun)
 	now := time.Now().UTC()
 	run.UpdatedAt = now
 	pendingDeletes := s.applyPendingAuditHashes(ctx, run)
+	oldJobRefs := s.loadOldJobRefs(ctx, run.ID)
 
 	payload, err := json.Marshal(run)
 	if err != nil {
@@ -286,14 +358,11 @@ func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 		return fmt.Errorf("marshal run job index: %w", err)
 	}
 
-	// Atomic GET prev status + SET new run doc (single key — cluster-safe).
-	keys := []string{runKey(run.ID)}
-	prevStatus, err := updateRunScript.Run(ctx, s.client, keys, string(payload)).Text()
+	prevStatus, err := updateRunScript.Run(ctx, s.client, []string{runKey(run.ID)}, string(payload)).Text()
 	if err != nil {
 		return fmt.Errorf("update run: %w", err)
 	}
 
-	// Idempotent index updates in a transaction (ZADD is upsert, ZREM is no-op if missing).
 	score := float64(now.Unix())
 	pipe := s.client.TxPipeline()
 	pipe.ZAdd(ctx, runIndexKey(run.WorkflowID), redis.Z{Score: score, Member: run.ID})
@@ -320,6 +389,23 @@ func (s *RedisStore) UpdateRun(ctx context.Context, run *WorkflowRun) error {
 		slog.Warn("update run: index pipeline failed (idempotent, will self-heal)", "run_id", run.ID, "error", err)
 	}
 	return nil
+}
+
+// loadOldJobRefs returns the run's persisted job-ref set so the post-script
+// pipeline can DEL job-index entries that the new payload no longer carries.
+// Returns an empty map if the key does not exist or fails to decode — both
+// mean "nothing to clean up".
+func (s *RedisStore) loadOldJobRefs(ctx context.Context, runID string) map[string]runJobRef {
+	data, err := s.client.Get(ctx, runKey(runID)).Bytes()
+	if err != nil {
+		return map[string]runJobRef{}
+	}
+	var prev WorkflowRun
+	if err := json.Unmarshal(data, &prev); err != nil {
+		slog.Warn("workflow: corrupt run snapshot skipped", "run_id", runID, "error", err)
+		return map[string]runJobRef{}
+	}
+	return collectRunJobRefs(&prev)
 }
 
 // GetRun fetches a run by ID.
@@ -731,19 +817,6 @@ func (s *RedisStore) indexSingleRunJobRef(ctx context.Context, jobID string, ref
 	return s.client.Set(ctx, runJobIndexKey(jobID), raw, 0).Err()
 }
 
-func (s *RedisStore) loadRunSnapshot(ctx context.Context, runID string) *WorkflowRun {
-	data, err := s.client.Get(ctx, runKey(runID)).Bytes()
-	if err != nil {
-		return nil
-	}
-	var run WorkflowRun
-	if err := json.Unmarshal(data, &run); err != nil {
-		slog.Warn("workflow: corrupt run snapshot skipped", "run_id", runID, "error", err)
-		return nil
-	}
-	return &run
-}
-
 func marshalJobRefs(refs map[string]runJobRef) (map[string][]byte, error) {
 	out := make(map[string][]byte, len(refs))
 	for jobID, ref := range refs {
@@ -754,52 +827,6 @@ func marshalJobRefs(refs map[string]runJobRef) (map[string][]byte, error) {
 		out[jobID] = raw
 	}
 	return out, nil
-}
-
-func mergePersistedAuditHashes(run, persisted *WorkflowRun) {
-	if run == nil || persisted == nil || run.Steps == nil || persisted.Steps == nil {
-		return
-	}
-	hashes := collectAuditHashesByJobID(persisted.Steps)
-	applyAuditHashesByJobID(run.Steps, hashes)
-}
-
-func collectAuditHashesByJobID(steps map[string]*StepRun) map[string]string {
-	hashes := map[string]string{}
-	for _, sr := range steps {
-		collectStepAuditHashesByJobID(hashes, sr)
-	}
-	return hashes
-}
-
-func collectStepAuditHashesByJobID(hashes map[string]string, sr *StepRun) {
-	if sr == nil {
-		return
-	}
-	if sr.JobID != "" && sr.AuditHash != "" {
-		hashes[sr.JobID] = sr.AuditHash
-	}
-	for _, child := range sr.Children {
-		collectStepAuditHashesByJobID(hashes, child)
-	}
-}
-
-func applyAuditHashesByJobID(steps map[string]*StepRun, hashes map[string]string) {
-	for _, sr := range steps {
-		applyStepAuditHashByJobID(sr, hashes)
-	}
-}
-
-func applyStepAuditHashByJobID(sr *StepRun, hashes map[string]string) {
-	if sr == nil {
-		return
-	}
-	if sr.JobID != "" && sr.AuditHash == "" {
-		sr.AuditHash = hashes[sr.JobID]
-	}
-	for _, child := range sr.Children {
-		applyStepAuditHashByJobID(child, hashes)
-	}
 }
 
 func collectRunJobRefs(run *WorkflowRun) map[string]runJobRef {
