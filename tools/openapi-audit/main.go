@@ -165,12 +165,16 @@ func collectRoutes(dir string) ([]Route, error) {
 // isDeprecatedOp returns true when an operation node declares
 // `deprecated: true`. The node is the mapping value under e.g. `get:`.
 func isDeprecatedOp(n *yaml.Node) bool {
+	return hasBoolField(n, "deprecated") && !hasBoolField(n, "x-live-route")
+}
+
+func hasBoolField(n *yaml.Node, key string) bool {
 	if n == nil || n.Kind != yaml.MappingNode {
 		return false
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
-		if strings.ToLower(n.Content[i].Value) == "deprecated" &&
-			strings.ToLower(n.Content[i+1].Value) == "true" {
+		if strings.EqualFold(n.Content[i].Value, key) &&
+			strings.EqualFold(n.Content[i+1].Value, "true") {
 			return true
 		}
 	}
