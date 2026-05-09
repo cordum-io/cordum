@@ -10,6 +10,7 @@ import { SkeletonCard } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { InstrumentCard } from "@/components/ui/InstrumentCard";
+import { Select } from "@/components/ui/Select";
 import { usePolicyStudioGlobal } from "@/hooks/usePolicyStudioGlobal";
 import { usePolicyAccess } from "@/hooks/usePolicyAccess";
 import { OutputPolicyControls } from "@/components/policy/output-rules/OutputPolicyControls";
@@ -128,11 +129,14 @@ export default function OutputRulesPage({ hideHeader }: { hideHeader?: boolean }
       </InfoBanner>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <label className="text-xs text-muted-foreground">
+        <label
+          htmlFor="govern-output-rules-bundle-select"
+          className="flex items-center gap-2 text-xs text-muted-foreground"
+        >
           Bundle
-          <select
+          <Select
             id="govern-output-rules-bundle-select"
-            className="ml-2 h-8 rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground"
+            className="h-8 px-2 text-xs"
             value={selectedBundleId}
             onChange={(event) => setSelectedBundleId(event.target.value)}
           >
@@ -141,7 +145,7 @@ export default function OutputRulesPage({ hideHeader }: { hideHeader?: boolean }
                 {bundle.name || bundle.id}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         {affordances.canSave && (
           <Button

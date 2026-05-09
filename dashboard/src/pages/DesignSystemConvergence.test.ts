@@ -75,6 +75,34 @@ describe("design-system convergence regressions", () => {
   it("keeps govern quarantine page styling on shared tokens instead of page-local CSS vars", () => {
     expect(quarantinePageSource).not.toMatch(/var\(--color-/);
   });
+
+  // Raw-control convergence regressions — the v2.5 drift sweep DoD #2 requires
+  // each newly converged page to use the canonical Input / Select / Textarea /
+  // Checkbox primitives instead of raw native controls. The regex is anchored
+  // on a word boundary so JSX tags like `<input ` or `<select\n` match while
+  // the literal words "input" / "select" / "textarea" inside identifiers
+  // (component names, prop names, comments) do NOT trigger.
+  const RAW_CONTROL_RE = /<(input|select|textarea)\b/;
+
+  it("v2.5 drift sweep — ReplayPage uses primitives, no raw native controls", () => {
+    expect(replayPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep — InputRulesPage uses primitives, no raw native controls", () => {
+    expect(inputRulesPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep — OutputRulesPage uses primitives, no raw native controls", () => {
+    expect(outputRulesPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep — PolicyAnalyticsPage uses primitives, no raw native controls", () => {
+    expect(policyAnalyticsPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep — QuarantinePage uses primitives, no raw native controls", () => {
+    expect(quarantinePageSource).not.toMatch(RAW_CONTROL_RE);
+  });
 });
 
 describe("premium overhaul DoD gates", () => {

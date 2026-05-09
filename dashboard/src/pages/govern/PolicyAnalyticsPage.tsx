@@ -30,6 +30,8 @@ import { SkeletonCard } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { InstrumentCard } from "@/components/ui/InstrumentCard";
+import { Input } from "@/components/ui/Input";
+import { LabeledField } from "@/components/ui/LabeledField";
 import { ChartTooltipCompact as ChartTooltip } from "@/components/ui/ChartTooltip";
 import { usePolicyAnalytics } from "@/hooks/usePolicies";
 import type {
@@ -187,11 +189,10 @@ function RuleTable({ rules }: { rules: RuleAnalytics[] }) {
   return (
     <div className="space-y-3">
       <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-        <input
+        <Input
           type="text"
+          icon={<Search className="h-3.5 w-3.5" />}
           placeholder="Search rule ID..."
-          className="w-full rounded-xl border border-border bg-background pl-8 pr-3 py-1.5 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           aria-label="Search rules"
@@ -424,30 +425,22 @@ export default function PolicyAnalyticsPage({
         {/* Controls */}
         <InstrumentCard accent="info" className="p-5">
           <div className="flex flex-wrap items-end gap-4">
-            <div className="space-y-1">
-              <label htmlFor="analytics-from" className="text-[11px] text-muted-foreground">
-                From
-              </label>
-              <input
+            <LabeledField label="From">
+              <Input
                 id="analytics-from"
                 type="datetime-local"
-                className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
               />
-            </div>
-            <div className="space-y-1">
-              <label htmlFor="analytics-to" className="text-[11px] text-muted-foreground">
-                To
-              </label>
-              <input
+            </LabeledField>
+            <LabeledField label="To">
+              <Input
                 id="analytics-to"
                 type="datetime-local"
-                className="rounded-xl border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
               />
-            </div>
+            </LabeledField>
             <Button
               variant="default"
               size="sm"

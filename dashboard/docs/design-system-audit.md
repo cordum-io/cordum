@@ -3,7 +3,7 @@ _Updated: 2026-04-20 — broader convergence sweep across MCP, P1, the priority 
 
 ## Convergence progress (task-16ceda44)
 - **P0 pilot — `pages/SettingsMcpPage.tsx`** — DONE. Composes only shared primitives (`PageHeader`, `InstrumentCard`, `Tabs`, `CollapsibleSection`, `EmptyState`, `ErrorBanner`, `SkeletonCard`, `Button`, `StatusBadge`). Page-local composition extracted to `components/settings/McpSummaryTiles.tsx` + `McpServerPanel.tsx`. Tests green (18 cases across pilot + primitives).
-- **P1 sweep — `pages/ApprovalsPage.tsx`, `pages/AuditLogPage.tsx`, `pages/SettingsUsersPage.tsx`, `pages/DLQPage.tsx`** — IN PROGRESS / largely migrated. These pages now share `StatTile`, `Tabs`, `Input`, `Select`, `Textarea`, `LabeledField`, `Button`, and `StatusBadge` instead of page-local KPI cards, filter bars, and dialog field markup. Remaining drift is now mostly limited to checkbox and table-shell cleanup.
+- **P1 sweep — `pages/ApprovalsPage.tsx`, `pages/AuditLogPage.tsx`, `pages/SettingsUsersPage.tsx`** — IN PROGRESS / largely migrated. These pages now share `StatTile`, `Tabs`, `Input`, `Select`, `Textarea`, `LabeledField`, `Button`, and `StatusBadge` instead of page-local KPI cards, filter bars, and dialog field markup. Remaining drift is now mostly limited to checkbox and table-shell cleanup. (`pages/DLQPage.tsx` was deleted in commit `45dacbbf` after Phase 3 wk4 redirected `/dlq` → `/jobs?status=dlq`; see "DLQ fold status" below.)
 - **AuditLogPage hero rewrite — DONE (task-55f813b3, Phase 3 wk3, 2026-05-09).** Promoted out of the P1 sweep into the v2.5 hero set. Now composes `primitives/DataTable` with virtualization at >100 rows and 3px decision-identity left edge, all filters serialised to URL via `nuqs` + `@/lib/url-state` parsers, sticky `ChainIntegrityWidget compact` Merkle bar at top, and a row-click `Drawer` drilldown that derives per-event chain-signature verdict (Verified | Tamper detected | Retention-trimmed | Not chain-signed) from the cached `useAuditVerify` result — opening N drawers fires at most one /audit/verify request via React Query's shared cache.
 - **Priority P2 cluster — `pages/JobsPage.tsx`, `pages/PacksPage.tsx`, `pages/SettingsKeysPage.tsx`, `pages/SettingsConfigPage.tsx`, `pages/settings/SettingsAuditExportPage.tsx`, `pages/AgentsPage.tsx`, `pages/TopicsPage.tsx`** — DONE for primitive convergence. This sweep removed the raw search fields, tab strips, dialog field markup, warning blocks, and token-only KPI tiles on the targeted pages. The cluster now composes shared `Tabs`, `Input`, `Select`, `Textarea`, `LabeledField`, `Checkbox`, `StatTile`, `DialogOverlay`, `InfoBanner`, `Button`, and `StatusBadge`, and the seven route files no longer contain raw `<input>/<select>/<textarea>` markup or page-local `var(--...)` color treatment.
 - **Detail/admin P2 cluster — `pages/JobDetailPage.tsx`, `pages/settings/SettingsSSOPage.tsx`, `pages/settings/SettingsSCIMPage.tsx`, `pages/settings/LicensePage.tsx`, `pages/SchemaDetailPage.tsx`, `pages/SchemasPage.tsx`** — DONE after the reopen fix. `SchemaDetailPage` now keeps its create/editor surface on shared `Input`, `Select`, `Checkbox`, `LabeledField`, `Button`, and `Tabs` primitives; `SchemasPage` search is back on the shared `Input` search-field treatment; and `JobDetailPage` status/timeline chrome no longer carries page-local `var(--color-*)` classes, instead reusing shared status-tone tokens exported from the `StatusBadge` primitive. Remaining route drift is now concentrated in deeper govern/detail surfaces (`ApprovalDetail`, `BundleDetail`, `TenantDetail`, `RunDetail`, `SettingsNotifications`, etc.) rather than the main operator/settings/admin cluster.
@@ -37,10 +37,10 @@ Decided 2026-04-24 · task-c154ff08 · epic-2e0ed1ee.
 - Metrics/navigation: `MetricValue`, `StatTile`, `Tabs`, `Pagination`, `DataTable`
 - Field wrappers: `LabeledField`
 ## Audit summary
-- Page components reviewed: **46**
+- Page components reviewed: **46** (45 after DLQPage deletion).
 - Pages using `PageHeader`: **37**
 - Pages already using `InstrumentCard` or the `.instrument-card` surface: **34**
-- Pages still containing raw `<input>/<select>/<textarea>` markup: **27**
+- Pages still containing raw `<input>/<select>/<textarea>` markup: **22** (down from 27 after reopen #1's raw-control sweep removed them from the 5 govern pages above; remaining count is across detail pages outside the v2.5 hero/drift scope).
 - Pages still carrying raw CSS-var styling / fallback color strings: **6** (down from 27 after the v2.5 drift sweep — only AgentDetailPage, HomePage, RunDetailPage, LoginPage, plus two unrelated low-impact carriers remain; see "v2.5 drift sweep close-out" section below).
 - Pages already depending on `MetricValue`: **5**
 - Pages already depending on `Tabs` or custom tablist markup: **6**
@@ -57,9 +57,19 @@ Initial component shape was carved out in task-dd5e1d8f as "safetyDecision-only 
 
 Test coverage: `WorkflowNodeGovernanceOverlay.test.tsx` covers component render contract (3 policyGate variants, auditHash render+copy, design-time vs runtime saturation). `transform.test.ts` covers wire-format → dashboard-shape mapping (3 audit_hash cases + 4 policy_gate cases) — locks the contract that closed the loop in task-6fccc637.
 
-## v2.5 drift sweep close-out (task-100cc89c, 2026-05-08)
+## v2.5 drift sweep close-out (task-100cc89c, 2026-05-08 + reopen #1 2026-05-09)
 
 Seven pages newly converged in this sweep, removing **~28 page-local `var(--color-*)` literals**. Commits on PR #249: `b5013067`, `bd9cf670`, `10ff0af1` (mid-sweep correction — see lesson below), `27b658e3`, `b5488d6f`. Each newly converged page has a regression case in `dashboard/src/pages/DesignSystemConvergence.test.ts` asserting `not.toMatch(/var\(--color-/)`.
+
+**Reopen #1 (2026-05-09): raw-control replacement sweep.** QA flagged that pages documented as "converged" still rendered raw `<input>/<select>/<textarea>` controls (DoD #1) and that the new convergence tests only guarded `var(--color-*)` and not the raw-control regex (DoD #2). Five pages had their 22 raw native controls swapped for the canonical `Input` / `Select` / `Textarea` / `Checkbox` / `LabeledField` primitives:
+
+- `pages/govern/ReplayPage.tsx`: 11 raw controls → primitives (search input, direction `<select>`, datetime-local From/To/Max-jobs filters wrapped in `LabeledField`, Tenant + Topic-pattern inputs, Original-decision `<select>`, "Use current published policy" checkbox, candidate-policy YAML `<textarea>`).
+- `pages/govern/InputRulesPage.tsx`: 6 raw controls → primitives (decision filter `<select>`, bundle filter `<select>`, search input, context-evaluator Tenant + Topic + Capability inputs).
+- `pages/govern/OutputRulesPage.tsx`: 1 raw `<select>` (Bundle) → `Select` primitive.
+- `pages/govern/PolicyAnalyticsPage.tsx`: 3 raw inputs → primitives (search input, From + To datetime-local inputs wrapped in `LabeledField`).
+- `pages/govern/QuarantinePage.tsx`: 1 raw search input → `Input` primitive with `icon` prop.
+
+`DesignSystemConvergence.test.ts` extended with a `RAW_CONTROL_RE = /<(input|select|textarea)\b/` regex applied per page (5 new test cases). Word-boundary anchored so identifiers/comments/prop names containing the literal word "input" / "select" / "textarea" do not trigger the assertion — only JSX tags do.
 
 **Converged in v2.5 drift sweep:**
 - `pages/ApprovalsPage.tsx` — gated card borders + denied-icon → `statusToneTextClasses.governance` / `statusToneBorderClasses.warning|.governance` helpers from `StatusBadge.tsx`.
@@ -80,7 +90,7 @@ Seven pages newly converged in this sweep, removing **~28 page-local `var(--colo
 
 **Lesson saved as memory mem-541413bc**: the codebase's Tailwind `@theme inline` block in `src/styles/index.css` registers `--color-warning` / `--color-governance` / `--color-info` / `--color-success` / `--color-cordum` (no `status-` prefix). The canonical Tailwind utilities are `text-warning`, `bg-info/15`, `border-governance/20`, `fill-cordum`, etc. `text-status-warning` only exists as a `.instrument-card.status-warning::before` state class — using it on other elements is a no-op visually (Tailwind silently ignores). Two batches of this sweep initially used `text-status-*` and produced visually-broken output; commit `10ff0af1` corrected by switching to `statusToneTextClasses` / `statusToneBorderClasses` helpers from `StatusBadge.tsx` plus the `<InfoBanner>` primitive.
 
-**DLQ fold status (task-0bcb9411, 2026-05-09)**: Phase 3 wk4 follow-up landed the prerequisite for deleting the standalone `DLQPage.tsx`: `/dlq` now redirects to `/jobs?status=dlq`, the AppShell Dead Letters item targets the same JobsPage filter, and JobsPage swaps to the DLQ data source with inline Replay/Drop actions when that filter is active. The `DLQPage.tsx` file remains in the tree until task-100cc89c's drift sweep removes it.
+**DLQ fold status (task-0bcb9411 + task-100cc89c step 5, 2026-05-09)**: Phase 3 wk4 follow-up landed the prerequisite for deleting the standalone `DLQPage.tsx`: `/dlq` now redirects to `/jobs?status=dlq`, the AppShell Dead Letters item targets the same JobsPage filter, and JobsPage swaps to the DLQ data source with inline Replay/Drop actions when that filter is active. `DLQPage.tsx` and the `components/dlq/` subtree (`DLQActions.tsx`, `RetryAttemptsPanel.tsx`) plus the page test file were deleted in commit `45dacbbf` (-940 LOC); the `/dlq` redirect route in `App.tsx` is the only thing that remains. CommandPalette's Dead Letters entry repoints to `/jobs?status=dlq`.
 ## Drift signals used in this audit
 - **Raw inputs** — page renders native form fields instead of central control primitives.
 - **Raw CSS vars** — page uses fallback `var(--...)` styling or hard-coded surface wrappers instead of design-system primitives.
@@ -92,8 +102,7 @@ Seven pages newly converged in this sweep, removing **~28 page-local `var(--colo
 
 Each entry below carries a concrete checklist so the next worker can continue the sweep without re-auditing.
 
-- **`pages/DLQPage.tsx`** — KPI row + search + error state + bulk actions are now on shared primitives, and row selection now uses the shared `Checkbox` primitive. Remaining work:
-  - Replace the bespoke `instrument-card status-danger` table wrapper with a composition of `InstrumentCard` + an internal `DataTable` once the floating-action-bar rail fits the new primitive.
+- ~~**`pages/DLQPage.tsx`**~~ — DELETED in task-100cc89c step 5 (commit `45dacbbf`) after Phase 3 wk4's DLQ fold (task-0bcb9411) made `/dlq` redirect to `/jobs?status=dlq`. JobsPage owns the DLQ surface end-to-end now (filter, fixtures, bulk actions, Replay/Drop). See "DLQ fold status" above.
 - **`pages/ApprovalsPage.tsx`** — KPI row, search, tabs, and denial note now use `StatTile`, `Input`, `Tabs`, and `Textarea`. v2.5 drift sweep (commit `b5013067` + `10ff0af1`) converged the gated card borders + denied-icon onto `statusToneTextClasses` / `statusToneBorderClasses` helpers. Remaining drift: convert the legacy drawer shell to `Drawer`/`CollapsibleSection` primitives and replace the raw lifecycle-note warning block with a reusable info/warning banner pattern (deferred to a follow-up — drawer migration is a11y-sensitive).
 - **`pages/AuditLogPage.tsx`** — DONE in the Phase 3 wk3 hero rewrite (task-55f813b3, 2026-05-09). Hand-rolled `<table>` + `motion.tbody` infinite-scroll replaced with `primitives/DataTable` (virtualization auto-engages above the 100-row threshold; `decisionAccessor` paints the 3px left edge per safety-decision tier). Filters migrated to `nuqs` URL state via `parseAsSearchTerm` + `parseAsString.withDefault('')` for action/agent/from/to (URL roundtrip confirmed by Block A tests). Sticky `ChainIntegrityWidget compact` Merkle bar mounted at top. Row-click opens a `Drawer` with `<AuditEventDrilldown>` rendering event metadata (DrillRow primitive with copy buttons) + `<ChainSignatureSection>` deriving per-event signature verdict from the cached `useAuditVerify` chain-wide result.
 - **`pages/SettingsUsersPage.tsx`** — summary row, tab switcher, search, dialog forms, and permission toggles now use `StatTile`, `Tabs`, `Input`, `Select`, `LabeledField`, and `Checkbox`. Remaining drift: decide whether the role cards should converge on `CollapsibleSection` or intentionally stay card-based.
@@ -113,7 +122,7 @@ Each entry below carries a concrete checklist so the next worker can continue th
 | Approvals | `pages/approvals/ApprovalDetailPage.tsx` | PageHeader, ErrorBanner, Raw inputs, Motion | P3/P4 |
 | Orchestrate | `pages/ApprovalsPage.tsx` | PageHeader, StatTile, Tabs, Input, Textarea, EmptyState, Motion | P1 (mostly migrated) |
 | Observe | `pages/AuditLogPage.tsx` | PageHeader, InstrumentCard, LabeledField, Input, Select, StatusBadge, EmptyState, ErrorBanner, DataTable, Drawer, ChainIntegrityWidget(compact), nuqs URL state | DONE (Phase 3 wk3, task-55f813b3) |
-| Observe | `pages/DLQPage.tsx` | PageHeader, StatTile, Input, Button, EmptyState, ErrorBanner, Motion | P1 (mostly migrated) |
+| Observe | ~~`pages/DLQPage.tsx`~~ | DELETED — folded into JobsPage `?status=dlq` (task-0bcb9411 + task-100cc89c step 5, commit `45dacbbf`) | DONE |
 | Govern | `pages/govern/BundleDetailPage.tsx` | PageHeader, InstrumentCard, EmptyState, Raw CSS vars | P3/P4 |
 | Govern | `pages/govern/BundlesPage.tsx` | PageHeader, InstrumentCard, MetricValue, EmptyState | P3/P4 |
 | Govern | `pages/govern/InputRulesPage.tsx` | PageHeader, InstrumentCard, EmptyState, Raw inputs, Raw CSS vars | P3/P4 |
