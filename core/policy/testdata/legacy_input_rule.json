@@ -1,0 +1,45 @@
+{
+  "ID": "legacy-input-secret-block",
+  "tier": "global",
+  "selector": {
+    "workflow_id": "wf-claims"
+  },
+  "Enabled": true,
+  "Severity": "critical",
+  "Desc": "Block secret leaks in inputs",
+  "Match": {
+    "Tenants": [
+      "acme"
+    ],
+    "Topics": [
+      "job.acme.*"
+    ],
+    "Capabilities": [
+      "llm.request"
+    ],
+    "RiskTags": [
+      "untrusted_input"
+    ],
+    "Scanners": [
+      "secret_leak"
+    ],
+    "ContentPatterns": [
+      "(?i)api[_-]?key"
+    ],
+    "Keywords": [
+      "secret",
+      "token"
+    ],
+    "ContentTypes": [
+      "application/json"
+    ],
+    "Detectors": [
+      "secret_leak"
+    ],
+    "InputSizeGt": 1024,
+    "MaxInputBytes": 1048576,
+    "Scope": null
+  },
+  "Decision": "deny",
+  "Reason": "secret_leak_detected"
+}
