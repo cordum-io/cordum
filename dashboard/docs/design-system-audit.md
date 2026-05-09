@@ -37,6 +37,10 @@ Decided 2026-04-24 · task-c154ff08 · epic-2e0ed1ee.
 - Metrics/navigation: `MetricValue`, `StatTile`, `Tabs`, `Pagination`, `DataTable`
 - Field wrappers: `LabeledField`
 
+### Raw-control convergence — closed (task-82593815, 2026-05-09)
+
+Phase 4 drift sweep follow-up #2 (the original 23-page batch from QA reopen #2) is closed. Re-grep at dashboard HEAD on 2026-05-09 returned only the documented carve-outs (`LoginPage`, `RunDetailPage`); the 23 flagged pages were migrated via parallel-worker activity since QA's snapshot. The convergence test (`src/pages/DesignSystemConvergence.test.ts`) now uses an `import.meta.glob` comprehensive sweep that automatically guards every page under `src/pages/**/*.tsx` against raw `<input>`/`<select>`/`<textarea>` regression — catching future drift without per-page list maintenance. A paired carve-out detector test asserts the two exempted pages still contain raw controls so silent migration of a carve-out forces a coordinated update.
+
 ### A11y test status (Phase 5a — task-bf55ddbd, 2026-05-09)
 
 `renderWithProviders` now accepts an opt-in `runAxe: true` option that

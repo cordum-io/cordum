@@ -153,6 +153,65 @@ describe("design-system convergence regressions", () => {
   it("v2.5 drift sweep reopen #2 — EdgeSessionDetailPage uses primitives, no raw native controls", () => {
     expect(edgeSessionDetailPageSource).not.toMatch(RAW_CONTROL_RE);
   });
+
+  // Comprehensive sweep gate — task-82593815 (drift sweep follow-up #2) closure.
+  // Replaces the open-ended per-page enumeration with a forward-compatible
+  // assertion: every page under src/pages/**/*.tsx must use the canonical
+  // Input / Select / Textarea primitives instead of raw native controls.
+  // Documented carve-outs stay raw and are listed below with a comment.
+  //
+  // When adding a new page that legitimately needs a native control, add the
+  // file basename to the carve-out set AND document the rationale in
+  // dashboard/docs/design-system-audit.md.
+  const allPageSources = import.meta.glob<string>(
+    ["./**/*.tsx", "!./**/*.test.tsx"],
+    {
+      query: "?raw",
+      import: "default",
+      eager: true,
+    },
+  );
+
+  // Carve-outs (documented in mem-df8a90aa + dashboard/docs/design-system-audit.md):
+  // - LoginPage: native HTML form required for browser autofill / password
+  //   manager interop on the auth surface.
+  // - RunDetailPage: workflow-run console exempted from primitive sweep
+  //   (see "DoD-3 (12-col Bento Grid) — exemptions" register).
+  const RAW_CONTROL_CARVE_OUTS = new Set([
+    "./LoginPage.tsx",
+    "./RunDetailPage.tsx",
+  ]);
+
+  it("v2.5 drift sweep — comprehensive sweep: all pages except documented carve-outs use primitives", () => {
+    const offenders: Array<{ path: string; match: string }> = [];
+    for (const [path, source] of Object.entries(allPageSources)) {
+      // Skip test files — vitest globs catch *.test.tsx too.
+      if (/\.test\.tsx$/.test(path)) continue;
+      if (RAW_CONTROL_CARVE_OUTS.has(path)) continue;
+      const match = RAW_CONTROL_RE.exec(source);
+      if (match) offenders.push({ path, match: match[0] });
+    }
+    expect(
+      offenders,
+      `Pages with raw native controls (not in carve-out set): ${offenders
+        .map((o) => `${o.path} (${o.match})`)
+        .join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("v2.5 drift sweep — carve-out pages still hold raw controls (regression detector for misclassified migration)", () => {
+    // If LoginPage or RunDetailPage are accidentally migrated and the carve-out
+    // is not removed from the set above, this test fails — forcing a coordinated
+    // doc + test update rather than silent drift.
+    for (const carveOut of RAW_CONTROL_CARVE_OUTS) {
+      const source = allPageSources[carveOut];
+      expect(source, `Carve-out ${carveOut} should exist`).toBeTruthy();
+      expect(
+        source,
+        `Carve-out ${carveOut} should still contain a raw control (else remove from carve-out set + update audit doc)`,
+      ).toMatch(RAW_CONTROL_RE);
+    }
+  });
 });
 
 describe("premium overhaul DoD gates", () => {
