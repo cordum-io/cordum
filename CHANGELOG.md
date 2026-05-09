@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Safety Kernel input normalization hygiene (2026-05-09, task-63da1070)
+
+- Input policy scanners now evaluate raw request content first and (when content changed) a normalized candidate produced by Unicode NFKC plus stripping of zero-width controls (U+200B/U+200C/U+200D/U+2060/U+FEFF) and Unicode bidi controls (U+200E/U+200F/U+202A..U+202E/U+2066..U+2069). Audit/evidence content (`req.content`) is never mutated; the normalized candidate exists only as a transient in-memory scanner input. New helper `normalizeInputCandidates` lives in `core/controlplane/safetykernel/input_normalization.go`.
+- `evaluateInputRule` reuses regex/keyword/named-scanner findings from raw and dedupes normalized findings by (Type, Scanner, Detail, MatchedPattern); when at least one normalized-only match survives dedup, a single metadata-only `input_normalized` finding is appended naming which modes fired (e.g. `nfkc+zero_width`). The metadata finding never carries raw or normalized payload text.
+- Structured scope evaluation continues to run on raw bytes only — NFKC and zero-width/bidi stripping would alter JSON structure and break instruction-vs-cart scope semantics.
+- New mutation regression suite: `TestInputNormalization_PublicMutationSweep` proves 15 normalized-only catches across 18 fullwidth/zero-width/bidi mutations of injection prompts with 0 benign multilingual false positives; `TestInputNormalization_HoldoutMutationSweep_Aggregate` reads the restored private holdout corpus (env `CORDUM_PRIVATE_HOLDOUT_ROOT`, default `D:/Cordum/private-corpora/agentshield-cordum-holdout/current/cordum-holdout-corpus`), reports aggregate-only counts per category (no prompt content surfaced), and confirms 0 benign false positives across 252 other-category mutations.
+- Scope intentionally narrow: NFKC + zero-width/bidi stripping only. No base64/ROT13/hex decoding; no model-in-loop classifier.
+
 #### Dashboard 2 — Rules surface table + filters (2026-05-09, task-f339eead)
 
 - `/policies` now renders the Rules surface table shell: `PoliciesFilterBar` with nuqs URL state (`type`, `scope`, `status`, `search`), `primitives/DataTable` virtualization at >100 rows, type icons from `src/lib/policy-studio/rule-type.ts`, status badges, decision-tone left edge, and a last-7d firing sparkline when the rules-list response includes `firing_last_7d`.
