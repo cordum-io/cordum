@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### AgentShield private holdout + mutation regression suite (2026-05-09, task-7fbc245d)
+
+- AgentShield benchmark hardening now has a verified-mode Cordum adapter path that strips benchmark-derived metadata and uses `job.default`, plus a public-safe private-holdout scaffold, deterministic mutation suite, regression JSON runner, baseline documentation, and CI/manual commands. Private holdout cases remain gitignored/internal-only; results report misses and false positives separately per epic-f3da4017 rails.
+
 #### AgentShield benchmark scope-boundary doc (2026-05-09, task-f4519eab)
 
 - New `cordum/docs/agentshield-scope-boundary.md` establishes honest framing for AgentShield-related public messaging from Cordum: public-corpus = smoke test (not a generalization metric), while the verified current Cordum adapter/config result is narrower — `/api/v1/policy/simulate` with benchmark-signaling metadata and `job.agentshield.benchmark` default-topic deny before input rules inspect prompt content. Private holdout (task-7fbc245d) is the real coverage gate; Cordum's differentiator is action-layer governance with backend-verified provenance, not content-policy classification. Doc includes explicit do-claim / don't-claim list per epic-f3da4017 rails + an upstream-content-classifier boundary section recommending that deep jailbreak / content classification sit upstream of Cordum.
