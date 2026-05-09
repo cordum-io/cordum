@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { X, Copy, Check, ChevronDown, ChevronRight } from "lucide-react";
 import { Badge } from "../ui/Badge";
 import { cn } from "../../lib/utils";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import type { AuditEntry, AuditCategory, AuditSeverity } from "../../api/types";
 
 // ---------------------------------------------------------------------------
@@ -46,21 +47,12 @@ const severityLabels: Record<AuditSeverity, string> = {
 // ---------------------------------------------------------------------------
 
 function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard({ resetMs: 1500 });
   return (
     <button
       type="button"
       className="ml-1 inline-flex items-center rounded p-0.5 text-muted-foreground hover:text-ink transition-colors"
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        } catch {
-          // Insecure context or permission denied — leave the copied
-          // indicator off so the UI doesn't lie.
-        }
-      }}
+      onClick={() => void copy(text)}
       aria-label="Copy to clipboard"
     >
       {copied ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}

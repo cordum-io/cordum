@@ -7,13 +7,14 @@
  * server: this component imports the AgentActionEvent type which has no raw
  * body fields, so a clean implementation cannot accidentally expose them.
  */
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Copy, Check } from "lucide-react";
 import type { AgentActionEvent, EdgeArtifactPointer } from "@/api/types";
 import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
 import { CodeBlock } from "@/components/ui/CodeBlock";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { cn } from "@/lib/utils";
 
 interface EdgeEventInspectorProps {
@@ -236,20 +237,12 @@ function Fact({
 }
 
 function CopyButton({ value, label }: { value: string; label: string }) {
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopyToClipboard({ resetMs: 1500 });
   return (
     <Button
       variant="outline"
       size="sm"
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(value);
-          setCopied(true);
-          window.setTimeout(() => setCopied(false), 1500);
-        } catch {
-          /* ignore — clipboard unavailable */
-        }
-      }}
+      onClick={() => void copy(value)}
       aria-label={label}
     >
       {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
