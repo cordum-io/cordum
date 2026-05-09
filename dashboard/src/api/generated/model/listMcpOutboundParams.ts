@@ -7,12 +7,12 @@
  */
 
 export type ListMcpOutboundParams = {
-since?: string;
-until?: string;
-/**
- * @minimum 1
- * @maximum 500
- */
-limit?: number;
-cursor?: string;
+  since?: string;
+  until?: string;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
+  cursor?: string;
 };

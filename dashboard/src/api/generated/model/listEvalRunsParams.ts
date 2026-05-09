@@ -7,10 +7,10 @@
  */
 
 export type ListEvalRunsParams = {
-cursor?: string;
-limit?: number;
-has_regression?: boolean;
-since?: string;
-until?: string;
-min_score?: number;
+  cursor?: string;
+  limit?: number;
+  has_regression?: boolean;
+  since?: string;
+  until?: string;
+  min_score?: number;
 };

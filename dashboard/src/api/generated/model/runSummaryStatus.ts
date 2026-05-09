@@ -9,17 +9,17 @@
 /**
  * Workflow run lifecycle status (lowercase)
  */
-export type RunSummaryStatus = typeof RunSummaryStatus[keyof typeof RunSummaryStatus];
-
+export type RunSummaryStatus =
+  (typeof RunSummaryStatus)[keyof typeof RunSummaryStatus];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const RunSummaryStatus = {
-  pending: 'pending',
-  running: 'running',
-  waiting: 'waiting',
-  succeeded: 'succeeded',
-  failed: 'failed',
-  denied: 'denied',
-  cancelled: 'cancelled',
-  timed_out: 'timed_out',
+  pending: "pending",
+  running: "running",
+  waiting: "waiting",
+  succeeded: "succeeded",
+  failed: "failed",
+  denied: "denied",
+  cancelled: "cancelled",
+  timed_out: "timed_out",
 } as const;

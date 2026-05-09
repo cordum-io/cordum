@@ -7,5 +7,5 @@
  */
 
 export type ListDLQParams = {
-limit?: number;
+  limit?: number;
 };

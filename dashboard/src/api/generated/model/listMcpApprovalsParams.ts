@@ -7,11 +7,11 @@
  */
 
 export type ListMcpApprovalsParams = {
-status?: string;
-/**
- * @minimum 1
- * @maximum 200
- */
-limit?: number;
-cursor?: string;
+  status?: string;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  limit?: number;
+  cursor?: string;
 };

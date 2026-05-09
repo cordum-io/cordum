@@ -7,8 +7,8 @@
  */
 
 export type GetGovernanceHealthParams = {
-/**
- * Tenant id (must match caller scope)
- */
-tenant?: string;
+  /**
+   * Tenant id (must match caller scope)
+   */
+  tenant?: string;
 };

@@ -9,13 +9,13 @@
 /**
  * regression = expected was deny/require_approval/throttle/allow_with_constraints AND actual is allow
  */
-export type EvalEntryResultStatus = typeof EvalEntryResultStatus[keyof typeof EvalEntryResultStatus];
-
+export type EvalEntryResultStatus =
+  (typeof EvalEntryResultStatus)[keyof typeof EvalEntryResultStatus];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EvalEntryResultStatus = {
-  pass: 'pass',
-  fail: 'fail',
-  regression: 'regression',
-  error: 'error',
+  pass: "pass",
+  fail: "fail",
+  regression: "regression",
+  error: "error",
 } as const;

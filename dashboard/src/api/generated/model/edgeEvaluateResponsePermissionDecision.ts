@@ -9,11 +9,11 @@
 /**
  * Hook-friendly permission decision.
  */
-export type EdgeEvaluateResponsePermissionDecision = typeof EdgeEvaluateResponsePermissionDecision[keyof typeof EdgeEvaluateResponsePermissionDecision];
-
+export type EdgeEvaluateResponsePermissionDecision =
+  (typeof EdgeEvaluateResponsePermissionDecision)[keyof typeof EdgeEvaluateResponsePermissionDecision];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeEvaluateResponsePermissionDecision = {
-  allow: 'allow',
-  deny: 'deny',
+  allow: "allow",
+  deny: "deny",
 } as const;

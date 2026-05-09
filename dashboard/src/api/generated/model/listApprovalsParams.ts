@@ -7,6 +7,6 @@
  */
 
 export type ListApprovalsParams = {
-limit?: number;
-cursor?: string;
+  limit?: number;
+  cursor?: string;
 };

@@ -7,8 +7,8 @@
  */
 
 export type ListAllWorkflowRunsParams = {
-limit?: number;
-cursor?: string;
-status?: string;
-workflow_id?: string;
+  limit?: number;
+  cursor?: string;
+  status?: string;
+  workflow_id?: string;
 };

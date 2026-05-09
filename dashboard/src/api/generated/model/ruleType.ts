@@ -9,13 +9,12 @@
 /**
  * Discriminator for a Rule's match/decide payload schema.
  */
-export type RuleType = typeof RuleType[keyof typeof RuleType];
-
+export type RuleType = (typeof RuleType)[keyof typeof RuleType];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const RuleType = {
-  input: 'input',
-  output: 'output',
-  velocity: 'velocity',
-  edge: 'edge',
+  input: "input",
+  output: "output",
+  velocity: "velocity",
+  edge: "edge",
 } as const;

@@ -5,8 +5,8 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.3
  */
-import type { PolicyRuleAction } from './policyRuleAction';
-import type { PolicyRuleConditions } from './policyRuleConditions';
+import type { PolicyRuleAction } from "./policyRuleAction";
+import type { PolicyRuleConditions } from "./policyRuleConditions";
 
 export interface PolicyRule {
   id?: string;
@@ -16,6 +16,12 @@ export interface PolicyRule {
   action?: PolicyRuleAction;
   conditions?: PolicyRuleConditions;
   priority?: number;
+  /**
+   * Last seven UTC daily firing counts, oldest-to-newest, tenant-scoped and zero-filled when no matching events exist.
+   * @minItems 7
+   * @maxItems 7
+   */
+  firing_last_7d?: number[];
   /** Bundle or file that defines this rule */
   source?: string;
 }

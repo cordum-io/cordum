@@ -12,14 +12,13 @@ deployment; `tenant`/`workflow` scope to job-side bindings;
 `edge_fleet`/`edge_user` scope to edge-side bindings.
 
  */
-export type RuleScopeKind = typeof RuleScopeKind[keyof typeof RuleScopeKind];
-
+export type RuleScopeKind = (typeof RuleScopeKind)[keyof typeof RuleScopeKind];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const RuleScopeKind = {
-  global: 'global',
-  tenant: 'tenant',
-  workflow: 'workflow',
-  edge_fleet: 'edge_fleet',
-  edge_user: 'edge_user',
+  global: "global",
+  tenant: "tenant",
+  workflow: "workflow",
+  edge_fleet: "edge_fleet",
+  edge_user: "edge_user",
 } as const;
