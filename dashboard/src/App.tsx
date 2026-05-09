@@ -114,7 +114,7 @@ function PolicyTabRedirect({ tab, mode }: { tab: string; mode?: string }) {
  * Maps the legacy `?tab=` + `?mode=` query params onto the new three-surface IA.
  * Preserves any unrelated query params for bookmark compatibility.
  */
-function GovernOverviewRedirect() {
+export function GovernOverviewRedirect() {
   const [searchParams] = useSearchParams();
   const tab = searchParams.get("tab") ?? "";
   const mode = searchParams.get("mode") ?? "";
