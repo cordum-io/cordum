@@ -4,14 +4,11 @@ export const baseHandlers = [
   // Dashboard 2 — Rules surface list (unified Backend-1 Rule shape).
   // Default empty so PoliciesPage renders the empty-state CTA without
   // per-test setup; tests override with populated/paginated responses.
+  // The drawer (Dashboard 3A) sources existing rules from this list cache
+  // / endpoint — no `/policy/rules/:id` detail route exists in the current
+  // dashboard/core contract (cordum-api.yaml:2609 + gateway.go:1415).
   http.get("*/api/v1/policy/rules", () =>
     HttpResponse.json({ items: [], total: 0 }),
-  ),
-  // Dashboard 3A — Rules surface single-rule detail. Default 404 so the
-  // drawer's not-found state renders without per-test setup; tests
-  // override with populated rule responses or 5xx via server.use(...).
-  http.get("*/api/v1/policy/rules/:id", () =>
-    HttpResponse.json({ error: "rule not found" }, { status: 404 }),
   ),
   // Dashboard 5 — Bundle Studio list (unified Backend-1.5 Bundle shape).
   // Default empty so BundlesPage renders the empty-state CTA without

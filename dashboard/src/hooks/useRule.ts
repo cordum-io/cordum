@@ -1,5 +1,10 @@
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
-import { ApiError, get } from "../api/client";
+import {
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
+import { get } from "../api/client";
 import { queryKeys } from "../lib/queryKeys";
 import { RuleStatus } from "@/api/generated/model/ruleStatus";
 import { RuleType } from "@/api/generated/model/ruleType";
@@ -7,6 +12,7 @@ import { RuleScopeKind } from "@/api/generated/model/ruleScopeKind";
 import {
   normalizeRule,
   type NormalizedRule,
+  type RulesListResult,
   UNKNOWN_RULE_TYPE,
   type RuleTypeOrUnknown,
 } from "./useRulesList";
@@ -27,6 +33,12 @@ const CREATE_NEW_TYPES = new Set<RuleType>([
   RuleType.velocity,
   RuleType.edge,
 ]);
+
+interface BackendRulesListResponse {
+  items?: unknown;
+  rules?: unknown;
+  total?: number;
+}
 
 /**
  * Returns a fresh draft NormalizedRule for the create-new path. The
@@ -73,8 +85,48 @@ export function ruleHasKnownType(
   return rule.type !== UNKNOWN_RULE_TYPE;
 }
 
-function isNotFoundError(err: unknown): boolean {
-  return err instanceof ApiError && err.status === 404;
+/**
+ * Searches every cached `useRulesList` query for a rule with the given id.
+ * The drawer is normally opened from a list-row click, so the rule is
+ * already in cache and no extra network request is needed. Exported for
+ * tests that want to seed the cache and assert cache-first behavior.
+ */
+export function findRuleInListCaches(
+  queryClient: QueryClient,
+  id: string,
+): NormalizedRule | null {
+  const cached = queryClient.getQueriesData<RulesListResult>({
+    queryKey: queryKeys.policyStudioRules.all(),
+  });
+  for (const [, data] of cached) {
+    if (!data) continue;
+    const found = data.rules.find((rule) => rule.id === id);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Fallback for direct URL navigation to `/policies?rule=<id>&open=editor`
+ * when the list cache hasn't been populated yet. The current dashboard/core
+ * contract exposes only the list endpoint (cordum-api.yaml:2609 +
+ * gateway.go:1415 register only GET `/api/v1/policy/rules`); there is no
+ * single-rule detail route. So we fetch the list, normalize each row, and
+ * pick out the requested id. Returns null when the rule is not in the list
+ * (deleted / renamed / unknown id).
+ */
+async function fetchRuleFromListEndpoint(id: string): Promise<NormalizedRule | null> {
+  const raw = await get<BackendRulesListResponse>("/policy/rules");
+  const items = Array.isArray(raw.rules)
+    ? raw.rules
+    : Array.isArray(raw.items)
+      ? raw.items
+      : [];
+  for (const row of items) {
+    const rule = normalizeRule(row);
+    if (rule && rule.id === id) return rule;
+  }
+  return null;
 }
 
 interface UseRuleQueryArgs {
@@ -85,15 +137,18 @@ interface UseRuleQueryArgs {
 }
 
 /**
- * Loads a single Rule by id from `/policy/rules/{id}`. The endpoint shape
- * mirrors useRulesList — accept `unknown`, run through the same normalizer,
- * and return null for unsalvageable rows so the drawer can render the
- * not-found state explicitly.
+ * Resolves a single Rule by id. There is no `/api/v1/policy/rules/{id}`
+ * route in the current dashboard/core contract; instead the drawer reads
+ * from the React Query list cache (populated by `useRulesList`) and falls
+ * back to the list endpoint when the cache is cold. Returns null for
+ * unsalvageable rows so the drawer can render a not-found state explicitly
+ * — only true network/backend failures bubble up to the error state.
  */
 export function useRule({
   id,
   createType,
 }: UseRuleQueryArgs): UseQueryResult<NormalizedRule | null> {
+  const queryClient = useQueryClient();
   const isCreateNew = id === NEW_RULE_ID;
   const enabled = typeof id === "string" && id.length > 0;
   return useQuery<NormalizedRule | null>({
@@ -103,16 +158,9 @@ export function useRule({
         return createType ? emptyDraftRule(createType) : null;
       }
       if (!id) return null;
-      try {
-        const raw = await get<unknown>(`/policy/rules/${encodeURIComponent(id)}`);
-        return normalizeRule(raw);
-      } catch (err) {
-        // 404 is an expected outcome for an unknown rule id. The drawer
-        // distinguishes it from network/5xx errors by returning data=null
-        // here — only true backend failures bubble up to the error state.
-        if (isNotFoundError(err)) return null;
-        throw err;
-      }
+      const fromCache = findRuleInListCaches(queryClient, id);
+      if (fromCache) return fromCache;
+      return fetchRuleFromListEndpoint(id);
     },
     enabled,
     // Detail pages are usually opened deliberately; a 60s stale window keeps
