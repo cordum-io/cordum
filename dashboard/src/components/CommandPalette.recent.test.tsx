@@ -1,15 +1,28 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { act, fireEvent } from "@testing-library/react";
+import { fireEvent } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { server } from "../test-utils/msw";
 import { renderWithProviders } from "../test-utils/render";
 import { useUiStore } from "../state/ui";
+import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { CommandPalette } from "./CommandPalette";
 import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
 
+function KeyboardShortcutsHarness() {
+  useKeyboardShortcuts();
+
+  return (
+    <>
+      <label htmlFor="shortcut-input">Shortcut input</label>
+      <input id="shortcut-input" />
+      <KeyboardShortcutsHelp />
+    </>
+  );
+}
+
 describe("CommandPalette recent jobs/agents", () => {
   beforeEach(() => {
-    useUiStore.setState({ commandOpen: false });
+    useUiStore.setState({ commandOpen: false, shortcutsHelpOpen: false });
   });
 
   it("renders recent jobs section when /jobs returns items", async () => {
@@ -146,35 +159,28 @@ describe("KeyboardShortcutsHelp dialog opens on `?`", () => {
     useUiStore.setState({ shortcutsHelpOpen: false });
   });
 
-  it("renders the Keyboard Shortcuts dialog when shortcutsHelpOpen flips to true", () => {
-    const { queryByText, getByText } = renderWithProviders(<KeyboardShortcutsHelp />);
+  it("opens from a real '?' keydown and closes from Escape", () => {
+    const { queryByText, getByText } = renderWithProviders(
+      <KeyboardShortcutsHarness />,
+    );
 
-    // Dialog absent when store is closed
     expect(queryByText("Keyboard Shortcuts")).toBeNull();
 
-    // Simulate the `?` keypress effect by toggling the store (matches the
-    // `useKeyboardShortcuts.ts:102-108` handler, which calls
-    // `setShortcutsHelpOpen(!shortcutsHelpOpen)`). Wrap in act() so the
-    // zustand subscriber re-renders synchronously before the assertion.
-    act(() => {
-      useUiStore.getState().setShortcutsHelpOpen(true);
-    });
-
-    // Dialog now visible with the canonical heading
+    fireEvent.keyDown(document, { key: "?" });
     expect(getByText("Keyboard Shortcuts")).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(queryByText("Keyboard Shortcuts")).toBeNull();
   });
 
-  it("closes when shortcutsHelpOpen flips back to false (Escape path)", () => {
-    useUiStore.setState({ shortcutsHelpOpen: true });
+  it("does not open when '?' is typed inside an input", () => {
+    const { getByLabelText, queryByText } = renderWithProviders(
+      <KeyboardShortcutsHarness />,
+    );
+    const input = getByLabelText("Shortcut input");
 
-    const { queryByText } = renderWithProviders(<KeyboardShortcutsHelp />);
-
-    expect(queryByText("Keyboard Shortcuts")).toBeTruthy();
-
-    // Escape close path: useKeyboardShortcuts.ts:111-117 calls setShortcutsHelpOpen(false).
-    act(() => {
-      useUiStore.getState().setShortcutsHelpOpen(false);
-    });
+    input.focus();
+    fireEvent.keyDown(input, { key: "?" });
 
     expect(queryByText("Keyboard Shortcuts")).toBeNull();
   });
