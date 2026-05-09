@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Backend 1.5 — policy-studio yaml additions on dashboard branch + regenerated dashboard TS (2026-05-09, task-e38d99a5)
+
+- `docs/api/openapi/cordum-api.yaml`: surgically extracted Backend 1's 14 unified Rule/Decision/Bundle schemas (lines 10989–11256 of `origin/policy-studio-backend`) and appended them to dashboard branch's yaml so the orval pipeline can regenerate dashboard TS for downstream Dashboard 1+ tasks. Bumped `info.version` `2026-05-09.2` → `2026-05-09.3` (next-after worker-dac4's /policy/audit enrichment .2). worker-dac4's existing /policy/audit edits at lines 1, 3266, 9876, 9883 untouched (disjoint regions).
+- `dashboard/src/api/generated/`: regenerated via `pnpm run generate-api`. 17 new TS files surface the unified shapes — `model/{rule,ruleType,ruleStatus,ruleScope,ruleScopeKind,decision,decisionType,decisionSource,bundle,bundleVersion,bundleMetadata,edgeMode,auditMetadata,traceStep}.ts` plus 3 sub-schemas (`ruleMatch`, `ruleDecide`, `traceStepConstraints`). 502 existing files received only the `OpenAPI spec version` comment bump (no semantic changes).
+- Bridges Backend 1 (`origin/policy-studio-backend` PR) → Dashboard 1+ track. Per Yaron 2026-05-09 directive (commit/push, no merge until full epic done), the PR opens against `dashboard` and stays in REVIEW; the regenerated types live as commits on dashboard branch and are consumable immediately by parallel Dashboard tasks.
+
 #### Phase 5c command palette recent jobs/agents (2026-05-09, task-095927f8)
 
 - `dashboard/src/components/CommandPalette.tsx` now appends two dynamic groups to the `cmd+k` palette: **Recent Jobs** (top 50, label `${topic} · ${id-prefix}`, deep-link `/jobs/:id`, keywords include id/topic/status/capabilities) and **Recent Agents** (top 50, label `name||id`, deep-link `/agents/:id`, keywords include id/name/pool/status/capabilities). Data sourced from existing `useJobs({ limit: 50 })` and `useWorkers()` React Query hooks; cache-aware so palette open shows last-known recent without an extra fetch.
