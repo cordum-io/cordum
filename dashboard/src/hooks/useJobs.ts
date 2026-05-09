@@ -7,8 +7,6 @@ import type {
   Job,
   JobStatus,
   ApiResponse,
-  RemediateJobInput,
-  RemediateJobResponse,
   SubmitJobInput,
   SubmitJobResponse,
 } from "../api/types";
@@ -277,34 +275,6 @@ export function useRetryJob() {
     onError: (err, { id }) => {
       logger.error("jobs", "Retry job failed", { id, error: err.message });
       useToastStore.getState().addToast({ type: "error", title: "Failed to retry job", description: err.message });
-    },
-  });
-}
-
-export function useRemediateJob() {
-  const queryClient = useQueryClient();
-  return useMutation<
-    RemediateJobResponse,
-    Error,
-    { jobId: string; input: RemediateJobInput }
-  >({
-    mutationFn: ({ jobId, input }) => {
-      const trimmedJobID = validateRemediateJobId(jobId);
-      logger.info("jobs", "Remediating job", {
-        jobId: trimmedJobID,
-      });
-      return post<RemediateJobResponse>(`/jobs/${encodeURIComponent(trimmedJobID)}/remediate`, input);
-    },
-    onSuccess: (_result, variables) => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
-      queryClient.invalidateQueries({ queryKey: queryKeys.jobs.detail(variables.jobId) });
-    },
-    onError: (err, variables) => {
-      logger.error("jobs", "Remediate job failed", {
-        jobId: variables.jobId,
-        error: err.message,
-      });
-      useToastStore.getState().addToast({ type: "error", title: "Remediation failed", description: err.message });
     },
   });
 }

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { MoreHorizontal, GitCompare, History, CopyCheck } from "lucide-react";
+import { MoreHorizontal, GitCompare, History } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type BundleTab = "yaml" | "preview" | "diff" | "history" | "shadow";
@@ -20,10 +20,6 @@ const OVERFLOW_TABS: { id: BundleTab; label: string; icon: typeof GitCompare }[]
   { id: "diff", label: "Diff", icon: GitCompare },
   { id: "history", label: "Snapshots", icon: History },
 ];
-
-// Icon retained for future overflow surfacing; exported to avoid
-// unused-import lints once the shadow tab promotes to overflow.
-export const shadowTabIcon = CopyCheck;
 
 export function BundleDetailTabs({ active, onChange, snapshotCount = 0 }: BundleDetailTabsProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);

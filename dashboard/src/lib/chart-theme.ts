@@ -17,8 +17,6 @@ export const chartColors = {
   muted: "#5a6a70",
 } as const;
 
-export type ChartColorKey = keyof typeof chartColors;
-
 /** Resolve a semantic key or pass through a raw hex color. */
 export function resolveChartColor(key: string): string {
   return (chartColors as Record<string, string>)[key] ?? key;

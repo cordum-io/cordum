@@ -14,18 +14,6 @@ function makeApproval(overrides: Partial<Approval>): Approval {
 }
 
 describe("useApprovals internals", () => {
-  it("builds history query params", () => {
-    const params = __approvalsInternal.buildHistoryParams({
-      page: 2,
-      perPage: 25,
-      sort: "desc",
-    });
-
-    expect(params).toContain("page=2");
-    expect(params).toContain("perPage=25");
-    expect(params).toContain("sort=desc");
-  });
-
   it("filters approval list by status when requested", () => {
     const approvals = [
       makeApproval({ id: "a-1", status: "pending" }),

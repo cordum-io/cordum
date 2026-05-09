@@ -13,7 +13,6 @@
 
 import type { JobFilters } from "../hooks/useJobs";
 import type { DLQFilters } from "../hooks/useDLQ";
-import type { ApprovalHistoryFilters } from "../hooks/useApprovals";
 import type { AuditFilters, ExportFormat } from "../hooks/useAudit";
 import type { WorkflowListParams, WorkflowRunsParams, AllRunsParams } from "../hooks/useWorkflows";
 import type { QuarantinedJobsFilters } from "../hooks/useOutputPolicy";
@@ -81,7 +80,6 @@ export const queryKeys = {
     all: ["approvals"] as const,
     list: (status?: string) => ["approvals", status ?? "all"] as const,
     detail: (id: string) => ["approval", id] as const,
-    history: (filters: ApprovalHistoryFilters) => ["approvals", "history", filters] as const,
     nav: () => ["approvals", "nav"] as const,
     context: (jobId: string) => ["approvals", "context", jobId] as const,
   },

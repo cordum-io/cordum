@@ -2,8 +2,6 @@ import { create } from "zustand";
 import { logger } from "../lib/logger";
 import type { StreamEvent } from "../api/types";
 
-export type LiveEvent = StreamEvent;
-
 export type WsStatus = "connected" | "connecting" | "disconnected" | "reconnecting" | "degraded";
 
 // ---------------------------------------------------------------------------

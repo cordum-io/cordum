@@ -7,12 +7,6 @@ export interface ApiResponse<T> {
   next_cursor?: number | null;
 }
 
-export interface PaginationParams {
-  page?: number;
-  perPage?: number;
-  sort?: string;
-}
-
 // JSON values safe to keep in dashboard state. Edge transforms use these for
 // redacted/bounded metadata only; raw prompts, tool payloads, transcripts,
 // command output, tokens, Authorization headers, and signed URLs must not be
@@ -200,21 +194,6 @@ export interface EdgeApproval {
   consumedAt?: string | null;
   labels?: EdgeLabels;
   metadata?: Record<string, string>;
-}
-
-export interface EdgeSessionCreateResponse {
-  sessionId: string;
-  executionId: string;
-  traceId: string;
-  policySnapshot: string;
-  dashboardUrl: string;
-  session: EdgeSession;
-  execution: AgentExecution;
-}
-
-export interface EdgeHeartbeatResponse {
-  sessionId: string;
-  heartbeatAlive: boolean;
 }
 
 export interface EdgeSessionListParams {
@@ -406,24 +385,7 @@ export interface OutputSafetyRecord {
   original_ptr?: string;
 }
 
-export interface OutputPolicyRule {
-  id: string;
-  match: Record<string, unknown>;
-  decision: OutputDecision;
-  reason?: string;
-  enabled?: boolean;
-}
-
 export type SafetyDecisionType = "allow" | "deny" | "require_approval" | "allow_with_constraints" | "throttle";
-
-export interface MatchedRule {
-  rule_id: string;
-  name: string;
-  bundle_id?: string;
-  priority: number;
-  match_reason?: string;
-  decision: SafetyDecisionType;
-}
 
 export interface PolicyConstraints {
   budgets?: {
@@ -500,31 +462,12 @@ export interface GovernanceDecisionsResponse {
   nextCursor?: string;
 }
 
-export interface McpPolicyResult {
-  server?: string;
-  tool?: string;
-  resource?: string;
-  action?: string;
-  decision: SafetyDecisionType;
-  matched_rules?: string[];
-}
-
 export interface SafetyDecision {
   type: SafetyDecisionType;
   reason: string;
   matchedRule?: string;
   evalTimeMs?: number;
   evalPath?: string[];
-}
-
-export interface SafetyResult {
-  decision: SafetyDecisionType;
-  matched_rules: MatchedRule[];
-  evaluation_ms: number;
-  constraints?: PolicyConstraints;
-  mcp_context?: McpPolicyResult;
-  approval_required: boolean;
-  approval_ref?: string;
 }
 
 export interface Job {
@@ -576,99 +519,7 @@ export interface Job {
   approvalDecision?: "approve" | "reject" | "expire" | "invalidate" | "repair";
 }
 
-// ---------------------------------------------------------------------------
-// ErrorCode enum (matches CAP v2.5.2 protobuf ErrorCode)
-// ---------------------------------------------------------------------------
-
-export enum ErrorCode {
-  UNSPECIFIED = 0,
-  // Protocol (100-104)
-  PROTOCOL_VERSION_MISMATCH = 100,
-  PROTOCOL_INVALID_PACKET = 101,
-  PROTOCOL_SIGNATURE_INVALID = 102,
-  PROTOCOL_TIMEOUT = 103,
-  PROTOCOL_RATE_LIMITED = 104,
-  // Job (200-206)
-  JOB_NOT_FOUND = 200,
-  JOB_ALREADY_COMPLETED = 201,
-  JOB_TIMEOUT = 202,
-  JOB_CANCELLED = 203,
-  JOB_PERMISSION_DENIED = 204,
-  JOB_RESOURCE_EXHAUSTED = 205,
-  JOB_INVALID_INPUT = 206,
-  // Safety (300-302)
-  SAFETY_DENIED = 300,
-  SAFETY_POLICY_VIOLATION = 301,
-  SAFETY_OUTPUT_QUARANTINED = 302,
-  // Transport (400-402)
-  TRANSPORT_UNAVAILABLE = 400,
-  TRANSPORT_POOL_EXHAUSTED = 401,
-  TRANSPORT_DELIVERY_FAILED = 402,
-}
-
-/** Human-readable label for an ErrorCode value. */
-export function errorCodeLabel(code: number): string {
-  switch (code) {
-    case ErrorCode.PROTOCOL_VERSION_MISMATCH: return "Protocol: Version Mismatch";
-    case ErrorCode.PROTOCOL_INVALID_PACKET: return "Protocol: Invalid Packet";
-    case ErrorCode.PROTOCOL_SIGNATURE_INVALID: return "Protocol: Signature Invalid";
-    case ErrorCode.PROTOCOL_TIMEOUT: return "Protocol: Timeout";
-    case ErrorCode.PROTOCOL_RATE_LIMITED: return "Protocol: Rate Limited";
-    case ErrorCode.JOB_NOT_FOUND: return "Job: Not Found";
-    case ErrorCode.JOB_ALREADY_COMPLETED: return "Job: Already Completed";
-    case ErrorCode.JOB_TIMEOUT: return "Job: Timeout";
-    case ErrorCode.JOB_CANCELLED: return "Job: Cancelled";
-    case ErrorCode.JOB_PERMISSION_DENIED: return "Job: Permission Denied";
-    case ErrorCode.JOB_RESOURCE_EXHAUSTED: return "Job: Resource Exhausted";
-    case ErrorCode.JOB_INVALID_INPUT: return "Job: Invalid Input";
-    case ErrorCode.SAFETY_DENIED: return "Safety: Denied";
-    case ErrorCode.SAFETY_POLICY_VIOLATION: return "Safety: Policy Violation";
-    case ErrorCode.SAFETY_OUTPUT_QUARANTINED: return "Safety: Output Quarantined";
-    case ErrorCode.TRANSPORT_UNAVAILABLE: return "Transport: Unavailable";
-    case ErrorCode.TRANSPORT_POOL_EXHAUSTED: return "Transport: Pool Exhausted";
-    case ErrorCode.TRANSPORT_DELIVERY_FAILED: return "Transport: Delivery Failed";
-    default: return `Error ${code}`;
-  }
-}
-
-/** Category for an ErrorCode — used to pick badge color. */
-export function errorCodeCategory(code: number): "safety" | "job" | "protocol" | "transport" | "unknown" {
-  if (code >= 300 && code < 400) return "safety";
-  if (code >= 200 && code < 300) return "job";
-  if (code >= 100 && code < 200) return "protocol";
-  if (code >= 400 && code < 500) return "transport";
-  return "unknown";
-}
-
-// ---------------------------------------------------------------------------
-// AlertSeverity enum (matches CAP v2.5.2 protobuf AlertSeverity)
-// ---------------------------------------------------------------------------
-
-export enum AlertSeverity {
-  UNSPECIFIED = 0,
-  INFO = 1,
-  WARNING = 2,
-  ERROR = 3,
-  CRITICAL = 4,
-}
-
 export type JobPriority = "low" | "normal" | "high" | "critical";
-
-export interface RemediateJobInput {
-  topic?: string;
-  prompt?: string;
-  priority?: JobPriority;
-  capability?: string;
-  requires?: string[];
-  risk_tags?: string[];
-  labels?: Record<string, string>;
-  reason: string;
-}
-
-export interface RemediateJobResponse {
-  job_id: string;
-  trace_id: string;
-}
 
 export interface SubmitJobInput {
   topic: string;
@@ -690,58 +541,6 @@ export interface SubmitJobInput {
 export interface SubmitJobResponse {
   job_id: string;
   trace_id: string;
-}
-
-// ---------------------------------------------------------------------------
-// Memory + Artifacts
-// ---------------------------------------------------------------------------
-
-export type MemoryEntryRole =
-  | "system"
-  | "user"
-  | "assistant"
-  | "agent"
-  | "tool"
-  | "unknown";
-
-export interface MemoryEntry {
-  id: string;
-  role: MemoryEntryRole;
-  content: string;
-  timestamp?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface MemoryPayload {
-  pointer: string;
-  key: string;
-  kind: "context" | "result" | "memory" | string;
-  size_bytes: number;
-  base64: string;
-  text?: string;
-  json?: unknown;
-  entries?: MemoryEntry[];
-}
-
-export interface ArtifactMetadata {
-  content_type?: string;
-  size_bytes?: number;
-  retention?: string;
-  labels?: Record<string, string>;
-}
-
-export interface ArtifactPayload {
-  artifact_ptr: string;
-  content_base64: string;
-  metadata: ArtifactMetadata;
-}
-
-export interface JobArtifactRef {
-  ptr: string;
-  contentType?: string;
-  sizeBytes?: number;
-  timestamp?: string;
-  source?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -969,11 +768,6 @@ export interface PolicyBundle {
   signature?: PolicyBundleSignature;
 }
 
-export interface PolicyPublishRequest {
-  note?: string;
-  dry_run?: boolean;
-}
-
 // ---------------------------------------------------------------------------
 // Policy Replay
 // ---------------------------------------------------------------------------
@@ -1141,16 +935,6 @@ export type WorkerSessionState =
   | "session_expired"
   | "session_revoked"
   | "trust_store_unready";
-
-export interface Pool {
-  name: string;
-  workerCount: number;
-  activeJobs: number;
-  capacity: number;
-  utilization: number;
-  topics: string[];
-  workers: Worker[];
-}
 
 // ---------------------------------------------------------------------------
 // Topics
@@ -1411,20 +1195,6 @@ export interface ApprovalContext {
   policySnapshotSummary: ApprovalPolicySnapshot;
   timeRemainingMs: number | null;
   constraints: Record<string, unknown> | null;
-}
-
-export interface ApprovalHistoryEntry {
-  id: string;
-  action: "approve" | "reject";
-  jobId: string;
-  actor: string;
-  timestamp: string;
-  reason?: string;
-  policyRule?: string;
-  bundleIds?: string[];
-  topic?: string;
-  workflowId?: string;
-  waitDurationMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -1837,20 +1607,6 @@ export interface StreamEvent {
 // Traces
 // ---------------------------------------------------------------------------
 
-export interface TraceSpan {
-  span_id: string;
-  parent_span_id?: string;
-  operation: string;
-  service: string;
-  start_time: string;
-  end_time?: string;
-  duration_ms?: number;
-  status: "ok" | "error" | "timeout";
-  attributes?: Record<string, unknown>;
-  safety_decision?: SafetyDecisionType;
-  error_message?: string;
-}
-
 // ---------------------------------------------------------------------------
 // Setup Wizard
 // ---------------------------------------------------------------------------
@@ -2050,17 +1806,6 @@ export interface EvalDataset {
   createdAt: string;
   updatedAt: string;
   createdBy?: string;
-}
-
-export interface EvalEntry {
-  id: string;
-  input: Record<string, unknown>;
-  expectedDecision: SafetyDecisionType;
-  ruleId?: string;
-  metadata?: Record<string, unknown>;
-  source: string;
-  sourceRef?: string;
-  notes?: string;
 }
 
 export type EvalRunStatus = "pass" | "fail" | "regression" | "error";

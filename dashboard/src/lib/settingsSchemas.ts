@@ -11,8 +11,6 @@ export const notificationChannelSchema = z.object({
   enabled: z.boolean().default(true),
 });
 
-export type NotificationChannelForm = z.infer<typeof notificationChannelSchema>;
-
 // ---------------------------------------------------------------------------
 // Notification Rule
 // ---------------------------------------------------------------------------
@@ -37,8 +35,6 @@ export const environmentSchema = z.object({
   config: z.record(z.unknown()).default({}),
 });
 
-export type EnvironmentForm = z.infer<typeof environmentSchema>;
-
 // ---------------------------------------------------------------------------
 // General Config
 // ---------------------------------------------------------------------------
@@ -56,5 +52,3 @@ export const generalConfigSchema = z.object({
   maintenanceMode: z.boolean(),
   maintenanceMessage: z.string().optional(),
 });
-
-export type GeneralConfigForm = z.infer<typeof generalConfigSchema>;

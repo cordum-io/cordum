@@ -18,8 +18,3 @@ export type ChatThread = {
   messages: ChatMessage[];
   status: "active" | "paused" | "completed";
 };
-
-export type ChatResponse = {
-  items: ChatMessage[];
-  next_cursor?: number | null;
-};

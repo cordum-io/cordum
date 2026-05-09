@@ -1,5 +1,5 @@
 import type { Node, Edge } from "reactflow";
-import type { Workflow, WorkflowRun, RunStatus } from "@/api/types";
+import type { RunStatus } from "@/api/types";
 
 // ---------------------------------------------------------------------------
 // Studio modes
@@ -78,16 +78,4 @@ export interface CanvasHandle {
   setEdges: React.Dispatch<React.SetStateAction<Edge[]>>;
   /** Read current graph state synchronously — safe to call in save callbacks */
   getGraph: () => { nodes: Node<UnifiedNodeData>[]; edges: Edge[] };
-}
-
-// ---------------------------------------------------------------------------
-// Studio context — passed down from orchestrator
-// ---------------------------------------------------------------------------
-
-export interface StudioContext {
-  mode: StudioMode;
-  workflow: Workflow | null;
-  run: WorkflowRun | null;
-  isLoading: boolean;
-  isSaving: boolean;
 }
