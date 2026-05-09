@@ -888,6 +888,42 @@ function ChainSignatureVerdict({
     );
   }
 
+  // Verified requires that the row's seq is actually present in the cached
+  // chain-wide result's verified range. Without this guard, an empty result
+  // (verified_events=0), a stale cache, a bounded/limited verify window, or
+  // a result missing coverage bounds would default-pass an absent seq as
+  // "verified" — the very gap QA flagged on reopen #3. Per architect's
+  // pending definition (comment-7419de07), "row's seq absent from the
+  // cached result" is pending. Conditions are inlined in a single &&
+  // chain so TypeScript narrows `first_seq` / `last_seq` from `number |
+  // undefined` to `number` before the comparison.
+  const inVerifiedRange =
+    chain.verified_events > 0 &&
+    chain.first_seq !== undefined &&
+    chain.last_seq !== undefined &&
+    event.seq >= chain.first_seq &&
+    event.seq <= chain.last_seq;
+
+  if (!inVerifiedRange) {
+    const rangeSuffix =
+      chain.first_seq !== undefined && chain.last_seq !== undefined
+        ? ` (${chain.first_seq}…${chain.last_seq})`
+        : "";
+    const emptySuffix =
+      chain.verified_events === 0 ? " (no events verified yet)" : "";
+    return (
+      <div className="space-y-1">
+        <StatusBadge variant="muted">Pending</StatusBadge>
+        <p className="text-xs text-muted-foreground">
+          Chain seq #{event.seq} is outside the cached verification range
+          {rangeSuffix}
+          {emptySuffix}
+          . Awaiting a fresh chain verdict that covers this seq.
+        </p>
+      </div>
+    );
+  }
+
   // Verified: seq is in the verified Merkle window and not in any gap.
   return (
     <div className="space-y-1">
