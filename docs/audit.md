@@ -77,6 +77,14 @@ inventing unverifiable rule ids in the audit chain. The shared reader helper
 folds job and Edge `policy.decision.v2` events into one stream by parsing
 `extra.source`.
 
+Edge has two persisted evidence paths during the migration window:
+Gateway `/edge/evaluate` and agentd `/edge/events` decision evidence. Fresh
+agentd evidence that is derived from a Gateway evaluate response carries the
+Gateway decision event id; the Gateway verifies that referenced event in the
+same execution before suppressing duplicate audit emission. Cache-hit,
+degraded, and local-only agentd evidence has no such verified reference and
+continues to emit audit normally.
+
 Rollback/cutover guidance:
 
 1. Start with the default `dual` mode and update SIEM dashboards/alerts to read

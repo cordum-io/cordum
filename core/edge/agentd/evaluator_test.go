@@ -91,6 +91,10 @@ func TestEvaluatorCallsGatewayAndRecordsDecisionEvidence(t *testing.T) {
 	if event.Kind != edgecore.EventKindHookPolicyDecision || event.Decision != edgecore.DecisionAllow {
 		t.Fatalf("decision event = %#v", event)
 	}
+	if event.Labels[edgecore.LabelDecisionAuditEmittedBy] != edgecore.LabelDecisionAuditEmittedByGateway ||
+		event.Labels[edgecore.LabelGatewayDecisionEventID] != "evt-eval-decision" {
+		t.Fatalf("fresh gateway audit labels = %#v, want emitted_by=gateway and gateway event id", event.Labels)
+	}
 	payload, _ := json.Marshal(event)
 	for _, forbidden := range []string{"raw-evaluator-secret", "evaluator-secret", "secret-transcript", `C:\\Users\\yaron`} {
 		if strings.Contains(string(payload), forbidden) {
