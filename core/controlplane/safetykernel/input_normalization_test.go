@@ -10,20 +10,20 @@ import (
 // stays unambiguous: Go rejects a literal U+FEFF mid-file, and other zero-width
 // or bidi runes round-trip badly through editors.
 const (
-	zwsp   = "​" // zero-width space
-	zwnj   = "‌" // zero-width non-joiner
+	zwsp   = "​"      // zero-width space
+	zwnj   = "‌"      // zero-width non-joiner
 	bom    = "\uFEFF" // zero-width no-break space / BOM
-	rlo    = "‮" // right-to-left override
-	pdf    = "‬" // pop directional formatting
-	lri    = "⁦" // left-to-right isolate
-	pdi    = "⁩" // pop directional isolate
-	fullwI = "ｉ" // fullwidth latin small i
-	fullwG = "ｇ" // fullwidth latin small g
-	fullwN = "ｎ" // fullwidth latin small n
-	fullwO = "ｏ" // fullwidth latin small o
-	fullwR = "ｒ" // fullwidth latin small r
-	fullwE = "ｅ" // fullwidth latin small e
-	ligaFI = "ﬁ" // latin small ligature fi
+	rlo    = "‮"      // right-to-left override
+	pdf    = "‬"      // pop directional formatting
+	lri    = "⁦"      // left-to-right isolate
+	pdi    = "⁩"      // pop directional isolate
+	fullwI = "ｉ"      // fullwidth latin small i
+	fullwG = "ｇ"      // fullwidth latin small g
+	fullwN = "ｎ"      // fullwidth latin small n
+	fullwO = "ｏ"      // fullwidth latin small o
+	fullwR = "ｒ"      // fullwidth latin small r
+	fullwE = "ｅ"      // fullwidth latin small e
+	ligaFI = "ﬁ"      // latin small ligature fi
 )
 
 func TestNormalizeInputCandidates_UnchangedASCII(t *testing.T) {
