@@ -1106,7 +1106,9 @@ paths:
     post:
       operationId: evaluateEdgeAction
       summary: Evaluate an Edge action with Safety Kernel policy
-      description: Classifies a bounded, redacted agent action for an existing Edge session/execution, calls the Safety Kernel using the Edge policy topic, persists a redacted policy decision or degraded event, and returns hook-friendly allow/deny fields. Raw `tool_input`, raw transcripts, and unredacted payloads are rejected; large evidence must use artifact pointers.
+      deprecated: true
+      x-live-route: true
+      description: Deprecated during the Policy Studio migration window. Use `POST /api/v1/policy/evaluate` with an edge `PolicyEvaluateRequest` for new integrations. This legacy endpoint still classifies a bounded, redacted agent action for an existing Edge session/execution, calls the Safety Kernel using the Edge policy topic, persists a redacted policy decision or degraded event, and returns hook-friendly allow/deny fields. Raw `tool_input`, raw transcripts, and unredacted payloads are rejected; large evidence must use artifact pointers.
       tags:
       - Edge
       parameters:
@@ -1120,6 +1122,17 @@ paths:
       responses:
         '200':
           description: Hook-friendly Edge policy decision. Safety outages may still return 200 with `degraded=true` when policy mode permits and degraded evidence was persisted.
+          headers:
+            Deprecation:
+              description: Set to `true` during the migration window.
+              schema:
+                type: string
+                example: 'true'
+            Link:
+              description: Successor relation pointing to `/api/v1/policy/evaluate`.
+              schema:
+                type: string
+                example: '</api/v1/policy/evaluate>; rel="successor-version"'
           content:
             application/json:
               schema:
@@ -2439,7 +2452,15 @@ paths:
   /api/v1/policy/evaluate:
     post:
       operationId: evaluatePolicy
-      summary: Evaluate safety policy against a request
+      summary: Evaluate unified policy against a job or edge context
+      description: |
+        Unified Policy Studio evaluator. New callers send
+        `PolicyEvaluateRequest` with either an inline `rule` or
+        `bundle_id` + `scope`, plus exactly one of `job_context` or
+        `edge_context`. During the migration window this endpoint also accepts
+        the legacy `PolicyCheckRequest` shape and returns the legacy
+        `PolicyCheckResponse` so existing clients keep working. Legacy-shape
+        responses include `Deprecation` and successor `Link` headers.
       tags:
       - Policy
       parameters:
@@ -2449,24 +2470,46 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PolicyCheckRequest'
+              oneOf:
+              - $ref: '#/components/schemas/PolicyEvaluateRequest'
+              - $ref: '#/components/schemas/PolicyCheckRequest'
       responses:
         '200':
           description: Policy evaluation result
+          headers:
+            Deprecation:
+              description: Present and set to `true` only when a legacy `PolicyCheckRequest` shape is evaluated.
+              schema:
+                type: string
+                example: 'true'
+            Link:
+              description: Successor relation pointing to `/api/v1/policy/evaluate` for legacy-shape callers.
+              schema:
+                type: string
+                example: '</api/v1/policy/evaluate>; rel="successor-version"'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PolicyCheckResponse'
+                oneOf:
+                - $ref: '#/components/schemas/PolicyEvaluateResponse'
+                - $ref: '#/components/schemas/PolicyCheckResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/policy/simulate:
     post:
       operationId: simulatePolicy
       summary: Simulate policy evaluation (no side effects)
+      deprecated: true
+      x-live-route: true
+      description: Deprecated during the Policy Studio migration window. Use `POST /api/v1/policy/evaluate` with `PolicyEvaluateRequest`; this endpoint keeps the legacy `PolicyCheckRequest`/`PolicyCheckResponse` schema until the cut-over.
       tags:
       - Policy
       parameters:
@@ -2480,6 +2523,17 @@ paths:
       responses:
         '200':
           description: Simulation result
+          headers:
+            Deprecation:
+              description: Set to `true` during the migration window.
+              schema:
+                type: string
+                example: 'true'
+            Link:
+              description: Successor relation pointing to `/api/v1/policy/evaluate`.
+              schema:
+                type: string
+                example: '</api/v1/policy/evaluate>; rel="successor-version"'
           content:
             application/json:
               schema:
@@ -2494,6 +2548,9 @@ paths:
     post:
       operationId: explainPolicy
       summary: Explain policy evaluation reasoning
+      deprecated: true
+      x-live-route: true
+      description: Deprecated during the Policy Studio migration window. Use `POST /api/v1/policy/evaluate` with `PolicyEvaluateRequest`; this endpoint keeps the legacy `PolicyCheckRequest`/`PolicyCheckResponse` schema until the cut-over.
       tags:
       - Policy
       parameters:
@@ -2507,6 +2564,17 @@ paths:
       responses:
         '200':
           description: Explanation result
+          headers:
+            Deprecation:
+              description: Set to `true` during the migration window.
+              schema:
+                type: string
+                example: 'true'
+            Link:
+              description: Successor relation pointing to `/api/v1/policy/evaluate`.
+              schema:
+                type: string
+                example: '</api/v1/policy/evaluate>; rel="successor-version"'
           content:
             application/json:
               schema:
@@ -2685,6 +2753,7 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/policy/bundles:
+    x-subroute-dispatch: true
     get:
       operationId: listPolicyBundles
       summary: List policy bundles
@@ -2713,6 +2782,80 @@ paths:
                     format: date-time
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/policy/bundles/deployments:
+    get:
+      operationId: listPolicyBundleDeployments
+      summary: List policy bundle deployment history for a scope
+      description: Returns the BundleStore deployment history for one rule scope, newest first.
+      tags:
+      - Policy
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: scope_kind
+        in: query
+        required: true
+        schema:
+          $ref: '#/components/schemas/RuleScopeKind'
+      - name: scope_value
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 100
+      responses:
+        '200':
+          description: Deployment history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyBundleDeploymentHistoryResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/policy/bundles/deployments/rollback:
+    post:
+      operationId: rollbackPolicyBundleDeployment
+      summary: Roll back the active policy bundle deployment for a scope
+      description: Restores the previous active (bundle, version) pair for the supplied scope and appends a rollback deployment marker.
+      tags:
+      - Policy
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyBundleRollbackRequest'
+      responses:
+        '200':
+          description: Rollback deployment record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyBundleDeploymentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/policy/bundles/{id}:
@@ -2775,6 +2918,136 @@ paths:
       responses:
         '204':
           description: Policy bundle deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/policy/bundles/{id}/versions:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    - $ref: '#/components/parameters/TenantID'
+    get:
+      operationId: listPolicyBundleVersions
+      summary: List immutable versions for a policy bundle
+      description: Returns the BundleStore versions for the bundle in chronological order.
+      tags:
+      - Policy
+      responses:
+        '200':
+          description: Bundle versions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyBundleVersionsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      operationId: createPolicyBundleVersion
+      summary: Create an immutable policy bundle version
+      description: Persists a versioned rule snapshot in the BundleStore; versions are immutable and duplicate version ids return 409.
+      tags:
+      - Policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyBundleVersionCreateRequest'
+      responses:
+        '201':
+          description: Bundle version created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyBundleVersionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/policy/bundles/{id}/versions/{version}:
+    get:
+      operationId: getPolicyBundleVersion
+      summary: Get one immutable policy bundle version
+      tags:
+      - Policy
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: version
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      responses:
+        '200':
+          description: Bundle version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyBundleVersionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/policy/bundles/{id}/deploy:
+    post:
+      operationId: deployPolicyBundleVersion
+      summary: Deploy a policy bundle version to a rule scope
+      description: Rebinds the active BundleStore deployment for the supplied scope and preserves the previous binding in deployment history.
+      tags:
+      - Policy
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyBundleDeployRequest'
+      responses:
+        '200':
+          description: Deployment record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyBundleDeploymentResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -11193,6 +11466,125 @@ components:
       - rule_id
       - type
       - timestamp
+    JobEvaluationInput:
+      type: object
+      description: |
+        Job-side content snapshot evaluated by a unified job Rule. `content`
+        may be truncated by callers; `size_bytes` records the original size.
+      properties:
+        content:
+          type: string
+        content_type:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+    JobEvaluationContext:
+      type: object
+      description: |
+        Job-side context for the unified evaluator. Used with input, output,
+        and velocity rules and dispatched to the safetykernel path.
+      properties:
+        tenant_id:
+          type: string
+        job_id:
+          type: string
+        workflow_id:
+          type: string
+        topic:
+          type: string
+        principal_id:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        memory_id:
+          type: string
+        capability:
+          type: string
+        risk_tags:
+          type: array
+          items:
+            type: string
+        input:
+          $ref: '#/components/schemas/JobEvaluationInput'
+      required:
+      - tenant_id
+      - topic
+    EdgeEvaluationContext:
+      type: object
+      description: |
+        Edge-side action snapshot for the unified evaluator. Raw tool input is
+        intentionally absent; callers provide only redacted input and labels.
+      properties:
+        tenant_id:
+          type: string
+        principal_id:
+          type: string
+        session_id:
+          type: string
+        execution_id:
+          type: string
+        agent_product:
+          type: string
+        tool_name:
+          type: string
+        tool_input_redacted:
+          type: object
+          additionalProperties: true
+        input_hash:
+          type: string
+        tool_input_hash:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        risk_tags:
+          type: array
+          items:
+            type: string
+      required:
+      - tenant_id
+      - principal_id
+    PolicyEvaluateRequest:
+      type: object
+      description: |
+        Unified Policy Studio evaluator request. Provide either `rule` or
+        `bundle_id` + `scope`, and exactly one of `job_context` or
+        `edge_context`. Job contexts are valid for input/output/velocity
+        rules; edge contexts are valid only for edge rules.
+      properties:
+        rule:
+          $ref: '#/components/schemas/Rule'
+        bundle_id:
+          type: string
+        scope:
+          $ref: '#/components/schemas/RuleScope'
+        job_context:
+          $ref: '#/components/schemas/JobEvaluationContext'
+        edge_context:
+          $ref: '#/components/schemas/EdgeEvaluationContext'
+      anyOf:
+      - required:
+        - rule
+      - required:
+        - bundle_id
+        - scope
+      oneOf:
+      - required:
+        - job_context
+      - required:
+        - edge_context
+    PolicyEvaluateResponse:
+      type: object
+      description: Unified evaluator response containing the shared Decision.
+      properties:
+        decision:
+          $ref: '#/components/schemas/Decision'
+      required:
+      - decision
     BundleMetadata:
       type: object
       description: |
@@ -11225,6 +11617,116 @@ components:
       required:
       - version
       - deployed_at
+    PolicyBundleVersionCreateRequest:
+      type: object
+      description: Request to append an immutable BundleStore version.
+      properties:
+        version:
+          type: string
+        rule_snapshot:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rule'
+        deployed_at:
+          type: string
+          format: date-time
+        audit_hash:
+          type: string
+      required:
+      - version
+      - rule_snapshot
+    PolicyBundleVersionResponse:
+      type: object
+      properties:
+        bundle_id:
+          type: string
+        version:
+          $ref: '#/components/schemas/BundleVersion'
+      required:
+      - bundle_id
+      - version
+    PolicyBundleVersionsResponse:
+      type: object
+      properties:
+        bundle_id:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BundleVersion'
+      required:
+      - bundle_id
+      - items
+    PolicyBundleDeployRequest:
+      type: object
+      properties:
+        version:
+          type: string
+        scope:
+          $ref: '#/components/schemas/RuleScope'
+      required:
+      - version
+      - scope
+    PolicyBundleRollbackRequest:
+      type: object
+      properties:
+        scope:
+          $ref: '#/components/schemas/RuleScope'
+      required:
+      - scope
+    BundleDeploymentAction:
+      type: string
+      enum:
+      - deploy
+      - rollback
+    BundleDeployment:
+      type: object
+      description: Audit-ready BundleStore binding event for one rule scope.
+      properties:
+        bundle_id:
+          type: string
+        version:
+          type: string
+        scope:
+          $ref: '#/components/schemas/RuleScope'
+        deployed_at:
+          type: string
+          format: date-time
+        deployed_by:
+          type: string
+        audit_hash:
+          type: string
+        action:
+          $ref: '#/components/schemas/BundleDeploymentAction'
+        prev_bundle_id:
+          type: string
+        prev_version:
+          type: string
+      required:
+      - bundle_id
+      - version
+      - scope
+      - deployed_at
+      - action
+    PolicyBundleDeploymentResponse:
+      type: object
+      properties:
+        deployment:
+          $ref: '#/components/schemas/BundleDeployment'
+      required:
+      - deployment
+    PolicyBundleDeploymentHistoryResponse:
+      type: object
+      properties:
+        scope:
+          $ref: '#/components/schemas/RuleScope'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BundleDeployment'
+      required:
+      - scope
+      - items
     Bundle:
       type: object
       description: |

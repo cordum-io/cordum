@@ -46,7 +46,44 @@ QA caught two correctness defects + two test gaps in the initial Backend
 -timeout 240s` clean at 80.3% coverage. `go test ./core/workflow/...
 ./core/edge/...` clean (no neighboring-store regression).
 
+### Deprecated
+
+#### Policy Studio Rewrite — Backend 5 migration window (epic-d9a6c0a1, task-aadaec4a)
+
+- Legacy evaluator surfaces remain functional but are marked deprecated while
+  clients migrate to unified `POST /api/v1/policy/evaluate` with
+  `PolicyEvaluateRequest`: `POST /api/v1/policy/simulate`,
+  `POST /api/v1/policy/explain`, legacy `PolicyCheckRequest` bodies on
+  `POST /api/v1/policy/evaluate`, and `POST /api/v1/edge/evaluate`.
+  Deprecated/legacy responses include `Deprecation: true` plus a
+  `Link: </api/v1/policy/evaluate>; rel="successor-version"` header. Removal
+  is deferred until the later Policy Studio cut-over after backend and
+  dashboard clients have moved to the unified evaluator.
+
 ### Added
+
+#### Policy Studio Rewrite — Backend 5: unified evaluator entry-point (epic-d9a6c0a1, task-aadaec4a)
+
+- Added canonical HTTP `POST /api/v1/policy/evaluate` unified evaluator for
+  both job and Edge policy contexts. Unified requests accept either an inline
+  `Rule` or `bundle_id` + `scope`, plus exactly one of `job_context` or
+  `edge_context`, and return the shared `Decision` envelope.
+- Added gRPC `PolicyEvaluator.EvaluateUnified` using the same evaluator helper
+  as HTTP, including tenant resolution, role checks, validation, and typed
+  status-code mapping.
+- Added Rule.type dispatch: `input` / `output` / `velocity` route to the
+  Safety Kernel adapters; `edge` routes to the Edge classifier adapter.
+  Type-confusion requests fail before downstream dispatch.
+- Added BundleStore-backed lifecycle gateway routes for immutable bundle
+  versions, deploy, deployment history, and rollback. These routes back the
+  OpenAPI paths used by the unified evaluator; no YAML-only endpoints were
+  introduced.
+- Added shared `policy.decision.v2` audit emission for unified evaluator
+  results while preserving transition-window dual emission with legacy audit
+  records.
+- Added [`docs/policy-evaluate-api.md`](docs/policy-evaluate-api.md) covering
+  HTTP/gRPC usage, dispatch rules, bundle resolution, error mapping, audit
+  behavior, and old-endpoint migration.
 
 #### Policy Studio Rewrite — Backend 2: bundle store (epic-d9a6c0a1, task-b349524a)
 

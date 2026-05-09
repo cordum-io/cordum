@@ -47,6 +47,7 @@ import (
 	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/licensing"
 	"github.com/cordum/cordum/core/model"
+	"github.com/cordum/cordum/core/policy"
 	"github.com/cordum/cordum/core/policyshadow"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/telemetry"
@@ -124,6 +125,7 @@ const (
 
 type server struct {
 	pb.UnimplementedCordumApiServer
+	pb.UnimplementedPolicyEvaluatorServer
 	memStore              store.Store
 	jobStore              *store.RedisJobStore // Typed for ListRecentJobs
 	edgeStore             edgecore.Store
@@ -196,6 +198,7 @@ type server struct {
 
 	legalHoldStore    *audit.LegalHoldStore
 	statusCacheObj    *statusCache
+	policyBundleStore policy.BundleStore
 	policyShadowStore *policyshadow.Store
 	mcpDenyRing       *denyEventRing
 	sessionIssuer     *scheduler.SessionTokenIssuer
@@ -691,6 +694,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		edgeRecorder:           edgeRecorder,
 		legalHoldStore:         initLegalHoldStore(cfg.RedisURL),
 		statusCacheObj:         newStatusCache(2 * time.Second),
+		policyBundleStore:      policy.NewRedisBundleStoreFromClient(jobStore.Client()),
 		policyShadowStore:      policyshadow.NewStore(configSvc),
 		mcpDenyRing:            newDenyEventRing(500),
 		trustResolver:          scheduler.NewTrustResolver(jobStore.Client()),
@@ -824,6 +828,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		),
 	)
 	pb.RegisterCordumApiServer(grpcServer, s)
+	pb.RegisterPolicyEvaluatorServer(grpcServer, s)
 	if env.Bool(env.EnvGRPCReflection) {
 		if env.IsProduction() && !env.Bool("CORDUM_GRPC_REFLECTION_FORCE") {
 			slog.Error("gRPC reflection blocked in production mode (exposes service definitions). Set CORDUM_GRPC_REFLECTION_FORCE=1 to override.")
@@ -1418,10 +1423,13 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "GET /api/v1/policy/global", s.instrumented("/api/v1/policy/global", s.handleGetPolicyGlobal))
 	s.registerRoute(mux, "PUT /api/v1/policy/global", s.instrumented("/api/v1/policy/global", s.handlePutPolicyGlobal))
 	s.registerRoute(mux, "GET /api/v1/policy/bundles", s.instrumented("/api/v1/policy/bundles", s.handlePolicyBundles))
+	s.registerRoute(mux, "GET /api/v1/policy/bundles/deployments", s.instrumented("/api/v1/policy/bundles/deployments", s.handleListPolicyBundleDeployments))
+	s.registerRoute(mux, "POST /api/v1/policy/bundles/deployments/rollback", s.instrumented("/api/v1/policy/bundles/deployments/rollback", s.handleRollbackPolicyBundleDeployment))
 	s.registerRoute(mux, "GET /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleGetPolicyBundle))
 	s.registerRoute(mux, "PUT /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handlePutPolicyBundle))
 	s.registerRoute(mux, "DELETE /api/v1/policy/bundles/{id}", s.instrumented("/api/v1/policy/bundles/{id}", s.handleDeletePolicyBundle))
 	s.registerRoute(mux, "POST /api/v1/policy/bundles/{id}/simulate", s.instrumented("/api/v1/policy/bundles/{id}/simulate", s.handleSimulatePolicyBundle))
+	s.registerRoute(mux, "/api/v1/policy/bundles/", s.instrumented("/api/v1/policy/bundles/*", s.handlePolicyBundleLifecycleSubroutes))
 	// Policy shadow (task-44807b2c) — shadow-evaluation surface for a bundle.
 	// PUT upserts the shadow policy, GET fetches current status, DELETE removes it.
 	// The three results endpoints expose dashboard analytics (summary counters,

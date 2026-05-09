@@ -453,9 +453,9 @@ export interface paths {
         /**
          * Verify audit chain integrity
          * @description Walks the tenant's audit stream and attests integrity of the hash chain. Reports
-         *     `status=ok` on a contiguous chain, `status=gap` with classification when seq numbers are
-         *     missing (retention-trimmed vs suspected tampering), and `status=tamper` on a broken hash
-         *     link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
+         *     `status=ok` on a contiguous chain, `status=partial` when gaps are below the
+         *     retention boundary, and `status=compromised` for missing sequence numbers or a
+         *     broken hash link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
          *     integrity report surface, not event retrieval.
          */
         get: operations["verifyAuditChain"];
@@ -554,6 +554,26 @@ export interface paths {
         put?: never;
         /** Logout and invalidate session */
         post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/oidc/group-role-mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update OIDC groups-to-roles mapping
+         * @description Admin-only endpoint for updating the active Okta/OIDC groups claim and Cordum role mapping. Values are validated, applied to the live provider, and persisted into system/default config.
+         */
+        put: operations["updateOIDCGroupRoleMapping"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -678,6 +698,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/copilot/sessions/{sessionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Copilot session detail
+         * @description Returns a Copilot chat transcript plus linked jobs and governance decisions.
+         */
+        get: operations["getCopilotSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/delegations": {
         parameters: {
             query?: never;
@@ -757,6 +797,381 @@ export interface paths {
         get: operations["listDLQPaginated"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Edge action approvals
+         * @description Lists tenant-scoped Edge approval records for action-level governance. Non-admin/non-operator callers receive only approvals whose `principal_id` matches the authenticated `auth.PrincipalID`; admin and operator callers may list all approvals in the tenant for operations and forensics. Status, tuple, cursor, and limit filters are applied within that visibility scope so list pagination remains principal-stable. Raw action payloads are never returned; actions are represented by `event_id`, `action_hash`, `input_hash`, and `policy_snapshot`.
+         */
+        get: operations["listEdgeApprovals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/approvals/{approval_ref}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get an Edge action approval
+         * @description Returns one tenant-scoped Edge approval record. Detail reads are principal-bound: the caller must be the original requester principal (`auth.PrincipalID` matches the approval `principal_id`) or hold an admin/operator role. Cross-tenant requests and same-tenant callers that fail this binding are reported as not found and no raw tool/action payload is exposed.
+         */
+        get: operations["getEdgeApproval"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/approvals/{approval_ref}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve an Edge action approval
+         * @description Resolves a pending Edge approval as approved for one retry/consume. Requires approval/admin permission, enforces tenant scope and self-approval protection, and fails with 409 if the session/execution/event/action hash or policy snapshot is stale.
+         *
+         *     EDGE-060 — supports `Idempotency-Key` for safe retry against
+         *     the resolution state transition. Same key + same body returns
+         *     the SAME cached 200 response (replay), NOT 409 "already
+         *     approved" — this is the EDGE-060 DoD #7 invariant. A different
+         *     key against an already-terminal approval still surfaces the
+         *     existing 409 path.
+         */
+        post: operations["approveEdgeApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/approvals/{approval_ref}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject an Edge action approval
+         * @description Resolves a pending Edge approval as rejected. Requires approval/admin permission, enforces tenant scope and self-approval protection, and fails with 409 if the referenced Edge session/execution/event is stale.
+         *
+         *     EDGE-060 — supports `Idempotency-Key` for safe retry against
+         *     the resolution state transition. Same key + same body returns
+         *     the SAME cached 200 response (replay), NOT 409 "already
+         *     rejected".
+         */
+        post: operations["rejectEdgeApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/approvals/{approval_ref}/wait": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bounded blocking wait for an Edge approval to leave Pending
+         * @description Agentd/local-dev affordance that polls the Edge approval store until the approval is non-pending or the bounded timeout elapses, then returns the current EdgeApproval. The wait is principal-bound: the caller must be the original requester principal (`auth.PrincipalID` matches the approval `principal_id`) or hold an admin/operator role. The server clamps `timeout_ms` to a 5 minute maximum and uses a 30 second default when omitted or non-positive. Tenant isolation is enforced; cross-tenant references and same-tenant callers that fail the principal binding return 404 with no metadata leakage. This endpoint is not required by the dashboard approve/reject UX — callers there should use the standard list/detail/approve/reject flow.
+         */
+        post: operations["waitEdgeApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Evaluate an Edge action with Safety Kernel policy
+         * @deprecated
+         * @description Deprecated during the Policy Studio migration window. Use `POST /api/v1/policy/evaluate` with an edge `PolicyEvaluateRequest` for new integrations. This legacy endpoint still classifies a bounded, redacted agent action for an existing Edge session/execution, calls the Safety Kernel using the Edge policy topic, persists a redacted policy decision or degraded event, and returns hook-friendly allow/deny fields. Raw `tool_input`, raw transcripts, and unredacted payloads are rejected; large evidence must use artifact pointers.
+         */
+        post: operations["evaluateEdgeAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Append a single Edge agent action event
+         * @description Writes a redacted AgentActionEvent for an existing Edge session/execution. Raw tool inputs, raw tool results, and transcripts must not be sent inline; send bounded `input_redacted` details and reference large evidence with `artifact_ptrs`. Optional `Idempotency-Key` retries are scoped by tenant and endpoint: the same normalized request replays the first 201 response without appending a duplicate event, while the same key with a different normalized request returns 409 `idempotency_conflict`. The append and replay record commit in one Redis transaction. If the replay record has expired and the same logical `event_id` is already present, the API returns 409 `idempotency_window_expired` and does not append a duplicate event.
+         */
+        post: operations["createEdgeEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/events/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Append a batch of Edge agent action events
+         * @description Appends a fully prevalidated, ordered batch for existing Edge session/execution parents. Mixed-tenant or invalid items are rejected before append where possible. Large raw payloads must be stored separately and referenced by `artifact_ptrs`. Optional `Idempotency-Key` retries are scoped by tenant and endpoint: the same normalized batch replays the first 201 response without partial append or duplicate events, while the same key with a different normalized batch returns 409 `idempotency_conflict`. The append and replay record commit in one Redis transaction. If the replay record has expired and any same logical `event_id` is already present, the API returns 409 `idempotency_window_expired` and does not append duplicate events.
+         */
+        post: operations["createEdgeEventsBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Edge agent executions for a tenant */
+        get: operations["listEdgeExecutions"];
+        put?: never;
+        /**
+         * Create an Edge agent execution
+         * @description EDGE-060 — supports `Idempotency-Key`. A retry with the same
+         *     key and identical body returns the SAME `execution_id` (cached
+         *     replay, 201) without burning against the per-session execution
+         *     cap. A retry with the same key but different body returns 409
+         *     `idempotency_conflict`. Missing key falls back to non-idempotent
+         *     behavior (every call generates a fresh `execution_id`).
+         */
+        post: operations["createEdgeExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/executions/{execution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get an Edge agent execution */
+        get: operations["getEdgeExecution"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/executions/{execution_id}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** End an Edge agent execution */
+        post: operations["endEdgeExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/executions/{execution_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Edge events for an execution
+         * @description Returns tenant-scoped events for one execution in ascending sequence order with cursor pagination and optional kind, decision, and RFC3339 time-window filters.
+         */
+        get: operations["listEdgeExecutionEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Edge sessions for a tenant */
+        get: operations["listEdgeSessions"];
+        put?: never;
+        /**
+         * Create an Edge session and initial execution
+         * @description EDGE-060 — supports `Idempotency-Key`. A retry with the same key
+         *     and identical body returns the SAME `session_id` /
+         *     `execution_id` / `trace_id` (cached replay, 201). A retry with
+         *     the same key but different body returns 409
+         *     `idempotency_conflict`. Missing key falls back to non-idempotent
+         *     behavior (every call generates fresh UUIDs).
+         */
+        post: operations["createEdgeSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get an Edge session */
+        get: operations["getEdgeSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/sessions/{session_id}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** End an Edge session */
+        post: operations["endEdgeSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/sessions/{session_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Edge events for a session
+         * @description Returns tenant-scoped events across executions in the session with cursor pagination and optional kind, decision, and RFC3339 time-window filters.
+         */
+        get: operations["listEdgeSessionEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/sessions/{session_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Assemble an Edge session evidence bundle
+         * @description Returns a `SessionExportBundle` for the named session — session record,
+         *     executions, ordered AgentActionEvents, approvals, and a metadata-only
+         *     manifest of every artifact pointer attached to those events. Bundles
+         *     contain artifact metadata (URI, sha256, size, content_type, retention,
+         *     redaction level) but never raw artifact bodies. Cross-tenant probes
+         *     receive 404 indistinguishable from missing-session.
+         */
+        post: operations["exportEdgeSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/edge/sessions/{session_id}/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh an Edge session heartbeat */
+        post: operations["heartbeatEdgeSession"];
         delete?: never;
         options?: never;
         head?: never;
@@ -955,6 +1370,33 @@ export interface paths {
         };
         /** Query the governance decision log */
         get: operations["listGovernanceDecisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/governance/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Composite governance health score per tenant
+         * @description Returns the Command Center governance-health aggregate for the tenant:
+         *     denial-rate, approval-latency p95, policy coverage, and audit-chain integrity
+         *     rolled up into a 0-100 score plus A-F grade.
+         *
+         *     Admin-only. When governance-health caching is enabled, results are cached
+         *     per tenant for 60 seconds so dashboards can poll without forcing a full
+         *     recompute on every refresh. If caching is disabled, the handler falls
+         *     back to a fresh per-request cache and the endpoint behaves as uncached.
+         */
+        get: operations["getGovernanceHealth"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1568,6 +2010,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/policy/bundles/{id}/deploy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deploy a policy bundle version to a rule scope
+         * @description Rebinds the active BundleStore deployment for the supplied scope and preserves the previous binding in deployment history.
+         */
+        post: operations["deployPolicyBundleVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/policy/bundles/{id}/simulate": {
         parameters: {
             query?: never;
@@ -1579,6 +2041,92 @@ export interface paths {
         put?: never;
         /** Simulate a policy bundle against a request */
         post: operations["simulatePolicyBundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/bundles/{id}/versions": {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * List immutable versions for a policy bundle
+         * @description Returns the BundleStore versions for the bundle in chronological order.
+         */
+        get: operations["listPolicyBundleVersions"];
+        put?: never;
+        /**
+         * Create an immutable policy bundle version
+         * @description Persists a versioned rule snapshot in the BundleStore; versions are immutable and duplicate version ids return 409.
+         */
+        post: operations["createPolicyBundleVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/bundles/{id}/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one immutable policy bundle version */
+        get: operations["getPolicyBundleVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/bundles/deployments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List policy bundle deployment history for a scope
+         * @description Returns the BundleStore deployment history for one rule scope, newest first.
+         */
+        get: operations["listPolicyBundleDeployments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/bundles/deployments/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Roll back the active policy bundle deployment for a scope
+         * @description Restores the previous active (bundle, version) pair for the supplied scope and appends a rollback deployment marker.
+         */
+        post: operations["rollbackPolicyBundleDeployment"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1629,7 +2177,16 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Evaluate safety policy against a request */
+        /**
+         * Evaluate unified policy against a job or edge context
+         * @description Unified Policy Studio evaluator. New callers send
+         *     `PolicyEvaluateRequest` with either an inline `rule` or
+         *     `bundle_id` + `scope`, plus exactly one of `job_context` or
+         *     `edge_context`. During the migration window this endpoint also accepts
+         *     the legacy `PolicyCheckRequest` shape and returns the legacy
+         *     `PolicyCheckResponse` so existing clients keep working. Legacy-shape
+         *     responses include `Deprecation` and successor `Link` headers.
+         */
         post: operations["evaluatePolicy"];
         delete?: never;
         options?: never;
@@ -1646,8 +2203,43 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Explain policy evaluation reasoning */
+        /**
+         * Explain policy evaluation reasoning
+         * @deprecated
+         * @description Deprecated during the Policy Studio migration window. Use `POST /api/v1/policy/evaluate` with `PolicyEvaluateRequest`; this endpoint keeps the legacy `PolicyCheckRequest`/`PolicyCheckResponse` schema until the cut-over.
+         */
         post: operations["explainPolicy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/global": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the unified Global policy authority
+         * @description EDGE-052 — returns the five-section view of the Global policy
+         *     authority that all four evaluators (Cordum job, Edge action, MCP
+         *     tool, output scan) consult. Each section is a YAML SafetyPolicy
+         *     fragment persisted under a dedicated `secops/`-prefixed bundle key.
+         */
+        get: operations["getPolicyGlobal"];
+        /**
+         * Atomically update the unified Global policy authority
+         * @description EDGE-052 — atomically writes one or more sections of the Global
+         *     policy. Sections not present in the request body are left
+         *     unchanged. A `snapshot_version` field on the request acts as
+         *     optimistic concurrency: when non-empty and != the current
+         *     snapshot the request is rejected with 409 Conflict.
+         */
+        put: operations["updatePolicyGlobal"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1773,6 +2365,127 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/policy/shadows/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Tilde-encoded bundle id; `/` in logical IDs (e.g. `secops/safety`)
+                 *     becomes `~` on the wire (`secops~safety`). The server decodes the
+                 *     tilde back to `/` before looking up the shadow.
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get the shadow policy for a bundle
+         * @description Returns the active shadow policy for `{id}` or 404 if none is set.
+         *     Requires `policy.read` (admin role bypasses). Dashboards translate
+         *     the 404 into an empty-state render rather than an error.
+         */
+        get: operations["getPolicyShadow"];
+        /**
+         * Activate or replace the shadow policy for a bundle
+         * @description PUT upserts the shadow policy for the given bundle. A bundle has at
+         *     most one shadow at a time; re-activating replaces the current one
+         *     in place. Validation matches `handlePutPolicyBundle` — malformed
+         *     YAML returns 400 before any Redis write.
+         */
+        put: operations["activatePolicyShadow"];
+        post?: never;
+        /**
+         * Remove the shadow policy for a bundle
+         * @description Deactivates the shadow. Emits a `safety.policy_change` audit event
+         *     with `action=shadow_deactivate` and the outgoing shadow's
+         *     `shadow_bundle_id` so the activate/deactivate pair correlates.
+         */
+        delete: operations["deletePolicyShadow"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/shadows/{id}/results/comparisons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Tilde-encoded bundle id (see `/api/v1/policy/shadows/{id}`). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Paginated shadow-vs-active decision comparisons
+         * @description Returns individual shadow-eval entries with both the active verdict
+         *     and the shadow's would-be verdict. Paginates via Redis-stream
+         *     cursors; clients pass `next_cursor` back as `?cursor=` to resume.
+         *     `truncated_at_max=true` means the page ended because the scan hit
+         *     its budget before reaching `to`.
+         */
+        get: operations["getPolicyShadowResultsComparisons"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/shadows/{id}/results/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Tilde-encoded bundle id (see `/api/v1/policy/shadows/{id}`). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Aggregate shadow-evaluation counts over a time window
+         * @description Counts shadow-eval outcomes (escalated / relaxed / approval_differ /
+         *     unchanged) across the audit stream between `from` and `to`.
+         *     Memoised for 60 s per (tenant, bundle, window) so dashboard polling
+         *     doesn't thrash Redis XRANGE. Requires `policy.read`.
+         */
+        get: operations["getPolicyShadowResultsSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/policy/shadows/{id}/results/timeseries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Tilde-encoded bundle id (see `/api/v1/policy/shadows/{id}`). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Zero-filled bucketed timeseries of shadow outcomes
+         * @description Returns one row per bucket (including empty buckets) so the
+         *     dashboard chart shows gaps rather than stretching the last
+         *     observation. Bucket widths are a closed whitelist to prevent
+         *     fine-grained requests blowing out the 2000-bucket ceiling.
+         */
+        get: operations["getPolicyShadowResultsTimeseries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/policy/simulate": {
         parameters: {
             query?: never;
@@ -1782,7 +2495,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Simulate policy evaluation (no side effects) */
+        /**
+         * Simulate policy evaluation (no side effects)
+         * @deprecated
+         * @description Deprecated during the Policy Studio migration window. Use `POST /api/v1/policy/evaluate` with `PolicyEvaluateRequest`; this endpoint keeps the legacy `PolicyCheckRequest`/`PolicyCheckResponse` schema until the cut-over.
+         */
         post: operations["simulatePolicy"];
         delete?: never;
         options?: never;
@@ -2711,11 +3428,68 @@ export interface components {
                 size_bytes?: number;
             };
         };
+        /**
+         * @description Records who created or last updated a Rule or Bundle. The `updated_*`
+         *     fields are zero-valued on first creation and populated by the first
+         *     subsequent edit.
+         */
+        AuditMetadata: {
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+            /** Format: date-time */
+            updated_at?: string;
+            updated_by?: string;
+        };
+        AuditVerifyGap: {
+            /**
+             * Format: int64
+             * @description Sequence number where the gap or mismatch was observed.
+             */
+            at_seq: number;
+            /** @enum {string} */
+            type: "missing" | "out_of_order" | "hash_mismatch" | "retention_trimmed";
+        };
+        AuditVerifyResult: {
+            /**
+             * Format: int64
+             * @description First sequence number observed in the verified range.
+             */
+            first_seq?: number;
+            gaps: components["schemas"]["AuditVerifyGap"][];
+            /**
+             * Format: int64
+             * @description Last sequence number observed in the verified range.
+             */
+            last_seq?: number;
+            /**
+             * Format: int64
+             * @description Lowest sequence number still present in the retained stream.
+             */
+            retention_boundary_seq: number;
+            /**
+             * Format: double
+             * @description Configured audit retention window in hours.
+             */
+            retention_window_hours?: number;
+            /** @enum {string} */
+            status: "ok" | "compromised" | "partial";
+            /** @description Number of events walked in the requested range. */
+            total_events: number;
+            /** @description Number of events whose hash and linkage verified. */
+            verified_events: number;
+        };
         AuthConfig: {
             default_tenant?: string;
             oidc_client_id?: string;
             oidc_client_secret_masked?: string;
             oidc_enabled?: boolean;
+            /** @description Case-insensitive group name to Cordum role mapping. */
+            oidc_group_role_mapping?: {
+                [key: string]: "admin" | "operator" | "viewer";
+            };
+            /** @description OIDC claim containing IdP group names, defaulting to groups. */
+            oidc_groups_claim?: string;
             oidc_issuer?: string;
             oidc_login_url?: string;
             oidc_redirect_uri?: string;
@@ -2747,6 +3521,58 @@ export interface components {
             updated_at?: string;
             username?: string;
         };
+        /**
+         * @description Deployable set of rules with a deployment scope. Rules are referenced
+         *     by id rather than embedded so a bundle can rotate its members without
+         *     forcing rule duplication; the snapshot at deploy time lives in
+         *     `versions[].rule_snapshot` for tamper-evident rollback. Coexists
+         *     alongside the legacy PolicyBundleSummary schema.
+         */
+        Bundle: {
+            id: string;
+            metadata?: components["schemas"]["BundleMetadata"];
+            name: string;
+            rule_ids?: string[];
+            scope_binding: components["schemas"]["RuleScope"];
+            versions?: components["schemas"]["BundleVersion"][];
+        };
+        /** @description Audit-ready BundleStore binding event for one rule scope. */
+        BundleDeployment: {
+            action: components["schemas"]["BundleDeploymentAction"];
+            audit_hash?: string;
+            bundle_id: string;
+            /** Format: date-time */
+            deployed_at: string;
+            deployed_by?: string;
+            prev_bundle_id?: string;
+            prev_version?: string;
+            scope: components["schemas"]["RuleScope"];
+            version: string;
+        };
+        /** @enum {string} */
+        BundleDeploymentAction: "deploy" | "rollback";
+        /**
+         * @description Per-bundle authoring metadata that does not affect match/decide
+         *     payloads. `edge_mode` is the per-bundle enforcement posture for
+         *     edge-scoped bundles, replacing the legacy global EdgePolicyMode
+         *     switch.
+         */
+        BundleMetadata: {
+            edge_mode?: components["schemas"]["EdgeMode"];
+        };
+        /**
+         * @description Immutable record of a Bundle deploy. `rule_snapshot` captures the
+         *     full Rule contents at deploy time so rollback and audit do not depend
+         *     on the live rule store; `audit_hash` chains the version into the
+         *     audit chain.
+         */
+        BundleVersion: {
+            audit_hash?: string;
+            /** Format: date-time */
+            deployed_at: string;
+            rule_snapshot?: components["schemas"]["Rule"][];
+            version: string;
+        };
         ChangePasswordRequest: {
             /** Format: password */
             current_password: string;
@@ -2772,6 +3598,68 @@ export interface components {
             /** @enum {string} */
             scope?: "system" | "org" | "team" | "workflow" | "step";
             scope_id?: string;
+        };
+        CopilotMessage: {
+            content: string;
+            id: string;
+            jobIds?: string[];
+            /** @enum {string} */
+            role: "user" | "assistant" | "tool" | "system";
+            /** Format: date-time */
+            timestamp: string;
+        };
+        CopilotSession: {
+            /** Format: date-time */
+            createdAt: string;
+            id: string;
+            messages: components["schemas"]["CopilotMessage"][];
+            metadata?: {
+                [key: string]: string;
+            };
+            title?: string;
+            /** Format: date-time */
+            updatedAt: string;
+            userId: string;
+        };
+        CopilotSessionDecision: {
+            agentId?: string;
+            approvalDecision?: string;
+            approvalStatus?: string;
+            constraints?: {
+                [key: string]: unknown;
+            } | null;
+            jobId: string;
+            matchedRule?: string;
+            policyVersion?: string;
+            reason?: string;
+            ruleName?: string;
+            /** Format: date-time */
+            timestamp: string;
+            topic?: string;
+            verdict: string;
+        };
+        CopilotSessionDetailResponse: {
+            decisions: components["schemas"]["CopilotSessionDecision"][];
+            jobs: components["schemas"]["CopilotSessionJob"][];
+            session: components["schemas"]["CopilotSession"];
+            /** @description True when the backend capped jobs or decisions at 500 entries. */
+            truncated: boolean;
+        };
+        CopilotSessionJob: {
+            capabilities: string[];
+            /** Format: date-time */
+            createdAt?: string;
+            id: string;
+            metadata: {
+                [key: string]: string;
+            };
+            pool?: string;
+            riskTags: string[];
+            status: string;
+            topic?: string;
+            type?: string;
+            /** Format: date-time */
+            updatedAt?: string;
         };
         CreateAPIKeyRequest: {
             /** Format: date-time */
@@ -2807,6 +3695,40 @@ export interface components {
             tenant?: string;
             username: string;
         };
+        /**
+         * @description Unified evaluator output. A single Decision may aggregate multiple
+         *     rule evaluations via `trace`; `type` holds the final outcome the
+         *     evaluator derived from the trace. `source` distinguishes the
+         *     producing evaluator. `input_ref`/`output_ref` are pointers into the
+         *     blob store rather than embedded payloads.
+         */
+        Decision: {
+            audit_hash?: string;
+            bundle_id?: string;
+            bundle_version?: string;
+            input_ref?: string;
+            output_ref?: string;
+            rule_id: string;
+            source: components["schemas"]["DecisionSource"];
+            /** Format: date-time */
+            timestamp: string;
+            trace?: components["schemas"]["TraceStep"][];
+            type: components["schemas"]["DecisionType"];
+        };
+        /**
+         * @description Identifies which evaluator produced a Decision: the safetykernel job
+         *     pipeline (`job`) or the edge classifier path (`edge`).
+         * @enum {string}
+         */
+        DecisionSource: "job" | "edge";
+        /**
+         * @description Unified decision outcome emitted by either evaluator. The seven values
+         *     mirror the wire-format DecisionType enum in
+         *     cap/proto/cordum/agent/v1/safety.proto (epic-d9a6c0a1 appended
+         *     QUARANTINE and REDACT to the existing five values).
+         * @enum {string}
+         */
+        DecisionType: "allow" | "deny" | "require_human" | "throttle" | "allow_with_constraints" | "quarantine" | "redact";
         DelegationChainLink: {
             agent_id: string;
             /** Format: date-time */
@@ -2879,6 +3801,478 @@ export interface components {
             estimated_duration_sec?: number;
             steps?: components["schemas"]["RunStepStatus"][];
             warnings?: string[];
+        };
+        EdgeAgentActionEvent: {
+            action_name?: string;
+            agent_product?: string;
+            approval_ref?: string;
+            /** @description References to redacted external evidence artifacts. Large tool payloads/transcripts are represented here instead of inline raw event fields. */
+            artifact_ptrs?: components["schemas"]["EdgeArtifactPointer"][];
+            capability?: string;
+            /** @enum {string} */
+            decision: "ALLOW" | "DENY" | "REQUIRE_APPROVAL" | "THROTTLE" | "CONSTRAIN" | "RECORDED";
+            decision_reason?: string;
+            duration_ms?: number;
+            error_code?: string;
+            error_message?: string;
+            event_id: string;
+            execution_id: string;
+            /** @description Stable `sha256:` hash for the original input when available. */
+            input_hash?: string;
+            /** @description Bounded redacted input summary safe to persist and return. */
+            input_redacted?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description Open-ended non-empty event kind such as `hook.pre_tool_use` or `mcp.tool.pre`. */
+            kind: string;
+            labels?: components["schemas"]["EdgeLabels"];
+            /** @enum {string} */
+            layer: "hook" | "mcp" | "llm" | "runtime" | "workflow" | "system";
+            policy_snapshot?: string;
+            principal_id?: string;
+            risk_tags?: string[];
+            rule_id?: string;
+            seq: number;
+            session_id: string;
+            /** @enum {string} */
+            status: "ok" | "blocked" | "failed" | "degraded";
+            tenant_id: string;
+            tool_name?: string;
+            tool_use_id?: string;
+            /** Format: date-time */
+            ts: string;
+        };
+        EdgeAgentActionEventBatchRequest: {
+            events: components["schemas"]["EdgeAgentActionEventWriteRequest"][];
+        };
+        EdgeAgentActionEventBatchResponse: {
+            items?: components["schemas"]["EdgeAgentActionEvent"][];
+        };
+        EdgeAgentActionEventPageResponse: {
+            items?: components["schemas"]["EdgeAgentActionEvent"][];
+            next_cursor?: string | null;
+        };
+        /** @description Redacted event write payload. Do not send raw `tool_input`, `tool_result`, `raw_input`, `raw_transcript`, or `transcript` fields; large evidence belongs in `artifact_ptrs`. */
+        EdgeAgentActionEventWriteRequest: {
+            action_name?: string;
+            agent_product?: string;
+            approval_ref?: string;
+            /** @description References to redacted external artifacts for transcripts, tool inputs/results, diffs, or evidence bundles that are too large or sensitive for inline event storage. */
+            artifact_ptrs?: components["schemas"]["EdgeArtifactPointer"][];
+            capability?: string;
+            /** @enum {string} */
+            decision: "ALLOW" | "DENY" | "REQUIRE_APPROVAL" | "THROTTLE" | "CONSTRAIN" | "RECORDED";
+            decision_reason?: string;
+            duration_ms?: number;
+            error_code?: string;
+            error_message?: string;
+            event_id: string;
+            execution_id: string;
+            /** @description Optional stable hash. When `input_redacted` is present, the server derives a stable `sha256:` hash before persistence. */
+            input_hash?: string;
+            /** @description Bounded, redacted, client-safe input summary. Secrets and large raw payloads are rejected; store large evidence using `artifact_ptrs`. */
+            input_redacted?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description Open-ended non-empty event kind such as `hook.pre_tool_use` or `mcp.tool.pre`. */
+            kind: string;
+            labels?: components["schemas"]["EdgeLabels"];
+            /** @enum {string} */
+            layer: "hook" | "mcp" | "llm" | "runtime" | "workflow" | "system";
+            policy_snapshot?: string;
+            principal_id?: string;
+            risk_tags?: string[];
+            rule_id?: string;
+            /** @description Optional sequence number. Omit or set 0 for server assignment; explicit values must be the next sequence for the execution. */
+            seq?: number;
+            session_id: string;
+            /** @enum {string} */
+            status: "ok" | "blocked" | "failed" | "degraded";
+            /** @description Optional body tenant; when present it must match X-Tenant-ID. */
+            tenant_id?: string;
+            tool_name?: string;
+            tool_use_id?: string;
+            /** Format: date-time */
+            ts: string;
+        };
+        EdgeAgentExecution: {
+            /** @enum {string} */
+            adapter: "claude-code-hook" | "mcp-gateway" | "llm-proxy" | "runtime-sidecar" | "sdk-runner";
+            attempt?: number;
+            /** Format: date-time */
+            ended_at?: string | null;
+            execution_id: string;
+            job_id?: string;
+            labels?: components["schemas"]["EdgeLabels"];
+            metrics?: components["schemas"]["EdgeExecutionMetrics"];
+            /** @enum {string} */
+            mode: "local-dev" | "enterprise-managed" | "workflow" | "ci" | "prod-runner";
+            policy_snapshot?: string;
+            session_id: string;
+            /** Format: date-time */
+            started_at: string;
+            /** @enum {string} */
+            status: "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled" | "timeout" | "degraded";
+            step_id?: string;
+            tenant_id: string;
+            trace_id?: string;
+            worker_id?: string;
+            workflow_run_id?: string;
+        };
+        /** @description Tenant-scoped action approval bound to an Edge session/execution/event, action hash, and policy snapshot. Raw action/tool payloads are not stored here; use hashes and artifact pointers for evidence. */
+        EdgeApproval: {
+            /** @description Stable action hash. The raw action payload is not stored. */
+            action_hash: string;
+            approval_ref: string;
+            /**
+             * Format: date-time
+             * @description Set once an approved approval is atomically claimed by the agent retry path.
+             */
+            consumed_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * @description Empty while pending; terminal decisions match status.
+             * @enum {string}
+             */
+            decision?: "" | "approve" | "reject" | "expire" | "invalidate";
+            event_id: string;
+            execution_id: string;
+            /** Format: date-time */
+            expires_at: string | null;
+            /** @description Stable hash of the redacted/bounded action input used for evidence correlation. */
+            input_hash: string;
+            labels?: components["schemas"]["EdgeLabels"];
+            metadata?: {
+                [key: string]: string;
+            };
+            /** @description Redacted policy snapshot identifier; used to reject stale approvals. */
+            policy_snapshot: string;
+            /** @description Principal that requested the governed action. */
+            principal_id: string;
+            /** @description Trigger reason explaining why approval was required. */
+            reason: string;
+            /** @description Authenticated requester identity used for self-approval protection. */
+            requester: string;
+            /** @description Resolver-provided reason or system expiry reason for terminal records. */
+            resolution_reason?: string;
+            /** Format: date-time */
+            resolved_at?: string | null;
+            /** @description Display/audit identity for the resolver. */
+            resolved_by?: string;
+            /** @description Principal that approved/rejected/expired the approval. */
+            resolver_id?: string;
+            rule_id: string;
+            session_id: string;
+            /** @enum {string} */
+            status: "pending" | "approved" | "rejected" | "expired" | "invalidated";
+            tenant_id: string;
+        };
+        /** @description Human resolver note for approving or rejecting an Edge action approval. */
+        EdgeApprovalDecisionRequest: {
+            reason?: string;
+        };
+        EdgeApprovalPageResponse: {
+            items?: components["schemas"]["EdgeApproval"][];
+            next_cursor?: string | null;
+        };
+        /** @description Pointer to redacted evidence stored outside the event row. Its tenant/session/execution/event IDs must match the enclosing event, and the URI must be an internal artifact reference rather than a signed URL or token-bearing external URI. */
+        EdgeArtifactPointer: {
+            /** @enum {string} */
+            artifact_type: "edge.transcript" | "edge.diff" | "edge.tool_input" | "edge.tool_result" | "edge.evidence_bundle";
+            /** Format: date-time */
+            created_at: string;
+            event_id: string;
+            execution_id: string;
+            /** @enum {string} */
+            redaction_level: "standard" | "strict";
+            /** @enum {string} */
+            retention_class: "short" | "standard" | "audit";
+            session_id: string;
+            sha256: string;
+            tenant_id: string;
+            /** @description Internal artifact URI such as `artifact://...` or `edge-artifact://...`; signed URLs, query-string tokens, userinfo, fragments, and external HTTP(S) storage URLs are rejected before persistence. */
+            uri: string;
+        };
+        EdgeEndExecutionRequest: {
+            /** Format: date-time */
+            ended_at?: string;
+            /**
+             * @default succeeded
+             * @enum {string}
+             */
+            status: "succeeded" | "failed" | "cancelled" | "timeout";
+        };
+        EdgeEndSessionRequest: {
+            /** Format: date-time */
+            ended_at?: string;
+            /**
+             * @default ended
+             * @enum {string}
+             */
+            status: "ended" | "failed";
+        };
+        EdgeEnforcementLayers: {
+            [key: string]: boolean;
+        };
+        /** @description Standard error envelope for all `/api/v1/edge/*` routes. Messages and details are sanitized and must not echo raw tool payloads, API keys, signed URLs, or secrets. */
+        EdgeError: {
+            /**
+             * @description Stable machine-readable Edge error code.
+             * @example idempotency_conflict
+             * @enum {string}
+             */
+            code: "unauthorized" | "access_denied" | "tenant_required" | "tenant_mismatch" | "tenant_access_denied" | "missing_path_param" | "invalid_request" | "invalid_json" | "missing_required_field" | "not_found" | "request_too_large" | "service_unavailable" | "store_unavailable" | "internal_error" | "upstream_error" | "conflict" | "session_terminal" | "execution_terminal" | "execution_session_mismatch" | "raw_payload_rejected" | "artifact_pointer_invalid" | "approval_conflict" | "approval_not_actionable" | "self_approval_denied" | "idempotency_conflict" | "idempotency_key_invalid" | "idempotency_window_expired" | "max_executions_exceeded" | "event_cap_exceeded";
+            /** @description Optional sanitized structured details. */
+            details?: {
+                [key: string]: unknown;
+            };
+            /**
+             * @description Sanitized human-readable message.
+             * @example idempotency key already used with a different request
+             */
+            message: string;
+            /** @description Request correlation id from `X-Request-Id`/middleware. */
+            request_id: string;
+        };
+        /** @description Redacted Edge action evaluation request for an existing session/execution. Do not send raw `tool_input`, `tool_result`, `raw_input`, `raw_transcript`, or `transcript`; send bounded `input_redacted`/`tool_input_redacted` plus `artifact_ptrs`. */
+        EdgeEvaluateRequest: {
+            /** @description Optional client hint; ignored/overridden by the server-side classifier when derivable. */
+            action_name?: string;
+            agent_product?: string;
+            /**
+             * @description Optional override of the default 5-minute approval TTL when policy
+             *     returns REQUIRE_APPROVAL (EDGE-059). Bound to [1, 300] seconds
+             *     server-side; values outside this range or omitted use the 5-minute
+             *     default. Callers can ONLY shorten the TTL — values >300 are
+             *     silently capped at the default. Used by e2e tests that need to
+             *     exercise approval expiration inside a bounded sleep window.
+             * @example 2
+             */
+            approval_ttl_seconds?: number;
+            /** @description References to redacted external artifacts for large or sensitive evidence. */
+            artifact_ptrs?: components["schemas"]["EdgeArtifactPointer"][];
+            /** @description Optional client hint; ignored/overridden by the server-side classifier when derivable. */
+            capability?: string;
+            cwd?: string;
+            /** @description Optional caller-supplied event ID; omitted values are generated by the server. */
+            event_id?: string;
+            execution_id: string;
+            git_branch?: string;
+            git_remote?: string;
+            git_sha?: string;
+            /** @description Optional client hash. When redacted input is supplied, the server computes/overwrites the persisted `sha256:` hash from accepted redacted input. */
+            input_hash?: string;
+            /** @description Bounded, redacted action input. The server re-redacts and computes the persisted `input_hash`. */
+            input_redacted?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description Non-empty Edge event kind such as `hook.pre_tool_use`. */
+            kind: string;
+            labels?: components["schemas"]["EdgeLabels"];
+            /** @enum {string} */
+            layer: "hook" | "mcp" | "llm" | "runtime" | "workflow" | "system";
+            principal_id: string;
+            repo?: string;
+            /** @description Optional client hints. Server-side classifier output is authoritative. */
+            risk_tags?: string[];
+            session_id: string;
+            /** @description Optional body tenant; when present it must match X-Tenant-ID. */
+            tenant_id?: string;
+            /** @description Claude-hook-friendly alias for `input_hash`. */
+            tool_input_hash?: string;
+            /** @description Claude-hook-friendly alias for `input_redacted`. */
+            tool_input_redacted?: {
+                [key: string]: unknown;
+            } | null;
+            /** @description Hook tool name such as `Bash`; required for hook-layer tool evaluations. */
+            tool_name?: string;
+            tool_use_id?: string;
+        };
+        EdgeEvaluateResponse: {
+            /** @description Opaque approval reference from the Safety Kernel/approval integration. This endpoint does not create approval records. */
+            approval_ref?: string;
+            constraints?: {
+                [key: string]: unknown;
+            } | null;
+            /** @enum {string} */
+            decision: "ALLOW" | "DENY" | "REQUIRE_APPROVAL" | "THROTTLE" | "CONSTRAIN";
+            /** @description True when Safety was unavailable and the response follows policy-mode degraded behavior. */
+            degraded?: boolean;
+            /** @enum {string} */
+            error_code?: "safety_unavailable";
+            /** @description Sanitized bounded error guidance; upstream secret-bearing error strings are not returned. */
+            error_message?: string;
+            /** @description Persisted Edge decision/degraded event ID. */
+            event_id?: string;
+            /** @description Hook/terminal-friendly exit code; zero for allow-like responses and non-zero for deny/block guidance. */
+            exit_code: number;
+            /**
+             * @description Hook-friendly permission decision.
+             * @enum {string}
+             */
+            permission_decision: "allow" | "deny";
+            permission_decision_reason?: string;
+            policy_snapshot?: string;
+            reason?: string;
+            rule_id?: string;
+            terminal_message?: string;
+            terminal_title?: string;
+            timeout_ms?: number;
+            updated_input?: {
+                [key: string]: unknown;
+            } | null;
+            /** @enum {string} */
+            wait_strategy?: "manual_approval" | "backoff" | "retry";
+        };
+        /**
+         * @description Edge-side action snapshot for the unified evaluator. Raw tool input is
+         *     intentionally absent; callers provide only redacted input and labels.
+         */
+        EdgeEvaluationContext: {
+            agent_product?: string;
+            execution_id?: string;
+            input_hash?: string;
+            labels?: {
+                [key: string]: string;
+            };
+            principal_id: string;
+            risk_tags?: string[];
+            session_id?: string;
+            tenant_id: string;
+            tool_input_hash?: string;
+            tool_input_redacted?: {
+                [key: string]: unknown;
+            };
+            tool_name?: string;
+        };
+        EdgeExecutionCreateRequest: {
+            /** @enum {string} */
+            adapter?: "claude-code-hook" | "mcp-gateway" | "llm-proxy" | "runtime-sidecar" | "sdk-runner";
+            attempt?: number;
+            job_id?: string;
+            labels?: components["schemas"]["EdgeLabels"];
+            /** @enum {string} */
+            mode?: "local-dev" | "enterprise-managed" | "workflow" | "ci" | "prod-runner";
+            /** @description Redacted policy snapshot identifier or summary; raw secrets are redacted before persistence/response. */
+            policy_snapshot?: string;
+            session_id: string;
+            step_id?: string;
+            /** @description Optional body tenant; when present it must match X-Tenant-ID. */
+            tenant_id?: string;
+            trace_id?: string;
+            worker_id?: string;
+            workflow_run_id?: string;
+        };
+        EdgeExecutionMetrics: {
+            allow?: number;
+            artifacts?: number;
+            deny?: number;
+            events?: number;
+            llm_cost_usd?: number;
+            require_approval?: number;
+        };
+        EdgeExecutionPageResponse: {
+            items?: components["schemas"]["EdgeAgentExecution"][];
+            next_cursor?: string | null;
+        };
+        EdgeHeartbeatResponse: {
+            heartbeat_alive: boolean;
+            session_id: string;
+        };
+        EdgeLabels: {
+            [key: string]: string;
+        };
+        /**
+         * @description Per-bundle enforcement posture for the edge evaluator. Migrates the
+         *     legacy global EdgePolicyMode switch onto bundle metadata so different
+         *     fleets and users can run at different modes simultaneously. See spec
+         *     cordum/docs/specs/policy-studio-rewrite.md "Edge bundle metadata".
+         * @enum {string}
+         */
+        EdgeMode: "observe" | "enforce" | "enterprise-strict";
+        EdgeRiskSummary: {
+            approval_count?: number;
+            artifact_count?: number;
+            denied_count?: number;
+            /** @enum {string} */
+            max_risk?: "low" | "medium" | "high" | "critical";
+        };
+        EdgeSession: {
+            agent_product?: string;
+            agent_version?: string;
+            cwd?: string;
+            device_id?: string;
+            /** Format: date-time */
+            ended_at?: string | null;
+            enforcement_layers?: components["schemas"]["EdgeEnforcementLayers"];
+            git_branch?: string;
+            git_remote?: string;
+            git_sha?: string;
+            host_id?: string;
+            job_id?: string;
+            labels?: components["schemas"]["EdgeLabels"];
+            /** @enum {string} */
+            mode: "local-dev" | "enterprise-managed" | "workflow" | "ci" | "prod-runner";
+            /** @enum {string} */
+            policy_mode: "observe" | "enforce" | "enterprise-strict";
+            /** @description Redacted policy snapshot identifier or summary; raw secrets are redacted before persistence/response. */
+            policy_snapshot?: string;
+            principal_id?: string;
+            /** @enum {string} */
+            principal_type: "human" | "service" | "unknown";
+            repo?: string;
+            risk_summary: components["schemas"]["EdgeRiskSummary"];
+            session_id: string;
+            /** Format: date-time */
+            started_at: string;
+            /** @enum {string} */
+            status: "starting" | "running" | "waiting_for_approval" | "degraded" | "ended" | "failed";
+            tenant_id: string;
+            trace_id: string;
+            workflow_run_id?: string;
+        };
+        EdgeSessionCreateRequest: {
+            agent_product?: string;
+            agent_version?: string;
+            cwd?: string;
+            device_id?: string;
+            enforcement_layers?: components["schemas"]["EdgeEnforcementLayers"];
+            git_branch?: string;
+            git_remote?: string;
+            git_sha?: string;
+            host_id?: string;
+            job_id?: string;
+            labels?: components["schemas"]["EdgeLabels"];
+            /** @enum {string} */
+            mode?: "local-dev" | "enterprise-managed" | "workflow" | "ci" | "prod-runner";
+            /** @enum {string} */
+            policy_mode?: "observe" | "enforce" | "enterprise-strict";
+            /** @description Redacted policy snapshot identifier or summary; raw secrets are redacted before persistence/response. */
+            policy_snapshot?: string;
+            principal_id?: string;
+            /** @enum {string} */
+            principal_type?: "human" | "service" | "unknown";
+            repo?: string;
+            /** @description Optional body tenant; when present it must match X-Tenant-ID. */
+            tenant_id?: string;
+            trace_id?: string;
+            workflow_run_id?: string;
+        };
+        EdgeSessionCreateResponse: {
+            /** @description Relative dashboard URL for the Edge session. */
+            dashboard_url: string;
+            execution: components["schemas"]["EdgeAgentExecution"];
+            execution_id: string;
+            /** @description Redacted policy snapshot identifier or summary; raw secrets are redacted before persistence/response. */
+            policy_snapshot: string;
+            session: components["schemas"]["EdgeSession"];
+            session_id: string;
+            trace_id: string;
+        };
+        EdgeSessionPageResponse: {
+            items?: components["schemas"]["EdgeSession"][];
+            next_cursor?: string | null;
         };
         Error: {
             /** @description Human-readable error message */
@@ -2958,6 +4352,24 @@ export interface components {
         GenericObject: {
             [key: string]: unknown;
         };
+        GovernanceHealth: {
+            factors: {
+                [key: string]: components["schemas"]["GovernanceHealthFactor"];
+            };
+            /** Format: date-time */
+            generated_at: string;
+            /** @enum {string} */
+            grade: "A" | "B" | "C" | "D" | "F";
+            score: number;
+            truncated_at_max?: boolean;
+        };
+        GovernanceHealthFactor: {
+            notes?: string;
+            /** @description Factor-specific raw measurement payload. */
+            raw?: unknown;
+            score: number;
+            weight: number;
+        };
         /**
          * @description Pack-signature verification outcome computed by the gateway at
          *     install time. Never client-supplied — the gateway discards any
@@ -3025,6 +4437,34 @@ export interface components {
             /** Format: date-time */
             started_at?: string | null;
             trace_id?: string;
+        };
+        /**
+         * @description Job-side context for the unified evaluator. Used with input, output,
+         *     and velocity rules and dispatched to the safetykernel path.
+         */
+        JobEvaluationContext: {
+            capability?: string;
+            input?: components["schemas"]["JobEvaluationInput"];
+            job_id?: string;
+            labels?: {
+                [key: string]: string;
+            };
+            memory_id?: string;
+            principal_id?: string;
+            risk_tags?: string[];
+            tenant_id: string;
+            topic: string;
+            workflow_id?: string;
+        };
+        /**
+         * @description Job-side content snapshot evaluated by a unified job Rule. `content`
+         *     may be truncated by callers; `size_bytes` records the original size.
+         */
+        JobEvaluationInput: {
+            content?: string;
+            content_type?: string;
+            /** Format: int64 */
+            size_bytes?: number;
         };
         JobRecord: {
             actor_id?: string;
@@ -3171,6 +4611,17 @@ export interface components {
             transport?: "sse" | "stdio";
             uptime_seconds?: number;
         };
+        OIDCGroupRoleMappingUpdateRequest: {
+            /** @description JSON object mapping Okta/OIDC group names to Cordum roles. */
+            oidc_group_role_mapping: {
+                [key: string]: "admin" | "operator" | "viewer";
+            };
+            /**
+             * @description OIDC claim containing IdP group names.
+             * @default groups
+             */
+            oidc_groups_claim: string;
+        };
         OutputRule: {
             /** @enum {string} */
             action?: "BLOCK" | "REDACT" | "WARN" | "LOG";
@@ -3226,10 +4677,24 @@ export interface components {
             /** Format: date-time */
             timestamp?: string;
         };
+        PolicyBundleDeploymentHistoryResponse: {
+            items: components["schemas"]["BundleDeployment"][];
+            scope: components["schemas"]["RuleScope"];
+        };
+        PolicyBundleDeploymentResponse: {
+            deployment: components["schemas"]["BundleDeployment"];
+        };
+        PolicyBundleDeployRequest: {
+            scope: components["schemas"]["RuleScope"];
+            version: string;
+        };
         PolicyBundleDetail: components["schemas"]["PolicyBundleSummary"] & {
             /** @description Raw YAML content of the bundle */
             content?: string;
             rules?: components["schemas"]["PolicyRule"][];
+        };
+        PolicyBundleRollbackRequest: {
+            scope: components["schemas"]["RuleScope"];
         };
         PolicyBundleSummary: {
             author?: string;
@@ -3240,6 +4705,22 @@ export interface components {
             source?: string;
             /** Format: date-time */
             updated_at?: string;
+        };
+        /** @description Request to append an immutable BundleStore version. */
+        PolicyBundleVersionCreateRequest: {
+            audit_hash?: string;
+            /** Format: date-time */
+            deployed_at?: string;
+            rule_snapshot: components["schemas"]["Rule"][];
+            version: string;
+        };
+        PolicyBundleVersionResponse: {
+            bundle_id: string;
+            version: components["schemas"]["BundleVersion"];
+        };
+        PolicyBundleVersionsResponse: {
+            bundle_id: string;
+            items: components["schemas"]["BundleVersion"][];
         };
         PolicyCheckRequest: {
             capability?: string;
@@ -3265,6 +4746,52 @@ export interface components {
             evaluations?: components["schemas"]["SafetyDecision"][] | null;
             reason?: string;
             rule_id?: string | null;
+        };
+        /**
+         * @description Unified Policy Studio evaluator request. Provide either `rule` or
+         *     `bundle_id` + `scope`, and exactly one of `job_context` or
+         *     `edge_context`. Job contexts are valid for input/output/velocity
+         *     rules; edge contexts are valid only for edge rules.
+         */
+        PolicyEvaluateRequest: ({
+            bundle_id?: string;
+            edge_context?: components["schemas"]["EdgeEvaluationContext"];
+            job_context?: components["schemas"]["JobEvaluationContext"];
+            rule?: components["schemas"]["Rule"];
+            scope?: components["schemas"]["RuleScope"];
+        } | unknown | unknown) & (unknown | unknown);
+        /** @description Unified evaluator response containing the shared Decision. */
+        PolicyEvaluateResponse: {
+            decision: components["schemas"]["Decision"];
+        };
+        /**
+         * @description EDGE-052 — five-section view of the Global policy authority. The
+         *     snapshot_hash matches the cfg:&lt;sha&gt; identifier the kernel
+         *     propagates on policy decisions; clients pass it back on PUT for
+         *     optimistic concurrency.
+         */
+        PolicyGlobalDocument: {
+            /** @description Keyed by section name — input_rules, output_rules, edge_action_rules, mcp_tool_rules, invariants. */
+            sections?: {
+                [key: string]: components["schemas"]["PolicyGlobalSection"];
+            };
+            snapshot_hash?: string;
+            snapshot_version?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        /**
+         * @description One section of the unified Global policy. The bundle_id is the
+         *     underlying configsvc key (e.g. `secops/global-input`,
+         *     `secops/invariants`). Empty content means no studio overrides
+         *     are authored for this section.
+         */
+        PolicyGlobalSection: {
+            bundle_id?: string;
+            /** @description YAML SafetyPolicy fragment for this section. */
+            content?: string;
+            enabled?: boolean;
+            sha256?: string;
         };
         PolicyReplayRequest: {
             candidate_bundle_id?: string;
@@ -3330,6 +4857,43 @@ export interface components {
             priority?: number;
             /** @description Bundle or file that defines this rule */
             source?: string;
+        };
+        /**
+         * @description Full stored representation of a shadow candidate policy. `content`
+         *     is the raw YAML source — consumers that only need to list shadows
+         *     may prefer the server-side summary projection (not exposed as a
+         *     separate endpoint today).
+         */
+        PolicyShadow: {
+            /**
+             * Format: date-time
+             * @description Bumped on each re-activation; equals `created_at` on the first.
+             */
+            activated_at: string;
+            /** @description Active bundle this shadow is tied to (one shadow per bundle). */
+            bundle_id: string;
+            /** @description Raw YAML source of the candidate policy. */
+            content: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Principal ID that activated the shadow. */
+            created_by: string;
+            /** @description Arbitrary operator-supplied key/value pairs (e.g. ticket refs). */
+            metadata?: {
+                [key: string]: string;
+            };
+            /** @description Stable `shadow-<12 hex>` handle that persists across reactivation. */
+            shadow_bundle_id: string;
+            tenant_id: string;
+        };
+        /** @description PUT body for activating or replacing a shadow policy. */
+        PolicyShadowUpsertRequest: {
+            /** @description Raw YAML source of the candidate policy. Required. */
+            content: string;
+            /** @description Arbitrary operator-supplied key/value pairs; optional. */
+            metadata?: {
+                [key: string]: string;
+            };
         };
         PolicySnapshot: {
             author?: string;
@@ -3406,6 +4970,60 @@ export interface components {
             note?: string;
             snapshot_id: string;
         };
+        /**
+         * @description Unified authoring surface for both job-side and edge-side policy. The
+         *     envelope (id, name, type, scope, status, version, audit) is shared
+         *     across all rule types; type-specific match/decide payloads carry the
+         *     per-RuleType schema as free-form objects to preserve lossless
+         *     roundtrip with the Go json.RawMessage and protobuf
+         *     google.protobuf.Struct transport. Coexists alongside the legacy
+         *     OutputRule/VelocityRule schemas during the migration window.
+         */
+        Rule: {
+            audit: components["schemas"]["AuditMetadata"];
+            decide: {
+                [key: string]: unknown;
+            };
+            description?: string;
+            id: string;
+            match: {
+                [key: string]: unknown;
+            };
+            name: string;
+            scope: components["schemas"]["RuleScope"];
+            status: components["schemas"]["RuleStatus"];
+            type: components["schemas"]["RuleType"];
+            version: string;
+        };
+        /**
+         * @description Narrows where a rule (or bundle) applies. When `kind` is `global`,
+         *     `value` is unused and may be empty; for the other kinds, `value`
+         *     carries the corresponding identifier (tenant id, workflow id, edge
+         *     fleet name, edge user id).
+         */
+        RuleScope: {
+            kind: components["schemas"]["RuleScopeKind"];
+            value?: string;
+        };
+        /**
+         * @description Narrows where a rule (or bundle) applies. `global` covers an entire
+         *     deployment; `tenant`/`workflow` scope to job-side bindings;
+         *     `edge_fleet`/`edge_user` scope to edge-side bindings.
+         * @enum {string}
+         */
+        RuleScopeKind: "global" | "tenant" | "workflow" | "edge_fleet" | "edge_user";
+        /**
+         * @description Lifecycle state of a Rule. `draft` rules are author-only; `published`
+         *     rules participate in evaluation; `deprecated` rules remain queryable
+         *     for audit and rollback but are skipped by evaluators.
+         * @enum {string}
+         */
+        RuleStatus: "draft" | "published" | "deprecated";
+        /**
+         * @description Discriminator for a Rule's match/decide payload schema.
+         * @enum {string}
+         */
+        RuleType: "input" | "output" | "velocity" | "edge";
         RunDetail: components["schemas"]["RunSummary"] & {
             created_by?: string;
             dry_run?: boolean;
@@ -3477,6 +5095,88 @@ export interface components {
             schema: {
                 [key: string]: unknown;
             };
+        };
+        ShadowComparisonEntry: {
+            active_rule_id?: string;
+            active_verdict?: string;
+            agent_id?: string;
+            /** @enum {string} */
+            diff?: "escalated" | "relaxed" | "approval_differ" | "unchanged";
+            job_id?: string;
+            /** @description Shadow-evaluation latency in ms, stored as a string in the audit event Extra map. */
+            latency_ms?: string;
+            /** Format: int64 */
+            seq?: number;
+            shadow_bundle_id?: string;
+            shadow_rule_id?: string;
+            shadow_verdict?: string;
+            /** Format: int64 */
+            ts_ms?: number;
+        };
+        ShadowComparisonsResponse: {
+            entries: components["schemas"]["ShadowComparisonEntry"][];
+            /** @description Redis stream ID (`<ms>-<seq>`) to pass back as `?cursor=` for the next page. Empty when no more rows. */
+            next_cursor?: string;
+            truncated_at_max: boolean;
+        };
+        ShadowResultsSummary: {
+            /**
+             * Format: int64
+             * @description Both reached a terminal decision but differed on REQUIRE_APPROVAL.
+             */
+            approval_differ_count: number;
+            bundle_id: string;
+            /**
+             * Format: int64
+             * @description Shadow would have been stricter than active (e.g. DENY vs ALLOW).
+             */
+            escalated_count: number;
+            /** Format: int64 */
+            from_ms: number;
+            /**
+             * Format: int64
+             * @description Shadow would have been more permissive than active.
+             */
+            relaxed_count: number;
+            shadow_bundle_id?: string;
+            /** Format: int64 */
+            to_ms: number;
+            /** Format: int64 */
+            total_evaluated: number;
+            /** @description True when the scan hit its event budget before reaching `to_ms`. */
+            truncated_at_max: boolean;
+            /** Format: int64 */
+            unchanged_count: number;
+        };
+        ShadowTimeseriesBucket: {
+            /** Format: int64 */
+            approval_differ: number;
+            /** Format: int64 */
+            escalated: number;
+            /** Format: int64 */
+            relaxed: number;
+            /** Format: int64 */
+            total: number;
+            /**
+             * Format: int64
+             * @description Bucket start time (aligned down to the bucket boundary).
+             */
+            ts_ms: number;
+            /** Format: int64 */
+            unchanged: number;
+        };
+        ShadowTimeseriesResponse: {
+            /**
+             * @description Bucket width as the caller requested (e.g. `1m`, `5m`).
+             * @enum {string}
+             */
+            bucket: "1m" | "5m" | "15m" | "1h" | "1d";
+            buckets: components["schemas"]["ShadowTimeseriesBucket"][];
+            /** Format: int64 */
+            from_ms: number;
+            /** Format: int64 */
+            to_ms: number;
+            truncated_at_max: boolean;
         };
         StatusResponse: {
             build?: {
@@ -3606,11 +5306,45 @@ export interface components {
             risk_tags?: string[];
             status: string;
         };
+        /**
+         * @description Records one rule evaluation contributing to a Decision. Multiple
+         *     TraceSteps are emitted when a rule chain or bundle composition
+         *     produces a final decision through ordered evaluation. `constraints`
+         *     carries the raw constraints payload (e.g. the existing safetykernel
+         *     BudgetConstraints/SandboxProfile JSON) when the evaluator applied an
+         *     allow_with_constraints path; downstream consumers parse it per
+         *     RuleType.
+         */
+        TraceStep: {
+            bundle_id?: string;
+            constraints?: {
+                [key: string]: unknown;
+            };
+            decision_type: components["schemas"]["DecisionType"];
+            reason?: string;
+            rule_id: string;
+            /** Format: date-time */
+            timestamp: string;
+        };
         UpdatePolicyBundleRequest: {
             author?: string;
             content?: string;
             enabled?: boolean;
             message?: string;
+        };
+        UpdatePolicyGlobalRequest: {
+            author?: string;
+            message?: string;
+            /** @description Keyed by section name. Only listed sections are written; absent sections remain unchanged. */
+            sections: {
+                [key: string]: {
+                    /** @description YAML SafetyPolicy fragment. Empty content deletes the section's bundle. */
+                    content?: string;
+                    enabled?: boolean;
+                };
+            };
+            /** @description Optimistic concurrency token. When non-empty and != current snapshot, request is rejected with 409. */
+            snapshot_version?: string;
         };
         UpdateUserRequest: {
             display_name?: string;
@@ -3743,6 +5477,117 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description Edge bad gateway — upstream service error */
+        EdgeBadGateway: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["EdgeError"];
+            };
+        };
+        /** @description Edge bad request — invalid or missing parameters */
+        EdgeBadRequest: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["EdgeError"];
+            };
+        };
+        /** @description Edge conflict — resource state or idempotency conflict */
+        EdgeConflict: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["EdgeError"];
+            };
+        };
+        /**
+         * @description The target Edge execution already holds the maximum number of
+         *     AgentActionEvent rows allowed by the store (default 5000). End the
+         *     execution or start a new session to continue recording evidence. Error
+         *     envelope `code` is `event_cap_exceeded`.
+         */
+        EdgeEventCapExceeded: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["EdgeError"];
+            };
+        };
+        /** @description Edge forbidden — insufficient permissions or tenant access denied */
+        EdgeForbidden: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["EdgeError"];
+            };
+        };
+        /** @description Edge internal server error */
+        EdgeInternalServerError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["EdgeError"];
+            };
+        };
+        /**
+         * @description The target Edge session already holds the maximum number of
+         *     AgentExecution rows allowed by the gateway. Configure the cap via
+         *     CORDUM_EDGE_MAX_EXECUTIONS_PER_SESSION; default 100. End the session
+         *     and start a new one to continue recording executions. Error envelope
+         *     `code` is `max_executions_exceeded`; `details` carries
+         *     `{limit, current}`.
+         */
+        EdgeMaxExecutionsExceeded: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["EdgeError"];
+            };
+        };
+        /** @description Edge resource not found */
+        EdgeNotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["EdgeError"];
+            };
+        };
+        /** @description Edge payload too large */
+        EdgePayloadTooLarge: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["EdgeError"];
+            };
+        };
+        /** @description Edge service unavailable */
+        EdgeServiceUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["EdgeError"];
+            };
+        };
+        /** @description Edge unauthorized — missing or invalid credentials */
+        EdgeUnauthorized: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["EdgeError"];
+            };
+        };
         /** @description Forbidden — insufficient permissions */
         Forbidden: {
             headers: {
@@ -3750,6 +5595,15 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description Composite governance health score */
+        GovernanceHealthResponse: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["GovernanceHealth"];
             };
         };
         /** @description Internal server error */
@@ -3821,7 +5675,7 @@ export interface components {
     parameters: {
         ForceQ: boolean;
         HoldID: string;
-        /** @description Optional idempotency key for safe retries. */
+        /** @description Optional idempotency key for safe retries. Edge event create/batch scopes keys by tenant and endpoint, replays the first response for the same normalized request, and returns 409 `idempotency_conflict` if the same key is reused with a different normalized request. Callers SHOULD send a UUID (per the original Job submit contract); the Edge runtime additionally accepts any non-empty string up to 512 bytes for backward-compatible local-dev keys. */
         IdempotencyKey: string;
         /** @description Job ID */
         JobID: string;
@@ -4837,7 +6691,7 @@ export interface operations {
                 limit?: number;
                 /** @description Inclusive lower bound on event time (unix ms) */
                 since?: number;
-                /** @description Tenant id (must match caller scope) */
+                /** @description Tenant id to verify; must match caller scope and defaults to the authenticated/request tenant. */
                 tenant?: string;
                 /** @description Inclusive upper bound on event time (unix ms) */
                 until?: number;
@@ -4857,22 +6711,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GenericObject"];
+                    "application/json": components["schemas"]["AuditVerifyResult"];
                 };
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             500: components["responses"]["InternalServerError"];
-            /** @description Audit chainer not installed; integrity cannot be attested */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     getAuthConfig: {
@@ -5030,6 +6876,38 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Unauthorized"];
+        };
+    };
+    updateOIDCGroupRoleMapping: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OIDCGroupRoleMappingUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Sanitized authentication configuration */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthConfig"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     changeOwnPassword: {
@@ -5327,6 +7205,45 @@ export interface operations {
             500: components["responses"]["InternalServerError"];
         };
     };
+    getCopilotSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Copilot session detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CopilotSessionDetailResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalServerError"];
+            /** @description Copilot session store is not wired yet */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     listDelegations: {
         parameters: {
             query?: {
@@ -5477,6 +7394,787 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             500: components["responses"]["InternalServerError"];
+        };
+    };
+    listEdgeApprovals: {
+        parameters: {
+            query?: {
+                /** @description Optional tuple filter; must be supplied with `session_id` and `execution_id`. */
+                action_hash?: string;
+                cursor?: string;
+                /** @description Optional tuple filter; must be supplied with `session_id` and `action_hash`. */
+                execution_id?: string;
+                limit?: number;
+                /** @description Optional tuple filter; must be supplied with `execution_id` and `action_hash`. */
+                session_id?: string;
+                status?: "pending" | "approved" | "rejected" | "expired" | "invalidated";
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Edge approval page scoped to the caller's principal unless the caller has admin/operator visibility. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeApprovalPageResponse"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    getEdgeApproval: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                approval_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Edge approval */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeApproval"];
+                };
+            };
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            /** @description Edge approval not found, cross-tenant, or caller is not the original requester principal and lacks admin/operator role. The same not_found envelope is used to prevent tenant-insider enumeration of approval timing or decisions. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeError"];
+                };
+            };
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    approveEdgeApproval: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Optional idempotency key for safe retries. Edge event create/batch scopes keys by tenant and endpoint, replays the first response for the same normalized request, and returns 409 `idempotency_conflict` if the same key is reused with a different normalized request. Callers SHOULD send a UUID (per the original Job submit contract); the Edge runtime additionally accepts any non-empty string up to 512 bytes for backward-compatible local-dev keys. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                approval_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["EdgeApprovalDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Approved Edge approval */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeApproval"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            /** @description Approval permission denied or self-approval rejected (`code=self_approval_denied`). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeError"];
+                };
+            };
+            404: components["responses"]["EdgeNotFound"];
+            409: components["responses"]["EdgeConflict"];
+            413: components["responses"]["EdgePayloadTooLarge"];
+            429: components["responses"]["EdgeEventCapExceeded"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    rejectEdgeApproval: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Optional idempotency key for safe retries. Edge event create/batch scopes keys by tenant and endpoint, replays the first response for the same normalized request, and returns 409 `idempotency_conflict` if the same key is reused with a different normalized request. Callers SHOULD send a UUID (per the original Job submit contract); the Edge runtime additionally accepts any non-empty string up to 512 bytes for backward-compatible local-dev keys. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                approval_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["EdgeApprovalDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Rejected Edge approval */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeApproval"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            /** @description Approval permission denied or self-approval rejected (`code=self_approval_denied`). */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeError"];
+                };
+            };
+            404: components["responses"]["EdgeNotFound"];
+            409: components["responses"]["EdgeConflict"];
+            413: components["responses"]["EdgePayloadTooLarge"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    waitEdgeApproval: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                approval_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Caller-requested wait budget. Server clamps to a 5-minute max and uses a 30s default when omitted or non-positive. */
+                    timeout_ms?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Current Edge approval after the wait (resolved if approved/rejected/expired/invalidated; otherwise still pending). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeApproval"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            /** @description Edge approval not found, cross-tenant, or caller is not the original requester principal and lacks admin/operator role. The same not_found envelope is used to prevent tenant-insider enumeration of approval timing or decisions. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeError"];
+                };
+            };
+            409: components["responses"]["EdgeConflict"];
+            413: components["responses"]["EdgePayloadTooLarge"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    evaluateEdgeAction: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EdgeEvaluateRequest"];
+            };
+        };
+        responses: {
+            /** @description Hook-friendly Edge policy decision. Safety outages may still return 200 with `degraded=true` when policy mode permits and degraded evidence was persisted. */
+            200: {
+                headers: {
+                    /** @description Set to `true` during the migration window. */
+                    Deprecation?: string;
+                    /** @description Successor relation pointing to `/api/v1/policy/evaluate`. */
+                    Link?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeEvaluateResponse"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            404: components["responses"]["EdgeNotFound"];
+            409: components["responses"]["EdgeConflict"];
+            413: components["responses"]["EdgePayloadTooLarge"];
+            500: components["responses"]["EdgeInternalServerError"];
+            502: components["responses"]["EdgeBadGateway"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    createEdgeEvent: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Optional idempotency key for safe retries. Edge event create/batch scopes keys by tenant and endpoint, replays the first response for the same normalized request, and returns 409 `idempotency_conflict` if the same key is reused with a different normalized request. Callers SHOULD send a UUID (per the original Job submit contract); the Edge runtime additionally accepts any non-empty string up to 512 bytes for backward-compatible local-dev keys. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EdgeAgentActionEventWriteRequest"];
+            };
+        };
+        responses: {
+            /** @description Edge event appended */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeAgentActionEvent"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            404: components["responses"]["EdgeNotFound"];
+            409: components["responses"]["EdgeConflict"];
+            413: components["responses"]["EdgePayloadTooLarge"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    createEdgeEventsBatch: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Optional idempotency key for safe retries. Edge event create/batch scopes keys by tenant and endpoint, replays the first response for the same normalized request, and returns 409 `idempotency_conflict` if the same key is reused with a different normalized request. Callers SHOULD send a UUID (per the original Job submit contract); the Edge runtime additionally accepts any non-empty string up to 512 bytes for backward-compatible local-dev keys. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EdgeAgentActionEventBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Edge events appended in input order */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeAgentActionEventBatchResponse"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            404: components["responses"]["EdgeNotFound"];
+            409: components["responses"]["EdgeConflict"];
+            413: components["responses"]["EdgePayloadTooLarge"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    listEdgeExecutions: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                job_id?: string;
+                limit?: number;
+                session_id?: string;
+                trace_id?: string;
+                workflow_run_id?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Edge execution page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeExecutionPageResponse"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    createEdgeExecution: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Optional idempotency key for safe retries. Edge event create/batch scopes keys by tenant and endpoint, replays the first response for the same normalized request, and returns 409 `idempotency_conflict` if the same key is reused with a different normalized request. Callers SHOULD send a UUID (per the original Job submit contract); the Edge runtime additionally accepts any non-empty string up to 512 bytes for backward-compatible local-dev keys. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EdgeExecutionCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Edge execution created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeAgentExecution"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            404: components["responses"]["EdgeNotFound"];
+            413: components["responses"]["EdgePayloadTooLarge"];
+            429: components["responses"]["EdgeMaxExecutionsExceeded"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    getEdgeExecution: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Edge execution */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeAgentExecution"];
+                };
+            };
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            404: components["responses"]["EdgeNotFound"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    endEdgeExecution: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["EdgeEndExecutionRequest"];
+            };
+        };
+        responses: {
+            /** @description Ended Edge execution */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeAgentExecution"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            404: components["responses"]["EdgeNotFound"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    listEdgeExecutionEvents: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                decision?: "ALLOW" | "DENY" | "REQUIRE_APPROVAL" | "THROTTLE" | "CONSTRAIN" | "RECORDED";
+                /** @description Optional event kind filter; event kinds are open-ended non-empty strings such as `hook.pre_tool_use`. */
+                kind?: string;
+                limit?: number;
+                /** @description Inclusive lower timestamp bound. */
+                since?: string;
+                /** @description Inclusive upper timestamp bound. */
+                until?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Edge event page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeAgentActionEventPageResponse"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            404: components["responses"]["EdgeNotFound"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    listEdgeSessions: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                limit?: number;
+                principal_id?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Edge session page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeSessionPageResponse"];
+                };
+            };
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    createEdgeSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Optional idempotency key for safe retries. Edge event create/batch scopes keys by tenant and endpoint, replays the first response for the same normalized request, and returns 409 `idempotency_conflict` if the same key is reused with a different normalized request. Callers SHOULD send a UUID (per the original Job submit contract); the Edge runtime additionally accepts any non-empty string up to 512 bytes for backward-compatible local-dev keys. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EdgeSessionCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Edge session created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeSessionCreateResponse"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            409: components["responses"]["EdgeConflict"];
+            413: components["responses"]["EdgePayloadTooLarge"];
+            429: components["responses"]["EdgeEventCapExceeded"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    getEdgeSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Edge session */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeSession"];
+                };
+            };
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            404: components["responses"]["EdgeNotFound"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    endEdgeSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["EdgeEndSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Ended Edge session */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeSession"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            404: components["responses"]["EdgeNotFound"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    listEdgeSessionEvents: {
+        parameters: {
+            query?: {
+                cursor?: string;
+                decision?: "ALLOW" | "DENY" | "REQUIRE_APPROVAL" | "THROTTLE" | "CONSTRAIN" | "RECORDED";
+                /** @description Optional event kind filter; event kinds are open-ended non-empty strings such as `hook.pre_tool_use`. */
+                kind?: string;
+                limit?: number;
+                /** @description Inclusive lower timestamp bound. */
+                since?: string;
+                /** @description Inclusive upper timestamp bound. */
+                until?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Edge event page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeAgentActionEventPageResponse"];
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            404: components["responses"]["EdgeNotFound"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    exportEdgeSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description Caps the number of events the bundle carries. When the
+                     *     session has more, `truncation.events_truncated = true`
+                     *     and `truncation.event_count` records the actual total.
+                     *     Values above 10000 are rejected with HTTP 400 +
+                     *     `code=max_events_too_large` (EDGE-065 request-validation
+                     *     bound). Values <= 0 fall back to the assembler default
+                     *     (5000).
+                     * @default 5000
+                     */
+                    max_events?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Edge session export bundle */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        generated_at: string;
+                        /** @example edge.export.v1 */
+                        manifest_version: string;
+                        /** @enum {string} */
+                        redaction_level?: "standard" | "strict";
+                        tenant_id: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            400: components["responses"]["EdgeBadRequest"];
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            404: components["responses"]["EdgeNotFound"];
+            /** @description Bundle exceeds `CORDUM_EDGE_EXPORT_MAX_BYTES`; reduce `max_events` and retry. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeError"];
+                };
+            };
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
+        };
+    };
+    heartbeatEdgeSession: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Heartbeat refreshed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeHeartbeatResponse"];
+                };
+            };
+            401: components["responses"]["EdgeUnauthorized"];
+            403: components["responses"]["EdgeForbidden"];
+            404: components["responses"]["EdgeNotFound"];
+            500: components["responses"]["EdgeInternalServerError"];
+            503: components["responses"]["EdgeServiceUnavailable"];
         };
     };
     listEvalDatasets: {
@@ -6051,6 +8749,27 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getGovernanceHealth: {
+        parameters: {
+            query?: {
+                /** @description Tenant id (must match caller scope) */
+                tenant?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["GovernanceHealthResponse"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
     healthCheckV1: {
         parameters: {
             query?: never;
@@ -6113,7 +8832,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Optional idempotency key for safe retries. */
+                /** @description Optional idempotency key for safe retries. Edge event create/batch scopes keys by tenant and endpoint, replays the first response for the same normalized request, and returns 409 `idempotency_conflict` if the same key is reused with a different normalized request. Callers SHOULD send a UUID (per the original Job submit contract); the Edge runtime additionally accepts any non-empty string up to 512 bytes for backward-compatible local-dev keys. */
                 "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
                 /** @description Tenant isolation header (required on all protected routes). */
                 "X-Tenant-ID": components["parameters"]["TenantID"];
@@ -7234,6 +9953,40 @@ export interface operations {
             500: components["responses"]["InternalServerError"];
         };
     };
+    deployPolicyBundleVersion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyBundleDeployRequest"];
+            };
+        };
+        responses: {
+            /** @description Deployment record */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyBundleDeploymentResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
     simulatePolicyBundle: {
         parameters: {
             query?: never;
@@ -7267,6 +10020,163 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
+    listPolicyBundleVersions: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bundle versions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyBundleVersionsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
+    createPolicyBundleVersion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyBundleVersionCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Bundle version created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyBundleVersionResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
+    getPolicyBundleVersion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                id: string;
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bundle version */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyBundleVersionResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
+    listPolicyBundleDeployments: {
+        parameters: {
+            query: {
+                limit?: number;
+                scope_kind: components["schemas"]["RuleScopeKind"];
+                scope_value?: string;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deployment history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyBundleDeploymentHistoryResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
+    rollbackPolicyBundleDeployment: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyBundleRollbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Rollback deployment record */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyBundleDeploymentResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalServerError"];
         };
@@ -7369,21 +10279,27 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PolicyCheckRequest"];
+                "application/json": components["schemas"]["PolicyEvaluateRequest"] | components["schemas"]["PolicyCheckRequest"];
             };
         };
         responses: {
             /** @description Policy evaluation result */
             200: {
                 headers: {
+                    /** @description Present and set to `true` only when a legacy `PolicyCheckRequest` shape is evaluated. */
+                    Deprecation?: string;
+                    /** @description Successor relation pointing to `/api/v1/policy/evaluate` for legacy-shape callers. */
+                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PolicyCheckResponse"];
+                    "application/json": components["schemas"]["PolicyEvaluateResponse"] | components["schemas"]["PolicyCheckResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalServerError"];
         };
     };
@@ -7406,6 +10322,10 @@ export interface operations {
             /** @description Explanation result */
             200: {
                 headers: {
+                    /** @description Set to `true` during the migration window. */
+                    Deprecation?: string;
+                    /** @description Successor relation pointing to `/api/v1/policy/evaluate`. */
+                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -7414,6 +10334,69 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
+    getPolicyGlobal: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unified Global policy snapshot */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyGlobalDocument"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalServerError"];
+        };
+    };
+    updatePolicyGlobal: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdatePolicyGlobalRequest"];
+            };
+        };
+        responses: {
+            /** @description Unified Global policy updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyGlobalDocument"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description snapshot_version mismatch (optimistic concurrency) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             500: components["responses"]["InternalServerError"];
         };
     };
@@ -7634,6 +10617,230 @@ export interface operations {
             500: components["responses"]["InternalServerError"];
         };
     };
+    getPolicyShadow: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                /**
+                 * @description Tilde-encoded bundle id; `/` in logical IDs (e.g. `secops/safety`)
+                 *     becomes `~` on the wire (`secops~safety`). The server decodes the
+                 *     tilde back to `/` before looking up the shadow.
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Shadow policy */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyShadow"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    activatePolicyShadow: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                /**
+                 * @description Tilde-encoded bundle id; `/` in logical IDs (e.g. `secops/safety`)
+                 *     becomes `~` on the wire (`secops~safety`). The server decodes the
+                 *     tilde back to `/` before looking up the shadow.
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PolicyShadowUpsertRequest"];
+            };
+        };
+        responses: {
+            /** @description Shadow policy activated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyShadow"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    deletePolicyShadow: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                /**
+                 * @description Tilde-encoded bundle id; `/` in logical IDs (e.g. `secops/safety`)
+                 *     becomes `~` on the wire (`secops~safety`). The server decodes the
+                 *     tilde back to `/` before looking up the shadow.
+                 */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Shadow policy removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getPolicyShadowResultsComparisons: {
+        parameters: {
+            query: {
+                /** @description Redis stream ID (`<ms>-<seq>`) returned as `next_cursor` from the previous page. */
+                cursor?: string;
+                /** @description Filter to one diff class (omit for all classes). */
+                diff?: "escalated" | "relaxed" | "approval_differ" | "unchanged" | "all";
+                /** @description Inclusive lower bound, unix milliseconds. */
+                from: number;
+                /** @description Page size. Default 50, maximum 500. */
+                limit?: number;
+                /** @description Exclusive upper bound, unix milliseconds (≤ 30 days after `from`). */
+                to: number;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                /** @description Tilde-encoded bundle id (see `/api/v1/policy/shadows/{id}`). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated comparisons */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShadowComparisonsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getPolicyShadowResultsSummary: {
+        parameters: {
+            query: {
+                /** @description Inclusive lower bound, unix milliseconds. */
+                from: number;
+                /** @description Exclusive upper bound, unix milliseconds. Must be strictly greater than `from`; the range cannot exceed 30 days. */
+                to: number;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                /** @description Tilde-encoded bundle id (see `/api/v1/policy/shadows/{id}`). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShadowResultsSummary"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getPolicyShadowResultsTimeseries: {
+        parameters: {
+            query: {
+                /** @description Bucket width (closed whitelist). */
+                bucket: "1m" | "5m" | "15m" | "1h" | "1d";
+                /** @description Inclusive lower bound, unix milliseconds. */
+                from: number;
+                /** @description Exclusive upper bound, unix milliseconds (≤ 30 days after `from`). */
+                to: number;
+            };
+            header: {
+                /** @description Tenant isolation header (required on all protected routes). */
+                "X-Tenant-ID": components["parameters"]["TenantID"];
+            };
+            path: {
+                /** @description Tilde-encoded bundle id (see `/api/v1/policy/shadows/{id}`). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Timeseries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ShadowTimeseriesResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     simulatePolicy: {
         parameters: {
             query?: never;
@@ -7653,6 +10860,10 @@ export interface operations {
             /** @description Simulation result */
             200: {
                 headers: {
+                    /** @description Set to `true` during the migration window. */
+                    Deprecation?: string;
+                    /** @description Successor relation pointing to `/api/v1/policy/evaluate`. */
+                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -9471,6 +12682,7 @@ export interface operations {
 }
 export enum ApiPaths {
     getAuthConfig = "/api/v1/auth/config",
+    updateOIDCGroupRoleMapping = "/api/v1/auth/oidc/group-role-mapping",
     login = "/api/v1/auth/login",
     getSession = "/api/v1/auth/session",
     logout = "/api/v1/auth/logout",
@@ -9483,6 +12695,27 @@ export enum ApiPaths {
     listAPIKeys = "/api/v1/auth/keys",
     createAPIKey = "/api/v1/auth/keys",
     deleteAPIKey = "/api/v1/auth/keys/{id}",
+    getCopilotSession = "/api/v1/copilot/sessions/{sessionId}",
+    createEdgeSession = "/api/v1/edge/sessions",
+    listEdgeSessions = "/api/v1/edge/sessions",
+    getEdgeSession = "/api/v1/edge/sessions/{session_id}",
+    heartbeatEdgeSession = "/api/v1/edge/sessions/{session_id}/heartbeat",
+    endEdgeSession = "/api/v1/edge/sessions/{session_id}/end",
+    listEdgeExecutions = "/api/v1/edge/executions",
+    createEdgeExecution = "/api/v1/edge/executions",
+    getEdgeExecution = "/api/v1/edge/executions/{execution_id}",
+    endEdgeExecution = "/api/v1/edge/executions/{execution_id}/end",
+    listEdgeApprovals = "/api/v1/edge/approvals",
+    getEdgeApproval = "/api/v1/edge/approvals/{approval_ref}",
+    approveEdgeApproval = "/api/v1/edge/approvals/{approval_ref}/approve",
+    waitEdgeApproval = "/api/v1/edge/approvals/{approval_ref}/wait",
+    rejectEdgeApproval = "/api/v1/edge/approvals/{approval_ref}/reject",
+    evaluateEdgeAction = "/api/v1/edge/evaluate",
+    createEdgeEvent = "/api/v1/edge/events",
+    createEdgeEventsBatch = "/api/v1/edge/events/batch",
+    listEdgeSessionEvents = "/api/v1/edge/sessions/{session_id}/events",
+    exportEdgeSession = "/api/v1/edge/sessions/{session_id}/export",
+    listEdgeExecutionEvents = "/api/v1/edge/executions/{execution_id}/events",
     submitJob = "/api/v1/jobs",
     listJobs = "/api/v1/jobs",
     getJob = "/api/v1/jobs/{id}",
@@ -9521,14 +12754,28 @@ export enum ApiPaths {
     listPolicyRules = "/api/v1/policy/rules",
     listOutputRules = "/api/v1/policy/output/rules",
     upsertOutputRule = "/api/v1/policy/output/rules/{id}",
+    getPolicyGlobal = "/api/v1/policy/global",
+    updatePolicyGlobal = "/api/v1/policy/global",
     listPolicyBundles = "/api/v1/policy/bundles",
+    listPolicyBundleDeployments = "/api/v1/policy/bundles/deployments",
+    rollbackPolicyBundleDeployment = "/api/v1/policy/bundles/deployments/rollback",
     getPolicyBundle = "/api/v1/policy/bundles/{id}",
     updatePolicyBundle = "/api/v1/policy/bundles/{id}",
     deletePolicyBundle = "/api/v1/policy/bundles/{id}",
+    listPolicyBundleVersions = "/api/v1/policy/bundles/{id}/versions",
+    createPolicyBundleVersion = "/api/v1/policy/bundles/{id}/versions",
+    getPolicyBundleVersion = "/api/v1/policy/bundles/{id}/versions/{version}",
+    deployPolicyBundleVersion = "/api/v1/policy/bundles/{id}/deploy",
     simulatePolicyBundle = "/api/v1/policy/bundles/{id}/simulate",
     listBundleSnapshots = "/api/v1/policy/bundles/snapshots",
     createBundleSnapshot = "/api/v1/policy/bundles/snapshots",
     getBundleSnapshot = "/api/v1/policy/bundles/snapshots/{id}",
+    activatePolicyShadow = "/api/v1/policy/shadows/{id}",
+    getPolicyShadow = "/api/v1/policy/shadows/{id}",
+    deletePolicyShadow = "/api/v1/policy/shadows/{id}",
+    getPolicyShadowResultsSummary = "/api/v1/policy/shadows/{id}/results/summary",
+    getPolicyShadowResultsComparisons = "/api/v1/policy/shadows/{id}/results/comparisons",
+    getPolicyShadowResultsTimeseries = "/api/v1/policy/shadows/{id}/results/timeseries",
     publishPolicy = "/api/v1/policy/publish",
     rollbackPolicy = "/api/v1/policy/rollback",
     getPolicyAudit = "/api/v1/policy/audit",
@@ -9620,6 +12867,7 @@ export enum ApiPaths {
     listDelegationsForAgent = "/api/v1/agents/{id}/delegations",
     listDelegations = "/api/v1/delegations",
     listGovernanceDecisions = "/api/v1/governance/decisions",
+    getGovernanceHealth = "/api/v1/governance/health",
     listMcpApprovals = "/api/v1/mcp/approvals",
     getMcpApproval = "/api/v1/mcp/approvals/{id}",
     approveMcpApproval = "/api/v1/mcp/approvals/{id}/approve",

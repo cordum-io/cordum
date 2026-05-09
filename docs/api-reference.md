@@ -8,6 +8,7 @@ Source of truth: `core/controlplane/gateway/gateway_core.go` route registration 
 - Interactive Swagger UI wrapper: `docs/api/openapi/index.html`
 - REST + gRPC overview: `docs/api.md`
 - gRPC service definition (`CordumApi`): `core/protocol/proto/v1/api.proto`
+- gRPC service definition (`PolicyEvaluator`): `cap/proto/cordum/agent/v1/policy.proto`
 
 This file is the comprehensive REST route reference; the canonical OpenAPI spec lives alongside it at `docs/api/openapi/cordum-api.yaml`.
 
@@ -1452,52 +1453,59 @@ Notes:
 
 ## 8. Policy Evaluation and Bundles
 
-### Policy evaluation endpoints
+### Unified policy evaluator
 
 ### POST `/api/v1/policy/evaluate`
-### POST `/api/v1/policy/simulate`
-### POST `/api/v1/policy/explain`
 
-- Auth: required
-- Request schema (`policyCheckRequest`):
+- Canonical Policy Studio evaluator for job and Edge contexts.
+- Auth: required + tenant access; requires `policy.write` or `admin`.
+- Request: unified `PolicyEvaluateRequest` with exactly one rule source
+  (`rule`, or `bundle_id` + `scope`) and exactly one context
+  (`job_context` or `edge_context`).
+- Response: `{ "decision": Decision }`, where `Decision.source` is `job` for
+  `input`/`output`/`velocity` rules and `edge` for `edge` rules.
+- gRPC parity: `PolicyEvaluator.EvaluateUnified`.
+- Full contract: [`docs/policy-evaluate-api.md`](policy-evaluate-api.md).
 
 ```json
 {
-  "job_id": "job-id",
-  "topic": "job.default",
-  "tenant": "default",
-  "org_id": "default",
-  "team_id": "team-a",
-  "workflow_id": "wf-id",
-  "step_id": "step-id",
-  "principal_id": "user-1",
-  "priority": "interactive",
-  "estimated_cost": 0.1,
-  "budget": {
-    "max_input_tokens": 8000,
-    "max_output_tokens": 1024,
-    "max_total_tokens": 4096,
-    "deadline_ms": 30000
-  },
-  "labels": {"k":"v"},
-  "memory_id": "run:abc",
-  "effective_config": {},
-  "meta": {
-    "tenant_id": "default",
-    "actor_id": "user-1",
-    "actor_type": "human",
-    "idempotency_key": "abc",
+  "bundle_id": "secops/default",
+  "scope": { "kind": "tenant", "value": "tenant-acme" },
+  "job_context": {
+    "tenant_id": "tenant-acme",
+    "job_id": "job-id",
+    "topic": "job.default",
+    "principal_id": "user-1",
     "capability": "summarize",
     "risk_tags": ["pii"],
-    "requires": ["approval"],
-    "pack_id": "pack.example",
-    "labels": {}
+    "input": {
+      "content": "summarize this document",
+      "content_type": "text/plain",
+      "size_bytes": 23
+    }
   }
 }
 ```
 
-- Response: protobuf-JSON `PolicyCheckResponse` from safety kernel
-- Errors: `400`, `403`, `502`, `503`
+Errors: `400` invalid request/type confusion, `401`/`403` auth or tenant
+denial, `404` no active bundle/rule, `502`/`503` downstream/store unavailable,
+`500` unexpected server error.
+
+### Deprecated legacy evaluator endpoints
+
+### POST `/api/v1/policy/simulate`
+### POST `/api/v1/policy/explain`
+
+- Status: deprecated but live during the Policy Studio migration window.
+- Auth: required + `policy.write` or `admin`.
+- Request/response: unchanged legacy protobuf-JSON
+  `PolicyCheckRequest`/`PolicyCheckResponse`.
+- Response metadata: `Deprecation: true` and
+  `Link: </api/v1/policy/evaluate>; rel="successor-version"`.
+
+Legacy `PolicyCheckRequest` bodies posted to `POST /api/v1/policy/evaluate`
+are also accepted during the migration window and return the unchanged legacy
+response with the same deprecation headers.
 
 ### GET `/api/v1/policy/snapshots`
 
@@ -1750,6 +1758,25 @@ Notes:
 - Deletes a policy bundle by ID.
 - Response: `204 No Content`
 - Errors: `400` (invalid id), `404` (not found)
+
+### BundleStore lifecycle routes
+
+These routes operate on the unified Policy Studio `BundleStore` used by the
+evaluator's `bundle_id` + `scope` path. They coexist with the legacy config
+bundle CRUD/snapshot endpoints above.
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/policy/bundles/{id}/versions` | `policy.read` or admin | List immutable versions. |
+| `POST` | `/api/v1/policy/bundles/{id}/versions` | `policy.write` or admin | Create a version with `rule_snapshot`. |
+| `GET` | `/api/v1/policy/bundles/{id}/versions/{version}` | `policy.read` or admin | Fetch one version. |
+| `POST` | `/api/v1/policy/bundles/{id}/deploy` | `policy.write` or admin | Bind a version to a `RuleScope`. |
+| `GET` | `/api/v1/policy/bundles/deployments` | `policy.read` or admin | List deployment history by `scope_kind`/`scope_value`. |
+| `POST` | `/api/v1/policy/bundles/deployments/rollback` | `policy.write` or admin | Restore the previous active deployment for a scope. |
+
+Tenant-scoped deploy/history/rollback requests require the authenticated
+tenant to match `scope.value`. BundleStore conflicts return `409`; missing
+bundles, versions, active deployments, or rollback targets return `404`.
 
 ### GET `/api/v1/policy/output/rules`
 
@@ -3122,11 +3149,13 @@ legacy `OutputRule`, `VelocityRule`, and `PolicyBundleSummary` schemas
 during the migration window — DoD #3 of task-3bf37e32 verifies the legacy
 schemas are byte-identical to pre-edit.
 
-Path operations that consume the new schemas (`/policies`,
-`/policies/bundles`, `/policies/decisions`, etc.) land in Backend 5 (the
-unified evaluator entry-point task). The Backend 1 PR ships the type
-definitions only; orval-generated dashboard hooks therefore have no new
-operations to wire until Backend 5 merges.
+Backend 5 adds the first canonical operations that consume the unified shapes:
+HTTP `POST /api/v1/policy/evaluate`, gRPC
+`PolicyEvaluator.EvaluateUnified`, and BundleStore-backed lifecycle routes
+for bundle versions/deployments/rollback. Dashboard-only `/policies`,
+`/policies/bundles`, and `/policies/decisions` navigation remains a separate
+dashboard surface; backend clients should use the `/api/v1/policy/*` routes
+documented above and in [`docs/policy-evaluate-api.md`](policy-evaluate-api.md).
 
 The full design is documented in
 [docs/specs/policy-studio-rewrite.md](specs/policy-studio-rewrite.md).
