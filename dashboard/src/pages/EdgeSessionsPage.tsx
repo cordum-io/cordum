@@ -14,6 +14,7 @@ import {
   FileText,
   Clock,
   Search,
+  Terminal,
   type LucideIcon,
 } from "lucide-react";
 import type { EdgeSession, EdgeSessionListParams } from "@/api/types";
@@ -192,6 +193,7 @@ export default function EdgeSessionsPage() {
         ) : visibleSessions.length === 0 ? (
           <div className="mt-4">
             <EmptyState
+              icon={<Terminal className="w-5 h-5" aria-hidden="true" />}
               title="No Edge sessions"
               description={
                 sessions.length === 0
