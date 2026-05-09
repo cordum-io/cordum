@@ -7,6 +7,6 @@
  */
 
 export type ListDLQPaginatedParams = {
-limit?: number;
-cursor?: string;
+  limit?: number;
+  cursor?: string;
 };

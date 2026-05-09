@@ -7,5 +7,5 @@
  */
 
 export type ListMcpToolsParams = {
-agent_id?: string;
+  agent_id?: string;
 };

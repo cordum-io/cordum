@@ -10,4 +10,6 @@
  * Claude-hook-friendly alias for `input_redacted`.
  * @nullable
  */
-export type EdgeEvaluateRequestToolInputRedacted = { [key: string]: unknown } | null;
+export type EdgeEvaluateRequestToolInputRedacted = {
+  [key: string]: unknown;
+} | null;

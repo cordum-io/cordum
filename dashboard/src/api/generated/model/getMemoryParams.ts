@@ -7,12 +7,12 @@
  */
 
 export type GetMemoryParams = {
-/**
- * Memory pointer
- */
-ptr?: string;
-/**
- * Memory key
- */
-key?: string;
+  /**
+   * Memory pointer
+   */
+  ptr?: string;
+  /**
+   * Memory key
+   */
+  key?: string;
 };

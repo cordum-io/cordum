@@ -13,12 +13,11 @@ fleets and users can run at different modes simultaneously. See spec
 cordum/docs/specs/policy-studio-rewrite.md "Edge bundle metadata".
 
  */
-export type EdgeMode = typeof EdgeMode[keyof typeof EdgeMode];
-
+export type EdgeMode = (typeof EdgeMode)[keyof typeof EdgeMode];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeMode = {
-  observe: 'observe',
-  enforce: 'enforce',
-  'enterprise-strict': 'enterprise-strict',
+  observe: "observe",
+  enforce: "enforce",
+  "enterprise-strict": "enterprise-strict",
 } as const;

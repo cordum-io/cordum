@@ -6,4 +6,4 @@
  * OpenAPI spec version: 2026-05-09.3
  */
 
-export type PolicyCheckRequestLabels = {[key: string]: string};
+export type PolicyCheckRequestLabels = { [key: string]: string };

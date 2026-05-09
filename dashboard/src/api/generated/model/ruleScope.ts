@@ -5,7 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.3
  */
-import type { RuleScopeKind } from './ruleScopeKind';
+import type { RuleScopeKind } from "./ruleScopeKind";
 
 /**
  * Narrows where a rule (or bundle) applies. When `kind` is `global`,

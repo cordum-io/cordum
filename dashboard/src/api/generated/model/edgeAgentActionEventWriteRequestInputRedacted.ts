@@ -10,4 +10,6 @@
  * Bounded, redacted, client-safe input summary. Secrets and large raw payloads are rejected; store large evidence using `artifact_ptrs`.
  * @nullable
  */
-export type EdgeAgentActionEventWriteRequestInputRedacted = { [key: string]: unknown } | null;
+export type EdgeAgentActionEventWriteRequestInputRedacted = {
+  [key: string]: unknown;
+} | null;

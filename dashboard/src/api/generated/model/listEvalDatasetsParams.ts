@@ -7,9 +7,9 @@
  */
 
 export type ListEvalDatasetsParams = {
-cursor?: string;
-limit?: number;
-name_prefix?: string;
-created_after?: string;
-created_before?: string;
+  cursor?: string;
+  limit?: number;
+  name_prefix?: string;
+  created_after?: string;
+  created_before?: string;
 };
