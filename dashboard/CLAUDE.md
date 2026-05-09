@@ -274,11 +274,17 @@ wrapped because they don't render UI and never throw a render error.
 
 **When to delegate to the outer ErrorBoundaryWrapper instead** — a
 render error in the AppShell layout (sidebar, header, command palette
-mount) bubbles past `RouteBoundary` and lands in the outer
-`ErrorBoundaryWrapper` inside `ProtectedRoutes`. That fallback is the
-default generic "Something went wrong" full-page card. Don't move
-shell-render-time failures into a per-route boundary; they aren't
-scoped to one route.
+mount) lands in the outer `ErrorBoundaryWrapper`, which is the OUTERMOST
+component returned from `ProtectedRoutes` and wraps `<AppShell>`
+itself. That fallback is the default generic "Something went wrong"
+full-page card. Don't move shell-render-time failures into a per-route
+boundary; they aren't scoped to one route.
+
+The `/login` route — rendered by the App-level `<Routes>` outside
+`ProtectedRoutes` — gets its own `RouteBoundary` so a render error
+during login still surfaces a route-scoped fallback (with Retry +
+Report-bug). It is the only route NOT covered by `ErrorBoundaryWrapper`
+because it lives outside the protected shell.
 
 **Fallback props** — the optional `fallback` render prop on
 `ErrorBoundary` receives `{ error: Error, reset: () => void }`. Calling
