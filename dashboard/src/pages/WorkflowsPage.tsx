@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Input } from "@/components/ui/Input";
 import { SkeletonTable } from "@/components/ui/Skeleton";
 import { Search, Plus, Workflow, RefreshCw, Eye, GitBranch } from "lucide-react";
 import { formatRelativeTime, clickableRowProps } from "@/lib/utils";
@@ -85,14 +86,14 @@ export default function WorkflowsPage() {
       />
 
       {/* Search — showcase style */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-        <input
+      <div className="max-w-sm">
+        <Input
           type="text"
           placeholder="Search workflows..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="h-8 w-full pl-8 pr-3 text-xs bg-surface-1 border border-border rounded-2xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cordum"
+          icon={<Search className="w-3.5 h-3.5" />}
+          className="h-8 text-xs"
         />
       </div>
 

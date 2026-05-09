@@ -17,6 +17,7 @@ import { EntitlementGate } from "@/components/EntitlementGate";
 import { UpgradePrompt } from "@/components/UpgradePrompt";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Drawer } from "@/components/ui/Drawer";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -853,15 +854,12 @@ export default function VelocityRulesPage({
             />
           </label>
 
-          <label className="flex items-center gap-3 rounded-2xl border border-border/60 bg-surface-1 px-4 py-3 text-sm text-foreground">
-            <input
-              type="checkbox"
-              checked={draft.enabled}
-              onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))}
-              className="h-4 w-4 rounded border-border text-cordum focus:ring-cordum/40"
-            />
-            Keep this fragment enabled after save
-          </label>
+          <Checkbox
+            checked={draft.enabled}
+            onChange={(event) => setDraft((current) => ({ ...current, enabled: event.target.checked }))}
+            label="Keep this fragment enabled after save"
+            wrapperClassName="rounded-2xl border border-border/60 bg-surface-1 px-4 py-3"
+          />
 
           <div className="flex items-center justify-end gap-2 border-t border-border/50 pt-4">
             <Button variant="outline" onClick={() => setEditorOpen(false)}>

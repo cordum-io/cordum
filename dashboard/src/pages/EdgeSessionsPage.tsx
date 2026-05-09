@@ -19,6 +19,8 @@ import {
 import type { EdgeSession, EdgeSessionListParams } from "@/api/types";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { useEdgeSessions } from "@/hooks/useEdgeSessions";
@@ -283,24 +285,25 @@ function SessionsFilters({
       />
       <label className="flex items-center gap-2 text-xs text-muted-foreground">
         Agent
-        <input
+        <Input
           data-testid="edge-sessions-filter-agent"
           type="text"
           value={filter.agentProduct}
           onChange={(event) => setFilter({ ...filter, agentProduct: event.target.value })}
           placeholder="claude-code"
-          className="rounded-xl border border-border bg-background px-2 py-1 text-xs text-foreground shadow-soft"
+          className="h-8 w-40 text-xs"
         />
       </label>
       <label className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Search className="h-3 w-3" />
-        <input
+        <span>Search</span>
+        <Input
           data-testid="edge-sessions-filter-search"
           type="search"
           value={filter.search}
           onChange={(event) => setFilter({ ...filter, search: event.target.value })}
           placeholder="Search session id or principal"
-          className="rounded-xl border border-border bg-background px-2 py-1 text-xs text-foreground shadow-soft"
+          icon={<Search className="h-3 w-3" />}
+          className="h-8 w-64 text-xs"
         />
       </label>
     </section>
@@ -323,11 +326,11 @@ function FilterSelect({
   return (
     <label className="flex items-center gap-2 text-xs text-muted-foreground">
       {label}
-      <select
+      <Select
         data-testid={testid}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="rounded-xl border border-border bg-background px-2 py-1 text-xs text-foreground shadow-soft"
+        className="h-8 w-44 text-xs"
       >
         <option value="">All</option>
         {options.map((option) => (
@@ -335,7 +338,7 @@ function FilterSelect({
             {option}
           </option>
         ))}
-      </select>
+      </Select>
     </label>
   );
 }

@@ -22,8 +22,10 @@ import {
 } from "lucide-react";
 import type { AgentActionEvent, EdgeDecision } from "@/api/types";
 import { Button } from "@/components/ui/Button";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
+import { Select } from "@/components/ui/Select";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import {
@@ -195,16 +197,13 @@ export default function EdgeSessionDetailPage() {
         </header>
 
         <div className="mt-3 flex items-center gap-2">
-          <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              data-testid="edge-toggle-receipts"
-              checked={showReceipts}
-              onChange={(e) => setShowReceipts(e.target.checked)}
-              className="h-3.5 w-3.5 rounded border-border accent-cordum"
-            />
-            <span>Show pre-evaluation receipts</span>
-          </label>
+          <Checkbox
+            data-testid="edge-toggle-receipts"
+            checked={showReceipts}
+            onChange={(e) => setShowReceipts(e.target.checked)}
+            label="Show pre-evaluation receipts"
+            wrapperClassName="px-0 py-0 text-xs text-muted-foreground hover:bg-transparent"
+          />
         </div>
 
         {eventsQuery.isPending ? (
@@ -364,11 +363,11 @@ function FilterSelect({
   return (
     <label className="flex items-center gap-2 text-xs text-muted-foreground">
       {label}
-      <select
+      <Select
         data-testid={testid}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="rounded-xl border border-border bg-background px-2 py-1 text-xs text-foreground shadow-soft"
+        className="h-8 w-44 text-xs"
       >
         <option value="">All</option>
         {options.map((option) => (
@@ -376,7 +375,7 @@ function FilterSelect({
             {option}
           </option>
         ))}
-      </select>
+      </Select>
     </label>
   );
 }

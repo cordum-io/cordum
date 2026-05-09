@@ -40,7 +40,7 @@ Decided 2026-04-24 · task-c154ff08 · epic-2e0ed1ee.
 - Page components reviewed: **46** (45 after DLQPage deletion).
 - Pages using `PageHeader`: **37**
 - Pages already using `InstrumentCard` or the `.instrument-card` surface: **34**
-- Pages still containing raw `<input>/<select>/<textarea>` markup: **22** (down from 27 after reopen #1's raw-control sweep removed them from the 5 govern pages above; remaining count is across detail pages outside the v2.5 hero/drift scope).
+- Pages still containing raw `<input>/<select>/<textarea>` markup: **2** (down from 27 after reopen #1 + reopen #2 raw-control sweeps; only `LoginPage` and the full-bleed `RunDetailPage` console remain, both explicitly carved out below).
 - Pages still carrying raw CSS-var styling / fallback color strings: **6** (down from 27 after the v2.5 drift sweep — only AgentDetailPage, HomePage, RunDetailPage, LoginPage, plus two unrelated low-impact carriers remain; see "v2.5 drift sweep close-out" section below).
 - Pages already depending on `MetricValue`: **5**
 - Pages already depending on `Tabs` or custom tablist markup: **6**
@@ -71,6 +71,8 @@ Seven pages newly converged in this sweep, removing **~28 page-local `var(--colo
 
 `DesignSystemConvergence.test.ts` extended with a `RAW_CONTROL_RE = /<(input|select|textarea)\b/` regex applied per page (5 new test cases). Word-boundary anchored so identifiers/comments/prop names containing the literal word "input" / "select" / "textarea" do not trigger the assertion — only JSX tags do.
 
+**Reopen #2 (2026-05-09): full-scope stale-audit raw-control close-out.** QA re-ran the same case-sensitive raw-control grep against the broader pages that this document claimed were already/silently converged. Those stale claims are now closed: `ApprovalDetailPage`, `TenantDetailPage`, `SimulatorPage`, `BundlesPage`, `TenantsPage`, `VelocityRulesPage`, `WorkflowsPage`, `SettingsSSOPage`, `EdgeSessionsPage`, and `EdgeSessionDetailPage` now compose `Input`, `Select`, `Textarea`, `Checkbox`, and/or `LabeledField` primitives instead of native form fields. The convergence test now includes 10 additional raw-control assertions for these pages. A fresh grep leaves only the explicit carve-outs (`LoginPage` pre-auth + `RunDetailPage` full-bleed console).
+
 **Converged in v2.5 drift sweep:**
 - `pages/ApprovalsPage.tsx` — gated card borders + denied-icon → `statusToneTextClasses.governance` / `statusToneBorderClasses.warning|.governance` helpers from `StatusBadge.tsx`.
 - `pages/govern/BundleDetailPage.tsx` — unsaved-changes indicator → `statusToneTextClasses.warning` helper.
@@ -80,7 +82,7 @@ Seven pages newly converged in this sweep, removing **~28 page-local `var(--colo
 - `pages/govern/PolicyAnalyticsPage.tsx` — bar fill, override highlights, false-positive banner → `fill-cordum`, `text-warning`, `bg-warning/5`, `text-cordum` bare-token classes.
 - `pages/govern/QuarantinePage.tsx` — severity-tone helpers, finding-dot indicator, medium-tier card border → `text-warning`, `text-info`, `bg-warning`, `bg-info`, `border-warning/20`.
 
-**Pages discovered already silently converged on grep (audit text was stale)**: `pages/govern/TenantDetailPage.tsx`, `pages/approvals/ApprovalDetailPage.tsx`, `pages/SettingsNotificationsPage.tsx`, `pages/govern/SimulatorPage.tsx`, `pages/govern/BundlesPage.tsx`, `pages/govern/TenantsPage.tsx`, `pages/govern/VelocityRulesPage.tsx`, `pages/govern/PolicyOverviewPage.tsx`.
+**Pages discovered already silently converged on grep (audit text was stale)**: `pages/SettingsNotificationsPage.tsx`, `pages/govern/PolicyOverviewPage.tsx`. Earlier stale claims for `ApprovalDetailPage`, `TenantDetailPage`, `SimulatorPage`, `BundlesPage`, `TenantsPage`, and `VelocityRulesPage` were corrected by reopen #2's primitive migration above.
 
 **Pages deliberately retained with `var(--color-*)`:**
 - `pages/AgentDetailPage.tsx` — recharts `<Bar fill="var(--color-cordum)" />` props are theme-bound (chart-fill drift cannot be Tailwind-converted without breaking the theme reference). Decision-identity exception, mirrors HomePage's chart palette discipline (msg-96e66aaa).
@@ -109,7 +111,8 @@ Each entry below carries a concrete checklist so the next worker can continue th
 ### P2 — medium-priority convergence
 - DONE in the detail/admin sweep: `pages/JobDetailPage.tsx`, `pages/settings/SettingsSSOPage.tsx`, `pages/settings/SettingsSCIMPage.tsx`, `pages/settings/LicensePage.tsx`, `pages/SchemaDetailPage.tsx`, `pages/SchemasPage.tsx`
 - DONE in the v2.5 drift sweep (task-100cc89c, 2026-05-08): `pages/govern/BundleDetailPage.tsx`, `pages/govern/OutputRulesPage.tsx`, `pages/govern/ReplayPage.tsx`, `pages/govern/InputRulesPage.tsx`, `pages/govern/PolicyAnalyticsPage.tsx`, `pages/govern/QuarantinePage.tsx`. See "v2.5 drift sweep close-out" section above.
-- Already silently converged (audit text was stale, grep on 2026-05-08 returned 0 drift signals): `pages/approvals/ApprovalDetailPage.tsx`, `pages/govern/TenantDetailPage.tsx`, `pages/SettingsNotificationsPage.tsx`, `pages/govern/SimulatorPage.tsx`, `pages/govern/BundlesPage.tsx`, `pages/govern/TenantsPage.tsx`, `pages/govern/VelocityRulesPage.tsx`, `pages/govern/PolicyOverviewPage.tsx`.
+- DONE in the v2.5 drift sweep reopen #2 (raw-control close-out, 2026-05-09): `pages/approvals/ApprovalDetailPage.tsx`, `pages/govern/TenantDetailPage.tsx`, `pages/govern/SimulatorPage.tsx`, `pages/govern/BundlesPage.tsx`, `pages/govern/TenantsPage.tsx`, `pages/govern/VelocityRulesPage.tsx`, `pages/WorkflowsPage.tsx`, `pages/settings/SettingsSSOPage.tsx`, `pages/EdgeSessionsPage.tsx`, `pages/EdgeSessionDetailPage.tsx`.
+- Already silently converged (audit text was stale, grep on 2026-05-09 returned 0 drift signals): `pages/SettingsNotificationsPage.tsx`, `pages/govern/PolicyOverviewPage.tsx`.
 - `pages/RunDetailPage.tsx` carve-out: existing DoD-3 exemption now extends to raw-controls/raw-vars signals (full-bleed canvas console UX).
 ### Bugs / cleanup notes noticed during the audit
 - `components/settings/SettingsLayout.tsx` and `components/KeyboardShortcutsHelp.tsx` were flagged early in the audit for old token naming. Re-check these files before close-out to ensure no stale `surface2` references remain after the broader sweep is merged.
@@ -119,22 +122,22 @@ Each entry below carries a concrete checklist so the next worker can continue th
 | Operate | `pages/AgentDetailPage.tsx` | PageHeader, InstrumentCard, ErrorBanner, Raw CSS vars | P3/P4 |
 | Operate | `pages/AgentIdentityDetailPage.tsx` | PageHeader, InstrumentCard, ErrorBanner, Motion | P3/P4 |
 | Operate | `pages/AgentsPage.tsx` | PageHeader, StatTile, Tabs, Input, EmptyState, ErrorBanner, Motion | Converged in priority P2 sweep |
-| Approvals | `pages/approvals/ApprovalDetailPage.tsx` | PageHeader, ErrorBanner, Raw inputs, Motion | P3/P4 |
+| Approvals | `pages/approvals/ApprovalDetailPage.tsx` | PageHeader, ErrorBanner, Textarea, Motion | Converged in v2.5 drift sweep reopen #2 |
 | Orchestrate | `pages/ApprovalsPage.tsx` | PageHeader, StatTile, Tabs, Input, Textarea, EmptyState, Motion | P1 (mostly migrated) |
 | Observe | `pages/AuditLogPage.tsx` | PageHeader, InstrumentCard, LabeledField, Input, Select, StatusBadge, EmptyState, ErrorBanner, DataTable, Drawer, ChainIntegrityWidget(compact), nuqs URL state | DONE (Phase 3 wk3, task-55f813b3) |
 | Observe | ~~`pages/DLQPage.tsx`~~ | DELETED — folded into JobsPage `?status=dlq` (task-0bcb9411 + task-100cc89c step 5, commit `45dacbbf`) | DONE |
 | Govern | `pages/govern/BundleDetailPage.tsx` | PageHeader, InstrumentCard, EmptyState, Raw CSS vars | P3/P4 |
-| Govern | `pages/govern/BundlesPage.tsx` | PageHeader, InstrumentCard, MetricValue, EmptyState | P3/P4 |
+| Govern | `pages/govern/BundlesPage.tsx` | PageHeader, InstrumentCard, MetricValue, Select, EmptyState | Converged in v2.5 drift sweep reopen #2 |
 | Govern | `pages/govern/InputRulesPage.tsx` | PageHeader, InstrumentCard, EmptyState, Raw inputs, Raw CSS vars | P3/P4 |
 | Govern | `pages/govern/OutputRulesPage.tsx` | PageHeader, EmptyState, Raw inputs, Raw CSS vars | P3/P4 |
 | Govern | `pages/govern/PolicyAnalyticsPage.tsx` | PageHeader, EmptyState, Raw inputs, Raw CSS vars, Motion | P3/P4 |
 | Govern | `pages/govern/PolicyOverviewPage.tsx` | PageHeader, Raw CSS vars | P3/P4 |
 | Govern | `pages/govern/QuarantinePage.tsx` | PageHeader, InstrumentCard, MetricValue, EmptyState, Raw inputs, Raw CSS vars, Motion | P3/P4 |
 | Govern | `pages/govern/ReplayPage.tsx` | PageHeader, InstrumentCard, EmptyState, Raw inputs, Raw CSS vars, Motion | P3/P4 |
-| Govern | `pages/govern/SimulatorPage.tsx` | PageHeader, InstrumentCard, EmptyState, Raw inputs | P3/P4 |
-| Govern | `pages/govern/TenantDetailPage.tsx` | PageHeader, EmptyState, Raw inputs | P3/P4 |
-| Govern | `pages/govern/TenantsPage.tsx` | PageHeader, InstrumentCard, MetricValue, EmptyState, Raw inputs | P3/P4 |
-| Govern | `pages/govern/VelocityRulesPage.tsx` | PageHeader, InstrumentCard, EmptyState, ErrorBanner, Raw inputs | P3/P4 |
+| Govern | `pages/govern/SimulatorPage.tsx` | PageHeader, InstrumentCard, Select, EmptyState | Converged in v2.5 drift sweep reopen #2 |
+| Govern | `pages/govern/TenantDetailPage.tsx` | PageHeader, Input, Select, LabeledField, EmptyState | Converged in v2.5 drift sweep reopen #2 |
+| Govern | `pages/govern/TenantsPage.tsx` | PageHeader, InstrumentCard, MetricValue, Select, EmptyState | Converged in v2.5 drift sweep reopen #2 |
+| Govern | `pages/govern/VelocityRulesPage.tsx` | PageHeader, InstrumentCard, Input, Select, Checkbox, Textarea, EmptyState, ErrorBanner | Converged in v2.5 drift sweep reopen #2 |
 | Operate | `pages/HomePage.tsx` | PageHeader, StatTile, primitives/DataTable, InstrumentCard, ErrorBanner, CollapsibleSection, Motion, --chart-1..5 tokens | Converged in Phase 3 wk5 (task-5101a23c) |
 | Operate | `pages/JobDetailPage.tsx` | InstrumentCard, EmptyState, InfoBanner, StatusBadge, CollapsibleSection, Motion | Converged in detail/admin sweep |
 | Operate | `pages/JobsPage.tsx` | PageHeader, Tabs, Input, Textarea, LabeledField, EmptyState, ErrorBanner, Motion | Converged in priority P2 sweep |
@@ -150,7 +153,7 @@ Each entry below carries a concrete checklist so the next worker can continue th
 | Settings | `pages/settings/OutputSafetySettings.tsx` | ErrorBanner, Raw inputs | P3/P4 |
 | Settings | `pages/settings/SettingsAuditExportPage.tsx` | PageHeader, InstrumentCard, Tabs, Input, LabeledField, EmptyState, ErrorBanner, Motion | Converged in priority P2 sweep |
 | Settings | `pages/settings/SettingsSCIMPage.tsx` | PageHeader, InstrumentCard, DetailList, EmptyState, StatTile, StatusBadge, ErrorBanner, Motion | Converged in detail/admin sweep |
-| Settings | `pages/settings/SettingsSSOPage.tsx` | PageHeader, InstrumentCard, DetailList, InfoBanner, StatusBadge, ErrorBanner, Motion | Converged in detail/admin sweep |
+| Settings | `pages/settings/SettingsSSOPage.tsx` | PageHeader, InstrumentCard, DetailList, Input, Textarea, LabeledField, InfoBanner, StatusBadge, ErrorBanner, Motion | Converged in detail/admin sweep + reopen #2 raw-control close-out |
 | Settings | `pages/SettingsConfigPage.tsx` | PageHeader, Tabs, Input, Select, Checkbox, LabeledField, InfoBanner, ErrorBanner, Motion | Converged in priority P2 sweep |
 | Settings | `pages/SettingsEnvironmentsPage.tsx` | PageHeader, InstrumentCard, EmptyState, ErrorBanner, Motion | P3/P4 |
 | Settings | `pages/SettingsHealthPage.tsx` | PageHeader, InstrumentCard, Motion | P3/P4 |
@@ -160,5 +163,5 @@ Each entry below carries a concrete checklist so the next worker can continue th
 | Settings | `pages/SettingsNotificationsPage.tsx` | PageHeader, InstrumentCard, ErrorBanner, Motion | P3/P4 |
 | Settings | `pages/SettingsUsersPage.tsx` | PageHeader, StatTile, InstrumentCard, Tabs, LabeledField, Input, Select, EmptyState, ErrorBanner, Motion | P1 (mostly migrated) |
 | Extend | `pages/TopicsPage.tsx` | PageHeader, StatTile, EmptyState, ErrorBanner, StatusBadge, Motion | Converged in priority P2 sweep |
-| Orchestrate | `pages/WorkflowsPage.tsx` | PageHeader, InstrumentCard, EmptyState, ErrorBanner, Raw inputs, Motion | P3/P4 |
+| Orchestrate | `pages/WorkflowsPage.tsx` | PageHeader, InstrumentCard, Input, EmptyState, ErrorBanner, Motion | Converged in v2.5 drift sweep reopen #2 |
 | Orchestrate | `pages/WorkflowStudioPage.tsx` | Motion | P3/P4 |

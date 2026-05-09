@@ -9,6 +9,9 @@ import { SkeletonCard } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { InstrumentCard } from "@/components/ui/InstrumentCard";
+import { Input } from "@/components/ui/Input";
+import { LabeledField } from "@/components/ui/LabeledField";
+import { Select } from "@/components/ui/Select";
 import { TenantTagListEditor } from "@/components/policy/tenants/TenantTagListEditor";
 import { TenantMcpMatrixEditor } from "@/components/policy/tenants/TenantMcpMatrixEditor";
 import { TenantTopicAccessSection } from "@/components/policy/tenants/TenantTopicAccessSection";
@@ -162,11 +165,11 @@ export default function TenantDetailPage() {
             <ArrowLeft className="mr-1 h-3.5 w-3.5" />
             Back to tenants
           </Button>
-          <label className="text-xs text-muted-foreground">
-            Bundle
-            <select
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Bundle</span>
+            <Select
               id="govern-tenant-detail-bundle-select"
-              className="ml-2 h-8 rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground"
+              className="h-8 min-w-44 text-xs"
               value={selectedBundleId}
               onChange={(event) => setSelectedBundleId(event.target.value)}
             >
@@ -175,8 +178,8 @@ export default function TenantDetailPage() {
                   {bundle.name || bundle.id}
                 </option>
               ))}
-            </select>
-          </label>
+            </Select>
+          </div>
         </div>
         {affordances.showSave && (
           <Button
@@ -284,10 +287,12 @@ export default function TenantDetailPage() {
                 );
               }}
             />
-            <label className="text-xs text-muted-foreground">
-              max_concurrent_jobs
-              <input
-                className="mt-1 h-8 w-full rounded-2xl border border-border bg-surface-2 px-3 text-xs text-foreground"
+            <LabeledField
+              label="max_concurrent_jobs"
+              description="Leave empty to inherit system defaults."
+            >
+              <Input
+                className="h-8 text-xs"
                 type="number"
                 min={0}
                 step={1}
@@ -315,10 +320,7 @@ export default function TenantDetailPage() {
                   );
                 }}
               />
-              <p className="mt-1 text-xs text-muted-foreground">
-                Leave empty to inherit system defaults.
-              </p>
-            </label>
+            </LabeledField>
           </div>
 
           <TenantMcpMatrixEditor

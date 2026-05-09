@@ -10,6 +10,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { InstrumentCard } from "@/components/ui/InstrumentCard";
 import { MetricValue } from "@/components/ui/MetricValue";
+import { Select } from "@/components/ui/Select";
 import { TenantList, type TenantSummaryCard } from "@/components/policy/tenants/TenantList";
 import { usePolicyAccess } from "@/hooks/usePolicyAccess";
 import { usePolicyStudioGlobal } from "@/hooks/usePolicyStudioGlobal";
@@ -155,11 +156,11 @@ export default function TenantsPage({
       </InfoBanner>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <label className="text-xs text-muted-foreground">
-          Bundle
-          <select
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>Bundle</span>
+          <Select
             id="govern-tenant-bundle-select"
-            className="ml-2 h-8 rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground"
+            className="h-8 min-w-44 text-xs"
             value={selectedBundleId}
             onChange={(event) => setSelectedBundleId(event.target.value)}
           >
@@ -168,8 +169,8 @@ export default function TenantsPage({
                 {bundle.name || bundle.id}
               </option>
             ))}
-          </select>
-        </label>
+          </Select>
+        </div>
       </div>
 
       {loadError && (

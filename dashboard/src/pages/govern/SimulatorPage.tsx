@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
+import { Select } from "@/components/ui/Select";
 import { SimulatorContextForm, type SimulatorContext } from "@/components/policy/simulator/SimulatorContextForm";
 import { SimulatorResultsChain } from "@/components/policy/simulator/SimulatorResultsChain";
 import { SimulatorDecisionSummary } from "@/components/policy/simulator/SimulatorDecisionSummary";
@@ -186,11 +187,11 @@ export default function SimulatorPage({ hideHeader }: { hideHeader?: boolean } =
             className="flex flex-wrap items-center justify-between gap-3"
             variants={{ hidden: { opacity: 0, y: 10 }, visible: { opacity: 1, y: 0 } }}
           >
-            <label className="text-xs text-muted-foreground">
-              Bundle
-              <select
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>Bundle</span>
+              <Select
                 id="simulator-bundle-select"
-                className="ml-2 h-8 rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground"
+                className="h-8 min-w-44 text-xs"
                 value={selectedBundleId}
                 onChange={(e) => setSelectedBundleId(e.target.value)}
               >
@@ -199,8 +200,8 @@ export default function SimulatorPage({ hideHeader }: { hideHeader?: boolean } =
                     {b.name || b.id}
                   </option>
                 ))}
-              </select>
-            </label>
+              </Select>
+            </div>
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
               <span className="font-mono">{bundles.length} bundles</span>
               <span className="font-mono">{ruleCount} rules</span>

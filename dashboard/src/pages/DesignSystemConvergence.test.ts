@@ -25,6 +25,16 @@ import replayPageSource from "./govern/ReplayPage.tsx?raw";
 import inputRulesPageSource from "./govern/InputRulesPage.tsx?raw";
 import policyAnalyticsPageSource from "./govern/PolicyAnalyticsPage.tsx?raw";
 import quarantinePageSource from "./govern/QuarantinePage.tsx?raw";
+import approvalDetailPageSource from "./approvals/ApprovalDetailPage.tsx?raw";
+import tenantDetailPageSource from "./govern/TenantDetailPage.tsx?raw";
+import simulatorPageSource from "./govern/SimulatorPage.tsx?raw";
+import bundlesPageSource from "./govern/BundlesPage.tsx?raw";
+import tenantsPageSource from "./govern/TenantsPage.tsx?raw";
+import velocityRulesPageSource from "./govern/VelocityRulesPage.tsx?raw";
+import workflowsPageSource from "./WorkflowsPage.tsx?raw";
+import settingsSSOPageSource from "./settings/SettingsSSOPage.tsx?raw";
+import edgeSessionsPageSource from "./EdgeSessionsPage.tsx?raw";
+import edgeSessionDetailPageSource from "./EdgeSessionDetailPage.tsx?raw";
 import buttonSource from "../components/ui/Button.tsx?raw";
 import cardSource from "../components/ui/Card.tsx?raw";
 
@@ -102,6 +112,46 @@ describe("design-system convergence regressions", () => {
 
   it("v2.5 drift sweep — QuarantinePage uses primitives, no raw native controls", () => {
     expect(quarantinePageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — ApprovalDetailPage uses primitives, no raw native controls", () => {
+    expect(approvalDetailPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — TenantDetailPage uses primitives, no raw native controls", () => {
+    expect(tenantDetailPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — SimulatorPage uses primitives, no raw native controls", () => {
+    expect(simulatorPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — BundlesPage uses primitives, no raw native controls", () => {
+    expect(bundlesPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — TenantsPage uses primitives, no raw native controls", () => {
+    expect(tenantsPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — VelocityRulesPage uses primitives, no raw native controls", () => {
+    expect(velocityRulesPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — WorkflowsPage uses primitives, no raw native controls", () => {
+    expect(workflowsPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — SettingsSSOPage uses primitives, no raw native controls", () => {
+    expect(settingsSSOPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — EdgeSessionsPage uses primitives, no raw native controls", () => {
+    expect(edgeSessionsPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — EdgeSessionDetailPage uses primitives, no raw native controls", () => {
+    expect(edgeSessionDetailPageSource).not.toMatch(RAW_CONTROL_RE);
   });
 });
 

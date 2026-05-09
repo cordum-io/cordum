@@ -10,6 +10,7 @@ import { SkeletonCard } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InstrumentCard } from "@/components/ui/InstrumentCard";
 import { MetricValue } from "@/components/ui/MetricValue";
+import { Select } from "@/components/ui/Select";
 import { BundleList } from "@/components/policy/bundles/BundleList";
 import { usePolicyBundles } from "@/hooks/usePolicies";
 import { usePolicyAccess } from "@/hooks/usePolicyAccess";
@@ -132,16 +133,16 @@ export default function BundlesPage({ hideHeader }: { hideHeader?: boolean } = {
           <div className="flex items-center justify-end">
             <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
               <span>Sort by</span>
-              <select
+              <Select
                 value={sortField}
                 onChange={(e) => setSortField(e.target.value as "name" | "signed")}
-                className="h-7 rounded-full border border-border bg-background px-3 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cordum/40"
+                className="h-8 w-40 text-xs"
                 aria-label="Sort bundles by"
                 data-testid="bundles-sort-select"
               >
                 <option value="name">Name</option>
                 <option value="signed">Signature status</option>
-              </select>
+              </Select>
             </label>
           </div>
 
