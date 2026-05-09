@@ -4,7 +4,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { del, get, post } from "../api/client";
+import { get, post } from "../api/client";
 import {
   mapEvalDataset,
   mapEvalRun,
@@ -260,22 +260,6 @@ export function useRunEvalDataset(datasetId: string | undefined) {
       if (run.runId) {
         qc.setQueryData(["evals", "run", run.runId], run);
       }
-    },
-  });
-}
-
-export function useDeleteEvalDataset() {
-  const qc = useQueryClient();
-  return useMutation<void, Error, { datasetId: string; force?: boolean }>({
-    mutationFn: async ({ datasetId, force }) => {
-      const path = force
-        ? `/evals/datasets/${encodeURIComponent(datasetId)}?force=true`
-        : `/evals/datasets/${encodeURIComponent(datasetId)}`;
-      await del(path);
-    },
-    onSuccess: (_void, vars) => {
-      qc.invalidateQueries({ queryKey: ["evals", "datasets"] });
-      qc.removeQueries({ queryKey: ["evals", "dataset", vars.datasetId] });
     },
   });
 }

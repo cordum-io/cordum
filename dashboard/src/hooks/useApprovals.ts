@@ -8,23 +8,12 @@ import type {
   ApprovalContext,
   ApprovalConflictCode,
   ApprovalConflictPayload,
-  ApprovalHistoryEntry,
   ApiResponse,
 } from "../api/types";
 import { api } from "../lib/api";
-import { mapApprovalItem, type BackendApprovalItem, type BackendPolicyAuditEntry } from "../api/transform";
+import { mapApprovalItem, type BackendApprovalItem } from "../api/transform";
 
 type ApprovalsSnapshot = { previous: [QueryKey, ApiResponse<Approval[]> | undefined][] };
-
-interface ApprovalSnapshot {
-  topic?: string;
-  workflow_id?: string;
-  requested_at?: string;
-}
-
-function isApprovalSnapshot(v: unknown): v is ApprovalSnapshot {
-  return typeof v === "object" && v !== null;
-}
 
 // ---------------------------------------------------------------------------
 // Queries
@@ -120,25 +109,6 @@ export function useApprovalContext(jobId: string) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// History query
-// ---------------------------------------------------------------------------
-
-export interface ApprovalHistoryFilters {
-  page?: number;
-  perPage?: number;
-  sort?: string;
-}
-
-function buildHistoryParams(filters: ApprovalHistoryFilters): string {
-  const params = new URLSearchParams();
-  if (filters.page !== undefined) params.set("page", String(filters.page));
-  if (filters.perPage !== undefined) params.set("perPage", String(filters.perPage));
-  if (filters.sort) params.set("sort", filters.sort);
-  const qs = params.toString();
-  return qs ? `?${qs}` : "";
-}
-
 function filterApprovalsByStatus(items: Approval[], status?: string): Approval[] {
   if (!status?.trim()) return items;
   const normalized = status.trim().toLowerCase();
@@ -187,63 +157,6 @@ function getApprovalConflictCode(err: unknown): ApprovalConflictCode | undefined
 
 function shouldKeepOptimisticRemoval(err: unknown): boolean {
   return getApprovalConflictCode(err) === "approval_already_resolved";
-}
-
-export function useApprovalHistory(filters: ApprovalHistoryFilters = {}) {
-  return useQuery<ApiResponse<ApprovalHistoryEntry[]>>({
-    queryKey: queryKeys.approvals.history(filters),
-    queryFn: async () => {
-      const qs = buildHistoryParams(filters);
-      const res = await get<{ items: BackendPolicyAuditEntry[] }>(
-        `/policy/audit${qs}`,
-      );
-      const items = (res.items ?? [])
-        .filter(
-          (e) => e.action === "approve" || e.action === "reject",
-        )
-        .map((e): ApprovalHistoryEntry => {
-          // Try to extract extra fields from snapshot_after
-          let topic: string | undefined;
-          let workflowId: string | undefined;
-          let waitDurationMs: number | undefined;
-          if (e.snapshot_after) {
-            try {
-              const raw = typeof e.snapshot_after === "string"
-                ? JSON.parse(e.snapshot_after)
-                : e.snapshot_after;
-              if (isApprovalSnapshot(raw)) {
-                topic = raw.topic;
-                workflowId = raw.workflow_id;
-                if (raw.requested_at && e.created_at) {
-                  waitDurationMs = new Date(e.created_at).getTime() - new Date(raw.requested_at).getTime();
-                }
-              }
-            } catch (parseErr) {
-              logger.warn("approvals", "Failed to parse approval snapshot_after", {
-                auditId: e.id,
-                rawType: typeof e.snapshot_after,
-                error: parseErr instanceof Error ? parseErr.message : String(parseErr),
-              });
-            }
-          }
-          return {
-            id: e.id,
-            action: e.action as "approve" | "reject",
-            jobId: e.resource_id || "",
-            actor: e.actor_id || e.role || "unknown",
-            timestamp: e.created_at || "",
-            reason: e.message,
-            policyRule: e.resource_type === "policy_rule" ? e.resource_id : undefined,
-            bundleIds: e.bundle_ids,
-            topic,
-            workflowId,
-            waitDurationMs,
-          };
-        });
-      return { items };
-    },
-    staleTime: 60_000,
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -360,7 +273,6 @@ export function useRejectJob() {
 
 /** @internal exported for unit tests */
 export const __approvalsInternal = {
-  buildHistoryParams,
   filterApprovalsByStatus,
   matchesApprovalIdentifier,
   removeApprovalFromList,

@@ -28,7 +28,6 @@ import type {
   JobRecord,
   ChatMessagePayload,
 } from "../types/api";
-import { API_PATHS } from "./constants";
 
 type QueryParams = Record<string, string | number | boolean | null | undefined>;
 
@@ -123,18 +122,6 @@ interface ChatSendBody {
   stepId?: string;
   jobId?: string;
   metadata?: Record<string, unknown>;
-}
-
-export function wsUrl(path?: string, params?: Record<string, string | undefined>): string {
-  const base = window.location.origin.replace(/^http/, "ws");
-  const p = path || API_PATHS.stream;
-  const qs = params
-    ? "?" + Object.entries(params)
-        .filter(([, v]) => v != null && v !== "")
-        .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v!)}`)
-        .join("&")
-    : "";
-  return `${base}${p}${qs}`;
 }
 
 export const api = {

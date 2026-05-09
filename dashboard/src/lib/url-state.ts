@@ -42,7 +42,6 @@ export const parseAsPage = createParser({
 
 /** Time-range bucket presets. 'custom' signals the caller will supply explicit from/to. */
 export const TIME_RANGE_BUCKETS = ["1h", "24h", "7d", "30d", "custom"] as const;
-export type TimeRangeBucket = (typeof TIME_RANGE_BUCKETS)[number];
 
 /** Time-range parser without a baked-in default — chain `.withDefault('24h')` per page. */
 export const parseAsTimeRange = parseAsStringLiteral(TIME_RANGE_BUCKETS);

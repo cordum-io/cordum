@@ -1,6 +1,6 @@
 import type { HTMLAttributes } from "react";
 import { cn } from "../lib/utils";
-import { approvalStatusMeta, jobStatusMeta, runStatusMeta, type StatusMeta } from "../lib/status";
+import { runStatusMeta, type StatusMeta } from "../lib/status";
 
 const toneStyles: Record<string, string> = {
   success: "bg-[color:rgba(31,122,87,0.16)] text-success",
@@ -53,13 +53,5 @@ export function StatusBadge({
 
 export function RunStatusBadge({ status }: { status?: string }) {
   return <StatusBadge meta={runStatusMeta(status)} />;
-}
-
-export function JobStatusBadge({ state }: { state?: string }) {
-  return <StatusBadge meta={jobStatusMeta(state)} />;
-}
-
-export function ApprovalStatusBadge({ required }: { required?: boolean }) {
-  return <StatusBadge meta={approvalStatusMeta(required)} />;
 }
 

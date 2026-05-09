@@ -7,11 +7,6 @@ import { formatRelativeTime } from "@/lib/utils";
 import { evalScoreVariant } from "@/lib/badgeVariants";
 import type { EvalDataset, EvalRun } from "@/api/types";
 
-export interface DatasetListEntry {
-  dataset: EvalDataset;
-  latestRun?: EvalRun;
-}
-
 export interface DatasetListProps {
   datasets: EvalDataset[];
   latestRunsByDatasetId?: Record<string, EvalRun | undefined>;
