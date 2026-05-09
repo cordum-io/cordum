@@ -79,6 +79,7 @@ const EdgeSessionsPage = lazy(() => import("./pages/EdgeSessionsPage"));
 // Policy Studio v3 surfaces (epic-d9a6c0a1 Dashboard 1 foundation).
 const PoliciesPage = lazy(() => import("./pages/policies/PoliciesPage"));
 const PoliciesBundlesPage = lazy(() => import("./pages/policies/BundlesPage"));
+const PoliciesBundleDetailPage = lazy(() => import("./pages/policies/BundleDetailPage"));
 const PoliciesDecisionsPage = lazy(() => import("./pages/policies/DecisionsPage"));
 
 // Policy Studio tab redirects — canonical `/govern/<tab>` aliases land on
@@ -210,6 +211,7 @@ function ProtectedRoutes() {
           {/* POLICY STUDIO (epic-d9a6c0a1 v3 IA) — three top-level surfaces */}
           <Route path="/policies" element={<PoliciesPage />} />
           <Route path="/policies/bundles" element={<PoliciesBundlesPage />} />
+          <Route path="/policies/bundles/:id" element={<PoliciesBundleDetailPage />} />
           <Route path="/policies/decisions" element={<PoliciesDecisionsPage />} />
 
           {/* GOVERN — legacy redirects preserve bookmarks; canonical surfaces are /policies/* */}

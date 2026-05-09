@@ -7,6 +7,23 @@ export const baseHandlers = [
   http.get("*/api/v1/policy/bundles", () =>
     HttpResponse.json({ items: [], total: 0 }),
   ),
+  // Bundle detail / versions / deployments — minimal-but-renderable
+  // defaults for Dashboard 5 step-4 BundleDetailPage tests.
+  http.get("*/api/v1/policy/bundles/:id", ({ params }) =>
+    HttpResponse.json({
+      id: String(params.id),
+      name: String(params.id),
+      rule_ids: [],
+      scope_binding: { kind: "global" },
+      versions: [],
+    }),
+  ),
+  http.get("*/api/v1/policy/bundles/:id/versions", () =>
+    HttpResponse.json({ items: [] }),
+  ),
+  http.get("*/api/v1/policy/bundles/:id/deployments", () =>
+    HttpResponse.json({ items: [] }),
+  ),
   http.get("*/api/v1/approvals", () =>
     HttpResponse.json({ items: [], next_cursor: null }),
   ),
