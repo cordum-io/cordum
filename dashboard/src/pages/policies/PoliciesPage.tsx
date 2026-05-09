@@ -12,11 +12,14 @@ import { PoliciesFilterBar } from "./PoliciesFilterBar";
 import { RuleStatus } from "@/api/generated/model/ruleStatus";
 import { formatRelativeTime } from "@/lib/utils";
 import { ruleTypeIcon, ruleTypeLabel } from "@/lib/policy-studio/rule-type";
-import { useRulesList, type RuleFilters } from "@/hooks/useRulesList";
-import type { Rule } from "@/api/generated/model/rule";
+import {
+  useRulesList,
+  type NormalizedRule,
+  type RuleFilters,
+} from "@/hooks/useRulesList";
 
 interface RuleRow {
-  rule: Rule;
+  rule: NormalizedRule;
   id: string;
   name: string;
   typeLabel: string;
@@ -25,8 +28,6 @@ interface RuleRow {
   updatedAt: string;
   last7dSeries: number[] | null;
 }
-
-type RuleWithMetrics = Rule & { firing_last_7d?: unknown };
 
 const STATUS_VARIANT: Record<RuleStatus, BadgeVariant> = {
   [RuleStatus.draft]: "muted",
@@ -40,19 +41,36 @@ const STATUS_DECISION_TIER: Record<RuleStatus, DecisionTier> = {
   [RuleStatus.deprecated]: "throttle",
 };
 
-function scopeLabel(rule: Rule): string {
-  if (rule.scope.kind === "global") return "global";
-  return rule.scope.value ? `${rule.scope.kind}:${rule.scope.value}` : rule.scope.kind;
+// Defensive lookups — `useRulesList` already normalizes status into the
+// generated RuleStatus enum, but indexing a Record on a runtime-cast value
+// risks an undefined render if a future caller bypasses the hook. Fall back
+// to the neutral "draft" treatment so the page never crashes.
+function statusVariant(status: RuleStatus): BadgeVariant {
+  return STATUS_VARIANT[status] ?? STATUS_VARIANT[RuleStatus.draft];
 }
 
-function readLast7dSeries(rule: Rule): number[] | null {
-  const series = (rule as RuleWithMetrics).firing_last_7d;
+function statusDecisionTier(status: RuleStatus): DecisionTier {
+  return STATUS_DECISION_TIER[status] ?? STATUS_DECISION_TIER[RuleStatus.draft];
+}
+
+function scopeLabel(rule: NormalizedRule): string {
+  // No direct `rule.scope.kind` assumptions — guard against any residual
+  // malformed normalized rows. Preserves task-fd25f310 comment-beeedc8e.
+  const scope = rule.scope;
+  if (!scope || typeof scope.kind !== "string") return "global";
+  if (scope.kind === "global") return "global";
+  return scope.value ? `${scope.kind}:${scope.value}` : scope.kind;
+}
+
+function readLast7dSeries(rule: NormalizedRule): number[] | null {
+  const series = rule.firing_last_7d;
   if (!Array.isArray(series)) return null;
   const numeric = series.filter((value): value is number => typeof value === "number");
   return numeric.length === series.length ? numeric : null;
 }
 
-function toRuleRow(rule: Rule): RuleRow {
+function toRuleRow(rule: NormalizedRule): RuleRow {
+  const updatedAt = rule.audit?.updated_at || rule.audit?.created_at || "";
   return {
     rule,
     id: rule.id,
@@ -60,12 +78,12 @@ function toRuleRow(rule: Rule): RuleRow {
     typeLabel: ruleTypeLabel(rule.type),
     scopeLabel: scopeLabel(rule),
     status: rule.status,
-    updatedAt: rule.audit.updated_at ?? rule.audit.created_at,
+    updatedAt,
     last7dSeries: readLast7dSeries(rule),
   };
 }
 
-function RuleTypeCell({ rule }: { rule: Rule }) {
+function RuleTypeCell({ rule }: { rule: NormalizedRule }) {
   const Icon = ruleTypeIcon(rule.type);
   return (
     <span className="inline-flex items-center gap-2">
@@ -162,7 +180,7 @@ export default function PoliciesPage() {
         accessorKey: "status",
         header: "Status",
         cell: ({ row }) => (
-          <StatusBadge variant={STATUS_VARIANT[row.original.status]}>
+          <StatusBadge variant={statusVariant(row.original.status)}>
             {row.original.status}
           </StatusBadge>
         ),
@@ -181,7 +199,8 @@ export default function PoliciesPage() {
       {
         accessorKey: "updatedAt",
         header: "Updated",
-        cell: ({ row }) => formatRelativeTime(row.original.updatedAt),
+        cell: ({ row }) =>
+          row.original.updatedAt ? formatRelativeTime(row.original.updatedAt) : "—",
       },
       {
         id: "actions",
@@ -242,7 +261,7 @@ export default function PoliciesPage() {
         <DataTable<RuleRow>
           columns={columns}
           data={rows}
-          decisionAccessor={(row) => STATUS_DECISION_TIER[row.status]}
+          decisionAccessor={(row) => statusDecisionTier(row.status)}
           emptyState={emptyState}
           initialSorting={[{ id: "name", desc: false }]}
           virtualizedHeight={520}

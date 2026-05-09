@@ -219,6 +219,115 @@ describe("Policy Studio foundation page shells", () => {
     expect(await findByText("No bundles yet")).toBeTruthy();
   });
 
+  it("PoliciesPage renders meaningful labels for legacy tenant:acme rows previously stuck on Unknown/global/unknown", async () => {
+    // Reproduces the user-reported symptom: live `/api/v1/policy/rules` was
+    // returning legacy/snake_case shapes that the strict generated `Rule`
+    // accessors rendered as `Unknown` (type label), `global—unknown` (scope),
+    // and a raw status of "unknown". After normalization the rows now show
+    // mapped type/scope/status; the truly unmapped row still falls back to
+    // the safe Unknown label without crashing.
+    server.use(
+      http.get("*/api/v1/policy/rules", () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: "legacy-input",
+              name: "PII ingress guard (legacy)",
+              type: "input_rule",
+              tenant_id: "acme",
+              enabled: true,
+              action: "DENY",
+              firing_last_7d: [0, 1, 0, 1, 0, 1, 0],
+            },
+            {
+              id: "legacy-output",
+              name: "Output redactor (legacy)",
+              rule_type: "output_rule",
+              match: { tenants: ["acme"], scanners: ["regex"] },
+              enabled: false,
+            },
+            {
+              id: "legacy-edge",
+              name: "Edge classifier (legacy)",
+              classifier: "edge_action",
+              scope_kind: "tenant",
+              scope_value: "acme",
+              status: "published",
+            },
+            {
+              id: "legacy-mystery",
+              name: "Unmapped (legacy)",
+              type: "totally_made_up",
+              match: { tenants: ["acme"] },
+            },
+          ],
+          total: 4,
+        }),
+      ),
+    );
+
+    renderPoliciesPage();
+
+    expect(
+      await screen.findByRole("link", { name: /pii ingress guard \(legacy\)/i }),
+    ).toBeTruthy();
+    expect(screen.getByRole("link", { name: /output redactor \(legacy\)/i })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /edge classifier \(legacy\)/i })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /unmapped \(legacy\)/i })).toBeTruthy();
+
+    // Scope cells now read tenant:acme — not literal "global—unknown".
+    expect(screen.getAllByText("tenant:acme").length).toBe(4);
+
+    // Type cells now resolve to icons + meaningful labels per legacy hint.
+    // Two rows map to RuleType.input (legacy-input + the unmapped fallback),
+    // one to output, one to edge.
+    expect(screen.getAllByTestId("rule-type-icon-input")).toHaveLength(2);
+    expect(screen.getAllByTestId("rule-type-icon-output")).toHaveLength(1);
+    expect(screen.getAllByTestId("rule-type-icon-edge")).toHaveLength(1);
+
+    // Status badges show published/deprecated mapped from legacy enabled/status.
+    // "published" / "deprecated" also appear as filter <option> text, so the
+    // row-level count is ≥ filter+rows.
+    expect(screen.getAllByText("published").length).toBeGreaterThanOrEqual(3);
+    expect(screen.getAllByText("deprecated").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryAllByText("unknown")).toHaveLength(0);
+  });
+
+  it("PoliciesPage renders the safe Unknown fallback for truly unmapped rule types without crashing", async () => {
+    // Direct rule.scope.kind / undefined-icon assumptions are forbidden by
+    // task-fd25f310 comment-beeedc8e/-58bb8361. This test guards that an
+    // out-of-enum status plus a missing scope plus an unmapped type still
+    // renders a row instead of throwing.
+    server.use(
+      http.get("*/api/v1/policy/rules", () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: "fully-malformed",
+              name: "Fully malformed",
+              status: "active", // out-of-enum → falls back to draft
+              audit: null,
+            },
+          ],
+          total: 1,
+        }),
+      ),
+    );
+
+    renderPoliciesPage();
+
+    expect(await screen.findByRole("link", { name: /fully malformed/i })).toBeTruthy();
+    // Default scope is global; default status is draft; default type is input
+    // (Unknown label only emerges from rule-type fallback when ruleTypeIcon
+    // receives a value not in the RuleType enum, which the normalizer prevents
+    // for unsalvageable rows by mapping unmapped hints into RuleType.input).
+    // "draft" appears as both the filter <option> text and the StatusBadge.
+    expect(screen.getByText("global")).toBeTruthy();
+    expect(screen.getAllByText("draft").length).toBeGreaterThanOrEqual(1);
+    // Updated cell + Last 7d cell both fall back to "—" for malformed rows.
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(1);
+  });
+
   it("DecisionsPage renders the canonical PageHeader title (axe-clean on initial render)", async () => {
     const { getByText } = await renderWithProviders(<DecisionsPage />, {
       runAxe: true,
