@@ -73,6 +73,10 @@ without removing the legacy Edge evidence path:
 - Added a pure `policy.Rule{Type: edge}` adapter that compiles unified edge
   Match/Decide JSON into the existing legacy Edge/Safety Kernel policy rule
   shape.
+- Gateway `/api/v1/edge/evaluate` now consumes bound unified edge bundles in
+  production: published `Rule{Type: edge}` entries from the latest bundle
+  `versions[].rule_snapshot` are scope-checked, adapted, and evaluated before
+  falling back to the legacy Safety Kernel path when no unified rule matches.
 - Added an additive `policy.Decision{Source: edge}` emitter for Edge
   decisions, mapping legacy Edge outcomes into unified decision types:
   `ALLOW -> allow`, `DENY -> deny`, `REQUIRE_APPROVAL -> require_human`,
@@ -82,6 +86,10 @@ without removing the legacy Edge evidence path:
   `AUDIT_UNIFIED_DECISION_MODE` transition helper. Default `dual` mode writes
   legacy Edge audit first and `policy.decision.v2` second; `legacy` and
   `unified` modes are honored by the same parser used for job decisions.
+- Fresh agentd evidence remains persisted as a distinct local evidence event,
+  but carries a verified Gateway event reference so `/edge/events` suppresses
+  duplicate policy-decision audit emission when `/edge/evaluate` already wrote
+  the shared decision record for that action.
 - Edge policy mode resolution can read per-bundle `metadata.edge_mode` when a
   session is bound to a policy bundle, while preserving the existing
   session/global `EdgePolicyMode` fallback for operators that have not yet run

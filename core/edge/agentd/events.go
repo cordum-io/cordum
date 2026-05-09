@@ -29,6 +29,13 @@ type DecisionEvidence struct {
 	ErrorCode    string
 	ErrorMessage string
 	DurationMS   int
+
+	// GatewayEventID is set only for fresh Gateway evaluate responses whose
+	// policy-decision audit was already emitted by /edge/evaluate. The agentd
+	// evidence event is still persisted, but Gateway /edge/events can suppress
+	// duplicate audit emission after verifying this referenced event exists.
+	GatewayEventID      string
+	GatewayAuditEmitted bool
 }
 
 // RecordDecisionEvidence writes a best-effort policy decision event and returns
@@ -224,6 +231,12 @@ func decisionEvidenceLabels(req claude.AgentdRequest, state SessionState, eviden
 		labels["action_hash"] = sanitizeEventText(evidence.Response.ActionHash)
 	} else if req.ActionHash != "" {
 		labels["action_hash"] = sanitizeEventText(req.ActionHash)
+	}
+	if evidence.GatewayAuditEmitted {
+		labels[edgecore.LabelDecisionAuditEmittedBy] = edgecore.LabelDecisionAuditEmittedByGateway
+	}
+	if strings.TrimSpace(evidence.GatewayEventID) != "" {
+		labels[edgecore.LabelGatewayDecisionEventID] = sanitizeEventText(evidence.GatewayEventID)
 	}
 	if tier := decisionEvidenceRuleTier(evidence.Response); tier != "" {
 		labels["tier"] = tier

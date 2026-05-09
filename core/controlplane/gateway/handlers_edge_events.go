@@ -140,7 +140,7 @@ func (s *server) handleCreateEdgeEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.forwardPersistedEdgeEvent(appended)
-	s.emitEdgeDecisionAuditEvents(appended)
+	s.emitEdgeDecisionAuditEvents(r.Context(), store, appended)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_, _ = w.Write(responseBody)
@@ -217,7 +217,7 @@ func (s *server) handleCreateEdgeEventsBatch(w http.ResponseWriter, r *http.Requ
 	}
 	for _, event := range appended {
 		s.forwardPersistedEdgeEvent(event)
-		s.emitEdgeDecisionAuditEvents(event)
+		s.emitEdgeDecisionAuditEvents(r.Context(), store, event)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -245,7 +245,7 @@ func (s *server) appendEdgeEventWithIdempotency(w http.ResponseWriter, r *http.R
 		return
 	}
 	s.forwardPersistedEdgeEvent(result.Events[0])
-	s.emitEdgeDecisionAuditEvents(result.Events[0])
+	s.emitEdgeDecisionAuditEvents(r.Context(), store, result.Events[0])
 	writeEdgeIdempotencyReplay(w, r, result.Record)
 }
 
@@ -265,7 +265,7 @@ func (s *server) appendEdgeEventBatchWithIdempotency(w http.ResponseWriter, r *h
 	}
 	for _, event := range result.Events {
 		s.forwardPersistedEdgeEvent(event)
-		s.emitEdgeDecisionAuditEvents(event)
+		s.emitEdgeDecisionAuditEvents(r.Context(), store, event)
 	}
 	writeEdgeIdempotencyReplay(w, r, result.Record)
 }

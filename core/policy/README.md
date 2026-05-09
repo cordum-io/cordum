@@ -10,8 +10,9 @@ with a `RuleType` discriminator and per-type `Match`/`Decide` payloads.
 - `core/controlplane/safetykernel/` — consumes `Rule` through adapter
   functions and emits job-source `Decision` values alongside the legacy Safety
   Kernel responses during Backend 3's transition window.
-- `core/edge/` — consumes `Rule{Type: edge}` through an adapter, keeps legacy
-  `EdgeDecision` persistence for compatibility, and emits
+- `core/edge/` and Gateway `/edge/evaluate` — consume bound bundle
+  `Rule{Type: edge}` snapshots through the Edge adapter, keep legacy
+  `EdgeDecision` persistence for compatibility, and emit
   `Decision{Source: edge}` into the shared audit-chain stream (Backend 4).
 - `core/controlplane/gateway/` — exposes `/policies/*` HTTP routes (Backend 5).
 
