@@ -11,6 +11,10 @@ with a `RuleType` discriminator and per-type `Match`/`Decide` payloads.
   evaluation paths (Backend 3 + Backend 5).
 - `core/edge/` — same migration; joins the unified audit-chain (Backend 4).
 - `core/controlplane/gateway/` — exposes `/policies/*` HTTP routes (Backend 5).
+- `BundleRedisStore` (`bundle_store_redis.go`) — Redis-backed shared
+  bundle storage for job + edge consumers; Backend 5+ wires this into
+  the unified evaluator entry-point. Schema documented in
+  [`docs/policy-bundle-store.md`](../../docs/policy-bundle-store.md).
 
 ## Match / Decide contract
 
