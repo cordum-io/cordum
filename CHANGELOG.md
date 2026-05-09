@@ -33,11 +33,12 @@ window. Backwards-compat is locked in by
   `DecisionType`, `DecisionSource`, `RuleScopeKind`, `EdgeMode`).
 - New proto file `cap/proto/cordum/agent/v1/policy.proto` carrying the
   unified shapes; references `safety.proto`'s existing `DecisionType` enum
-  rather than redeclaring it.
+  rather than redeclaring it. Tracked in **cordum-io/cap#46**
+  (https://github.com/cordum-io/cap/pull/46).
 - **[WIRE]** `safety.proto`'s `DecisionType` enum extended with
   `DECISION_TYPE_QUARANTINE = 6` and `DECISION_TYPE_REDACT = 7` (CAP
-  append-only rule preserved; values 0–5 unchanged). Cap PR carries the
-  matching spec/CHANGELOG/conformance-fixture updates separately.
+  append-only rule preserved; values 0–5 unchanged). Wire change ships in
+  cordum-io/cap#46 alongside the new policy.proto messages.
 - OpenAPI `info.version` bumped to `'2026-05-09.1'`; 14 new schema entries
   appended under `components.schemas` (`Rule`, `Decision`, `TraceStep`,
   `Bundle`, `BundleVersion`, `BundleMetadata`, `RuleScope`,
