@@ -2,9 +2,15 @@ import { Component, type ReactNode, type ErrorInfo } from "react";
 import { logger } from "../lib/logger";
 import { CodeBlock } from "./ui/CodeBlock";
 
+export interface ErrorBoundaryFallbackProps {
+  error: Error;
+  reset: () => void;
+}
+
 interface Props {
   children: ReactNode;
   resetKey?: string;
+  fallback?: (props: ErrorBoundaryFallbackProps) => ReactNode;
 }
 
 interface State {
@@ -36,9 +42,16 @@ export class ErrorBoundary extends Component<Props, State> {
     }
   }
 
+  reset = () => {
+    this.setState({ hasError: false, error: null });
+  };
+
   render() {
     if (this.state.hasError) {
       const { error } = this.state;
+      if (this.props.fallback && error) {
+        return this.props.fallback({ error, reset: this.reset });
+      }
 
       return (
         <div className="flex min-h-[300px] items-center justify-center px-4 py-6">

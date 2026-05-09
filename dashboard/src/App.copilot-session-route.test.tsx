@@ -31,7 +31,11 @@ describe("App routing — /copilot/sessions/:sessionId resolves to CopilotSessio
   // App.tsx (the original review concern on this test file).
   it("registers /copilot/sessions/:sessionId route in App.tsx (registration guard)", () => {
     expect(appSource).toMatch(/path="\/copilot\/sessions\/:sessionId"/);
-    expect(appSource).toMatch(/element=\{<CopilotSessionPage\b/);
+    // The element prop wraps CopilotSessionPage in a per-route ErrorBoundary
+    // (RouteBoundary) per Phase 5e. The guard tolerates either the bare
+    // <CopilotSessionPage /> form (legacy) or the wrapped form so future
+    // refactors that preserve the page-component wiring still pass.
+    expect(appSource).toMatch(/<CopilotSessionPage\b/);
   });
 
   it("/copilot/sessions/<id> mounts CopilotSessionPage (NOT NotFoundPage)", async () => {
