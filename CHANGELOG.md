@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+
+#### Policy Studio Rewrite — Backend 1 unified shapes (2026-05-09, task-3bf37e32)
+
+- Integrated the Cordum-core `core/policy/` foundation package for unified `Rule`, `Decision`, `Bundle`, scope, audit, metadata, and enum shapes shared by job and edge policy surfaces. Existing legacy safety/edge policy types remain additive during the migration window.
+- Backwards-compat coverage remains in `core/policy/backwards_compat_test.go` with golden fixtures for legacy input/output rule JSON.
+
 #### Safety Kernel input normalization hygiene (2026-05-09, task-63da1070)
 
 - Input policy scanners now evaluate raw request content first and (when content changed) a normalized candidate produced by Unicode NFKC plus stripping of zero-width controls (U+200B/U+200C/U+200D/U+2060/U+FEFF) and Unicode bidi controls (U+200E/U+200F/U+202A..U+202E/U+2066..U+2069). Audit/evidence content (`req.content`) is never mutated; the normalized candidate exists only as a transient in-memory scanner input. New helper `normalizeInputCandidates` lives in `core/controlplane/safetykernel/input_normalization.go`.
