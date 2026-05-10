@@ -95,12 +95,21 @@ export function findRuleInListCaches(
   queryClient: QueryClient,
   id: string,
 ): NormalizedRule | null {
+  // The umbrella `policyStudioRules.all()` key matches BOTH list and detail
+  // query keys (`['policy-studio-rules', 'list', ...]` and
+  // `['policy-studio-rules', 'detail', id]`). Detail data is a single
+  // NormalizedRule and has no `.rules` array, so we must filter to list
+  // queries only — a permissive `data.rules.find` here crashes once a
+  // rule has been opened (QA reopen #2 finding 2026-05-10).
   const cached = queryClient.getQueriesData<RulesListResult>({
     queryKey: queryKeys.policyStudioRules.all(),
   });
-  for (const [, data] of cached) {
+  for (const [key, data] of cached) {
     if (!data) continue;
-    const found = data.rules.find((rule) => rule.id === id);
+    if (!Array.isArray(key) || key[1] !== "list") continue;
+    const rules = (data as RulesListResult).rules;
+    if (!Array.isArray(rules)) continue;
+    const found = rules.find((rule) => rule.id === id);
     if (found) return found;
   }
   return null;

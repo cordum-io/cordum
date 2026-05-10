@@ -145,4 +145,36 @@ describe("findRuleInListCaches", () => {
     );
     expect(findRuleInListCaches(queryClient, "rule-1")).toBeNull();
   });
+
+  it("ignores cached detail-query data when iterating list caches (regression: QA reopen #2)", () => {
+    // The umbrella .all() key matches BOTH list and detail entries. Detail
+    // data is a NormalizedRule with NO `.rules` array; iterating naïvely
+    // crashes with "Cannot read properties of undefined (reading 'find')"
+    // once a rule has been opened. Filter must be by query-key shape, not
+    // just truthy `data`.
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(
+      queryKeys.policyStudioRules.detail("rule-x"),
+      makeRule("rule-x", "Cached detail row"),
+    );
+    queryClient.setQueryData<RulesListResult>(queryKeys.policyStudioRules.list(), {
+      rules: [makeRule("rule-1", "Block secrets"), makeRule("rule-2")],
+      total: 2,
+    });
+    expect(() => findRuleInListCaches(queryClient, "rule-1")).not.toThrow();
+    expect(findRuleInListCaches(queryClient, "rule-1")?.name).toBe("Block secrets");
+    // Detail-only id must NOT be returned via the list-cache path; the
+    // helper's contract is "find in list caches", not "find anywhere".
+    expect(findRuleInListCaches(queryClient, "rule-x")).toBeNull();
+  });
+
+  it("does not crash when only a detail-query entry is cached (no list query yet)", () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(
+      queryKeys.policyStudioRules.detail("rule-only-detail"),
+      makeRule("rule-only-detail"),
+    );
+    expect(() => findRuleInListCaches(queryClient, "rule-only-detail")).not.toThrow();
+    expect(findRuleInListCaches(queryClient, "rule-only-detail")).toBeNull();
+  });
 });
