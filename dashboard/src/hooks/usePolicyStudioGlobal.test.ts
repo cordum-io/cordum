@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "@/api/client";
-import { createEmptyGlobalInputRule } from "@/components/policy/global/GlobalRuleEditorDrawer";
+import { createEmptyGlobalInputRule } from "@/test-utils/fixtures/global-rules";
 import { __policyStudioGlobalInternal } from "./usePolicyStudioGlobal";
 
 describe("usePolicyStudioGlobal internals", () => {

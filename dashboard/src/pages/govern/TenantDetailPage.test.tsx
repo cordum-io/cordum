@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createEmptyGlobalInputRule } from "@/components/policy/global/GlobalRuleEditorDrawer";
+import { createEmptyGlobalInputRule } from "@/test-utils/fixtures/global-rules";
 import {
   filterTenantScopedRules,
   getTenantDetailAffordances,
