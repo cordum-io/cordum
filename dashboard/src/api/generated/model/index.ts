@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-05-09.3
+ * OpenAPI spec version: 2026-05-10.1
  */
 
 export * from "./aPIKeyInfo";
@@ -81,6 +81,7 @@ export * from "./createWorkerCredentialBody";
 export * from "./createWorkflow201";
 export * from "./dLQEntry";
 export * from "./decision";
+export * from "./decisionListResponse";
 export * from "./decisionSource";
 export * from "./decisionType";
 export * from "./delegationChainLink";
@@ -327,6 +328,7 @@ export * from "./listMcpToolsParams";
 export * from "./listPacks200";
 export * from "./listPolicyBundleDeploymentsParams";
 export * from "./listPolicyBundles200";
+export * from "./listPolicyDecisionsParams";
 export * from "./listPolicyRules200";
 export * from "./listPolicyRulesParams";
 export * from "./listPools200";
@@ -470,6 +472,7 @@ export * from "./statusResponseBuild";
 export * from "./statusResponseLicense";
 export * from "./statusResponseNats";
 export * from "./statusResponseRedis";
+export * from "./streamPolicyDecisionsParams";
 export * from "./submitJobRequest";
 export * from "./submitJobRequestContext";
 export * from "./submitJobRequestLabels";

@@ -1,4 +1,5 @@
 import { http, HttpResponse } from "msw";
+import { fixturePolicyDecisions } from "./fixtures/decisions";
 
 export const baseHandlers = [
   // Dashboard 2 — Rules surface list (unified Backend-1 Rule shape).
@@ -124,5 +125,16 @@ export const baseHandlers = [
   // fixtures, error responses, or 1000-row virtualization stress data.
   http.get("*/api/v1/policy/audit", () =>
     HttpResponse.json({ items: [], total: 0, has_more: false, offset: 0 }),
+  ),
+  // /api/v1/policy/decisions (Backend 5b) — default returns the canonical
+  // 12-row fixture covering all 7 DecisionTypes + both Source values so D8
+  // (Decisions list) + D9 (replay) page tests render meaningful state
+  // without per-test setup. Per-test overrides apply server.use(...).
+  http.get("*/api/v1/policy/decisions", () =>
+    HttpResponse.json({
+      items: fixturePolicyDecisions,
+      has_more: false,
+      next_cursor: "",
+    }),
   ),
 ];
