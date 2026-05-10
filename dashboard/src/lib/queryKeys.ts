@@ -159,6 +159,33 @@ export const queryKeys = {
     detail: (id: string) => ["policy-studio-rules", "detail", id] as const,
   },
 
+  // Policy Studio — Decisions (Dashboard 8). Mirrors policyStudioRules
+  // namespace shape so cache invalidation patterns stay consistent across
+  // the Studio surfaces.
+  policyStudioDecisions: {
+    all: () => ["policy-studio-decisions"] as const,
+    list: (
+      params: {
+        source?: string | null;
+        type?: string | null;
+        since?: string | null;
+        until?: string | null;
+        cursor?: string | null;
+        limit?: number | null;
+      } = {},
+    ) =>
+      [
+        "policy-studio-decisions",
+        "list",
+        scalarKey(params.source),
+        scalarKey(params.type),
+        scalarKey(params.since),
+        scalarKey(params.until),
+        scalarKey(params.cursor, "first"),
+        scalarKey(params.limit, "default"),
+      ] as const,
+  },
+
   // ── Policies ──────────────────────────────────────────────────────
   policies: {
     bundles: () => ["policy-bundles"] as const,

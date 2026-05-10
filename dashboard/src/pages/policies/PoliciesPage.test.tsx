@@ -383,11 +383,21 @@ describe("Policy Studio foundation page shells", () => {
   });
 
   it("DecisionsPage renders the canonical PageHeader title (axe-clean on initial render)", async () => {
-    const { getByText } = await renderWithProviders(<DecisionsPage />, {
-      runAxe: true,
-    });
+    server.use(
+      http.get("*/api/v1/policy/decisions", () =>
+        HttpResponse.json({ items: [], has_more: false }),
+      ),
+    );
+    const { getByText } = await renderWithProviders(
+      <NuqsTestingAdapter searchParams="">
+        <DecisionsPage />
+      </NuqsTestingAdapter>,
+      { runAxe: true },
+    );
     expect(getByText("Policy Decisions")).toBeTruthy();
     expect(getByText("Live stream of policy outcomes")).toBeTruthy();
-    expect(getByText("Decisions stream coming online")).toBeTruthy();
+    // D8a shipped the actual table; the empty-state copy replaces the
+    // Dashboard 1 stub's "coming online" placeholder.
+    expect(getByText(/No decisions match these filters/i)).toBeTruthy();
   });
 });
