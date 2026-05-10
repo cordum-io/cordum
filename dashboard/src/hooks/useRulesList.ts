@@ -249,7 +249,7 @@ function normalizeRulesList(response: BackendRulesListResponse): RulesListResult
     rules,
     total: typeof response.total === "number" ? response.total : rules.length,
   };
-  if (typeof response.next_cursor === "string") {
+  if (typeof response.next_cursor === "string" && response.next_cursor.length > 0) {
     result.nextCursor = response.next_cursor;
   }
   return result;
