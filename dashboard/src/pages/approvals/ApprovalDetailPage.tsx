@@ -707,16 +707,8 @@ export default function ApprovalDetailPage() {
           setApproveDialogOpen(false);
         },
         onError: (err) => {
-          const errBody = (err as any)?.body ?? (err as any)?.data;
-          if (errBody?.code === "self_approval_denied") {
-            toast.error("Self-approval not permitted", {
-              description:
-                "You cannot approve a job you submitted. A different administrator must approve this request.",
-            });
-          } else {
-            const friendly = friendlyError(err, "approve job");
-            toast.error(friendly.title, { description: friendly.description });
-          }
+          const friendly = friendlyError(err, "approve job");
+          toast.error(friendly.title, { description: friendly.description });
         },
       },
     );

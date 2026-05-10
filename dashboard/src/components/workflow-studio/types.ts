@@ -57,6 +57,9 @@ export interface UnifiedNodeData {
   /** Audit-chain hash for the runtime decision. Source: WorkflowRunStep.auditHash
    *  (cordum-core field tracked in task-913b6c6c). Renders as a copy chip. */
   auditHash?: string;
+  /** Step dependencies. Source: WorkflowStep.depends_on (snake_case mirror
+   *  of the cordum-core field). Renders in the tooltip as a chip list. */
+  depends_on?: string[];
 
   // --- Mode awareness ---
   /** Current studio mode — nodes render differently based on this */

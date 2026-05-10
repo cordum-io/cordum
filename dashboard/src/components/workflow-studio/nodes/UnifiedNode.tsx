@@ -54,7 +54,7 @@ function NodeTooltip({ data }: { data: UnifiedNodeData }) {
   const isRunMode = !!data.runStatus;
   const config = data.config as Record<string, unknown> | undefined;
   const retry = data.retry as { max_retries?: number; initial_backoff_sec?: number } | undefined;
-  const deps = (data as unknown as Record<string, unknown>).depends_on as string[] | undefined;
+  const deps = data.depends_on;
 
   return (
     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 pointer-events-none">
