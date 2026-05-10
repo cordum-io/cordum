@@ -191,12 +191,31 @@ export default function PoliciesPage() {
       {
         accessorKey: "last7dSeries",
         header: "Last 7d",
-        cell: ({ row }) =>
-          row.original.last7dSeries === null ? (
-            <span className="text-muted-foreground">—</span>
-          ) : (
-            <RuleFiringSparkline values={row.original.last7dSeries} />
-          ),
+        cell: ({ row }) => {
+          if (row.original.last7dSeries === null) {
+            return <span className="text-muted-foreground">—</span>;
+          }
+          // Cross-link (D10a #1): clicking the sparkline deep-links to the
+          // Decisions surface filtered to this rule. The /policies/decisions
+          // route is a Dashboard 1 stub today; the URL contract is canonical
+          // (rule= filter) and routes correctly once D8 ships its filter bar.
+          // Total firings supplies the tooltip + accessible name.
+          const total = row.original.last7dSeries.reduce(
+            (sum, n) => sum + (Number.isFinite(n) ? n : 0),
+            0,
+          );
+          return (
+            <Link
+              to={`/policies/decisions?rule=${encodeURIComponent(row.original.id)}`}
+              className="inline-flex items-center justify-end rounded-md transition-colors hover:bg-surface-2/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cordum/40"
+              title={`View ${total} decisions for ${row.original.name}`}
+              aria-label={`View decisions: ${total} firings (last 7d)`}
+              data-row-action="cross-link-decisions"
+            >
+              <RuleFiringSparkline values={row.original.last7dSeries} />
+            </Link>
+          );
+        },
         meta: { align: "right" },
       },
       {

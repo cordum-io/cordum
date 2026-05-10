@@ -1,5 +1,5 @@
-import { ArrowLeft, Save } from "lucide-react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { ArrowLeft, ExternalLink, Save } from "lucide-react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -181,16 +181,33 @@ export default function TenantDetailPage() {
             </Select>
           </div>
         </div>
-        {affordances.showSave && (
-          <Button
-            size="sm"
-            disabled={!isDirty || isSaving || !selectedBundleId}
-            onClick={() => void saveTenantChanges()}
+        <div className="flex items-center gap-2">
+          {/*
+            Cross-link (D10a #8): "Active policies" → /policies/bundles
+            filtered to this tenant. BundlesPage's filter bar honors
+            `?scope=tenant:<id>` via nuqs (BundlesPage.tsx:84) so the
+            filtered list is the canonical landing surface.
+          */}
+          <Link
+            to={`/policies/bundles?scope=tenant:${encodeURIComponent(tenant.id)}`}
+            aria-label={`View active policies for tenant ${tenant.label ?? tenant.id}`}
+            data-row-action="cross-link-active-policies"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 h-8 text-xs font-medium text-foreground transition-all duration-[var(--duration-soft)] ease-out hover:bg-secondary hover:-translate-y-[1px] hover:shadow-soft-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cordum/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
-            <Save className="mr-1 h-3.5 w-3.5" />
-            {isSaving ? "Saving…" : "Save"}
-          </Button>
-        )}
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+            Active policies
+          </Link>
+          {affordances.showSave && (
+            <Button
+              size="sm"
+              disabled={!isDirty || isSaving || !selectedBundleId}
+              onClick={() => void saveTenantChanges()}
+            >
+              <Save className="mr-1 h-3.5 w-3.5" />
+              {isSaving ? "Saving…" : "Save"}
+            </Button>
+          )}
+        </div>
       </div>
 
       {loadError && (

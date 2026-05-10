@@ -10,6 +10,7 @@
  *    chain status from the cached /audit/verify result, no N+1).
  */
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useQueryState, parseAsString } from "nuqs";
 import { parseAsSearchTerm } from "@/lib/url-state";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -39,6 +40,7 @@ import {
   Bot,
   X,
   Copy,
+  Activity,
 } from "lucide-react";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { cn, formatRelativeTime } from "@/lib/utils";
@@ -385,6 +387,26 @@ export default function AuditLogPage() {
         subtitle="System-wide activity trail"
         actions={
           <div className="flex gap-2">
+            {/*
+              Cross-link (D10a #10 / DoD #4): "View related decisions" →
+              the Policy Studio Decisions surface filtered to this audit
+              query (tenant + agent + time-window honored on the other
+              side once D8 ships its filter bar; the URL contract is
+              canonical today).
+            */}
+            <Link
+              to={
+                "/policies/decisions" +
+                (tenantId ? `?tenant=${encodeURIComponent(tenantId)}` : "")
+              }
+              aria-label="View related policy decisions"
+              data-row-action="cross-link-related-decisions"
+              title="View policy decisions for this audit context"
+              className="inline-flex items-center gap-1 rounded-xl border border-border px-3 h-8 text-xs font-medium text-foreground transition-all duration-[var(--duration-soft)] ease-out hover:bg-secondary hover:-translate-y-[1px] hover:shadow-soft-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cordum/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            >
+              <Activity className="w-3 h-3 mr-1" aria-hidden />
+              View related decisions
+            </Link>
             <Button variant="outline" size="sm" onClick={() => refetch()}>
               <RefreshCw className="w-3 h-3 mr-1" />
               Refresh
