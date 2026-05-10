@@ -276,7 +276,13 @@ function DrawerEditorBody({
   }, []);
   const onInsertTemplate = useCallback(
     (template: { yaml: string }) => {
-      editorRef.current?.insertText(template.yaml);
+      // Templates are full Rule envelopes — appending one to an existing
+      // full envelope creates duplicate top-level keys (id/name/type/...)
+      // that the YAML parser rejects with "Map keys must be unique".
+      // The author intent on a template click is "load this template",
+      // so we replace the document wholesale; Monaco's undo stack still
+      // holds the prior state for Ctrl+Z (QA reopen #1 fix 2026-05-10).
+      editorRef.current?.replaceDocument(template.yaml);
     },
     [],
   );

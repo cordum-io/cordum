@@ -4,6 +4,7 @@ import { renderWithProviders, waitFor } from "@/test-utils/render";
 import { RuleScopeKind } from "@/api/generated/model/ruleScopeKind";
 import { RuleStatus } from "@/api/generated/model/ruleStatus";
 import { RuleType } from "@/api/generated/model/ruleType";
+import { RULE_TEMPLATES } from "@/lib/policy-studio/templates";
 import RuleMonacoEditor, {
   type RuleMonacoEditorHandle,
 } from "./RuleMonacoEditor";
@@ -98,4 +99,58 @@ describe("RuleMonacoEditor (lazy scaffold)", () => {
     expect(next.name).toBe(sampleRule.name);
     expect(next.type).toBe(RuleType.input);
   });
+
+  it("replaceDocument loads a real PII Redact template into the editor and propagates the parsed Rule", async () => {
+    // QA reopen #1 fix (msg-d41b3a8d): full-envelope template insertion must
+    // produce a valid editor document. We use the actual committed template
+    // from RULE_TEMPLATES — not a synthetic single-key snippet — so this
+    // test exercises the same payload an end-user would click.
+    const onChange = vi.fn();
+    const ref = createRef<RuleMonacoEditorHandle>();
+    renderWithProviders(
+      <RuleMonacoEditor ref={ref} rule={sampleRule} onChange={onChange} />,
+    );
+    await waitFor(() => expect(ref.current).not.toBeNull());
+
+    const piiTemplate = RULE_TEMPLATES.find((t) => t.id === "pii-redact");
+    expect(piiTemplate).toBeDefined();
+    expect(piiTemplate!.yaml).toMatch(/Template: PII Redact/);
+    ref.current!.replaceDocument(piiTemplate!.yaml);
+
+    // The template must parse cleanly — no "Map keys must be unique" — and
+    // the parsed Rule must reflect the template's envelope (replace, not
+    // append).
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    const next = onChange.mock.calls[0]?.[0] as NormalizedRule;
+    expect(next.name).toBe("PII redact");
+    expect(next.type).toBe(RuleType.input);
+    expect(next.scope).toEqual({ kind: RuleScopeKind.tenant, value: "default" });
+    expect(next.status).toBe(RuleStatus.draft);
+    expect((next.decide as { type: string }).type).toBe("redact");
+  });
+
+  it.each(RULE_TEMPLATES.map((t) => [t.id, t]))(
+    "replaceDocument loads each committed RULE_TEMPLATES entry without YAML duplicate-key parse errors (%s)",
+    async (_id, template) => {
+      // Iterates the actual seven templates so a future template addition
+      // is automatically covered. QA's specific failure mode was
+      // "Map keys must be unique at line 15" when appending a full
+      // envelope; replaceDocument's contract is "swap the document
+      // wholesale", so each template must parse on its own as a
+      // standalone Rule envelope.
+      const onChange = vi.fn();
+      const ref = createRef<RuleMonacoEditorHandle>();
+      renderWithProviders(
+        <RuleMonacoEditor ref={ref} rule={sampleRule} onChange={onChange} />,
+      );
+      await waitFor(() => expect(ref.current).not.toBeNull());
+      ref.current!.replaceDocument(template.yaml);
+      await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+      const next = onChange.mock.calls[0]?.[0] as NormalizedRule;
+      // The parsed rule's `type` must match the template's declared type;
+      // if the parser had errored on duplicate keys, onChange wouldn't
+      // have been called at all.
+      expect(next.type).toBe(template.ruleType);
+    },
+  );
 });

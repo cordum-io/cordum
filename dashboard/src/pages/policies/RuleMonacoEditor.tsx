@@ -13,6 +13,13 @@ import { Loader2 } from "lucide-react";
 import type { NormalizedRule } from "@/hooks/useRulesList";
 import { logger } from "@/lib/logger";
 import { ruleToYaml, yamlToPartialRule } from "@/lib/policy-studio/editor/yaml";
+import { getRuleSchema, type RuleSchema } from "@/lib/policy-studio/schemas";
+import {
+  hoverDocumentationFor,
+  propertyCompletionsFromSchema,
+  validateAgainstSchema,
+} from "@/lib/policy-studio/editor/yaml-diagnostics";
+import { useMonacoNamespace } from "./useMonacoNamespace";
 
 const MonacoEditor = lazy(() => import("@monaco-editor/react"));
 
@@ -22,8 +29,22 @@ export interface RuleMonacoEditorHandle {
    * at end-of-document otherwise. When the editor instance hasn't mounted
    * yet (or under the test stub), updates the local YAML state and
    * synchronously runs the parser so the parent draft still updates.
+   *
+   * Use this for SNIPPET/PARTIAL-YAML insertions that augment the existing
+   * document. Inserting a full-envelope YAML (id/name/type/scope/...) into
+   * an existing document creates duplicate top-level keys and the YAML
+   * parser rejects it — use `replaceDocument` for full-template loads.
    */
   insertText(text: string): void;
+  /**
+   * Replaces the entire editor document with the given YAML text. Used by
+   * the templates gallery where a click means "load this template" — the
+   * existing draft is swapped wholesale rather than appended (which would
+   * collide on duplicate envelope keys for full-rule templates). The
+   * replacement runs through the same parser → onChange path, so the
+   * parent's canonical draft updates synchronously.
+   */
+  replaceDocument(text: string): void;
 }
 
 interface RuleMonacoEditorProps {
@@ -84,6 +105,20 @@ const RuleMonacoEditor = forwardRef<RuleMonacoEditorHandle, RuleMonacoEditorProp
     const editorRef = useRef<MinimalMonacoEditor | null>(null);
     const yamlRef = useRef<string>(yaml);
     const [parseError, setParseError] = useState<string | null>(null);
+    const [schemaIssues, setSchemaIssues] = useState<string | null>(null);
+
+    // Schema selection drives ALL schema-aware behavior below: completion,
+    // hover, diagnostics. Returning null for the UNKNOWN_RULE_TYPE sentinel
+    // (preserves task-15537d13's safe-fallback contract) means the editor
+    // refuses to register schema providers — we fail closed rather than
+    // suggest fields that don't apply.
+    const schema: RuleSchema | null = useMemo(() => getRuleSchema(rule.type), [rule.type]);
+    const schemaRef = useRef<RuleSchema | null>(schema);
+    useEffect(() => {
+      schemaRef.current = schema;
+    }, [schema]);
+
+    const monaco = useMonacoNamespace();
 
     useEffect(() => {
       yamlRef.current = yaml;
@@ -114,20 +149,34 @@ const RuleMonacoEditor = forwardRef<RuleMonacoEditorHandle, RuleMonacoEditorProp
           const parsed = yamlToPartialRule(text, rule);
           if (parsed.error) {
             setParseError(parsed.error);
+            setSchemaIssues(null);
+            updateMonacoMarkers(monaco, [], { parseError: parsed.error });
             return;
           }
           setParseError(null);
           if (parsed.rule) {
             lastEmittedRef.current = parsed.rule;
             onChange(parsed.rule);
+            // Run schema validation against the active rule type's schema.
+            // Diagnostics are surfaced both in Monaco's gutter (via
+            // setModelMarkers) and as a non-destructive footer banner so
+            // users on the test stub or older Monaco builds still see the
+            // first issue.
+            const activeSchema = schemaRef.current;
+            const issues = activeSchema
+              ? validateAgainstSchema(parsed.rule, activeSchema)
+              : [];
+            setSchemaIssues(issues.length === 0 ? null : `${issues.length} schema issue${issues.length === 1 ? "" : "s"}: ${issues[0].path || "(root)"} — ${issues[0].message}`);
+            updateMonacoMarkers(monaco, issues, { parseError: null });
           }
         } catch (err) {
           setParseError(err instanceof Error ? err.message : "YAML parse failed");
+          setSchemaIssues(null);
           onError?.(err);
           logger.warn("policy-studio-editor", "yaml parse failure", { err });
         }
       },
-      [onChange, onError, rule],
+      [monaco, onChange, onError, rule],
     );
 
     const handleYamlChange = useCallback(
@@ -154,9 +203,48 @@ const RuleMonacoEditor = forwardRef<RuleMonacoEditorHandle, RuleMonacoEditorProp
       editorRef.current = editor as MinimalMonacoEditor;
     }, []);
 
+    const replaceDocumentImpl = useCallback(
+      (text: string) => {
+        const ed = editorRef.current;
+        if (ed) {
+          const model = ed.getModel();
+          if (model) {
+            // executeEdits over the full document range preserves Monaco's
+            // undo stack so the user can revert a template load via Ctrl+Z.
+            const lastLine = model.getLineCount();
+            const lastCol = model.getLineMaxColumn(lastLine);
+            ed.executeEdits("template-replace", [
+              {
+                range: {
+                  startLineNumber: 1,
+                  startColumn: 1,
+                  endLineNumber: lastLine,
+                  endColumn: lastCol,
+                },
+                text,
+                forceMoveMarkers: true,
+              },
+            ]);
+            // Monaco's onChange will fire and propagate via the debounced
+            // path; we also seed yamlRef so a quick subsequent insertText
+            // sees the new content.
+            yamlRef.current = text;
+            return;
+          }
+        }
+        // Fallback: pre-mount or test environment. Set state + parse +
+        // propagate synchronously so the parent draft updates immediately.
+        setYaml(text);
+        yamlRef.current = text;
+        parseAndPropagate(text);
+      },
+      [parseAndPropagate],
+    );
+
     useImperativeHandle(
       ref,
       () => ({
+        replaceDocument: replaceDocumentImpl,
         insertText(text: string) {
           const ed = editorRef.current;
           if (ed) {
@@ -203,7 +291,7 @@ const RuleMonacoEditor = forwardRef<RuleMonacoEditorHandle, RuleMonacoEditorProp
           parseAndPropagate(next);
         },
       }),
-      [parseAndPropagate],
+      [parseAndPropagate, replaceDocumentImpl],
     );
 
     const monacoOptions = useMemo(
