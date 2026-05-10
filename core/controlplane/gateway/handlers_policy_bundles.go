@@ -52,80 +52,17 @@ func (s *server) handlePolicyBundles(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handlePolicyRules is the unified GET /api/v1/policy/rules entry point.
+// Backend 5d (epic-d9a6c0a1, task-025a6ad9) replaced the legacy
+// `{decision, match, reason, tier, source}` per-row shape with the
+// canonical `policy.Rule` envelope (with `type` populated per source
+// bucket) so the dashboard's /policies surface stops rendering every
+// rule's Type column as Unknown. Implementation lives in
+// `handlers_policy_rules_unified.go::handlePolicyRulesUnified`. The
+// thin alias here keeps the existing route registration in gateway.go
+// stable.
 func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
-	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, s.configSvc) {
-		return
-	}
-	bundles, _, err := s.loadPolicyBundles(r.Context())
-	if err != nil {
-		writeInternalError(w, r, "policy operation", err)
-		return
-	}
-	includeDisabled := parseBool(r.URL.Query().Get("include_disabled"))
-	fragmentIDs := make([]string, 0, len(bundles))
-	for fragmentID := range bundles {
-		fragmentIDs = append(fragmentIDs, fragmentID)
-	}
-	sort.Strings(fragmentIDs)
-
-	items := make([]map[string]any, 0)
-	parseErrors := make([]policybundles.PolicyRuleParseError, 0)
-	for _, fragmentID := range fragmentIDs {
-		rawBundle := bundles[fragmentID]
-		bundle, _ := rawBundle.(map[string]any)
-		if bundle != nil && !includeDisabled && !policybundles.BundleEnabled(bundle) {
-			continue
-		}
-		content := ""
-		switch v := rawBundle.(type) {
-		case string:
-			content = strings.TrimSpace(v)
-		case map[string]any:
-			content = strings.TrimSpace(policybundles.StringFromAny(v["content"]))
-			if content == "" {
-				content = strings.TrimSpace(policybundles.StringFromAny(v["policy"]))
-			}
-			if content == "" {
-				content = strings.TrimSpace(policybundles.StringFromAny(v["data"]))
-			}
-		}
-		if content == "" {
-			continue
-		}
-		bundleMeta := bundle
-		if bundleMeta == nil {
-			bundleMeta = map[string]any{}
-		}
-		rules, err := policybundles.RulesFromPolicyContent(fragmentID, bundleMeta, content)
-		if err != nil {
-			parseErrors = append(parseErrors, policybundles.PolicyRuleParseError{
-				FragmentID: fragmentID,
-				Error:      err.Error(),
-			})
-			continue
-		}
-		items = append(items, rules...)
-	}
-	if len(items) > 0 {
-		tenant, err := s.resolveTenant(r, "")
-		if err != nil {
-			writeErrorJSON(w, http.StatusForbidden, "tenant access denied")
-			return
-		}
-		firingLast7d, err := s.ruleFiringLast7d(r.Context(), tenant, policyRuleIDs(items), time.Now().UTC())
-		if err != nil {
-			writeInternalError(w, r, "policy operation", err)
-			return
-		}
-		attachPolicyRuleFiringLast7d(items, firingLast7d)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	resp := map[string]any{"items": items}
-	if len(parseErrors) > 0 {
-		resp["errors"] = parseErrors
-	}
-	writeJSON(w, resp)
+	s.handlePolicyRulesUnified(w, r)
 }
 
 func policyRuleIDs(items []map[string]any) []string {

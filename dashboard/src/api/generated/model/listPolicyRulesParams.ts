@@ -3,9 +3,41 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-05-10.2
+ * OpenAPI spec version: 2026-05-10.3
  */
+import type { RuleType } from "./ruleType";
+import type { RuleScopeKind } from "./ruleScopeKind";
+import type { RuleStatus } from "./ruleStatus";
 
 export type ListPolicyRulesParams = {
-  include_disabled?: boolean;
+  /**
+   * Filter by rule type. AND-combined with other filters.
+   */
+  type?: RuleType;
+  /**
+   * Filter by scope kind (global, tenant, workflow, edge_fleet, edge_user).
+   */
+  scope_kind?: RuleScopeKind;
+  /**
+   * Filter by scope value (tenant id, workflow id, fleet name, etc.); requires scope_kind.
+   */
+  scope_value?: string;
+  /**
+   * Filter by lifecycle status.
+   */
+  status?: RuleStatus;
+  /**
+   * Filter rules whose `audit.pack_source.pack_id` matches; useful for filtering by installed pack (cordclaw, openclaw, visa, etc.).
+   */
+  pack_id?: string;
+  /**
+   * Page size, 1..500. Defaults to 100. Out-of-range returns 400.
+   * @minimum 1
+   * @maximum 500
+   */
+  limit?: number;
+  /**
+   * Opaque pagination cursor returned by `next_cursor` on the previous page.
+   */
+  cursor?: string;
 };

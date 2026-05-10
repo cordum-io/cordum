@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Cordum HTTP API
-  version: '2026-05-10.2'
+  version: '2026-05-10.3'
   description: Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
   contact:
     name: Cordum Team
@@ -2609,36 +2609,68 @@ paths:
   /api/v1/policy/rules:
     get:
       operationId: listPolicyRules
-      summary: List policy rules
-      description: >
-        Lists policy rules and includes `firing_last_7d`, a tenant-scoped
-        seven-day UTC firing histogram computed in one bulk history scan for
-        all returned rules. Rules with no matching events are zero-filled.
+      summary: List policy rules (unified envelope)
+      description: |
+        Lists policy rules in the unified `Rule` envelope (Backend 5d).
+        Each item carries `type` (input | output | velocity | edge),
+        `scope`, `status`, `version`, and `audit.pack_source` (for rules
+        loaded from cordumctl pack bundles), replacing the legacy
+        `{decision, match, reason, tier, source, firing_last_7d}` shape
+        that left the dashboard rendering all rules as Type=Unknown.
+
+        Sources merged: RuleStore (interactively-authored rules) +
+        YAML pack bundles (input + output buckets) + velocity bundles.
       tags:
       - Policy
       parameters:
       - $ref: '#/components/parameters/TenantID'
-      - name: include_disabled
+      - name: type
         in: query
+        description: Filter by rule type. AND-combined with other filters.
         schema:
-          type: boolean
-          default: false
+          $ref: '#/components/schemas/RuleType'
+      - name: scope_kind
+        in: query
+        description: Filter by scope kind (global, tenant, workflow, edge_fleet, edge_user).
+        schema:
+          $ref: '#/components/schemas/RuleScopeKind'
+      - name: scope_value
+        in: query
+        description: Filter by scope value (tenant id, workflow id, fleet name, etc.); requires scope_kind.
+        schema:
+          type: string
+      - name: status
+        in: query
+        description: Filter by lifecycle status.
+        schema:
+          $ref: '#/components/schemas/RuleStatus'
+      - name: pack_id
+        in: query
+        description: Filter rules whose `audit.pack_source.pack_id` matches; useful for filtering by installed pack (cordclaw, openclaw, visa, etc.).
+        schema:
+          type: string
+      - name: limit
+        in: query
+        description: Page size, 1..500. Defaults to 100. Out-of-range returns 400.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+      - name: cursor
+        in: query
+        description: Opaque pagination cursor returned by `next_cursor` on the previous page.
+        schema:
+          type: string
       responses:
         '200':
-          description: Policy rules
+          description: Unified rule envelopes with cursor pagination metadata.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/PolicyRule'
-                  errors:
-                    type: array
-                    items:
-                      type: string
+                $ref: '#/components/schemas/RulesListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '500':
@@ -2743,7 +2775,14 @@ paths:
   /api/v1/policy/output/rules:
     get:
       operationId: listOutputRules
-      summary: List output policy rules
+      summary: List output policy rules (deprecated)
+      deprecated: true
+      description: |
+        DEPRECATED (Backend 5d). Use `GET /api/v1/policy/rules?type=output`
+        instead — the unified envelope carries the same data plus type,
+        scope, status, and pack_source attribution. This endpoint is kept
+        alive for backwards compatibility until the Dashboard 11 cut-over
+        deletes it.
       tags:
       - Policy
       parameters:
@@ -5840,7 +5879,14 @@ paths:
   /api/v1/policy/velocity-rules:
     get:
       operationId: listVelocityRules
-      summary: List velocity rules
+      summary: List velocity rules (deprecated)
+      deprecated: true
+      description: |
+        DEPRECATED (Backend 5d). Use `GET /api/v1/policy/rules?type=velocity`
+        instead — the unified envelope carries the same data plus the
+        full rule envelope (type, scope, status, pack_source). This
+        endpoint is kept alive for backwards compatibility until the
+        Dashboard 11 cut-over deletes it.
       tags:
       - Policy
       parameters:
@@ -11871,7 +11917,10 @@ components:
       description: |
         Records who created or last updated a Rule or Bundle. The `updated_*`
         fields are zero-valued on first creation and populated by the first
-        subsequent edit.
+        subsequent edit. `pack_source` is populated when the rule
+        originated from a `cordumctl pack install` YAML bundle (Backend
+        5d) — the dashboard's pack_id + tier columns + Source filter
+        depend on it surfacing on every legacy-bundle-loaded rule.
       properties:
         created_at:
           type: string
@@ -11883,9 +11932,34 @@ components:
           format: date-time
         updated_by:
           type: string
+        pack_source:
+          $ref: '#/components/schemas/PackSource'
       required:
       - created_at
       - created_by
+    PackSource:
+      type: object
+      description: |
+        Pack-level provenance for rules loaded from cordumctl pack
+        bundles. Mirrors `policybundles.PolicyRuleSource` field-for-field
+        so legacy → unified translation is lossless. RuleStore-authored
+        rules (created via Dashboard 3E publish-to-bundle) leave the
+        whole sub-field unset.
+      properties:
+        fragment_id:
+          type: string
+        tier:
+          type: string
+        pack_id:
+          type: string
+        overlay_name:
+          type: string
+        version:
+          type: string
+        installed_at:
+          type: string
+        sha256:
+          type: string
     TraceStep:
       type: object
       description: |
@@ -11958,6 +12032,28 @@ components:
       - audit
       - match
       - decide
+    RulesListResponse:
+      type: object
+      description: |
+        Backend 5d envelope returned by `GET /api/v1/policy/rules`. Items
+        are full `Rule` envelopes with `type` populated per source bucket
+        (input | output | velocity | edge) — replaces the pre-5d legacy
+        per-row `{decision, match, reason, tier, source}` shape that left
+        the dashboard rendering everything as Type=Unknown. `next_cursor`
+        is opaque base64 of the last-returned id; pass it back unmodified
+        to fetch the next page.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Rule'
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+      - items
+      - has_more
     RuleStaleVersionResponse:
       type: object
       description: |

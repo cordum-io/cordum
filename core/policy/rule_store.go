@@ -57,6 +57,15 @@ type RuleStore interface {
 	// supplied scope, ordered by ID ascending for deterministic test +
 	// pagination behaviour. An empty result is not an error.
 	ListRulesByScope(ctx context.Context, scope RuleScope) ([]*Rule, error)
+
+	// ListRules returns every Rule in the store regardless of scope,
+	// ordered by ID ascending. Used by the unified
+	// `GET /api/v1/policy/rules` surface (Backend 5d) which merges
+	// store-authored Rules with YAML-bundle-loaded Rules from
+	// `policybundles.RulesFromPolicyContent`. An empty result is not an
+	// error. Implementations should accept a context-bound cancel so
+	// large stores don't pin a connection.
+	ListRules(ctx context.Context) ([]*Rule, error)
 }
 
 // Typed errors returned by RuleStore implementations. Consumers branch

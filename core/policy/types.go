@@ -99,10 +99,30 @@ type RuleScope struct {
 
 // AuditMetadata records who created or last updated a Rule or Bundle. The
 // Updated* fields are zero-valued on first creation and populated by the
-// first subsequent edit.
+// first subsequent edit. PackSource is populated when the rule originated
+// from a policy pack bundle (`policybundles.PolicyRuleSourceFromBundle`)
+// rather than from interactive authoring via the RuleStore — the
+// dashboard's pack_id + tier columns + Source filter depend on it
+// surfacing on every legacy-bundle-loaded rule.
 type AuditMetadata struct {
-	CreatedAt time.Time `json:"created_at"`
-	CreatedBy string    `json:"created_by"`
-	UpdatedAt time.Time `json:"updated_at,omitzero"`
-	UpdatedBy string    `json:"updated_by,omitempty"`
+	CreatedAt  time.Time   `json:"created_at"`
+	CreatedBy  string      `json:"created_by"`
+	UpdatedAt  time.Time   `json:"updated_at,omitzero"`
+	UpdatedBy  string      `json:"updated_by,omitempty"`
+	PackSource *PackSource `json:"pack_source,omitempty"`
+}
+
+// PackSource carries pack-level provenance for rules loaded from
+// `cordumctl pack install` YAML bundles. Mirrors
+// `policybundles.PolicyRuleSource` field-for-field so legacy → unified
+// translation is lossless without a circular dep on the policybundles
+// package. RuleStore-authored rules leave this nil.
+type PackSource struct {
+	FragmentID  string `json:"fragment_id,omitempty"`
+	Tier        string `json:"tier,omitempty"`
+	PackID      string `json:"pack_id,omitempty"`
+	OverlayName string `json:"overlay_name,omitempty"`
+	Version     string `json:"version,omitempty"`
+	InstalledAt string `json:"installed_at,omitempty"`
+	Sha256      string `json:"sha256,omitempty"`
 }
