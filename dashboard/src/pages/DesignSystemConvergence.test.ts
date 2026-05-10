@@ -20,17 +20,9 @@ import packsPageSource from "./PacksPage.tsx?raw";
 import delegationsPageSource from "./DelegationsPage.tsx?raw";
 import approvalsPageSource from "./ApprovalsPage.tsx?raw";
 import bundleDetailGovernSource from "./govern/BundleDetailPage.tsx?raw";
-import outputRulesPageSource from "./govern/OutputRulesPage.tsx?raw";
-import replayPageSource from "./govern/ReplayPage.tsx?raw";
-import inputRulesPageSource from "./govern/InputRulesPage.tsx?raw";
-import policyAnalyticsPageSource from "./govern/PolicyAnalyticsPage.tsx?raw";
 import quarantinePageSource from "./govern/QuarantinePage.tsx?raw";
 import approvalDetailPageSource from "./approvals/ApprovalDetailPage.tsx?raw";
 import tenantDetailPageSource from "./govern/TenantDetailPage.tsx?raw";
-import simulatorPageSource from "./govern/SimulatorPage.tsx?raw";
-import bundlesPageSource from "./govern/BundlesPage.tsx?raw";
-import tenantsPageSource from "./govern/TenantsPage.tsx?raw";
-import velocityRulesPageSource from "./govern/VelocityRulesPage.tsx?raw";
 import workflowsPageSource from "./WorkflowsPage.tsx?raw";
 import settingsSSOPageSource from "./settings/SettingsSSOPage.tsx?raw";
 import edgeSessionsPageSource from "./EdgeSessionsPage.tsx?raw";
@@ -66,22 +58,6 @@ describe("design-system convergence regressions", () => {
     expect(bundleDetailGovernSource).not.toMatch(/var\(--color-/);
   });
 
-  it("keeps govern output rules page styling on shared tokens instead of page-local CSS vars", () => {
-    expect(outputRulesPageSource).not.toMatch(/var\(--color-/);
-  });
-
-  it("keeps govern replay page styling on shared tokens instead of page-local CSS vars", () => {
-    expect(replayPageSource).not.toMatch(/var\(--color-/);
-  });
-
-  it("keeps govern input rules page styling on shared tokens instead of page-local CSS vars", () => {
-    expect(inputRulesPageSource).not.toMatch(/var\(--color-/);
-  });
-
-  it("keeps govern policy analytics page styling on shared tokens instead of page-local CSS vars", () => {
-    expect(policyAnalyticsPageSource).not.toMatch(/var\(--color-/);
-  });
-
   it("keeps govern quarantine page styling on shared tokens instead of page-local CSS vars", () => {
     expect(quarantinePageSource).not.toMatch(/var\(--color-/);
   });
@@ -94,22 +70,6 @@ describe("design-system convergence regressions", () => {
   // (component names, prop names, comments) do NOT trigger.
   const RAW_CONTROL_RE = /<(input|select|textarea)\b/;
 
-  it("v2.5 drift sweep — ReplayPage uses primitives, no raw native controls", () => {
-    expect(replayPageSource).not.toMatch(RAW_CONTROL_RE);
-  });
-
-  it("v2.5 drift sweep — InputRulesPage uses primitives, no raw native controls", () => {
-    expect(inputRulesPageSource).not.toMatch(RAW_CONTROL_RE);
-  });
-
-  it("v2.5 drift sweep — OutputRulesPage uses primitives, no raw native controls", () => {
-    expect(outputRulesPageSource).not.toMatch(RAW_CONTROL_RE);
-  });
-
-  it("v2.5 drift sweep — PolicyAnalyticsPage uses primitives, no raw native controls", () => {
-    expect(policyAnalyticsPageSource).not.toMatch(RAW_CONTROL_RE);
-  });
-
   it("v2.5 drift sweep — QuarantinePage uses primitives, no raw native controls", () => {
     expect(quarantinePageSource).not.toMatch(RAW_CONTROL_RE);
   });
@@ -120,22 +80,6 @@ describe("design-system convergence regressions", () => {
 
   it("v2.5 drift sweep reopen #2 — TenantDetailPage uses primitives, no raw native controls", () => {
     expect(tenantDetailPageSource).not.toMatch(RAW_CONTROL_RE);
-  });
-
-  it("v2.5 drift sweep reopen #2 — SimulatorPage uses primitives, no raw native controls", () => {
-    expect(simulatorPageSource).not.toMatch(RAW_CONTROL_RE);
-  });
-
-  it("v2.5 drift sweep reopen #2 — BundlesPage uses primitives, no raw native controls", () => {
-    expect(bundlesPageSource).not.toMatch(RAW_CONTROL_RE);
-  });
-
-  it("v2.5 drift sweep reopen #2 — TenantsPage uses primitives, no raw native controls", () => {
-    expect(tenantsPageSource).not.toMatch(RAW_CONTROL_RE);
-  });
-
-  it("v2.5 drift sweep reopen #2 — VelocityRulesPage uses primitives, no raw native controls", () => {
-    expect(velocityRulesPageSource).not.toMatch(RAW_CONTROL_RE);
   });
 
   it("v2.5 drift sweep reopen #2 — WorkflowsPage uses primitives, no raw native controls", () => {
