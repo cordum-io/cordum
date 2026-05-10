@@ -13,13 +13,11 @@ import { Loader2 } from "lucide-react";
 import type { NormalizedRule } from "@/hooks/useRulesList";
 import { logger } from "@/lib/logger";
 import { ruleToYaml, yamlToPartialRule } from "@/lib/policy-studio/editor/yaml";
-import { getRuleSchema, type RuleSchema } from "@/lib/policy-studio/schemas";
-import {
-  hoverDocumentationFor,
-  propertyCompletionsFromSchema,
-  validateAgainstSchema,
-} from "@/lib/policy-studio/editor/yaml-diagnostics";
-import { useMonacoNamespace } from "./useMonacoNamespace";
+// 3C scope is templates-only. Schema-provider/autocomplete/hover/diagnostics
+// wiring (getRuleSchema, validateAgainstSchema, hoverDocumentationFor,
+// propertyCompletionsFromSchema, useMonacoNamespace) is owned by 3B
+// (task-9cbbe097) — re-imported there. Keeping those references out of
+// this 3C fix is the QA reopen #2 directive.
 
 const MonacoEditor = lazy(() => import("@monaco-editor/react"));
 
@@ -105,20 +103,6 @@ const RuleMonacoEditor = forwardRef<RuleMonacoEditorHandle, RuleMonacoEditorProp
     const editorRef = useRef<MinimalMonacoEditor | null>(null);
     const yamlRef = useRef<string>(yaml);
     const [parseError, setParseError] = useState<string | null>(null);
-    const [schemaIssues, setSchemaIssues] = useState<string | null>(null);
-
-    // Schema selection drives ALL schema-aware behavior below: completion,
-    // hover, diagnostics. Returning null for the UNKNOWN_RULE_TYPE sentinel
-    // (preserves task-15537d13's safe-fallback contract) means the editor
-    // refuses to register schema providers — we fail closed rather than
-    // suggest fields that don't apply.
-    const schema: RuleSchema | null = useMemo(() => getRuleSchema(rule.type), [rule.type]);
-    const schemaRef = useRef<RuleSchema | null>(schema);
-    useEffect(() => {
-      schemaRef.current = schema;
-    }, [schema]);
-
-    const monaco = useMonacoNamespace();
 
     useEffect(() => {
       yamlRef.current = yaml;
@@ -149,34 +133,20 @@ const RuleMonacoEditor = forwardRef<RuleMonacoEditorHandle, RuleMonacoEditorProp
           const parsed = yamlToPartialRule(text, rule);
           if (parsed.error) {
             setParseError(parsed.error);
-            setSchemaIssues(null);
-            updateMonacoMarkers(monaco, [], { parseError: parsed.error });
             return;
           }
           setParseError(null);
           if (parsed.rule) {
             lastEmittedRef.current = parsed.rule;
             onChange(parsed.rule);
-            // Run schema validation against the active rule type's schema.
-            // Diagnostics are surfaced both in Monaco's gutter (via
-            // setModelMarkers) and as a non-destructive footer banner so
-            // users on the test stub or older Monaco builds still see the
-            // first issue.
-            const activeSchema = schemaRef.current;
-            const issues = activeSchema
-              ? validateAgainstSchema(parsed.rule, activeSchema)
-              : [];
-            setSchemaIssues(issues.length === 0 ? null : `${issues.length} schema issue${issues.length === 1 ? "" : "s"}: ${issues[0].path || "(root)"} — ${issues[0].message}`);
-            updateMonacoMarkers(monaco, issues, { parseError: null });
           }
         } catch (err) {
           setParseError(err instanceof Error ? err.message : "YAML parse failed");
-          setSchemaIssues(null);
           onError?.(err);
           logger.warn("policy-studio-editor", "yaml parse failure", { err });
         }
       },
-      [monaco, onChange, onError, rule],
+      [onChange, onError, rule],
     );
 
     const handleYamlChange = useCallback(
