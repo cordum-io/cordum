@@ -18,9 +18,13 @@ export interface DeployBundleInput {
 }
 
 /**
- * Deploy a bundle version to a scope. Calls Backend 2's
- * `POST /api/v1/policy/bundles/:id/deploy` (worker-1ca4 PR #252).
- * Invalidates the bundle's deployments + active-deployment caches on success.
+ * Deploy a bundle version to a scope. Calls
+ * `POST /api/v1/policy/bundles/{id}/deploy`. The route lands via the
+ * `/api/v1/policy/bundles/*` lifecycle catch-all registered at
+ * `core/controlplane/gateway/gateway.go:1437` and dispatched in
+ * `handlers_policy_bundle_lifecycle.go:63-69` to
+ * `handleDeployPolicyBundleVersion`. Invalidates the bundle's
+ * deployments + active-deployment caches on success.
  */
 export function useDeployBundle() {
   const queryClient = useQueryClient();

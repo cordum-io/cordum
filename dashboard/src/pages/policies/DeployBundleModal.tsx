@@ -14,6 +14,14 @@ interface DeployBundleModalProps {
   open: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  /**
+   * Pre-fill the scope picker. Used when the modal is opened from a
+   * BundleDeploymentsTab matrix cell that already represents a scope —
+   * the operator's intent is "promote THIS version to THIS scope" rather
+   * than "pick a scope". Defaults to "global" when omitted.
+   */
+  initialScopeKind?: ScopeKind;
+  initialScopeValue?: string;
 }
 
 type ScopeKind = "global" | "tenant" | "workflow" | "edge_fleet" | "edge_user";
@@ -53,25 +61,30 @@ export default function DeployBundleModal({
   open,
   onClose,
   onSuccess,
+  initialScopeKind,
+  initialScopeValue,
 }: DeployBundleModalProps) {
   const bundleQ = useBundle(bundleId);
   const deploy = useDeployBundle();
 
-  const [scopeKind, setScopeKind] = useState<ScopeKind>("global");
-  const [scopeValue, setScopeValue] = useState<string>("");
+  const [scopeKind, setScopeKind] = useState<ScopeKind>(initialScopeKind ?? "global");
+  const [scopeValue, setScopeValue] = useState<string>(initialScopeValue ?? "");
   const [edgeMode, setEdgeMode] = useState<EdgeMode | "">("");
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  // Reset form whenever the modal re-opens for a different version. Pre-
-  // fills edgeMode from the bundle's current metadata so an operator
-  // changing only the scope doesn't accidentally drop the edge_mode.
+  // Reset form whenever the modal re-opens for a different version or
+  // initial scope. Pre-fills edgeMode from the bundle's current metadata
+  // so an operator changing only the scope doesn't accidentally drop the
+  // edge_mode. `initialScopeKind`/`initialScopeValue` come from the
+  // BundleDeploymentsTab matrix-cell click path so the modal opens with
+  // the cell's scope pre-selected.
   useEffect(() => {
     if (!open) return;
-    setScopeKind("global");
-    setScopeValue("");
+    setScopeKind(initialScopeKind ?? "global");
+    setScopeValue(initialScopeValue ?? "");
     setEdgeMode(bundleQ.data?.metadata?.edge_mode ?? "");
     setConfirmOpen(false);
-  }, [open, version, bundleQ.data?.metadata?.edge_mode]);
+  }, [open, version, bundleQ.data?.metadata?.edge_mode, initialScopeKind, initialScopeValue]);
 
   const scopeOption = useMemo(
     () => SCOPE_OPTIONS.find((s) => s.value === scopeKind) ?? SCOPE_OPTIONS[0],

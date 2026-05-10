@@ -7,10 +7,26 @@ import {
   useBundleDeployments,
   type BundleDeployment,
 } from "@/hooks/useBundle";
-import { useDeployBundle } from "@/hooks/useDeployBundle";
 import { useRollbackBundle } from "@/hooks/useRollbackBundle";
 import { formatRelativeTime } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import DeployBundleModal from "./DeployBundleModal";
+
+type DeployScopeKind = "global" | "tenant" | "workflow" | "edge_fleet" | "edge_user";
+
+const KNOWN_DEPLOY_SCOPE_KINDS = new Set<DeployScopeKind>([
+  "global",
+  "tenant",
+  "workflow",
+  "edge_fleet",
+  "edge_user",
+]);
+
+function asDeployScopeKind(kind: string | undefined): DeployScopeKind {
+  return kind && KNOWN_DEPLOY_SCOPE_KINDS.has(kind as DeployScopeKind)
+    ? (kind as DeployScopeKind)
+    : "global";
+}
 
 interface BundleDeploymentsTabProps {
   bundleId: string;
@@ -23,12 +39,16 @@ interface ScopeRow {
   value?: string;
 }
 
-interface PendingMutation {
-  action: "promote" | "rollback";
+interface PendingRollback {
   bundleId: string;
-  version: string;
   scope: { kind: string; value?: string };
   scopeLabel: string;
+}
+
+interface PendingPromote {
+  bundleId: string;
+  version: string;
+  scope: { kind: DeployScopeKind; value?: string };
 }
 
 function scopeLabel(d: BundleDeployment): string {
@@ -55,16 +75,18 @@ function uniqueScopes(deployments: BundleDeployment[]): ScopeRow[] {
 /**
  * Bundle detail — Deployments tab (Dashboard 5 step 7).
  * Renders a scope×version matrix consuming Backend 2's GetActiveDeployment
- * grouping. Cells: active period if a binding exists; click → ConfirmDialog
- * → Promote (if cell empty) or Rollback (if active). Gantt-style timeline
- * is a separate task (Dashboard 6).
+ * grouping. Cell click semantics: empty cell → opens `DeployBundleModal`
+ * (Dashboard 7) pre-filled with this scope+version so the operator can
+ * confirm or adjust the scope/edge-mode picker before promoting; active
+ * cell → opens `ConfirmDialog` → Rollback. Gantt-style timeline is a
+ * separate task (Dashboard 6).
  */
 export default function BundleDeploymentsTab({ bundleId }: BundleDeploymentsTabProps) {
   const versionsQ = useBundleVersions(bundleId);
   const deploymentsQ = useBundleDeployments(bundleId);
-  const deploy = useDeployBundle();
   const rollback = useRollbackBundle();
-  const [pending, setPending] = useState<PendingMutation | null>(null);
+  const [pendingPromote, setPendingPromote] = useState<PendingPromote | null>(null);
+  const [pendingRollback, setPendingRollback] = useState<PendingRollback | null>(null);
 
   const versions = versionsQ.data?.items ?? [];
   const deployments = deploymentsQ.data?.items ?? [];
@@ -97,31 +119,36 @@ export default function BundleDeploymentsTab({ bundleId }: BundleDeploymentsTabP
 
   function handleCellClick(scope: ScopeRow, version: string) {
     const existing = cellIndex.get(`${scope.key}|${version}`);
-    setPending({
-      action: existing?.active ? "rollback" : "promote",
+    if (existing?.active) {
+      // Active cell: rollback flow stays on the simpler ConfirmDialog —
+      // there's no scope/edge-mode to choose, just confirm-and-go.
+      setPendingRollback({
+        bundleId,
+        scope: { kind: scope.kind, value: scope.value },
+        scopeLabel: scope.label,
+      });
+      return;
+    }
+    // Empty cell: open the full deploy modal pre-filled with this
+    // scope+version. The modal's scope/edge-mode picker satisfies the
+    // DoD #1 requirement that the deploy modal opens from BOTH Versions
+    // and Deployments tabs (QA reopen #1 finding 2026-05-10).
+    setPendingPromote({
       bundleId,
       version,
-      scope: { kind: scope.kind, value: scope.value },
-      scopeLabel: scope.label,
+      scope: { kind: asDeployScopeKind(scope.kind), value: scope.value },
     });
   }
 
-  function handleConfirm() {
-    if (!pending) return;
-    if (pending.action === "promote") {
-      deploy.mutate(
-        { bundleId: pending.bundleId, version: pending.version, scope: pending.scope },
-        { onSettled: () => setPending(null) },
-      );
-    } else {
-      rollback.mutate(
-        { bundleId: pending.bundleId, scope: pending.scope },
-        { onSettled: () => setPending(null) },
-      );
-    }
+  function handleRollbackConfirm() {
+    if (!pendingRollback) return;
+    rollback.mutate(
+      { bundleId: pendingRollback.bundleId, scope: pendingRollback.scope },
+      { onSettled: () => setPendingRollback(null) },
+    );
   }
 
-  const isPending = deploy.isPending || rollback.isPending;
+  const isRollbackPending = rollback.isPending;
 
   return (
     <div className="space-y-4">
@@ -188,23 +215,27 @@ export default function BundleDeploymentsTab({ bundleId }: BundleDeploymentsTabP
       </div>
 
       <ConfirmDialog
-        open={pending !== null}
-        onCancel={() => setPending(null)}
-        onConfirm={handleConfirm}
-        title={
-          pending?.action === "rollback"
-            ? `Rollback ${pending?.scopeLabel}?`
-            : `Promote ${pending?.version} to ${pending?.scopeLabel}?`
-        }
-        description={
-          pending?.action === "rollback"
-            ? "Re-activates the previous bundle version for this scope. Audit-logged."
-            : "Activates this bundle version for this scope. Existing active version is moved to history."
-        }
-        confirmLabel={pending?.action === "rollback" ? "Rollback" : "Promote"}
-        variant={pending?.action === "rollback" ? "destructive" : "default"}
-        isPending={isPending}
+        open={pendingRollback !== null}
+        onCancel={() => setPendingRollback(null)}
+        onConfirm={handleRollbackConfirm}
+        title={pendingRollback ? `Rollback ${pendingRollback.scopeLabel}?` : ""}
+        description="Re-activates the previous bundle version for this scope. Audit-logged."
+        confirmLabel="Rollback"
+        variant="destructive"
+        isPending={isRollbackPending}
       />
+
+      {pendingPromote && (
+        <DeployBundleModal
+          bundleId={pendingPromote.bundleId}
+          version={pendingPromote.version}
+          initialScopeKind={pendingPromote.scope.kind}
+          initialScopeValue={pendingPromote.scope.value}
+          open
+          onClose={() => setPendingPromote(null)}
+          onSuccess={() => setPendingPromote(null)}
+        />
+      )}
     </div>
   );
 }

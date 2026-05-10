@@ -67,11 +67,72 @@ describe("BundleDeploymentsTab — Dashboard 5 step 7", () => {
     ).toBeTruthy();
   });
 
-  it("opens ConfirmDialog when a cell is clicked; confirm triggers the mutation", async () => {
+  it("opens DeployBundleModal pre-filled when a non-active matrix cell is clicked (DoD #1)", async () => {
+    // QA reopen #1 finding: deploy modal must open from BOTH Versions and
+    // Deployments tabs. Previously the Deployments-tab matrix click went
+    // straight to ConfirmDialog and never opened DeployBundleModal — this
+    // missed the DoD's scope picker + edge-mode picker requirement.
     server.use(
       http.get("*/api/v1/policy/bundles/:id/versions", () =>
         HttpResponse.json({
           items: [{ version: "v2", deployed_at: "2026-05-09T10:00:00Z" }],
+        }),
+      ),
+      http.get("*/api/v1/policy/bundles/:id/deployments", () =>
+        HttpResponse.json({
+          items: [
+            {
+              scope: "tenant:acme",
+              scope_kind: "tenant",
+              scope_value: "acme",
+              version: "v1",
+              active: true,
+              deployed_at: "2026-05-08T10:00:00Z",
+            },
+          ],
+        }),
+      ),
+      http.get("*/api/v1/policy/bundles/:id", ({ params }) =>
+        HttpResponse.json({
+          id: String(params.id),
+          name: `bundle-${String(params.id)}`,
+          rule_ids: [],
+          scope_binding: { kind: "global" },
+          versions: [],
+        }),
+      ),
+    );
+    renderWithProviders(<BundleDeploymentsTab bundleId="b-1" />);
+
+    const promoteBtn = await screen.findByRole("button", {
+      name: "Promote v2 to tenant:acme",
+    });
+    fireEvent.click(promoteBtn);
+
+    // DeployBundleModal opens — its "Scope kind" select is the modal's
+    // canonical affordance and ConfirmDialog has no such field, so its
+    // presence proves the modal mounted.
+    const scopeSelect = (await screen.findByLabelText(
+      "Scope kind",
+    )) as HTMLSelectElement;
+    expect(scopeSelect).toBeTruthy();
+    // Pre-filled with the cell's scope: tenant + acme.
+    expect(scopeSelect.value).toBe("tenant");
+    const valueInput = (await screen.findByLabelText(
+      "Scope value",
+    )) as HTMLInputElement;
+    expect(valueInput.value).toBe("acme");
+    // Modal header shows the prefilled version too.
+    expect(
+      await screen.findByRole("heading", { name: /v2/i }),
+    ).toBeTruthy();
+  });
+
+  it("opens ConfirmDialog (rollback semantics) when an active matrix cell is clicked", async () => {
+    server.use(
+      http.get("*/api/v1/policy/bundles/:id/versions", () =>
+        HttpResponse.json({
+          items: [{ version: "v1", deployed_at: "2026-05-08T10:00:00Z" }],
         }),
       ),
       http.get("*/api/v1/policy/bundles/:id/deployments", () =>
@@ -90,17 +151,20 @@ describe("BundleDeploymentsTab — Dashboard 5 step 7", () => {
     );
     renderWithProviders(<BundleDeploymentsTab bundleId="b-1" />);
 
-    const promoteBtn = await screen.findByRole("button", {
-      name: "Promote v2 to global",
+    const rollbackBtn = await screen.findByRole("button", {
+      name: "Rollback global from v1",
     });
-    fireEvent.click(promoteBtn);
+    fireEvent.click(rollbackBtn);
 
-    // ConfirmDialog should now be open with promote semantics.
+    // ConfirmDialog opens with rollback semantics (no scope picker).
     await waitFor(() => {
-      expect(screen.getByText(/Promote v2 to global\?/)).toBeTruthy();
+      expect(screen.getByText(/Rollback global\?/)).toBeTruthy();
     });
     expect(
-      screen.getByRole("button", { name: /^Promote$/ }),
+      screen.getByRole("button", { name: /^Rollback$/ }),
     ).toBeTruthy();
+    // No "Scope kind" select present — the rollback path keeps the
+    // simpler ConfirmDialog flow on purpose.
+    expect(screen.queryByLabelText("Scope kind")).toBeNull();
   });
 });
