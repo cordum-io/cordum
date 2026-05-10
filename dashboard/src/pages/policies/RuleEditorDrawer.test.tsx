@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
+import { fireEvent } from "@testing-library/react";
 import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { server } from "@/test-utils/msw";
 import { RuleScopeKind } from "@/api/generated/model/ruleScopeKind";
@@ -12,6 +13,39 @@ function renderDrawerAt(path: string) {
   return renderWithProviders(
     <Routes>
       <Route path="/policies" element={<RuleEditorDrawer />} />
+    </Routes>,
+    { initialEntries: [path] },
+  );
+}
+
+/**
+ * Renders the drawer alongside a LocationProbe so tests can assert the URL
+ * state after navigation events (close clearing only editor params, etc.).
+ * The probe renders the current location's search/pathname into the DOM
+ * with a testid so getByTestId can pull them out post-click.
+ */
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <>
+      <span data-testid="location-pathname">{location.pathname}</span>
+      <span data-testid="location-search">{location.search}</span>
+    </>
+  );
+}
+
+function renderDrawerWithProbeAt(path: string) {
+  return renderWithProviders(
+    <Routes>
+      <Route
+        path="/policies"
+        element={
+          <>
+            <RuleEditorDrawer />
+            <LocationProbe />
+          </>
+        }
+      />
     </Routes>,
     { initialEntries: [path] },
   );
@@ -173,5 +207,63 @@ describe("RuleEditorDrawer URL contract", () => {
     expect(
       screen.getByText(/editor cannot mount without a known schema/i),
     ).not.toBeNull();
+  });
+
+  it("clicking Close removes only the editor params (rule/open/type) and preserves unrelated filters", async () => {
+    // DoD #5 close-path coverage. Verifies the closeDrawer contract:
+    // unrelated filters (scope, status, search) survive a click-through;
+    // only rule/open/type are removed. Re-tests the contract that
+    // PoliciesPage's row click leads to the drawer + close round-trip
+    // returns the user to their pre-click filter state.
+    mockRulesListEndpoint([
+      {
+        id: "rule-close",
+        name: "Close path",
+        type: RuleType.input,
+        scope: { kind: RuleScopeKind.global },
+        status: RuleStatus.published,
+        version: "v1",
+        audit: { created_at: "2026-04-01T00:00:00Z", created_by: "alice" },
+        match: {},
+        decide: { type: "deny" },
+      },
+    ]);
+    renderDrawerWithProbeAt(
+      "/policies?rule=rule-close&open=editor&type=input&scope=tenant%3Aacme&status=published&search=secrets",
+    );
+
+    // Drawer mounts with all six params present. Verify the unrelated
+    // filters are visible in the URL before close so we know the test is
+    // exercising the right starting state, not a no-op.
+    await waitFor(() =>
+      expect(screen.getByText(/Close path/i)).not.toBeNull(),
+    );
+    const searchBefore = screen.getByTestId("location-search").textContent ?? "";
+    expect(searchBefore).toMatch(/rule=rule-close/);
+    expect(searchBefore).toMatch(/open=editor/);
+    expect(searchBefore).toMatch(/type=input/);
+    expect(searchBefore).toMatch(/scope=tenant%3Aacme/);
+    expect(searchBefore).toMatch(/status=published/);
+    expect(searchBefore).toMatch(/search=secrets/);
+
+    // Click the close affordance — same button users hit in the live UI.
+    const closeBtn = screen.getByRole("button", { name: /close rule editor/i });
+    fireEvent.click(closeBtn);
+
+    // After close: drawer is gone, editor params (rule/open/type) are gone,
+    // and the three unrelated filters survive verbatim.
+    await waitFor(() => {
+      const params = new URLSearchParams(
+        screen.getByTestId("location-search").textContent ?? "",
+      );
+      expect(params.has("rule")).toBe(false);
+      expect(params.has("open")).toBe(false);
+      expect(params.has("type")).toBe(false);
+      expect(params.get("scope")).toBe("tenant:acme");
+      expect(params.get("status")).toBe("published");
+      expect(params.get("search")).toBe("secrets");
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByTestId("location-pathname").textContent).toBe("/policies");
   });
 });
