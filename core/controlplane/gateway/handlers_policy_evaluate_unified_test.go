@@ -509,4 +509,35 @@ func (s *memoryPolicyBundleStore) getActiveCalls() int {
 	return s.getActiveCount
 }
 
+func (s *memoryPolicyBundleStore) AddRuleToBundle(
+	ctx context.Context,
+	bundleID, ruleID string,
+	ruleExists func(ctx context.Context, ruleID string) (bool, error),
+) (*policy.Bundle, error) {
+	if ruleExists != nil {
+		ok, err := ruleExists(ctx, ruleID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, policy.ErrRuleNotFound
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.bundles[bundleID]
+	if !ok {
+		return nil, policy.ErrBundleNotFound
+	}
+	for _, existing := range b.RuleIDs {
+		if existing == ruleID {
+			cp := *b
+			return &cp, nil
+		}
+	}
+	b.RuleIDs = append(b.RuleIDs, ruleID)
+	cp := *b
+	return &cp, nil
+}
+
 var _ policy.BundleStore = (*memoryPolicyBundleStore)(nil)

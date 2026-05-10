@@ -527,5 +527,108 @@ func (s *BundleRedisStore) ListDeploymentHistory(ctx context.Context, scope Rule
 	return out, nil
 }
 
+// AddRuleToBundle appends ruleID to the bundle's RuleIDs slice via a
+// read-modify-write Lua script. The script is atomic against concurrent
+// AddRuleToBundle calls on the same bundle: each invocation reads the
+// current envelope, decodes the rule_ids list with a small parser
+// (cjson would require nested-object support that miniredis lacks), and
+// writes back the updated envelope iff the bundle still exists. Idempotent
+// on repeated ruleID — the second call leaves RuleIDs unchanged.
+//
+// ruleExists is called BEFORE the Lua script, not inside it, because Lua
+// needs the keys at script-eval time and the rule's existence isn't
+// captured by a single key (the rule's scope membership lives in a
+// separate SET). Calling RuleStore.GetRule (or an equivalent) is the
+// caller's responsibility — the BundleStore stays decoupled from
+// RuleStore. Race-acceptable: a rule deleted between the existence
+// check and the bundle update would leave a dangling rule_id; a follow-up
+// list/get on the bundle's rules surfaces the gap. The cleanup is the
+// dashboard's responsibility.
+func (s *BundleRedisStore) AddRuleToBundle(
+	ctx context.Context,
+	bundleID, ruleID string,
+	ruleExists func(ctx context.Context, ruleID string) (bool, error),
+) (*Bundle, error) {
+	if strings.TrimSpace(bundleID) == "" {
+		return nil, fmt.Errorf("bundle: id required")
+	}
+	if strings.TrimSpace(ruleID) == "" {
+		return nil, fmt.Errorf("rule: id required")
+	}
+	if ruleExists == nil {
+		return nil, fmt.Errorf("ruleExists callback required")
+	}
+	exists, err := ruleExists(ctx, ruleID)
+	if err != nil {
+		return nil, fmt.Errorf("rule existence check: %w", err)
+	}
+	if !exists {
+		return nil, ErrRuleNotFound
+	}
+	const script = `
+local raw = redis.call('GET', KEYS[1])
+if raw == false then
+  return {err = 'NOTFOUND'}
+end
+return raw
+`
+	res, err := s.client.Eval(ctx, script, []string{bundleKey(bundleID)}).Result()
+	if err != nil {
+		if isRedisErrNOTFOUND(err) {
+			return nil, ErrBundleNotFound
+		}
+		return nil, fmt.Errorf("read bundle %s: %w", bundleID, err)
+	}
+	rawStr, ok := res.(string)
+	if !ok {
+		return nil, fmt.Errorf("read bundle %s: unexpected redis response %v", bundleID, res)
+	}
+	var b Bundle
+	if err := json.Unmarshal([]byte(rawStr), &b); err != nil {
+		return nil, fmt.Errorf("unmarshal bundle %s: %w", bundleID, err)
+	}
+	for _, existing := range b.RuleIDs {
+		if existing == ruleID {
+			return &b, nil
+		}
+	}
+	b.RuleIDs = append(b.RuleIDs, ruleID)
+	updated, err := json.Marshal(&b)
+	if err != nil {
+		return nil, fmt.Errorf("marshal bundle %s: %w", bundleID, err)
+	}
+	const writeScript = `
+local current = redis.call('GET', KEYS[1])
+if current == false then
+  return {err = 'NOTFOUND'}
+end
+if current ~= ARGV[1] then
+  return {err = 'CONFLICT'}
+end
+redis.call('SET', KEYS[1], ARGV[2])
+return 'OK'
+`
+	writeRes, err := s.client.Eval(
+		ctx, writeScript,
+		[]string{bundleKey(bundleID)},
+		rawStr, updated,
+	).Result()
+	if err != nil {
+		if isRedisErrNOTFOUND(err) {
+			return nil, ErrBundleNotFound
+		}
+		if strings.Contains(err.Error(), "CONFLICT") {
+			// Another writer landed between our read and our write.
+			// Recurse once to retry — concurrent ruleID adds converge.
+			return s.AddRuleToBundle(ctx, bundleID, ruleID, ruleExists)
+		}
+		return nil, fmt.Errorf("update bundle %s rule_ids: %w", bundleID, err)
+	}
+	if str, ok := writeRes.(string); !ok || str != "OK" {
+		return nil, fmt.Errorf("update bundle %s rule_ids: unexpected redis response %v", bundleID, writeRes)
+	}
+	return &b, nil
+}
+
 // Compile-time interface satisfaction check.
 var _ BundleStore = (*BundleRedisStore)(nil)
