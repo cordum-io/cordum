@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { ColumnDef } from "@tanstack/react-table";
 import { History } from "lucide-react";
@@ -24,6 +24,15 @@ import {
   useDecisionsChartsToggle,
 } from "./DecisionsFilterBar";
 import { DecisionExpandRow } from "./DecisionExpandRow";
+
+// Recharts is heavyweight — lazy-load so the eager /policies/decisions
+// chunk stays small (epic rail "Recharts must be in a separate Vite
+// chunk; not in the eager /policies/decisions chunk").
+const DecisionsChartsPanel = lazy(() =>
+  import("./DecisionsChartsPanel").then((mod) => ({
+    default: mod.DecisionsChartsPanel,
+  })),
+);
 
 interface DecisionRow {
   decision: Decision;
@@ -236,16 +245,18 @@ export default function DecisionsPage() {
       />
 
       {chartsOn && (
-        // D9b will populate this region with DecisionsChartsPanel; D8b
-        // ships the toggle + URL roundtrip + an explicit placeholder so
-        // QA can confirm the wiring without depending on the chart code
-        // being merged.
-        <div
-          data-testid="decisions-charts-placeholder"
-          className="rounded-2xl border border-dashed border-border/60 bg-surface-1 p-4 text-xs italic text-muted-foreground"
+        <Suspense
+          fallback={
+            <div
+              data-testid="decisions-charts-loading"
+              className="rounded-2xl border border-dashed border-border/60 bg-surface-1 p-4 text-xs italic text-muted-foreground"
+            >
+              Loading charts...
+            </div>
+          }
         >
-          Charts panel ships in D9b (task-e343469b). Toggle wired today.
-        </div>
+          <DecisionsChartsPanel decisions={decisions} />
+        </Suspense>
       )}
 
       <DataTable

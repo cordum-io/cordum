@@ -227,15 +227,106 @@ both a memory bound and a UX bound (the user is scanning, not auditing —
 authoritative history lives in the `Load more` cursor-paged path below
 the live feed).
 
-### Charts toggle (D8b ships the toggle; D9b ships the panel)
+### Charts toggle + panel (D8b toggle + D9b panel)
 
 The `Charts ▾` toggle writes `?charts=on` to the URL via `nuqs`
-`parseAsStringLiteral(["on"])`. DecisionsPage renders an explicit
-placeholder block `<div data-testid="decisions-charts-placeholder">…
-Charts panel ships in D9b (task-e343469b). Toggle wired today.</div>`
-so QA can confirm the URL roundtrip without depending on D9b's chart
-code being merged. When D9b lands, the placeholder is swapped for
-`<DecisionsChartsPanel decisions={…} />` — the URL contract is unchanged.
+`parseAsStringLiteral(["on"])`. DecisionsPage gates a lazy
+`<DecisionsChartsPanel decisions={…} />` (React.lazy + Suspense) on that
+flag so the eager `/policies/decisions` chunk doesn't pull Recharts.
+
+The panel renders four compact Recharts charts in a responsive 1-col
+/ 2-col grid:
+
+1. **Decision distribution** — PieChart, count by `DecisionType`.
+2. **Top firing rules** — horizontal BarChart, top 10. Below the chart,
+   the top 5 are surfaced as `<Link>` anchors carrying
+   `data-row-action="cross-link-decisions-rule"` + href
+   `/policies?rule=<id>&open=editor` (matches D10b's cross-link-2
+   contract; clicking the rule label deep-links to the rule editor).
+3. **Decisions per minute** — LineChart bucketed to ISO-minute UTC
+   slugs; the chart shows the last hour of data.
+4. **Decisions by source** — stacked BarChart with x=source (job vs
+   edge), stacked by DecisionType. Decision shape lacks `scope_kind`;
+   `source` is the truthful proxy until a sibling backend task
+   exposes scope on the unified Decision envelope.
+
+Each ChartCard exposes `data-decision-count` (the throttled total)
+plus a chart-specific `aria-label` so screen readers announce the
+metric without needing the chart axes.
+
+**1Hz throttle (live mode):** the panel wraps incoming `decisions[]`
+through co-located `useThrottledValue(value, 1000)`. Leading-edge
+emit on first input; subsequent inputs inside the 1s window are
+deferred via `setTimeout(intervalMs - elapsed)` so the trailing-edge
+update lands once with the latest snapshot. A 100/s prop-update
+burst from `useDecisionsStream` produces **zero** chart-data
+recomputes inside the window — the trailing tick wins. Implemented
+with native `setTimeout`/`Date.now`; no lodash dep.
+
+**Bundle-size separation:** verified via `npm run build` —
+`DecisionsPage-*.js` (~26KB) does NOT contain Recharts;
+`DecisionsChartsPanel-*.js` (~6.6KB) ships the panel logic; the
+Recharts library lives in a separate `generateCategoricalChart-*.js`
+chunk (~353KB), transitively lazy through the panel's `React.lazy`.
+
+### Decisions actions (D9b — Replay + What-if + cross-link)
+
+The DecisionExpandRow's Actions row exposes three operations, all
+keyed off the unified `Decision` payload:
+
+**Replay** (`useReplayDecision`): clicking issues a POST to
+`/api/v1/policy/replay` with body
+`{from, to, filters: {original_decision: decision.type},
+use_current_policy: true, max_jobs: 1}` — a 1-second window around
+`decision.timestamp` is the closest per-decision approximation
+available against the bulk endpoint (Decision shape lacks
+`tenant_id`/`topic`/`principal_id`, so a single-decision lane needs
+a sibling backend task). The hook derives `{was, now, bundleVersion,
+changed}` from `response.changes[0].new_decision` (when present) or
+`response.summary.unchanged` (when changes[] is empty). The result
+panel renders inline under the action row:
+
+- `data.changed === true` → "If evaluated now: \<NowBadge\> (was:
+  \<WasBadge\>)" with warning border highlight.
+- `data.changed === false` → neutral "No change: still \<Badge\>
+  under the active policy".
+- Loading / error states render dedicated `data-testid` markers
+  (`decision-replay-loading`, `decision-replay-error`).
+
+On mutation success the hook invalidates the
+`policy-studio-decisions` queryKey so the list refetches in case
+the bundle rolled forward between record and replay.
+
+**What-if** (`<WhatIfDrawer>`): clicking opens a Drawer (size=xl)
+loaded with the firing rule (via `useRuleAtVersion(decision.rule_id,
+decision.bundle_version)`). The drawer hosts the shared lazy
+`<RuleMonacoEditor>` so the YAML editing experience is identical to
+the Rule editor surface. Side-by-side Actual / Hypothetical panels
+let the author compare the on-the-wire decision (read-only) against
+a re-evaluation of their edited rule (computed on Re-evaluate via
+`POST /api/v1/policy/evaluate`).
+
+**No-save semantics** (spec § L141): `WhatIfDrawer` never imports
+or calls `updatePolicyRule` / `createPolicyRule`. Closing the
+drawer or unmounting fires `useEffect [open=false]` which resets
+draft + hypothetical state — the in-progress edit is intentionally
+lost. Authors who want to persist the experiment open the rule
+editor via the row's "Open rule" cross-link instead. A regression
+test asserts PUT/POST to `/api/v1/policy/rules` MUST never fire
+while the drawer is open.
+
+**Rule fetch fallback:** `useRuleAtVersion(ruleID, bundleVersion)`
+calls `listPolicyRules({limit: 500})` and client-side filters for
+`rule.id === ruleID`. Backend 5d's GET `/api/v1/policy/rules` does
+not yet accept a `version` query parameter, so when `bundleVersion`
+is provided the hook logs a structured warn
+(`logger.warn("decisions-whatif", "rule-version filter unsupported;
+returning latest rule", {rule_id, bundle_version})`) and returns
+the latest snapshot. Sibling backend task tracks the version-pin.
+
+**Open rule** (unchanged from D8b): react-router `<Link>` to
+`/policies?rule=<id>&open=editor`, matching the D10a cross-link
+contract used elsewhere in the studio.
 
 ### Cursor pagination vs Live mode
 
