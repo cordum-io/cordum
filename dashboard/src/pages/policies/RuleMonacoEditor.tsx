@@ -13,13 +13,60 @@ import { Loader2 } from "lucide-react";
 import type { NormalizedRule } from "@/hooks/useRulesList";
 import { logger } from "@/lib/logger";
 import { ruleToYaml, yamlToPartialRule } from "@/lib/policy-studio/editor/yaml";
-// 3C scope is templates-only. Schema-provider/autocomplete/hover/diagnostics
-// wiring (getRuleSchema, validateAgainstSchema, hoverDocumentationFor,
-// propertyCompletionsFromSchema, useMonacoNamespace) is owned by 3B
-// (task-9cbbe097) — re-imported there. Keeping those references out of
-// this 3C fix is the QA reopen #2 directive.
+import { getRuleSchema, type RuleSchema } from "@/lib/policy-studio/schemas";
+import {
+  hoverDocumentationFor,
+  propertyCompletionsFromSchema,
+  validateAgainstSchema,
+  type SchemaDiagnostic,
+} from "@/lib/policy-studio/editor/yaml-diagnostics";
+import {
+  useMonacoNamespace,
+  type MonacoCompletionItem,
+  type MonacoNamespace,
+} from "./useMonacoNamespace";
 
 const MonacoEditor = lazy(() => import("@monaco-editor/react"));
+
+const POLICY_STUDIO_MARKER_OWNER = "policy-studio-rule";
+
+// Surface schema diagnostics + parse errors as Monaco markers so they
+// render in the gutter and the Problems panel when the editor is loaded.
+// In tests (no monaco), this is a no-op; the inline banner below the
+// editor still shows the first issue so assertions stay stable.
+function updateMonacoMarkers(
+  monaco: MonacoNamespace | null,
+  schemaIssues: ReadonlyArray<SchemaDiagnostic>,
+  options: { parseError: string | null },
+): void {
+  if (!monaco) return;
+  const models = monaco.editor.getModels();
+  if (models.length === 0) return;
+  const markers = [];
+  if (options.parseError) {
+    markers.push({
+      severity: monaco.MarkerSeverity.Error,
+      message: options.parseError,
+      startLineNumber: 1,
+      startColumn: 1,
+      endLineNumber: 1,
+      endColumn: 1,
+    });
+  }
+  for (const issue of schemaIssues) {
+    markers.push({
+      severity: monaco.MarkerSeverity.Warning,
+      message: `${issue.path ? `${issue.path}: ` : ""}${issue.message}`,
+      startLineNumber: 1,
+      startColumn: 1,
+      endLineNumber: 1,
+      endColumn: 1,
+    });
+  }
+  for (const model of models) {
+    monaco.editor.setModelMarkers(model, POLICY_STUDIO_MARKER_OWNER, markers);
+  }
+}
 
 export interface RuleMonacoEditorHandle {
   /**
@@ -103,6 +150,19 @@ const RuleMonacoEditor = forwardRef<RuleMonacoEditorHandle, RuleMonacoEditorProp
     const editorRef = useRef<MinimalMonacoEditor | null>(null);
     const yamlRef = useRef<string>(yaml);
     const [parseError, setParseError] = useState<string | null>(null);
+    const [schemaIssue, setSchemaIssue] = useState<string | null>(null);
+
+    // Schema selection drives every schema-aware behavior: completion,
+    // hover, gutter diagnostics. Returning null for the UNKNOWN_RULE_TYPE
+    // sentinel (preserves task-15537d13's safe-fallback contract) means
+    // the editor refuses to register schema providers — fail closed.
+    const schema: RuleSchema | null = useMemo(() => getRuleSchema(rule.type), [rule.type]);
+    const schemaRef = useRef<RuleSchema | null>(schema);
+    useEffect(() => {
+      schemaRef.current = schema;
+    }, [schema]);
+
+    const monaco = useMonacoNamespace();
 
     useEffect(() => {
       yamlRef.current = yaml;
@@ -133,20 +193,37 @@ const RuleMonacoEditor = forwardRef<RuleMonacoEditorHandle, RuleMonacoEditorProp
           const parsed = yamlToPartialRule(text, rule);
           if (parsed.error) {
             setParseError(parsed.error);
+            setSchemaIssue(null);
+            updateMonacoMarkers(monaco, [], { parseError: parsed.error });
             return;
           }
           setParseError(null);
           if (parsed.rule) {
             lastEmittedRef.current = parsed.rule;
             onChange(parsed.rule);
+            // Schema validation against the active rule type. Diagnostics
+            // surface BOTH in Monaco's gutter (when monaco is loaded) and
+            // as a banner footer so the test stub path still renders the
+            // first issue.
+            const activeSchema = schemaRef.current;
+            const issues = activeSchema
+              ? validateAgainstSchema(parsed.rule, activeSchema)
+              : [];
+            setSchemaIssue(
+              issues.length === 0
+                ? null
+                : `${issues.length} schema issue${issues.length === 1 ? "" : "s"}: ${issues[0].path || "(root)"} — ${issues[0].message}`,
+            );
+            updateMonacoMarkers(monaco, issues, { parseError: null });
           }
         } catch (err) {
           setParseError(err instanceof Error ? err.message : "YAML parse failed");
+          setSchemaIssue(null);
           onError?.(err);
           logger.warn("policy-studio-editor", "yaml parse failure", { err });
         }
       },
-      [onChange, onError, rule],
+      [monaco, onChange, onError, rule],
     );
 
     const handleYamlChange = useCallback(
@@ -172,6 +249,56 @@ const RuleMonacoEditor = forwardRef<RuleMonacoEditorHandle, RuleMonacoEditorProp
       // surface, then narrow at use sites.
       editorRef.current = editor as MinimalMonacoEditor;
     }, []);
+
+    // Register schema-aware YAML completion + hover providers once the
+    // Monaco namespace is loaded. The active schema is read through
+    // `schemaRef`, so a rule-type change updates suggestions without
+    // re-registering (registering twice would surface duplicates).
+    useEffect(() => {
+      if (!monaco) return;
+      const completionDisposer = monaco.languages.registerCompletionItemProvider("yaml", {
+        triggerCharacters: [":", " ", "-"],
+        provideCompletionItems(model, position) {
+          const activeSchema = schemaRef.current;
+          if (!activeSchema) return { suggestions: [] };
+          const word = model.getWordAtPosition(position);
+          const items = propertyCompletionsFromSchema(activeSchema);
+          const suggestions: MonacoCompletionItem[] = items.map((item) => ({
+            label: item.label,
+            kind:
+              item.kind === "value"
+                ? monaco.languages.CompletionItemKind.EnumMember
+                : monaco.languages.CompletionItemKind.Property,
+            insertText: item.label,
+            documentation: item.documentation,
+            range: word
+              ? {
+                  startLineNumber: position.lineNumber,
+                  startColumn: word.startColumn,
+                  endLineNumber: position.lineNumber,
+                  endColumn: word.endColumn,
+                }
+              : undefined,
+          }));
+          return { suggestions };
+        },
+      });
+      const hoverDisposer = monaco.languages.registerHoverProvider("yaml", {
+        provideHover(model, position) {
+          const activeSchema = schemaRef.current;
+          if (!activeSchema) return null;
+          const word = model.getWordAtPosition(position);
+          if (!word) return null;
+          const documentation = hoverDocumentationFor(activeSchema, word.word);
+          if (!documentation) return null;
+          return { contents: [{ value: `**${word.word}** — ${documentation}` }] };
+        },
+      });
+      return () => {
+        completionDisposer.dispose();
+        hoverDisposer.dispose();
+      };
+    }, [monaco]);
 
     const replaceDocumentImpl = useCallback(
       (text: string) => {
@@ -309,6 +436,24 @@ const RuleMonacoEditor = forwardRef<RuleMonacoEditorHandle, RuleMonacoEditorProp
             className="border-t border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
           >
             {parseError}
+          </div>
+        )}
+        {parseError === null && schemaIssue !== null && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="border-t border-info/40 bg-info/10 px-3 py-2 text-xs text-info"
+          >
+            {schemaIssue}
+          </div>
+        )}
+        {schema === null && (
+          <div
+            role="alert"
+            className="border-t border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning"
+          >
+            Schema for this rule type is unavailable; autocomplete and
+            schema diagnostics are disabled.
           </div>
         )}
       </div>

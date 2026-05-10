@@ -114,8 +114,10 @@ function validateNode(node: SchemaNode, value: unknown, path: string, out: Schem
     }
   }
 
-  if (value !== null && typeof value === "object" && !Array.isArray(value) && node.properties) {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
     const obj = value as Record<string, unknown>;
+    // `required` runs even when `properties` is absent so anyOf branches
+    // shaped like `{ required: ["max_per_minute"] }` can fire.
     if (Array.isArray(node.required)) {
       for (const req of node.required) {
         if (!(req in obj)) {
@@ -123,16 +125,18 @@ function validateNode(node: SchemaNode, value: unknown, path: string, out: Schem
         }
       }
     }
-    for (const [key, child] of Object.entries(node.properties)) {
-      if (key in obj) {
-        validateNode(child, obj[key], pathSegment(path, key), out);
+    if (node.properties) {
+      for (const [key, child] of Object.entries(node.properties)) {
+        if (key in obj) {
+          validateNode(child, obj[key], pathSegment(path, key), out);
+        }
       }
-    }
-    if (node.additionalProperties === false) {
-      const allowed = new Set(Object.keys(node.properties));
-      for (const key of Object.keys(obj)) {
-        if (!allowed.has(key)) {
-          out.push({ path: pathSegment(path, key), message: `Unknown property "${key}".` });
+      if (node.additionalProperties === false) {
+        const allowed = new Set(Object.keys(node.properties));
+        for (const key of Object.keys(obj)) {
+          if (!allowed.has(key)) {
+            out.push({ path: pathSegment(path, key), message: `Unknown property "${key}".` });
+          }
         }
       }
     }
