@@ -22,6 +22,11 @@ import { RuleTemplatesGallery } from "./RuleTemplatesGallery";
 import type { RuleMonacoEditorHandle } from "./RuleMonacoEditor";
 import { RuleInlineSimulator } from "./RuleInlineSimulator";
 
+// Lazy-load the publish modal — the bundle list + ConfirmDialog only
+// matter when an author clicks Publish, so we don't ship them in the
+// initial drawer chunk.
+const PublishToBundleModal = lazy(() => import("./PublishToBundleModal"));
+
 // Monaco bundles to ~600 KB raw (per `dist/stats.html`); we lazy-load it so
 // the /policies route stays under the 400 KB initial-chunk budget. The cost
 // is paid by users opening the editor — never by users browsing the table.
@@ -221,7 +226,19 @@ function RuleEditorDrawerContent({ control, onClose }: RuleEditorDrawerContentPr
       )}
 
       {!query.isPending && !query.isError && draft && (
-        <DrawerEditorBody draft={draft} onDraftChange={setDraft} />
+        <DrawerEditorBody
+          draft={draft}
+          onDraftChange={setDraft}
+          isCreateNew={isCreateNew}
+          originalVersion={query.data?.version ?? ""}
+          onReloadFromServer={async () => {
+            const next = await query.refetch();
+            if (next.data) {
+              setDraft(next.data);
+              lastLoadedId.current = ruleId;
+            }
+          }}
+        />
       )}
     </Drawer>
   );
@@ -345,9 +362,15 @@ function DrawerNotFound({
 function DrawerEditorBody({
   draft,
   onDraftChange,
+  isCreateNew,
+  originalVersion,
+  onReloadFromServer,
 }: {
   draft: NormalizedRule;
   onDraftChange: (rule: NormalizedRule) => void;
+  isCreateNew: boolean;
+  originalVersion: string;
+  onReloadFromServer: () => Promise<void>;
 }) {
   // Hooks must be called unconditionally (rules-of-hooks). Mode + ref
   // state live above the unknown-type guard.
@@ -438,76 +461,165 @@ function DrawerEditorBody({
 
       <RuleInlineSimulator draft={knownTypeDraft} />
 
-      <DrawerActions draft={draft} />
+      <DrawerActions
+        draft={draft}
+        isCreateNew={isCreateNew}
+        originalVersion={originalVersion}
+        onReloadFromServer={onReloadFromServer}
+      />
     </div>
   );
 }
 
-function DrawerActions({ draft }: { draft: NormalizedRule }) {
-  // Phase 3A boundary: Save-draft is the only mutation surface in this
-  // phase. Publish-to-bundle ships in Phase 3E. The hook below detects
-  // whether the backend mutation is safely available; when it isn't, we
-  // disable the button with a clear tooltip rather than fail silently.
+function DrawerActions({
+  draft,
+  isCreateNew,
+  originalVersion,
+  onReloadFromServer,
+}: {
+  draft: NormalizedRule;
+  isCreateNew: boolean;
+  // Original loaded version, used as `If-Match` on update. Empty for the
+  // create-new path. The drawer captures this from `useRule.data.version`
+  // — never the in-form `draft.version`, which is server-managed and may
+  // be stale relative to what the user clicked Save against.
+  originalVersion: string;
+  // Reload action wired by the parent drawer — refetches the canonical
+  // server state and replaces the in-form draft. Used by the
+  // stale-version banner so the user can recover from a 409 without
+  // closing + reopening the drawer (which would lose any non-conflicting
+  // edits to other unrelated rules).
+  onReloadFromServer: () => Promise<void>;
+}) {
   const save = useSaveRuleDraft();
+  const [publishOpen, setPublishOpen] = useState(false);
   const [feedback, setFeedback] = useState<
     | { kind: "idle" }
     | { kind: "success"; message: string }
     | { kind: "error"; message: string }
+    | {
+        kind: "stale";
+        currentVersion: string;
+        currentAuditHash: string;
+      }
   >({ kind: "idle" });
 
   const onSaveDraft = useCallback(async () => {
-    if (!save.isAvailable) return;
     setFeedback({ kind: "idle" });
-    const result = await save.mutateAsync(draft);
+    const result =
+      isCreateNew || !originalVersion
+        ? await save.mutateAsync({ mode: "create", rule: draft })
+        : await save.mutateAsync({
+            mode: "update",
+            rule: draft,
+            ifMatch: originalVersion,
+          });
     if (result.ok) {
       setFeedback({
         kind: "success",
-        message: `Saved draft (id: ${result.rule.id || "auto"}).`,
+        message: `Saved (now at ${result.rule.version}).`,
       });
-    } else {
-      setFeedback({ kind: "error", message: result.error });
+      return;
     }
-  }, [draft, save]);
+    if (result.kind === "stale") {
+      // D3E DoD #3 reload banner — show the server-current state and
+      // refuse to overwrite. Step 5 wires a Reload action that pulls
+      // the v(N+1) Rule into the form.
+      setFeedback({
+        kind: "stale",
+        currentVersion: result.currentVersion,
+        currentAuditHash: result.currentAuditHash,
+      });
+      return;
+    }
+    setFeedback({ kind: "error", message: result.error });
+  }, [draft, isCreateNew, originalVersion, save]);
 
   return (
     <div className="flex flex-col gap-2 pt-1">
-      {feedback.kind !== "idle" && (
+      {feedback.kind === "success" && (
         <div
           role="status"
           aria-live="polite"
-          className={
-            feedback.kind === "success"
-              ? "rounded-md border border-success/40 bg-success/10 px-3 py-1.5 text-xs text-success"
-              : "rounded-md border border-warning/40 bg-warning/10 px-3 py-1.5 text-xs text-warning"
-          }
+          className="rounded-md border border-success/40 bg-success/10 px-3 py-1.5 text-xs text-success"
         >
           {feedback.message}
+        </div>
+      )}
+      {feedback.kind === "error" && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="rounded-md border border-warning/40 bg-warning/10 px-3 py-1.5 text-xs text-warning"
+        >
+          {feedback.message}
+        </div>
+      )}
+      {feedback.kind === "stale" && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          data-testid="rule-stale-version-banner"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning bg-warning/10 px-3 py-2 text-xs text-warning"
+        >
+          <span>
+            <strong className="font-semibold">Newer version on server.</strong>{" "}
+            The rule was updated to <code>{feedback.currentVersion}</code> while
+            you were editing. Reload to keep the latest changes; saving now
+            would overwrite them.
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="primary"
+            data-testid="rule-stale-version-reload"
+            onClick={async () => {
+              await onReloadFromServer();
+              setFeedback({ kind: "idle" });
+            }}
+          >
+            Reload from server
+          </Button>
         </div>
       )}
       <div className="flex items-center justify-end gap-2">
         <Button
           variant="primary"
           onClick={onSaveDraft}
-          disabled={!save.isAvailable || save.isPending}
+          disabled={save.isPending}
           loading={save.isPending}
           title={
-            save.isAvailable
-              ? "Save the in-progress rule as a draft"
-              : "Save draft endpoint is not wired up yet — Phase 3E will enable it"
+            isCreateNew
+              ? "Create the rule"
+              : "Save the in-progress rule as a draft"
           }
-          aria-label={save.isAvailable ? "Save draft" : "Save draft (not yet enabled)"}
+          aria-label={isCreateNew ? "Create rule" : "Save draft"}
         >
-          Save draft
+          {isCreateNew ? "Create rule" : "Save draft"}
         </Button>
         <Button
           variant="ghost"
-          disabled
-          title="Publish to bundle ships in Phase 3E"
-          aria-label="Publish to bundle (Phase 3E)"
+          onClick={() => setPublishOpen(true)}
+          disabled={!draft.id || isCreateNew}
+          title={
+            !draft.id || isCreateNew
+              ? "Save the rule first, then publish it to a bundle"
+              : "Add this rule to a bundle"
+          }
+          aria-label="Publish to bundle"
         >
           Publish to bundle…
         </Button>
       </div>
+      {publishOpen && (
+        <Suspense fallback={null}>
+          <PublishToBundleModal
+            ruleId={draft.id}
+            open={publishOpen}
+            onClose={() => setPublishOpen(false)}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

@@ -188,11 +188,17 @@ describe("design-system convergence regressions", () => {
   //   limits need numeric coercion + empty→undefined handling for
   //   optional fields. Carved out until the Input primitive grows a
   //   typed-number variant.
+  // - policies/PublishToBundleModal.tsx (Phase 3E): bundle picker is a
+  //   `<input type="radio">` group rendered as cards with name + scope
+  //   + rule count visible at once. A `<Select>` dropdown would hide
+  //   the metadata strip; a RadioGroup primitive doesn't yet exist.
+  //   Carved out until a RadioGroup card-list primitive ships.
   const RAW_CONTROL_CARVE_OUTS = new Set([
     "./LoginPage.tsx",
     "./RunDetailPage.tsx",
     "./policies/TokenInput.tsx",
     "./policies/RuleFormView.tsx",
+    "./policies/PublishToBundleModal.tsx",
   ]);
 
   it("v2.5 drift sweep — comprehensive sweep: all pages except documented carve-outs use primitives", () => {

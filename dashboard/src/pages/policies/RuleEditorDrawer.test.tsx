@@ -162,7 +162,7 @@ describe("RuleEditorDrawer URL contract", () => {
     expect(screen.getByRole("button", { name: /retry/i })).not.toBeNull();
   });
 
-  it("disables Save draft and surfaces the Phase 3E tooltip while the backend mutation is unwired", async () => {
+  it("Phase 3E: enables Save draft for an existing rule (Backend 5c write API wired)", async () => {
     mockRulesListEndpoint([
       {
         id: "rule-2",
@@ -177,11 +177,12 @@ describe("RuleEditorDrawer URL contract", () => {
       },
     ]);
     renderDrawerAt("/policies?rule=rule-2&open=editor");
-    const saveBtn = await screen.findByRole("button", {
-      name: /save draft \(not yet enabled\)/i,
-    });
-    expect((saveBtn as HTMLButtonElement).disabled).toBe(true);
-    expect(saveBtn.getAttribute("title")).toMatch(/Phase 3E/i);
+    // Save button is enabled now that Phase 3E shipped useSaveRuleDraft
+    // against the unified Rule write API (POST /policy/rules + PUT
+    // /policy/rules/{id} with If-Match).
+    const saveBtn = await screen.findByRole("button", { name: /^save draft$/i });
+    expect((saveBtn as HTMLButtonElement).disabled).toBe(false);
+    expect(saveBtn.getAttribute("title")).toMatch(/save the in-progress rule/i);
   });
 
   it("preserves task-15537d13 hotfix safety: refuses to mount Monaco for an unknown rule type", async () => {
