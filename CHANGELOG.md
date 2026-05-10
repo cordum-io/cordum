@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Backend 6 — pack `metadata.aliases` + safety-policy `constraints` extensions (2026-05-10, task-e4e9489c)
+
+- **Pack manifest**: `metadata.aliases: []string` is now optional and additive. When set, topic / pools-patch / timeouts-patch namespace checks accept `job.<id>.*` AND `job.<alias>.*` for each declared alias. Regex `^[a-z][a-z0-9_-]{1,30}$`, max 8 entries, duplicates rejected. Unblocks the CordClaw pack owning `job.openclaw.*` topics under `metadata.id: cordclaw` (task-1e446868). Existing packs without aliases keep validating under the strict prefix rule. See `docs/operations/pack-aliases.md`.
+- **Safety-policy `constraints`** schema (`core/infra/config/schema/safety_policy.schema.json`) now permits three additional fields under `rule.constraints`:
+  - `max_output_bytes` (integer, 0–16 777 216 / 16 MiB upper bound enforced to prevent OOM via misconfigured large outputs).
+  - `allowed_destinations` ([]string — write-target allowlist).
+  - `redact_patterns` ([]string — regex patterns redacted before downstream emission).
+  Schema retains `additionalProperties: false`; typos still fail. Existing policy fragments without these fields validate unchanged. See `docs/operations/safetykernel-constraints.md`.
+- Both changes are additive only — no schema-version bump on either surface. CLI + gateway validators (`cmd/cordumctl/pack.go`, `core/controlplane/gateway/packs/validate.go`) are mirror-updated; pools-patch and timeouts-patch validators thread aliases through. Sibling invariants (pack-id regex, schema-id prefix, workflow-id prefix, pool-name prefix) are unchanged — only the topic namespace check honors aliases. Tests cover alias regex, count cap, duplicates, back-compat, and the new constraint bounds.
+
 #### Cordum Edge P0 (2026-04-30)
 
 EDGE epic shipped 32 P0 tasks for the Compliance Firewall surface — local

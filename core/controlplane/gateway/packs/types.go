@@ -18,6 +18,12 @@ type PackMetadata struct {
 	Version     string `yaml:"version" json:"version"`
 	Title       string `yaml:"title" json:"title"`
 	Description string `yaml:"description" json:"description"`
+	// Aliases declares additional namespace identifiers this pack owns,
+	// in addition to ID. When set, topic/pools-patch namespace checks
+	// accept `job.<id>.*` AND `job.<alias>.*` for each alias. Each alias
+	// must match `^[a-z][a-z0-9_-]{1,30}$`; max 8 entries. Existing packs
+	// that omit this field keep validating under the strict prefix rule.
+	Aliases []string `yaml:"aliases,omitempty" json:"aliases,omitempty"`
 }
 
 // PackCompatibility declares protocol and core version requirements.

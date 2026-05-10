@@ -96,13 +96,13 @@ func TestValidateTimeoutsPatch(t *testing.T) {
 	patch := map[string]any{
 		"topics": map[string]any{"job.bad": map[string]any{}},
 	}
-	if err := packs.ValidateTimeoutsPatch(patch, "pack1"); err == nil {
+	if err := packs.ValidateTimeoutsPatch(patch, "pack1", nil); err == nil {
 		t.Fatalf("expected namespacing error")
 	}
 	patch = map[string]any{
 		"topics": map[string]any{"job.pack1.ok": map[string]any{}},
 	}
-	if err := packs.ValidateTimeoutsPatch(patch, "pack1"); err != nil {
+	if err := packs.ValidateTimeoutsPatch(patch, "pack1", nil); err != nil {
 		t.Fatalf("expected valid timeouts patch: %v", err)
 	}
 }
