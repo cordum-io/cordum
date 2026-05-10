@@ -200,6 +200,7 @@ type server struct {
 	legalHoldStore    *audit.LegalHoldStore
 	statusCacheObj    *statusCache
 	policyBundleStore policy.BundleStore
+	policyRuleStore   policy.RuleStore
 	policyShadowStore *policyshadow.Store
 	mcpDenyRing       *denyEventRing
 	sessionIssuer     *scheduler.SessionTokenIssuer
@@ -697,6 +698,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		legalHoldStore:         initLegalHoldStore(cfg.RedisURL),
 		statusCacheObj:         newStatusCache(2 * time.Second),
 		policyBundleStore:      policy.NewRedisBundleStoreFromClient(jobStore.Client()),
+		policyRuleStore:        policy.NewRedisRuleStoreFromClient(jobStore.Client()),
 		policyShadowStore:      policyshadow.NewStore(configSvc),
 		mcpDenyRing:            newDenyEventRing(500),
 		trustResolver:          scheduler.NewTrustResolver(jobStore.Client()),
@@ -1429,6 +1431,14 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	// per-bundle endpoints below remain as backward-compat aliases.
 	s.registerRoute(mux, "GET /api/v1/policy/global", s.instrumented("/api/v1/policy/global", s.handleGetPolicyGlobal))
 	s.registerRoute(mux, "PUT /api/v1/policy/global", s.instrumented("/api/v1/policy/global", s.handlePutPolicyGlobal))
+	// Backend 5c — unified Rule write API + add-rule-to-bundle. POST /rules
+	// creates a Rule with server-set ID/Version=v1/Audit; PUT /rules/{id}
+	// requires If-Match optimistic concurrency (412 missing / 409 stale
+	// with current_version + current_audit_hash); POST /bundles/{id}/rules
+	// binds an existing rule into a bundle's RuleIDs[] set, idempotently.
+	s.registerRoute(mux, "POST /api/v1/policy/rules", s.instrumented("/api/v1/policy/rules", s.handleCreatePolicyRule))
+	s.registerRoute(mux, "PUT /api/v1/policy/rules/{id}", s.instrumented("/api/v1/policy/rules/{id}", s.handleUpdatePolicyRule))
+	s.registerRoute(mux, "POST /api/v1/policy/bundles/{id}/rules", s.instrumented("/api/v1/policy/bundles/{id}/rules", s.handleAddRuleToBundle))
 	s.registerRoute(mux, "GET /api/v1/policy/bundles", s.instrumented("/api/v1/policy/bundles", s.handlePolicyBundles))
 	s.registerRoute(mux, "GET /api/v1/policy/bundles/deployments", s.instrumented("/api/v1/policy/bundles/deployments", s.handleListPolicyBundleDeployments))
 	s.registerRoute(mux, "POST /api/v1/policy/bundles/deployments/rollback", s.instrumented("/api/v1/policy/bundles/deployments/rollback", s.handleRollbackPolicyBundleDeployment))

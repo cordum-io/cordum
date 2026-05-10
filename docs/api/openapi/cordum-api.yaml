@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Cordum HTTP API
-  version: '2026-05-10.1'
+  version: '2026-05-10.2'
   description: Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
   contact:
     name: Cordum Team
@@ -2643,6 +2643,103 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalServerError'
+    post:
+      operationId: createPolicyRule
+      summary: Create a unified policy rule
+      description: |
+        Creates a Rule in the unified authoring surface. Server assigns
+        `version=v1`, `audit.created_at`, `audit.updated_at`, and defaults
+        `status=draft`. Client-supplied `version` or `audit.*` fields are
+        rejected with 400 — clients cannot fake history.
+      tags:
+      - Policy
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Rule'
+      responses:
+        '201':
+          description: Rule created
+          headers:
+            Location:
+              description: Canonical URL of the created rule.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Duplicate rule id
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/policy/rules/{id}:
+    put:
+      operationId: updatePolicyRule
+      summary: Update a unified policy rule (optimistic concurrency)
+      description: |
+        Updates a Rule with optimistic concurrency. Requires the
+        `If-Match` header set to the current `version`. Returns 412 if
+        the header is missing and 409 with body
+        `{"error":"stale_version","current_version":...,"current_audit_hash":...}`
+        when the header is stale, so the dashboard can render a reload
+        banner without re-fetching.
+      tags:
+      - Policy
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: If-Match
+        in: header
+        required: true
+        description: Current `Rule.version` for optimistic concurrency.
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Rule'
+      responses:
+        '200':
+          description: Rule updated; `version` is bumped (vN -> v(N+1)).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Rule not found
+        '409':
+          description: Stale `If-Match` header — current version + audit hash returned in body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuleStaleVersionResponse'
+        '428':
+          description: "`If-Match` header missing"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
   /api/v1/policy/output/rules:
     get:
       operationId: listOutputRules
@@ -3058,6 +3155,61 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+  /api/v1/policy/bundles/{id}/rules:
+    post:
+      operationId: addRuleToBundle
+      summary: Bind an existing rule into a bundle
+      description: |
+        Appends `rule_id` to the bundle's `rule_ids` set. Idempotent —
+        repeated calls with the same `rule_id` leave the set unchanged.
+        Concurrent calls with distinct `rule_id`s converge under Lua CAS
+        without lost writes. The two 404 paths are disambiguated via
+        `error: "rule_not_found"` vs `error: "bundle_not_found"` so the
+        dashboard can present the right copy.
+      tags:
+      - Policy
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/TenantID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddRuleToBundleRequest'
+      responses:
+        '200':
+          description: Bundle updated with the new binding.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bundle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: Either the bundle or the rule does not exist.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    enum:
+                    - bundle_not_found
+                    - rule_not_found
+                required:
+                - error
         '500':
           $ref: '#/components/responses/InternalServerError'
   /api/v1/policy/bundles/{id}/simulate:
@@ -11806,6 +11958,37 @@ components:
       - audit
       - match
       - decide
+    RuleStaleVersionResponse:
+      type: object
+      description: |
+        Returned by `PUT /api/v1/policy/rules/{id}` with a 409 status when
+        the client's `If-Match` header is older than the current
+        `version`. The dashboard renders a reload banner from this body
+        instead of re-fetching.
+      properties:
+        error:
+          type: string
+          enum:
+          - stale_version
+        current_version:
+          type: string
+          description: The server-side current `version`. Use this as the next `If-Match`.
+        current_audit_hash:
+          type: string
+          description: SHA-256 hex of the server-side current Rule envelope. Lets clients confirm a follow-up read returned the same state without a roundtrip.
+      required:
+      - error
+      - current_version
+      - current_audit_hash
+    AddRuleToBundleRequest:
+      type: object
+      description: Request body for `POST /api/v1/policy/bundles/{id}/rules`.
+      properties:
+        rule_id:
+          type: string
+          description: ID of an existing Rule to bind into the bundle.
+      required:
+      - rule_id
     DecisionListResponse:
       type: object
       description: |
