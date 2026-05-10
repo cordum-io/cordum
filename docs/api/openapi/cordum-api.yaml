@@ -2777,6 +2777,7 @@ paths:
       operationId: listOutputRules
       summary: List output policy rules (deprecated)
       deprecated: true
+      x-live-route: true
       description: |
         DEPRECATED (Backend 5d). Use `GET /api/v1/policy/rules?type=output`
         instead — the unified envelope carries the same data plus type,
@@ -5881,6 +5882,7 @@ paths:
       operationId: listVelocityRules
       summary: List velocity rules (deprecated)
       deprecated: true
+      x-live-route: true
       description: |
         DEPRECATED (Backend 5d). Use `GET /api/v1/policy/rules?type=velocity`
         instead — the unified envelope carries the same data plus the
