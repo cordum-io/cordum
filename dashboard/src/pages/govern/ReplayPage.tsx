@@ -827,6 +827,26 @@ export default function ReplayPage({
         subtitle="Re-run historical jobs against the current or a candidate policy to see what decisions would change."
         label="Govern"
       />
+      <div className="px-6 pt-2">
+        <InfoBanner
+          id="govern-replay-deprecation"
+          variant="info"
+          title="Replay has moved to Policy Studio"
+        >
+          <p>
+            This page is deprecated. Use{" "}
+            <Link
+              to="/policies/decisions"
+              className="underline underline-offset-2 hover:opacity-90"
+              data-row-action="cross-link-d9-replay-banner"
+            >
+              /policies/decisions
+            </Link>{" "}
+            → click a row → Replay action. Deletion ships with Dashboard 11
+            (epic-d9a6c0a1).
+          </p>
+        </InfoBanner>
+      </div>
       {content}
     </div>
   );

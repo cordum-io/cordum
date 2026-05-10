@@ -552,6 +552,27 @@ export default function PolicyAnalyticsPage({
         subtitle="See which rules generate the most volume, overrides, and review fatigue before you replay or retune them."
         label="Govern"
       />
+      <div className="px-6 pt-2">
+        <InfoBanner
+          id="govern-analytics-deprecation"
+          variant="info"
+          title="Analytics has moved to Policy Studio"
+        >
+          <p>
+            This page is deprecated. Use the charts panel on{" "}
+            <Link
+              to="/policies/decisions?charts=on"
+              className="underline underline-offset-2 hover:opacity-90"
+              data-row-action="cross-link-d9-analytics-banner"
+            >
+              /policies/decisions?charts=on
+            </Link>{" "}
+            for decision distribution, top firing rules, decisions/min, and
+            decisions-by-scope. Deletion ships with Dashboard 11
+            (epic-d9a6c0a1).
+          </p>
+        </InfoBanner>
+      </div>
       {content}
     </div>
   );

@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { FlaskConical } from "lucide-react";
 import { motion } from "framer-motion";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -145,6 +145,35 @@ export default function SimulatorPage({ hideHeader }: { hideHeader?: boolean } =
           <StatusBadge variant="info">all roles</StatusBadge>
         }
       />}
+
+      <InfoBanner
+        id="govern-simulator-deprecation"
+        variant="info"
+        title="Simulator has moved to Policy Studio"
+      >
+        <p>
+          This page is deprecated. Use the inline simulator in the Rules
+          editor (
+          <Link
+            to="/policies"
+            className="underline underline-offset-2 hover:opacity-90"
+            data-row-action="cross-link-d9-simulator-banner"
+          >
+            /policies
+          </Link>
+          {" "}→ click a rule → Simulator panel) or the What-if action on a
+          decision (
+          <Link
+            to="/policies/decisions"
+            className="underline underline-offset-2 hover:opacity-90"
+            data-row-action="cross-link-d9-whatif-banner"
+          >
+            /policies/decisions
+          </Link>
+          {" "}→ click a row → What-if). Deletion ships with Dashboard 11
+          (epic-d9a6c0a1).
+        </p>
+      </InfoBanner>
 
       {loadError && (
         <InfoBanner variant="error" title="Unable to load simulation context">
