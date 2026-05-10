@@ -86,6 +86,22 @@ type BundleStore interface {
 	// deployment history, newest first. The history is bounded to the
 	// last 100 entries by the implementation.
 	ListDeploymentHistory(ctx context.Context, scope RuleScope, limit int) ([]*Deployment, error)
+
+	// Rule binding -------------------------------------------------------
+
+	// AddRuleToBundle appends ruleID to the bundle's RuleIDs set. The
+	// caller's RuleStore is consulted via ruleExists so the binding
+	// rejects unknown rule IDs (returns ErrRuleNotFound). Idempotent —
+	// calling twice with the same ruleID leaves RuleIDs unchanged on the
+	// second call. Returns the updated Bundle on success, ErrBundleNotFound
+	// when the bundle doesn't exist. Concurrent AddRuleToBundle calls on
+	// the same bundle but distinct ruleIDs converge — Lua atomicity
+	// ensures both rule IDs end up in RuleIDs[] without a lost write.
+	AddRuleToBundle(
+		ctx context.Context,
+		bundleID, ruleID string,
+		ruleExists func(ctx context.Context, ruleID string) (bool, error),
+	) (*Bundle, error)
 }
 
 // DeploymentAction discriminates a Deployment record between a fresh
