@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Cordum HTTP API
-  version: '2026-05-09.3'
+  version: '2026-05-10.1'
   description: Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
   contact:
     name: Cordum Team
@@ -5947,6 +5947,121 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/policy/decisions:
+    get:
+      operationId: listPolicyDecisions
+      summary: List unified policy decisions
+      description: |
+        Returns a tenant-scoped, paginated list of `Decision` records emitted
+        by the safetykernel job evaluator and the edge classifier. Replaces
+        the legacy `/api/v1/governance/decisions` view for Policy Studio
+        consumers; the legacy endpoint stays online until the D11 cut-over.
+        Cursor pagination encodes `(timestamp, id)` so concurrent inserts
+        cannot skip or duplicate rows.
+      tags:
+      - Policy
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: source
+        in: query
+        required: false
+        description: Filter by Decision source (job or edge).
+        schema:
+          $ref: '#/components/schemas/DecisionSource'
+        example: edge
+      - name: type
+        in: query
+        required: false
+        description: Filter by Decision type.
+        schema:
+          $ref: '#/components/schemas/DecisionType'
+        example: deny
+      - name: since
+        in: query
+        required: false
+        description: |
+          Inclusive lower-bound on Decision timestamp. Accepts RFC3339 or
+          unix milliseconds.
+        schema:
+          type: string
+        example: '2026-05-10T00:00:00Z'
+      - name: until
+        in: query
+        required: false
+        description: |
+          Inclusive upper-bound on Decision timestamp. Accepts RFC3339 or
+          unix milliseconds.
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        description: Max items per page (1-500, default 100).
+        schema:
+          type: integer
+          format: int64
+          default: 100
+          minimum: 1
+          maximum: 500
+        example: 100
+      - name: cursor
+        in: query
+        required: false
+        description: Opaque cursor returned on the prior page's next_cursor.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Paginated list of Decisions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/v1/policy/decisions/stream:
+    get:
+      operationId: streamPolicyDecisions
+      summary: Stream unified policy decisions over WebSocket
+      description: |
+        Upgrades the connection to a WebSocket that emits one Decision JSON
+        per message as the gateway publishes it. Backed by an in-process
+        broker; slow subscribers are auto-evicted after repeated drops to
+        protect the emit path. Optional `source` and `type` query params
+        narrow what reaches the socket; filtering happens server-side.
+      tags:
+      - Policy
+      parameters:
+      - $ref: '#/components/parameters/TenantID'
+      - name: source
+        in: query
+        required: false
+        description: Filter the stream to one Decision source.
+        schema:
+          $ref: '#/components/schemas/DecisionSource'
+      - name: type
+        in: query
+        required: false
+        description: Filter the stream to one Decision type.
+        schema:
+          $ref: '#/components/schemas/DecisionType'
+      responses:
+        '101':
+          description: Switching Protocols — WebSocket frames carry one Decision JSON per message.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/v1/policy/replay:
     post:
       operationId: replayPolicyDecisions
@@ -11691,6 +11806,24 @@ components:
       - audit
       - match
       - decide
+    DecisionListResponse:
+      type: object
+      description: |
+        Paginated envelope returned by `GET /api/v1/policy/decisions`. The
+        cursor is opaque; clients should pass it back unmodified on the
+        next request to continue paginating.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Decision'
+        has_more:
+          type: boolean
+        next_cursor:
+          type: string
+      required:
+      - items
+      - has_more
     Decision:
       type: object
       description: |

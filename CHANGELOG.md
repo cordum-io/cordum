@@ -21,6 +21,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+#### Policy Studio Backend 5b — unified Decision REST + WS stream endpoints (2026-05-10, task-fcc87bbc)
+
+- Added `GET /api/v1/policy/decisions` returning the unified `policy.Decision` shape (source/bundle_id/bundle_version/trace[]/audit_hash/input_ref/output_ref) the legacy `/api/v1/governance/decisions` endpoint cannot express. Query params: `source` (job|edge), `type` (any of the 7 unified DecisionTypes), `since`/`until` (RFC3339 or unix-millis), `limit` (1-500, default 100), `cursor` (opaque base64). Response envelope `{items: Decision[], has_more, next_cursor?}`. Cursor encodes `(timestamp, id)` so concurrent inserts cannot skip or duplicate rows. Unblocks Dashboard 8 + Dashboard 9.
+- Added `GET /api/v1/policy/decisions/stream` (WebSocket upgrade) emitting one `Decision` JSON per message. Optional `?source=` and `?type=` filters narrow the stream server-side. Per-connection `WriteDeadline=5s`; back-pressure via in-process `policy.DecisionBroker` drop-on-full + auto-evict after 3 consecutive drops. See `docs/api/decisions-stream.md`.
+- Extended `model.DecisionLogRecord` with the unified field block (Source/Type/Trace/BundleID/BundleVersion/AuditHash/InputRef/OutputRef). Legacy verdict + approval fields preserved so `/api/v1/governance/decisions` keeps working unchanged until the D11 cut-over removes that endpoint. `model.DecisionQuery` extended with Source + Type filters; new Redis indices `gov:dec:<tenant>:idx:source:*` and `gov:dec:<tenant>:idx:type:*` mirror the existing verdict-index pattern.
+- Inverted the scheduler's persistence path (`scheduler/decision_log_adapter.go::buildDecisionLogRecord`) to populate the unified field block alongside the legacy fields on every persisted decision — Source=job (always), Type derived from SafetyDecision via mapper, Trace synthesized from RuleID + Reason + Timestamp, Bundle binding parsed from `PolicySnapshot`. Single AppendDecision call per evaluation; no dual-write race.
+- Added the missing edge persistence wiring at `gateway/edge_decision_audit.go`: `AppendDecision(ctx, decisionLogRecordForEdge(event, decision))` runs after `EmitDecisionForEdgeEvent` and BEFORE `policyDecisionBroker.Publish` so a fast WS subscriber can never observe a Decision the store hasn't yet recorded. Pre-amendment edge decisions were SIEM-only; this PR is when edge decisions land in `gov:dec:*`.
+- Bumped `cordum-api.yaml` to `2026-05-10.1` with `DecisionListResponse` schema and the two new path entries; ran `pnpm run generate-api` to emit `listPolicyDecisions` orval hook + `decisionListResponse.ts` type. Dashboard MSW default handler (`test-utils/handlers.ts`) returns a 12-row fixture covering every DecisionType + both Sources so D8/D9 page tests render meaningful state.
+- Deferred to follow-up: scheduler→broker.Publish across-process fan-out (requires NATS bridge per architect's "out of scope today"). Job decisions surface via REST poll today; edge decisions surface via REST + WS. The contract is "WS may not see job decisions until the NATS bridge ships" — Dashboard 8 live mode should fall back to REST poll for job rows.
+
+
 #### Policy Studio Rewrite — Backend 5: unified evaluator entry-point (epic-d9a6c0a1, task-aadaec4a)
 
 - Added canonical HTTP `POST /api/v1/policy/evaluate` unified evaluator for

@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-05-09.3
+ * OpenAPI spec version: 2026-05-10.1
  */
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
@@ -25,6 +25,7 @@ import type {
   BadRequestResponse,
   ConflictResponse,
   CreateBundleSnapshotBody,
+  DecisionListResponse,
   EvaluatePolicy200,
   EvaluatePolicyBody,
   ForbiddenResponse,
@@ -39,6 +40,7 @@ import type {
   ListBundleSnapshots200,
   ListPolicyBundleDeploymentsParams,
   ListPolicyBundles200,
+  ListPolicyDecisionsParams,
   ListPolicyRules200,
   ListPolicyRulesParams,
   ListVelocityRules200,
@@ -70,6 +72,7 @@ import type {
   ShadowResultsSummary,
   ShadowTimeseriesResponse,
   SimulatePolicyBundleBody,
+  StreamPolicyDecisionsParams,
   TierLimitResponse,
   UnauthorizedResponse,
   UpdatePolicyBundleRequest,
@@ -5256,6 +5259,366 @@ export const usePolicyAnalytics = <
 
   return useMutation(mutationOptions, queryClient);
 };
+/**
+ * Returns a tenant-scoped, paginated list of `Decision` records emitted
+by the safetykernel job evaluator and the edge classifier. Replaces
+the legacy `/api/v1/governance/decisions` view for Policy Studio
+consumers; the legacy endpoint stays online until the D11 cut-over.
+Cursor pagination encodes `(timestamp, id)` so concurrent inserts
+cannot skip or duplicate rows.
+
+ * @summary List unified policy decisions
+ */
+export const listPolicyDecisions = (
+  params?: ListPolicyDecisionsParams,
+  signal?: AbortSignal,
+) => {
+  return apiClient<DecisionListResponse>({
+    url: `/api/v1/policy/decisions`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
+
+export const getListPolicyDecisionsQueryKey = (
+  params?: ListPolicyDecisionsParams,
+) => {
+  return [`/api/v1/policy/decisions`, ...(params ? [params] : [])] as const;
+};
+
+export const getListPolicyDecisionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listPolicyDecisions>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListPolicyDecisionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicyDecisions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListPolicyDecisionsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listPolicyDecisions>>
+  > = ({ signal }) => listPolicyDecisions(params, signal);
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listPolicyDecisions>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type ListPolicyDecisionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listPolicyDecisions>>
+>;
+export type ListPolicyDecisionsQueryError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse
+  | ServiceUnavailableResponse;
+
+export function useListPolicyDecisions<
+  TData = Awaited<ReturnType<typeof listPolicyDecisions>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+>(
+  params: undefined | ListPolicyDecisionsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicyDecisions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPolicyDecisions>>,
+          TError,
+          Awaited<ReturnType<typeof listPolicyDecisions>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListPolicyDecisions<
+  TData = Awaited<ReturnType<typeof listPolicyDecisions>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListPolicyDecisionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicyDecisions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPolicyDecisions>>,
+          TError,
+          Awaited<ReturnType<typeof listPolicyDecisions>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListPolicyDecisions<
+  TData = Awaited<ReturnType<typeof listPolicyDecisions>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListPolicyDecisionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicyDecisions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary List unified policy decisions
+ */
+
+export function useListPolicyDecisions<
+  TData = Awaited<ReturnType<typeof listPolicyDecisions>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListPolicyDecisionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listPolicyDecisions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListPolicyDecisionsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Upgrades the connection to a WebSocket that emits one Decision JSON
+per message as the gateway publishes it. Backed by an in-process
+broker; slow subscribers are auto-evicted after repeated drops to
+protect the emit path. Optional `source` and `type` query params
+narrow what reaches the socket; filtering happens server-side.
+
+ * @summary Stream unified policy decisions over WebSocket
+ */
+export const streamPolicyDecisions = (
+  params?: StreamPolicyDecisionsParams,
+  signal?: AbortSignal,
+) => {
+  return apiClient<unknown>({
+    url: `/api/v1/policy/decisions/stream`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
+
+export const getStreamPolicyDecisionsQueryKey = (
+  params?: StreamPolicyDecisionsParams,
+) => {
+  return [
+    `/api/v1/policy/decisions/stream`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getStreamPolicyDecisionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof streamPolicyDecisions>>,
+  TError = void | BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+>(
+  params?: StreamPolicyDecisionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof streamPolicyDecisions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getStreamPolicyDecisionsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof streamPolicyDecisions>>
+  > = ({ signal }) => streamPolicyDecisions(params, signal);
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof streamPolicyDecisions>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type StreamPolicyDecisionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof streamPolicyDecisions>>
+>;
+export type StreamPolicyDecisionsQueryError =
+  | void
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse;
+
+export function useStreamPolicyDecisions<
+  TData = Awaited<ReturnType<typeof streamPolicyDecisions>>,
+  TError = void | BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+>(
+  params: undefined | StreamPolicyDecisionsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof streamPolicyDecisions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof streamPolicyDecisions>>,
+          TError,
+          Awaited<ReturnType<typeof streamPolicyDecisions>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useStreamPolicyDecisions<
+  TData = Awaited<ReturnType<typeof streamPolicyDecisions>>,
+  TError = void | BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+>(
+  params?: StreamPolicyDecisionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof streamPolicyDecisions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof streamPolicyDecisions>>,
+          TError,
+          Awaited<ReturnType<typeof streamPolicyDecisions>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useStreamPolicyDecisions<
+  TData = Awaited<ReturnType<typeof streamPolicyDecisions>>,
+  TError = void | BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+>(
+  params?: StreamPolicyDecisionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof streamPolicyDecisions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary Stream unified policy decisions over WebSocket
+ */
+
+export function useStreamPolicyDecisions<
+  TData = Awaited<ReturnType<typeof streamPolicyDecisions>>,
+  TError = void | BadRequestResponse | UnauthorizedResponse | ForbiddenResponse,
+>(
+  params?: StreamPolicyDecisionsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof streamPolicyDecisions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getStreamPolicyDecisionsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
 /**
  * @summary Replay historical jobs against a candidate policy
  */
