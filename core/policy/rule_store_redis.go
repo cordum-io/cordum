@@ -347,6 +347,65 @@ func (s *RuleRedisStore) ListRulesByScope(
 	return rules, nil
 }
 
+// ListRules returns every Rule across all scopes via SCAN of the
+// `policy:rule:*` key namespace, filtering out the `:version` sidecar
+// keys. Used by Backend 5d's unified GET /api/v1/policy/rules. Sorted
+// by ID ascending for deterministic cursor pagination across calls.
+func (s *RuleRedisStore) ListRules(ctx context.Context) ([]*Rule, error) {
+	var ids []string
+	var cursor uint64
+	for {
+		batch, next, err := s.client.Scan(ctx, cursor, ruleKeyPrefix+"*", 256).Result()
+		if err != nil {
+			return nil, fmt.Errorf("scan rules: %w", err)
+		}
+		for _, key := range batch {
+			// Filter out the `:version` sidecar keys; only the envelope
+			// keys carry the rule id and JSON payload.
+			if strings.HasSuffix(key, ruleVersionSuffix) {
+				continue
+			}
+			id := strings.TrimPrefix(key, ruleKeyPrefix)
+			if id == "" {
+				continue
+			}
+			ids = append(ids, id)
+		}
+		if next == 0 {
+			break
+		}
+		cursor = next
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = ruleKey(id)
+	}
+	values, err := s.client.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("list rules mget: %w", err)
+	}
+	rules := make([]*Rule, 0, len(values))
+	for _, v := range values {
+		if v == nil {
+			continue
+		}
+		raw, ok := v.(string)
+		if !ok {
+			continue
+		}
+		var rule Rule
+		if err := json.Unmarshal([]byte(raw), &rule); err != nil {
+			continue
+		}
+		rules = append(rules, &rule)
+	}
+	sortRulesByID(rules)
+	return rules, nil
+}
+
 func rulesScopesEqual(a, b RuleScope) bool {
 	return a.Kind == b.Kind && a.Value == b.Value
 }

@@ -3,13 +3,17 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-05-10.2
+ * OpenAPI spec version: 2026-05-10.3
  */
+import type { PackSource } from "./packSource";
 
 /**
  * Records who created or last updated a Rule or Bundle. The `updated_*`
 fields are zero-valued on first creation and populated by the first
-subsequent edit.
+subsequent edit. `pack_source` is populated when the rule
+originated from a `cordumctl pack install` YAML bundle (Backend
+5d) — the dashboard's pack_id + tier columns + Source filter
+depend on it surfacing on every legacy-bundle-loaded rule.
 
  */
 export interface AuditMetadata {
@@ -17,4 +21,5 @@ export interface AuditMetadata {
   created_by: string;
   updated_at?: string;
   updated_by?: string;
+  pack_source?: PackSource;
 }

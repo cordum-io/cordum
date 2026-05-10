@@ -2,14 +2,16 @@ import { http, HttpResponse } from "msw";
 import { fixturePolicyDecisions } from "./fixtures/decisions";
 
 export const baseHandlers = [
-  // Dashboard 2 — Rules surface list (unified Backend-1 Rule shape).
-  // Default empty so PoliciesPage renders the empty-state CTA without
-  // per-test setup; tests override with populated/paginated responses.
-  // The drawer (Dashboard 3A) sources existing rules from this list cache
-  // / endpoint — no `/policy/rules/:id` detail route exists in the current
-  // dashboard/core contract (cordum-api.yaml:2609 + gateway.go:1415).
+  // Backend 5d — Rules surface list (unified Rule envelope with type
+  // populated per source bucket). Default empty so PoliciesPage renders
+  // the empty-state CTA without per-test setup; tests opt into the
+  // realistic 8-row fixture (`fixtureUnifiedRules` from
+  // `test-utils/fixtures/rules-unified`) via `server.use(...)`. The
+  // envelope shape is the new unified one — `{items, has_more,
+  // next_cursor}` — replacing the legacy `{items, total}` shape used
+  // before Backend 5d.
   http.get("*/api/v1/policy/rules", () =>
-    HttpResponse.json({ items: [], total: 0 }),
+    HttpResponse.json({ items: [], has_more: false, next_cursor: "" }),
   ),
   // Backend 5c — POST /api/v1/policy/rules. Default returns the request
   // body echoed with `version=v1` + a deterministic `audit` envelope so
