@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 
+#### Policy Studio Dashboard 4 — templates gallery + cross-link contract (2026-05-10, task-f6872400)
+
+- Added `PoliciesEmptyTemplatesGallery` rendered on `PoliciesPage` truly-empty state (no rows, no filters); responsive 3-col grid links to `/policies?new=true&type=<ruleType>&template=<id>&open=editor`. Filtered-empty state retains the existing "No rules match these filters" copy without the gallery to avoid misleading authors into thinking template creation clears active filters.
+- Added `output-pii-sanitize.yaml` template (8th total) to ensure DoD #1's "6+ templates spanning all 4 rule types" coverage; previously the set lacked an output rule.
+- Extended the `RuleEditorDrawer` URL contract to accept the alternate create-new entry point `?new=true&type=...` (in addition to 3A's `?rule=new&type=...`) and to read `?template=<id>` for Monaco pre-fill via `RULE_TEMPLATES`. `?bundle=<id>` is forwarded to drawer state for the eventual Save-to-bundle bind once Backend 5c lands.
+- Drawer's close handler now atomically clears all six editor query keys (`rule`, `open`, `type`, `new`, `template`, `bundle`) while preserving unrelated filters (`scope`, `status`, `search`).
+- Documented the Policy Studio cross-link contract in `dashboard/docs/policy-studio-editor.md`: which surface (Rules table / Decisions → Rule / Bundles → Add rule / empty-state gallery) emits which URL shape.
+
+
 #### AgentShield detector strategy boundary ADR (2026-05-09, task-3a25ba1f)
 
 - Added ADR-011 documenting deterministic normalizers/cheap detectors vs upstream classifier boundaries, and linked the boundary from AgentShield/output-safety docs.
