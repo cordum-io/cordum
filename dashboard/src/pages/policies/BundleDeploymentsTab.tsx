@@ -10,6 +10,7 @@ import {
 import { useRollbackBundle } from "@/hooks/useRollbackBundle";
 import { formatRelativeTime } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { BundleDeploymentTimeline } from "./BundleDeploymentTimeline";
 import DeployBundleModal from "./DeployBundleModal";
 
 type DeployScopeKind = "global" | "tenant" | "workflow" | "edge_fleet" | "edge_user";
@@ -152,6 +153,10 @@ export default function BundleDeploymentsTab({ bundleId }: BundleDeploymentsTabP
 
   return (
     <div className="space-y-4">
+      <BundleDeploymentTimeline
+        bundleId={bundleId}
+        deployments={deployments}
+      />
       <div className="overflow-x-auto rounded-2xl border border-border bg-surface-1">
         <table className="min-w-full text-sm" aria-label="Bundle deployments matrix (rows: scopes, columns: versions)">
           <thead>

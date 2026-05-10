@@ -8,6 +8,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 
+#### Policy Studio Dashboard 6 — bundle deployment timeline (Gantt) (2026-05-10, task-7b2862f8)
+
+- Added `BundleDeploymentTimeline` (Gantt-style horizontal chart) above the scope × version matrix on the Bundles "Deployments" tab. Each scope row shows colour-coded segments per active version; native SVG `<title>` tooltip surfaces version + scope + deployed_at; clicking any segment navigates to `/policies/bundles/:id?tab=versions&v=<version>`.
+- Range toolbar with 1d / 7d / 30d radio-group presets (default 30d). Zoom recomputes segment x-positions in-place; no re-fetch.
+- Mobile (< 720px): timeline hidden via `sm:hidden` Tailwind gate; matrix below remains the primary mobile view per the plan's "matrix-only on mobile" requirement.
+- Per-version colours rotate through 5 existing CSS-variable tokens (`--color-cordum`, `--color-success`, `--color-warning`, `--color-info`, `--color-accent`) — no new colour palette per epic rail. Rollback to a previous version reuses that version's colour for visual continuity.
+- Pure helper module `src/lib/policy-studio/timeline-segments.ts` (segment computation, scope key/label, version colour index) lives separate from the renderer for unit-testability without DOM mounts.
+- Architectural deviation flagged in PR body: DoD #5 says "Reuses Recharts" but Recharts has no Gantt primitive and forcing ScatterChart-with-custom-shape requires more custom rendering than the SVG-direct approach. SVG-direct keeps the bundle small (no new dep) and renders ~200 LOC of legible markup.
+- Path-A scope: tooltip shows version + scope + deployed_at only; author + audit_hash deferred to Backend 2.5 (which extends `BundleDeployment` with `deployed_by`, `audit_hash`, and an `action` enum). The component contract is shaped for a one-line additive update when 2.5 lands.
+
+
 #### Policy Studio Dashboard 4 — templates gallery + cross-link contract (2026-05-10, task-f6872400)
 
 - Added `PoliciesEmptyTemplatesGallery` rendered on `PoliciesPage` truly-empty state (no rows, no filters); responsive 3-col grid links to `/policies?new=true&type=<ruleType>&template=<id>&open=editor`. Filtered-empty state retains the existing "No rules match these filters" copy without the gallery to avoid misleading authors into thinking template creation clears active filters.

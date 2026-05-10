@@ -106,6 +106,73 @@ covered by tests in `PoliciesPage.test.tsx`:
 - `truly-empty state renders the templates gallery (D4 DoD #1)`.
 - `filtered-empty state shows the clear-filters copy and does NOT render the templates gallery (D4 branching)`.
 
+## Deployment timeline (Gantt) — Bundles tab
+
+The `BundleDeploymentTimeline` component (D6) renders a Gantt-style chart
+above the scope × version matrix on `/policies/bundles/:id?tab=deployments`.
+Source: `dashboard/src/pages/policies/BundleDeploymentTimeline.tsx` and the
+pure helper `dashboard/src/lib/policy-studio/timeline-segments.ts`.
+
+### Zoom contract
+
+| Preset | Range          | Notes                                                  |
+|--------|----------------|--------------------------------------------------------|
+| 1d     | last 24h       | Same-day incident windows.                             |
+| 7d     | last 7 days    | Default sprint-scope investigation window.             |
+| 30d    | last 30 days   | Default preset on first paint.                         |
+
+Range state is local component state (not URL state) to avoid
+collision with `?tab=` and `?v=` keys on the bundle detail page. The
+range can be reset on each visit; per-page persistence is intentional.
+
+### Segment colour encoding
+
+Per-version colours rotate through 5 CSS-variable tokens, in order of
+first occurrence in the segment list:
+
+```
+--color-cordum    (idx 0)
+--color-success   (idx 1)
+--color-warning   (idx 2)
+--color-info      (idx 3)
+--color-accent    (idx 4)
+```
+
+`versionColorIndex(version, versionOrder)` returns the stable index;
+rollback to a previous version reuses that version's colour for visual
+continuity (a deploy of v1, then v2, then rollback-to-v1 yields two v1
+segments that share the same colour).
+
+### Tooltip content (Path-A)
+
+Each segment exposes a native SVG `<title>` element so screen readers
+and hover both surface:
+
+```
+Version <version> on <scope>
+Deployed <relative-time> (<deployed_at ISO 8601>)
+```
+
+`author` and `audit_hash` are intentionally NOT shown in this phase —
+the `BundleDeployment` shape from `useBundleDeployments` doesn't include
+them yet. Backend 2.5 (task-2a3050b3) extends the OpenAPI yaml +
+regenerates the dashboard TS to add `deployed_by`, `audit_hash`, and
+`action: "deploy" | "rollback"`. When that lands, the tooltip extension
+is a one-line additive change in `BundleDeploymentTimelineSvg`.
+
+### Mobile fallback
+
+The SVG container is `<div className="hidden sm:block">`; below the
+`sm` Tailwind breakpoint (~640px), only the fallback paragraph
+("Open this page on a wider screen…") renders. The scope × version
+matrix below is the primary mobile view.
+
+### Click → navigate
+
+Each segment is a `<Link to={`/policies/bundles/${bundleId}?tab=versions&v=${version}`}>`.
+Clicking lands the user on the Bundle's "Versions" tab pre-filtered to
+that segment's version. The link's href is stable and SR-friendly.
+
 ## Maintenance notes
 
 - New templates: add a `<id>.yaml` file under
