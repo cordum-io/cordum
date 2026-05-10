@@ -130,6 +130,7 @@ type server struct {
 	jobStore              *store.RedisJobStore // Typed for ListRecentJobs
 	edgeStore             edgecore.Store
 	decisionLogStore      model.DecisionLogStore
+	policyDecisions       *policy.DecisionBroker
 	copilotStore          copilot.Store
 	governanceHealthCache *governance.Cache
 	routeTable            []routeInfo
@@ -654,6 +655,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		jobStore:               jobStore,
 		edgeStore:              edgeStore,
 		decisionLogStore:       decisionLogStore,
+		policyDecisions:        policy.NewDecisionBroker(),
 		copilotStore:           copilot.NotImplementedStore{},
 		governanceHealthCache:  governance.NewCache(60 * time.Second),
 		approvalAnalyticsCache: newApprovalAnalyticsCache(),
@@ -1461,6 +1463,8 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "POST /api/v1/policy/publish", s.instrumented("/api/v1/policy/publish", s.handlePublishPolicyBundles))
 	s.registerRoute(mux, "POST /api/v1/policy/rollback", s.instrumented("/api/v1/policy/rollback", s.handleRollbackPolicyBundles))
 	s.registerRoute(mux, "GET /api/v1/policy/audit", s.instrumented("/api/v1/policy/audit", s.handleListPolicyAudit))
+	s.registerRoute(mux, "GET /api/v1/policy/decisions", s.instrumented("/api/v1/policy/decisions", s.handleListPolicyDecisions))
+	s.registerRoute(mux, "GET /api/v1/policy/decisions/stream", s.instrumented("/api/v1/policy/decisions/stream", s.handlePolicyDecisionsStream))
 	s.registerRoute(mux, "POST /api/v1/policy/replay", s.instrumented("/api/v1/policy/replay", s.handlePolicyReplay))
 	s.registerRoute(mux, "POST /api/v1/policy/analytics", s.instrumented("/api/v1/policy/analytics", s.handlePolicyAnalytics))
 

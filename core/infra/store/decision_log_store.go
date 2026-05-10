@@ -114,6 +114,12 @@ func (s *RedisDecisionLogStore) AppendDecision(ctx context.Context, record model
 		pipe.ZAdd(ctx, decisionTopicIndexKey(record.Tenant, record.Topic), redis.Z{Score: score, Member: recordID})
 	}
 	pipe.ZAdd(ctx, decisionVerdictIndexKey(record.Tenant, verdict), redis.Z{Score: score, Member: recordID})
+	if record.Source != "" {
+		pipe.ZAdd(ctx, decisionSourceIndexKey(record.Tenant, string(record.Source)), redis.Z{Score: score, Member: recordID})
+	}
+	if record.Type != "" {
+		pipe.ZAdd(ctx, decisionTypeIndexKey(record.Tenant, string(record.Type)), redis.Z{Score: score, Member: recordID})
+	}
 
 	if s.ttl > 0 {
 		pipe.Expire(ctx, recordKey, s.ttl)
@@ -131,6 +137,12 @@ func (s *RedisDecisionLogStore) AppendDecision(ctx context.Context, record model
 			pipe.ZRemRangeByScore(ctx, decisionTopicIndexKey(record.Tenant, record.Topic), min, max)
 		}
 		pipe.ZRemRangeByScore(ctx, decisionVerdictIndexKey(record.Tenant, verdict), min, max)
+		if record.Source != "" {
+			pipe.ZRemRangeByScore(ctx, decisionSourceIndexKey(record.Tenant, string(record.Source)), min, max)
+		}
+		if record.Type != "" {
+			pipe.ZRemRangeByScore(ctx, decisionTypeIndexKey(record.Tenant, string(record.Type)), min, max)
+		}
 	}
 
 	if _, err := pipe.Exec(ctx); err != nil {
@@ -255,7 +267,7 @@ func (s *RedisDecisionLogStore) QueryDecisions(ctx context.Context, query model.
 }
 
 func (s *RedisDecisionLogStore) querySourceKey(ctx context.Context, query model.DecisionQuery) (string, func(), error) {
-	filterKeys := make([]string, 0, 4)
+	filterKeys := make([]string, 0, 6)
 	if query.RuleID != "" {
 		filterKeys = append(filterKeys, decisionRuleIndexKey(query.Tenant, query.RuleID))
 	}
@@ -271,6 +283,12 @@ func (s *RedisDecisionLogStore) querySourceKey(ctx context.Context, query model.
 			return "", nil, err
 		}
 		filterKeys = append(filterKeys, decisionVerdictIndexKey(query.Tenant, verdict))
+	}
+	if query.Source != "" {
+		filterKeys = append(filterKeys, decisionSourceIndexKey(query.Tenant, string(query.Source)))
+	}
+	if query.Type != "" {
+		filterKeys = append(filterKeys, decisionTypeIndexKey(query.Tenant, string(query.Type)))
 	}
 
 	if len(filterKeys) == 0 {
@@ -357,6 +375,12 @@ func (s *RedisDecisionLogStore) cleanupStaleDecisionIDs(ctx context.Context, que
 			keys = append(keys, decisionVerdictIndexKey(query.Tenant, verdict))
 		}
 	}
+	if query.Source != "" {
+		keys = append(keys, decisionSourceIndexKey(query.Tenant, string(query.Source)))
+	}
+	if query.Type != "" {
+		keys = append(keys, decisionTypeIndexKey(query.Tenant, string(query.Type)))
+	}
 	for _, key := range uniqueStrings(keys) {
 		if err := s.client.ZRem(ctx, key, members...).Err(); err != nil {
 			slog.Warn("decision-log: stale index cleanup failed", "key", key, "count", len(staleIDs), "error", err)
@@ -413,6 +437,12 @@ func matchesDecisionQuery(record model.DecisionLogRecord, query model.DecisionQu
 	if query.Verdict != "" && record.Verdict != query.Verdict {
 		return false
 	}
+	if query.Source != "" && record.Source != query.Source {
+		return false
+	}
+	if query.Type != "" && record.Type != query.Type {
+		return false
+	}
 	return true
 }
 
@@ -442,6 +472,14 @@ func decisionTopicIndexKey(tenant, topic string) string {
 
 func decisionVerdictIndexKey(tenant, verdict string) string {
 	return decisionTenantPrefix(tenant) + "idx:verdict:" + verdict
+}
+
+func decisionSourceIndexKey(tenant, source string) string {
+	return decisionTenantPrefix(tenant) + "idx:source:" + source
+}
+
+func decisionTypeIndexKey(tenant, decisionType string) string {
+	return decisionTenantPrefix(tenant) + "idx:type:" + decisionType
 }
 
 func decisionTempIndexKey(query model.DecisionQuery) string {

@@ -28,6 +28,7 @@ import (
 	"github.com/cordum/cordum/core/infra/schema"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/cordum/cordum/core/policy"
 	"github.com/cordum/cordum/core/policyshadow"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
@@ -374,6 +375,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 		memStore:              memStore,
 		jobStore:              jobStore,
 		decisionLogStore:      decisionLogStore,
+		policyDecisions:       policy.NewDecisionBroker(),
 		copilotStore:          copilot.NotImplementedStore{},
 		governanceHealthCache: governance.NewCache(60 * time.Second),
 		bus:                   bus,

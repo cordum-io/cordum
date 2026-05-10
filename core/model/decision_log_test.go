@@ -205,6 +205,89 @@ func TestDecisionCursorRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDecisionQueryNormalizeAcceptsSourceFilter(t *testing.T) {
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name   string
+		source string
+		want   DecisionSource
+		err    string
+	}{
+		{name: "job", source: "job", want: DecisionSourceJob},
+		{name: "edge", source: "edge", want: DecisionSourceEdge},
+		{name: "empty preserved", source: "", want: ""},
+		{name: "rejects unknown", source: "satellite", err: "decision source"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := DecisionQuery{
+				Tenant: "tenant-a",
+				Source: DecisionSource(tc.source),
+			}.Normalize(now)
+			if tc.err != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q", tc.err)
+				}
+				if !contains(err.Error(), tc.err) {
+					t.Fatalf("error=%q want substring %q", err.Error(), tc.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Normalize() error = %v", err)
+			}
+			if got.Source != tc.want {
+				t.Fatalf("Source=%q want %q", got.Source, tc.want)
+			}
+		})
+	}
+}
+
+func TestDecisionQueryNormalizeAcceptsTypeFilter(t *testing.T) {
+	now := time.Date(2026, time.May, 10, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name   string
+		typ    string
+		want   DecisionType
+		err    string
+	}{
+		{name: "allow", typ: "allow", want: DecisionAllow},
+		{name: "deny", typ: "deny", want: DecisionDeny},
+		{name: "require_human", typ: "require_human", want: DecisionRequireHuman},
+		{name: "throttle", typ: "throttle", want: DecisionThrottle},
+		{name: "allow_with_constraints", typ: "allow_with_constraints", want: DecisionAllowWithConstraints},
+		{name: "quarantine", typ: "quarantine", want: DecisionQuarantine},
+		{name: "redact", typ: "redact", want: DecisionRedact},
+		{name: "empty preserved", typ: "", want: ""},
+		{name: "rejects unknown", typ: "apocalypse", err: "decision type"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := DecisionQuery{
+				Tenant: "tenant-a",
+				Type:   DecisionType(tc.typ),
+			}.Normalize(now)
+			if tc.err != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q", tc.err)
+				}
+				if !contains(err.Error(), tc.err) {
+					t.Fatalf("error=%q want substring %q", err.Error(), tc.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Normalize() error = %v", err)
+			}
+			if got.Type != tc.want {
+				t.Fatalf("Type=%q want %q", got.Type, tc.want)
+			}
+		})
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(substr) == 0 || (len(s) >= len(substr) && stringContains(s, substr))
 }

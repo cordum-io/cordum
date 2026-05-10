@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordum/cordum/core/policy"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
@@ -14,6 +15,37 @@ const (
 	DefaultDecisionQueryLimit = 50
 	MaxDecisionQueryLimit     = 500
 	defaultDecisionQueryRange = 24 * time.Hour
+)
+
+// DecisionSource is an alias for policy.DecisionSource so callers in the
+// model layer (and its consumers — gateway handlers, store) can reference a
+// single canonical type without an import cycle dance.
+type DecisionSource = policy.DecisionSource
+
+// DecisionType is the unified policy.DecisionType reused at the model layer
+// for the same reason as DecisionSource.
+type DecisionType = policy.DecisionType
+
+// TraceStep is the unified policy.TraceStep persisted alongside the legacy
+// verdict on every DecisionLogRecord.
+type TraceStep = policy.TraceStep
+
+// Re-exported policy.DecisionSource constants — same values as policy.* via
+// the alias above; kept on model so callers don't need a second import.
+const (
+	DecisionSourceJob  = policy.DecisionSourceJob
+	DecisionSourceEdge = policy.DecisionSourceEdge
+)
+
+// Re-exported policy.DecisionType constants for the same reason.
+const (
+	DecisionAllow                = policy.DecisionAllow
+	DecisionDeny                 = policy.DecisionDeny
+	DecisionRequireHuman         = policy.DecisionRequireHuman
+	DecisionThrottle             = policy.DecisionThrottle
+	DecisionAllowWithConstraints = policy.DecisionAllowWithConstraints
+	DecisionQuarantine           = policy.DecisionQuarantine
+	DecisionRedact               = policy.DecisionRedact
 )
 
 const (
@@ -26,6 +58,15 @@ const (
 
 // DecisionLogRecord captures the governance fields required for the Policy
 // Decision Log and stays wire-compatible with audit.SIEMEvent projections.
+//
+// The legacy block (Verdict, ApprovalStatus, ApprovalDecision, Constraints)
+// preserves the /api/v1/governance/decisions transform until the D11
+// cut-over removes that endpoint. The unified block (Source, Type, Trace,
+// BundleID, BundleVersion, AuditHash, InputRef, OutputRef) carries the
+// policy.Decision shape required by /api/v1/policy/decisions. EmitDecision
+// (safetykernel + edge) is the source of truth for the unified fields;
+// schedulers/gateways persist exactly one record per evaluation that
+// populates both blocks.
 type DecisionLogRecord struct {
 	JobID            string                `json:"job_id,omitempty"`
 	Tenant           string                `json:"tenant,omitempty"`
@@ -39,6 +80,16 @@ type DecisionLogRecord struct {
 	ApprovalStatus   ApprovalStatus        `json:"approval_status,omitempty"`
 	ApprovalDecision ApprovalDecision      `json:"approval_decision,omitempty"`
 	Timestamp        int64                 `json:"timestamp,omitempty"`
+
+	// Unified policy.Decision projection (populated post-Backend-5b).
+	Source        DecisionSource `json:"source,omitempty"`
+	Type          DecisionType   `json:"type,omitempty"`
+	BundleID      string         `json:"bundle_id,omitempty"`
+	BundleVersion string         `json:"bundle_version,omitempty"`
+	Trace         []TraceStep    `json:"trace,omitempty"`
+	AuditHash     string         `json:"audit_hash,omitempty"`
+	InputRef      string         `json:"input_ref,omitempty"`
+	OutputRef     string         `json:"output_ref,omitempty"`
 }
 
 // DecisionQuery scopes Policy Decision Log lookups for a single tenant.
@@ -52,6 +103,10 @@ type DecisionQuery struct {
 	AgentID string         `json:"agent_id,omitempty"`
 	Cursor  string         `json:"cursor,omitempty"`
 	Limit   int            `json:"limit,omitempty"`
+
+	// Unified filters used by /api/v1/policy/decisions (Backend 5b).
+	Source DecisionSource `json:"source,omitempty"`
+	Type   DecisionType   `json:"type,omitempty"`
 }
 
 // DecisionPage is one page of Policy Decision Log results.
@@ -103,6 +158,18 @@ func (q DecisionQuery) Normalize(now time.Time) (DecisionQuery, error) {
 	if normalized.Verdict != "" {
 		if _, err := normalized.Verdict.DecisionLogWireValue(); err != nil {
 			return DecisionQuery{}, err
+		}
+	}
+
+	if normalized.Source != "" {
+		if _, err := policy.ParseDecisionSource(string(normalized.Source)); err != nil {
+			return DecisionQuery{}, fmt.Errorf("decision source: %w", err)
+		}
+	}
+
+	if normalized.Type != "" {
+		if _, err := policy.ParseDecisionType(string(normalized.Type)); err != nil {
+			return DecisionQuery{}, fmt.Errorf("decision type: %w", err)
 		}
 	}
 

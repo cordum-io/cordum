@@ -462,6 +462,160 @@ func TestRedisDecisionLogStoreTTLAppliedOnWrite(t *testing.T) {
 	}
 }
 
+func TestRedisDecisionLogStorePersistsExtendedUnifiedFields(t *testing.T) {
+	store, srv := newTestDecisionLogStore(t)
+	defer srv.Close()
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	rec := decisionFixture("tenant-a", "job-extended", time.Date(2026, time.May, 10, 9, 0, 0, 0, time.UTC).UnixMilli())
+	rec.Source = "job"
+	rec.BundleID = "bundle-acme"
+	rec.BundleVersion = "v3"
+	rec.AuditHash = "sha256:audit"
+	rec.InputRef = "blob://input-acme"
+	rec.OutputRef = "blob://output-acme"
+	rec.Type = "deny"
+	rec.Verdict = model.SafetyDeny
+
+	if err := store.AppendDecision(ctx, rec); err != nil {
+		t.Fatalf("AppendDecision() error = %v", err)
+	}
+
+	page, err := store.QueryDecisions(ctx, model.DecisionQuery{
+		Tenant: "tenant-a",
+		Since:  rec.Timestamp - 1000,
+		Until:  rec.Timestamp + 1000,
+		Limit:  10,
+	})
+	if err != nil {
+		t.Fatalf("QueryDecisions() error = %v", err)
+	}
+	if len(page.Items) != 1 {
+		t.Fatalf("len(page.Items)=%d want 1", len(page.Items))
+	}
+	got := page.Items[0]
+	if got.Source != rec.Source {
+		t.Fatalf("Source=%q want %q", got.Source, rec.Source)
+	}
+	if got.BundleID != "bundle-acme" {
+		t.Fatalf("BundleID=%q want bundle-acme", got.BundleID)
+	}
+	if got.BundleVersion != "v3" {
+		t.Fatalf("BundleVersion=%q want v3", got.BundleVersion)
+	}
+	if got.AuditHash != "sha256:audit" {
+		t.Fatalf("AuditHash=%q want sha256:audit", got.AuditHash)
+	}
+	if got.InputRef != "blob://input-acme" {
+		t.Fatalf("InputRef=%q want blob://input-acme", got.InputRef)
+	}
+	if got.OutputRef != "blob://output-acme" {
+		t.Fatalf("OutputRef=%q want blob://output-acme", got.OutputRef)
+	}
+	if string(got.Type) != "deny" {
+		t.Fatalf("Type=%q want deny", got.Type)
+	}
+}
+
+func TestRedisDecisionLogStoreQueryFiltersBySource(t *testing.T) {
+	store, srv := newTestDecisionLogStore(t)
+	defer srv.Close()
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	base := time.Date(2026, time.May, 10, 10, 0, 0, 0, time.UTC).UnixMilli()
+	jobRec := decisionFixture("tenant-a", "job-1", base-3000)
+	jobRec.Source = "job"
+	edgeRec := decisionFixture("tenant-a", "edge-1", base-2000)
+	edgeRec.Source = "edge"
+	for _, rec := range []model.DecisionLogRecord{jobRec, edgeRec} {
+		if err := store.AppendDecision(ctx, rec); err != nil {
+			t.Fatalf("AppendDecision(%s) error = %v", rec.JobID, err)
+		}
+	}
+
+	cases := []struct {
+		name      string
+		source    string
+		wantJobID string
+	}{
+		{name: "job", source: "job", wantJobID: "job-1"},
+		{name: "edge", source: "edge", wantJobID: "edge-1"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			page, err := store.QueryDecisions(ctx, model.DecisionQuery{
+				Tenant: "tenant-a",
+				Source: model.DecisionSource(tc.source),
+				Since:  base - 10_000,
+				Until:  base,
+				Limit:  10,
+			})
+			if err != nil {
+				t.Fatalf("QueryDecisions() error = %v", err)
+			}
+			if len(page.Items) != 1 {
+				t.Fatalf("len(page.Items)=%d want 1", len(page.Items))
+			}
+			if page.Items[0].JobID != tc.wantJobID {
+				t.Fatalf("JobID=%q want %q", page.Items[0].JobID, tc.wantJobID)
+			}
+		})
+	}
+}
+
+func TestRedisDecisionLogStoreQueryFiltersByType(t *testing.T) {
+	store, srv := newTestDecisionLogStore(t)
+	defer srv.Close()
+	defer func() { _ = store.Close() }()
+
+	ctx := context.Background()
+	base := time.Date(2026, time.May, 10, 10, 30, 0, 0, time.UTC).UnixMilli()
+	allowRec := decisionFixture("tenant-a", "j-allow", base-3000)
+	allowRec.Type = "allow"
+	denyRec := decisionFixture("tenant-a", "j-deny", base-2000)
+	denyRec.Type = "deny"
+	denyRec.Verdict = model.SafetyDeny
+	quarantineRec := decisionFixture("tenant-a", "j-quarantine", base-1000)
+	quarantineRec.Type = "quarantine"
+	for _, rec := range []model.DecisionLogRecord{allowRec, denyRec, quarantineRec} {
+		if err := store.AppendDecision(ctx, rec); err != nil {
+			t.Fatalf("AppendDecision(%s) error = %v", rec.JobID, err)
+		}
+	}
+
+	cases := []struct {
+		name      string
+		typ       string
+		wantJobID string
+	}{
+		{name: "allow", typ: "allow", wantJobID: "j-allow"},
+		{name: "deny", typ: "deny", wantJobID: "j-deny"},
+		{name: "quarantine_no_safetydecision_equivalent", typ: "quarantine", wantJobID: "j-quarantine"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			page, err := store.QueryDecisions(ctx, model.DecisionQuery{
+				Tenant: "tenant-a",
+				Type:   model.DecisionType(tc.typ),
+				Since:  base - 10_000,
+				Until:  base,
+				Limit:  10,
+			})
+			if err != nil {
+				t.Fatalf("QueryDecisions() error = %v", err)
+			}
+			if len(page.Items) != 1 {
+				t.Fatalf("len(page.Items)=%d want 1", len(page.Items))
+			}
+			if page.Items[0].JobID != tc.wantJobID {
+				t.Fatalf("JobID=%q want %q", page.Items[0].JobID, tc.wantJobID)
+			}
+		})
+	}
+}
+
 func newTestDecisionLogStore(t *testing.T) (*RedisDecisionLogStore, *miniredis.Miniredis) {
 	t.Helper()
 	srv, err := miniredis.Run()
