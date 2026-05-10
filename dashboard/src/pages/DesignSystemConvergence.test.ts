@@ -177,9 +177,22 @@ describe("design-system convergence regressions", () => {
   //   manager interop on the auth surface.
   // - RunDetailPage: workflow-run console exempted from primitive sweep
   //   (see "DoD-3 (12-col Bento Grid) — exemptions" register).
+  // - policies/TokenInput.tsx: chip-list input primitive (Phase 3B). Uses a
+  //   bare <input> as the trailing typing surface inside the chip
+  //   container; the existing Input primitive doesn't support that UX
+  //   shape (it owns the outer ring + sizing), so the raw control is the
+  //   right shape here. Phase 3B-only consumer until promoted.
+  // - policies/RuleFormView.tsx: number fields use a raw <input
+  //   type="number"> via RHF Controller because the existing Input
+  //   primitive treats values as strings and the velocity-rule throttle
+  //   limits need numeric coercion + empty→undefined handling for
+  //   optional fields. Carved out until the Input primitive grows a
+  //   typed-number variant.
   const RAW_CONTROL_CARVE_OUTS = new Set([
     "./LoginPage.tsx",
     "./RunDetailPage.tsx",
+    "./policies/TokenInput.tsx",
+    "./policies/RuleFormView.tsx",
   ]);
 
   it("v2.5 drift sweep — comprehensive sweep: all pages except documented carve-outs use primitives", () => {

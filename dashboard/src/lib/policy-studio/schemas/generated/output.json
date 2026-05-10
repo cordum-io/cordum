@@ -1,0 +1,163 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "cordum:policy-studio:rule:output",
+  "title": "Output rule payload",
+  "description": "Post-execution output safety scan. Match scopes by topic/tool/risk and finding types; decide narrows the unified DecisionType to outcomes meaningful for output (allow/deny/redact/quarantine/require_human).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name",
+    "type",
+    "scope",
+    "status",
+    "version",
+    "audit",
+    "match",
+    "decide"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "type": {
+      "const": "output",
+      "description": "Discriminator for a Rule's match/decide payload schema."
+    },
+    "scope": {
+      "type": "object",
+      "description": "Narrows where a rule (or bundle) applies. When `kind` is `global`,\n`value` is unused and may be empty; for the other kinds, `value`\ncarries the corresponding identifier (tenant id, workflow id, edge\nfleet name, edge user id).\n",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Narrows where a rule (or bundle) applies. `global` covers an entire\ndeployment; `tenant`/`workflow` scope to job-side bindings;\n`edge_fleet`/`edge_user` scope to edge-side bindings.\n",
+          "enum": [
+            "global",
+            "tenant",
+            "workflow",
+            "edge_fleet",
+            "edge_user"
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "description": "Lifecycle state of a Rule. `draft` rules are author-only; `published`\nrules participate in evaluation; `deprecated` rules remain queryable\nfor audit and rollback but are skipped by evaluators.\n",
+      "enum": [
+        "draft",
+        "published",
+        "deprecated"
+      ]
+    },
+    "version": {
+      "type": "string"
+    },
+    "audit": {
+      "type": "object",
+      "description": "Records who created or last updated a Rule or Bundle. The `updated_*`\nfields are zero-valued on first creation and populated by the first\nsubsequent edit.\n",
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "created_by": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_by": {
+          "type": "string"
+        }
+      }
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "topics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "Topics this rule applies to."
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "Tool names whose output is scanned by this rule."
+        },
+        "risk_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "Required risk tags on the job context."
+        },
+        "finding_types": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "secret_leak",
+              "pii",
+              "injection"
+            ]
+          },
+          "uniqueItems": true,
+          "description": "Output scanner finding types this rule reacts to."
+        }
+      }
+    },
+    "decide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "allow",
+            "deny",
+            "redact",
+            "quarantine",
+            "require_human"
+          ],
+          "description": "Output-meaningful decision outcomes."
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Human-readable rationale."
+        },
+        "redact_strategy": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Optional strategy hint passed to the output redactor (e.g. `mask`, `tokenize`)."
+        }
+      }
+    },
+    "description": {
+      "type": "string"
+    }
+  }
+}

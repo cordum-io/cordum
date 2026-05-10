@@ -1,0 +1,174 @@
+#!/usr/bin/env node
+/*
+ * Generate per-RuleType JSON Schemas for the Policy Studio Rules editor.
+ *
+ * Inputs:
+ *   - cordum/docs/api/openapi/cordum-api.yaml — unified Rule envelope
+ *     (Rule, RuleScope, RuleScopeKind, RuleStatus, RuleType, AuditMetadata).
+ *   - dashboard/scripts/policy-studio/rule-payloads.mjs — per-type
+ *     match/decide payload fragments.
+ *
+ * Output:
+ *   - dashboard/src/lib/policy-studio/schemas/generated/{type}.json — one
+ *     fully-merged JSON Schema per RuleType. Header banner forbids hand
+ *     edits; CI gate `pnpm run check-schemas` fails the PR if the
+ *     committed file drifts from regeneration.
+ *
+ * The output schemas are JSON Schema draft-07. They are consumed at
+ * runtime via `src/lib/policy-studio/schemas/index.ts`, and that runtime
+ * accessor is what the Monaco editor wires for diagnostics/hover/
+ * autocomplete and the form-side validators round-trip against.
+ */
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import yaml from "yaml";
+
+import { rulePayloads, ruleTypeOrder } from "./policy-studio/rule-payloads.mjs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const dashboardRoot = path.resolve(__dirname, "..");
+const repoRoot = path.resolve(dashboardRoot, "..");
+const openapiPath = path.join(repoRoot, "docs", "api", "openapi", "cordum-api.yaml");
+const outDir = path.join(dashboardRoot, "src", "lib", "policy-studio", "schemas", "generated");
+
+const ENVELOPE_REFS = ["Rule", "RuleScope", "RuleScopeKind", "RuleStatus", "AuditMetadata"];
+
+function loadOpenApiSchemas() {
+  const text = readFileSync(openapiPath, "utf8");
+  const doc = yaml.parse(text);
+  const schemas = doc?.components?.schemas;
+  if (!schemas || typeof schemas !== "object") {
+    throw new Error(`OpenAPI document at ${openapiPath} is missing components.schemas.`);
+  }
+  for (const ref of ENVELOPE_REFS) {
+    if (!schemas[ref]) {
+      throw new Error(`OpenAPI document is missing required schema "${ref}" used by Rule envelope.`);
+    }
+  }
+  return schemas;
+}
+
+// Resolve a single $ref against the OpenAPI components/schemas catalog.
+// We only handle local `#/components/schemas/Name` refs because that's all
+// the Rule envelope uses; anything else throws so we don't silently skip.
+function resolveRef(node, schemas) {
+  if (!node || typeof node !== "object") return node;
+  if (typeof node.$ref === "string") {
+    const prefix = "#/components/schemas/";
+    if (!node.$ref.startsWith(prefix)) {
+      throw new Error(`Unsupported $ref form "${node.$ref}" in Rule envelope.`);
+    }
+    const name = node.$ref.slice(prefix.length);
+    const target = schemas[name];
+    if (!target) throw new Error(`$ref "${node.$ref}" did not resolve.`);
+    return inline(target, schemas);
+  }
+  return node;
+}
+
+// Inline a schema fragment, recursively expanding $refs and stripping
+// OpenAPI 3.0-only keys (`nullable`) into JSON Schema draft-07 form.
+function inline(node, schemas) {
+  if (Array.isArray(node)) {
+    return node.map((entry) => inline(resolveRef(entry, schemas), schemas));
+  }
+  if (!node || typeof node !== "object") return node;
+  if (typeof node.$ref === "string") {
+    return resolveRef(node, schemas);
+  }
+  const out = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "nullable") continue;
+    out[key] = inline(value, schemas);
+  }
+  if (node.nullable === true && out.type) {
+    out.type = Array.isArray(out.type) ? [...out.type, "null"] : [out.type, "null"];
+  }
+  return out;
+}
+
+function buildSchemaForType(ruleType, schemas) {
+  const payload = rulePayloads[ruleType];
+  if (!payload) throw new Error(`No payload SSOT for rule type "${ruleType}".`);
+
+  const ruleSchema = inline(schemas.Rule, schemas);
+  const properties = { ...ruleSchema.properties };
+
+  // Pin the discriminator to this rule type and replace the free-form
+  // match/decide payloads with the SSOT fragment.
+  properties.type = { const: ruleType, description: ruleSchema.properties.type?.description };
+  properties.match = payload.match;
+  properties.decide = payload.decide;
+
+  // Audit is informational on the authoring surface — make all of its
+  // fields optional so a fresh draft (no created_at yet) round-trips.
+  if (properties.audit) {
+    const auditCopy = { ...properties.audit };
+    delete auditCopy.required;
+    properties.audit = auditCopy;
+  }
+
+  return {
+    $schema: "http://json-schema.org/draft-07/schema#",
+    $id: `cordum:policy-studio:rule:${ruleType}`,
+    title: payload.title,
+    description: payload.description,
+    type: "object",
+    additionalProperties: false,
+    required: ruleSchema.required,
+    properties,
+  };
+}
+
+function writeBanner() {
+  return [
+    "// ===================================================================",
+    "// AUTOGENERATED by dashboard/scripts/generate-schemas.mjs",
+    "// SOURCE: cordum/docs/api/openapi/cordum-api.yaml + scripts/policy-studio/rule-payloads.mjs",
+    "// DO NOT EDIT BY HAND. Run `pnpm run generate-schemas` to regenerate.",
+    "// CI gate `pnpm run check-schemas` fails the PR on drift.",
+    "// ===================================================================",
+  ].join("\n");
+}
+
+function main() {
+  const schemas = loadOpenApiSchemas();
+  mkdirSync(outDir, { recursive: true });
+  for (const ruleType of ruleTypeOrder) {
+    const built = buildSchemaForType(ruleType, schemas);
+    const outPath = path.join(outDir, `${ruleType}.json`);
+    // JSON Schema files are read by Vite at runtime via `import` — we keep
+    // them as pure JSON (no banner inside the file) and emit a sibling
+    // README.md banner so the directory itself is self-documenting.
+    const json = `${JSON.stringify(built, null, 2)}\n`;
+    writeFileSync(outPath, json, "utf8");
+  }
+  const readmePath = path.join(outDir, "README.md");
+  writeFileSync(
+    readmePath,
+    [
+      "# Policy Studio rule schemas (generated)",
+      "",
+      writeBanner().replace(/^\/\/ /gm, "> ").replace(/^\/\/$/gm, ">"),
+      "",
+      "Order:",
+      ...ruleTypeOrder.map((t) => `- \`${t}.json\``),
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  console.log(`[generate-schemas] wrote ${ruleTypeOrder.length} schemas to ${path.relative(dashboardRoot, outDir)}`);
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  try {
+    main();
+  } catch (err) {
+    console.error(`[generate-schemas] ${err instanceof Error ? err.message : err}`);
+    process.exit(1);
+  }
+}
+
+export { buildSchemaForType, loadOpenApiSchemas };

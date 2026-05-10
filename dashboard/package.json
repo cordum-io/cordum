@@ -15,6 +15,8 @@
     "lint:a11y": "eslint src/ --config eslint.a11y.config.mjs",
     "generate-api": "node ./scripts/generate-api.mjs",
     "check-api-codegen": "node ./scripts/check-api-codegen.mjs",
+    "generate-schemas": "node ./scripts/generate-schemas.mjs",
+    "check-schemas": "node ./scripts/check-schemas.mjs",
     "lhci:collect": "lhci collect",
     "lhci:assert": "lhci assert",
     "lhci:upload": "lhci upload",

@@ -1,9 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { AlertTriangle, FileCode2, Loader2, Shield, X } from "lucide-react";
+import { AlertTriangle, FileCode2, FormInput, Loader2, Shield, X } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Drawer } from "@/components/ui/Drawer";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Tabs } from "@/components/ui/Tabs";
 import { ruleTypeIcon, ruleTypeLabel } from "@/lib/policy-studio/rule-type";
 import {
   NEW_RULE_ID,
@@ -13,6 +14,7 @@ import {
 } from "@/hooks/useRule";
 import { useSaveRuleDraft } from "@/hooks/useSaveRuleDraft";
 import type { NormalizedRule } from "@/hooks/useRulesList";
+import type { RuleType } from "@/api/generated/model/ruleType";
 import { logger } from "@/lib/logger";
 import { RuleTemplatesGallery } from "./RuleTemplatesGallery";
 import type { RuleMonacoEditorHandle } from "./RuleMonacoEditor";
@@ -20,8 +22,14 @@ import type { RuleMonacoEditorHandle } from "./RuleMonacoEditor";
 // Monaco bundles to ~600 KB raw (per `dist/stats.html`); we lazy-load it so
 // the /policies route stays under the 400 KB initial-chunk budget. The cost
 // is paid by users opening the editor — never by users browsing the table.
-// Phase 3B will add a Form view on a tabs toggle alongside this scaffold.
+// Phase 3B mounts RuleFormView as a sibling under a Tabs toggle so the
+// Form view doesn't have to bring Monaco's bytes along on first paint.
 const RuleMonacoEditor = lazy(() => import("./RuleMonacoEditor"));
+const RuleFormView = lazy(() =>
+  import("./RuleFormView").then((mod) => ({ default: mod.RuleFormView })),
+);
+
+type EditorMode = "yaml" | "form";
 
 interface RuleEditorDrawerControl {
   ruleId: string;
@@ -259,9 +267,24 @@ function DrawerEditorBody({
   draft: NormalizedRule;
   onDraftChange: (rule: NormalizedRule) => void;
 }) {
+  // Hooks must be called unconditionally (rules-of-hooks). Mode + ref
+  // state live above the unknown-type guard.
+  const [mode, setMode] = useState<EditorMode>("yaml");
+  const editorRef = useRef<RuleMonacoEditorHandle>(null);
+  const handleEditorError = useCallback((component: string, err: unknown) => {
+    logger.warn("policy-studio-editor", `${component} mount failure`, { err });
+  }, []);
+  const onInsertTemplate = useCallback(
+    (template: { yaml: string }) => {
+      editorRef.current?.insertText(template.yaml);
+    },
+    [],
+  );
+
   // Defensive: the rule type sentinel UNKNOWN_RULE_TYPE means the row was
-  // unrecognized by the normalizer. We refuse to mount Monaco against an
-  // unknown type because we have no schema to validate against.
+  // unrecognized by the normalizer. We refuse to mount Monaco or Form
+  // against an unknown type because we have no schema to validate
+  // against.
   if (!ruleHasKnownType(draft)) {
     return (
       <EmptyState
@@ -272,45 +295,57 @@ function DrawerEditorBody({
     );
   }
 
-  const handleEditorError = useCallback((component: string, err: unknown) => {
-    logger.warn("policy-studio-editor", `${component} mount failure`, { err });
-  }, []);
-
-  const editorRef = useRef<RuleMonacoEditorHandle>(null);
-  const onInsertTemplate = useCallback(
-    (template: { yaml: string }) => {
-      editorRef.current?.insertText(template.yaml);
-    },
-    [],
-  );
+  const knownTypeDraft = draft as NormalizedRule & { type: RuleType };
 
   return (
     <div className="flex h-[calc(100%-3.5rem)] flex-col gap-3">
-      <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-muted-foreground">
-        <FileCode2 aria-hidden className="h-3.5 w-3.5" />
-        YAML editor
-        <span className="ml-auto rounded-full bg-surface-2 px-2 py-0.5 text-[0.6rem] tracking-wide text-muted-foreground">
-          Phase 3A
+      <div className="flex items-center gap-3">
+        <Tabs
+          ariaLabel="Editor mode"
+          variant="segmented"
+          activeTab={mode}
+          onChange={(next) => setMode(next as EditorMode)}
+          tabs={[
+            { id: "yaml", label: "YAML", icon: <FileCode2 aria-hidden className="h-3.5 w-3.5" /> },
+            { id: "form", label: "Form", icon: <FormInput aria-hidden className="h-3.5 w-3.5" /> },
+          ]}
+        />
+        <span className="ml-auto rounded-full bg-surface-2 px-2 py-0.5 text-[0.6rem] font-mono tracking-wide text-muted-foreground">
+          {mode === "yaml" ? "Schema-aware YAML" : "Structured fields"}
         </span>
       </div>
 
-      <RuleTemplatesGallery onInsert={onInsertTemplate} />
+      {mode === "yaml" && <RuleTemplatesGallery onInsert={onInsertTemplate} />}
 
       <div className="flex-1 min-h-0 overflow-hidden rounded-2xl border border-border bg-surface-1">
-        <Suspense
-          fallback={
-            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-              <Loader2 aria-hidden className="mr-2 h-4 w-4 animate-spin" /> Loading editor…
+        {mode === "yaml" ? (
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                <Loader2 aria-hidden className="mr-2 h-4 w-4 animate-spin" /> Loading editor…
+              </div>
+            }
+          >
+            <RuleMonacoEditor
+              ref={editorRef}
+              rule={knownTypeDraft}
+              onChange={onDraftChange}
+              onError={(err) => handleEditorError("RuleMonacoEditor", err)}
+            />
+          </Suspense>
+        ) : (
+          <Suspense
+            fallback={
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                <Loader2 aria-hidden className="mr-2 h-4 w-4 animate-spin" /> Loading form…
+              </div>
+            }
+          >
+            <div className="h-full overflow-y-auto p-3">
+              <RuleFormView rule={knownTypeDraft} onChange={onDraftChange} />
             </div>
-          }
-        >
-          <RuleMonacoEditor
-            ref={editorRef}
-            rule={draft}
-            onChange={onDraftChange}
-            onError={(err) => handleEditorError("RuleMonacoEditor", err)}
-          />
-        </Suspense>
+          </Suspense>
+        )}
       </div>
 
       <DrawerActions draft={draft} />

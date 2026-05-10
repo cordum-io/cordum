@@ -1,0 +1,153 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "cordum:policy-studio:rule:input",
+  "title": "Input rule payload",
+  "description": "Pre-execution job-side input policy. Match selects which content the rule applies to; decide chooses the unified DecisionType. Aligns with safetykernel input scanners.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name",
+    "type",
+    "scope",
+    "status",
+    "version",
+    "audit",
+    "match",
+    "decide"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "type": {
+      "const": "input",
+      "description": "Discriminator for a Rule's match/decide payload schema."
+    },
+    "scope": {
+      "type": "object",
+      "description": "Narrows where a rule (or bundle) applies. When `kind` is `global`,\n`value` is unused and may be empty; for the other kinds, `value`\ncarries the corresponding identifier (tenant id, workflow id, edge\nfleet name, edge user id).\n",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Narrows where a rule (or bundle) applies. `global` covers an entire\ndeployment; `tenant`/`workflow` scope to job-side bindings;\n`edge_fleet`/`edge_user` scope to edge-side bindings.\n",
+          "enum": [
+            "global",
+            "tenant",
+            "workflow",
+            "edge_fleet",
+            "edge_user"
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "description": "Lifecycle state of a Rule. `draft` rules are author-only; `published`\nrules participate in evaluation; `deprecated` rules remain queryable\nfor audit and rollback but are skipped by evaluators.\n",
+      "enum": [
+        "draft",
+        "published",
+        "deprecated"
+      ]
+    },
+    "version": {
+      "type": "string"
+    },
+    "audit": {
+      "type": "object",
+      "description": "Records who created or last updated a Rule or Bundle. The `updated_*`\nfields are zero-valued on first creation and populated by the first\nsubsequent edit.\n",
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "created_by": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_by": {
+          "type": "string"
+        }
+      }
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "topics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "Topics this rule applies to (e.g. `email.draft`)."
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "Tool names triggering this rule (e.g. `Bash`, `Edit`)."
+        },
+        "risk_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "Required risk tags on the job context for the rule to fire."
+        },
+        "content_pattern": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Optional regex applied to the input content; rule fires only when content matches."
+        }
+      }
+    },
+    "decide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "allow",
+            "deny",
+            "require_human",
+            "throttle",
+            "allow_with_constraints",
+            "quarantine",
+            "redact"
+          ],
+          "description": "Unified decision outcome."
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Human-readable rationale logged with the decision."
+        }
+      }
+    },
+    "description": {
+      "type": "string"
+    }
+  }
+}
