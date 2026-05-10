@@ -13,9 +13,9 @@ func TestValidatePackAliasesAcceptsValidEntries(t *testing.T) {
 		{},                             // empty slice is valid
 		{"openclaw"},                   // single, plain lowercase
 		{"openclaw", "alt-pack"},       // hyphen
-		{"a", "alt_pack"},              // 1-char + underscore
+		{"aa", "alt_pack"},             // 2-char min + underscore
 		{"a1", "alt-pack_v2"},          // digits + mix
-		{"a", "b", "c", "d", "e", "f", "g", "h"}, // exactly maxPackAliases
+		{"a1", "b2", "c3", "d4", "e5", "f6", "g7", "h8"}, // exactly maxPackAliases
 	}
 	for _, aliases := range cases {
 		if err := validatePackAliases(aliases); err != nil {

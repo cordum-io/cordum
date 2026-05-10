@@ -11,7 +11,7 @@ func TestValidatePackAliasesGatewayAcceptsValidEntries(t *testing.T) {
 		{},
 		{"openclaw"},
 		{"openclaw", "alt-pack"},
-		{"a", "alt_pack_v2"},
+		{"aa", "alt_pack_v2"},
 	}
 	for _, aliases := range cases {
 		if err := ValidatePackAliases(aliases); err != nil {
