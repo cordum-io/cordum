@@ -1,9 +1,12 @@
+import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, waitFor } from "@/test-utils/render";
 import { RuleScopeKind } from "@/api/generated/model/ruleScopeKind";
 import { RuleStatus } from "@/api/generated/model/ruleStatus";
 import { RuleType } from "@/api/generated/model/ruleType";
-import RuleMonacoEditor from "./RuleMonacoEditor";
+import RuleMonacoEditor, {
+  type RuleMonacoEditorHandle,
+} from "./RuleMonacoEditor";
 import type { NormalizedRule } from "@/hooks/useRulesList";
 
 const sampleRule: NormalizedRule = {
@@ -56,5 +59,43 @@ describe("RuleMonacoEditor (lazy scaffold)", () => {
     // guard suppresses the round-trip echo).
     await waitFor(() => expect(container.firstChild).not.toBeNull());
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("exposes the insertText imperative API via ref", async () => {
+    const onChange = vi.fn();
+    const ref = createRef<RuleMonacoEditorHandle>();
+    renderWithProviders(
+      <RuleMonacoEditor ref={ref} rule={sampleRule} onChange={onChange} />,
+    );
+    // useImperativeHandle effects run after render, so wait for the
+    // forwardRef installation before invoking the imperative API.
+    await waitFor(() => expect(ref.current).not.toBeNull());
+    expect(typeof ref.current!.insertText).toBe("function");
+  });
+
+  it("propagates an insertText payload through the parser to onChange (fallback path)", async () => {
+    // Vitest aliases @monaco-editor/react to a () => null stub, so the
+    // Monaco editor instance ref stays null. insertText therefore takes
+    // the fallback branch: append to local YAML + synchronously parse +
+    // call onChange. The live Monaco executeEdits path is exercised at
+    // runtime in browser. We use a non-envelope `description:` insert so
+    // the appended snippet doesn't duplicate any envelope key (which the
+    // strict YAML parser would reject).
+    const onChange = vi.fn();
+    const ref = createRef<RuleMonacoEditorHandle>();
+    renderWithProviders(
+      <RuleMonacoEditor ref={ref} rule={sampleRule} onChange={onChange} />,
+    );
+
+    await waitFor(() => expect(ref.current).not.toBeNull());
+    ref.current!.insertText("description: Updated by template");
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    const next = onChange.mock.calls[0]?.[0] as NormalizedRule;
+    expect(next.description).toBe("Updated by template");
+    // Envelope fields stay intact — append doesn't replace them.
+    expect(next.id).toBe(sampleRule.id);
+    expect(next.name).toBe(sampleRule.name);
+    expect(next.type).toBe(RuleType.input);
   });
 });

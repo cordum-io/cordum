@@ -14,6 +14,8 @@ import {
 import { useSaveRuleDraft } from "@/hooks/useSaveRuleDraft";
 import type { NormalizedRule } from "@/hooks/useRulesList";
 import { logger } from "@/lib/logger";
+import { RuleTemplatesGallery } from "./RuleTemplatesGallery";
+import type { RuleMonacoEditorHandle } from "./RuleMonacoEditor";
 
 // Monaco bundles to ~600 KB raw (per `dist/stats.html`); we lazy-load it so
 // the /policies route stays under the 400 KB initial-chunk budget. The cost
@@ -274,6 +276,14 @@ function DrawerEditorBody({
     logger.warn("policy-studio-editor", `${component} mount failure`, { err });
   }, []);
 
+  const editorRef = useRef<RuleMonacoEditorHandle>(null);
+  const onInsertTemplate = useCallback(
+    (template: { yaml: string }) => {
+      editorRef.current?.insertText(template.yaml);
+    },
+    [],
+  );
+
   return (
     <div className="flex h-[calc(100%-3.5rem)] flex-col gap-3">
       <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-muted-foreground">
@@ -284,6 +294,8 @@ function DrawerEditorBody({
         </span>
       </div>
 
+      <RuleTemplatesGallery onInsert={onInsertTemplate} />
+
       <div className="flex-1 min-h-0 overflow-hidden rounded-2xl border border-border bg-surface-1">
         <Suspense
           fallback={
@@ -293,6 +305,7 @@ function DrawerEditorBody({
           }
         >
           <RuleMonacoEditor
+            ref={editorRef}
             rule={draft}
             onChange={onDraftChange}
             onError={(err) => handleEditorError("RuleMonacoEditor", err)}

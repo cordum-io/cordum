@@ -1,0 +1,29 @@
+# Template: Edge File Access Guard (edge rule)
+# Prevents an edge agent from reading or writing paths outside the bound
+# workspace. The guard catches absolute paths, parent-traversal sequences,
+# and well-known sensitive locations (e.g. ~/.ssh, /etc).
+id: ""
+name: Edge file access guard
+type: edge
+scope:
+  kind: edge_user
+  value: "default"
+status: draft
+version: v1
+description: >-
+  Denies file-system reads/writes targeting paths outside the agent's
+  workspace, parent-traversal patterns, or well-known sensitive locations.
+match:
+  edge_event: "tool_use"
+  tool_names: ["fs.read", "fs.write", "fs.delete"]
+  path_deny_patterns:
+    - "^/etc/.*"
+    - "^/root/.*"
+    - ".*\\.\\..*"
+    - "^.*~/\\.ssh/.*"
+    - "^/var/run/secrets/.*"
+decide:
+  type: deny
+  reason: "Path outside workspace or in a sensitive system location."
+  constraints:
+    deny_mode: "block"

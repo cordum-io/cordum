@@ -1,0 +1,21 @@
+# Template: PII Redact (input rule)
+# Redacts personally identifiable information (PII) detected in agent input
+# before downstream tools see the payload. Best paired with a tenant scope so
+# the redactor only fires for tenants where PII handling is contractual.
+id: ""
+name: PII redact
+type: input
+scope:
+  kind: tenant
+  value: "default"
+status: draft
+version: v1
+description: >-
+  Triggers payload redaction when input scanners detect PII (emails, phone
+  numbers, SSNs, names) before the request reaches downstream tools.
+match:
+  scanners: [pii]
+  topics: ["job.*"]
+decide:
+  type: redact
+  reason: "PII detected; payload redacted before processing."
