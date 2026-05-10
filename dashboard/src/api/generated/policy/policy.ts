@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-05-10.1
+ * OpenAPI spec version: 2026-05-10.2
  */
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
@@ -22,7 +22,10 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AddRuleToBundle404,
+  AddRuleToBundleRequest,
   BadRequestResponse,
+  Bundle,
   ConflictResponse,
   CreateBundleSnapshotBody,
   DecisionListResponse,
@@ -67,6 +70,8 @@ import type {
   PolicySnapshot,
   PublishPolicyRequest,
   RollbackPolicyRequest,
+  Rule,
+  RuleStaleVersionResponse,
   ServiceUnavailableResponse,
   ShadowComparisonsResponse,
   ShadowResultsSummary,
@@ -683,6 +688,214 @@ export function useListPolicyRules<
   return query;
 }
 
+/**
+ * Creates a Rule in the unified authoring surface. Server assigns
+`version=v1`, `audit.created_at`, `audit.updated_at`, and defaults
+`status=draft`. Client-supplied `version` or `audit.*` fields are
+rejected with 400 — clients cannot fake history.
+
+ * @summary Create a unified policy rule
+ */
+export const createPolicyRule = (rule: Rule, signal?: AbortSignal) => {
+  return apiClient<Rule>({
+    url: `/api/v1/policy/rules`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: rule,
+    signal,
+  });
+};
+
+export const getCreatePolicyRuleMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | void
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createPolicyRule>>,
+    TError,
+    { data: Rule },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createPolicyRule>>,
+  TError,
+  { data: Rule },
+  TContext
+> => {
+  const mutationKey = ["createPolicyRule"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createPolicyRule>>,
+    { data: Rule }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createPolicyRule(data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreatePolicyRuleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createPolicyRule>>
+>;
+export type CreatePolicyRuleMutationBody = Rule;
+export type CreatePolicyRuleMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | void
+  | InternalServerErrorResponse;
+
+/**
+ * @summary Create a unified policy rule
+ */
+export const useCreatePolicyRule = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | void
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createPolicyRule>>,
+      TError,
+      { data: Rule },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createPolicyRule>>,
+  TError,
+  { data: Rule },
+  TContext
+> => {
+  const mutationOptions = getCreatePolicyRuleMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Updates a Rule with optimistic concurrency. Requires the
+`If-Match` header set to the current `version`. Returns 412 if
+the header is missing and 409 with body
+`{"error":"stale_version","current_version":...,"current_audit_hash":...}`
+when the header is stale, so the dashboard can render a reload
+banner without re-fetching.
+
+ * @summary Update a unified policy rule (optimistic concurrency)
+ */
+export const updatePolicyRule = (id: string, rule: Rule) => {
+  return apiClient<Rule>({
+    url: `/api/v1/policy/rules/${id}`,
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    data: rule,
+  });
+};
+
+export const getUpdatePolicyRuleMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | void
+    | RuleStaleVersionResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updatePolicyRule>>,
+    TError,
+    { id: string; data: Rule },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updatePolicyRule>>,
+  TError,
+  { id: string; data: Rule },
+  TContext
+> => {
+  const mutationKey = ["updatePolicyRule"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updatePolicyRule>>,
+    { id: string; data: Rule }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updatePolicyRule(id, data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdatePolicyRuleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updatePolicyRule>>
+>;
+export type UpdatePolicyRuleMutationBody = Rule;
+export type UpdatePolicyRuleMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | void
+  | RuleStaleVersionResponse
+  | InternalServerErrorResponse;
+
+/**
+ * @summary Update a unified policy rule (optimistic concurrency)
+ */
+export const useUpdatePolicyRule = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | void
+    | RuleStaleVersionResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof updatePolicyRule>>,
+      TError,
+      { id: string; data: Rule },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof updatePolicyRule>>,
+  TError,
+  { id: string; data: Rule },
+  TContext
+> => {
+  const mutationOptions = getUpdatePolicyRuleMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
 /**
  * @summary List output policy rules
  */
@@ -2528,6 +2741,114 @@ export const useDeployPolicyBundleVersion = <
   TContext
 > => {
   const mutationOptions = getDeployPolicyBundleVersionMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Appends `rule_id` to the bundle's `rule_ids` set. Idempotent —
+repeated calls with the same `rule_id` leave the set unchanged.
+Concurrent calls with distinct `rule_id`s converge under Lua CAS
+without lost writes. The two 404 paths are disambiguated via
+`error: "rule_not_found"` vs `error: "bundle_not_found"` so the
+dashboard can present the right copy.
+
+ * @summary Bind an existing rule into a bundle
+ */
+export const addRuleToBundle = (
+  id: string,
+  addRuleToBundleRequest: AddRuleToBundleRequest,
+  signal?: AbortSignal,
+) => {
+  return apiClient<Bundle>({
+    url: `/api/v1/policy/bundles/${id}/rules`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: addRuleToBundleRequest,
+    signal,
+  });
+};
+
+export const getAddRuleToBundleMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | AddRuleToBundle404
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addRuleToBundle>>,
+    TError,
+    { id: string; data: AddRuleToBundleRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof addRuleToBundle>>,
+  TError,
+  { id: string; data: AddRuleToBundleRequest },
+  TContext
+> => {
+  const mutationKey = ["addRuleToBundle"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof addRuleToBundle>>,
+    { id: string; data: AddRuleToBundleRequest }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return addRuleToBundle(id, data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AddRuleToBundleMutationResult = NonNullable<
+  Awaited<ReturnType<typeof addRuleToBundle>>
+>;
+export type AddRuleToBundleMutationBody = AddRuleToBundleRequest;
+export type AddRuleToBundleMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | AddRuleToBundle404
+  | InternalServerErrorResponse;
+
+/**
+ * @summary Bind an existing rule into a bundle
+ */
+export const useAddRuleToBundle = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | AddRuleToBundle404
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof addRuleToBundle>>,
+      TError,
+      { id: string; data: AddRuleToBundleRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof addRuleToBundle>>,
+  TError,
+  { id: string; data: AddRuleToBundleRequest },
+  TContext
+> => {
+  const mutationOptions = getAddRuleToBundleMutationOptions(options);
 
   return useMutation(mutationOptions, queryClient);
 };

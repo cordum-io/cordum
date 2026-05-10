@@ -3,10 +3,13 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-05-10.1
+ * OpenAPI spec version: 2026-05-10.2
  */
 
 export * from "./aPIKeyInfo";
+export * from "./addRuleToBundle404";
+export * from "./addRuleToBundle404Error";
+export * from "./addRuleToBundleRequest";
 export * from "./adminLock";
 export * from "./approvalAnalyticsGroup";
 export * from "./approvalAnalyticsResponse";
@@ -436,6 +439,8 @@ export * from "./ruleDecide";
 export * from "./ruleMatch";
 export * from "./ruleScope";
 export * from "./ruleScopeKind";
+export * from "./ruleStaleVersionResponse";
+export * from "./ruleStaleVersionResponseError";
 export * from "./ruleStatus";
 export * from "./ruleType";
 export * from "./runDetail";
