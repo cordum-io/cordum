@@ -16,8 +16,11 @@ import { useSaveRuleDraft } from "@/hooks/useSaveRuleDraft";
 import type { NormalizedRule } from "@/hooks/useRulesList";
 import type { RuleType } from "@/api/generated/model/ruleType";
 import { logger } from "@/lib/logger";
+import { RULE_TEMPLATES, type RuleTemplate } from "@/lib/policy-studio/templates";
+import { yamlToPartialRule } from "@/lib/policy-studio/editor/yaml";
 import { RuleTemplatesGallery } from "./RuleTemplatesGallery";
 import type { RuleMonacoEditorHandle } from "./RuleMonacoEditor";
+import { RuleInlineSimulator } from "./RuleInlineSimulator";
 
 // Monaco bundles to ~600 KB raw (per `dist/stats.html`); we lazy-load it so
 // the /policies route stays under the 400 KB initial-chunk budget. The cost
@@ -34,13 +37,32 @@ type EditorMode = "yaml" | "form";
 interface RuleEditorDrawerControl {
   ruleId: string;
   createType: ReturnType<typeof parseCreateNewType>;
+  // Optional template id — when set with `new=true`, the drawer pre-fills
+  // Monaco from the template's YAML stub instead of starting from the
+  // empty draft. Set by D4's empty-state gallery cards.
+  templateId: string | null;
+  // Optional bundle id — when set, the drawer's Save flow auto-binds the
+  // saved rule to the named bundle (Phase 3E wires the actual bind once
+  // Backend 5c lands; for now we forward the param through without
+  // breaking the URL contract).
+  bundleId: string | null;
 }
+
+const EDITOR_QUERY_KEYS = [
+  "rule",
+  "open",
+  "type",
+  "new",
+  "template",
+  "bundle",
+] as const;
 
 /**
  * Reads the URL search params controlling the editor drawer. The contract
- * is intentionally narrow: rule + open + (optional) type. Closing the drawer
- * clears ONLY these three keys so unrelated filters (status, scope, search)
- * survive a click-through.
+ * accepts BOTH legacy `rule=<id>|new` (3A) AND alternate `new=true&type=`
+ * (D4 empty-state gallery cards + future cross-links from Decisions /
+ * Bundles surfaces). Closing the drawer clears ONLY editor-specific keys
+ * so unrelated filters (status, scope, search) survive a click-through.
  */
 function useEditorDrawerControl(): {
   control: RuleEditorDrawerControl | null;
@@ -49,15 +71,18 @@ function useEditorDrawerControl(): {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
 
-  const ruleId = params.get("rule");
+  const ruleParam = params.get("rule");
   const open = params.get("open");
   const typeParam = params.get("type");
+  const newFlag = params.get("new");
+  const templateParam = params.get("template");
+  const bundleParam = params.get("bundle");
 
   const closeDrawer = useCallback(() => {
     const next = new URLSearchParams(params);
-    next.delete("rule");
-    next.delete("open");
-    next.delete("type");
+    for (const key of EDITOR_QUERY_KEYS) {
+      next.delete(key);
+    }
     const search = next.toString();
     setParams(next, { replace: true });
     // Defensive: the empty-search case still leaves a `?` in some history
@@ -68,11 +93,25 @@ function useEditorDrawerControl(): {
     }
   }, [params, setParams, navigate]);
 
-  if (open !== "editor" || !ruleId) {
+  if (open !== "editor") {
+    return { control: null, closeDrawer };
+  }
+  // Two equivalent create-new entry points:
+  //  1) ?rule=new&type=...        (3A's original contract)
+  //  2) ?new=true&type=...        (D4 empty-state gallery + cross-link contract)
+  // We canonicalise on the NEW_RULE_ID sentinel so downstream useRule
+  // doesn't have to know about both forms.
+  const ruleId = ruleParam ?? (newFlag === "true" ? NEW_RULE_ID : null);
+  if (!ruleId) {
     return { control: null, closeDrawer };
   }
   return {
-    control: { ruleId, createType: parseCreateNewType(typeParam) },
+    control: {
+      ruleId,
+      createType: parseCreateNewType(typeParam),
+      templateId: templateParam,
+      bundleId: bundleParam,
+    },
     closeDrawer,
   };
 }
@@ -94,8 +133,43 @@ interface RuleEditorDrawerContentProps {
   onClose: () => void;
 }
 
+/**
+ * Looks up a template by id and merges its YAML stub onto the empty draft.
+ * Returns the base draft unchanged when the id is unknown OR when the
+ * template's YAML fails to parse — defensive fallbacks keep the editor
+ * from crashing on stale URLs or malformed stubs. The caller is
+ * responsible for ensuring the rule type matches the URL `type` param.
+ */
+function applyTemplateToDraft(
+  base: NormalizedRule,
+  templateId: string,
+): NormalizedRule {
+  const template: RuleTemplate | undefined = RULE_TEMPLATES.find(
+    (t) => t.id === templateId,
+  );
+  if (!template) {
+    logger.warn("policy-studio-editor", "unknown template id; falling back to empty draft", {
+      templateId,
+    });
+    return base;
+  }
+  const parsed = yamlToPartialRule(template.yaml, base);
+  if (parsed.error || !parsed.rule) {
+    logger.warn("policy-studio-editor", "template YAML failed to parse; falling back to empty draft", {
+      templateId,
+      error: parsed.error,
+    });
+    return base;
+  }
+  // Force the rule type onto the template's declared type; if the URL
+  // type param diverged from the template's ruleType (e.g. a copy/paste
+  // error in a deep link), the template's intent wins because the YAML
+  // body is keyed to that type.
+  return { ...parsed.rule, type: template.ruleType };
+}
+
 function RuleEditorDrawerContent({ control, onClose }: RuleEditorDrawerContentProps) {
-  const { ruleId, createType } = control;
+  const { ruleId, createType, templateId } = control;
   const isCreateNew = ruleId === NEW_RULE_ID;
   const query = useRule({ id: ruleId, createType });
   // Local working copy. The drawer is the source of truth for the in-flight
@@ -107,10 +181,18 @@ function RuleEditorDrawerContent({ control, onClose }: RuleEditorDrawerContentPr
   useEffect(() => {
     if (lastLoadedId.current === ruleId) return;
     if (query.data) {
-      setDraft(query.data);
+      // Apply template pre-fill on the create-new path when a template id
+      // is present and resolves to a known stub. Falls back to the empty
+      // draft when the template id is missing or unrecognized so the
+      // drawer never crashes on stale URLs.
+      const seeded =
+        isCreateNew && templateId
+          ? applyTemplateToDraft(query.data, templateId)
+          : query.data;
+      setDraft(seeded);
       lastLoadedId.current = ruleId;
     }
-  }, [query.data, ruleId]);
+  }, [query.data, ruleId, isCreateNew, templateId]);
 
   const handleClose = useCallback(() => {
     // Future enhancement: ConfirmDialog on dirty state. For now we close
@@ -353,6 +435,8 @@ function DrawerEditorBody({
           </Suspense>
         )}
       </div>
+
+      <RuleInlineSimulator draft={knownTypeDraft} />
 
       <DrawerActions draft={draft} />
     </div>

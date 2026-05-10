@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { ColumnDef } from "@tanstack/react-table";
-import { MoreHorizontal, Plus, Shield, Sparkles } from "lucide-react";
+import { MoreHorizontal, Plus, Shield } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type DecisionTier } from "@/components/primitives/DataTable";
 import { RuleFiringSparkline } from "@/components/charts/RuleFiringSparkline";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import { PoliciesFilterBar } from "./PoliciesFilterBar";
+import { PoliciesEmptyTemplatesGallery } from "./PoliciesEmptyTemplatesGallery";
 import { RuleEditorDrawer } from "./RuleEditorDrawer";
 import { RuleStatus } from "@/api/generated/model/ruleStatus";
 import { RuleType } from "@/api/generated/model/ruleType";
@@ -215,26 +216,27 @@ export default function PoliciesPage() {
     [],
   );
 
-  const emptyState = (
+  // Truly-empty rules list (no rows, no filters) renders the templates
+  // gallery as the empty-state CTA. Filtered-empty (filters active + zero
+  // matches) falls back to the existing "No rules match these filters"
+  // copy without the gallery — surfacing it there would mislead authors
+  // into thinking template-creation clears their active filters (it
+  // doesn't).
+  const emptyState = filtersActive ? (
     <EmptyState
       icon={<Shield className="h-5 w-5" />}
-      title={filtersActive ? "No rules match these filters" : "No rules yet"}
-      description={
-        filtersActive
-          ? "Clear filters or adjust the search term to see more rules."
-          : "Create the first unified job or edge rule once the editor ships."
-      }
-      action={
-        <Link
-          className="text-sm font-medium text-cordum hover:text-cordum/80"
-          data-row-action
-          to="/policies?templates=1"
-        >
-          <Sparkles className="mr-1 inline h-3.5 w-3.5" aria-hidden />
-          Use a template
-        </Link>
-      }
+      title="No rules match these filters"
+      description="Clear filters or adjust the search term to see more rules."
     />
+  ) : (
+    <div className="space-y-4">
+      <EmptyState
+        icon={<Shield className="h-5 w-5" />}
+        title="No rules yet"
+        description="Create the first unified job or edge rule from a template, or start from a blank rule via + New rule."
+      />
+      <PoliciesEmptyTemplatesGallery />
+    </div>
   );
 
   return (

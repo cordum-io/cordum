@@ -118,14 +118,44 @@ describe("Policy Studio foundation page shells", () => {
     });
   });
 
-  it("PoliciesPage shows the template CTA empty state when MSW returns no filtered matches", async () => {
+  it("PoliciesPage filtered-empty state shows the clear-filters copy and does NOT render the templates gallery (D4 branching)", async () => {
     mockRulesResponse([]);
 
     renderPoliciesPage("?status=published");
 
     expect(await screen.findByText("No rules match these filters")).toBeTruthy();
-    const templateLink = screen.getByRole("link", { name: /use a template/i });
-    expect(templateLink.getAttribute("href")).toBe("/policies?templates=1");
+    // Surfacing the templates gallery on the filtered-empty path would
+    // mislead authors into thinking template-creation clears their active
+    // filters (it doesn't). The gallery's labelledby region ID is the
+    // canonical signal that it's NOT mounted.
+    expect(
+      document.getElementById("policies-empty-templates-heading"),
+    ).toBeNull();
+  });
+
+  it("PoliciesPage truly-empty state renders the templates gallery (D4 DoD #1)", async () => {
+    mockRulesResponse([]);
+
+    renderPoliciesPage("");
+
+    // EmptyState header still renders (the gallery mounts BELOW it).
+    expect(await screen.findByText("No rules yet")).toBeTruthy();
+    // Gallery presence is keyed off the section's labelledby region.
+    const galleryHeading = document.getElementById(
+      "policies-empty-templates-heading",
+    );
+    expect(galleryHeading).not.toBeNull();
+    expect(galleryHeading?.textContent ?? "").toMatch(/Start from a template/i);
+    // At least 6 template cards render (DoD #1: "6+ templates").
+    const cards = document.querySelectorAll("[data-template-id]");
+    expect(cards.length).toBeGreaterThanOrEqual(6);
+    // Each card href has the canonical D4 cross-link contract.
+    const firstHref = cards[0]?.getAttribute("href") ?? "";
+    expect(firstHref).toMatch(/^\/policies\?/);
+    expect(firstHref).toContain("new=true");
+    expect(firstHref).toContain("open=editor");
+    expect(firstHref).toContain("template=");
+    expect(firstHref).toContain("type=");
   });
 
   it("PoliciesPage virtualizes the DataTable when MSW returns more than 100 rules", async () => {

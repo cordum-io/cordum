@@ -3,6 +3,7 @@ import piiRedactYaml from "./pii-redact.yaml?raw";
 import secretScanYaml from "./secret-scan.yaml?raw";
 import rateLimitYaml from "./rate-limit.yaml?raw";
 import approvalGateYaml from "./approval-gate.yaml?raw";
+import outputPiiSanitizeYaml from "./output-pii-sanitize.yaml?raw";
 import edgeToolAllowlistYaml from "./edge-tool-allowlist.yaml?raw";
 import edgeFileAccessYaml from "./edge-file-access.yaml?raw";
 import edgePromptClassifierYaml from "./edge-prompt-classifier.yaml?raw";
@@ -45,6 +46,13 @@ export const RULE_TEMPLATES: ReadonlyArray<RuleTemplate> = [
     description: "Require human approval before a sensitive action proceeds.",
     ruleType: RuleType.input,
     yaml: approvalGateYaml,
+  },
+  {
+    id: "output-pii-sanitize",
+    label: "Sanitize PII in output",
+    description: "Quarantine model output containing PII (emails, phone, SSNs, credit-card numbers).",
+    ruleType: RuleType.output,
+    yaml: outputPiiSanitizeYaml,
   },
   {
     id: "edge-tool-allowlist",

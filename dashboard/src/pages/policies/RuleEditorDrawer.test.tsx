@@ -266,4 +266,54 @@ describe("RuleEditorDrawer URL contract", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByTestId("location-pathname").textContent).toBe("/policies");
   });
+
+  it("opens via the alternate ?new=true&type=&open=editor entry point (D4 cross-link contract)", async () => {
+    renderDrawerAt(`/policies?new=true&type=${RuleType.input}&open=editor`);
+    await waitFor(() =>
+      expect(screen.getByText(/New input rule/i)).not.toBeNull(),
+    );
+  });
+
+  it("pre-fills Monaco from RULE_TEMPLATES when ?template=<id> is set on a create-new URL (D4 DoD #2)", async () => {
+    renderDrawerAt(
+      `/policies?new=true&type=${RuleType.input}&template=pii-redact&open=editor`,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/PII redact/i)).not.toBeNull(),
+    );
+  });
+
+  it("falls back to an empty draft when ?template=<id> doesn't match any known template", async () => {
+    renderDrawerAt(
+      `/policies?new=true&type=${RuleType.input}&template=ghost-template&open=editor`,
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/New input rule/i)).not.toBeNull(),
+    );
+  });
+
+  it("clears all 6 editor query keys (rule/open/type/new/template/bundle) and preserves unrelated filters on close (D4 + 3A reopen #3)", async () => {
+    renderDrawerWithProbeAt(
+      `/policies?new=true&type=${RuleType.input}&template=pii-redact&bundle=acme-bundle&open=editor&scope=tenant%3Aacme&status=published&search=secrets`,
+    );
+    const closeBtn = await screen.findByRole("button", {
+      name: /close rule editor/i,
+    });
+    fireEvent.click(closeBtn);
+    await waitFor(() => {
+      const params = new URLSearchParams(
+        screen.getByTestId("location-search").textContent ?? "",
+      );
+      expect(params.has("rule")).toBe(false);
+      expect(params.has("open")).toBe(false);
+      expect(params.has("type")).toBe(false);
+      expect(params.has("new")).toBe(false);
+      expect(params.has("template")).toBe(false);
+      expect(params.has("bundle")).toBe(false);
+      expect(params.get("scope")).toBe("tenant:acme");
+      expect(params.get("status")).toBe("published");
+      expect(params.get("search")).toBe("secrets");
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
 });

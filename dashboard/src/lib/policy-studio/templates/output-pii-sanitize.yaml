@@ -1,0 +1,23 @@
+# Template: Sanitize PII in output (output rule)
+# Quarantines tool/model outputs that leak PII (emails, phone numbers, SSNs,
+# credit-card numbers, names tied to identifiers) before they leave the
+# safety boundary. Best paired with the input PII Redact template so both
+# halves of the request/response cycle are guarded.
+id: ""
+name: Sanitize PII in output
+type: output
+scope:
+  kind: tenant
+  value: "default"
+status: draft
+version: v1
+description: >-
+  Quarantines outputs flagged by PII scanners (emails, phone, SSNs,
+  credit-card numbers) before they leave the safety boundary. Reviewers
+  can release or redact via the quarantine queue.
+match:
+  scanners: [pii]
+  topics: ["job.*"]
+decide:
+  type: quarantine
+  reason: "PII detected in output; quarantined for review."
