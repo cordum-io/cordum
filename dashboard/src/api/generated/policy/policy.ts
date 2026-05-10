@@ -3,7 +3,7 @@
  * Do not edit manually.
  * Cordum HTTP API
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
- * OpenAPI spec version: 2026-05-10.2
+ * OpenAPI spec version: 2026-05-10.3
  */
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
@@ -44,7 +44,6 @@ import type {
   ListPolicyBundleDeploymentsParams,
   ListPolicyBundles200,
   ListPolicyDecisionsParams,
-  ListPolicyRules200,
   ListPolicyRulesParams,
   ListVelocityRules200,
   NotFoundResponse,
@@ -72,6 +71,7 @@ import type {
   RollbackPolicyRequest,
   Rule,
   RuleStaleVersionResponse,
+  RulesListResponse,
   ServiceUnavailableResponse,
   ShadowComparisonsResponse,
   ShadowResultsSummary,
@@ -533,15 +533,23 @@ export function useListPolicySnapshots<
 }
 
 /**
- * Lists policy rules and includes `firing_last_7d`, a tenant-scoped seven-day UTC firing histogram computed in one bulk history scan for all returned rules. Rules with no matching events are zero-filled.
+ * Lists policy rules in the unified `Rule` envelope (Backend 5d).
+Each item carries `type` (input | output | velocity | edge),
+`scope`, `status`, `version`, and `audit.pack_source` (for rules
+loaded from cordumctl pack bundles), replacing the legacy
+`{decision, match, reason, tier, source, firing_last_7d}` shape
+that left the dashboard rendering all rules as Type=Unknown.
 
- * @summary List policy rules
+Sources merged: RuleStore (interactively-authored rules) +
+YAML pack bundles (input + output buckets) + velocity bundles.
+
+ * @summary List policy rules (unified envelope)
  */
 export const listPolicyRules = (
   params?: ListPolicyRulesParams,
   signal?: AbortSignal,
 ) => {
-  return apiClient<ListPolicyRules200>({
+  return apiClient<RulesListResponse>({
     url: `/api/v1/policy/rules`,
     method: "GET",
     params,
@@ -555,7 +563,10 @@ export const getListPolicyRulesQueryKey = (params?: ListPolicyRulesParams) => {
 
 export const getListPolicyRulesQueryOptions = <
   TData = Awaited<ReturnType<typeof listPolicyRules>>,
-  TError = UnauthorizedResponse | InternalServerErrorResponse,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | InternalServerErrorResponse,
 >(
   params?: ListPolicyRulesParams,
   options?: {
@@ -587,12 +598,16 @@ export type ListPolicyRulesQueryResult = NonNullable<
   Awaited<ReturnType<typeof listPolicyRules>>
 >;
 export type ListPolicyRulesQueryError =
+  | BadRequestResponse
   | UnauthorizedResponse
   | InternalServerErrorResponse;
 
 export function useListPolicyRules<
   TData = Awaited<ReturnType<typeof listPolicyRules>>,
-  TError = UnauthorizedResponse | InternalServerErrorResponse,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | InternalServerErrorResponse,
 >(
   params: undefined | ListPolicyRulesParams,
   options: {
@@ -618,7 +633,10 @@ export function useListPolicyRules<
 };
 export function useListPolicyRules<
   TData = Awaited<ReturnType<typeof listPolicyRules>>,
-  TError = UnauthorizedResponse | InternalServerErrorResponse,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | InternalServerErrorResponse,
 >(
   params?: ListPolicyRulesParams,
   options?: {
@@ -642,7 +660,10 @@ export function useListPolicyRules<
 ): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 export function useListPolicyRules<
   TData = Awaited<ReturnType<typeof listPolicyRules>>,
-  TError = UnauthorizedResponse | InternalServerErrorResponse,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | InternalServerErrorResponse,
 >(
   params?: ListPolicyRulesParams,
   options?: {
@@ -657,12 +678,15 @@ export function useListPolicyRules<
   queryClient?: QueryClient,
 ): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
- * @summary List policy rules
+ * @summary List policy rules (unified envelope)
  */
 
 export function useListPolicyRules<
   TData = Awaited<ReturnType<typeof listPolicyRules>>,
-  TError = UnauthorizedResponse | InternalServerErrorResponse,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | InternalServerErrorResponse,
 >(
   params?: ListPolicyRulesParams,
   options?: {
@@ -897,7 +921,14 @@ export const useUpdatePolicyRule = <
   return useMutation(mutationOptions, queryClient);
 };
 /**
- * @summary List output policy rules
+ * DEPRECATED (Backend 5d). Use `GET /api/v1/policy/rules?type=output`
+instead — the unified envelope carries the same data plus type,
+scope, status, and pack_source attribution. This endpoint is kept
+alive for backwards compatibility until the Dashboard 11 cut-over
+deletes it.
+
+ * @deprecated
+ * @summary List output policy rules (deprecated)
  */
 export const listOutputRules = (signal?: AbortSignal) => {
   return apiClient<OutputRule[]>({
@@ -1005,7 +1036,8 @@ export function useListOutputRules<
   queryClient?: QueryClient,
 ): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
- * @summary List output policy rules
+ * @deprecated
+ * @summary List output policy rules (deprecated)
  */
 
 export function useListOutputRules<
@@ -4874,7 +4906,14 @@ export function useGetOutputPolicyStats<
 }
 
 /**
- * @summary List velocity rules
+ * DEPRECATED (Backend 5d). Use `GET /api/v1/policy/rules?type=velocity`
+instead — the unified envelope carries the same data plus the
+full rule envelope (type, scope, status, pack_source). This
+endpoint is kept alive for backwards compatibility until the
+Dashboard 11 cut-over deletes it.
+
+ * @deprecated
+ * @summary List velocity rules (deprecated)
  */
 export const listVelocityRules = (signal?: AbortSignal) => {
   return apiClient<ListVelocityRules200>({
@@ -4999,7 +5038,8 @@ export function useListVelocityRules<
   queryClient?: QueryClient,
 ): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
- * @summary List velocity rules
+ * @deprecated
+ * @summary List velocity rules (deprecated)
  */
 
 export function useListVelocityRules<
