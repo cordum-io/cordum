@@ -173,6 +173,80 @@ Each segment is a `<Link to={`/policies/bundles/${bundleId}?tab=versions&v=${ver
 Clicking lands the user on the Bundle's "Versions" tab pre-filtered to
 that segment's version. The link's href is stable and SR-friendly.
 
+## Decisions live mode (D8b — `useDecisionsStream`)
+
+The `/policies/decisions` surface ships a live-mode toggle that streams
+incoming policy decisions into a 200-event ring buffer at the top of the
+DataTable. The hook is `src/hooks/useDecisionsStream.ts` and the toggle
+sits in `DecisionsFilterBar`.
+
+### Lifecycle
+
+```
+                  ┌───────────────────────────┐
+   enabled=false  │                           │  enabled=true
+   ─────────────► │       mode: 'closed'      │ ──────────────►  new WebSocket()
+                  │ (no socket, ring empty)   │
+                  └───────────────────────────┘
+                                                 ┌─ ws.onopen fires <3s ──► mode: 'ws'
+                                                 │
+                                                 ├─ ws.onerror / 3s timeout
+                                                 │  / new WebSocket() throws ──► mode: 'polling'
+                                                 │       (refetchInterval=2s on /policy/decisions)
+                                                 │
+                                                 └─ ws.onclose AFTER onopen ──► mode: 'polling'
+```
+
+- **WS open**: `ws://<host>/api/v1/policy/decisions/stream?source=<src>&type=<typ>`. Subprotocol auth `["cordum-api-key", base64url(apiKey)]`.
+- **3s connect timeout**: if `ws.readyState !== OPEN`, the hook closes the socket and sets `mode: 'polling'` directly (rather than relying on `onclose`, which is asynchronous on real WebSocket and synchronous on the test mock).
+- **Polling fallback**: `useQuery` on `listPolicyDecisions({source, type, limit: 100})` with `refetchInterval: 2_000`. Each snapshot REPLACES the ring buffer (server is source of truth in polling mode). No append-with-dedupe needed.
+- **Filter change**: a collapsed `fkey = "<source>|<type>"` is in the effect deps. React tears down the old socket (effect cleanup runs first) before opening the new one, so source/type changes are zombie-free.
+- **Unmount / enabled=false**: cleanup runs `clearTimeout(connectTimerRef)` → `wsRef.current.close()` → `wsRef.current = null`; on enabled=false the ring buffer is also reset to `[]` and mode goes back to `'closed'`.
+
+### Why JOB decisions sometimes go via polling
+
+Backend 5b ships the per-API-gateway-replica broker incrementally. EDGE
+decisions emit on the same Go process that serves the WS, so they
+arrive end-to-end live. JOB decisions land in the Scheduler process and
+won't fan out to the gateway broker until the cross-process NATS bridge
+ships. Until then, JOB-source live mode auto-falls back to polling — the
+toggle still works, the user sees decisions within 2s of arrival, and
+nothing UI-side needs to change once the bridge lands.
+
+### Ring buffer cap (200 events)
+
+```ts
+const next = [raw, ...ringRef.current];
+ringRef.current = next.length > 200 ? next.slice(0, 200) : next;
+```
+
+Newest first; oldest evicted on overflow. The buffer is a `useRef` (not
+state) and re-renders are driven by a manual `tick` setter to avoid
+per-frame React state churn under high decision rate. The 200 cap is
+both a memory bound and a UX bound (the user is scanning, not auditing —
+authoritative history lives in the `Load more` cursor-paged path below
+the live feed).
+
+### Charts toggle (D8b ships the toggle; D9b ships the panel)
+
+The `Charts ▾` toggle writes `?charts=on` to the URL via `nuqs`
+`parseAsStringLiteral(["on"])`. DecisionsPage renders an explicit
+placeholder block `<div data-testid="decisions-charts-placeholder">…
+Charts panel ships in D9b (task-e343469b). Toggle wired today.</div>`
+so QA can confirm the URL roundtrip without depending on D9b's chart
+code being merged. When D9b lands, the placeholder is swapped for
+`<DecisionsChartsPanel decisions={…} />` — the URL contract is unchanged.
+
+### Cursor pagination vs Live mode
+
+The "Load more" button under the table is gated `{!live && list.hasMore}`.
+Reasoning: pulling another cursor page while the ring buffer is
+streaming would interleave server-history with live-prepended rows
+and corrupt the cursor's intended ordering. The UX rule is: flip Live
+OFF to scroll back through history; flip Live ON to follow the present.
+React Query caches paged data so the user resumes at the same cursor
+position when they flip Live OFF again.
+
 ## Maintenance notes
 
 - New templates: add a `<id>.yaml` file under

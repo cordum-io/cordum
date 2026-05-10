@@ -1,15 +1,17 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { ColumnDef } from "@tanstack/react-table";
 import { History } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { Button } from "@/components/ui/Button";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
 import {
   DataTable,
   type DecisionTier,
 } from "@/components/primitives/DataTable";
 import { useDecisionsList } from "@/hooks/useDecisionsList";
+import { useDecisionsStream } from "@/hooks/useDecisionsStream";
 import { decisionTone, type DecisionTone } from "@/lib/policy-studio/decision-tone";
 import { formatRelativeTime } from "@/lib/utils";
 import { DecisionType } from "@/api/generated/model/decisionType";
@@ -18,7 +20,10 @@ import type { Decision } from "@/api/generated/model/decision";
 import {
   DecisionsFilterBar,
   useDecisionsFilterValues,
+  useDecisionsLiveMode,
+  useDecisionsChartsToggle,
 } from "./DecisionsFilterBar";
+import { DecisionExpandRow } from "./DecisionExpandRow";
 
 interface DecisionRow {
   decision: Decision;
@@ -59,36 +64,60 @@ function decisionRowKey(d: Decision, index: number): string {
   return `${d.timestamp}|${d.rule_id}|${d.audit_hash ?? ""}|${index}`;
 }
 
+function toRow(d: Decision, index: number): DecisionRow {
+  return {
+    decision: d,
+    id: decisionRowKey(d, index),
+    timestamp: d.timestamp,
+    type: d.type,
+    ruleId: d.rule_id,
+    bundleLabel: bundleLabel(d),
+    source: d.source,
+    target: d.input_ref ?? "—",
+  };
+}
+
 /**
- * Policy Studio — Decisions surface (D8a, epic-d9a6c0a1).
+ * Policy Studio — Decisions surface (D8a + D8b, epic-d9a6c0a1).
  *
- * Renders the unified decisions stream behind a filter bar + virtualized
- * DataTable. Each row deep-links to the decision's source rule via the
- * D10a cross-link contract (PoliciesPage drawer URL).
- *
- * Out of scope (deferred to D8b — task TBD):
- *  - Expand-row inline (Trace + Input + Bundle context + actions row).
- *  - Live mode WebSocket stream (`Live ●` toggle).
- *  - Charts panel (`Charts ▾` toggle).
- *  - D9b actions (Replay / What-if) on the expand row.
+ * D8a (commit 2f67b3ee): page shell + filter bar + paged table.
+ * D8b (this commit): expand-row inline (Trace + Input + Bundle context +
+ * Actions); useDecisionsStream with WS auto-fallback to polling for live
+ * mode; cursor-paginated "Load more"; Charts toggle (URL state only;
+ * panel content lands in D9b / task-e343469b).
  */
 export default function DecisionsPage() {
   const filters = useDecisionsFilterValues();
-  const query = useDecisionsList(filters);
+  const [live] = useDecisionsLiveMode();
+  const [chartsOn] = useDecisionsChartsToggle();
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
-  const rows = useMemo<DecisionRow[]>(() => {
-    const items = query.data?.items ?? [];
-    return items.map((d, index) => ({
-      decision: d,
-      id: decisionRowKey(d, index),
-      timestamp: d.timestamp,
-      type: d.type,
-      ruleId: d.rule_id,
-      bundleLabel: bundleLabel(d),
-      source: d.source,
-      target: d.input_ref ?? "—",
-    }));
-  }, [query.data]);
+  const list = useDecisionsList(filters);
+  const stream = useDecisionsStream(
+    { source: filters.source, type: filters.type },
+    live,
+  );
+
+  // When live mode is active, the ring-buffer is the source of truth.
+  // Otherwise paginated history is. Switching back to history-mode
+  // resumes from cursor-page-1; live-mode does not advance the cursor.
+  const decisions = live && stream.mode !== "closed" ? stream.decisions : list.items;
+
+  const rows = useMemo<DecisionRow[]>(
+    () => decisions.map(toRow),
+    [decisions],
+  );
+
+  const toggleExpanded = useCallback((row: DecisionRow) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(row.id)) next.delete(row.id);
+      else next.add(row.id);
+      return next;
+    });
+  }, []);
 
   const columns = useMemo<ColumnDef<DecisionRow, unknown>[]>(
     () => [
@@ -174,7 +203,7 @@ export default function DecisionsPage() {
     [],
   );
 
-  if (query.isError) {
+  if (list.isError) {
     return (
       <div className="space-y-6">
         <PageHeader
@@ -201,14 +230,32 @@ export default function DecisionsPage() {
 
       <DecisionsFilterBar
         totalCount={rows.length}
-        onRefresh={() => void query.refetch()}
-        isFetching={query.isFetching}
+        onRefresh={() => void list.refetch()}
+        isFetching={list.isFetching}
+        liveMode={live ? stream.mode : "closed"}
       />
+
+      {chartsOn && (
+        // D9b will populate this region with DecisionsChartsPanel; D8b
+        // ships the toggle + URL roundtrip + an explicit placeholder so
+        // QA can confirm the wiring without depending on the chart code
+        // being merged.
+        <div
+          data-testid="decisions-charts-placeholder"
+          className="rounded-2xl border border-dashed border-border/60 bg-surface-1 p-4 text-xs italic text-muted-foreground"
+        >
+          Charts panel ships in D9b (task-e343469b). Toggle wired today.
+        </div>
+      )}
 
       <DataTable
         columns={columns}
         data={rows}
         decisionAccessor={(row) => TONE_TO_TIER[decisionTone(row.type)]}
+        onRowClick={toggleExpanded}
+        renderExpanded={(row) => <DecisionExpandRow decision={row.decision} />}
+        expandedIds={expandedIds}
+        getRowId={(row) => row.id}
         emptyState={
           <EmptyState
             icon={<History className="h-5 w-5" />}
@@ -217,6 +264,24 @@ export default function DecisionsPage() {
           />
         }
       />
+
+      {/* Cursor pagination: only relevant in history mode (not live).
+       * Live ring-buffer is bounded at 200 events; user flips Live off to
+       * paginate older history. Hiding the button in live mode keeps the
+       * UX honest. */}
+      {!live && list.hasMore && (
+        <div className="flex justify-center">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void list.fetchNextPage()}
+            loading={list.isFetchingNextPage}
+            aria-label="Load more decisions"
+          >
+            Load more
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

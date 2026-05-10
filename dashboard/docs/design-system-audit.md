@@ -166,6 +166,7 @@ Each entry below carries a concrete checklist so the next worker can continue th
 | Govern | `pages/govern/TenantsPage.tsx` | PageHeader, InstrumentCard, MetricValue, Select, EmptyState | Converged in v2.5 drift sweep reopen #2 |
 | Govern | `pages/govern/VelocityRulesPage.tsx` | PageHeader, InstrumentCard, Input, Select, Checkbox, Textarea, EmptyState, ErrorBanner | Converged in v2.5 drift sweep reopen #2 |
 | Govern | `pages/policies/PoliciesPage.tsx` | PageHeader, DataTable, Input, Select, Button, StatusBadge, EmptyState, nuqs URL state, Recharts sparkline | DONE for table + filters (Dashboard 2, task-f339eead; drawer/editor remains Dashboard 3) |
+| Govern | `pages/policies/DecisionsPage.tsx` | PageHeader, DataTable (+expand-row), Select, Button, StatusBadge, EmptyState, nuqs URL state, CodeBlock | DRAFT-2 (Dashboard 8a task-18957027 + Dashboard 8b task-66f9abcb — page shell, filter bar, paged table, expand-row, live mode, cursor pagination, Charts toggle; Charts panel content + Replay/What-if drawer remain Dashboard 9b task-e343469b) |
 | Operate | `pages/HomePage.tsx` | PageHeader, StatTile, primitives/DataTable, InstrumentCard, ErrorBanner, CollapsibleSection, Motion, --chart-1..5 tokens | Converged in Phase 3 wk5 (task-5101a23c) |
 | Operate | `pages/JobDetailPage.tsx` | InstrumentCard, EmptyState, InfoBanner, StatusBadge, CollapsibleSection, Motion | Converged in detail/admin sweep |
 | Operate | `pages/JobsPage.tsx` | PageHeader, Tabs, Input, Textarea, LabeledField, EmptyState, ErrorBanner, Motion | Converged in priority P2 sweep |

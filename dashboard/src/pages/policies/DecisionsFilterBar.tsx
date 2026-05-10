@@ -1,12 +1,24 @@
 import { useMemo } from "react";
-import { useQueryState, parseAsString, parseAsStringLiteral } from "nuqs";
-import { Filter, RefreshCw, X } from "lucide-react";
+import {
+  useQueryState,
+  parseAsString,
+  parseAsStringLiteral,
+} from "nuqs";
+import {
+  BarChart3,
+  Filter,
+  Radio,
+  RefreshCw,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { LabeledField } from "@/components/ui/LabeledField";
+import { cn } from "@/lib/utils";
 import { DecisionSource } from "@/api/generated/model/decisionSource";
 import { DecisionType } from "@/api/generated/model/decisionType";
 import type { ListPolicyDecisionsParams } from "@/api/generated/model/listPolicyDecisionsParams";
+import type { DecisionsStreamMode } from "@/hooks/useDecisionsStream";
 
 const SOURCE_VALUES: ReadonlyArray<DecisionSource> = [
   DecisionSource.job,
@@ -60,23 +72,29 @@ interface DecisionsFilterBarProps {
   totalCount?: number;
   onRefresh?: () => void;
   isFetching?: boolean;
+  /**
+   * Current live-stream mode (from useDecisionsStream). When 'ws' the
+   * indicator dot pulses; 'polling' shows a degraded amber dot;
+   * 'closed' is a muted dot.
+   */
+  liveMode?: DecisionsStreamMode;
 }
 
 /**
  * Filter bar for /policies/decisions. nuqs URL state owns: source, type,
- * since (preset minutes), until (rarely used; reserved for D8b cursor
- * pagination). Charts toggle + Live toggle both ship in D8b alongside the
- * stream + charts panel; this filter bar exposes only the canonical
- * server-supported filters today.
+ * since (preset minutes), live, charts.
  *
- * Returns the parsed filter values via the parent's controlled getter
- * (see `useDecisionsFilters` hook below) so the page's data hook + the
- * filter bar share a single source of truth.
+ * - `Live ●` toggles `?live=on` and gates useDecisionsStream in the page.
+ * - `Charts ▾` toggles `?charts=on` (D9b will mount the actual panel).
+ *
+ * Returns the parsed filter values via `useDecisionsFilterValues` so the
+ * page's data hook + the filter bar share one source of truth.
  */
 export function DecisionsFilterBar({
   totalCount,
   onRefresh,
   isFetching,
+  liveMode,
 }: DecisionsFilterBarProps) {
   const [source, setSource] = useQueryState(
     "source",
@@ -87,6 +105,8 @@ export function DecisionsFilterBar({
     parseAsStringLiteral(TYPE_VALUES),
   );
   const [since, setSince] = useQueryState("since", parseAsString);
+  const [live, setLive] = useDecisionsLiveMode();
+  const [chartsOn, setChartsOn] = useDecisionsChartsToggle();
 
   const presetMinutes = useMemo(() => presetMinutesFromSince(since), [since]);
 
@@ -154,6 +174,8 @@ export function DecisionsFilterBar({
         </LabeledField>
 
         <div className="ml-auto flex items-center gap-2">
+          <LiveToggle live={live} onToggle={() => void setLive(!live)} mode={liveMode} />
+          <ChartsToggle on={chartsOn} onToggle={() => void setChartsOn(!chartsOn)} />
           {filtersActive && (
             <Button
               variant="ghost"
@@ -195,6 +217,83 @@ export function DecisionsFilterBar({
   );
 }
 
+function LiveToggle({
+  live,
+  mode,
+  onToggle,
+}: {
+  live: boolean;
+  mode?: DecisionsStreamMode;
+  onToggle: () => void;
+}) {
+  // The dot color reflects connection health when live mode is on:
+  //   - mode='ws' -> emerald (connected to broker).
+  //   - mode='polling' -> amber (degraded; falling back to REST poll).
+  //   - mode='closed' (or undefined) + live=true -> amber pulse (connecting).
+  //   - live=false -> muted dot.
+  const dotColor = live
+    ? mode === "ws"
+      ? "bg-success"
+      : mode === "polling"
+        ? "bg-warning"
+        : "bg-warning animate-pulse"
+    : "bg-muted-foreground/40";
+  const titleText = live
+    ? mode === "ws"
+      ? "Live: connected"
+      : mode === "polling"
+        ? "Live: polling fallback (job decisions)"
+        : "Live: connecting..."
+    : "Live mode off";
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={live}
+      aria-label={live ? "Live mode on" : "Live mode off"}
+      title={titleText}
+      onClick={onToggle}
+      className={cn(
+        "inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium transition-colors hover:bg-surface-2",
+        live ? "bg-surface-2 text-foreground" : "bg-surface-1 text-muted-foreground",
+      )}
+    >
+      <span
+        className={cn("h-2 w-2 rounded-full", dotColor)}
+        aria-hidden
+      />
+      <Radio className="h-3.5 w-3.5" aria-hidden />
+      Live
+    </button>
+  );
+}
+
+function ChartsToggle({
+  on,
+  onToggle,
+}: {
+  on: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={on ? "Charts panel on" : "Charts panel off"}
+      title={on ? "Hide decisions charts panel" : "Show decisions charts panel"}
+      onClick={onToggle}
+      className={cn(
+        "inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-medium transition-colors hover:bg-surface-2",
+        on ? "bg-surface-2 text-foreground" : "bg-surface-1 text-muted-foreground",
+      )}
+    >
+      <BarChart3 className="h-3.5 w-3.5" aria-hidden />
+      Charts
+    </button>
+  );
+}
+
 /**
  * Hook for the page to read the current URL filter state without
  * subscribing the filter bar twice. Mirrors DecisionsFilterBar's nuqs
@@ -220,4 +319,26 @@ export function useDecisionsFilterValues(): DecisionsFilterValues {
       limit: 100,
     };
   }, [source, type, since]);
+}
+
+// Live + Charts URL state are written as ?live=on / ?charts=on (rather
+// than the booleanish "true") so URLs in design docs and Slack pings
+// read naturally.
+const LIVE_VALUES: ReadonlyArray<"on"> = ["on"];
+
+/**
+ * Returns `[live, setLive]` bound to the URL state at `?live=on`. Used
+ * by both the toggle button and DecisionsPage to drive the stream hook.
+ */
+export function useDecisionsLiveMode(): [boolean, (next: boolean) => Promise<URLSearchParams>] {
+  const [value, setValue] = useQueryState("live", parseAsStringLiteral(LIVE_VALUES));
+  const setNext = (next: boolean) => setValue(next ? "on" : null);
+  return [value === "on", setNext];
+}
+
+/** Same shape as useDecisionsLiveMode but for the Charts panel toggle. */
+export function useDecisionsChartsToggle(): [boolean, (next: boolean) => Promise<URLSearchParams>] {
+  const [value, setValue] = useQueryState("charts", parseAsStringLiteral(LIVE_VALUES));
+  const setNext = (next: boolean) => setValue(next ? "on" : null);
+  return [value === "on", setNext];
 }
