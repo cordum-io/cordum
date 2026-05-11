@@ -5,8 +5,8 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import type { EdgeEvaluationContextToolInputRedacted } from "./edgeEvaluationContextToolInputRedacted";
-import type { EdgeEvaluationContextLabels } from "./edgeEvaluationContextLabels";
+import type { EdgeEvaluationContextToolInputRedacted } from './edgeEvaluationContextToolInputRedacted';
+import type { EdgeEvaluationContextLabels } from './edgeEvaluationContextLabels';
 
 /**
  * Edge-side action snapshot for the unified evaluator. Raw tool input is

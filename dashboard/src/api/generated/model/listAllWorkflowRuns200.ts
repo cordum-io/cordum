@@ -5,8 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import type { PaginatedResponse } from "./paginatedResponse";
-import type { ListAllWorkflowRuns200AllOf } from "./listAllWorkflowRuns200AllOf";
+import type { PaginatedResponse } from './paginatedResponse';
+import type { ListAllWorkflowRuns200AllOf } from './listAllWorkflowRuns200AllOf';
 
-export type ListAllWorkflowRuns200 = PaginatedResponse &
-  ListAllWorkflowRuns200AllOf;
+export type ListAllWorkflowRuns200 = PaginatedResponse & ListAllWorkflowRuns200AllOf;

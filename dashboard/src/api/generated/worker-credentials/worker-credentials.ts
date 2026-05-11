@@ -5,7 +5,10 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery
+} from '@tanstack/react-query';
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -18,8 +21,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult,
-} from "@tanstack/react-query";
+  UseQueryResult
+} from '@tanstack/react-query';
 
 import type {
   BadRequestResponse,
@@ -29,361 +32,229 @@ import type {
   NotFoundResponse,
   ServiceUnavailableResponse,
   UnauthorizedResponse,
-  WorkerCredentialIssue,
-} from ".././model";
+  WorkerCredentialIssue
+} from '.././model';
 
-import { apiClient } from "../../client";
+import { apiClient } from '../../client';
+
+
+
 
 /**
  * @summary List external worker credentials
  */
-export const listWorkerCredentials = (signal?: AbortSignal) => {
-  return apiClient<ListWorkerCredentials200>({
-    url: `/api/v1/workers/credentials`,
-    method: "GET",
-    signal,
-  });
-};
+export const listWorkerCredentials = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return apiClient<ListWorkerCredentials200>(
+      {url: `/api/v1/workers/credentials`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
 
 export const getListWorkerCredentialsQueryKey = () => {
-  return [`/api/v1/workers/credentials`] as const;
-};
+    return [
+    `/api/v1/workers/credentials`
+    ] as const;
+    }
 
-export const getListWorkerCredentialsQueryOptions = <
-  TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
->(options?: {
-  query?: Partial<
-    UseQueryOptions<
-      Awaited<ReturnType<typeof listWorkerCredentials>>,
-      TError,
-      TData
-    >
-  >;
-}) => {
-  const { query: queryOptions } = options ?? {};
+    
+export const getListWorkerCredentialsQueryOptions = <TData = Awaited<ReturnType<typeof listWorkerCredentials>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listWorkerCredentials>>, TError, TData>>, }
+) => {
 
-  const queryKey = queryOptions?.queryKey ?? getListWorkerCredentialsQueryKey();
+const {query: queryOptions} = options ?? {};
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof listWorkerCredentials>>
-  > = ({ signal }) => listWorkerCredentials(signal);
+  const queryKey =  queryOptions?.queryKey ?? getListWorkerCredentialsQueryKey();
 
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof listWorkerCredentials>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+  
 
-export type ListWorkerCredentialsQueryResult = NonNullable<
-  Awaited<ReturnType<typeof listWorkerCredentials>>
->;
-export type ListWorkerCredentialsQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listWorkerCredentials>>> = ({ signal }) => listWorkerCredentials(signal);
 
-export function useListWorkerCredentials<
-  TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
->(
-  options: {
-    query: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof listWorkerCredentials>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listWorkerCredentials>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type ListWorkerCredentialsQueryResult = NonNullable<Awaited<ReturnType<typeof listWorkerCredentials>>>
+export type ListWorkerCredentialsQueryError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
+
+
+export function useListWorkerCredentials<TData = Awaited<ReturnType<typeof listWorkerCredentials>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listWorkerCredentials>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listWorkerCredentials>>,
           TError,
           Awaited<ReturnType<typeof listWorkerCredentials>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useListWorkerCredentials<
-  TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof listWorkerCredentials>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListWorkerCredentials<TData = Awaited<ReturnType<typeof listWorkerCredentials>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listWorkerCredentials>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listWorkerCredentials>>,
           TError,
           Awaited<ReturnType<typeof listWorkerCredentials>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useListWorkerCredentials<
-  TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof listWorkerCredentials>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListWorkerCredentials<TData = Awaited<ReturnType<typeof listWorkerCredentials>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listWorkerCredentials>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary List external worker credentials
  */
 
-export function useListWorkerCredentials<
-  TData = Awaited<ReturnType<typeof listWorkerCredentials>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof listWorkerCredentials>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getListWorkerCredentialsQueryOptions(options);
+export function useListWorkerCredentials<TData = Awaited<ReturnType<typeof listWorkerCredentials>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listWorkerCredentials>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getListWorkerCredentialsQueryOptions(options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
+
+
+
 
 /**
  * @summary Create or rotate a worker credential
  */
 export const createWorkerCredential = (
-  createWorkerCredentialBody: CreateWorkerCredentialBody,
-  signal?: AbortSignal,
+    createWorkerCredentialBody: CreateWorkerCredentialBody,
+ signal?: AbortSignal
 ) => {
-  return apiClient<WorkerCredentialIssue | WorkerCredentialIssue>({
-    url: `/api/v1/workers/credentials`,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    data: createWorkerCredentialBody,
-    signal,
-  });
-};
+      
+      
+      return apiClient<WorkerCredentialIssue | WorkerCredentialIssue>(
+      {url: `/api/v1/workers/credentials`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: createWorkerCredentialBody, signal
+    },
+      );
+    }
+  
 
-export const getCreateWorkerCredentialMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | ServiceUnavailableResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof createWorkerCredential>>,
-    TError,
-    { data: CreateWorkerCredentialBody },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof createWorkerCredential>>,
-  TError,
-  { data: CreateWorkerCredentialBody },
-  TContext
-> => {
-  const mutationKey = ["createWorkerCredential"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof createWorkerCredential>>,
-    { data: CreateWorkerCredentialBody }
-  > = (props) => {
-    const { data } = props ?? {};
+export const getCreateWorkerCredentialMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createWorkerCredential>>, TError,{data: CreateWorkerCredentialBody}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof createWorkerCredential>>, TError,{data: CreateWorkerCredentialBody}, TContext> => {
 
-    return createWorkerCredential(data);
-  };
+const mutationKey = ['createWorkerCredential'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type CreateWorkerCredentialMutationResult = NonNullable<
-  Awaited<ReturnType<typeof createWorkerCredential>>
->;
-export type CreateWorkerCredentialMutationBody = CreateWorkerCredentialBody;
-export type CreateWorkerCredentialMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse
-  | ServiceUnavailableResponse;
 
-/**
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createWorkerCredential>>, {data: CreateWorkerCredentialBody}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createWorkerCredential(data,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateWorkerCredentialMutationResult = NonNullable<Awaited<ReturnType<typeof createWorkerCredential>>>
+    export type CreateWorkerCredentialMutationBody = CreateWorkerCredentialBody
+    export type CreateWorkerCredentialMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
+
+    /**
  * @summary Create or rotate a worker credential
  */
-export const useCreateWorkerCredential = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | ServiceUnavailableResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof createWorkerCredential>>,
-      TError,
-      { data: CreateWorkerCredentialBody },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof createWorkerCredential>>,
-  TError,
-  { data: CreateWorkerCredentialBody },
-  TContext
-> => {
-  const mutationOptions = getCreateWorkerCredentialMutationOptions(options);
+export const useCreateWorkerCredential = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createWorkerCredential>>, TError,{data: CreateWorkerCredentialBody}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createWorkerCredential>>,
+        TError,
+        {data: CreateWorkerCredentialBody},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
-/**
+      const mutationOptions = getCreateWorkerCredentialMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * @summary Revoke a worker credential
  */
-export const deleteWorkerCredential = (workerId: string) => {
-  return apiClient<void>({
-    url: `/api/v1/workers/credentials/${workerId}`,
-    method: "DELETE",
-  });
-};
+export const deleteWorkerCredential = (
+    workerId: string,
+ ) => {
+      
+      
+      return apiClient<void>(
+      {url: `/api/v1/workers/credentials/${workerId}`, method: 'DELETE'
+    },
+      );
+    }
+  
 
-export const getDeleteWorkerCredentialMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | ServiceUnavailableResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof deleteWorkerCredential>>,
-    TError,
-    { workerId: string },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof deleteWorkerCredential>>,
-  TError,
-  { workerId: string },
-  TContext
-> => {
-  const mutationKey = ["deleteWorkerCredential"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof deleteWorkerCredential>>,
-    { workerId: string }
-  > = (props) => {
-    const { workerId } = props ?? {};
+export const getDeleteWorkerCredentialMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteWorkerCredential>>, TError,{workerId: string}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof deleteWorkerCredential>>, TError,{workerId: string}, TContext> => {
 
-    return deleteWorkerCredential(workerId);
-  };
+const mutationKey = ['deleteWorkerCredential'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type DeleteWorkerCredentialMutationResult = NonNullable<
-  Awaited<ReturnType<typeof deleteWorkerCredential>>
->;
 
-export type DeleteWorkerCredentialMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse
-  | ServiceUnavailableResponse;
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteWorkerCredential>>, {workerId: string}> = (props) => {
+          const {workerId} = props ?? {};
 
-/**
+          return  deleteWorkerCredential(workerId,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteWorkerCredentialMutationResult = NonNullable<Awaited<ReturnType<typeof deleteWorkerCredential>>>
+    
+    export type DeleteWorkerCredentialMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
+
+    /**
  * @summary Revoke a worker credential
  */
-export const useDeleteWorkerCredential = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | ServiceUnavailableResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof deleteWorkerCredential>>,
-      TError,
-      { workerId: string },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof deleteWorkerCredential>>,
-  TError,
-  { workerId: string },
-  TContext
-> => {
-  const mutationOptions = getDeleteWorkerCredentialMutationOptions(options);
+export const useDeleteWorkerCredential = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteWorkerCredential>>, TError,{workerId: string}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteWorkerCredential>>,
+        TError,
+        {workerId: string},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
+      const mutationOptions = getDeleteWorkerCredentialMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    

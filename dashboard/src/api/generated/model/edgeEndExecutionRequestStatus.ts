@@ -6,13 +6,13 @@
  * OpenAPI spec version: 2026-05-10.3
  */
 
-export type EdgeEndExecutionRequestStatus =
-  (typeof EdgeEndExecutionRequestStatus)[keyof typeof EdgeEndExecutionRequestStatus];
+export type EdgeEndExecutionRequestStatus = typeof EdgeEndExecutionRequestStatus[keyof typeof EdgeEndExecutionRequestStatus];
+
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeEndExecutionRequestStatus = {
-  succeeded: "succeeded",
-  failed: "failed",
-  cancelled: "cancelled",
-  timeout: "timeout",
+  succeeded: 'succeeded',
+  failed: 'failed',
+  cancelled: 'cancelled',
+  timeout: 'timeout',
 } as const;

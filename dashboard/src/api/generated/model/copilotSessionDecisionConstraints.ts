@@ -9,6 +9,4 @@
 /**
  * @nullable
  */
-export type CopilotSessionDecisionConstraints = {
-  [key: string]: unknown;
-} | null;
+export type CopilotSessionDecisionConstraints = { [key: string]: unknown } | null;

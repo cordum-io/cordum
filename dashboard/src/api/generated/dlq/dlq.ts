@@ -5,7 +5,10 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery
+} from '@tanstack/react-query';
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -18,8 +21,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult,
-} from "@tanstack/react-query";
+  UseQueryResult
+} from '@tanstack/react-query';
 
 import type {
   DLQEntry,
@@ -30,508 +33,321 @@ import type {
   ListDLQParams,
   NotFoundResponse,
   RetryDLQEntry200,
-  UnauthorizedResponse,
-} from ".././model";
+  UnauthorizedResponse
+} from '.././model';
 
-import { apiClient } from "../../client";
+import { apiClient } from '../../client';
+
+
+
 
 /**
  * @summary List dead-letter queue entries
  */
-export const listDLQ = (params?: ListDLQParams, signal?: AbortSignal) => {
-  return apiClient<DLQEntry[]>({
-    url: `/api/v1/dlq`,
-    method: "GET",
-    params,
-    signal,
-  });
-};
-
-export const getListDLQQueryKey = (params?: ListDLQParams) => {
-  return [`/api/v1/dlq`, ...(params ? [params] : [])] as const;
-};
-
-export const getListDLQQueryOptions = <
-  TData = Awaited<ReturnType<typeof listDLQ>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params?: ListDLQParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listDLQ>>, TError, TData>
-    >;
-  },
+export const listDLQ = (
+    params?: ListDLQParams,
+ signal?: AbortSignal
 ) => {
-  const { query: queryOptions } = options ?? {};
+      
+      
+      return apiClient<DLQEntry[]>(
+      {url: `/api/v1/dlq`, method: 'GET',
+        params, signal
+    },
+      );
+    }
+  
 
-  const queryKey = queryOptions?.queryKey ?? getListDLQQueryKey(params);
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof listDLQ>>> = ({
-    signal,
-  }) => listDLQ(params, signal);
 
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof listDLQ>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+export const getListDLQQueryKey = (params?: ListDLQParams,) => {
+    return [
+    `/api/v1/dlq`, ...(params ? [params]: [])
+    ] as const;
+    }
 
-export type ListDLQQueryResult = NonNullable<
-  Awaited<ReturnType<typeof listDLQ>>
->;
-export type ListDLQQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+    
+export const getListDLQQueryOptions = <TData = Awaited<ReturnType<typeof listDLQ>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(params?: ListDLQParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDLQ>>, TError, TData>>, }
+) => {
 
-export function useListDLQ<
-  TData = Awaited<ReturnType<typeof listDLQ>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params: undefined | ListDLQParams,
-  options: {
-    query: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listDLQ>>, TError, TData>
-    > &
-      Pick<
+const {query: queryOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListDLQQueryKey(params);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDLQ>>> = ({ signal }) => listDLQ(params, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDLQ>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type ListDLQQueryResult = NonNullable<Awaited<ReturnType<typeof listDLQ>>>
+export type ListDLQQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
+
+
+export function useListDLQ<TData = Awaited<ReturnType<typeof listDLQ>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+ params: undefined |  ListDLQParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDLQ>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listDLQ>>,
           TError,
           Awaited<ReturnType<typeof listDLQ>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useListDLQ<
-  TData = Awaited<ReturnType<typeof listDLQ>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params?: ListDLQParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listDLQ>>, TError, TData>
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListDLQ<TData = Awaited<ReturnType<typeof listDLQ>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+ params?: ListDLQParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDLQ>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listDLQ>>,
           TError,
           Awaited<ReturnType<typeof listDLQ>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useListDLQ<
-  TData = Awaited<ReturnType<typeof listDLQ>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params?: ListDLQParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listDLQ>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListDLQ<TData = Awaited<ReturnType<typeof listDLQ>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+ params?: ListDLQParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDLQ>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary List dead-letter queue entries
  */
 
-export function useListDLQ<
-  TData = Awaited<ReturnType<typeof listDLQ>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params?: ListDLQParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listDLQ>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getListDLQQueryOptions(params, options);
+export function useListDLQ<TData = Awaited<ReturnType<typeof listDLQ>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+ params?: ListDLQParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDLQ>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getListDLQQueryOptions(params,options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
+
+
+
 
 /**
  * @summary List DLQ entries (paginated)
  */
 export const listDLQPaginated = (
-  params?: ListDLQPaginatedParams,
-  signal?: AbortSignal,
+    params?: ListDLQPaginatedParams,
+ signal?: AbortSignal
 ) => {
-  return apiClient<ListDLQPaginated200>({
-    url: `/api/v1/dlq/page`,
-    method: "GET",
-    params,
-    signal,
-  });
-};
+      
+      
+      return apiClient<ListDLQPaginated200>(
+      {url: `/api/v1/dlq/page`, method: 'GET',
+        params, signal
+    },
+      );
+    }
+  
 
-export const getListDLQPaginatedQueryKey = (
-  params?: ListDLQPaginatedParams,
+
+
+export const getListDLQPaginatedQueryKey = (params?: ListDLQPaginatedParams,) => {
+    return [
+    `/api/v1/dlq/page`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getListDLQPaginatedQueryOptions = <TData = Awaited<ReturnType<typeof listDLQPaginated>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(params?: ListDLQPaginatedParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDLQPaginated>>, TError, TData>>, }
 ) => {
-  return [`/api/v1/dlq/page`, ...(params ? [params] : [])] as const;
-};
 
-export const getListDLQPaginatedQueryOptions = <
-  TData = Awaited<ReturnType<typeof listDLQPaginated>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params?: ListDLQPaginatedParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof listDLQPaginated>>,
-        TError,
-        TData
-      >
-    >;
-  },
-) => {
-  const { query: queryOptions } = options ?? {};
+const {query: queryOptions} = options ?? {};
 
-  const queryKey =
-    queryOptions?.queryKey ?? getListDLQPaginatedQueryKey(params);
+  const queryKey =  queryOptions?.queryKey ?? getListDLQPaginatedQueryKey(params);
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof listDLQPaginated>>
-  > = ({ signal }) => listDLQPaginated(params, signal);
+  
 
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof listDLQPaginated>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listDLQPaginated>>> = ({ signal }) => listDLQPaginated(params, signal);
 
-export type ListDLQPaginatedQueryResult = NonNullable<
-  Awaited<ReturnType<typeof listDLQPaginated>>
->;
-export type ListDLQPaginatedQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+      
 
-export function useListDLQPaginated<
-  TData = Awaited<ReturnType<typeof listDLQPaginated>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params: undefined | ListDLQPaginatedParams,
-  options: {
-    query: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof listDLQPaginated>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listDLQPaginated>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type ListDLQPaginatedQueryResult = NonNullable<Awaited<ReturnType<typeof listDLQPaginated>>>
+export type ListDLQPaginatedQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
+
+
+export function useListDLQPaginated<TData = Awaited<ReturnType<typeof listDLQPaginated>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+ params: undefined |  ListDLQPaginatedParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDLQPaginated>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listDLQPaginated>>,
           TError,
           Awaited<ReturnType<typeof listDLQPaginated>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useListDLQPaginated<
-  TData = Awaited<ReturnType<typeof listDLQPaginated>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params?: ListDLQPaginatedParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof listDLQPaginated>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListDLQPaginated<TData = Awaited<ReturnType<typeof listDLQPaginated>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+ params?: ListDLQPaginatedParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDLQPaginated>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listDLQPaginated>>,
           TError,
           Awaited<ReturnType<typeof listDLQPaginated>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useListDLQPaginated<
-  TData = Awaited<ReturnType<typeof listDLQPaginated>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params?: ListDLQPaginatedParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof listDLQPaginated>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListDLQPaginated<TData = Awaited<ReturnType<typeof listDLQPaginated>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+ params?: ListDLQPaginatedParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDLQPaginated>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary List DLQ entries (paginated)
  */
 
-export function useListDLQPaginated<
-  TData = Awaited<ReturnType<typeof listDLQPaginated>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params?: ListDLQPaginatedParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof listDLQPaginated>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getListDLQPaginatedQueryOptions(params, options);
+export function useListDLQPaginated<TData = Awaited<ReturnType<typeof listDLQPaginated>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+ params?: ListDLQPaginatedParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listDLQPaginated>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getListDLQPaginatedQueryOptions(params,options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
 
-/**
- * @summary Remove a DLQ entry
- */
-export const deleteDLQEntry = (jobId: string) => {
-  return apiClient<void>({ url: `/api/v1/dlq/${jobId}`, method: "DELETE" });
-};
 
-export const getDeleteDLQEntryMutationOptions = <
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof deleteDLQEntry>>,
-    TError,
-    { jobId: string },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof deleteDLQEntry>>,
-  TError,
-  { jobId: string },
-  TContext
-> => {
-  const mutationKey = ["deleteDLQEntry"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof deleteDLQEntry>>,
-    { jobId: string }
-  > = (props) => {
-    const { jobId } = props ?? {};
-
-    return deleteDLQEntry(jobId);
-  };
-
-  return { mutationFn, ...mutationOptions };
-};
-
-export type DeleteDLQEntryMutationResult = NonNullable<
-  Awaited<ReturnType<typeof deleteDLQEntry>>
->;
-
-export type DeleteDLQEntryMutationError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
 
 /**
  * @summary Remove a DLQ entry
  */
-export const useDeleteDLQEntry = <
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof deleteDLQEntry>>,
-      TError,
-      { jobId: string },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof deleteDLQEntry>>,
-  TError,
-  { jobId: string },
-  TContext
-> => {
-  const mutationOptions = getDeleteDLQEntryMutationOptions(options);
+export const deleteDLQEntry = (
+    jobId: string,
+ ) => {
+      
+      
+      return apiClient<void>(
+      {url: `/api/v1/dlq/${jobId}`, method: 'DELETE'
+    },
+      );
+    }
+  
 
-  return useMutation(mutationOptions, queryClient);
-};
-/**
+
+export const getDeleteDLQEntryMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteDLQEntry>>, TError,{jobId: string}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof deleteDLQEntry>>, TError,{jobId: string}, TContext> => {
+
+const mutationKey = ['deleteDLQEntry'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteDLQEntry>>, {jobId: string}> = (props) => {
+          const {jobId} = props ?? {};
+
+          return  deleteDLQEntry(jobId,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteDLQEntryMutationResult = NonNullable<Awaited<ReturnType<typeof deleteDLQEntry>>>
+    
+    export type DeleteDLQEntryMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse
+
+    /**
+ * @summary Remove a DLQ entry
+ */
+export const useDeleteDLQEntry = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteDLQEntry>>, TError,{jobId: string}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteDLQEntry>>,
+        TError,
+        {jobId: string},
+        TContext
+      > => {
+
+      const mutationOptions = getDeleteDLQEntryMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * @summary Retry a dead-lettered job
  */
-export const retryDLQEntry = (jobId: string, signal?: AbortSignal) => {
-  return apiClient<RetryDLQEntry200>({
-    url: `/api/v1/dlq/${jobId}/retry`,
-    method: "POST",
-    signal,
-  });
-};
+export const retryDLQEntry = (
+    jobId: string,
+ signal?: AbortSignal
+) => {
+      
+      
+      return apiClient<RetryDLQEntry200>(
+      {url: `/api/v1/dlq/${jobId}/retry`, method: 'POST', signal
+    },
+      );
+    }
+  
 
-export const getRetryDLQEntryMutationOptions = <
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof retryDLQEntry>>,
-    TError,
-    { jobId: string },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof retryDLQEntry>>,
-  TError,
-  { jobId: string },
-  TContext
-> => {
-  const mutationKey = ["retryDLQEntry"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof retryDLQEntry>>,
-    { jobId: string }
-  > = (props) => {
-    const { jobId } = props ?? {};
+export const getRetryDLQEntryMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryDLQEntry>>, TError,{jobId: string}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof retryDLQEntry>>, TError,{jobId: string}, TContext> => {
 
-    return retryDLQEntry(jobId);
-  };
+const mutationKey = ['retryDLQEntry'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type RetryDLQEntryMutationResult = NonNullable<
-  Awaited<ReturnType<typeof retryDLQEntry>>
->;
 
-export type RetryDLQEntryMutationError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof retryDLQEntry>>, {jobId: string}> = (props) => {
+          const {jobId} = props ?? {};
 
-/**
+          return  retryDLQEntry(jobId,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RetryDLQEntryMutationResult = NonNullable<Awaited<ReturnType<typeof retryDLQEntry>>>
+    
+    export type RetryDLQEntryMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse
+
+    /**
  * @summary Retry a dead-lettered job
  */
-export const useRetryDLQEntry = <
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof retryDLQEntry>>,
-      TError,
-      { jobId: string },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof retryDLQEntry>>,
-  TError,
-  { jobId: string },
-  TContext
-> => {
-  const mutationOptions = getRetryDLQEntryMutationOptions(options);
+export const useRetryDLQEntry = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof retryDLQEntry>>, TError,{jobId: string}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof retryDLQEntry>>,
+        TError,
+        {jobId: string},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
+      const mutationOptions = getRetryDLQEntryMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    

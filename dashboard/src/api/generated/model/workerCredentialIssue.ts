@@ -5,8 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import type { WorkerCredential } from "./workerCredential";
-import type { WorkerCredentialIssueAllOf } from "./workerCredentialIssueAllOf";
+import type { WorkerCredential } from './workerCredential';
+import type { WorkerCredentialIssueAllOf } from './workerCredentialIssueAllOf';
 
-export type WorkerCredentialIssue = WorkerCredential &
-  WorkerCredentialIssueAllOf;
+export type WorkerCredentialIssue = WorkerCredential & WorkerCredentialIssueAllOf;

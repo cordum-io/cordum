@@ -5,9 +5,9 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import type { RuleScope } from "./ruleScope";
-import type { BundleVersion } from "./bundleVersion";
-import type { BundleMetadata } from "./bundleMetadata";
+import type { RuleScope } from './ruleScope';
+import type { BundleVersion } from './bundleVersion';
+import type { BundleMetadata } from './bundleMetadata';
 
 /**
  * Deployable set of rules with a deployment scope. Rules are referenced

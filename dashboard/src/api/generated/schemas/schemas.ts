@@ -5,7 +5,10 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery
+} from '@tanstack/react-query';
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -18,8 +21,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult,
-} from "@tanstack/react-query";
+  UseQueryResult
+} from '@tanstack/react-query';
 
 import type {
   BadRequestResponse,
@@ -27,459 +30,321 @@ import type {
   ListSchemas200,
   NotFoundResponse,
   SchemaRecord,
-  UnauthorizedResponse,
-} from ".././model";
+  UnauthorizedResponse
+} from '.././model';
 
-import { apiClient } from "../../client";
+import { apiClient } from '../../client';
+
+
+
 
 /**
  * @summary Register a JSON schema
  */
 export const createSchema = (
-  schemaRecord: SchemaRecord,
-  signal?: AbortSignal,
+    schemaRecord: SchemaRecord,
+ signal?: AbortSignal
 ) => {
-  return apiClient<void>({
-    url: `/api/v1/schemas`,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    data: schemaRecord,
-    signal,
-  });
-};
+      
+      
+      return apiClient<void>(
+      {url: `/api/v1/schemas`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: schemaRecord, signal
+    },
+      );
+    }
+  
 
-export const getCreateSchemaMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof createSchema>>,
-    TError,
-    { data: SchemaRecord },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof createSchema>>,
-  TError,
-  { data: SchemaRecord },
-  TContext
-> => {
-  const mutationKey = ["createSchema"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof createSchema>>,
-    { data: SchemaRecord }
-  > = (props) => {
-    const { data } = props ?? {};
+export const getCreateSchemaMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createSchema>>, TError,{data: SchemaRecord}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof createSchema>>, TError,{data: SchemaRecord}, TContext> => {
 
-    return createSchema(data);
-  };
+const mutationKey = ['createSchema'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type CreateSchemaMutationResult = NonNullable<
-  Awaited<ReturnType<typeof createSchema>>
->;
-export type CreateSchemaMutationBody = SchemaRecord;
-export type CreateSchemaMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
 
-/**
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createSchema>>, {data: SchemaRecord}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createSchema(data,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateSchemaMutationResult = NonNullable<Awaited<ReturnType<typeof createSchema>>>
+    export type CreateSchemaMutationBody = SchemaRecord
+    export type CreateSchemaMutationError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse
+
+    /**
  * @summary Register a JSON schema
  */
-export const useCreateSchema = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof createSchema>>,
-      TError,
-      { data: SchemaRecord },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof createSchema>>,
-  TError,
-  { data: SchemaRecord },
-  TContext
-> => {
-  const mutationOptions = getCreateSchemaMutationOptions(options);
+export const useCreateSchema = <TError = BadRequestResponse | UnauthorizedResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createSchema>>, TError,{data: SchemaRecord}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createSchema>>,
+        TError,
+        {data: SchemaRecord},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
-/**
+      const mutationOptions = getCreateSchemaMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * @summary List registered schemas
  */
-export const listSchemas = (signal?: AbortSignal) => {
-  return apiClient<ListSchemas200>({
-    url: `/api/v1/schemas`,
-    method: "GET",
-    signal,
-  });
-};
+export const listSchemas = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return apiClient<ListSchemas200>(
+      {url: `/api/v1/schemas`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
 
 export const getListSchemasQueryKey = () => {
-  return [`/api/v1/schemas`] as const;
-};
+    return [
+    `/api/v1/schemas`
+    ] as const;
+    }
 
-export const getListSchemasQueryOptions = <
-  TData = Awaited<ReturnType<typeof listSchemas>>,
-  TError = UnauthorizedResponse | InternalServerErrorResponse,
->(options?: {
-  query?: Partial<
-    UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>
-  >;
-}) => {
-  const { query: queryOptions } = options ?? {};
+    
+export const getListSchemasQueryOptions = <TData = Awaited<ReturnType<typeof listSchemas>>, TError = UnauthorizedResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>>, }
+) => {
 
-  const queryKey = queryOptions?.queryKey ?? getListSchemasQueryKey();
+const {query: queryOptions} = options ?? {};
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof listSchemas>>> = ({
-    signal,
-  }) => listSchemas(signal);
+  const queryKey =  queryOptions?.queryKey ?? getListSchemasQueryKey();
 
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof listSchemas>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+  
 
-export type ListSchemasQueryResult = NonNullable<
-  Awaited<ReturnType<typeof listSchemas>>
->;
-export type ListSchemasQueryError =
-  | UnauthorizedResponse
-  | InternalServerErrorResponse;
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSchemas>>> = ({ signal }) => listSchemas(signal);
 
-export function useListSchemas<
-  TData = Awaited<ReturnType<typeof listSchemas>>,
-  TError = UnauthorizedResponse | InternalServerErrorResponse,
->(
-  options: {
-    query: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>
-    > &
-      Pick<
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type ListSchemasQueryResult = NonNullable<Awaited<ReturnType<typeof listSchemas>>>
+export type ListSchemasQueryError = UnauthorizedResponse | InternalServerErrorResponse
+
+
+export function useListSchemas<TData = Awaited<ReturnType<typeof listSchemas>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listSchemas>>,
           TError,
           Awaited<ReturnType<typeof listSchemas>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useListSchemas<
-  TData = Awaited<ReturnType<typeof listSchemas>>,
-  TError = UnauthorizedResponse | InternalServerErrorResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListSchemas<TData = Awaited<ReturnType<typeof listSchemas>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listSchemas>>,
           TError,
           Awaited<ReturnType<typeof listSchemas>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useListSchemas<
-  TData = Awaited<ReturnType<typeof listSchemas>>,
-  TError = UnauthorizedResponse | InternalServerErrorResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListSchemas<TData = Awaited<ReturnType<typeof listSchemas>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary List registered schemas
  */
 
-export function useListSchemas<
-  TData = Awaited<ReturnType<typeof listSchemas>>,
-  TError = UnauthorizedResponse | InternalServerErrorResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getListSchemasQueryOptions(options);
+export function useListSchemas<TData = Awaited<ReturnType<typeof listSchemas>>, TError = UnauthorizedResponse | InternalServerErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getListSchemasQueryOptions(options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
 
+
+
+
 /**
  * @summary Get a schema by ID
  */
-export const getSchema = (id: string, signal?: AbortSignal) => {
-  return apiClient<SchemaRecord>({
-    url: `/api/v1/schemas/${id}`,
-    method: "GET",
-    signal,
-  });
-};
-
-export const getGetSchemaQueryKey = (id?: string) => {
-  return [`/api/v1/schemas/${id}`] as const;
-};
-
-export const getGetSchemaQueryOptions = <
-  TData = Awaited<ReturnType<typeof getSchema>>,
-  TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
->(
-  id: string,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getSchema>>, TError, TData>
-    >;
-  },
+export const getSchema = (
+    id: string,
+ signal?: AbortSignal
 ) => {
-  const { query: queryOptions } = options ?? {};
+      
+      
+      return apiClient<SchemaRecord>(
+      {url: `/api/v1/schemas/${id}`, method: 'GET', signal
+    },
+      );
+    }
+  
 
-  const queryKey = queryOptions?.queryKey ?? getGetSchemaQueryKey(id);
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getSchema>>> = ({
-    signal,
-  }) => getSchema(id, signal);
 
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!id,
-    ...queryOptions,
-  } as UseQueryOptions<Awaited<ReturnType<typeof getSchema>>, TError, TData> & {
-    queryKey: DataTag<QueryKey, TData>;
-  };
-};
+export const getGetSchemaQueryKey = (id?: string,) => {
+    return [
+    `/api/v1/schemas/${id}`
+    ] as const;
+    }
 
-export type GetSchemaQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getSchema>>
->;
-export type GetSchemaQueryError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+    
+export const getGetSchemaQueryOptions = <TData = Awaited<ReturnType<typeof getSchema>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSchema>>, TError, TData>>, }
+) => {
 
-export function useGetSchema<
-  TData = Awaited<ReturnType<typeof getSchema>>,
-  TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
->(
-  id: string,
-  options: {
-    query: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getSchema>>, TError, TData>
-    > &
-      Pick<
+const {query: queryOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetSchemaQueryKey(id);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getSchema>>> = ({ signal }) => getSchema(id, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getSchema>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type GetSchemaQueryResult = NonNullable<Awaited<ReturnType<typeof getSchema>>>
+export type GetSchemaQueryError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
+
+
+export function useGetSchema<TData = Awaited<ReturnType<typeof getSchema>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
+ id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSchema>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getSchema>>,
           TError,
           Awaited<ReturnType<typeof getSchema>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useGetSchema<
-  TData = Awaited<ReturnType<typeof getSchema>>,
-  TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
->(
-  id: string,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getSchema>>, TError, TData>
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useGetSchema<TData = Awaited<ReturnType<typeof getSchema>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSchema>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getSchema>>,
           TError,
           Awaited<ReturnType<typeof getSchema>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useGetSchema<
-  TData = Awaited<ReturnType<typeof getSchema>>,
-  TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
->(
-  id: string,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getSchema>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useGetSchema<TData = Awaited<ReturnType<typeof getSchema>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSchema>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary Get a schema by ID
  */
 
-export function useGetSchema<
-  TData = Awaited<ReturnType<typeof getSchema>>,
-  TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
->(
-  id: string,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getSchema>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getGetSchemaQueryOptions(id, options);
+export function useGetSchema<TData = Awaited<ReturnType<typeof getSchema>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
+ id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getSchema>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getGetSchemaQueryOptions(id,options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
 
-/**
- * @summary Delete a schema
- */
-export const deleteSchema = (id: string) => {
-  return apiClient<void>({ url: `/api/v1/schemas/${id}`, method: "DELETE" });
-};
 
-export const getDeleteSchemaMutationOptions = <
-  TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof deleteSchema>>,
-    TError,
-    { id: string },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof deleteSchema>>,
-  TError,
-  { id: string },
-  TContext
-> => {
-  const mutationKey = ["deleteSchema"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof deleteSchema>>,
-    { id: string }
-  > = (props) => {
-    const { id } = props ?? {};
-
-    return deleteSchema(id);
-  };
-
-  return { mutationFn, ...mutationOptions };
-};
-
-export type DeleteSchemaMutationResult = NonNullable<
-  Awaited<ReturnType<typeof deleteSchema>>
->;
-
-export type DeleteSchemaMutationError =
-  | UnauthorizedResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
 
 /**
  * @summary Delete a schema
  */
-export const useDeleteSchema = <
-  TError =
-    | UnauthorizedResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof deleteSchema>>,
-      TError,
-      { id: string },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof deleteSchema>>,
-  TError,
-  { id: string },
-  TContext
-> => {
-  const mutationOptions = getDeleteSchemaMutationOptions(options);
+export const deleteSchema = (
+    id: string,
+ ) => {
+      
+      
+      return apiClient<void>(
+      {url: `/api/v1/schemas/${id}`, method: 'DELETE'
+    },
+      );
+    }
+  
 
-  return useMutation(mutationOptions, queryClient);
-};
+
+export const getDeleteSchemaMutationOptions = <TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteSchema>>, TError,{id: string}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof deleteSchema>>, TError,{id: string}, TContext> => {
+
+const mutationKey = ['deleteSchema'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteSchema>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteSchema(id,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteSchemaMutationResult = NonNullable<Awaited<ReturnType<typeof deleteSchema>>>
+    
+    export type DeleteSchemaMutationError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
+
+    /**
+ * @summary Delete a schema
+ */
+export const useDeleteSchema = <TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteSchema>>, TError,{id: string}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteSchema>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
+
+      const mutationOptions = getDeleteSchemaMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    

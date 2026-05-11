@@ -6,4 +6,4 @@
  * OpenAPI spec version: 2026-05-10.3
  */
 
-export type EdgeEvaluationContextLabels = { [key: string]: string };
+export type EdgeEvaluationContextLabels = {[key: string]: string};

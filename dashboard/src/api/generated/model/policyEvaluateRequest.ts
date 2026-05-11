@@ -5,10 +5,10 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import type { Rule } from "./rule";
-import type { RuleScope } from "./ruleScope";
-import type { JobEvaluationContext } from "./jobEvaluationContext";
-import type { EdgeEvaluationContext } from "./edgeEvaluationContext";
+import type { Rule } from './rule';
+import type { RuleScope } from './ruleScope';
+import type { JobEvaluationContext } from './jobEvaluationContext';
+import type { EdgeEvaluationContext } from './edgeEvaluationContext';
 
 /**
  * Unified Policy Studio evaluator request. Provide either `rule` or
@@ -17,38 +17,28 @@ import type { EdgeEvaluationContext } from "./edgeEvaluationContext";
 rules; edge contexts are valid only for edge rules.
 
  */
-export type PolicyEvaluateRequest =
-  | (
-      | (unknown &
-          (unknown & {
-            rule?: Rule;
-            bundle_id?: string;
-            scope?: RuleScope;
-            job_context?: JobEvaluationContext;
-            edge_context?: EdgeEvaluationContext;
-          }))
-      | (unknown & {
-          rule?: Rule;
-          bundle_id?: string;
-          scope?: RuleScope;
-          job_context?: JobEvaluationContext;
-          edge_context?: EdgeEvaluationContext;
-        })
-    )
-  | (
-      | (unknown &
-          (unknown & {
-            rule?: Rule;
-            bundle_id?: string;
-            scope?: RuleScope;
-            job_context?: JobEvaluationContext;
-            edge_context?: EdgeEvaluationContext;
-          }))
-      | (unknown & {
-          rule?: Rule;
-          bundle_id?: string;
-          scope?: RuleScope;
-          job_context?: JobEvaluationContext;
-          edge_context?: EdgeEvaluationContext;
-        })
-    );
+export type PolicyEvaluateRequest = (unknown & (unknown & {
+  rule?: Rule;
+  bundle_id?: string;
+  scope?: RuleScope;
+  job_context?: JobEvaluationContext;
+  edge_context?: EdgeEvaluationContext;
+}) | (unknown & {
+  rule?: Rule;
+  bundle_id?: string;
+  scope?: RuleScope;
+  job_context?: JobEvaluationContext;
+  edge_context?: EdgeEvaluationContext;
+})) | (unknown & (unknown & {
+  rule?: Rule;
+  bundle_id?: string;
+  scope?: RuleScope;
+  job_context?: JobEvaluationContext;
+  edge_context?: EdgeEvaluationContext;
+}) | (unknown & {
+  rule?: Rule;
+  bundle_id?: string;
+  scope?: RuleScope;
+  job_context?: JobEvaluationContext;
+  edge_context?: EdgeEvaluationContext;
+}));

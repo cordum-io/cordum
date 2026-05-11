@@ -5,7 +5,10 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery
+} from '@tanstack/react-query';
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -18,8 +21,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult,
-} from "@tanstack/react-query";
+  UseQueryResult
+} from '@tanstack/react-query';
 
 import type {
   BadRequestResponse,
@@ -33,857 +36,576 @@ import type {
   PoolDetail,
   PoolMutation,
   UnauthorizedResponse,
-  UpdatePoolBody,
-} from ".././model";
+  UpdatePoolBody
+} from '.././model';
 
-import { apiClient } from "../../client";
+import { apiClient } from '../../client';
+
+
+
 
 /**
  * @summary List worker pools
  */
-export const listPools = (signal?: AbortSignal) => {
-  return apiClient<ListPools200>({
-    url: `/api/v1/pools`,
-    method: "GET",
-    signal,
-  });
-};
+export const listPools = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return apiClient<ListPools200>(
+      {url: `/api/v1/pools`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
 
 export const getListPoolsQueryKey = () => {
-  return [`/api/v1/pools`] as const;
-};
+    return [
+    `/api/v1/pools`
+    ] as const;
+    }
 
-export const getListPoolsQueryOptions = <
-  TData = Awaited<ReturnType<typeof listPools>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(options?: {
-  query?: Partial<
-    UseQueryOptions<Awaited<ReturnType<typeof listPools>>, TError, TData>
-  >;
-}) => {
-  const { query: queryOptions } = options ?? {};
+    
+export const getListPoolsQueryOptions = <TData = Awaited<ReturnType<typeof listPools>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPools>>, TError, TData>>, }
+) => {
 
-  const queryKey = queryOptions?.queryKey ?? getListPoolsQueryKey();
+const {query: queryOptions} = options ?? {};
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof listPools>>> = ({
-    signal,
-  }) => listPools(signal);
+  const queryKey =  queryOptions?.queryKey ?? getListPoolsQueryKey();
 
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof listPools>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+  
 
-export type ListPoolsQueryResult = NonNullable<
-  Awaited<ReturnType<typeof listPools>>
->;
-export type ListPoolsQueryError = UnauthorizedResponse | ForbiddenResponse;
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPools>>> = ({ signal }) => listPools(signal);
 
-export function useListPools<
-  TData = Awaited<ReturnType<typeof listPools>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(
-  options: {
-    query: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listPools>>, TError, TData>
-    > &
-      Pick<
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPools>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type ListPoolsQueryResult = NonNullable<Awaited<ReturnType<typeof listPools>>>
+export type ListPoolsQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useListPools<TData = Awaited<ReturnType<typeof listPools>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPools>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listPools>>,
           TError,
           Awaited<ReturnType<typeof listPools>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useListPools<
-  TData = Awaited<ReturnType<typeof listPools>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listPools>>, TError, TData>
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListPools<TData = Awaited<ReturnType<typeof listPools>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPools>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listPools>>,
           TError,
           Awaited<ReturnType<typeof listPools>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useListPools<
-  TData = Awaited<ReturnType<typeof listPools>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listPools>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListPools<TData = Awaited<ReturnType<typeof listPools>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPools>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary List worker pools
  */
 
-export function useListPools<
-  TData = Awaited<ReturnType<typeof listPools>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listPools>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getListPoolsQueryOptions(options);
+export function useListPools<TData = Awaited<ReturnType<typeof listPools>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPools>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getListPoolsQueryOptions(options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
 
+
+
+
 /**
  * @summary Get pool detail
  */
-export const getPool = (name: string, signal?: AbortSignal) => {
-  return apiClient<PoolDetail>({
-    url: `/api/v1/pools/${name}`,
-    method: "GET",
-    signal,
-  });
-};
-
-export const getGetPoolQueryKey = (name?: string) => {
-  return [`/api/v1/pools/${name}`] as const;
-};
-
-export const getGetPoolQueryOptions = <
-  TData = Awaited<ReturnType<typeof getPool>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse,
->(
-  name: string,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getPool>>, TError, TData>
-    >;
-  },
+export const getPool = (
+    name: string,
+ signal?: AbortSignal
 ) => {
-  const { query: queryOptions } = options ?? {};
+      
+      
+      return apiClient<PoolDetail>(
+      {url: `/api/v1/pools/${name}`, method: 'GET', signal
+    },
+      );
+    }
+  
 
-  const queryKey = queryOptions?.queryKey ?? getGetPoolQueryKey(name);
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getPool>>> = ({
-    signal,
-  }) => getPool(name, signal);
 
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!name,
-    ...queryOptions,
-  } as UseQueryOptions<Awaited<ReturnType<typeof getPool>>, TError, TData> & {
-    queryKey: DataTag<QueryKey, TData>;
-  };
-};
+export const getGetPoolQueryKey = (name?: string,) => {
+    return [
+    `/api/v1/pools/${name}`
+    ] as const;
+    }
 
-export type GetPoolQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getPool>>
->;
-export type GetPoolQueryError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse;
+    
+export const getGetPoolQueryOptions = <TData = Awaited<ReturnType<typeof getPool>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPool>>, TError, TData>>, }
+) => {
 
-export function useGetPool<
-  TData = Awaited<ReturnType<typeof getPool>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse,
->(
-  name: string,
-  options: {
-    query: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getPool>>, TError, TData>
-    > &
-      Pick<
+const {query: queryOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPoolQueryKey(name);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPool>>> = ({ signal }) => getPool(name, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(name), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPool>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type GetPoolQueryResult = NonNullable<Awaited<ReturnType<typeof getPool>>>
+export type GetPoolQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
+
+
+export function useGetPool<TData = Awaited<ReturnType<typeof getPool>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPool>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPool>>,
           TError,
           Awaited<ReturnType<typeof getPool>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useGetPool<
-  TData = Awaited<ReturnType<typeof getPool>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse,
->(
-  name: string,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getPool>>, TError, TData>
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useGetPool<TData = Awaited<ReturnType<typeof getPool>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPool>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getPool>>,
           TError,
           Awaited<ReturnType<typeof getPool>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useGetPool<
-  TData = Awaited<ReturnType<typeof getPool>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse,
->(
-  name: string,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getPool>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useGetPool<TData = Awaited<ReturnType<typeof getPool>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPool>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary Get pool detail
  */
 
-export function useGetPool<
-  TData = Awaited<ReturnType<typeof getPool>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse,
->(
-  name: string,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getPool>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getGetPoolQueryOptions(name, options);
+export function useGetPool<TData = Awaited<ReturnType<typeof getPool>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
+ name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getPool>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getGetPoolQueryOptions(name,options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
 
-/**
- * @summary Create a worker pool
- */
-export const createPool = (name: string, createPoolBody: CreatePoolBody) => {
-  return apiClient<PoolMutation>({
-    url: `/api/v1/pools/${name}`,
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    data: createPoolBody,
-  });
-};
 
-export const getCreatePoolMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ConflictResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof createPool>>,
-    TError,
-    { name: string; data: CreatePoolBody },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof createPool>>,
-  TError,
-  { name: string; data: CreatePoolBody },
-  TContext
-> => {
-  const mutationKey = ["createPool"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof createPool>>,
-    { name: string; data: CreatePoolBody }
-  > = (props) => {
-    const { name, data } = props ?? {};
-
-    return createPool(name, data);
-  };
-
-  return { mutationFn, ...mutationOptions };
-};
-
-export type CreatePoolMutationResult = NonNullable<
-  Awaited<ReturnType<typeof createPool>>
->;
-export type CreatePoolMutationBody = CreatePoolBody;
-export type CreatePoolMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ConflictResponse;
 
 /**
  * @summary Create a worker pool
  */
-export const useCreatePool = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ConflictResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof createPool>>,
-      TError,
-      { name: string; data: CreatePoolBody },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof createPool>>,
-  TError,
-  { name: string; data: CreatePoolBody },
-  TContext
-> => {
-  const mutationOptions = getCreatePoolMutationOptions(options);
+export const createPool = (
+    name: string,
+    createPoolBody: CreatePoolBody,
+ ) => {
+      
+      
+      return apiClient<PoolMutation>(
+      {url: `/api/v1/pools/${name}`, method: 'PUT',
+      headers: {'Content-Type': 'application/json', },
+      data: createPoolBody
+    },
+      );
+    }
+  
 
-  return useMutation(mutationOptions, queryClient);
-};
-/**
+
+export const getCreatePoolMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPool>>, TError,{name: string;data: CreatePoolBody}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof createPool>>, TError,{name: string;data: CreatePoolBody}, TContext> => {
+
+const mutationKey = ['createPool'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createPool>>, {name: string;data: CreatePoolBody}> = (props) => {
+          const {name,data} = props ?? {};
+
+          return  createPool(name,data,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreatePoolMutationResult = NonNullable<Awaited<ReturnType<typeof createPool>>>
+    export type CreatePoolMutationBody = CreatePoolBody
+    export type CreatePoolMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse
+
+    /**
+ * @summary Create a worker pool
+ */
+export const useCreatePool = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPool>>, TError,{name: string;data: CreatePoolBody}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createPool>>,
+        TError,
+        {name: string;data: CreatePoolBody},
+        TContext
+      > => {
+
+      const mutationOptions = getCreatePoolMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * @summary Update a worker pool
  */
-export const updatePool = (name: string, updatePoolBody: UpdatePoolBody) => {
-  return apiClient<PoolMutation>({
-    url: `/api/v1/pools/${name}`,
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    data: updatePoolBody,
-  });
-};
+export const updatePool = (
+    name: string,
+    updatePoolBody: UpdatePoolBody,
+ ) => {
+      
+      
+      return apiClient<PoolMutation>(
+      {url: `/api/v1/pools/${name}`, method: 'PATCH',
+      headers: {'Content-Type': 'application/json', },
+      data: updatePoolBody
+    },
+      );
+    }
+  
 
-export const getUpdatePoolMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | ConflictResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof updatePool>>,
-    TError,
-    { name: string; data: UpdatePoolBody },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof updatePool>>,
-  TError,
-  { name: string; data: UpdatePoolBody },
-  TContext
-> => {
-  const mutationKey = ["updatePool"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof updatePool>>,
-    { name: string; data: UpdatePoolBody }
-  > = (props) => {
-    const { name, data } = props ?? {};
+export const getUpdatePoolMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePool>>, TError,{name: string;data: UpdatePoolBody}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof updatePool>>, TError,{name: string;data: UpdatePoolBody}, TContext> => {
 
-    return updatePool(name, data);
-  };
+const mutationKey = ['updatePool'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type UpdatePoolMutationResult = NonNullable<
-  Awaited<ReturnType<typeof updatePool>>
->;
-export type UpdatePoolMutationBody = UpdatePoolBody;
-export type UpdatePoolMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse
-  | ConflictResponse;
 
-/**
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updatePool>>, {name: string;data: UpdatePoolBody}> = (props) => {
+          const {name,data} = props ?? {};
+
+          return  updatePool(name,data,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdatePoolMutationResult = NonNullable<Awaited<ReturnType<typeof updatePool>>>
+    export type UpdatePoolMutationBody = UpdatePoolBody
+    export type UpdatePoolMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
  * @summary Update a worker pool
  */
-export const useUpdatePool = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | ConflictResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof updatePool>>,
-      TError,
-      { name: string; data: UpdatePoolBody },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof updatePool>>,
-  TError,
-  { name: string; data: UpdatePoolBody },
-  TContext
-> => {
-  const mutationOptions = getUpdatePoolMutationOptions(options);
+export const useUpdatePool = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updatePool>>, TError,{name: string;data: UpdatePoolBody}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updatePool>>,
+        TError,
+        {name: string;data: UpdatePoolBody},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
-/**
+      const mutationOptions = getUpdatePoolMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * @summary Delete a worker pool
  */
-export const deletePool = (name: string, params?: DeletePoolParams) => {
-  return apiClient<void>({
-    url: `/api/v1/pools/${name}`,
-    method: "DELETE",
-    params,
-  });
-};
+export const deletePool = (
+    name: string,
+    params?: DeletePoolParams,
+ ) => {
+      
+      
+      return apiClient<void>(
+      {url: `/api/v1/pools/${name}`, method: 'DELETE',
+        params
+    },
+      );
+    }
+  
 
-export const getDeletePoolMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | ConflictResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof deletePool>>,
-    TError,
-    { name: string; params?: DeletePoolParams },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof deletePool>>,
-  TError,
-  { name: string; params?: DeletePoolParams },
-  TContext
-> => {
-  const mutationKey = ["deletePool"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof deletePool>>,
-    { name: string; params?: DeletePoolParams }
-  > = (props) => {
-    const { name, params } = props ?? {};
+export const getDeletePoolMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePool>>, TError,{name: string;params?: DeletePoolParams}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof deletePool>>, TError,{name: string;params?: DeletePoolParams}, TContext> => {
 
-    return deletePool(name, params);
-  };
+const mutationKey = ['deletePool'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type DeletePoolMutationResult = NonNullable<
-  Awaited<ReturnType<typeof deletePool>>
->;
 
-export type DeletePoolMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse
-  | ConflictResponse;
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deletePool>>, {name: string;params?: DeletePoolParams}> = (props) => {
+          const {name,params} = props ?? {};
 
-/**
+          return  deletePool(name,params,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeletePoolMutationResult = NonNullable<Awaited<ReturnType<typeof deletePool>>>
+    
+    export type DeletePoolMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
  * @summary Delete a worker pool
  */
-export const useDeletePool = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | ConflictResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof deletePool>>,
-      TError,
-      { name: string; params?: DeletePoolParams },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof deletePool>>,
-  TError,
-  { name: string; params?: DeletePoolParams },
-  TContext
-> => {
-  const mutationOptions = getDeletePoolMutationOptions(options);
+export const useDeletePool = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePool>>, TError,{name: string;params?: DeletePoolParams}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deletePool>>,
+        TError,
+        {name: string;params?: DeletePoolParams},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
-/**
+      const mutationOptions = getDeletePoolMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * @summary Mark a pool as draining
  */
 export const drainPool = (
-  name: string,
-  drainPoolBody?: DrainPoolBody,
-  signal?: AbortSignal,
+    name: string,
+    drainPoolBody?: DrainPoolBody,
+ signal?: AbortSignal
 ) => {
-  return apiClient<PoolMutation>({
-    url: `/api/v1/pools/${name}/drain`,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    data: drainPoolBody,
-    signal,
-  });
-};
+      
+      
+      return apiClient<PoolMutation>(
+      {url: `/api/v1/pools/${name}/drain`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: drainPoolBody, signal
+    },
+      );
+    }
+  
 
-export const getDrainPoolMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | ConflictResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof drainPool>>,
-    TError,
-    { name: string; data: DrainPoolBody },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof drainPool>>,
-  TError,
-  { name: string; data: DrainPoolBody },
-  TContext
-> => {
-  const mutationKey = ["drainPool"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof drainPool>>,
-    { name: string; data: DrainPoolBody }
-  > = (props) => {
-    const { name, data } = props ?? {};
+export const getDrainPoolMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof drainPool>>, TError,{name: string;data: DrainPoolBody}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof drainPool>>, TError,{name: string;data: DrainPoolBody}, TContext> => {
 
-    return drainPool(name, data);
-  };
+const mutationKey = ['drainPool'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type DrainPoolMutationResult = NonNullable<
-  Awaited<ReturnType<typeof drainPool>>
->;
-export type DrainPoolMutationBody = DrainPoolBody;
-export type DrainPoolMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse
-  | ConflictResponse;
 
-/**
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof drainPool>>, {name: string;data: DrainPoolBody}> = (props) => {
+          const {name,data} = props ?? {};
+
+          return  drainPool(name,data,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DrainPoolMutationResult = NonNullable<Awaited<ReturnType<typeof drainPool>>>
+    export type DrainPoolMutationBody = DrainPoolBody
+    export type DrainPoolMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
  * @summary Mark a pool as draining
  */
-export const useDrainPool = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | ConflictResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof drainPool>>,
-      TError,
-      { name: string; data: DrainPoolBody },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof drainPool>>,
-  TError,
-  { name: string; data: DrainPoolBody },
-  TContext
-> => {
-  const mutationOptions = getDrainPoolMutationOptions(options);
+export const useDrainPool = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof drainPool>>, TError,{name: string;data: DrainPoolBody}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof drainPool>>,
+        TError,
+        {name: string;data: DrainPoolBody},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
-/**
+      const mutationOptions = getDrainPoolMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * @summary Add a topic mapping to a pool
  */
-export const addTopicToPool = (name: string, topic: string) => {
-  return apiClient<void>({
-    url: `/api/v1/pools/${name}/topics/${topic}`,
-    method: "PUT",
-  });
-};
+export const addTopicToPool = (
+    name: string,
+    topic: string,
+ ) => {
+      
+      
+      return apiClient<void>(
+      {url: `/api/v1/pools/${name}/topics/${topic}`, method: 'PUT'
+    },
+      );
+    }
+  
 
-export const getAddTopicToPoolMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | ConflictResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof addTopicToPool>>,
-    TError,
-    { name: string; topic: string },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof addTopicToPool>>,
-  TError,
-  { name: string; topic: string },
-  TContext
-> => {
-  const mutationKey = ["addTopicToPool"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof addTopicToPool>>,
-    { name: string; topic: string }
-  > = (props) => {
-    const { name, topic } = props ?? {};
+export const getAddTopicToPoolMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addTopicToPool>>, TError,{name: string;topic: string}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof addTopicToPool>>, TError,{name: string;topic: string}, TContext> => {
 
-    return addTopicToPool(name, topic);
-  };
+const mutationKey = ['addTopicToPool'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type AddTopicToPoolMutationResult = NonNullable<
-  Awaited<ReturnType<typeof addTopicToPool>>
->;
 
-export type AddTopicToPoolMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse
-  | ConflictResponse;
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addTopicToPool>>, {name: string;topic: string}> = (props) => {
+          const {name,topic} = props ?? {};
 
-/**
+          return  addTopicToPool(name,topic,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AddTopicToPoolMutationResult = NonNullable<Awaited<ReturnType<typeof addTopicToPool>>>
+    
+    export type AddTopicToPoolMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
  * @summary Add a topic mapping to a pool
  */
-export const useAddTopicToPool = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | ConflictResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof addTopicToPool>>,
-      TError,
-      { name: string; topic: string },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof addTopicToPool>>,
-  TError,
-  { name: string; topic: string },
-  TContext
-> => {
-  const mutationOptions = getAddTopicToPoolMutationOptions(options);
+export const useAddTopicToPool = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addTopicToPool>>, TError,{name: string;topic: string}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof addTopicToPool>>,
+        TError,
+        {name: string;topic: string},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
-/**
+      const mutationOptions = getAddTopicToPoolMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * @summary Remove a topic mapping from a pool
  */
-export const removeTopicFromPool = (name: string, topic: string) => {
-  return apiClient<void>({
-    url: `/api/v1/pools/${name}/topics/${topic}`,
-    method: "DELETE",
-  });
-};
+export const removeTopicFromPool = (
+    name: string,
+    topic: string,
+ ) => {
+      
+      
+      return apiClient<void>(
+      {url: `/api/v1/pools/${name}/topics/${topic}`, method: 'DELETE'
+    },
+      );
+    }
+  
 
-export const getRemoveTopicFromPoolMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | ConflictResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof removeTopicFromPool>>,
-    TError,
-    { name: string; topic: string },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof removeTopicFromPool>>,
-  TError,
-  { name: string; topic: string },
-  TContext
-> => {
-  const mutationKey = ["removeTopicFromPool"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof removeTopicFromPool>>,
-    { name: string; topic: string }
-  > = (props) => {
-    const { name, topic } = props ?? {};
+export const getRemoveTopicFromPoolMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeTopicFromPool>>, TError,{name: string;topic: string}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof removeTopicFromPool>>, TError,{name: string;topic: string}, TContext> => {
 
-    return removeTopicFromPool(name, topic);
-  };
+const mutationKey = ['removeTopicFromPool'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type RemoveTopicFromPoolMutationResult = NonNullable<
-  Awaited<ReturnType<typeof removeTopicFromPool>>
->;
 
-export type RemoveTopicFromPoolMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse
-  | ConflictResponse;
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeTopicFromPool>>, {name: string;topic: string}> = (props) => {
+          const {name,topic} = props ?? {};
 
-/**
+          return  removeTopicFromPool(name,topic,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemoveTopicFromPoolMutationResult = NonNullable<Awaited<ReturnType<typeof removeTopicFromPool>>>
+    
+    export type RemoveTopicFromPoolMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse
+
+    /**
  * @summary Remove a topic mapping from a pool
  */
-export const useRemoveTopicFromPool = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | ConflictResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof removeTopicFromPool>>,
-      TError,
-      { name: string; topic: string },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof removeTopicFromPool>>,
-  TError,
-  { name: string; topic: string },
-  TContext
-> => {
-  const mutationOptions = getRemoveTopicFromPoolMutationOptions(options);
+export const useRemoveTopicFromPool = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeTopicFromPool>>, TError,{name: string;topic: string}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof removeTopicFromPool>>,
+        TError,
+        {name: string;topic: string},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
+      const mutationOptions = getRemoveTopicFromPoolMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    

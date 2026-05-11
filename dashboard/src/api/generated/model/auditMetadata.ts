@@ -5,7 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import type { PackSource } from "./packSource";
+import type { PackSource } from './packSource';
 
 /**
  * Records who created or last updated a Rule or Bundle. The `updated_*`

@@ -9,6 +9,4 @@
 /**
  * Case-insensitive group name to Cordum role mapping.
  */
-export type AuthConfigOidcGroupRoleMapping = {
-  [key: string]: "admin" | "operator" | "viewer";
-};
+export type AuthConfigOidcGroupRoleMapping = {[key: string]: 'admin' | 'operator' | 'viewer'};

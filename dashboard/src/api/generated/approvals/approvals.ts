@@ -5,7 +5,10 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery
+} from '@tanstack/react-query';
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -18,8 +21,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult,
-} from "@tanstack/react-query";
+  UseQueryResult
+} from '@tanstack/react-query';
 
 import type {
   ApprovalDecisionRequest,
@@ -34,644 +37,394 @@ import type {
   RejectJob200,
   RepairApprovalBody,
   SubmitJobResponse,
-  UnauthorizedResponse,
-} from ".././model";
+  UnauthorizedResponse
+} from '.././model';
 
-import { apiClient } from "../../client";
+import { apiClient } from '../../client';
+
+
+
 
 /**
  * @summary List pending approvals
  */
 export const listApprovals = (
-  params?: ListApprovalsParams,
-  signal?: AbortSignal,
+    params?: ListApprovalsParams,
+ signal?: AbortSignal
 ) => {
-  return apiClient<ListApprovals200>({
-    url: `/api/v1/approvals`,
-    method: "GET",
-    params,
-    signal,
-  });
-};
+      
+      
+      return apiClient<ListApprovals200>(
+      {url: `/api/v1/approvals`, method: 'GET',
+        params, signal
+    },
+      );
+    }
+  
 
-export const getListApprovalsQueryKey = (params?: ListApprovalsParams) => {
-  return [`/api/v1/approvals`, ...(params ? [params] : [])] as const;
-};
 
-export const getListApprovalsQueryOptions = <
-  TData = Awaited<ReturnType<typeof listApprovals>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params?: ListApprovalsParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listApprovals>>, TError, TData>
-    >;
-  },
+
+export const getListApprovalsQueryKey = (params?: ListApprovalsParams,) => {
+    return [
+    `/api/v1/approvals`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getListApprovalsQueryOptions = <TData = Awaited<ReturnType<typeof listApprovals>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(params?: ListApprovalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listApprovals>>, TError, TData>>, }
 ) => {
-  const { query: queryOptions } = options ?? {};
 
-  const queryKey = queryOptions?.queryKey ?? getListApprovalsQueryKey(params);
+const {query: queryOptions} = options ?? {};
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof listApprovals>>> = ({
-    signal,
-  }) => listApprovals(params, signal);
+  const queryKey =  queryOptions?.queryKey ?? getListApprovalsQueryKey(params);
 
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof listApprovals>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+  
 
-export type ListApprovalsQueryResult = NonNullable<
-  Awaited<ReturnType<typeof listApprovals>>
->;
-export type ListApprovalsQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listApprovals>>> = ({ signal }) => listApprovals(params, signal);
 
-export function useListApprovals<
-  TData = Awaited<ReturnType<typeof listApprovals>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params: undefined | ListApprovalsParams,
-  options: {
-    query: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listApprovals>>, TError, TData>
-    > &
-      Pick<
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listApprovals>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type ListApprovalsQueryResult = NonNullable<Awaited<ReturnType<typeof listApprovals>>>
+export type ListApprovalsQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
+
+
+export function useListApprovals<TData = Awaited<ReturnType<typeof listApprovals>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+ params: undefined |  ListApprovalsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listApprovals>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listApprovals>>,
           TError,
           Awaited<ReturnType<typeof listApprovals>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useListApprovals<
-  TData = Awaited<ReturnType<typeof listApprovals>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params?: ListApprovalsParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listApprovals>>, TError, TData>
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListApprovals<TData = Awaited<ReturnType<typeof listApprovals>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+ params?: ListApprovalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listApprovals>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listApprovals>>,
           TError,
           Awaited<ReturnType<typeof listApprovals>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useListApprovals<
-  TData = Awaited<ReturnType<typeof listApprovals>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params?: ListApprovalsParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listApprovals>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListApprovals<TData = Awaited<ReturnType<typeof listApprovals>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+ params?: ListApprovalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listApprovals>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary List pending approvals
  */
 
-export function useListApprovals<
-  TData = Awaited<ReturnType<typeof listApprovals>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  params?: ListApprovalsParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listApprovals>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getListApprovalsQueryOptions(params, options);
+export function useListApprovals<TData = Awaited<ReturnType<typeof listApprovals>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+ params?: ListApprovalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listApprovals>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getListApprovalsQueryOptions(params,options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
+
+
+
 
 /**
  * @summary Approve a job
  */
 export const approveJob = (
-  jobId: string,
-  approvalDecisionRequest: ApprovalDecisionRequest,
-  signal?: AbortSignal,
+    jobId: string,
+    approvalDecisionRequest: ApprovalDecisionRequest,
+ signal?: AbortSignal
 ) => {
-  return apiClient<SubmitJobResponse>({
-    url: `/api/v1/approvals/${jobId}/approve`,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    data: approvalDecisionRequest,
-    signal,
-  });
-};
+      
+      
+      return apiClient<SubmitJobResponse>(
+      {url: `/api/v1/approvals/${jobId}/approve`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: approvalDecisionRequest, signal
+    },
+      );
+    }
+  
 
-export const getApproveJobMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof approveJob>>,
-    TError,
-    { jobId: string; data: ApprovalDecisionRequest },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof approveJob>>,
-  TError,
-  { jobId: string; data: ApprovalDecisionRequest },
-  TContext
-> => {
-  const mutationKey = ["approveJob"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof approveJob>>,
-    { jobId: string; data: ApprovalDecisionRequest }
-  > = (props) => {
-    const { jobId, data } = props ?? {};
+export const getApproveJobMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveJob>>, TError,{jobId: string;data: ApprovalDecisionRequest}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof approveJob>>, TError,{jobId: string;data: ApprovalDecisionRequest}, TContext> => {
 
-    return approveJob(jobId, data);
-  };
+const mutationKey = ['approveJob'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type ApproveJobMutationResult = NonNullable<
-  Awaited<ReturnType<typeof approveJob>>
->;
-export type ApproveJobMutationBody = ApprovalDecisionRequest;
-export type ApproveJobMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
 
-/**
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveJob>>, {jobId: string;data: ApprovalDecisionRequest}> = (props) => {
+          const {jobId,data} = props ?? {};
+
+          return  approveJob(jobId,data,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ApproveJobMutationResult = NonNullable<Awaited<ReturnType<typeof approveJob>>>
+    export type ApproveJobMutationBody = ApprovalDecisionRequest
+    export type ApproveJobMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse
+
+    /**
  * @summary Approve a job
  */
-export const useApproveJob = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof approveJob>>,
-      TError,
-      { jobId: string; data: ApprovalDecisionRequest },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof approveJob>>,
-  TError,
-  { jobId: string; data: ApprovalDecisionRequest },
-  TContext
-> => {
-  const mutationOptions = getApproveJobMutationOptions(options);
+export const useApproveJob = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveJob>>, TError,{jobId: string;data: ApprovalDecisionRequest}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof approveJob>>,
+        TError,
+        {jobId: string;data: ApprovalDecisionRequest},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
-/**
+      const mutationOptions = getApproveJobMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * @summary Reject a job
  */
 export const rejectJob = (
-  jobId: string,
-  approvalDecisionRequest: ApprovalDecisionRequest,
-  signal?: AbortSignal,
+    jobId: string,
+    approvalDecisionRequest: ApprovalDecisionRequest,
+ signal?: AbortSignal
 ) => {
-  return apiClient<RejectJob200>({
-    url: `/api/v1/approvals/${jobId}/reject`,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    data: approvalDecisionRequest,
-    signal,
-  });
-};
+      
+      
+      return apiClient<RejectJob200>(
+      {url: `/api/v1/approvals/${jobId}/reject`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: approvalDecisionRequest, signal
+    },
+      );
+    }
+  
 
-export const getRejectJobMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof rejectJob>>,
-    TError,
-    { jobId: string; data: ApprovalDecisionRequest },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof rejectJob>>,
-  TError,
-  { jobId: string; data: ApprovalDecisionRequest },
-  TContext
-> => {
-  const mutationKey = ["rejectJob"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof rejectJob>>,
-    { jobId: string; data: ApprovalDecisionRequest }
-  > = (props) => {
-    const { jobId, data } = props ?? {};
+export const getRejectJobMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectJob>>, TError,{jobId: string;data: ApprovalDecisionRequest}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof rejectJob>>, TError,{jobId: string;data: ApprovalDecisionRequest}, TContext> => {
 
-    return rejectJob(jobId, data);
-  };
+const mutationKey = ['rejectJob'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type RejectJobMutationResult = NonNullable<
-  Awaited<ReturnType<typeof rejectJob>>
->;
-export type RejectJobMutationBody = ApprovalDecisionRequest;
-export type RejectJobMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
 
-/**
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectJob>>, {jobId: string;data: ApprovalDecisionRequest}> = (props) => {
+          const {jobId,data} = props ?? {};
+
+          return  rejectJob(jobId,data,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RejectJobMutationResult = NonNullable<Awaited<ReturnType<typeof rejectJob>>>
+    export type RejectJobMutationBody = ApprovalDecisionRequest
+    export type RejectJobMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse
+
+    /**
  * @summary Reject a job
  */
-export const useRejectJob = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof rejectJob>>,
-      TError,
-      { jobId: string; data: ApprovalDecisionRequest },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof rejectJob>>,
-  TError,
-  { jobId: string; data: ApprovalDecisionRequest },
-  TContext
-> => {
-  const mutationOptions = getRejectJobMutationOptions(options);
+export const useRejectJob = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectJob>>, TError,{jobId: string;data: ApprovalDecisionRequest}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof rejectJob>>,
+        TError,
+        {jobId: string;data: ApprovalDecisionRequest},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
-/**
+      const mutationOptions = getRejectJobMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * Returns all enriched context for a single approval in one call: blast radius, prior approvals, rollback hints, policy snapshot summary, time remaining, and parsed constraints. Used by the approval detail page.
 
  * @summary Get enriched approval context for a single job
  */
-export const getApprovalContext = (jobId: string, signal?: AbortSignal) => {
-  return apiClient<GetApprovalContext200>({
-    url: `/api/v1/approvals/${jobId}/context`,
-    method: "GET",
-    signal,
-  });
-};
-
-export const getGetApprovalContextQueryKey = (jobId?: string) => {
-  return [`/api/v1/approvals/${jobId}/context`] as const;
-};
-
-export const getGetApprovalContextQueryOptions = <
-  TData = Awaited<ReturnType<typeof getApprovalContext>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
->(
-  jobId: string,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getApprovalContext>>,
-        TError,
-        TData
-      >
-    >;
-  },
+export const getApprovalContext = (
+    jobId: string,
+ signal?: AbortSignal
 ) => {
-  const { query: queryOptions } = options ?? {};
+      
+      
+      return apiClient<GetApprovalContext200>(
+      {url: `/api/v1/approvals/${jobId}/context`, method: 'GET', signal
+    },
+      );
+    }
+  
 
-  const queryKey =
-    queryOptions?.queryKey ?? getGetApprovalContextQueryKey(jobId);
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof getApprovalContext>>
-  > = ({ signal }) => getApprovalContext(jobId, signal);
 
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!jobId,
-    ...queryOptions,
-  } as UseQueryOptions<
-    Awaited<ReturnType<typeof getApprovalContext>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+export const getGetApprovalContextQueryKey = (jobId?: string,) => {
+    return [
+    `/api/v1/approvals/${jobId}/context`
+    ] as const;
+    }
 
-export type GetApprovalContextQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getApprovalContext>>
->;
-export type GetApprovalContextQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+    
+export const getGetApprovalContextQueryOptions = <TData = Awaited<ReturnType<typeof getApprovalContext>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(jobId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalContext>>, TError, TData>>, }
+) => {
 
-export function useGetApprovalContext<
-  TData = Awaited<ReturnType<typeof getApprovalContext>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
->(
-  jobId: string,
-  options: {
-    query: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getApprovalContext>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+const {query: queryOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetApprovalContextQueryKey(jobId);
+
+  
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getApprovalContext>>> = ({ signal }) => getApprovalContext(jobId, signal);
+
+      
+
+      
+
+   return  { queryKey, queryFn, enabled: !!(jobId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getApprovalContext>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type GetApprovalContextQueryResult = NonNullable<Awaited<ReturnType<typeof getApprovalContext>>>
+export type GetApprovalContextQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse
+
+
+export function useGetApprovalContext<TData = Awaited<ReturnType<typeof getApprovalContext>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(
+ jobId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalContext>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getApprovalContext>>,
           TError,
           Awaited<ReturnType<typeof getApprovalContext>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useGetApprovalContext<
-  TData = Awaited<ReturnType<typeof getApprovalContext>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
->(
-  jobId: string,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getApprovalContext>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useGetApprovalContext<TData = Awaited<ReturnType<typeof getApprovalContext>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(
+ jobId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalContext>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getApprovalContext>>,
           TError,
           Awaited<ReturnType<typeof getApprovalContext>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useGetApprovalContext<
-  TData = Awaited<ReturnType<typeof getApprovalContext>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
->(
-  jobId: string,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getApprovalContext>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useGetApprovalContext<TData = Awaited<ReturnType<typeof getApprovalContext>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(
+ jobId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalContext>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary Get enriched approval context for a single job
  */
 
-export function useGetApprovalContext<
-  TData = Awaited<ReturnType<typeof getApprovalContext>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
->(
-  jobId: string,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getApprovalContext>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getGetApprovalContextQueryOptions(jobId, options);
+export function useGetApprovalContext<TData = Awaited<ReturnType<typeof getApprovalContext>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(
+ jobId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getApprovalContext>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getGetApprovalContextQueryOptions(jobId,options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
+
+
+
 
 /**
  * @summary Inspect or apply approval repair
  */
 export const repairApproval = (
-  jobId: string,
-  repairApprovalBody?: RepairApprovalBody,
-  signal?: AbortSignal,
+    jobId: string,
+    repairApprovalBody?: RepairApprovalBody,
+ signal?: AbortSignal
 ) => {
-  return apiClient<GenericObject>({
-    url: `/api/v1/approvals/${jobId}/repair`,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    data: repairApprovalBody,
-    signal,
-  });
-};
+      
+      
+      return apiClient<GenericObject>(
+      {url: `/api/v1/approvals/${jobId}/repair`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: repairApprovalBody, signal
+    },
+      );
+    }
+  
 
-export const getRepairApprovalMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | GenericObject
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof repairApproval>>,
-    TError,
-    { jobId: string; data: RepairApprovalBody },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof repairApproval>>,
-  TError,
-  { jobId: string; data: RepairApprovalBody },
-  TContext
-> => {
-  const mutationKey = ["repairApproval"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof repairApproval>>,
-    { jobId: string; data: RepairApprovalBody }
-  > = (props) => {
-    const { jobId, data } = props ?? {};
+export const getRepairApprovalMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | GenericObject | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof repairApproval>>, TError,{jobId: string;data: RepairApprovalBody}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof repairApproval>>, TError,{jobId: string;data: RepairApprovalBody}, TContext> => {
 
-    return repairApproval(jobId, data);
-  };
+const mutationKey = ['repairApproval'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type RepairApprovalMutationResult = NonNullable<
-  Awaited<ReturnType<typeof repairApproval>>
->;
-export type RepairApprovalMutationBody = RepairApprovalBody;
-export type RepairApprovalMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse
-  | GenericObject
-  | InternalServerErrorResponse;
 
-/**
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof repairApproval>>, {jobId: string;data: RepairApprovalBody}> = (props) => {
+          const {jobId,data} = props ?? {};
+
+          return  repairApproval(jobId,data,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RepairApprovalMutationResult = NonNullable<Awaited<ReturnType<typeof repairApproval>>>
+    export type RepairApprovalMutationBody = RepairApprovalBody
+    export type RepairApprovalMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | GenericObject | InternalServerErrorResponse
+
+    /**
  * @summary Inspect or apply approval repair
  */
-export const useRepairApproval = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | GenericObject
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof repairApproval>>,
-      TError,
-      { jobId: string; data: RepairApprovalBody },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof repairApproval>>,
-  TError,
-  { jobId: string; data: RepairApprovalBody },
-  TContext
-> => {
-  const mutationOptions = getRepairApprovalMutationOptions(options);
+export const useRepairApproval = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | GenericObject | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof repairApproval>>, TError,{jobId: string;data: RepairApprovalBody}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof repairApproval>>,
+        TError,
+        {jobId: string;data: RepairApprovalBody},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
+      const mutationOptions = getRepairApprovalMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    

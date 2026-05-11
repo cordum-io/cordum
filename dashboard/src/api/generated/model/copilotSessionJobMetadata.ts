@@ -6,4 +6,4 @@
  * OpenAPI spec version: 2026-05-10.3
  */
 
-export type CopilotSessionJobMetadata = { [key: string]: string };
+export type CopilotSessionJobMetadata = {[key: string]: string};

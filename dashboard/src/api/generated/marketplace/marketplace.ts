@@ -5,7 +5,10 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery
+} from '@tanstack/react-query';
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -18,8 +21,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult,
-} from "@tanstack/react-query";
+  UseQueryResult
+} from '@tanstack/react-query';
 
 import type {
   BadGatewayResponse,
@@ -29,273 +32,168 @@ import type {
   MarketplaceCatalog,
   MarketplaceInstallRequest,
   PackRecord,
-  UnauthorizedResponse,
-} from ".././model";
+  UnauthorizedResponse
+} from '.././model';
 
-import { apiClient } from "../../client";
+import { apiClient } from '../../client';
+
+
+
 
 /**
  * @summary List packs available in the marketplace
  */
-export const listMarketplacePacks = (signal?: AbortSignal) => {
-  return apiClient<MarketplaceCatalog>({
-    url: `/api/v1/marketplace/packs`,
-    method: "GET",
-    signal,
-  });
-};
+export const listMarketplacePacks = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return apiClient<MarketplaceCatalog>(
+      {url: `/api/v1/marketplace/packs`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
 
 export const getListMarketplacePacksQueryKey = () => {
-  return [`/api/v1/marketplace/packs`] as const;
-};
+    return [
+    `/api/v1/marketplace/packs`
+    ] as const;
+    }
 
-export const getListMarketplacePacksQueryOptions = <
-  TData = Awaited<ReturnType<typeof listMarketplacePacks>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse
-    | BadGatewayResponse,
->(options?: {
-  query?: Partial<
-    UseQueryOptions<
-      Awaited<ReturnType<typeof listMarketplacePacks>>,
-      TError,
-      TData
-    >
-  >;
-}) => {
-  const { query: queryOptions } = options ?? {};
+    
+export const getListMarketplacePacksQueryOptions = <TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | BadGatewayResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>>, }
+) => {
 
-  const queryKey = queryOptions?.queryKey ?? getListMarketplacePacksQueryKey();
+const {query: queryOptions} = options ?? {};
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof listMarketplacePacks>>
-  > = ({ signal }) => listMarketplacePacks(signal);
+  const queryKey =  queryOptions?.queryKey ?? getListMarketplacePacksQueryKey();
 
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof listMarketplacePacks>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+  
 
-export type ListMarketplacePacksQueryResult = NonNullable<
-  Awaited<ReturnType<typeof listMarketplacePacks>>
->;
-export type ListMarketplacePacksQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse
-  | BadGatewayResponse;
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMarketplacePacks>>> = ({ signal }) => listMarketplacePacks(signal);
 
-export function useListMarketplacePacks<
-  TData = Awaited<ReturnType<typeof listMarketplacePacks>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse
-    | BadGatewayResponse,
->(
-  options: {
-    query: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof listMarketplacePacks>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type ListMarketplacePacksQueryResult = NonNullable<Awaited<ReturnType<typeof listMarketplacePacks>>>
+export type ListMarketplacePacksQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | BadGatewayResponse
+
+
+export function useListMarketplacePacks<TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | BadGatewayResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listMarketplacePacks>>,
           TError,
           Awaited<ReturnType<typeof listMarketplacePacks>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useListMarketplacePacks<
-  TData = Awaited<ReturnType<typeof listMarketplacePacks>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse
-    | BadGatewayResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof listMarketplacePacks>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListMarketplacePacks<TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | BadGatewayResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listMarketplacePacks>>,
           TError,
           Awaited<ReturnType<typeof listMarketplacePacks>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useListMarketplacePacks<
-  TData = Awaited<ReturnType<typeof listMarketplacePacks>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse
-    | BadGatewayResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof listMarketplacePacks>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListMarketplacePacks<TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | BadGatewayResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary List packs available in the marketplace
  */
 
-export function useListMarketplacePacks<
-  TData = Awaited<ReturnType<typeof listMarketplacePacks>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse
-    | BadGatewayResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof listMarketplacePacks>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getListMarketplacePacksQueryOptions(options);
+export function useListMarketplacePacks<TData = Awaited<ReturnType<typeof listMarketplacePacks>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | BadGatewayResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMarketplacePacks>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getListMarketplacePacksQueryOptions(options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
+
+
+
 
 /**
  * @summary Install a pack from the marketplace
  */
 export const installMarketplacePack = (
-  marketplaceInstallRequest: MarketplaceInstallRequest,
-  signal?: AbortSignal,
+    marketplaceInstallRequest: MarketplaceInstallRequest,
+ signal?: AbortSignal
 ) => {
-  return apiClient<PackRecord>({
-    url: `/api/v1/marketplace/install`,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    data: marketplaceInstallRequest,
-    signal,
-  });
-};
+      
+      
+      return apiClient<PackRecord>(
+      {url: `/api/v1/marketplace/install`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: marketplaceInstallRequest, signal
+    },
+      );
+    }
+  
 
-export const getInstallMarketplacePackMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse
-    | BadGatewayResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof installMarketplacePack>>,
-    TError,
-    { data: MarketplaceInstallRequest },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof installMarketplacePack>>,
-  TError,
-  { data: MarketplaceInstallRequest },
-  TContext
-> => {
-  const mutationKey = ["installMarketplacePack"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof installMarketplacePack>>,
-    { data: MarketplaceInstallRequest }
-  > = (props) => {
-    const { data } = props ?? {};
+export const getInstallMarketplacePackMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | BadGatewayResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof installMarketplacePack>>, TError,{data: MarketplaceInstallRequest}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof installMarketplacePack>>, TError,{data: MarketplaceInstallRequest}, TContext> => {
 
-    return installMarketplacePack(data);
-  };
+const mutationKey = ['installMarketplacePack'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type InstallMarketplacePackMutationResult = NonNullable<
-  Awaited<ReturnType<typeof installMarketplacePack>>
->;
-export type InstallMarketplacePackMutationBody = MarketplaceInstallRequest;
-export type InstallMarketplacePackMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse
-  | BadGatewayResponse;
 
-/**
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof installMarketplacePack>>, {data: MarketplaceInstallRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  installMarketplacePack(data,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type InstallMarketplacePackMutationResult = NonNullable<Awaited<ReturnType<typeof installMarketplacePack>>>
+    export type InstallMarketplacePackMutationBody = MarketplaceInstallRequest
+    export type InstallMarketplacePackMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | BadGatewayResponse
+
+    /**
  * @summary Install a pack from the marketplace
  */
-export const useInstallMarketplacePack = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse
-    | BadGatewayResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof installMarketplacePack>>,
-      TError,
-      { data: MarketplaceInstallRequest },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof installMarketplacePack>>,
-  TError,
-  { data: MarketplaceInstallRequest },
-  TContext
-> => {
-  const mutationOptions = getInstallMarketplacePackMutationOptions(options);
+export const useInstallMarketplacePack = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | BadGatewayResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof installMarketplacePack>>, TError,{data: MarketplaceInstallRequest}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof installMarketplacePack>>,
+        TError,
+        {data: MarketplaceInstallRequest},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
+      const mutationOptions = getInstallMarketplacePackMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    

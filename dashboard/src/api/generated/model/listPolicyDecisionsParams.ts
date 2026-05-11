@@ -5,38 +5,38 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import type { DecisionSource } from "./decisionSource";
-import type { DecisionType } from "./decisionType";
+import type { DecisionSource } from './decisionSource';
+import type { DecisionType } from './decisionType';
 
 export type ListPolicyDecisionsParams = {
-  /**
-   * Filter by Decision source (job or edge).
-   */
-  source?: DecisionSource;
-  /**
-   * Filter by Decision type.
-   */
-  type?: DecisionType;
-  /**
+/**
+ * Filter by Decision source (job or edge).
+ */
+source?: DecisionSource;
+/**
+ * Filter by Decision type.
+ */
+type?: DecisionType;
+/**
  * Inclusive lower-bound on Decision timestamp. Accepts RFC3339 or
 unix milliseconds.
 
  */
-  since?: string;
-  /**
+since?: string;
+/**
  * Inclusive upper-bound on Decision timestamp. Accepts RFC3339 or
 unix milliseconds.
 
  */
-  until?: string;
-  /**
-   * Max items per page (1-500, default 100).
-   * @minimum 1
-   * @maximum 500
-   */
-  limit?: number;
-  /**
-   * Opaque cursor returned on the prior page's next_cursor.
-   */
-  cursor?: string;
+until?: string;
+/**
+ * Max items per page (1-500, default 100).
+ * @minimum 1
+ * @maximum 500
+ */
+limit?: number;
+/**
+ * Opaque cursor returned on the prior page's next_cursor.
+ */
+cursor?: string;
 };

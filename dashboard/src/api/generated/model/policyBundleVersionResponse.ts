@@ -5,7 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import type { BundleVersion } from "./bundleVersion";
+import type { BundleVersion } from './bundleVersion';
 
 export interface PolicyBundleVersionResponse {
   bundle_id: string;

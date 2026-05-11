@@ -5,16 +5,16 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import type { DecisionSource } from "./decisionSource";
-import type { DecisionType } from "./decisionType";
+import type { DecisionSource } from './decisionSource';
+import type { DecisionType } from './decisionType';
 
 export type StreamPolicyDecisionsParams = {
-  /**
-   * Filter the stream to one Decision source.
-   */
-  source?: DecisionSource;
-  /**
-   * Filter the stream to one Decision type.
-   */
-  type?: DecisionType;
+/**
+ * Filter the stream to one Decision source.
+ */
+source?: DecisionSource;
+/**
+ * Filter the stream to one Decision type.
+ */
+type?: DecisionType;
 };
