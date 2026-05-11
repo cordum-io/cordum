@@ -5,10 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
@@ -84,12 +86,49 @@ func (s *server) handlePolicyRulesUnified(w http.ResponseWriter, r *http.Request
 	filtered := applyRulesListFilters(merged, filters)
 	page, hasMore, nextCursor := paginateRules(filtered, filters)
 
+	s.attachRuleFiringLast7d(r, page)
+
 	w.Header().Set("Content-Type", "application/json")
 	writeJSON(w, rulesListResponse{
 		Items:      page,
 		HasMore:    hasMore,
 		NextCursor: nextCursor,
 	})
+}
+
+// attachRuleFiringLast7d populates `FiringLast7d` on each rule in the page via
+// a single bulk job-history scan. Tenant-scoped per the request; degrades
+// silently when the tenant header is missing or jobStore is unavailable so the
+// rule listing itself never 500s on analytics-only failures.
+func (s *server) attachRuleFiringLast7d(r *http.Request, page []*policy.Rule) {
+	if len(page) == 0 {
+		return
+	}
+	tenant := strings.TrimSpace(tenantFromRequest(r))
+	if tenant == "" {
+		return
+	}
+	ids := make([]string, 0, len(page))
+	for _, rule := range page {
+		if rule != nil && rule.ID != "" {
+			ids = append(ids, rule.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	firing, err := s.ruleFiringLast7d(r.Context(), tenant, ids, time.Now().UTC())
+	if err != nil {
+		slog.WarnContext(r.Context(), "policy rules firing analytics unavailable",
+			"tenant", tenant, "rules", len(ids), "err", err)
+		return
+	}
+	for _, rule := range page {
+		if rule == nil {
+			continue
+		}
+		rule.FiringLast7d = firing[rule.ID]
+	}
 }
 
 func parseRulesListFilters(q map[string][]string) (rulesListFilters, error) {
