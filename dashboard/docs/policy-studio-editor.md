@@ -68,15 +68,31 @@ links MUST URL-encode the dynamic segments (`encodeURIComponent`).
 Each `RULE_TEMPLATES` entry's `ruleType` and `id` flow into the URL.
 Clicking lands the user in the editor with the template YAML pre-filled.
 
-### From the Decisions surface (D8) — to be emitted by D8
+### From the Decisions surface (D8 + D10b) — live as of D8b/D10b
 
-```
-/policies?rule=<id>&open=editor
-```
+The Decisions surface emits 4 outbound cross-links today, plus 3 more
+gated on Backend 5e (task-adb200b0 — extends `policy.Decision` with
+`job_id`/`agent_id`/`session_id`/`principal_id`/`tenant_id`/`topic`).
 
-`DecisionExpandRow`'s "→ Rule" button. The decision's `rule_id` is the
-`<id>`. Already documented in D8's plan; D4 verifies the contract here
-without changing D8 code.
+| Source surface | Link emit point | URL |
+|----------------|-----------------|-----|
+| `DecisionsPage` ruleId cell | `DecisionsPage.tsx:154` | `/policies?rule=<rule_id>&open=editor` |
+| `DecisionExpandRow` Open rule button | `DecisionExpandRow.tsx:148` | `/policies?rule=<rule_id>&open=editor` |
+| `DecisionsPage` Bundle:Version cell | `DecisionsPage.tsx:170` | `/policies/bundles/<bundle_id>?tab=versions&v=<bundle_version>` |
+| `DecisionsChartsPanel` Top-firing rules list | `DecisionsChartsPanel.tsx:165` | `/policies?rule=<rule_id>&open=editor` (one per visible rule, below the BarChart) |
+| `DecisionExpandRow` Bundle context | `DecisionExpandRow.tsx` (D10b commit) | `/audit?search=<audit_hash>` |
+
+**Deferred to D10c** (gated on Backend 5e):
+| Plan link | Reason |
+|-----------|--------|
+| Decisions row Job ID → `/jobs/:id` | `Decision.job_id` field doesn't exist yet |
+| Decisions row Agent → `/agents/:id` | `Decision.agent_id` field doesn't exist yet |
+| Decisions row Edge session → `/edge/sessions/:sessionId` | `Decision.session_id` field doesn't exist yet |
+
+The Charts BarChart's bars themselves intentionally do NOT carry an
+`onClick` — the rule-name list-link below the chart provides the same
+cross-link target with a larger a11y target area (WCAG 2.5.5) and
+native keyboard activation. Adding `<Bar onClick>` would be redundant.
 
 ### From the Bundles surface (D5) — to be emitted by D5
 

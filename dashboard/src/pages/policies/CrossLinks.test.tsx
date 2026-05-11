@@ -7,8 +7,12 @@ import { server } from "@/test-utils/msw";
 import { RuleScopeKind } from "@/api/generated/model/ruleScopeKind";
 import { RuleStatus } from "@/api/generated/model/ruleStatus";
 import { RuleType } from "@/api/generated/model/ruleType";
+import { DecisionSource } from "@/api/generated/model/decisionSource";
+import { DecisionType } from "@/api/generated/model/decisionType";
+import type { Decision } from "@/api/generated/model/decision";
 import PoliciesPage from "./PoliciesPage";
 import BundleRulesTab from "./BundleRulesTab";
+import { DecisionExpandRow } from "./DecisionExpandRow";
 
 // D10a (task-ce11ca57 split per architect msg-f38f9aff) covers the 4
 // cross-links whose source AND destination both exist on the dashboard
@@ -187,6 +191,89 @@ describe("D10a cross-links", () => {
     const link = await screen.findByLabelText(/View decisions: 3 firings/i);
     fireEvent.click(link, { button: 0 });
     await waitFor(() => expect(observedSearch).toContain("rule=rule-nav"));
+  });
+});
+
+// D10b cross-links — extends D10a with the genuinely new cross-link unblocked
+// by D8b + D9b. Items 4/5/6 (Decisions row → /jobs/:id, /agents/:id,
+// /edge/sessions/:sessionId) require Decision schema fields that don't yet
+// exist; tracked by Backend 5e (task-adb200b0) and will land in D10c.
+// Items 1/2/3 (rule cell, bundle cell, charts top-rules) already shipped in
+// D8b commit 2f67b3ee + 2c443430 and D9b commit 48274dc4.
+
+describe("D10b cross-links", () => {
+  const auditDecision: Decision = {
+    source: DecisionSource.job,
+    rule_id: "rule.input.secret-scan",
+    bundle_id: "bundle.acme.input",
+    bundle_version: "v3",
+    type: DecisionType.deny,
+    timestamp: "2026-05-10T12:00:00Z",
+    audit_hash: "sha256:beefcafe0001",
+    trace: [],
+  };
+
+  it("DecisionExpandRow renders a 'View in audit chain' link when audit_hash is present", async () => {
+    server.use(
+      http.get("*/api/v1/artifacts/*", () =>
+        HttpResponse.json({ content_base64: "" }),
+      ),
+    );
+
+    renderWithProviders(<DecisionExpandRow decision={auditDecision} />);
+
+    const link = await screen.findByLabelText(
+      /View this decision in the full audit chain/i,
+    );
+    expect(link.getAttribute("href")).toBe(
+      "/audit?search=sha256%3Abeefcafe0001",
+    );
+    expect(link.getAttribute("data-row-action")).toBe(
+      "cross-link-decisions-audit",
+    );
+  });
+
+  it("DecisionExpandRow encodes audit_hash with non-URL-safe characters", async () => {
+    server.use(
+      http.get("*/api/v1/artifacts/*", () =>
+        HttpResponse.json({ content_base64: "" }),
+      ),
+    );
+
+    renderWithProviders(
+      <DecisionExpandRow
+        decision={{
+          ...auditDecision,
+          audit_hash: "sha256:abc/def+ghi=jkl",
+        }}
+      />,
+    );
+
+    const link = await screen.findByLabelText(
+      /View this decision in the full audit chain/i,
+    );
+    // encodeURIComponent: `:` → %3A, `/` → %2F, `+` → %2B, `=` → %3D
+    expect(link.getAttribute("href")).toBe(
+      "/audit?search=sha256%3Aabc%2Fdef%2Bghi%3Djkl",
+    );
+  });
+
+  it("DecisionExpandRow omits the audit chain link when audit_hash is missing", async () => {
+    server.use(
+      http.get("*/api/v1/artifacts/*", () =>
+        HttpResponse.json({ content_base64: "" }),
+      ),
+    );
+
+    const { audit_hash: _omit, ...rest } = auditDecision;
+    void _omit;
+    renderWithProviders(<DecisionExpandRow decision={rest} />);
+
+    // Bundle context section still renders, but the audit-chain Link is absent.
+    await screen.findByText("Bundle context");
+    expect(
+      screen.queryByLabelText(/View this decision in the full audit chain/i),
+    ).toBeNull();
   });
 });
 

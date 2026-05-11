@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Play, Sparkles } from "lucide-react";
+import { ArrowRight, Link2, Play, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { CodeBlock } from "@/components/ui/CodeBlock";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
@@ -121,6 +121,19 @@ export function DecisionExpandRow({ decision }: DecisionExpandRowProps) {
           <dt className="text-muted-foreground">Source</dt>
           <dd className="font-mono text-foreground">{decision.source}</dd>
         </dl>
+        {decision.audit_hash && (
+          <div className="mt-3">
+            <Link
+              to={`/audit?search=${encodeURIComponent(decision.audit_hash)}`}
+              data-row-action="cross-link-decisions-audit"
+              aria-label="View this decision in the full audit chain"
+              className="inline-flex items-center gap-1 text-xs font-medium text-cordum hover:underline"
+            >
+              <Link2 className="h-3 w-3" aria-hidden />
+              View in full audit chain
+            </Link>
+          </div>
+        )}
       </Section>
 
       <Section title="Actions" subtitle="Replay, What-if, and open in rule editor">

@@ -8,6 +8,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 
+#### Policy Studio Dashboard 10b — Decisions audit-chain cross-link (2026-05-11, task-dca913fe)
+
+- Added a "View in full audit chain" Link to `DecisionExpandRow.tsx`'s Bundle context section. Conditional on `decision.audit_hash` truthy; navigates to `/audit?search=<encoded audit_hash>` via the existing `nuqs` `search` URL contract on `AuditLogPage`. `data-row-action="cross-link-decisions-audit"` + `aria-label="View this decision in the full audit chain"` mirror D10a's link conventions. Lucide `Link2` icon for visual.
+- Sibling task to D10a (task-ce11ca57, commit `ce217a28`) which shipped the 4 always-wireable cross-links (PoliciesPage Last-7d, BundleRulesTab "Add rule", TenantDetail "Active policies", AuditLog "View related decisions").
+- **Scope reframe vs original plan**: Phase 0 inventory found the 6 plan items reduced to 1 wireable + 3 backend-blocked + 2 already-shipped:
+  - **Already shipped** (verified on dashboard tip `250dc91e`): items 1 (Decisions row → Rule, D8b `DecisionExpandRow.tsx:148` + `DecisionsPage.tsx:154`), 2 (Decisions row → Bundle, D8b `DecisionsPage.tsx:170`), 6 (Charts "Top firing rules" → rule editor via D9b's per-rule list-link below the BarChart at `DecisionsChartsPanel.tsx:165` — equivalent to + better a11y than a `<Bar onClick>` would be).
+  - **Backend-blocked** (deferred to D10c): items 3/4/5 — Decisions row → /jobs/:id, /agents/:id, /edge/sessions/:sessionId. The unified `Decision` interface (`api/generated/model/decision.ts`) carries `{source, rule_id, bundle_id, bundle_version, type, trace, input_ref, output_ref, audit_hash, timestamp}` — no `job_id`/`agent_id`/`session_id` fields. **Backend 5e (task-adb200b0)** filed to extend the schema; D10c picks up the 3 deferred links once that ships.
+  - **Wired today**: item 7 (audit chain link).
+- 3 new test cases in `CrossLinks.test.tsx` (additive — D10a's 5 cases preserved): audit link rendered + URL-encoded + omitted-when-missing. 14/14 pass on targeted run (CrossLinks + DecisionExpandRow).
+
+
 #### Policy Studio Dashboard 9b — Decisions Replay + What-if drawer + Charts panel (2026-05-10, task-e343469b)
 
 - Added `dashboard/src/hooks/useReplayDecision.ts` — React Query useMutation wrapper around the generated `replayPolicyDecisions` (POST /api/v1/policy/replay). Adapts the bulk time-range endpoint to per-decision semantics by sending a 1-second window around `decision.timestamp` + `filters.original_decision = decision.type` + `use_current_policy = true` + `max_jobs = 1`. Derives `{was, now, bundleVersion, changed}` from `response.changes[0].new_decision` (changed branch) OR `summary.unchanged` (unchanged branch). `onSuccess` invalidates the `policy-studio-decisions` queryKey so the list refreshes if the active policy has rotated. Approximation is acknowledged in code comments — `policy.Decision` lacks `tenant_id`/`topic`/`principal_id`, so we can't pin the replay to exactly THIS decision; a sibling Backend 5e is the proper fix.
