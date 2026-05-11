@@ -23,14 +23,6 @@ jobs:
         go-version: ${{ matrix.go-version }}
         cache: false
 
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
     - name: Drop local replace directives (CI uses published modules)
       run: |
         go mod edit -dropreplace github.com/cordum-io/cap/v2
@@ -97,14 +89,6 @@ jobs:
         go-version: '1.25'
         cache: false
 
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
     - name: Drop local replace directives (CI uses published modules)
       run: |
         go mod edit -dropreplace github.com/cordum-io/cap/v2
@@ -125,14 +109,6 @@ jobs:
       with:
         go-version: '1.25'
         cache: false
-
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
 
     - name: Drop local replace directives (CI uses published modules)
       run: |
@@ -330,14 +306,6 @@ jobs:
         go-version: '1.25'
         cache: false
 
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
     - name: Drop local replace directives (CI uses published modules)
       run: |
         go mod edit -dropreplace github.com/cordum-io/cap/v2
@@ -354,10 +322,10 @@ jobs:
     - name: Sanitize SARIF
       run: |
         jq '
-          (.runs[].tool.driver.rules[] |= del(.relationships))
-          | (.runs[].results |= map(select(
+          (.runs[]?.tool.driver.rules[]? |= del(.relationships))
+          | (.runs[]?.results |= ((. // []) | map(select(
               ([.locations[]?.physicalLocation.artifactLocation.uri // ""] | any(endswith(".pb.go"))) | not
-            )))
+            ))))
         ' results.sarif > results.cleaned.sarif
 
     - name: Upload SARIF file
@@ -412,14 +380,6 @@ jobs:
       with:
         go-version: '1.25'
 
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
-
     - name: Generate TLS certificates
       run: |
         go run ./cmd/cordumctl generate-certs --dir ./certs
@@ -470,14 +430,6 @@ jobs:
       with:
         go-version: '1.25'
         cache: false
-
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
 
     - name: Install oasdiff
       run: go install github.com/oasdiff/oasdiff@v1.11.7
