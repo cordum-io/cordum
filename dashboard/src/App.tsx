@@ -64,9 +64,7 @@ const SettingsAuditExportPage = lazy(() => import("./pages/settings/SettingsAudi
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const SettingsShell = lazy(() => import("./pages/SettingsShell"));
 const SettingsHubPage = lazy(() => import("./pages/SettingsHubPage"));
-// PolicyOverviewPage is no longer routed; /govern/overview redirects to /policies
-// (epic-d9a6c0a1 Dashboard 1). The component file remains until Dashboard 2-4
-// hero rewrites land + the file is deleted in Dashboard 11 cut-over.
+const GovernPolicyOverviewPage = lazy(() => import("./pages/govern/PolicyOverviewPage"));
 const GovernTenantDetailPage = lazy(() => import("./pages/govern/TenantDetailPage"));
 const GovernBundleDetailPage = lazy(() => import("./pages/govern/BundleDetailPage"));
 const GovernQuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"));
@@ -77,12 +75,6 @@ const EvalRunDetailPage = lazy(() => import("./pages/EvalRunDetailPage"));
 const CopilotSessionPage = lazy(() => import("./pages/CopilotSessionPage"));
 const EdgeSessionDetailPage = lazy(() => import("./pages/EdgeSessionDetailPage"));
 const EdgeSessionsPage = lazy(() => import("./pages/EdgeSessionsPage"));
-// Policy Studio v3 surfaces (epic-d9a6c0a1 Dashboard 1 foundation).
-const PoliciesPage = lazy(() => import("./pages/policies/PoliciesPage"));
-const PoliciesBundlesPage = lazy(() => import("./pages/policies/BundlesPage"));
-const PoliciesBundleDetailPage = lazy(() => import("./pages/policies/BundleDetailPage"));
-const PoliciesDecisionsPage = lazy(() => import("./pages/policies/DecisionsPage"));
-
 // Policy Studio tab redirects — canonical `/govern/<tab>` aliases land on
 // the tabbed overview with the right tab/mode pre-selected. These are not
 // legacy redirects; they are the current public shortcuts operators use
@@ -209,10 +201,6 @@ function ProtectedRoutes() {
           <Route path="/approvals/:jobId" element={<RouteBoundary name="Approval details"><ApprovalDetailPage /></RouteBoundary>} />
 
           {/* POLICY STUDIO (epic-d9a6c0a1 v3 IA) — three top-level surfaces */}
-          <Route path="/policies" element={<RouteBoundary name="Policy rules"><PoliciesPage /></RouteBoundary>} />
-          <Route path="/policies/bundles" element={<RouteBoundary name="Policy bundles"><PoliciesBundlesPage /></RouteBoundary>} />
-          <Route path="/policies/bundles/:id" element={<RouteBoundary name="Bundle details"><PoliciesBundleDetailPage /></RouteBoundary>} />
-          <Route path="/policies/decisions" element={<RouteBoundary name="Policy decisions"><PoliciesDecisionsPage /></RouteBoundary>} />
 
           {/* GOVERN — legacy redirects preserve bookmarks; canonical surfaces are /policies/* */}
           <Route path="/govern/overview" element={<GovernOverviewRedirect />} />
