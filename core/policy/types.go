@@ -45,7 +45,25 @@ type Decision struct {
 	InputRef      string         `json:"input_ref,omitempty"`
 	OutputRef     string         `json:"output_ref,omitempty"`
 	AuditHash     string         `json:"audit_hash,omitempty"`
-	Timestamp     time.Time      `json:"timestamp"`
+	// JobID is populated by JOB-source decisions (safetykernel emitter) when
+	// the evaluation context carries job identity. Empty for EDGE-source.
+	JobID string `json:"job_id,omitempty"`
+	// SessionID is populated by EDGE-source decisions (edge agentd emitter)
+	// when the evaluation event carries an edge session reference. Empty for JOB.
+	SessionID string `json:"session_id,omitempty"`
+	// AgentID is the acting agent identity at evaluation time. Populated by
+	// both JOB and EDGE emitters when the context/event carries it.
+	AgentID string `json:"agent_id,omitempty"`
+	// PrincipalID is the human/service principal owning the action. Populated
+	// by both emitters when context/event carries it.
+	PrincipalID string `json:"principal_id,omitempty"`
+	// TenantID matches the tenant context used to load the rule scope.
+	// Populated by both emitters.
+	TenantID string `json:"tenant_id,omitempty"`
+	// Topic is the action topic — for JOB, the job topic; for EDGE, the
+	// action class. Populated by both emitters when context/event carries it.
+	Topic     string    `json:"topic,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // TraceStep records one rule evaluation contributing to a Decision. Multiple

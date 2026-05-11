@@ -92,6 +92,57 @@ func TestBundleBindingFromContextHandlesNil(t *testing.T) {
 	require.Empty(t, got.BundleVersion)
 }
 
+// Backend 5e lock-in. EmitDecision must populate JobID/AgentID/PrincipalID/
+// TenantID/Topic from the JobContext attached via WithJobContext. SessionID
+// stays empty for JOB-source decisions (EDGE emitter populates it).
+func TestEmitDecisionPopulatesJobContextIdentity(t *testing.T) {
+	ctx := WithJobContext(context.Background(), JobContext{
+		Tenant:      "acme",
+		WorkflowID:  "wf-deploy",
+		JobID:       "job-1234",
+		AgentID:     "agent-alpha",
+		PrincipalID: "principal-yaron",
+		Topic:       "job.deploy",
+	})
+	got := EmitDecision(ctx, policy.Rule{ID: "rule-with-context", Type: policy.RuleTypeInput},
+		policy.DecisionAllow, nil, "", "", "")
+
+	require.Equal(t, "job-1234", got.JobID)
+	require.Equal(t, "agent-alpha", got.AgentID)
+	require.Equal(t, "principal-yaron", got.PrincipalID)
+	require.Equal(t, "acme", got.TenantID)
+	require.Equal(t, "job.deploy", got.Topic)
+	require.Empty(t, got.SessionID, "JOB-source decision must NOT populate SessionID")
+}
+
+// Identity context is optional — EmitDecision must not populate the new
+// identity fields when the context lacks JobContext (e.g. unit tests, legacy
+// callers that don't yet thread identity).
+func TestEmitDecisionWithoutJobContextLeavesIdentityFieldsEmpty(t *testing.T) {
+	got := EmitDecision(context.Background(),
+		policy.Rule{ID: "rule-no-identity", Type: policy.RuleTypeInput},
+		policy.DecisionAllow, nil, "", "", "")
+	require.Empty(t, got.JobID)
+	require.Empty(t, got.AgentID)
+	require.Empty(t, got.PrincipalID)
+	require.Empty(t, got.TenantID)
+	require.Empty(t, got.Topic)
+	require.Empty(t, got.SessionID)
+}
+
+// WithJobContext + bundleBinding combine — both context values must coexist on
+// the emitted Decision without trampling each other.
+func TestEmitDecisionCombinesBundleBindingAndJobContext(t *testing.T) {
+	ctx := WithBundleBinding(context.Background(), BundleBinding{BundleID: "bnd", BundleVersion: "v2"})
+	ctx = WithJobContext(ctx, JobContext{JobID: "job-merge", Tenant: "tenA"})
+	got := EmitDecision(ctx, policy.Rule{ID: "rule-merge", Type: policy.RuleTypeInput},
+		policy.DecisionAllow, nil, "", "", "")
+	require.Equal(t, "bnd", got.BundleID)
+	require.Equal(t, "v2", got.BundleVersion)
+	require.Equal(t, "job-merge", got.JobID)
+	require.Equal(t, "tenA", got.TenantID)
+}
+
 func TestEmitDecisionIsConcurrentSafe(t *testing.T) {
 	ctx := WithBundleBinding(context.Background(), BundleBinding{BundleID: "bundle", BundleVersion: "v1"})
 	rule := policy.Rule{ID: "rule-concurrent", Type: policy.RuleTypeInput}

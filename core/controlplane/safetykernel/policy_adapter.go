@@ -9,11 +9,19 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
-// JobContext carries job-side scope fields used by unified Rule envelopes.
+// JobContext carries job-side scope + identity fields used by unified Rule
+// envelopes and by the JOB Decision emitter. The Tenant + WorkflowID + JobID
+// triplet was the original scope-matching surface (RuleScopeMatchesJob); the
+// AgentID + PrincipalID + Topic fields were added for Backend 5e so JOB
+// Decisions can carry the full evaluation identity (unblocks dashboard
+// per-decision Replay + cross-link work).
 type JobContext struct {
-	Tenant     string
-	WorkflowID string
-	JobID      string
+	Tenant      string
+	WorkflowID  string
+	JobID       string
+	AgentID     string
+	PrincipalID string
+	Topic       string
 }
 
 // RuleToCompiledInput adapts a unified input Rule into the existing matcher.

@@ -88,6 +88,25 @@ func TestEmitDecisionForEdgeEventRejectsMissingRuleAndUnknownDecision(t *testing
 	require.ErrorContains(t, err, "decision")
 }
 
+// Backend 5e lock-in. EmitDecisionForEdgeEvent must populate SessionID/
+// AgentID/PrincipalID/TenantID/Topic directly from the persisted event.
+// JobID stays empty since EDGE-source decisions don't carry a job identity.
+func TestEmitDecisionForEdgeEventPopulatesIdentityFields(t *testing.T) {
+	event := unifiedDecisionTestEvent(DecisionAllow)
+	event.AgentProduct = "claude-code"
+	event.ActionName = "bash.exec"
+
+	got, err := EmitDecisionForEdgeEvent(event, EdgeDecisionEmitOptions{})
+	require.NoError(t, err)
+
+	require.Equal(t, "sess-unified-edge", got.SessionID)
+	require.Equal(t, "claude-code", got.AgentID)
+	require.Equal(t, "principal-a", got.PrincipalID)
+	require.Equal(t, "tenant-a", got.TenantID)
+	require.Equal(t, "bash.exec", got.Topic)
+	require.Empty(t, got.JobID, "EDGE-source decision must NOT populate JobID")
+}
+
 func unifiedDecisionTestEvent(decision EdgeDecision) AgentActionEvent {
 	return AgentActionEvent{
 		EventID:        "evt-unified-edge",
