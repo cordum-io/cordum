@@ -23,6 +23,7 @@ import type {
   EdgeExecutionListParams,
   EdgeSessionListParams,
 } from "../api/types";
+import type { RuleFilters } from "../hooks/useRulesList";
 
 const scalarKey = (value: string | number | null | undefined, fallback = "all") =>
   value === null || value === undefined || value === "" ? fallback : value;
@@ -119,6 +120,72 @@ export const queryKeys = {
     detail: (runId: string | null | undefined) => ["workflow-run", runId] as const,
     timeline: (runId: string | null | undefined, limit?: number) =>
       ["workflow-run", runId, "timeline", limit ?? "default"] as const,
+  },
+
+  // ── Bundle Studio (unified Backend-1.5 Bundle shape) ──────────────
+  // Separate key tree from policies.bundles() (legacy PolicyBundleSummary)
+  // so the two coexist without cache pollution while Backend 2 lands.
+  bundleStudio: {
+    all: () => ["bundle-studio"] as const,
+    list: (filters: { scope?: string; search?: string }) =>
+      [
+        "bundle-studio",
+        "list",
+        scalarKey(filters.scope),
+        scalarKey(filters.search),
+      ] as const,
+    detail: (id: string) => ["bundle-studio", "detail", id] as const,
+    versions: (id: string) => ["bundle-studio", "versions", id] as const,
+    version: (id: string, version: string) =>
+      ["bundle-studio", "version", id, version] as const,
+    deployments: (id: string) => ["bundle-studio", "deployments", id] as const,
+  },
+
+  // ── Policy Studio Rules (unified Rule shape) ──────────────────────
+  // Separate from policies.rules() (legacy PolicyRule cache) so the
+  // Dashboard 2 surface can target the unified rule envelope without
+  // polluting the older /govern pages during the migration window.
+  policyStudioRules: {
+    all: () => ["policy-studio-rules"] as const,
+    list: (filters: RuleFilters = {}) =>
+      [
+        "policy-studio-rules",
+        "list",
+        scalarKey(filters.type),
+        scalarKey(filters.scope),
+        scalarKey(filters.status),
+        scalarKey(filters.search),
+        scalarKey(filters.cursor, "first"),
+        scalarKey(filters.limit, "default"),
+      ] as const,
+    detail: (id: string) => ["policy-studio-rules", "detail", id] as const,
+  },
+
+  // Policy Studio — Decisions (Dashboard 8). Mirrors policyStudioRules
+  // namespace shape so cache invalidation patterns stay consistent across
+  // the Studio surfaces.
+  policyStudioDecisions: {
+    all: () => ["policy-studio-decisions"] as const,
+    list: (
+      params: {
+        source?: string | null;
+        type?: string | null;
+        since?: string | null;
+        until?: string | null;
+        cursor?: string | null;
+        limit?: number | null;
+      } = {},
+    ) =>
+      [
+        "policy-studio-decisions",
+        "list",
+        scalarKey(params.source),
+        scalarKey(params.type),
+        scalarKey(params.since),
+        scalarKey(params.until),
+        scalarKey(params.cursor, "first"),
+        scalarKey(params.limit, "default"),
+      ] as const,
   },
 
   // ── Policies ──────────────────────────────────────────────────────

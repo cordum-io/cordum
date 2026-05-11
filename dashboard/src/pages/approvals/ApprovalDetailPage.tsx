@@ -40,6 +40,7 @@ import { CodeBlock } from "@/components/ui/CodeBlock";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { Textarea } from "@/components/ui/Textarea";
 import { friendlyError } from "@/lib/friendlyError";
 import type {
   ApprovalContext,
@@ -706,16 +707,8 @@ export default function ApprovalDetailPage() {
           setApproveDialogOpen(false);
         },
         onError: (err) => {
-          const errBody = (err as any)?.body ?? (err as any)?.data;
-          if (errBody?.code === "self_approval_denied") {
-            toast.error("Self-approval not permitted", {
-              description:
-                "You cannot approve a job you submitted. A different administrator must approve this request.",
-            });
-          } else {
-            const friendly = friendlyError(err, "approve job");
-            toast.error(friendly.title, { description: friendly.description });
-          }
+          const friendly = friendlyError(err, "approve job");
+          toast.error(friendly.title, { description: friendly.description });
         },
       },
     );
@@ -968,8 +961,8 @@ export default function ApprovalDetailPage() {
             <p className="text-sm text-muted-foreground">
               This will deny the governed change. Please provide a reason.
             </p>
-            <textarea
-              className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+            <Textarea
+              className="resize-none"
               rows={3}
               placeholder="Reason for rejection..."
               value={rejectReason}
@@ -992,4 +985,3 @@ export default function ApprovalDetailPage() {
     </div>
   );
 }
-

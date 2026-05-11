@@ -1,0 +1,28 @@
+# Template: Edge Prompt Classifier (edge rule)
+# Classifies agent prompts at the edge and denies anything in the
+# prompt-injection / jailbreak / data-exfiltration class. Pair with the
+# governance Decisions stream so denied prompts are auditable downstream.
+id: ""
+name: Edge prompt classifier
+type: edge
+scope:
+  kind: edge_fleet
+  value: "default"
+status: draft
+version: v1
+description: >-
+  Routes incoming edge prompts through the safety classifier and denies any
+  classified as prompt_injection, jailbreak, or data_exfiltration.
+match:
+  edge_event: "prompt"
+  classifier: "prompt_safety"
+  classified_as:
+    - "prompt_injection"
+    - "jailbreak"
+    - "data_exfiltration"
+decide:
+  type: deny
+  reason: "Prompt classified as adversarial."
+  constraints:
+    deny_mode: "block"
+    log_classification: true

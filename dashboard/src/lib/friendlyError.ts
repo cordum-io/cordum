@@ -54,6 +54,11 @@ const ERROR_CODE_MAP: Record<string, FriendlyError> = {
     title: "Approval can’t be decided",
     description: "This approval is no longer actionable. Refresh to see its latest lifecycle state.",
   },
+  self_approval_denied: {
+    title: "Self-approval not permitted",
+    description:
+      "You cannot approve a job you submitted. A different administrator must approve this request.",
+  },
 };
 
 /** HTTP status code to friendly message mapping. */

@@ -1,5 +1,5 @@
 import type { Node, Edge } from "reactflow";
-import type { Workflow, WorkflowRun, RunStatus } from "@/api/types";
+import type { RunStatus } from "@/api/types";
 
 // ---------------------------------------------------------------------------
 // Studio modes
@@ -57,6 +57,9 @@ export interface UnifiedNodeData {
   /** Audit-chain hash for the runtime decision. Source: WorkflowRunStep.auditHash
    *  (cordum-core field tracked in task-913b6c6c). Renders as a copy chip. */
   auditHash?: string;
+  /** Step dependencies. Source: WorkflowStep.depends_on (snake_case mirror
+   *  of the cordum-core field). Renders in the tooltip as a chip list. */
+  depends_on?: string[];
 
   // --- Mode awareness ---
   /** Current studio mode — nodes render differently based on this */
@@ -78,16 +81,4 @@ export interface CanvasHandle {
   setEdges: React.Dispatch<React.SetStateAction<Edge[]>>;
   /** Read current graph state synchronously — safe to call in save callbacks */
   getGraph: () => { nodes: Node<UnifiedNodeData>[]; edges: Edge[] };
-}
-
-// ---------------------------------------------------------------------------
-// Studio context — passed down from orchestrator
-// ---------------------------------------------------------------------------
-
-export interface StudioContext {
-  mode: StudioMode;
-  workflow: Workflow | null;
-  run: WorkflowRun | null;
-  isLoading: boolean;
-  isSaving: boolean;
 }
