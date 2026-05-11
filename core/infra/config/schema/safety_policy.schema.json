@@ -265,7 +265,10 @@
         "sandbox": {"$ref": "#/definitions/sandboxProfile"},
         "toolchain": {"$ref": "#/definitions/toolchainConstraints"},
         "diff": {"$ref": "#/definitions/diffConstraints"},
-        "redaction_level": {"type": "string"}
+        "redaction_level": {"type": "string"},
+        "max_output_bytes": {"type": "integer", "minimum": 0, "maximum": 16777216},
+        "allowed_destinations": {"type": "array", "items": {"type": "string"}},
+        "redact_patterns": {"type": "array", "items": {"type": "string"}}
       }
     },
     "budgetConstraints": {

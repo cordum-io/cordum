@@ -3,7 +3,6 @@ import { type ReactNode, useState, useEffect, useRef, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/state/ui";
-import { FEATURE_FLAGS } from "@/config/flags";
 import { useApprovals } from "@/hooks/useApprovals";
 import { useDLQ } from "@/hooks/useDLQ";
 import { useLicense } from "@/hooks/useLicense";
@@ -40,7 +39,6 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
-  KeyRound,
   Package,
   Database,
   Hash,
@@ -82,17 +80,16 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
       { path: "/jobs", label: "Jobs", icon: ListChecks },
       { path: "/edge/sessions", label: "Edge Sessions", icon: ShieldCheck },
       { path: "/workflows", label: "Workflows", icon: Workflow },
+      { path: "/runs", label: "Runs", icon: ListChecks },
       { path: "/approvals", label: "Approvals", icon: UserCheck, badge: "approvals" },
     ],
   },
   {
     label: "Govern",
     items: [
-      { path: "/govern/overview", label: "Policy Studio", icon: Shield },
-      ...(FEATURE_FLAGS.delegationDashboard
-        ? [{ path: "/delegations", label: "Delegations", icon: KeyRound }]
-        : []),
-      { path: "/govern/quarantine", label: "Quarantine", icon: ShieldAlert, badge: "quarantine" },
+      { path: "/policies", label: "Policy Studio", icon: Shield },
+      { path: "/security/quarantine", label: "Quarantine", icon: ShieldAlert, badge: "quarantine" },
+      { path: "/security/safety", label: "Safety Controls", icon: ShieldCheck },
       { path: "/govern/verification", label: "Verification", icon: ShieldCheck },
     ],
   },
@@ -108,9 +105,6 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
     label: "Audit",
     items: [
       { path: "/audit", label: "Audit Log", icon: FileText },
-      // Dead Letters folded into JobsPage as a status filter (task-0bcb9411).
-      // App.tsx still redirects legacy /dlq bookmarks, but the canonical
-      // navigation target is JobsPage with the DLQ status filter active.
       { path: "/jobs?status=dlq", label: "Dead Letters", icon: AlertTriangle, badge: "dlq" },
     ],
   },

@@ -65,9 +65,9 @@ describe("Policy Studio foundation page shells", () => {
       </NuqsTestingAdapter>,
       { runAxe: true },
     );
-    expect(getByText("Policy Rules")).toBeTruthy();
+    expect(getByText("Policy Studio")).toBeTruthy();
     expect(
-      getByText("Author and manage rules across job + edge surfaces"),
+      getByText("Author and manage unified firewall rules across cloud + edge"),
     ).toBeTruthy();
     expect(await findByText("No rules yet")).toBeTruthy();
   });
@@ -90,7 +90,7 @@ describe("Policy Studio foundation page shells", () => {
     expect(screen.getByLabelText("Search rules")).toBeTruthy();
     expect(screen.getByRole("button", { name: /new rule/i })).toBeTruthy();
     expect(await screen.findByRole("link", { name: /pii ingress guard/i })).toBeTruthy();
-    expect(screen.getByRole("columnheader", { name: /last 7d/i })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: /traffic \(7d\)/i })).toBeTruthy();
     expect(screen.getByText("tenant:acme")).toBeTruthy();
     expect(screen.getAllByText("published").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByTestId("rule-type-icon-input")).toBeTruthy();
@@ -244,7 +244,7 @@ describe("Policy Studio foundation page shells", () => {
       </NuqsTestingAdapter>,
       { runAxe: true },
     );
-    expect(getByText("Policy Bundles")).toBeTruthy();
+    expect(getByText("Policy Studio")).toBeTruthy();
     expect(getByText("Group rules + deploy to scopes")).toBeTruthy();
     expect(await findByText("No bundles yet")).toBeTruthy();
   });

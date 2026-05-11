@@ -52,10 +52,16 @@ type packManifest struct {
 }
 
 type packMetadata struct {
-	ID          string `yaml:"id"`
-	Version     string `yaml:"version"`
-	Title       string `yaml:"title"`
-	Description string `yaml:"description"`
+	ID          string   `yaml:"id"`
+	Version     string   `yaml:"version"`
+	Title       string   `yaml:"title"`
+	Description string   `yaml:"description"`
+	// Aliases declares additional namespace identifiers this pack owns,
+	// in addition to ID. When set, topic/pools-patch namespace checks
+	// accept `job.<id>.*` AND `job.<alias>.*` for each alias. Each alias
+	// must match `^[a-z][a-z0-9_-]{1,30}$`; max 8 entries. Existing packs
+	// that omit this field keep validating under the strict prefix rule.
+	Aliases []string `yaml:"aliases,omitempty"`
 }
 
 type packCompatibility struct {
@@ -373,7 +379,7 @@ func runPackInstall(args []string) error {
 		if shouldSkipConfigOverlay(*inactive, overlay) {
 			continue
 		}
-		applied, err := applyConfigOverlay(ctx, client, overlay, manifest.Metadata.ID, bundle.Dir)
+		applied, err := applyConfigOverlay(ctx, client, overlay, manifest.Metadata.ID, manifest.Metadata.Aliases, bundle.Dir)
 		if err != nil {
 			return rollback(err)
 		}
@@ -818,6 +824,88 @@ func loadPackManifest(dir string) (*packManifest, error) {
 	return &manifest, nil
 }
 
+// packAliasPattern bounds the alias namespace: leading lower-case letter,
+// followed by lower-case alnum / hyphen / underscore, up to 31 chars total.
+// Tight on purpose — prevents namespace squatting by forcing distinct,
+// auditable identifiers per alias declaration.
+var packAliasPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,30}$`)
+
+// maxPackAliases caps the number of alias entries a single pack may
+// declare. Eight is enough for legitimate "this pack owns sibling
+// namespaces" cases (e.g., cordclaw → openclaw) without enabling broad
+// namespace fan-out.
+const maxPackAliases = 8
+
+// validatePackAliases enforces the alias regex + cap. Returns nil when
+// the slice is empty; called from validatePackManifest before any topic
+// or pool prefix check so an alias typo fails install-time, not
+// emit-time.
+func validatePackAliases(aliases []string) error {
+	if len(aliases) == 0 {
+		return nil
+	}
+	if len(aliases) > maxPackAliases {
+		return fmt.Errorf("metadata.aliases: at most %d entries allowed, got %d", maxPackAliases, len(aliases))
+	}
+	seen := make(map[string]struct{}, len(aliases))
+	for _, alias := range aliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" {
+			return errors.New("metadata.aliases: empty alias not allowed")
+		}
+		if !packAliasPattern.MatchString(alias) {
+			return fmt.Errorf("metadata.aliases: %q must match %s", alias, packAliasPattern.String())
+		}
+		if _, dup := seen[alias]; dup {
+			return fmt.Errorf("metadata.aliases: duplicate entry %q", alias)
+		}
+		seen[alias] = struct{}{}
+	}
+	return nil
+}
+
+// packTopicPrefixes returns the set of "job.<x>." prefixes a pack may use
+// for its topics. Always includes "job.<id>."; each declared alias adds
+// "job.<alias>.". Callers iterate over the slice with HasPrefix; the slice
+// is small (<=9 entries given maxPackAliases) so linear scan is fine.
+func packTopicPrefixes(id string, aliases []string) []string {
+	prefixes := make([]string, 0, 1+len(aliases))
+	prefixes = append(prefixes, "job."+id+".")
+	for _, alias := range aliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" {
+			continue
+		}
+		prefixes = append(prefixes, "job."+alias+".")
+	}
+	return prefixes
+}
+
+// hasAnyPrefix reports whether s starts with any prefix in the slice.
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// formatPrefixList formats a slice of `job.<x>.` prefixes for error
+// messages. Single prefix → `job.<x>.*`; multiple → `job.<a>.* or
+// job.<b>.* ...` so operators can see exactly which namespaces are
+// allowed. Glob suffix is added inline since errors mention `.*` patterns.
+func formatPrefixList(prefixes []string) string {
+	parts := make([]string, len(prefixes))
+	for i, prefix := range prefixes {
+		parts[i] = prefix + "*"
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return strings.Join(parts, " or ")
+}
+
 func validatePackManifest(manifest *packManifest) error {
 	if manifest == nil {
 		return errors.New("pack manifest required")
@@ -829,6 +917,9 @@ func validatePackManifest(manifest *packManifest) error {
 	idPattern := regexp.MustCompile(`^[a-z0-9-]+$`)
 	if !idPattern.MatchString(id) {
 		return fmt.Errorf("metadata.id must match %s", idPattern.String())
+	}
+	if err := validatePackAliases(manifest.Metadata.Aliases); err != nil {
+		return err
 	}
 	if strings.TrimSpace(manifest.Metadata.Version) == "" {
 		return errors.New("metadata.version required")
@@ -843,12 +934,13 @@ func validatePackManifest(manifest *packManifest) error {
 			return fmt.Errorf("compatibility.maxCoreVersion must be semver: %q", maxVersion)
 		}
 	}
+	topicPrefixes := packTopicPrefixes(id, manifest.Metadata.Aliases)
 	for _, topic := range manifest.Topics {
 		if topic.Name == "" {
 			return errors.New("topic name required")
 		}
-		if !strings.HasPrefix(topic.Name, "job."+id+".") {
-			return fmt.Errorf("topic %q must be namespaced under job.%s.*", topic.Name, id)
+		if !hasAnyPrefix(topic.Name, topicPrefixes) {
+			return fmt.Errorf("topic %q must be namespaced under %s", topic.Name, formatPrefixList(topicPrefixes))
 		}
 	}
 	schemaIDs := make(map[string]struct{}, len(manifest.Resources.Schemas))
@@ -1137,7 +1229,7 @@ func topicPoolMappingsFromConfig(doc *configDoc) (map[string]string, error) {
 	return poolsCfg.TopicToPool(), nil
 }
 
-func applyConfigOverlay(ctx context.Context, client *restClient, overlay packConfigOverlay, packID, dir string) (appliedConfigChange, error) {
+func applyConfigOverlay(ctx context.Context, client *restClient, overlay packConfigOverlay, packID string, packAliases []string, dir string) (appliedConfigChange, error) {
 	key := strings.TrimSpace(overlay.Key)
 	if key == "" {
 		return appliedConfigChange{}, errors.New("config overlay key required")
@@ -1173,7 +1265,7 @@ func applyConfigOverlay(ctx context.Context, client *restClient, overlay packCon
 		doc.Data = map[string]any{}
 	}
 	current := normalizeJSON(doc.Data[key])
-	if err := validateConfigPatch(key, patchMap, packID, current); err != nil {
+	if err := validateConfigPatch(key, patchMap, packID, packAliases, current); err != nil {
 		return appliedConfigChange{}, fmt.Errorf("apply config overlay %s: %w", overlay.Name, err)
 	}
 	before := deepCopy(current)
@@ -1644,18 +1736,19 @@ func loadPatchFile(dir, relPath string) (any, error) {
 	return data, nil
 }
 
-func validateConfigPatch(key string, patch map[string]any, packID string, current any) error {
+func validateConfigPatch(key string, patch map[string]any, packID string, packAliases []string, current any) error {
 	switch strings.ToLower(key) {
 	case "pools":
-		return validatePoolsPatch(patch, packID, current)
+		return validatePoolsPatch(patch, packID, packAliases, current)
 	case "timeouts":
-		return validateTimeoutsPatch(patch, packID)
+		return validateTimeoutsPatch(patch, packID, packAliases)
 	default:
 		return fmt.Errorf("unsupported config overlay key %q", key)
 	}
 }
 
-func validatePoolsPatch(patch map[string]any, packID string, current any) error {
+func validatePoolsPatch(patch map[string]any, packID string, packAliases []string, current any) error {
+	topicPrefixes := packTopicPrefixes(packID, packAliases)
 	rawTopics := normalizeJSON(patch["topics"])
 	if rawTopics != nil {
 		topics, ok := rawTopics.(map[string]any)
@@ -1663,8 +1756,8 @@ func validatePoolsPatch(patch map[string]any, packID string, current any) error 
 			return errors.New("pools.topics must be a map")
 		}
 		for topic := range topics {
-			if !strings.HasPrefix(topic, "job."+packID+".") {
-				return fmt.Errorf("pools topic %q must be namespaced under job.%s.*", topic, packID)
+			if !hasAnyPrefix(topic, topicPrefixes) {
+				return fmt.Errorf("pools topic %q must be namespaced under %s", topic, formatPrefixList(topicPrefixes))
 			}
 		}
 	}
@@ -1709,7 +1802,8 @@ func extractPools(current any) map[string]struct{} {
 	return out
 }
 
-func validateTimeoutsPatch(patch map[string]any, packID string) error {
+func validateTimeoutsPatch(patch map[string]any, packID string, packAliases []string) error {
+	topicPrefixes := packTopicPrefixes(packID, packAliases)
 	rawTopics := normalizeJSON(patch["topics"])
 	if rawTopics != nil {
 		topics, ok := rawTopics.(map[string]any)
@@ -1717,8 +1811,8 @@ func validateTimeoutsPatch(patch map[string]any, packID string) error {
 			return errors.New("timeouts.topics must be a map")
 		}
 		for topic := range topics {
-			if !strings.HasPrefix(topic, "job."+packID+".") {
-				return fmt.Errorf("timeouts topic %q must be namespaced under job.%s.*", topic, packID)
+			if !hasAnyPrefix(topic, topicPrefixes) {
+				return fmt.Errorf("timeouts topic %q must be namespaced under %s", topic, formatPrefixList(topicPrefixes))
 			}
 		}
 	}

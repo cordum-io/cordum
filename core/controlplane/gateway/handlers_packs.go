@@ -257,7 +257,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		if packs.ShouldSkipConfigOverlay(opts.Inactive, overlay) {
 			continue
 		}
-		applied, err := s.applyConfigOverlay(ctx, overlay, manifest.Metadata.ID, bundleDir)
+		applied, err := s.applyConfigOverlay(ctx, overlay, manifest.Metadata.ID, manifest.Metadata.Aliases, bundleDir)
 		if err != nil {
 			rollback()
 			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
@@ -752,7 +752,7 @@ func (s *server) rollbackWorkflow(ctx context.Context, plan packs.WorkflowPlan) 
 	return s.workflowStore.DeleteWorkflow(ctx, plan.ID)
 }
 
-func (s *server) applyConfigOverlay(ctx context.Context, overlay packs.PackConfigOverlay, packID, dir string) (packs.AppliedConfigChange, error) {
+func (s *server) applyConfigOverlay(ctx context.Context, overlay packs.PackConfigOverlay, packID string, packAliases []string, dir string) (packs.AppliedConfigChange, error) {
 	key := strings.TrimSpace(overlay.Key)
 	if key == "" {
 		return packs.AppliedConfigChange{}, errors.New("config overlay key required")
@@ -785,7 +785,7 @@ func (s *server) applyConfigOverlay(ctx context.Context, overlay packs.PackConfi
 		doc.Data = map[string]any{}
 	}
 	current := packs.NormalizeJSON(doc.Data[key])
-	if err := packs.ValidateConfigPatch(key, patchMap, packID, current); err != nil {
+	if err := packs.ValidateConfigPatch(key, patchMap, packID, packAliases, current); err != nil {
 		return packs.AppliedConfigChange{}, err
 	}
 	before := packs.DeepCopy(current)

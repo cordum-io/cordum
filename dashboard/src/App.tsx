@@ -36,20 +36,18 @@ const JobsPage = lazy(() => import("./pages/JobsPage"));
 const JobDetailPage = lazy(() => import("./pages/JobDetailPage"));
 const AgentsPage = lazy(() => import("./pages/AgentsPage"));
 const AgentDetailPage = lazy(() => import("./pages/AgentDetailPage"));
-const DelegationsPage = lazy(() => import("./pages/DelegationsPage"));
 const ApprovalsPage = lazy(() => import("./pages/ApprovalsPage"));
 const ApprovalDetailPage = lazy(() => import("./pages/approvals/ApprovalDetailPage"));
 const WorkflowsPage = lazy(() => import("./pages/WorkflowsPage"));
 const WorkflowStudioPage = lazy(() => import("./pages/WorkflowStudioPage"));
 const RunDetailPage = lazy(() => import("./pages/RunDetailPage"));
+const RunsPage = lazy(() => import("./pages/RunsPage"));
 const PacksPage = lazy(() => import("./pages/PacksPage"));
 const PackDetailPage = lazy(() => import("./pages/PackDetailPage"));
 const SchemasPage = lazy(() => import("./pages/SchemasPage"));
 const SchemaDetailPage = lazy(() => import("./pages/SchemaDetailPage"));
 const TopicsPage = lazy(() => import("./pages/TopicsPage"));
 const AuditLogPage = lazy(() => import("./pages/AuditLogPage"));
-// DLQPage was deleted in task-100cc89c step 5 — /dlq folds into JobsPage
-// as ?status=dlq via the DlqRouteRedirect below.
 const SettingsHealthPage = lazy(() => import("./pages/SettingsHealthPage"));
 const SettingsKeysPage = lazy(() => import("./pages/SettingsKeysPage"));
 const SettingsUsersPage = lazy(() => import("./pages/SettingsUsersPage"));
@@ -64,12 +62,11 @@ const SettingsAuditExportPage = lazy(() => import("./pages/settings/SettingsAudi
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage"));
 const SettingsShell = lazy(() => import("./pages/SettingsShell"));
 const SettingsHubPage = lazy(() => import("./pages/SettingsHubPage"));
-// PolicyOverviewPage is no longer routed; /govern/overview redirects to /policies
-// (epic-d9a6c0a1 Dashboard 1). The component file remains until Dashboard 2-4
-// hero rewrites land + the file is deleted in Dashboard 11 cut-over.
+
 const GovernTenantDetailPage = lazy(() => import("./pages/govern/TenantDetailPage"));
 const GovernBundleDetailPage = lazy(() => import("./pages/govern/BundleDetailPage"));
-const GovernQuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"));
+const QuarantinePage = lazy(() => import("./pages/govern/QuarantinePage"));
+const SafetyControlsPage = lazy(() => import("./pages/govern/SafetyControlsPage"));
 const GovernanceVerificationPage = lazy(() => import("./pages/govern/GovernanceVerificationPage"));
 const EvalsPage = lazy(() => import("./pages/EvalsPage"));
 const EvalDatasetDetailPage = lazy(() => import("./pages/EvalDatasetDetailPage"));
@@ -77,6 +74,7 @@ const EvalRunDetailPage = lazy(() => import("./pages/EvalRunDetailPage"));
 const CopilotSessionPage = lazy(() => import("./pages/CopilotSessionPage"));
 const EdgeSessionDetailPage = lazy(() => import("./pages/EdgeSessionDetailPage"));
 const EdgeSessionsPage = lazy(() => import("./pages/EdgeSessionsPage"));
+
 // Policy Studio v3 surfaces (epic-d9a6c0a1 Dashboard 1 foundation).
 const PoliciesPage = lazy(() => import("./pages/policies/PoliciesPage"));
 const PoliciesBundlesPage = lazy(() => import("./pages/policies/BundlesPage"));
@@ -97,18 +95,6 @@ function AgentIdentityRedirect() {
 
 export function DlqRouteRedirect() {
   return <Navigate to="/jobs?status=dlq" replace />;
-}
-
-function PolicyTabRedirect({ tab, mode }: { tab: string; mode?: string }) {
-  const [searchParams] = useSearchParams();
-  const params = new URLSearchParams(searchParams);
-  params.set("tab", tab);
-  if (mode) {
-    params.set("mode", mode);
-  } else {
-    params.delete("mode");
-  }
-  return <Navigate to={`/govern/overview?${params.toString()}`} replace />;
 }
 
 /**
@@ -187,47 +173,50 @@ function ProtectedRoutes() {
     <AppShell>
       <Suspense fallback={<LoadingScreen />}>
         <Routes>
-          {/* OPERATE */}
+          {/* RUN / OPERATE */}
           <Route path="/" element={<RouteBoundary name="Overview"><HomePage /></RouteBoundary>} />
           <Route path="/agents" element={<RouteBoundary name="Agents"><AgentsPage /></RouteBoundary>} />
           <Route path="/agents/:id" element={<RouteBoundary name="Agent details"><AgentDetailPage /></RouteBoundary>} />
           <Route path="/agents/identity/:id" element={<AgentIdentityRedirect />} />
-          {FEATURE_FLAGS.delegationDashboard && (
-            <Route path="/delegations" element={<RouteBoundary name="Delegations"><DelegationsPage /></RouteBoundary>} />
-          )}
           <Route path="/jobs" element={<RouteBoundary name="Jobs"><JobsPage /></RouteBoundary>} />
           <Route path="/jobs/:id" element={<RouteBoundary name="Job details"><JobDetailPage /></RouteBoundary>} />
           <Route path="/edge/sessions" element={<RouteBoundary name="Edge sessions"><EdgeSessionsPage /></RouteBoundary>} />
           <Route path="/edge/sessions/:sessionId" element={<RouteBoundary name="Edge session details"><EdgeSessionDetailPage /></RouteBoundary>} />
+          <Route path="/runs" element={<RouteBoundary name="Runs"><RunsPage /></RouteBoundary>} />
 
-          {/* ORCHESTRATE */}
-          <Route path="/workflows" element={<RouteBoundary name="Workflows"><WorkflowsPage /></RouteBoundary>} />
-          <Route path="/workflows/studio/new" element={<RouteBoundary name="Workflow studio"><WorkflowStudioPage /></RouteBoundary>} />
-          <Route path="/workflows/:id/studio" element={<RouteBoundary name="Workflow studio"><WorkflowStudioPage /></RouteBoundary>} />
-          <Route path="/workflows/:id/runs/:runId" element={<RouteBoundary name="Run details"><RunDetailPage /></RouteBoundary>} />
+          {/* GOVERN */}
           <Route path="/approvals" element={<RouteBoundary name="Approvals"><ApprovalsPage /></RouteBoundary>} />
           <Route path="/approvals/:jobId" element={<RouteBoundary name="Approval details"><ApprovalDetailPage /></RouteBoundary>} />
-
-          {/* POLICY STUDIO (epic-d9a6c0a1 v3 IA) — three top-level surfaces */}
+          
           <Route path="/policies" element={<RouteBoundary name="Policy rules"><PoliciesPage /></RouteBoundary>} />
           <Route path="/policies/bundles" element={<RouteBoundary name="Policy bundles"><PoliciesBundlesPage /></RouteBoundary>} />
           <Route path="/policies/bundles/:id" element={<RouteBoundary name="Bundle details"><PoliciesBundleDetailPage /></RouteBoundary>} />
           <Route path="/policies/decisions" element={<RouteBoundary name="Policy decisions"><PoliciesDecisionsPage /></RouteBoundary>} />
 
-          {/* GOVERN — legacy redirects preserve bookmarks; canonical surfaces are /policies/* */}
-          <Route path="/govern/overview" element={<GovernOverviewRedirect />} />
-          <Route path="/govern/input-rules" element={<PolicyTabRedirect tab="input-rules" />} />
-          <Route path="/govern/output-rules" element={<PolicyTabRedirect tab="output-rules" />} />
-          <Route path="/govern/velocity-rules" element={<PolicyTabRedirect tab="velocity" />} />
-          <Route path="/govern/tenants" element={<PolicyTabRedirect tab="scope" />} />
+          <Route path="/security/quarantine" element={<RouteBoundary name="Quarantine"><QuarantinePage /></RouteBoundary>} />
+          <Route path="/security/safety" element={<RouteBoundary name="Safety Controls"><SafetyControlsPage /></RouteBoundary>} />
+          <Route path="/govern/verification" element={<RouteBoundary name="Governance verification"><GovernanceVerificationPage /></RouteBoundary>} />
           <Route path="/govern/tenants/:id" element={<RouteBoundary name="Tenant details"><GovernTenantDetailPage /></RouteBoundary>} />
           <Route path="/govern/bundles/:id" element={<RouteBoundary name="Bundle details"><GovernBundleDetailPage /></RouteBoundary>} />
-          <Route path="/govern/bundles" element={<PolicyTabRedirect tab="bundles" />} />
-          <Route path="/govern/simulator" element={<PolicyTabRedirect tab="evaluation" mode="simulator" />} />
-          <Route path="/govern/quarantine" element={<RouteBoundary name="Quarantine"><GovernQuarantinePage /></RouteBoundary>} />
-          <Route path="/govern/verification" element={<RouteBoundary name="Governance verification"><GovernanceVerificationPage /></RouteBoundary>} />
-          <Route path="/govern/replay" element={<PolicyTabRedirect tab="evaluation" mode="replay" />} />
-          <Route path="/govern/analytics" element={<PolicyTabRedirect tab="evaluation" mode="analytics" />} />
+          <Route path="/govern/overview" element={<GovernOverviewRedirect />} />
+          <Route path="/govern/quarantine" element={<Navigate to="/security/quarantine" replace />} />
+
+          {/* BUILD / CATALOG */}
+          <Route path="/workflows" element={<RouteBoundary name="Workflows"><WorkflowsPage /></RouteBoundary>} />
+          <Route path="/workflows/studio/new" element={<RouteBoundary name="Workflow studio"><WorkflowStudioPage /></RouteBoundary>} />
+          <Route path="/workflows/:id/studio" element={<RouteBoundary name="Workflow studio"><WorkflowStudioPage /></RouteBoundary>} />
+          <Route path="/workflows/:id/runs/:runId" element={<RouteBoundary name="Run details"><RunDetailPage /></RouteBoundary>} />
+          <Route path="/packs" element={<RouteBoundary name="Packs"><PacksPage /></RouteBoundary>} />
+          <Route path="/packs/:id" element={<RouteBoundary name="Pack details"><PackDetailPage /></RouteBoundary>} />
+          <Route path="/topics" element={<RouteBoundary name="Topics"><TopicsPage /></RouteBoundary>} />
+          <Route path="/schemas" element={<RouteBoundary name="Schemas"><SchemasPage /></RouteBoundary>} />
+          <Route path="/schemas/:id" element={<RouteBoundary name="Schema details"><SchemaDetailPage /></RouteBoundary>} />
+
+          {/* AUDIT */}
+          <Route path="/audit" element={<RouteBoundary name="Audit Trail"><AuditLogPage /></RouteBoundary>} />
+          <Route path="/dlq" element={<DlqRouteRedirect />} />
+
+          {/* OTHER */}
           {FEATURE_FLAGS.evalsPage && (
             <>
               <Route path="/evals" element={<RouteBoundary name="Evaluations"><EvalsPage /></RouteBoundary>} />
@@ -235,27 +224,9 @@ function ProtectedRoutes() {
               <Route path="/evals/runs/:runId" element={<RouteBoundary name="Eval run"><EvalRunDetailPage /></RouteBoundary>} />
             </>
           )}
-
-          {/* COPILOT */}
           <Route path="/copilot/sessions/:sessionId" element={<RouteBoundary name="Copilot session"><CopilotSessionPage /></RouteBoundary>} />
 
-          {/* EXTEND */}
-          <Route path="/packs" element={<RouteBoundary name="Packs"><PacksPage /></RouteBoundary>} />
-          <Route path="/packs/:id" element={<RouteBoundary name="Pack details"><PackDetailPage /></RouteBoundary>} />
-          <Route path="/topics" element={<RouteBoundary name="Topics"><TopicsPage /></RouteBoundary>} />
-          <Route path="/schemas" element={<RouteBoundary name="Schemas"><SchemasPage /></RouteBoundary>} />
-          <Route path="/schemas/:id" element={<RouteBoundary name="Schema details"><SchemaDetailPage /></RouteBoundary>} />
-
-          {/* OBSERVE */}
-          <Route path="/audit" element={<RouteBoundary name="Audit log"><AuditLogPage /></RouteBoundary>} />
-          {/* /dlq folds into JobsPage via ?status=dlq (task-0bcb9411 + page-
-              deletion in task-100cc89c step 5). The redirect keeps existing
-              bookmarks + sidebar entries working. */}
-          <Route path="/dlq" element={<DlqRouteRedirect />} />
-
-          {/* SETTINGS — single shell with grouped left sub-nav (v2.5 IA cut).
-              Each leaf route gets its own RouteBoundary so a failure in one
-              settings page leaves the rest of the shell + sidebar usable. */}
+          {/* SETTINGS */}
           <Route path="/settings" element={<RouteBoundary name="Settings"><SettingsShell /></RouteBoundary>}>
             <Route index element={<RouteBoundary name="Settings hub"><SettingsHubPage /></RouteBoundary>} />
             <Route path="health" element={<RouteBoundary name="Settings: health"><SettingsHealthPage /></RouteBoundary>} />

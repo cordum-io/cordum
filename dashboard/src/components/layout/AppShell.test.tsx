@@ -65,6 +65,7 @@ describe("AppShell GOVERN navigation", () => {
     expect(labels).toEqual([
       "Policy Studio",
       "Quarantine",
+      "Safety Controls",
       "Verification",
     ]);
   });
@@ -74,13 +75,14 @@ describe("AppShell GOVERN navigation", () => {
     expect(govern).toBeDefined();
 
     expect(govern?.items.map((item) => item.path)).toEqual([
-      "/govern/overview",
-      "/govern/quarantine",
+      "/policies",
+      "/security/quarantine",
+      "/security/safety",
       "/govern/verification",
     ]);
 
     const quarantine = govern?.items.find((item) => item.label === "Quarantine");
-    expect(quarantine?.path).toBe("/govern/quarantine");
+    expect(quarantine?.path).toBe("/security/quarantine");
     expect(quarantine?.badge).toBe("quarantine");
   });
 
@@ -115,12 +117,12 @@ describe("AppShell findActiveSection", () => {
     expect(findActiveSection("/edge/sessions/abc", APP_SHELL_NAV_SECTIONS)).toBe("Run");
   });
 
-  it("matches /govern/overview to Govern", () => {
-    expect(findActiveSection("/govern/overview", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
+  it("matches /policies to Govern (Policy Studio nav item)", () => {
+    expect(findActiveSection("/policies", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
   });
 
-  it("matches /govern/quarantine to Govern (badge route)", () => {
-    expect(findActiveSection("/govern/quarantine", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
+  it("matches /security/quarantine to Govern (badge route)", () => {
+    expect(findActiveSection("/security/quarantine", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
   });
 
   it("matches /packs/abc to Catalog", () => {
@@ -170,6 +172,7 @@ describe("AppShell sidebar accordion structure", () => {
       "Jobs",
       "Edge Sessions",
       "Workflows",
+      "Runs",
       "Approvals",
     ]);
   });

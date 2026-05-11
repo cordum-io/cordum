@@ -1,6 +1,6 @@
-import { GitBranch, Plus, Search } from "lucide-react";
+import { GitBranch, Plus, Search, Shield, Package, TrendingUp } from "lucide-react";
 import { useMemo } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQueryState, parseAsString } from "nuqs";
 import type { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -8,9 +8,16 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { DataTable } from "@/components/primitives/DataTable";
+import { Tabs } from "@/components/ui/Tabs";
 import { formatRelativeTime } from "@/lib/utils";
 import { useBundlesList } from "@/hooks/useBundlesList";
 import type { Bundle } from "@/api/generated/model/bundle";
+
+const POLICY_STUDIO_TABS = [
+  { id: "rules", label: "Rules", icon: <Shield className="h-4 w-4" /> },
+  { id: "bundles", label: "Bundles", icon: <Package className="h-4 w-4" /> },
+  { id: "decisions", label: "Decisions", icon: <TrendingUp className="h-4 w-4" /> },
+];
 
 /**
  * Policy Studio — Bundles surface (Dashboard 5 step 4a).
@@ -81,6 +88,7 @@ function StatusDot({ deployed }: { deployed: boolean }) {
 }
 
 export default function BundlesPage() {
+  const navigate = useNavigate();
   const [scope, setScope] = useQueryState(
     "scope",
     parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
@@ -155,24 +163,28 @@ export default function BundlesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        label="Policy Studio"
-        title="Policy Bundles"
+        label="Govern \u00b7 Policy Studio"
+        title="Policy Studio"
         subtitle="Group rules + deploy to scopes"
         actions={
           <Button
             variant="primary"
             size="sm"
-            // No-op until Backend 2's CreateBundle endpoint ships; the
-            // affordance is intentionally visible so the IA reads as
-            // complete to a CISO browsing the surface.
-            onClick={() => {
-              /* placeholder — Dashboard 5 follow-up wires CreateBundle */
-            }}
+            // No-op until Backend 2's CreateBundle endpoint ships
+            onClick={() => {}}
           >
             <Plus className="h-3.5 w-3.5 mr-1" aria-hidden />
             New bundle
           </Button>
         }
+      />
+
+      <Tabs
+        tabs={POLICY_STUDIO_TABS}
+        activeTab="bundles"
+        onChange={(id) => navigate(id === "rules" ? "/policies" : `/policies/${id}`)}
+        variant="segmented"
+        className="w-fit"
       />
 
       <div className="flex flex-wrap items-center gap-3">
@@ -194,6 +206,15 @@ export default function BundlesPage() {
           aria-label="Filter by scope binding"
           className="max-w-[240px]"
         />
+        <Button
+          variant="primary"
+          size="sm"
+          // No-op until Backend 2's CreateBundle endpoint ships
+          onClick={() => {}}
+        >
+          <Plus className="h-3.5 w-3.5 mr-1" aria-hidden />
+          New bundle
+        </Button>
       </div>
 
       {isError ? (

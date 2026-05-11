@@ -1,1 +1,0 @@
-CURL_HOME=/tmp/tmp.kCF0taHtqH

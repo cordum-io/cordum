@@ -1,18 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import type { ColumnDef } from "@tanstack/react-table";
-import { MoreHorizontal, Plus, Shield } from "lucide-react";
+import { GripVertical, MoreHorizontal, Plus, Shield, Globe, Users, Zap, Package, TrendingUp } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { DataTable, type DecisionTier } from "@/components/primitives/DataTable";
 import { RuleFiringSparkline } from "@/components/charts/RuleFiringSparkline";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { StatusBadge, type BadgeVariant } from "@/components/ui/StatusBadge";
+import { Tabs } from "@/components/ui/Tabs";
 import { PoliciesFilterBar } from "./PoliciesFilterBar";
 import { PoliciesEmptyTemplatesGallery } from "./PoliciesEmptyTemplatesGallery";
 import { RuleEditorDrawer } from "./RuleEditorDrawer";
 import { RuleStatus } from "@/api/generated/model/ruleStatus";
 import { RuleType } from "@/api/generated/model/ruleType";
+import { RuleScopeKind } from "@/api/generated/model/ruleScopeKind";
 import { formatRelativeTime } from "@/lib/utils";
 import { ruleTypeIcon, ruleTypeLabel } from "@/lib/policy-studio/rule-type";
 import {
@@ -28,9 +30,20 @@ interface RuleRow {
   typeLabel: string;
   scopeLabel: string;
   status: RuleStatus;
+  decision: string;
   updatedAt: string;
   last7dSeries: number[] | null;
 }
+
+const ACTION_VARIANT: Record<string, BadgeVariant> = {
+  allow: "healthy",
+  deny: "danger",
+  require_human: "warning",
+  throttle: "warning",
+  allow_with_constraints: "warning",
+  quarantine: "warning",
+  redact: "muted",
+};
 
 const STATUS_VARIANT: Record<RuleStatus, BadgeVariant> = {
   [RuleStatus.draft]: "muted",
@@ -38,27 +51,35 @@ const STATUS_VARIANT: Record<RuleStatus, BadgeVariant> = {
   [RuleStatus.deprecated]: "warning",
 };
 
-const STATUS_DECISION_TIER: Record<RuleStatus, DecisionTier> = {
-  [RuleStatus.draft]: "allow_with_constraints",
-  [RuleStatus.published]: "allow",
-  [RuleStatus.deprecated]: "throttle",
+const ACTION_DECISION_TIER: Record<string, DecisionTier> = {
+  allow: "allow",
+  deny: "deny",
+  require_human: "require_approval",
+  throttle: "throttle",
+  allow_with_constraints: "allow_with_constraints",
+  quarantine: "throttle",
+  redact: "allow_with_constraints",
 };
 
-// Defensive lookups — `useRulesList` already normalizes status into the
-// generated RuleStatus enum, but indexing a Record on a runtime-cast value
-// risks an undefined render if a future caller bypasses the hook. Fall back
-// to the neutral "draft" treatment so the page never crashes.
-function statusVariant(status: RuleStatus): BadgeVariant {
-  return STATUS_VARIANT[status] ?? STATUS_VARIANT[RuleStatus.draft];
+const POLICY_STUDIO_TABS = [
+  { id: "rules", label: "Rules", icon: <Shield className="h-4 w-4" /> },
+  { id: "bundles", label: "Bundles", icon: <Package className="h-4 w-4" /> },
+  { id: "decisions", label: "Decisions", icon: <TrendingUp className="h-4 w-4" /> },
+];
+
+function actionVariant(action: string): BadgeVariant {
+  return ACTION_VARIANT[action] ?? "muted";
 }
 
-function statusDecisionTier(status: RuleStatus): DecisionTier {
-  return STATUS_DECISION_TIER[status] ?? STATUS_DECISION_TIER[RuleStatus.draft];
+function statusVariant(status: RuleStatus): BadgeVariant {
+  return STATUS_VARIANT[status] ?? "muted";
+}
+
+function actionDecisionTier(action: string): DecisionTier {
+  return ACTION_DECISION_TIER[action] ?? "allow";
 }
 
 function scopeLabel(rule: NormalizedRule): string {
-  // No direct `rule.scope.kind` assumptions — guard against any residual
-  // malformed normalized rows. Preserves task-fd25f310 comment-beeedc8e.
   const scope = rule.scope;
   if (!scope || typeof scope.kind !== "string") return "global";
   if (scope.kind === "global") return "global";
@@ -74,6 +95,7 @@ function readLast7dSeries(rule: NormalizedRule): number[] | null {
 
 function toRuleRow(rule: NormalizedRule): RuleRow {
   const updatedAt = rule.audit?.updated_at || rule.audit?.created_at || "";
+  const decision = String(rule.decide?.type || "allow");
   return {
     rule,
     id: rule.id,
@@ -81,6 +103,7 @@ function toRuleRow(rule: NormalizedRule): RuleRow {
     typeLabel: ruleTypeLabel(rule.type),
     scopeLabel: scopeLabel(rule),
     status: rule.status,
+    decision,
     updatedAt,
     last7dSeries: readLast7dSeries(rule),
   };
@@ -103,11 +126,11 @@ function RuleTypeCell({ rule }: { rule: NormalizedRule }) {
 function RuleActions() {
   return (
     <Button
-      aria-label="Rule actions coming in Dashboard 3"
+      aria-label="Rule actions"
       data-row-action
       disabled
       size="icon"
-      title="Dashboard 3 wires edit, duplicate, and archive"
+      title="Rule actions coming in follow-up"
       variant="ghost"
     >
       <MoreHorizontal className="h-4 w-4" aria-hidden />
@@ -115,7 +138,45 @@ function RuleActions() {
   );
 }
 
+interface TierSectionProps {
+  title: string;
+  description: string;
+  icon: ReactNode;
+  rows: RuleRow[];
+  columns: ColumnDef<RuleRow, unknown>[];
+  isPending: boolean;
+  emptyState: ReactNode;
+}
+
+function TierSection({ title, description, icon, rows, columns, isPending, emptyState }: TierSectionProps) {
+  if (!isPending && rows.length === 0) return null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-3 px-1">
+        <div className="mt-0.5 rounded-lg bg-surface-2 p-1.5 text-muted-foreground shadow-sm ring-1 ring-border">
+          {icon}
+        </div>
+        <div>
+          <h3 className="text-sm font-bold tracking-tight text-foreground">{title}</h3>
+          <p className="text-xs text-muted-foreground/80 leading-relaxed">{description}</p>
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-2xl border border-border bg-surface-1/40 shadow-sm transition-all hover:bg-surface-1/60">
+        <DataTable<RuleRow>
+          columns={columns}
+          data={rows}
+          decisionAccessor={(row) => actionDecisionTier(row.decision)}
+          emptyState={emptyState}
+          compact
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function PoliciesPage() {
+  const navigate = useNavigate();
   const [rawFilters, setRawFilters] = useState<RuleFilters>({});
   const [queryFilters, setQueryFilters] = useState<RuleFilters>({});
   const hasSyncedFilters = useRef(false);
@@ -144,14 +205,44 @@ export default function PoliciesPage() {
     return () => window.clearTimeout(timeoutId);
   }, [rawFilters]);
 
-  const rows = useMemo(
+  const allRows = useMemo(
     () => (data?.rules ?? []).map(toRuleRow),
     [data?.rules],
   );
+
+  const globalRows = useMemo(
+    () => allRows.filter((r) => r.rule.scope?.kind === RuleScopeKind.global),
+    [allRows],
+  );
+  const tenantRows = useMemo(
+    () => allRows.filter((r) => r.rule.scope?.kind === RuleScopeKind.tenant),
+    [allRows],
+  );
+  const specificRows = useMemo(
+    () =>
+      allRows.filter(
+        (r) =>
+          r.rule.scope?.kind !== RuleScopeKind.global &&
+          r.rule.scope?.kind !== RuleScopeKind.tenant,
+      ),
+    [allRows],
+  );
+
   const filtersActive = Object.keys(rawFilters).length > 0;
 
   const columns = useMemo<ColumnDef<RuleRow, unknown>[]>(
     () => [
+      {
+        id: "priority",
+        header: "#",
+        cell: ({ row }) => (
+          <div className="flex items-center gap-2 text-muted-foreground font-mono text-[10px]">
+            <GripVertical className="h-3 w-3 opacity-20" />
+            <span>{(row.index + 1).toString().padStart(2, "0")}</span>
+          </div>
+        ),
+        size: 50,
+      },
       {
         accessorKey: "name",
         header: "Name",
@@ -171,12 +262,12 @@ export default function PoliciesPage() {
         cell: ({ row }) => <RuleTypeCell rule={row.original.rule} />,
       },
       {
-        accessorKey: "scopeLabel",
-        header: "Scope",
+        accessorKey: "decision",
+        header: "Decision",
         cell: ({ row }) => (
-          <span className="font-mono text-xs text-muted-foreground">
-            {row.original.scopeLabel}
-          </span>
+          <StatusBadge variant={actionVariant(row.original.decision)}>
+            {row.original.decision}
+          </StatusBadge>
         ),
       },
       {
@@ -189,17 +280,21 @@ export default function PoliciesPage() {
         ),
       },
       {
+        accessorKey: "scopeLabel",
+        header: "Scope",
+        cell: ({ row }) => (
+          <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-tight">
+            {row.original.scopeLabel}
+          </span>
+        ),
+      },
+      {
         accessorKey: "last7dSeries",
-        header: "Last 7d",
+        header: "Traffic (7d)",
         cell: ({ row }) => {
           if (row.original.last7dSeries === null) {
             return <span className="text-muted-foreground">—</span>;
           }
-          // Cross-link (D10a #1): clicking the sparkline deep-links to the
-          // Decisions surface filtered to this rule. The /policies/decisions
-          // route is a Dashboard 1 stub today; the URL contract is canonical
-          // (rule= filter) and routes correctly once D8 ships its filter bar.
-          // Total firings supplies the tooltip + accessible name.
           const total = row.original.last7dSeries.reduce(
             (sum, n) => sum + (Number.isFinite(n) ? n : 0),
             0,
@@ -226,21 +321,16 @@ export default function PoliciesPage() {
       },
       {
         id: "actions",
-        header: "Actions",
+        header: "",
         cell: () => <RuleActions />,
         enableSorting: false,
+        size: 40,
         meta: { align: "right" },
       },
     ],
     [],
   );
 
-  // Truly-empty rules list (no rows, no filters) renders the templates
-  // gallery as the empty-state CTA. Filtered-empty (filters active + zero
-  // matches) falls back to the existing "No rules match these filters"
-  // copy without the gallery — surfacing it there would mislead authors
-  // into thinking template-creation clears their active filters (it
-  // doesn't).
   const emptyState = filtersActive ? (
     <EmptyState
       icon={<Shield className="h-5 w-5" />}
@@ -259,11 +349,11 @@ export default function PoliciesPage() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-20">
       <PageHeader
-        label="Policy Studio"
-        title="Policy Rules"
-        subtitle="Author and manage rules across job + edge surfaces"
+        label="Govern \u00b7 Policy Studio"
+        title="Policy Studio"
+        subtitle="Author and manage unified firewall rules across cloud + edge"
         actions={
           <Link
             to={`/policies?rule=new&open=editor&type=${RuleType.input}`}
@@ -274,6 +364,14 @@ export default function PoliciesPage() {
             New rule
           </Link>
         }
+      />
+
+      <Tabs
+        tabs={POLICY_STUDIO_TABS}
+        activeTab="rules"
+        onChange={(id) => navigate(id === "rules" ? "/policies" : `/policies/${id}`)}
+        variant="segmented"
+        className="w-fit"
       />
 
       <PoliciesFilterBar onFiltersChange={setRawFilters} />
@@ -291,15 +389,38 @@ export default function PoliciesPage() {
           title="Loading rules…"
           description="Fetching from /api/v1/policy/rules."
         />
+      ) : allRows.length === 0 ? (
+        emptyState
       ) : (
-        <DataTable<RuleRow>
-          columns={columns}
-          data={rows}
-          decisionAccessor={(row) => statusDecisionTier(row.status)}
-          emptyState={emptyState}
-          initialSorting={[{ id: "name", desc: false }]}
-          virtualizedHeight={520}
-        />
+        <div className="space-y-12">
+          <TierSection
+            title="Global Policies"
+            description="Evaluated first for all traffic across cloud jobs and edge agents. Highest precedence."
+            icon={<Globe className="h-4 w-4" />}
+            rows={globalRows}
+            columns={columns}
+            isPending={isPending}
+            emptyState={emptyState}
+          />
+          <TierSection
+            title="Tenant Policies"
+            description="Evaluated after Global rules for specific tenant contexts."
+            icon={<Users className="h-4 w-4" />}
+            rows={tenantRows}
+            columns={columns}
+            isPending={isPending}
+            emptyState={emptyState}
+          />
+          <TierSection
+            title="Specific & Edge Policies"
+            description="Targeted rules for individual Workflows, Edge Fleets, or Users. Evaluated last."
+            icon={<Zap className="h-4 w-4" />}
+            rows={specificRows}
+            columns={columns}
+            isPending={isPending}
+            emptyState={emptyState}
+          />
+        </div>
       )}
     </div>
   );

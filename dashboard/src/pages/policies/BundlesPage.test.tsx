@@ -50,7 +50,7 @@ describe("BundlesPage", () => {
       { initialEntries: ["/policies/bundles"] },
     );
     expect(
-      await screen.findByRole("heading", { name: /policy bundles/i }),
+      await screen.findByRole("heading", { name: /policy studio/i }),
     ).toBeTruthy();
     expect(await screen.findByText(/no bundles yet/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /create your first bundle/i })).toBeTruthy();
