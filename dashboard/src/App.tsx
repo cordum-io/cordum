@@ -82,7 +82,7 @@ const EdgeSessionsPage = lazy(() => import("./pages/EdgeSessionsPage"));
 function AgentIdentityRedirect() {
   const { id } = useParams<{ id: string }>();
   if (!id) return <Navigate to="/agents" replace />;
-  return <Navigate to={`/agents/${id}?tab=identity`} replace />;
+  return <Navigate to={`/agents/${encodeURIComponent(id)}?tab=identity`} replace />;
 }
 
 function PolicyTabRedirect({ tab, mode }: { tab: string; mode?: string }) {
