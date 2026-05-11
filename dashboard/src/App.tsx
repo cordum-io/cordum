@@ -203,7 +203,7 @@ function ProtectedRoutes() {
           {/* POLICY STUDIO (epic-d9a6c0a1 v3 IA) — three top-level surfaces */}
 
           {/* GOVERN — legacy redirects preserve bookmarks; canonical surfaces are /policies/* */}
-          <Route path="/govern/overview" element={<GovernOverviewRedirect />} />
+          <Route path="/govern/overview" element={<RouteBoundary name="Policy overview"><GovernPolicyOverviewPage /></RouteBoundary>} />
           <Route path="/govern/input-rules" element={<PolicyTabRedirect tab="input-rules" />} />
           <Route path="/govern/output-rules" element={<PolicyTabRedirect tab="output-rules" />} />
           <Route path="/govern/velocity-rules" element={<PolicyTabRedirect tab="velocity" />} />
