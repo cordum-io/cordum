@@ -79,4 +79,3 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260406210006-6f92a3bedf2d // indirect
 )
 
-replace github.com/cordum-io/cap/v2 => ../cap
