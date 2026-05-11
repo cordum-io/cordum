@@ -66,17 +66,20 @@ function bundleLabel(d: Decision): string {
   return d.bundle_version ? `${d.bundle_id}:${d.bundle_version}` : d.bundle_id;
 }
 
-function decisionRowKey(d: Decision, index: number): string {
-  // Decisions don't carry a stable id in the unified shape; use
-  // (timestamp + rule_id + audit_hash + index) so re-renders preserve
-  // row identity for virtualization without colliding on synthetic data.
-  return `${d.timestamp}|${d.rule_id}|${d.audit_hash ?? ""}|${index}`;
+export function decisionRowKey(d: Decision, _index?: number): string {
+  // Decisions don't carry a stable id in the unified shape. Key on the
+  // (timestamp, rule_id, audit_hash) tuple — position-independent so the
+  // expand-row state survives the live↔history toggle (live mode is
+  // newest-first, history is oldest-first; same Decision sits at a
+  // different index across the two modes). `_index` retained as an
+  // optional ignored parameter to keep .map(toRow) callsites tidy.
+  return `${d.timestamp}|${d.rule_id}|${d.audit_hash ?? ""}`;
 }
 
-function toRow(d: Decision, index: number): DecisionRow {
+function toRow(d: Decision): DecisionRow {
   return {
     decision: d,
-    id: decisionRowKey(d, index),
+    id: decisionRowKey(d),
     timestamp: d.timestamp,
     type: d.type,
     ruleId: d.rule_id,

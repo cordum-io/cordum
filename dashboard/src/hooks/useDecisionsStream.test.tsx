@@ -240,4 +240,61 @@ describe("useDecisionsStream", () => {
     unmount();
     expect(ws.closed).toBe(true);
   });
+
+  // Bug 1 (HIGH) lock-in — apiBaseUrl change must tear down the old WS
+  // and reopen against the new URL. Without apiBaseUrl in the effect
+  // deps, the existing WS keeps streaming from the OLD URL while polling
+  // fallback hits the NEW URL — tenant-switch / env-reload split-brain.
+  it("re-opens the WebSocket against the new URL when apiBaseUrl changes", async () => {
+    useConfigStore.setState({
+      apiKey: "test-key",
+      apiBaseUrl: "https://api-a.example/api/v1",
+    });
+    const { result } = renderHook(() => useDecisionsStream({}, true), {
+      wrapper: makeWrapper(newClient()),
+    });
+    expect(MockWebSocket.instances).toHaveLength(1);
+    const first = MockWebSocket.instances[0];
+    expect(first.url).toContain("api-a.example");
+    act(() => first.simulateOpen());
+    await waitFor(() => expect(result.current.mode).toBe("ws"));
+
+    act(() => {
+      useConfigStore.setState({ apiBaseUrl: "https://api-b.example/api/v1" });
+    });
+    await waitFor(() => expect(first.closed).toBe(true));
+    expect(MockWebSocket.instances).toHaveLength(2);
+    const second = MockWebSocket.instances[1];
+    expect(second.url).toContain("api-b.example");
+  });
+
+  // Bug 2 (MED) lock-in — when the user navigates away during the 3s
+  // WS-connect-timeout window, the cleanup return must (a) flip
+  // unmountedRef so any in-flight timer callback short-circuits before
+  // setMode('polling'), and (b) clearTimeout so the callback never even
+  // fires. Together they prevent a setState-on-unmounted-component warn.
+  it("does not setState or warn when the 3s connect timeout would fire post-unmount", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { unmount } = renderHook(() => useDecisionsStream({}, true), {
+      wrapper: makeWrapper(newClient()),
+    });
+    expect(MockWebSocket.instances).toHaveLength(1);
+    const ws = MockWebSocket.instances[0];
+    // Intentionally do NOT call simulateOpen — leave WS in CONNECTING so
+    // the 3s timer is the only side-effect path remaining.
+    unmount();
+    expect(ws.closed).toBe(true);
+    // Advance well past the 3s connect timeout. With cleanup + the guard
+    // both in place, no callback should reach setMode('polling').
+    vi.advanceTimersByTime(3_500);
+    vi.useRealTimers();
+    const unmountedWarns = errorSpy.mock.calls.filter((call) =>
+      /update.*unmounted|memory leak|can'?t perform a react state update/i.test(
+        String(call[0]),
+      ),
+    );
+    expect(unmountedWarns).toEqual([]);
+    errorSpy.mockRestore();
+  });
 });
