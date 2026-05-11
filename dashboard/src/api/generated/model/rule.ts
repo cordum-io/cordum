@@ -30,6 +30,13 @@ export interface Rule {
   status: RuleStatus;
   version: string;
   audit: AuditMetadata;
+  /** 7-bucket daily firing histogram (oldest→newest) for the rule scoped
+to the request tenant. Populated by `GET /api/v1/policy/rules` via
+a single bulk job-history scan per request. Absent (omitted) when
+firing analytics are not computed for the request — e.g. tenant-less
+calls, individual single-rule GET endpoints, or jobStore unavailable.
+ */
+  firing_last_7d?: number[];
   match: RuleMatch;
   decide: RuleDecide;
   description?: string;
