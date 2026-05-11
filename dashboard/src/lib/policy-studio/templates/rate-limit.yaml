@@ -1,0 +1,25 @@
+# Template: Rate Limit (velocity rule)
+# Throttles a specific agent identity to a sustainable request rate. Use the
+# velocity rule type when the protection target is rate-of-requests rather
+# than the content of any single request.
+id: ""
+name: Rate limit
+type: velocity
+scope:
+  kind: tenant
+  value: "default"
+status: draft
+version: v1
+description: >-
+  Throttles requests from a single agent identity above 60 requests per
+  minute (1-second sliding window granularity). Returns the offending
+  request to the caller with a 429 outcome.
+match:
+  topics: ["job.*"]
+  agent_ids: ["*"]
+decide:
+  type: throttle
+  velocity:
+    window_ms: 60000
+    max_requests: 60
+  reason: "Agent exceeded sustained request rate."

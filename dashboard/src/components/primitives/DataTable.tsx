@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
+import { Fragment, useMemo, useRef, useState, type ReactNode, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import {
   flexRender,
   getCoreRowModel,
@@ -31,6 +31,16 @@ export interface DataTableProps<T> {
   estimatedRowHeight?: number;
   /** Scrollable container height when virtualization is active. Default 480. */
   virtualizedHeight?: number;
+  /**
+   * Render expanded inline content beneath specific rows. When this prop
+   * AND `expandedIds` are both provided AND `getRowId(row)` is in the
+   * set, an extra `<tr>` is appended below the row containing
+   * `renderExpanded(row)`. Only honored in the non-virtualized branch
+   * (rows.length <= 100); virtualized lists silently ignore the props.
+   */
+  renderExpanded?: (row: T) => ReactNode | null;
+  expandedIds?: ReadonlySet<string>;
+  getRowId?: (row: T) => string;
 }
 
 export const VIRTUALIZE_THRESHOLD = 100;
@@ -65,6 +75,9 @@ export function DataTable<T>({
   initialSorting,
   estimatedRowHeight = 44,
   virtualizedHeight = 480,
+  renderExpanded,
+  expandedIds,
+  getRowId,
 }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>(initialSorting ?? []);
 
@@ -171,6 +184,7 @@ export function DataTable<T>({
   }
 
   if (!shouldVirtualize) {
+    const visibleColumnsCount = table.getVisibleFlatColumns().length;
     return (
       <div className={cn("overflow-x-auto", className)}>
         <table className="w-full">
@@ -178,19 +192,37 @@ export function DataTable<T>({
           <tbody>
             {rows.map((row) => {
               const tier = decisionAccessor?.(row.original);
+              const rowId = getRowId?.(row.original);
+              const isExpanded =
+                renderExpanded !== undefined &&
+                expandedIds !== undefined &&
+                rowId !== undefined &&
+                expandedIds.has(rowId);
               return (
-                <tr
-                  key={row.id}
-                  onClick={handleRowClick ? (e) => handleRowClick(row.original, e) : undefined}
-                  className={cn(
-                    "border-b border-border hover:bg-surface-1 transition-colors",
-                    handleRowClick && "cursor-pointer",
+                <Fragment key={row.id}>
+                  <tr
+                    onClick={handleRowClick ? (e) => handleRowClick(row.original, e) : undefined}
+                    className={cn(
+                      "border-b border-border hover:bg-surface-1 transition-colors",
+                      handleRowClick && "cursor-pointer",
+                    )}
+                    style={rowEdgeStyle(tier)}
+                    data-decision-tier={tier}
+                    data-row-expanded={isExpanded || undefined}
+                  >
+                    {renderCells(row)}
+                  </tr>
+                  {isExpanded && (
+                    <tr
+                      className="border-b border-border bg-surface-0/50"
+                      data-row-expansion="true"
+                    >
+                      <td colSpan={visibleColumnsCount} className="p-3">
+                        {renderExpanded?.(row.original)}
+                      </td>
+                    </tr>
                   )}
-                  style={rowEdgeStyle(tier)}
-                  data-decision-tier={tier}
-                >
-                  {renderCells(row)}
-                </tr>
+                </Fragment>
               );
             })}
           </tbody>

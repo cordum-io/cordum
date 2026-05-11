@@ -1,6 +1,21 @@
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
 import { closeMswServer, resetMswServer } from "./msw";
 
+// jsdom doesn't ship a ResizeObserver implementation. Recharts'
+// ResponsiveContainer reads it on mount; without a stub the chart panels
+// throw "ResizeObserver is not defined" before our test assertions run.
+// The stub is intentionally inert (no callbacks) — tests don't need
+// resize semantics; they need the constructor to exist.
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
+if (typeof globalThis.ResizeObserver === "undefined") {
+  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver = ResizeObserverStub;
+}
+
 const queryClientErrorPattern = /No QueryClient set.*use QueryClientProvider/;
 const queryClientDiagnostic = [
   "✗ Test error: React component rendered outside a QueryClient.",

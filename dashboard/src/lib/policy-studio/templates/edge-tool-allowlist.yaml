@@ -1,0 +1,28 @@
+# Template: Edge Tool Allowlist (edge rule)
+# Restricts which tools an agent at the edge (Cordum Edge / Claude Code hook)
+# may invoke. Anything not in the allowlist is denied at the hook before the
+# tool call reaches the host.
+id: ""
+name: Edge tool allowlist
+type: edge
+scope:
+  kind: edge_fleet
+  value: "default"
+status: draft
+version: v1
+description: >-
+  Denies any edge tool invocation whose tool name is not in the allowlist.
+  Default deny + explicit allowlist is the safe stance for managed fleets.
+match:
+  edge_event: "tool_use"
+  tool_allowlist:
+    - "fs.read"
+    - "fs.write"
+    - "shell.exec"
+    - "git.status"
+    - "git.diff"
+decide:
+  type: deny
+  reason: "Tool not in allowlist for this edge fleet."
+  constraints:
+    deny_mode: "block"

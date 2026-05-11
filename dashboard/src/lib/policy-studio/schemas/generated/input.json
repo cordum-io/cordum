@@ -1,0 +1,187 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "cordum:policy-studio:rule:input",
+  "title": "Input rule payload",
+  "description": "Pre-execution job-side input policy. Match selects which content the rule applies to; decide chooses the unified DecisionType. Aligns with safetykernel input scanners.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "name",
+    "type",
+    "scope",
+    "status",
+    "version",
+    "audit",
+    "match",
+    "decide"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string"
+    },
+    "type": {
+      "const": "input",
+      "description": "Discriminator for a Rule's match/decide payload schema."
+    },
+    "scope": {
+      "type": "object",
+      "description": "Narrows where a rule (or bundle) applies. When `kind` is `global`,\n`value` is unused and may be empty; for the other kinds, `value`\ncarries the corresponding identifier (tenant id, workflow id, edge\nfleet name, edge user id).\n",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Narrows where a rule (or bundle) applies. `global` covers an entire\ndeployment; `tenant`/`workflow` scope to job-side bindings;\n`edge_fleet`/`edge_user` scope to edge-side bindings.\n",
+          "enum": [
+            "global",
+            "tenant",
+            "workflow",
+            "edge_fleet",
+            "edge_user"
+          ]
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "description": "Lifecycle state of a Rule. `draft` rules are author-only; `published`\nrules participate in evaluation; `deprecated` rules remain queryable\nfor audit and rollback but are skipped by evaluators.\n",
+      "enum": [
+        "draft",
+        "published",
+        "deprecated"
+      ]
+    },
+    "version": {
+      "type": "string"
+    },
+    "audit": {
+      "type": "object",
+      "description": "Records who created or last updated a Rule or Bundle. The `updated_*`\nfields are zero-valued on first creation and populated by the first\nsubsequent edit. `pack_source` is populated when the rule\noriginated from a `cordumctl pack install` YAML bundle (Backend\n5d) — the dashboard's pack_id + tier columns + Source filter\ndepend on it surfacing on every legacy-bundle-loaded rule.\n",
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "created_by": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_by": {
+          "type": "string"
+        },
+        "pack_source": {
+          "type": "object",
+          "description": "Pack-level provenance for rules loaded from cordumctl pack\nbundles. Mirrors `policybundles.PolicyRuleSource` field-for-field\nso legacy → unified translation is lossless. RuleStore-authored\nrules (created via Dashboard 3E publish-to-bundle) leave the\nwhole sub-field unset.\n",
+          "properties": {
+            "fragment_id": {
+              "type": "string"
+            },
+            "tier": {
+              "type": "string"
+            },
+            "pack_id": {
+              "type": "string"
+            },
+            "overlay_name": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
+            "installed_at": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "firing_last_7d": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      },
+      "description": "7-bucket daily firing histogram (oldest→newest) for the rule scoped\nto the request tenant. Populated by `GET /api/v1/policy/rules` via\na single bulk job-history scan per request. Absent (omitted) when\nfiring analytics are not computed for the request — e.g. tenant-less\ncalls, individual single-rule GET endpoints, or jobStore unavailable.\n"
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "topics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "Topics this rule applies to (e.g. `email.draft`)."
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "Tool names triggering this rule (e.g. `Bash`, `Edit`)."
+        },
+        "risk_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "description": "Required risk tags on the job context for the rule to fire."
+        },
+        "content_pattern": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Optional regex applied to the input content; rule fires only when content matches."
+        }
+      }
+    },
+    "decide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "allow",
+            "deny",
+            "require_human",
+            "throttle",
+            "allow_with_constraints",
+            "quarantine",
+            "redact"
+          ],
+          "description": "Unified decision outcome."
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Human-readable rationale logged with the decision."
+        }
+      }
+    },
+    "description": {
+      "type": "string"
+    }
+  }
+}

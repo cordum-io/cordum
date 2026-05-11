@@ -1,5 +1,5 @@
-import { ArrowLeft, Save } from "lucide-react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { ArrowLeft, ExternalLink, Save } from "lucide-react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -9,6 +9,9 @@ import { SkeletonCard } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { InfoBanner } from "@/components/ui/InfoBanner";
 import { InstrumentCard } from "@/components/ui/InstrumentCard";
+import { Input } from "@/components/ui/Input";
+import { LabeledField } from "@/components/ui/LabeledField";
+import { Select } from "@/components/ui/Select";
 import { TenantTagListEditor } from "@/components/policy/tenants/TenantTagListEditor";
 import { TenantMcpMatrixEditor } from "@/components/policy/tenants/TenantMcpMatrixEditor";
 import { TenantTopicAccessSection } from "@/components/policy/tenants/TenantTopicAccessSection";
@@ -162,11 +165,11 @@ export default function TenantDetailPage() {
             <ArrowLeft className="mr-1 h-3.5 w-3.5" />
             Back to tenants
           </Button>
-          <label className="text-xs text-muted-foreground">
-            Bundle
-            <select
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>Bundle</span>
+            <Select
               id="govern-tenant-detail-bundle-select"
-              className="ml-2 h-8 rounded-2xl border border-border bg-surface-2 px-2 text-xs text-foreground"
+              className="h-8 min-w-44 text-xs"
               value={selectedBundleId}
               onChange={(event) => setSelectedBundleId(event.target.value)}
             >
@@ -175,19 +178,36 @@ export default function TenantDetailPage() {
                   {bundle.name || bundle.id}
                 </option>
               ))}
-            </select>
-          </label>
+            </Select>
+          </div>
         </div>
-        {affordances.showSave && (
-          <Button
-            size="sm"
-            disabled={!isDirty || isSaving || !selectedBundleId}
-            onClick={() => void saveTenantChanges()}
+        <div className="flex items-center gap-2">
+          {/*
+            Cross-link (D10a #8): "Active policies" → /policies/bundles
+            filtered to this tenant. BundlesPage's filter bar honors
+            `?scope=tenant:<id>` via nuqs (BundlesPage.tsx:84) so the
+            filtered list is the canonical landing surface.
+          */}
+          <Link
+            to={`/policies/bundles?scope=tenant:${encodeURIComponent(tenant.id)}`}
+            aria-label={`View active policies for tenant ${tenant.label ?? tenant.id}`}
+            data-row-action="cross-link-active-policies"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border px-3 h-8 text-xs font-medium text-foreground transition-all duration-[var(--duration-soft)] ease-out hover:bg-secondary hover:-translate-y-[1px] hover:shadow-soft-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cordum/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
-            <Save className="mr-1 h-3.5 w-3.5" />
-            {isSaving ? "Saving…" : "Save"}
-          </Button>
-        )}
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+            Active policies
+          </Link>
+          {affordances.showSave && (
+            <Button
+              size="sm"
+              disabled={!isDirty || isSaving || !selectedBundleId}
+              onClick={() => void saveTenantChanges()}
+            >
+              <Save className="mr-1 h-3.5 w-3.5" />
+              {isSaving ? "Saving…" : "Save"}
+            </Button>
+          )}
+        </div>
       </div>
 
       {loadError && (
@@ -284,10 +304,12 @@ export default function TenantDetailPage() {
                 );
               }}
             />
-            <label className="text-xs text-muted-foreground">
-              max_concurrent_jobs
-              <input
-                className="mt-1 h-8 w-full rounded-2xl border border-border bg-surface-2 px-3 text-xs text-foreground"
+            <LabeledField
+              label="max_concurrent_jobs"
+              description="Leave empty to inherit system defaults."
+            >
+              <Input
+                className="h-8 text-xs"
                 type="number"
                 min={0}
                 step={1}
@@ -315,10 +337,7 @@ export default function TenantDetailPage() {
                   );
                 }}
               />
-              <p className="mt-1 text-xs text-muted-foreground">
-                Leave empty to inherit system defaults.
-              </p>
-            </label>
+            </LabeledField>
           </div>
 
           <TenantMcpMatrixEditor

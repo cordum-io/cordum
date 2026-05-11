@@ -19,7 +19,9 @@
     "lhci:assert": "lhci assert",
     "lhci:upload": "lhci upload",
     "lhci:autorun": "lhci autorun",
-    "lhci": "start-server-and-test \"vite preview --host --port 4173\" http-get://127.0.0.1:4173/login \"lhci autorun\""
+    "lhci": "start-server-and-test \"vite preview --host --port 4173\" http-get://127.0.0.1:4173/login \"lhci autorun\"",
+    "generate-schemas": "node ./scripts/generate-schemas.mjs",
+    "check-schemas": "node ./scripts/check-schemas.mjs"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",

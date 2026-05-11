@@ -1,0 +1,25 @@
+# Template: Approval Gate (input rule)
+# Requires human approval before a sensitive action proceeds. Pair with the
+# Approvals queue (Drawer + dashboard /approvals) so a reviewer can act on
+# the gated request inline.
+id: ""
+name: Approval gate
+type: input
+scope:
+  kind: tenant
+  value: "default"
+status: draft
+version: v1
+description: >-
+  Pauses execution and routes the request to a human approver before any
+  downstream tool runs. Tenants/topics decide which actions require review.
+match:
+  topics:
+    - "job.payments.*"
+    - "job.deploy.*"
+decide:
+  type: require_human
+  reason: "Sensitive action — awaiting human approval."
+  constraints:
+    expires_in_seconds: 1800
+    approver_roles: ["security-officer", "platform-lead"]
