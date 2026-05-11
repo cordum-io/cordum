@@ -6,11 +6,11 @@
  * OpenAPI spec version: 2026-05-10.3
  */
 
-export type AddRuleToBundle404Error =
-  (typeof AddRuleToBundle404Error)[keyof typeof AddRuleToBundle404Error];
+export type AddRuleToBundle404Error = typeof AddRuleToBundle404Error[keyof typeof AddRuleToBundle404Error];
+
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const AddRuleToBundle404Error = {
-  bundle_not_found: "bundle_not_found",
-  rule_not_found: "rule_not_found",
+  bundle_not_found: 'bundle_not_found',
+  rule_not_found: 'rule_not_found',
 } as const;

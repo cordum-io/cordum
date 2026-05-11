@@ -9,6 +9,4 @@
 /**
  * JSON object mapping Okta/OIDC group names to Cordum roles.
  */
-export type OIDCGroupRoleMappingUpdateRequestOidcGroupRoleMapping = {
-  [key: string]: "admin" | "operator" | "viewer";
-};
+export type OIDCGroupRoleMappingUpdateRequestOidcGroupRoleMapping = {[key: string]: 'admin' | 'operator' | 'viewer'};

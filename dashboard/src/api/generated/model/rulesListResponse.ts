@@ -5,7 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import type { Rule } from "./rule";
+import type { Rule } from './rule';
 
 /**
  * Backend 5d envelope returned by `GET /api/v1/policy/rules`. Items

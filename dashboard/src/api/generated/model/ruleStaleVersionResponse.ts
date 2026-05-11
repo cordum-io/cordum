@@ -5,7 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import type { RuleStaleVersionResponseError } from "./ruleStaleVersionResponseError";
+import type { RuleStaleVersionResponseError } from './ruleStaleVersionResponseError';
 
 /**
  * Returned by `PUT /api/v1/policy/rules/{id}` with a 409 status when

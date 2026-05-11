@@ -10,6 +10,4 @@
  * Bounded, redacted action input. The server re-redacts and computes the persisted `input_hash`.
  * @nullable
  */
-export type EdgeEvaluateRequestInputRedacted = {
-  [key: string]: unknown;
-} | null;
+export type EdgeEvaluateRequestInputRedacted = { [key: string]: unknown } | null;

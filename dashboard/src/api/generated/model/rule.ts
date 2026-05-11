@@ -5,12 +5,12 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import type { RuleType } from "./ruleType";
-import type { RuleScope } from "./ruleScope";
-import type { RuleStatus } from "./ruleStatus";
-import type { AuditMetadata } from "./auditMetadata";
-import type { RuleMatch } from "./ruleMatch";
-import type { RuleDecide } from "./ruleDecide";
+import type { RuleType } from './ruleType';
+import type { RuleScope } from './ruleScope';
+import type { RuleStatus } from './ruleStatus';
+import type { AuditMetadata } from './auditMetadata';
+import type { RuleMatch } from './ruleMatch';
+import type { RuleDecide } from './ruleDecide';
 
 /**
  * Unified authoring surface for both job-side and edge-side policy. The

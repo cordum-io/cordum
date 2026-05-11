@@ -6,6 +6,4 @@
  * OpenAPI spec version: 2026-05-10.3
  */
 
-export type ListGovernanceDecisions200ItemsItemConstraints = {
-  [key: string]: unknown;
-};
+export type ListGovernanceDecisions200ItemsItemConstraints = { [key: string]: unknown };

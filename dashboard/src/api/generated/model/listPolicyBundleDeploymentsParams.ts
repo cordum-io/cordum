@@ -5,14 +5,14 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import type { RuleScopeKind } from "./ruleScopeKind";
+import type { RuleScopeKind } from './ruleScopeKind';
 
 export type ListPolicyBundleDeploymentsParams = {
-  scope_kind: RuleScopeKind;
-  scope_value?: string;
-  /**
-   * @minimum 1
-   * @maximum 100
-   */
-  limit?: number;
+scope_kind: RuleScopeKind;
+scope_value?: string;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
 };

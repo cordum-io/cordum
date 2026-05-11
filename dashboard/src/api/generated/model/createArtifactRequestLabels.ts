@@ -6,4 +6,4 @@
  * OpenAPI spec version: 2026-05-10.3
  */
 
-export type CreateArtifactRequestLabels = { [key: string]: string };
+export type CreateArtifactRequestLabels = {[key: string]: string};

@@ -6,11 +6,11 @@
  * OpenAPI spec version: 2026-05-10.3
  */
 
-export type BundleDeploymentAction =
-  (typeof BundleDeploymentAction)[keyof typeof BundleDeploymentAction];
+export type BundleDeploymentAction = typeof BundleDeploymentAction[keyof typeof BundleDeploymentAction];
+
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const BundleDeploymentAction = {
-  deploy: "deploy",
-  rollback: "rollback",
+  deploy: 'deploy',
+  rollback: 'rollback',
 } as const;

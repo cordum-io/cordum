@@ -13,15 +13,16 @@ cap/proto/cordum/agent/v1/safety.proto (epic-d9a6c0a1 appended
 QUARANTINE and REDACT to the existing five values).
 
  */
-export type DecisionType = (typeof DecisionType)[keyof typeof DecisionType];
+export type DecisionType = typeof DecisionType[keyof typeof DecisionType];
+
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const DecisionType = {
-  allow: "allow",
-  deny: "deny",
-  require_human: "require_human",
-  throttle: "throttle",
-  allow_with_constraints: "allow_with_constraints",
-  quarantine: "quarantine",
-  redact: "redact",
+  allow: 'allow',
+  deny: 'deny',
+  require_human: 'require_human',
+  throttle: 'throttle',
+  allow_with_constraints: 'allow_with_constraints',
+  quarantine: 'quarantine',
+  redact: 'redact',
 } as const;

@@ -5,7 +5,10 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery
+} from '@tanstack/react-query';
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -18,8 +21,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult,
-} from "@tanstack/react-query";
+  UseQueryResult
+} from '@tanstack/react-query';
 
 import type {
   AuditVerifyResult,
@@ -32,10 +35,13 @@ import type {
   ServiceUnavailableResponse,
   TierLimitResponse,
   UnauthorizedResponse,
-  VerifyAuditChainParams,
-} from ".././model";
+  VerifyAuditChainParams
+} from '.././model';
 
-import { apiClient } from "../../client";
+import { apiClient } from '../../client';
+
+
+
 
 /**
  * Walks the tenant's audit stream and attests integrity of the hash chain. Reports
@@ -47,186 +53,94 @@ integrity report surface, not event retrieval.
  * @summary Verify audit chain integrity
  */
 export const verifyAuditChain = (
-  params?: VerifyAuditChainParams,
-  signal?: AbortSignal,
+    params?: VerifyAuditChainParams,
+ signal?: AbortSignal
 ) => {
-  return apiClient<AuditVerifyResult>({
-    url: `/api/v1/audit/verify`,
-    method: "GET",
-    params,
-    signal,
-  });
-};
+      
+      
+      return apiClient<AuditVerifyResult>(
+      {url: `/api/v1/audit/verify`, method: 'GET',
+        params, signal
+    },
+      );
+    }
+  
 
-export const getVerifyAuditChainQueryKey = (
-  params?: VerifyAuditChainParams,
+
+
+export const getVerifyAuditChainQueryKey = (params?: VerifyAuditChainParams,) => {
+    return [
+    `/api/v1/audit/verify`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getVerifyAuditChainQueryOptions = <TData = Awaited<ReturnType<typeof verifyAuditChain>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse>(params?: VerifyAuditChainParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof verifyAuditChain>>, TError, TData>>, }
 ) => {
-  return [`/api/v1/audit/verify`, ...(params ? [params] : [])] as const;
-};
 
-export const getVerifyAuditChainQueryOptions = <
-  TData = Awaited<ReturnType<typeof verifyAuditChain>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse
-    | ServiceUnavailableResponse,
->(
-  params?: VerifyAuditChainParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof verifyAuditChain>>,
-        TError,
-        TData
-      >
-    >;
-  },
-) => {
-  const { query: queryOptions } = options ?? {};
+const {query: queryOptions} = options ?? {};
 
-  const queryKey =
-    queryOptions?.queryKey ?? getVerifyAuditChainQueryKey(params);
+  const queryKey =  queryOptions?.queryKey ?? getVerifyAuditChainQueryKey(params);
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof verifyAuditChain>>
-  > = ({ signal }) => verifyAuditChain(params, signal);
+  
 
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof verifyAuditChain>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof verifyAuditChain>>> = ({ signal }) => verifyAuditChain(params, signal);
 
-export type VerifyAuditChainQueryResult = NonNullable<
-  Awaited<ReturnType<typeof verifyAuditChain>>
->;
-export type VerifyAuditChainQueryError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse
-  | ServiceUnavailableResponse;
+      
 
-export function useVerifyAuditChain<
-  TData = Awaited<ReturnType<typeof verifyAuditChain>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse
-    | ServiceUnavailableResponse,
->(
-  params: undefined | VerifyAuditChainParams,
-  options: {
-    query: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof verifyAuditChain>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof verifyAuditChain>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type VerifyAuditChainQueryResult = NonNullable<Awaited<ReturnType<typeof verifyAuditChain>>>
+export type VerifyAuditChainQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse
+
+
+export function useVerifyAuditChain<TData = Awaited<ReturnType<typeof verifyAuditChain>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse>(
+ params: undefined |  VerifyAuditChainParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof verifyAuditChain>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof verifyAuditChain>>,
           TError,
           Awaited<ReturnType<typeof verifyAuditChain>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useVerifyAuditChain<
-  TData = Awaited<ReturnType<typeof verifyAuditChain>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse
-    | ServiceUnavailableResponse,
->(
-  params?: VerifyAuditChainParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof verifyAuditChain>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useVerifyAuditChain<TData = Awaited<ReturnType<typeof verifyAuditChain>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse>(
+ params?: VerifyAuditChainParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof verifyAuditChain>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof verifyAuditChain>>,
           TError,
           Awaited<ReturnType<typeof verifyAuditChain>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useVerifyAuditChain<
-  TData = Awaited<ReturnType<typeof verifyAuditChain>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse
-    | ServiceUnavailableResponse,
->(
-  params?: VerifyAuditChainParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof verifyAuditChain>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useVerifyAuditChain<TData = Awaited<ReturnType<typeof verifyAuditChain>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse>(
+ params?: VerifyAuditChainParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof verifyAuditChain>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary Verify audit chain integrity
  */
 
-export function useVerifyAuditChain<
-  TData = Awaited<ReturnType<typeof verifyAuditChain>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse
-    | ServiceUnavailableResponse,
->(
-  params?: VerifyAuditChainParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof verifyAuditChain>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getVerifyAuditChainQueryOptions(params, options);
+export function useVerifyAuditChain<TData = Awaited<ReturnType<typeof verifyAuditChain>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse>(
+ params?: VerifyAuditChainParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof verifyAuditChain>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getVerifyAuditChainQueryOptions(params,options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
+
+
+
 
 /**
  * Streams a compliance-shaped audit export (ndjson or csv) for a bounded time window.
@@ -237,560 +151,339 @@ body carries SOC2 mapping columns when the operator has configured a mapping tab
  * @summary Stream compliance audit export
  */
 export const exportAuditCompliance = (
-  params?: ExportAuditComplianceParams,
-  signal?: AbortSignal,
+    params?: ExportAuditComplianceParams,
+ signal?: AbortSignal
 ) => {
-  return apiClient<string>({
-    url: `/api/v1/audit/export`,
-    method: "GET",
-    params,
-    signal,
-  });
-};
+      
+      
+      return apiClient<string>(
+      {url: `/api/v1/audit/export`, method: 'GET',
+        params, signal
+    },
+      );
+    }
+  
 
-export const getExportAuditComplianceQueryKey = (
-  params?: ExportAuditComplianceParams,
+
+
+export const getExportAuditComplianceQueryKey = (params?: ExportAuditComplianceParams,) => {
+    return [
+    `/api/v1/audit/export`, ...(params ? [params]: [])
+    ] as const;
+    }
+
+    
+export const getExportAuditComplianceQueryOptions = <TData = Awaited<ReturnType<typeof exportAuditCompliance>>, TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | InternalServerErrorResponse | Error>(params?: ExportAuditComplianceParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportAuditCompliance>>, TError, TData>>, }
 ) => {
-  return [`/api/v1/audit/export`, ...(params ? [params] : [])] as const;
-};
 
-export const getExportAuditComplianceQueryOptions = <
-  TData = Awaited<ReturnType<typeof exportAuditCompliance>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | TierLimitResponse
-    | InternalServerErrorResponse
-    | Error,
->(
-  params?: ExportAuditComplianceParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof exportAuditCompliance>>,
-        TError,
-        TData
-      >
-    >;
-  },
-) => {
-  const { query: queryOptions } = options ?? {};
+const {query: queryOptions} = options ?? {};
 
-  const queryKey =
-    queryOptions?.queryKey ?? getExportAuditComplianceQueryKey(params);
+  const queryKey =  queryOptions?.queryKey ?? getExportAuditComplianceQueryKey(params);
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof exportAuditCompliance>>
-  > = ({ signal }) => exportAuditCompliance(params, signal);
+  
 
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof exportAuditCompliance>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportAuditCompliance>>> = ({ signal }) => exportAuditCompliance(params, signal);
 
-export type ExportAuditComplianceQueryResult = NonNullable<
-  Awaited<ReturnType<typeof exportAuditCompliance>>
->;
-export type ExportAuditComplianceQueryError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | TierLimitResponse
-  | InternalServerErrorResponse
-  | Error;
+      
 
-export function useExportAuditCompliance<
-  TData = Awaited<ReturnType<typeof exportAuditCompliance>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | TierLimitResponse
-    | InternalServerErrorResponse
-    | Error,
->(
-  params: undefined | ExportAuditComplianceParams,
-  options: {
-    query: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof exportAuditCompliance>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportAuditCompliance>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type ExportAuditComplianceQueryResult = NonNullable<Awaited<ReturnType<typeof exportAuditCompliance>>>
+export type ExportAuditComplianceQueryError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | InternalServerErrorResponse | Error
+
+
+export function useExportAuditCompliance<TData = Awaited<ReturnType<typeof exportAuditCompliance>>, TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | InternalServerErrorResponse | Error>(
+ params: undefined |  ExportAuditComplianceParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportAuditCompliance>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof exportAuditCompliance>>,
           TError,
           Awaited<ReturnType<typeof exportAuditCompliance>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useExportAuditCompliance<
-  TData = Awaited<ReturnType<typeof exportAuditCompliance>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | TierLimitResponse
-    | InternalServerErrorResponse
-    | Error,
->(
-  params?: ExportAuditComplianceParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof exportAuditCompliance>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useExportAuditCompliance<TData = Awaited<ReturnType<typeof exportAuditCompliance>>, TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | InternalServerErrorResponse | Error>(
+ params?: ExportAuditComplianceParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportAuditCompliance>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof exportAuditCompliance>>,
           TError,
           Awaited<ReturnType<typeof exportAuditCompliance>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useExportAuditCompliance<
-  TData = Awaited<ReturnType<typeof exportAuditCompliance>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | TierLimitResponse
-    | InternalServerErrorResponse
-    | Error,
->(
-  params?: ExportAuditComplianceParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof exportAuditCompliance>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useExportAuditCompliance<TData = Awaited<ReturnType<typeof exportAuditCompliance>>, TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | InternalServerErrorResponse | Error>(
+ params?: ExportAuditComplianceParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportAuditCompliance>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary Stream compliance audit export
  */
 
-export function useExportAuditCompliance<
-  TData = Awaited<ReturnType<typeof exportAuditCompliance>>,
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | TierLimitResponse
-    | InternalServerErrorResponse
-    | Error,
->(
-  params?: ExportAuditComplianceParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof exportAuditCompliance>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getExportAuditComplianceQueryOptions(params, options);
+export function useExportAuditCompliance<TData = Awaited<ReturnType<typeof exportAuditCompliance>>, TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | InternalServerErrorResponse | Error>(
+ params?: ExportAuditComplianceParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportAuditCompliance>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getExportAuditComplianceQueryOptions(params,options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
 
+
+
+
 /**
  * @summary Audit export health
  */
-export const getAuditExportHealth = (signal?: AbortSignal) => {
-  return apiClient<GenericObject>({
-    url: `/api/v1/audit/export/health`,
-    method: "GET",
-    signal,
-  });
-};
+export const getAuditExportHealth = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return apiClient<GenericObject>(
+      {url: `/api/v1/audit/export/health`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
 
 export const getGetAuditExportHealthQueryKey = () => {
-  return [`/api/v1/audit/export/health`] as const;
-};
+    return [
+    `/api/v1/audit/export/health`
+    ] as const;
+    }
 
-export const getGetAuditExportHealthQueryOptions = <
-  TData = Awaited<ReturnType<typeof getAuditExportHealth>>,
-  TError = UnauthorizedResponse | TierLimitResponse,
->(options?: {
-  query?: Partial<
-    UseQueryOptions<
-      Awaited<ReturnType<typeof getAuditExportHealth>>,
-      TError,
-      TData
-    >
-  >;
-}) => {
-  const { query: queryOptions } = options ?? {};
+    
+export const getGetAuditExportHealthQueryOptions = <TData = Awaited<ReturnType<typeof getAuditExportHealth>>, TError = UnauthorizedResponse | TierLimitResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuditExportHealth>>, TError, TData>>, }
+) => {
 
-  const queryKey = queryOptions?.queryKey ?? getGetAuditExportHealthQueryKey();
+const {query: queryOptions} = options ?? {};
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof getAuditExportHealth>>
-  > = ({ signal }) => getAuditExportHealth(signal);
+  const queryKey =  queryOptions?.queryKey ?? getGetAuditExportHealthQueryKey();
 
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof getAuditExportHealth>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+  
 
-export type GetAuditExportHealthQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getAuditExportHealth>>
->;
-export type GetAuditExportHealthQueryError =
-  | UnauthorizedResponse
-  | TierLimitResponse;
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAuditExportHealth>>> = ({ signal }) => getAuditExportHealth(signal);
 
-export function useGetAuditExportHealth<
-  TData = Awaited<ReturnType<typeof getAuditExportHealth>>,
-  TError = UnauthorizedResponse | TierLimitResponse,
->(
-  options: {
-    query: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getAuditExportHealth>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAuditExportHealth>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type GetAuditExportHealthQueryResult = NonNullable<Awaited<ReturnType<typeof getAuditExportHealth>>>
+export type GetAuditExportHealthQueryError = UnauthorizedResponse | TierLimitResponse
+
+
+export function useGetAuditExportHealth<TData = Awaited<ReturnType<typeof getAuditExportHealth>>, TError = UnauthorizedResponse | TierLimitResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuditExportHealth>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getAuditExportHealth>>,
           TError,
           Awaited<ReturnType<typeof getAuditExportHealth>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useGetAuditExportHealth<
-  TData = Awaited<ReturnType<typeof getAuditExportHealth>>,
-  TError = UnauthorizedResponse | TierLimitResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getAuditExportHealth>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useGetAuditExportHealth<TData = Awaited<ReturnType<typeof getAuditExportHealth>>, TError = UnauthorizedResponse | TierLimitResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuditExportHealth>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getAuditExportHealth>>,
           TError,
           Awaited<ReturnType<typeof getAuditExportHealth>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useGetAuditExportHealth<
-  TData = Awaited<ReturnType<typeof getAuditExportHealth>>,
-  TError = UnauthorizedResponse | TierLimitResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getAuditExportHealth>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useGetAuditExportHealth<TData = Awaited<ReturnType<typeof getAuditExportHealth>>, TError = UnauthorizedResponse | TierLimitResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuditExportHealth>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary Audit export health
  */
 
-export function useGetAuditExportHealth<
-  TData = Awaited<ReturnType<typeof getAuditExportHealth>>,
-  TError = UnauthorizedResponse | TierLimitResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getAuditExportHealth>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getGetAuditExportHealthQueryOptions(options);
+export function useGetAuditExportHealth<TData = Awaited<ReturnType<typeof getAuditExportHealth>>, TError = UnauthorizedResponse | TierLimitResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuditExportHealth>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getGetAuditExportHealthQueryOptions(options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
 
+
+
+
 /**
  * @summary Audit export config
  */
-export const getAuditExportConfig = (signal?: AbortSignal) => {
-  return apiClient<GenericObject>({
-    url: `/api/v1/audit/export/config`,
-    method: "GET",
-    signal,
-  });
-};
+export const getAuditExportConfig = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return apiClient<GenericObject>(
+      {url: `/api/v1/audit/export/config`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
 
 export const getGetAuditExportConfigQueryKey = () => {
-  return [`/api/v1/audit/export/config`] as const;
-};
+    return [
+    `/api/v1/audit/export/config`
+    ] as const;
+    }
 
-export const getGetAuditExportConfigQueryOptions = <
-  TData = Awaited<ReturnType<typeof getAuditExportConfig>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(options?: {
-  query?: Partial<
-    UseQueryOptions<
-      Awaited<ReturnType<typeof getAuditExportConfig>>,
-      TError,
-      TData
-    >
-  >;
-}) => {
-  const { query: queryOptions } = options ?? {};
+    
+export const getGetAuditExportConfigQueryOptions = <TData = Awaited<ReturnType<typeof getAuditExportConfig>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuditExportConfig>>, TError, TData>>, }
+) => {
 
-  const queryKey = queryOptions?.queryKey ?? getGetAuditExportConfigQueryKey();
+const {query: queryOptions} = options ?? {};
 
-  const queryFn: QueryFunction<
-    Awaited<ReturnType<typeof getAuditExportConfig>>
-  > = ({ signal }) => getAuditExportConfig(signal);
+  const queryKey =  queryOptions?.queryKey ?? getGetAuditExportConfigQueryKey();
 
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof getAuditExportConfig>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+  
 
-export type GetAuditExportConfigQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getAuditExportConfig>>
->;
-export type GetAuditExportConfigQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse;
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAuditExportConfig>>> = ({ signal }) => getAuditExportConfig(signal);
 
-export function useGetAuditExportConfig<
-  TData = Awaited<ReturnType<typeof getAuditExportConfig>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(
-  options: {
-    query: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getAuditExportConfig>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAuditExportConfig>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type GetAuditExportConfigQueryResult = NonNullable<Awaited<ReturnType<typeof getAuditExportConfig>>>
+export type GetAuditExportConfigQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetAuditExportConfig<TData = Awaited<ReturnType<typeof getAuditExportConfig>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuditExportConfig>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getAuditExportConfig>>,
           TError,
           Awaited<ReturnType<typeof getAuditExportConfig>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useGetAuditExportConfig<
-  TData = Awaited<ReturnType<typeof getAuditExportConfig>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getAuditExportConfig>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useGetAuditExportConfig<TData = Awaited<ReturnType<typeof getAuditExportConfig>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuditExportConfig>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getAuditExportConfig>>,
           TError,
           Awaited<ReturnType<typeof getAuditExportConfig>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useGetAuditExportConfig<
-  TData = Awaited<ReturnType<typeof getAuditExportConfig>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getAuditExportConfig>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useGetAuditExportConfig<TData = Awaited<ReturnType<typeof getAuditExportConfig>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuditExportConfig>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary Audit export config
  */
 
-export function useGetAuditExportConfig<
-  TData = Awaited<ReturnType<typeof getAuditExportConfig>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getAuditExportConfig>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getGetAuditExportConfigQueryOptions(options);
+export function useGetAuditExportConfig<TData = Awaited<ReturnType<typeof getAuditExportConfig>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAuditExportConfig>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getGetAuditExportConfigQueryOptions(options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
 
-/**
- * @summary Audit export test
- */
-export const testAuditExport = (signal?: AbortSignal) => {
-  return apiClient<GenericObject>({
-    url: `/api/v1/audit/export/test`,
-    method: "POST",
-    signal,
-  });
-};
 
-export const getTestAuditExportMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | TierLimitResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof testAuditExport>>,
-    TError,
-    void,
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof testAuditExport>>,
-  TError,
-  void,
-  TContext
-> => {
-  const mutationKey = ["testAuditExport"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof testAuditExport>>,
-    void
-  > = () => {
-    return testAuditExport();
-  };
-
-  return { mutationFn, ...mutationOptions };
-};
-
-export type TestAuditExportMutationResult = NonNullable<
-  Awaited<ReturnType<typeof testAuditExport>>
->;
-
-export type TestAuditExportMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | TierLimitResponse
-  | InternalServerErrorResponse;
 
 /**
  * @summary Audit export test
  */
-export const useTestAuditExport = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | TierLimitResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof testAuditExport>>,
-      TError,
-      void,
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof testAuditExport>>,
-  TError,
-  void,
-  TContext
-> => {
-  const mutationOptions = getTestAuditExportMutationOptions(options);
+export const testAuditExport = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return apiClient<GenericObject>(
+      {url: `/api/v1/audit/export/test`, method: 'POST', signal
+    },
+      );
+    }
+  
 
-  return useMutation(mutationOptions, queryClient);
-};
+
+export const getTestAuditExportMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof testAuditExport>>, TError,void, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof testAuditExport>>, TError,void, TContext> => {
+
+const mutationKey = ['testAuditExport'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof testAuditExport>>, void> = () => {
+          
+
+          return  testAuditExport()
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type TestAuditExportMutationResult = NonNullable<Awaited<ReturnType<typeof testAuditExport>>>
+    
+    export type TestAuditExportMutationError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | InternalServerErrorResponse
+
+    /**
+ * @summary Audit export test
+ */
+export const useTestAuditExport = <TError = BadRequestResponse | UnauthorizedResponse | TierLimitResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof testAuditExport>>, TError,void, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof testAuditExport>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getTestAuditExportMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    

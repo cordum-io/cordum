@@ -5,7 +5,10 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery
+} from '@tanstack/react-query';
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -18,8 +21,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult,
-} from "@tanstack/react-query";
+  UseQueryResult
+} from '@tanstack/react-query';
 
 import type {
   ForbiddenResponse,
@@ -28,371 +31,258 @@ import type {
   InternalServerErrorResponse,
   ReloadLicense200,
   ServiceUnavailableResponse,
-  UnauthorizedResponse,
-} from ".././model";
+  UnauthorizedResponse
+} from '.././model';
 
-import { apiClient } from "../../client";
+import { apiClient } from '../../client';
+
+
+
 
 /**
  * @summary Get resolved license metadata
  */
-export const getLicense = (signal?: AbortSignal) => {
-  return apiClient<GetLicense200>({
-    url: `/api/v1/license`,
-    method: "GET",
-    signal,
-  });
-};
+export const getLicense = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return apiClient<GetLicense200>(
+      {url: `/api/v1/license`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
 
 export const getGetLicenseQueryKey = () => {
-  return [`/api/v1/license`] as const;
-};
+    return [
+    `/api/v1/license`
+    ] as const;
+    }
 
-export const getGetLicenseQueryOptions = <
-  TData = Awaited<ReturnType<typeof getLicense>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(options?: {
-  query?: Partial<
-    UseQueryOptions<Awaited<ReturnType<typeof getLicense>>, TError, TData>
-  >;
-}) => {
-  const { query: queryOptions } = options ?? {};
+    
+export const getGetLicenseQueryOptions = <TData = Awaited<ReturnType<typeof getLicense>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLicense>>, TError, TData>>, }
+) => {
 
-  const queryKey = queryOptions?.queryKey ?? getGetLicenseQueryKey();
+const {query: queryOptions} = options ?? {};
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getLicense>>> = ({
-    signal,
-  }) => getLicense(signal);
+  const queryKey =  queryOptions?.queryKey ?? getGetLicenseQueryKey();
 
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof getLicense>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+  
 
-export type GetLicenseQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getLicense>>
->;
-export type GetLicenseQueryError = UnauthorizedResponse | ForbiddenResponse;
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLicense>>> = ({ signal }) => getLicense(signal);
 
-export function useGetLicense<
-  TData = Awaited<ReturnType<typeof getLicense>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(
-  options: {
-    query: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getLicense>>, TError, TData>
-    > &
-      Pick<
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLicense>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type GetLicenseQueryResult = NonNullable<Awaited<ReturnType<typeof getLicense>>>
+export type GetLicenseQueryError = UnauthorizedResponse | ForbiddenResponse
+
+
+export function useGetLicense<TData = Awaited<ReturnType<typeof getLicense>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLicense>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getLicense>>,
           TError,
           Awaited<ReturnType<typeof getLicense>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useGetLicense<
-  TData = Awaited<ReturnType<typeof getLicense>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getLicense>>, TError, TData>
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useGetLicense<TData = Awaited<ReturnType<typeof getLicense>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLicense>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getLicense>>,
           TError,
           Awaited<ReturnType<typeof getLicense>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useGetLicense<
-  TData = Awaited<ReturnType<typeof getLicense>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getLicense>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useGetLicense<TData = Awaited<ReturnType<typeof getLicense>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLicense>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary Get resolved license metadata
  */
 
-export function useGetLicense<
-  TData = Awaited<ReturnType<typeof getLicense>>,
-  TError = UnauthorizedResponse | ForbiddenResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getLicense>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getGetLicenseQueryOptions(options);
+export function useGetLicense<TData = Awaited<ReturnType<typeof getLicense>>, TError = UnauthorizedResponse | ForbiddenResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLicense>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getGetLicenseQueryOptions(options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
 
+
+
+
 /**
  * @summary Get entitlement usage vs limits
  */
-export const getLicenseUsage = (signal?: AbortSignal) => {
-  return apiClient<GenericObject>({
-    url: `/api/v1/license/usage`,
-    method: "GET",
-    signal,
-  });
-};
+export const getLicenseUsage = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return apiClient<GenericObject>(
+      {url: `/api/v1/license/usage`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
 
 export const getGetLicenseUsageQueryKey = () => {
-  return [`/api/v1/license/usage`] as const;
-};
+    return [
+    `/api/v1/license/usage`
+    ] as const;
+    }
 
-export const getGetLicenseUsageQueryOptions = <
-  TData = Awaited<ReturnType<typeof getLicenseUsage>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(options?: {
-  query?: Partial<
-    UseQueryOptions<Awaited<ReturnType<typeof getLicenseUsage>>, TError, TData>
-  >;
-}) => {
-  const { query: queryOptions } = options ?? {};
+    
+export const getGetLicenseUsageQueryOptions = <TData = Awaited<ReturnType<typeof getLicenseUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLicenseUsage>>, TError, TData>>, }
+) => {
 
-  const queryKey = queryOptions?.queryKey ?? getGetLicenseUsageQueryKey();
+const {query: queryOptions} = options ?? {};
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getLicenseUsage>>> = ({
-    signal,
-  }) => getLicenseUsage(signal);
+  const queryKey =  queryOptions?.queryKey ?? getGetLicenseUsageQueryKey();
 
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof getLicenseUsage>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+  
 
-export type GetLicenseUsageQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getLicenseUsage>>
->;
-export type GetLicenseUsageQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLicenseUsage>>> = ({ signal }) => getLicenseUsage(signal);
 
-export function useGetLicenseUsage<
-  TData = Awaited<ReturnType<typeof getLicenseUsage>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  options: {
-    query: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getLicenseUsage>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLicenseUsage>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type GetLicenseUsageQueryResult = NonNullable<Awaited<ReturnType<typeof getLicenseUsage>>>
+export type GetLicenseUsageQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
+
+
+export function useGetLicenseUsage<TData = Awaited<ReturnType<typeof getLicenseUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLicenseUsage>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getLicenseUsage>>,
           TError,
           Awaited<ReturnType<typeof getLicenseUsage>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useGetLicenseUsage<
-  TData = Awaited<ReturnType<typeof getLicenseUsage>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getLicenseUsage>>,
-        TError,
-        TData
-      >
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useGetLicenseUsage<TData = Awaited<ReturnType<typeof getLicenseUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLicenseUsage>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getLicenseUsage>>,
           TError,
           Awaited<ReturnType<typeof getLicenseUsage>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useGetLicenseUsage<
-  TData = Awaited<ReturnType<typeof getLicenseUsage>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getLicenseUsage>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useGetLicenseUsage<TData = Awaited<ReturnType<typeof getLicenseUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLicenseUsage>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary Get entitlement usage vs limits
  */
 
-export function useGetLicenseUsage<
-  TData = Awaited<ReturnType<typeof getLicenseUsage>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<
-        Awaited<ReturnType<typeof getLicenseUsage>>,
-        TError,
-        TData
-      >
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getGetLicenseUsageQueryOptions(options);
+export function useGetLicenseUsage<TData = Awaited<ReturnType<typeof getLicenseUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLicenseUsage>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getGetLicenseUsageQueryOptions(options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
 
-/**
- * @summary Reload the active license
- */
-export const reloadLicense = (signal?: AbortSignal) => {
-  return apiClient<ReloadLicense200>({
-    url: `/api/v1/license/reload`,
-    method: "POST",
-    signal,
-  });
-};
 
-export const getReloadLicenseMutationOptions = <
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof reloadLicense>>,
-    TError,
-    void,
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof reloadLicense>>,
-  TError,
-  void,
-  TContext
-> => {
-  const mutationKey = ["reloadLicense"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof reloadLicense>>,
-    void
-  > = () => {
-    return reloadLicense();
-  };
-
-  return { mutationFn, ...mutationOptions };
-};
-
-export type ReloadLicenseMutationResult = NonNullable<
-  Awaited<ReturnType<typeof reloadLicense>>
->;
-
-export type ReloadLicenseMutationError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | ServiceUnavailableResponse;
 
 /**
  * @summary Reload the active license
  */
-export const useReloadLicense = <
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | ServiceUnavailableResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof reloadLicense>>,
-      TError,
-      void,
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof reloadLicense>>,
-  TError,
-  void,
-  TContext
-> => {
-  const mutationOptions = getReloadLicenseMutationOptions(options);
+export const reloadLicense = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return apiClient<ReloadLicense200>(
+      {url: `/api/v1/license/reload`, method: 'POST', signal
+    },
+      );
+    }
+  
 
-  return useMutation(mutationOptions, queryClient);
-};
+
+export const getReloadLicenseMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reloadLicense>>, TError,void, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof reloadLicense>>, TError,void, TContext> => {
+
+const mutationKey = ['reloadLicense'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
+
+      
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reloadLicense>>, void> = () => {
+          
+
+          return  reloadLicense()
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReloadLicenseMutationResult = NonNullable<Awaited<ReturnType<typeof reloadLicense>>>
+    
+    export type ReloadLicenseMutationError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
+
+    /**
+ * @summary Reload the active license
+ */
+export const useReloadLicense = <TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reloadLicense>>, TError,void, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof reloadLicense>>,
+        TError,
+        void,
+        TContext
+      > => {
+
+      const mutationOptions = getReloadLicenseMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    

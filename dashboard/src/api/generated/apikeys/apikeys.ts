@@ -5,7 +5,10 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import { useMutation, useQuery } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery
+} from '@tanstack/react-query';
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -18,8 +21,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult,
-} from "@tanstack/react-query";
+  UseQueryResult
+} from '@tanstack/react-query';
 
 import type {
   BadRequestResponse,
@@ -29,149 +32,105 @@ import type {
   InternalServerErrorResponse,
   ListAPIKeys200,
   NotFoundResponse,
-  UnauthorizedResponse,
-} from ".././model";
+  UnauthorizedResponse
+} from '.././model';
 
-import { apiClient } from "../../client";
+import { apiClient } from '../../client';
+
+
+
 
 /**
  * @summary List API keys
  */
-export const listAPIKeys = (signal?: AbortSignal) => {
-  return apiClient<ListAPIKeys200>({
-    url: `/api/v1/auth/keys`,
-    method: "GET",
-    signal,
-  });
-};
+export const listAPIKeys = (
+    
+ signal?: AbortSignal
+) => {
+      
+      
+      return apiClient<ListAPIKeys200>(
+      {url: `/api/v1/auth/keys`, method: 'GET', signal
+    },
+      );
+    }
+  
+
+
 
 export const getListAPIKeysQueryKey = () => {
-  return [`/api/v1/auth/keys`] as const;
-};
+    return [
+    `/api/v1/auth/keys`
+    ] as const;
+    }
 
-export const getListAPIKeysQueryOptions = <
-  TData = Awaited<ReturnType<typeof listAPIKeys>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(options?: {
-  query?: Partial<
-    UseQueryOptions<Awaited<ReturnType<typeof listAPIKeys>>, TError, TData>
-  >;
-}) => {
-  const { query: queryOptions } = options ?? {};
+    
+export const getListAPIKeysQueryOptions = <TData = Awaited<ReturnType<typeof listAPIKeys>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAPIKeys>>, TError, TData>>, }
+) => {
 
-  const queryKey = queryOptions?.queryKey ?? getListAPIKeysQueryKey();
+const {query: queryOptions} = options ?? {};
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof listAPIKeys>>> = ({
-    signal,
-  }) => listAPIKeys(signal);
+  const queryKey =  queryOptions?.queryKey ?? getListAPIKeysQueryKey();
 
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof listAPIKeys>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData> };
-};
+  
 
-export type ListAPIKeysQueryResult = NonNullable<
-  Awaited<ReturnType<typeof listAPIKeys>>
->;
-export type ListAPIKeysQueryError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAPIKeys>>> = ({ signal }) => listAPIKeys(signal);
 
-export function useListAPIKeys<
-  TData = Awaited<ReturnType<typeof listAPIKeys>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  options: {
-    query: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listAPIKeys>>, TError, TData>
-    > &
-      Pick<
+      
+
+      
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAPIKeys>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
+}
+
+export type ListAPIKeysQueryResult = NonNullable<Awaited<ReturnType<typeof listAPIKeys>>>
+export type ListAPIKeysQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
+
+
+export function useListAPIKeys<TData = Awaited<ReturnType<typeof listAPIKeys>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAPIKeys>>, TError, TData>> & Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listAPIKeys>>,
           TError,
           Awaited<ReturnType<typeof listAPIKeys>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData>;
-};
-export function useListAPIKeys<
-  TData = Awaited<ReturnType<typeof listAPIKeys>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listAPIKeys>>, TError, TData>
-    > &
-      Pick<
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListAPIKeys<TData = Awaited<ReturnType<typeof listAPIKeys>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAPIKeys>>, TError, TData>> & Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listAPIKeys>>,
           TError,
           Awaited<ReturnType<typeof listAPIKeys>>
-        >,
-        "initialData"
-      >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-export function useListAPIKeys<
-  TData = Awaited<ReturnType<typeof listAPIKeys>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listAPIKeys>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+        > , 'initialData'
+      >, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+export function useListAPIKeys<TData = Awaited<ReturnType<typeof listAPIKeys>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAPIKeys>>, TError, TData>>, }
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
 /**
  * @summary List API keys
  */
 
-export function useListAPIKeys<
-  TData = Awaited<ReturnType<typeof listAPIKeys>>,
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
->(
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof listAPIKeys>>, TError, TData>
-    >;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
-  const queryOptions = getListAPIKeysQueryOptions(options);
+export function useListAPIKeys<TData = Awaited<ReturnType<typeof listAPIKeys>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAPIKeys>>, TError, TData>>, }
+ , queryClient?: QueryClient 
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
 
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData> };
+  const queryOptions = getListAPIKeysQueryOptions(options)
 
-  query.queryKey = queryOptions.queryKey;
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey ;
 
   return query;
 }
+
+
+
 
 /**
  * The raw secret is returned **only once** in the response. Store it
@@ -180,184 +139,125 @@ securely; it cannot be retrieved again.
  * @summary Create an API key
  */
 export const createAPIKey = (
-  createAPIKeyRequest: CreateAPIKeyRequest,
-  signal?: AbortSignal,
+    createAPIKeyRequest: CreateAPIKeyRequest,
+ signal?: AbortSignal
 ) => {
-  return apiClient<CreateAPIKeyResponse>({
-    url: `/api/v1/auth/keys`,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    data: createAPIKeyRequest,
-    signal,
-  });
-};
+      
+      
+      return apiClient<CreateAPIKeyResponse>(
+      {url: `/api/v1/auth/keys`, method: 'POST',
+      headers: {'Content-Type': 'application/json', },
+      data: createAPIKeyRequest, signal
+    },
+      );
+    }
+  
 
-export const getCreateAPIKeyMutationOptions = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof createAPIKey>>,
-    TError,
-    { data: CreateAPIKeyRequest },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof createAPIKey>>,
-  TError,
-  { data: CreateAPIKeyRequest },
-  TContext
-> => {
-  const mutationKey = ["createAPIKey"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof createAPIKey>>,
-    { data: CreateAPIKeyRequest }
-  > = (props) => {
-    const { data } = props ?? {};
+export const getCreateAPIKeyMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAPIKey>>, TError,{data: CreateAPIKeyRequest}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof createAPIKey>>, TError,{data: CreateAPIKeyRequest}, TContext> => {
 
-    return createAPIKey(data);
-  };
+const mutationKey = ['createAPIKey'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type CreateAPIKeyMutationResult = NonNullable<
-  Awaited<ReturnType<typeof createAPIKey>>
->;
-export type CreateAPIKeyMutationBody = CreateAPIKeyRequest;
-export type CreateAPIKeyMutationError =
-  | BadRequestResponse
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | InternalServerErrorResponse;
 
-/**
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAPIKey>>, {data: CreateAPIKeyRequest}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createAPIKey(data,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAPIKeyMutationResult = NonNullable<Awaited<ReturnType<typeof createAPIKey>>>
+    export type CreateAPIKeyMutationBody = CreateAPIKeyRequest
+    export type CreateAPIKeyMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
+
+    /**
  * @summary Create an API key
  */
-export const useCreateAPIKey = <
-  TError =
-    | BadRequestResponse
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof createAPIKey>>,
-      TError,
-      { data: CreateAPIKeyRequest },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof createAPIKey>>,
-  TError,
-  { data: CreateAPIKeyRequest },
-  TContext
-> => {
-  const mutationOptions = getCreateAPIKeyMutationOptions(options);
+export const useCreateAPIKey = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAPIKey>>, TError,{data: CreateAPIKeyRequest}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createAPIKey>>,
+        TError,
+        {data: CreateAPIKeyRequest},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
-/**
+      const mutationOptions = getCreateAPIKeyMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    /**
  * @summary Revoke an API key
  */
-export const deleteAPIKey = (id: string) => {
-  return apiClient<void>({ url: `/api/v1/auth/keys/${id}`, method: "DELETE" });
-};
+export const deleteAPIKey = (
+    id: string,
+ ) => {
+      
+      
+      return apiClient<void>(
+      {url: `/api/v1/auth/keys/${id}`, method: 'DELETE'
+    },
+      );
+    }
+  
 
-export const getDeleteAPIKeyMutationOptions = <
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof deleteAPIKey>>,
-    TError,
-    { id: string },
-    TContext
-  >;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof deleteAPIKey>>,
-  TError,
-  { id: string },
-  TContext
-> => {
-  const mutationKey = ["deleteAPIKey"];
-  const { mutation: mutationOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey } };
 
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof deleteAPIKey>>,
-    { id: string }
-  > = (props) => {
-    const { id } = props ?? {};
+export const getDeleteAPIKeyMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAPIKey>>, TError,{id: string}, TContext>, }
+): UseMutationOptions<Awaited<ReturnType<typeof deleteAPIKey>>, TError,{id: string}, TContext> => {
 
-    return deleteAPIKey(id);
-  };
+const mutationKey = ['deleteAPIKey'];
+const {mutation: mutationOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }};
 
-  return { mutationFn, ...mutationOptions };
-};
+      
 
-export type DeleteAPIKeyMutationResult = NonNullable<
-  Awaited<ReturnType<typeof deleteAPIKey>>
->;
 
-export type DeleteAPIKeyMutationError =
-  | UnauthorizedResponse
-  | ForbiddenResponse
-  | NotFoundResponse
-  | InternalServerErrorResponse;
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteAPIKey>>, {id: string}> = (props) => {
+          const {id} = props ?? {};
 
-/**
+          return  deleteAPIKey(id,)
+        }
+
+        
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteAPIKeyMutationResult = NonNullable<Awaited<ReturnType<typeof deleteAPIKey>>>
+    
+    export type DeleteAPIKeyMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse
+
+    /**
  * @summary Revoke an API key
  */
-export const useDeleteAPIKey = <
-  TError =
-    | UnauthorizedResponse
-    | ForbiddenResponse
-    | NotFoundResponse
-    | InternalServerErrorResponse,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof deleteAPIKey>>,
-      TError,
-      { id: string },
-      TContext
-    >;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof deleteAPIKey>>,
-  TError,
-  { id: string },
-  TContext
-> => {
-  const mutationOptions = getDeleteAPIKeyMutationOptions(options);
+export const useDeleteAPIKey = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteAPIKey>>, TError,{id: string}, TContext>, }
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteAPIKey>>,
+        TError,
+        {id: string},
+        TContext
+      > => {
 
-  return useMutation(mutationOptions, queryClient);
-};
+      const mutationOptions = getDeleteAPIKeyMutationOptions(options);
+
+      return useMutation(mutationOptions, queryClient);
+    }
+    

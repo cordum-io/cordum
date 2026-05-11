@@ -12,11 +12,12 @@ rules participate in evaluation; `deprecated` rules remain queryable
 for audit and rollback but are skipped by evaluators.
 
  */
-export type RuleStatus = (typeof RuleStatus)[keyof typeof RuleStatus];
+export type RuleStatus = typeof RuleStatus[keyof typeof RuleStatus];
+
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const RuleStatus = {
-  draft: "draft",
-  published: "published",
-  deprecated: "deprecated",
+  draft: 'draft',
+  published: 'published',
+  deprecated: 'deprecated',
 } as const;

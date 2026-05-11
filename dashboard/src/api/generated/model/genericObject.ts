@@ -6,6 +6,4 @@
  * OpenAPI spec version: 2026-05-10.3
  */
 
-export interface GenericObject {
-  [key: string]: unknown;
-}
+export interface GenericObject { [key: string]: unknown }

@@ -5,8 +5,8 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-10.3
  */
-import type { JobEvaluationContextLabels } from "./jobEvaluationContextLabels";
-import type { JobEvaluationInput } from "./jobEvaluationInput";
+import type { JobEvaluationContextLabels } from './jobEvaluationContextLabels';
+import type { JobEvaluationInput } from './jobEvaluationInput';
 
 /**
  * Job-side context for the unified evaluator. Used with input, output,
