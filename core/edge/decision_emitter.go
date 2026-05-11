@@ -46,7 +46,17 @@ func EmitDecisionForEdgeEvent(event AgentActionEvent, opts EdgeDecisionEmitOptio
 		InputRef:      strings.TrimSpace(opts.InputRef),
 		OutputRef:     strings.TrimSpace(opts.OutputRef),
 		AuditHash:     strings.TrimSpace(opts.AuditHash),
-		Timestamp:     timestamp,
+		// Backend 5e identity fields read directly from the persisted event
+		// — no opts threading needed since AgentActionEvent already carries
+		// session/tenant/principal scope. AgentProduct is the closest
+		// available agent identity until the event schema gains an explicit
+		// AgentID; Topic = ActionName (the action class).
+		SessionID:   strings.TrimSpace(event.SessionID),
+		AgentID:     strings.TrimSpace(event.AgentProduct),
+		PrincipalID: strings.TrimSpace(event.PrincipalID),
+		TenantID:    strings.TrimSpace(event.TenantID),
+		Topic:       strings.TrimSpace(event.ActionName),
+		Timestamp:   timestamp,
 	}, nil
 }
 
