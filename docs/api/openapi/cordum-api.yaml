@@ -12016,6 +12016,16 @@ components:
           type: string
         audit:
           $ref: '#/components/schemas/AuditMetadata'
+        firing_last_7d:
+          type: array
+          items:
+            type: integer
+          description: |
+            7-bucket daily firing histogram (oldest→newest) for the rule scoped
+            to the request tenant. Populated by `GET /api/v1/policy/rules` via
+            a single bulk job-history scan per request. Absent (omitted) when
+            firing analytics are not computed for the request — e.g. tenant-less
+            calls, individual single-rule GET endpoints, or jobStore unavailable.
         match:
           type: object
           additionalProperties: true
