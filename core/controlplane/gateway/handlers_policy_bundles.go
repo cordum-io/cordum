@@ -64,28 +64,6 @@ func (s *server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 	s.handlePolicyRulesUnified(w, r)
 }
 
-func policyRuleIDs(items []map[string]any) []string {
-	ids := make([]string, 0, len(items))
-	for _, item := range items {
-		id := strings.TrimSpace(policybundles.StringFromAny(item["id"]))
-		if id != "" {
-			ids = append(ids, id)
-		}
-	}
-	return ids
-}
-
-func attachPolicyRuleFiringLast7d(items []map[string]any, firingLast7d map[string][]int) {
-	for _, item := range items {
-		id := strings.TrimSpace(policybundles.StringFromAny(item["id"]))
-		buckets := firingLast7d[id]
-		if len(buckets) != policyRuleFiringLast7dBuckets {
-			buckets = make([]int, policyRuleFiringLast7dBuckets)
-		}
-		item["firing_last_7d"] = append([]int(nil), buckets...)
-	}
-}
-
 func (s *server) handlePolicyOutputRules(w http.ResponseWriter, r *http.Request) {
 	if !s.requireStoreAndPermissionOrRole(w, r, auth.PermPolicyRead, []string{"admin"}, s.configSvc) {
 		return

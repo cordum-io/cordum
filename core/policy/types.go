@@ -12,16 +12,22 @@ import (
 // orval-generated dashboard types and protobuf google.protobuf.Struct
 // transport.
 type Rule struct {
-	ID          string          `json:"id"`
-	Name        string          `json:"name"`
-	Type        RuleType        `json:"type"`
-	Scope       RuleScope       `json:"scope"`
-	Status      RuleStatus      `json:"status"`
-	Version     string          `json:"version"`
-	Audit       AuditMetadata   `json:"audit"`
-	Match       json.RawMessage `json:"match"`
-	Decide      json.RawMessage `json:"decide"`
-	Description string          `json:"description,omitempty"`
+	ID      string        `json:"id"`
+	Name    string        `json:"name"`
+	Type    RuleType      `json:"type"`
+	Scope   RuleScope     `json:"scope"`
+	Status  RuleStatus    `json:"status"`
+	Version string        `json:"version"`
+	Audit   AuditMetadata `json:"audit"`
+	// FiringLast7d is a 7-bucket daily firing histogram (oldest→newest) for the
+	// rule scoped to the request tenant. Populated by `handlePolicyRulesUnified`
+	// via a single bulk job-history scan per request. Length is 0 (omitempty) when
+	// firing analytics are not computed for the request — e.g. tenant-less calls,
+	// individual GET-rule endpoints, or jobStore unavailable.
+	FiringLast7d []int           `json:"firing_last_7d,omitempty"`
+	Match        json.RawMessage `json:"match"`
+	Decide       json.RawMessage `json:"decide"`
+	Description  string          `json:"description,omitempty"`
 }
 
 // Decision is the unified evaluator output. A single Decision may aggregate
