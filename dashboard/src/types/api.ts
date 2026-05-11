@@ -111,19 +111,6 @@ export type PolicyRemediation = {
   remove_labels?: string[];
 };
 
-export type TimelineEvent = {
-  time: string;
-  type: string;
-  run_id?: string;
-  workflow_id?: string;
-  step_id?: string;
-  job_id?: string;
-  status?: string;
-  result_ptr?: string;
-  message?: string;
-  data?: Record<string, unknown>;
-};
-
 export type JobRecord = {
   id: string;
   trace_id?: string;
@@ -193,22 +180,6 @@ export type JobDetail = {
   step_id?: string;
 };
 
-export type RawDLQEntry = {
-  job_id: string;
-  topic?: string;
-  status?: string;
-  reason?: string;
-  reason_code?: string;
-  last_state?: string;
-  attempts?: number;
-  created_at: string;
-};
-
-export type DLQResponse = {
-  items: RawDLQEntry[];
-  next_cursor?: number | null;
-};
-
 export type Heartbeat = {
   worker_id?: string;
   pool?: string;
@@ -217,18 +188,6 @@ export type Heartbeat = {
   topic?: string;
   updated_at?: string;
   [key: string]: unknown;
-};
-
-export type SafetyDecisionRecord = {
-  decision?: string;
-  reason?: string;
-  rule_id?: string;
-  policy_snapshot?: string;
-  constraints?: Record<string, unknown>;
-  remediations?: PolicyRemediation[];
-  approval_required?: boolean;
-  approval_ref?: string;
-  checked_at?: number;
 };
 
 export type WorkflowRunsResponse = {
@@ -279,12 +238,6 @@ export type ConfigDocument = {
   revision: number;
   updated_at: string;
   meta?: Record<string, string>;
-};
-
-export type EffectiveConfigSnapshot = {
-  version: string;
-  hash: string;
-  data: Record<string, unknown>;
 };
 
 export type PolicyCheckResponse = Record<string, unknown>;
@@ -343,33 +296,6 @@ export type PackRecord = {
 
 export type PackListResponse = {
   items: PackRecord[];
-};
-
-export type PackVerifyResult = {
-  name: string;
-  expected: string;
-  got: string;
-  reason: string;
-  ok: boolean;
-};
-
-export type PackVerifyResponse = {
-  pack_id: string;
-  results: PackVerifyResult[];
-};
-
-export type LicenseInfo = {
-  mode?: string;
-  status?: string;
-  plan?: string;
-  org_id?: string;
-  license_id?: string;
-  deployment_type?: string;
-  issued_at?: string;
-  not_before?: string;
-  expires_at?: string;
-  features?: string[];
-  limits?: Record<string, number>;
 };
 
 export type PolicyBundlesResponse = {
@@ -478,86 +404,6 @@ export type PolicyRuleError = {
 export type PolicyRulesResponse = {
   items: RawPolicyRule[];
   errors?: PolicyRuleError[];
-};
-
-export type BusPacket = {
-  traceId?: string;
-  senderId?: string;
-  createdAt?: string;
-  protocolVersion?: number;
-  payload?: {
-    jobRequest?: {
-      jobId?: string;
-      topic?: string;
-      tenantId?: string;
-      principalId?: string;
-      workflowId?: string;
-      labels?: Record<string, string>;
-      riskTags?: string[];
-      requires?: string[];
-      packId?: string;
-    };
-    jobResult?: {
-      jobId?: string;
-      status?: string;
-      errorCode?: string;
-      errorMessage?: string;
-      resultPtr?: string;
-    };
-    jobProgress?: {
-      jobId?: string;
-      status?: string;
-      progress?: number;
-      message?: string;
-    };
-    heartbeat?: {
-      workerId?: string;
-      pool?: string;
-      cpuLoad?: number;
-      memoryLoad?: number;
-    };
-    alert?: {
-      level?: string;
-      message?: string;
-      code?: string;
-    };
-    jobCancel?: {
-      jobId?: string;
-      reason?: string;
-    };
-    chatMessage?: {
-      id?: string;
-      runId?: string;
-      role?: "user" | "agent" | "system";
-      content?: string;
-      stepId?: string;
-      jobId?: string;
-      agentId?: string;
-      agentName?: string;
-      createdAt?: string;
-      metadata?: Record<string, unknown>;
-    };
-  };
-};
-
-export type AuthUser = {
-  id: string;
-  username: string;
-  email?: string;
-  display_name?: string;
-  tenant: string;
-  roles?: string[];
-  disabled?: boolean;
-  source?: string;
-  created_at?: string;
-  updated_at?: string;
-  last_login_at?: string;
-};
-
-export type AuthLoginResponse = {
-  token: string;
-  expires_at: string;
-  user: AuthUser;
 };
 
 export type PolicySnapshotsListResponse = {

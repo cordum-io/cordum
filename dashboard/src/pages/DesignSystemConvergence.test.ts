@@ -20,11 +20,13 @@ import packsPageSource from "./PacksPage.tsx?raw";
 import delegationsPageSource from "./DelegationsPage.tsx?raw";
 import approvalsPageSource from "./ApprovalsPage.tsx?raw";
 import bundleDetailGovernSource from "./govern/BundleDetailPage.tsx?raw";
-import outputRulesPageSource from "./govern/OutputRulesPage.tsx?raw";
-import replayPageSource from "./govern/ReplayPage.tsx?raw";
-import inputRulesPageSource from "./govern/InputRulesPage.tsx?raw";
-import policyAnalyticsPageSource from "./govern/PolicyAnalyticsPage.tsx?raw";
 import quarantinePageSource from "./govern/QuarantinePage.tsx?raw";
+import approvalDetailPageSource from "./approvals/ApprovalDetailPage.tsx?raw";
+import tenantDetailPageSource from "./govern/TenantDetailPage.tsx?raw";
+import workflowsPageSource from "./WorkflowsPage.tsx?raw";
+import settingsSSOPageSource from "./settings/SettingsSSOPage.tsx?raw";
+import edgeSessionsPageSource from "./EdgeSessionsPage.tsx?raw";
+import edgeSessionDetailPageSource from "./EdgeSessionDetailPage.tsx?raw";
 import buttonSource from "../components/ui/Button.tsx?raw";
 import cardSource from "../components/ui/Card.tsx?raw";
 
@@ -56,22 +58,6 @@ describe("design-system convergence regressions", () => {
     expect(bundleDetailGovernSource).not.toMatch(/var\(--color-/);
   });
 
-  it("keeps govern output rules page styling on shared tokens instead of page-local CSS vars", () => {
-    expect(outputRulesPageSource).not.toMatch(/var\(--color-/);
-  });
-
-  it("keeps govern replay page styling on shared tokens instead of page-local CSS vars", () => {
-    expect(replayPageSource).not.toMatch(/var\(--color-/);
-  });
-
-  it("keeps govern input rules page styling on shared tokens instead of page-local CSS vars", () => {
-    expect(inputRulesPageSource).not.toMatch(/var\(--color-/);
-  });
-
-  it("keeps govern policy analytics page styling on shared tokens instead of page-local CSS vars", () => {
-    expect(policyAnalyticsPageSource).not.toMatch(/var\(--color-/);
-  });
-
   it("keeps govern quarantine page styling on shared tokens instead of page-local CSS vars", () => {
     expect(quarantinePageSource).not.toMatch(/var\(--color-/);
   });
@@ -84,24 +70,110 @@ describe("design-system convergence regressions", () => {
   // (component names, prop names, comments) do NOT trigger.
   const RAW_CONTROL_RE = /<(input|select|textarea)\b/;
 
-  it("v2.5 drift sweep — ReplayPage uses primitives, no raw native controls", () => {
-    expect(replayPageSource).not.toMatch(RAW_CONTROL_RE);
-  });
-
-  it("v2.5 drift sweep — InputRulesPage uses primitives, no raw native controls", () => {
-    expect(inputRulesPageSource).not.toMatch(RAW_CONTROL_RE);
-  });
-
-  it("v2.5 drift sweep — OutputRulesPage uses primitives, no raw native controls", () => {
-    expect(outputRulesPageSource).not.toMatch(RAW_CONTROL_RE);
-  });
-
-  it("v2.5 drift sweep — PolicyAnalyticsPage uses primitives, no raw native controls", () => {
-    expect(policyAnalyticsPageSource).not.toMatch(RAW_CONTROL_RE);
-  });
-
   it("v2.5 drift sweep — QuarantinePage uses primitives, no raw native controls", () => {
     expect(quarantinePageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — ApprovalDetailPage uses primitives, no raw native controls", () => {
+    expect(approvalDetailPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — TenantDetailPage uses primitives, no raw native controls", () => {
+    expect(tenantDetailPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — WorkflowsPage uses primitives, no raw native controls", () => {
+    expect(workflowsPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — SettingsSSOPage uses primitives, no raw native controls", () => {
+    expect(settingsSSOPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — EdgeSessionsPage uses primitives, no raw native controls", () => {
+    expect(edgeSessionsPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  it("v2.5 drift sweep reopen #2 — EdgeSessionDetailPage uses primitives, no raw native controls", () => {
+    expect(edgeSessionDetailPageSource).not.toMatch(RAW_CONTROL_RE);
+  });
+
+  // Comprehensive sweep gate — task-82593815 (drift sweep follow-up #2) closure.
+  // Replaces the open-ended per-page enumeration with a forward-compatible
+  // assertion: every page under src/pages/**/*.tsx must use the canonical
+  // Input / Select / Textarea primitives instead of raw native controls.
+  // Documented carve-outs stay raw and are listed below with a comment.
+  //
+  // When adding a new page that legitimately needs a native control, add the
+  // file basename to the carve-out set AND document the rationale in
+  // dashboard/docs/design-system-audit.md.
+  const allPageSources = import.meta.glob<string>(
+    ["./**/*.tsx", "!./**/*.test.tsx"],
+    {
+      query: "?raw",
+      import: "default",
+      eager: true,
+    },
+  );
+
+  // Carve-outs (documented in mem-df8a90aa + dashboard/docs/design-system-audit.md):
+  // - LoginPage: native HTML form required for browser autofill / password
+  //   manager interop on the auth surface.
+  // - RunDetailPage: workflow-run console exempted from primitive sweep
+  //   (see "DoD-3 (12-col Bento Grid) — exemptions" register).
+  // - policies/TokenInput.tsx: chip-list input primitive (Phase 3B). Uses a
+  //   bare <input> as the trailing typing surface inside the chip
+  //   container; the existing Input primitive doesn't support that UX
+  //   shape (it owns the outer ring + sizing), so the raw control is the
+  //   right shape here. Phase 3B-only consumer until promoted.
+  // - policies/RuleFormView.tsx: number fields use a raw <input
+  //   type="number"> via RHF Controller because the existing Input
+  //   primitive treats values as strings and the velocity-rule throttle
+  //   limits need numeric coercion + empty→undefined handling for
+  //   optional fields. Carved out until the Input primitive grows a
+  //   typed-number variant.
+  // - policies/PublishToBundleModal.tsx (Phase 3E): bundle picker is a
+  //   `<input type="radio">` group rendered as cards with name + scope
+  //   + rule count visible at once. A `<Select>` dropdown would hide
+  //   the metadata strip; a RadioGroup primitive doesn't yet exist.
+  //   Carved out until a RadioGroup card-list primitive ships.
+  const RAW_CONTROL_CARVE_OUTS = new Set([
+    "./LoginPage.tsx",
+    "./RunDetailPage.tsx",
+    "./policies/TokenInput.tsx",
+    "./policies/RuleFormView.tsx",
+    "./policies/PublishToBundleModal.tsx",
+  ]);
+
+  it("v2.5 drift sweep — comprehensive sweep: all pages except documented carve-outs use primitives", () => {
+    const offenders: Array<{ path: string; match: string }> = [];
+    for (const [path, source] of Object.entries(allPageSources)) {
+      // Skip test files — vitest globs catch *.test.tsx too.
+      if (/\.test\.tsx$/.test(path)) continue;
+      if (RAW_CONTROL_CARVE_OUTS.has(path)) continue;
+      const match = RAW_CONTROL_RE.exec(source);
+      if (match) offenders.push({ path, match: match[0] });
+    }
+    expect(
+      offenders,
+      `Pages with raw native controls (not in carve-out set): ${offenders
+        .map((o) => `${o.path} (${o.match})`)
+        .join(", ")}`,
+    ).toEqual([]);
+  });
+
+  it("v2.5 drift sweep — carve-out pages still hold raw controls (regression detector for misclassified migration)", () => {
+    // If LoginPage or RunDetailPage are accidentally migrated and the carve-out
+    // is not removed from the set above, this test fails — forcing a coordinated
+    // doc + test update rather than silent drift.
+    for (const carveOut of RAW_CONTROL_CARVE_OUTS) {
+      const source = allPageSources[carveOut];
+      expect(source, `Carve-out ${carveOut} should exist`).toBeTruthy();
+      expect(
+        source,
+        `Carve-out ${carveOut} should still contain a raw control (else remove from carve-out set + update audit doc)`,
+      ).toMatch(RAW_CONTROL_RE);
+    }
   });
 });
 

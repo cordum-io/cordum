@@ -76,34 +76,33 @@ func (b *DecisionBroker) Publish(_ context.Context, d Decision) {
 		return
 	}
 
-	// Snapshot subscribers under read lock so Publish doesn't serialise with
-	// other Publish calls.
-	b.mu.RLock()
-	if len(b.subs) == 0 {
-		b.mu.RUnlock()
+	// Hold the registry lock while attempting non-blocking sends. Closing a
+	// subscriber channel also requires the same lock, so this prevents a
+	// concurrent unsubscribe/eviction from closing a channel between a snapshot
+	// and the send below.
+	b.mu.Lock()
+	if b.closed.Load() || len(b.subs) == 0 {
+		b.mu.Unlock()
 		return
 	}
-	snapshot := make([]*decisionSubscriber, 0, len(b.subs))
-	for _, sub := range b.subs {
-		snapshot = append(snapshot, sub)
-	}
-	b.mu.RUnlock()
 
-	var evicted []uint64
-	for _, sub := range snapshot {
+	evicted := make([]*decisionSubscriber, 0)
+	for id, sub := range b.subs {
 		select {
 		case sub.ch <- d:
 			sub.drops = 0
 		default:
 			sub.drops++
 			if sub.drops >= maxConsecutiveDrops {
-				evicted = append(evicted, sub.id)
+				delete(b.subs, id)
+				evicted = append(evicted, sub)
 			}
 		}
 	}
+	b.mu.Unlock()
 
 	if len(evicted) > 0 {
-		b.evictAll(evicted)
+		closeEvictedSubscribers(evicted)
 	}
 }
 
@@ -154,6 +153,10 @@ func (b *DecisionBroker) evictAll(ids []uint64) {
 		evicted = append(evicted, sub)
 	}
 	b.mu.Unlock()
+	closeEvictedSubscribers(evicted)
+}
+
+func closeEvictedSubscribers(evicted []*decisionSubscriber) {
 	for _, sub := range evicted {
 		slog.Warn("policy decision broker evicted slow subscriber",
 			"subscriber_id", sub.id,

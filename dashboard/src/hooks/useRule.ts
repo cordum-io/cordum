@@ -14,7 +14,6 @@ import {
   type NormalizedRule,
   type RulesListResult,
   UNKNOWN_RULE_TYPE,
-  type RuleTypeOrUnknown,
 } from "./useRulesList";
 
 // Sentinel id used by the create-new path: PoliciesPage links to
@@ -177,5 +176,3 @@ export function useRule({
     staleTime: 60_000,
   });
 }
-
-export type RuleEditorTypeOrUnknown = RuleTypeOrUnknown;

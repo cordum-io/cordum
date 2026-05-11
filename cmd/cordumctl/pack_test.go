@@ -364,24 +364,24 @@ func TestValidatePoolsPatch(t *testing.T) {
 	patch := map[string]any{
 		"topics": map[string]any{"job.bad": map[string]any{}},
 	}
-	if err := validatePoolsPatch(patch, "pack1", nil); err == nil {
+	if err := validatePoolsPatch(patch, "pack1", nil, nil); err == nil {
 		t.Fatalf("expected namespacing error")
 	}
 
 	patch = map[string]any{
 		"pools": map[string]any{"shared": map[string]any{}},
 	}
-	if err := validatePoolsPatch(patch, "pack1", nil); err == nil {
+	if err := validatePoolsPatch(patch, "pack1", nil, nil); err == nil {
 		t.Fatalf("expected pool namespacing error")
 	}
 
 	current := map[string]any{"pools": map[string]any{"shared": map[string]any{}}}
-	if err := validatePoolsPatch(patch, "pack1", current); err != nil {
+	if err := validatePoolsPatch(patch, "pack1", nil, current); err != nil {
 		t.Fatalf("expected existing pool to be allowed: %v", err)
 	}
 
 	patch = map[string]any{"topics": map[string]any{"job.pack1.ok": map[string]any{}}, "extra": 1}
-	if err := validatePoolsPatch(patch, "pack1", nil); err == nil {
+	if err := validatePoolsPatch(patch, "pack1", nil, nil); err == nil {
 		t.Fatalf("expected unsupported key error")
 	}
 }
@@ -390,19 +390,19 @@ func TestValidateTimeoutsPatch(t *testing.T) {
 	patch := map[string]any{
 		"topics": map[string]any{"job.bad": map[string]any{}},
 	}
-	if err := validateTimeoutsPatch(patch, "pack1"); err == nil {
+	if err := validateTimeoutsPatch(patch, "pack1", nil); err == nil {
 		t.Fatalf("expected namespacing error")
 	}
 
 	patch = map[string]any{
 		"workflows": map[string]any{"bad.workflow": map[string]any{}},
 	}
-	if err := validateTimeoutsPatch(patch, "pack1"); err == nil {
+	if err := validateTimeoutsPatch(patch, "pack1", nil); err == nil {
 		t.Fatalf("expected workflow namespacing error")
 	}
 
 	patch = map[string]any{"topics": map[string]any{"job.pack1.ok": map[string]any{}}, "extra": 1}
-	if err := validateTimeoutsPatch(patch, "pack1"); err == nil {
+	if err := validateTimeoutsPatch(patch, "pack1", nil); err == nil {
 		t.Fatalf("expected unsupported key error")
 	}
 
@@ -410,7 +410,7 @@ func TestValidateTimeoutsPatch(t *testing.T) {
 		"topics":    map[string]any{"job.pack1.ok": map[string]any{}},
 		"workflows": map[string]any{"pack1.workflow": map[string]any{}},
 	}
-	if err := validateTimeoutsPatch(patch, "pack1"); err != nil {
+	if err := validateTimeoutsPatch(patch, "pack1", nil); err != nil {
 		t.Fatalf("expected valid timeouts patch: %v", err)
 	}
 }

@@ -376,33 +376,6 @@ export function useRuns(workflowId: string | null | undefined, params?: Workflow
   });
 }
 
-export function useAllRuns(filters?: AllRunsParams) {
-  return useQuery<WorkflowRunListResponse>({
-    queryKey: queryKeys.workflowRuns.allRuns(filters),
-    queryFn: async () => {
-      const res = await get<{ items: BackendWorkflowRun[]; next_cursor?: number | null }>(
-        `/workflow-runs${buildQuery({
-          limit: filters?.limit,
-          cursor: filters?.cursor,
-          status: filters?.status,
-          workflow_id: filters?.workflowId,
-          org_id: filters?.orgId,
-          team_id: filters?.teamId,
-          updated_after: filters?.updatedAfter,
-          updated_before: filters?.updatedBefore,
-        })}`,
-      );
-      const items = Array.isArray(res)
-        ? res
-        : (res as Record<string, unknown> | null)?.items as BackendWorkflowRun[] | undefined ?? [];
-      return {
-        items: items.map(mapWorkflowRun),
-        next_cursor: Array.isArray(res) ? null : (res as Record<string, unknown> | null)?.next_cursor as number | null ?? null,
-      };
-    },
-  });
-}
-
 export function useRun(runId: string | null | undefined) {
   return useQuery<WorkflowRun>({
     queryKey: queryKeys.workflowRuns.detail(runId),
@@ -550,27 +523,6 @@ function sortByAttention(runs: WorkflowRun[]): WorkflowRun[] {
     });
 }
 
-export function useActiveRuns() {
-  return useQuery<WorkflowRunListResponse, Error, WorkflowRun[]>({
-    queryKey: queryKeys.workflowRuns.active(),
-    queryFn: async () => {
-      const res = await get<{ items: BackendWorkflowRun[]; next_cursor?: number | null }>(
-        `/workflow-runs${buildQuery({ limit: 50 })}`,
-      );
-      const items = Array.isArray(res)
-        ? res
-        : (res as Record<string, unknown> | null)?.items as BackendWorkflowRun[] | undefined ?? [];
-      return {
-        items: items.map(mapWorkflowRun),
-        next_cursor: Array.isArray(res) ? null : (res as Record<string, unknown> | null)?.next_cursor as number | null ?? null,
-      };
-    },
-    select: (data) => sortByAttention(data.items),
-    refetchInterval: 10_000,
-    staleTime: 5_000,
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Workflow stats (client-side from run history)
 // ---------------------------------------------------------------------------
@@ -607,21 +559,6 @@ function computeWorkflowStats(runs: WorkflowRun[]): WorkflowStats {
   };
 }
 
-export function useWorkflowStats(workflowId: string | null | undefined) {
-  return useQuery<WorkflowRun[], Error, WorkflowStats>({
-    queryKey: queryKeys.workflowRuns.byWorkflow(workflowId, { limit: 20 }),
-    queryFn: () => {
-      if (!workflowId) throw new Error("workflow id is required");
-      return get<BackendWorkflowRun[]>(
-        `/workflows/${workflowId}/runs${buildQuery({ limit: 20 })}`,
-      ).then((runs) => (runs ?? []).map(mapWorkflowRun));
-    },
-    enabled: !!workflowId,
-    select: computeWorkflowStats,
-    staleTime: 30_000,
-  });
-}
-
 export function useCancelRun() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -646,104 +583,6 @@ export function useCancelRun() {
     onError: (err, variables) => {
       logger.error("workflows", "Cancel run failed", { runId: variables?.runId, error: err.message });
       useToastStore.getState().addToast({ type: "error", title: "Failed to cancel run", description: err.message });
-    },
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Delete run
-// ---------------------------------------------------------------------------
-
-export interface DeleteRunInput {
-  workflowId: string;
-  runId: string;
-}
-
-export function useDeleteRun() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (input: DeleteRunInput) => {
-      if (!input?.workflowId || !input?.runId) {
-        throw new Error("workflow id and run id are required");
-      }
-      logger.info("workflows", "Deleting run", { workflowId: input.workflowId, runId: input.runId });
-      return del<void>(`/workflows/${input.workflowId}/runs/${input.runId}`);
-    },
-    onSuccess: (_data, variables) => {
-      logger.info("workflows", "Run deleted", { workflowId: variables?.workflowId, runId: variables?.runId });
-      useToastStore.getState().addToast({ type: "success", title: "Run deleted" });
-      queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.all });
-      if (variables?.workflowId) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.byWorkflow(variables.workflowId) });
-      }
-    },
-    onError: (err, variables) => {
-      logger.error("workflows", "Delete run failed", { runId: variables?.runId, error: err.message });
-      useToastStore.getState().addToast({ type: "error", title: "Failed to delete run", description: err.message });
-    },
-  });
-}
-
-export function useDeleteRuns() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (inputs: DeleteRunInput[]) => {
-      if (!inputs?.length) {
-        throw new Error("at least one run is required");
-      }
-      logger.info("workflows", "Deleting runs", { count: inputs.length });
-      return Promise.all(
-        inputs.map((input) => del<void>(`/workflows/${input.workflowId}/runs/${input.runId}`)),
-      );
-    },
-    onSuccess: (_data, variables) => {
-      logger.info("workflows", "Runs deleted", { count: variables?.length });
-      useToastStore.getState().addToast({ type: "success", title: `${variables?.length ?? 0} run(s) deleted` });
-      queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.all });
-      const workflowIds = new Set(variables?.map((v) => v.workflowId));
-      for (const wid of workflowIds) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.workflowRuns.byWorkflow(wid) });
-      }
-    },
-    onError: (err) => {
-      logger.error("workflows", "Bulk delete runs failed", { error: err.message });
-      useToastStore.getState().addToast({ type: "error", title: "Failed to delete runs", description: err.message });
-    },
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Dry-run simulation
-// ---------------------------------------------------------------------------
-
-export interface DryRunStepResult {
-  step_id: string;
-  step_type: string;
-  decision: string;
-  reason: string;
-  rule_id?: string;
-}
-
-export interface DryRunResult {
-  steps: DryRunStepResult[];
-}
-
-export interface DryRunInput {
-  workflowId: string;
-  input?: Record<string, unknown>;
-  environment?: Record<string, unknown>;
-}
-
-export function useDryRun() {
-  return useMutation({
-    mutationFn: (params: DryRunInput) => {
-      if (!params?.workflowId) {
-        throw new Error("workflow id is required");
-      }
-      return post<DryRunResult>(`/workflows/${params.workflowId}/dry-run`, {
-        input: params.input ?? {},
-        environment: params.environment,
-      });
     },
   });
 }

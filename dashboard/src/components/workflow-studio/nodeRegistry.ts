@@ -225,14 +225,6 @@ export function getGroupedStepTypes(): { category: string; label: string; types:
   }));
 }
 
-/**
- * Palette types — the subset of types users can drag onto the canvas.
- * Excludes `job` (legacy alias for agent-task).
- */
-export const PALETTE_TYPES = Object.keys(REGISTRY).filter(
-  (t) => t !== "job",
-);
-
 // ---------------------------------------------------------------------------
 // Run status helpers (shared between node rendering and edge styling)
 // ---------------------------------------------------------------------------

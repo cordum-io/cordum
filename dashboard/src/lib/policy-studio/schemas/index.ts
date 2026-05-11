@@ -46,15 +46,3 @@ export function getRuleSchema(type: RuleType | string | null | undefined): RuleS
   if (!Object.prototype.hasOwnProperty.call(SCHEMA_BY_TYPE, type)) return null;
   return SCHEMA_BY_TYPE[type as RuleType];
 }
-
-/**
- * Catalog used by tests and by the Monaco completion provider to iterate
- * the four authored rule types in display order without importing the
- * scripts SSOT into runtime code.
- */
-export const RULE_SCHEMA_TYPES: ReadonlyArray<RuleType> = [
-  RuleType.input,
-  RuleType.output,
-  RuleType.velocity,
-  RuleType.edge,
-];

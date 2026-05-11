@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { LegacyDataTable } from "@/components/ui/LegacyDataTable";
 import { formatRelativeTime } from "@/lib/utils";
+import { evalScoreVariant } from "@/lib/badgeVariants";
 import type { EvalRun } from "@/api/types";
 
 export interface RunHistoryTableProps {
@@ -10,13 +11,6 @@ export interface RunHistoryTableProps {
   hasNextPage: boolean;
   isFetchingNextPage?: boolean;
   onLoadMore: () => void;
-}
-
-function scoreVariant(score: number | null): "success" | "warning" | "danger" | "default" {
-  if (score === null) return "default";
-  if (score >= 95) return "success";
-  if (score >= 80) return "warning";
-  return "danger";
 }
 
 function runStatus(run: EvalRun): { label: string; variant: "success" | "warning" | "danger" | "default" } {
@@ -52,7 +46,7 @@ export function RunHistoryTable({
       render: (r: EvalRun) => {
         const s = r.summary.scorePercent;
         return (
-          <Badge variant={scoreVariant(s)} aria-label={`score ${s === null ? "unknown" : s}`}>
+          <Badge variant={evalScoreVariant(s)} aria-label={`score ${s === null ? "unknown" : s}`}>
             {s === null ? "—" : `${Math.round(s)}%`}
           </Badge>
         );

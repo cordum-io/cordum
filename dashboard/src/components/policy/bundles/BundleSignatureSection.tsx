@@ -1,7 +1,7 @@
-import { useState } from "react";
 import { AlertTriangle, Copy, Check, KeyRound } from "lucide-react";
 import { Card, CardTitle } from "@/components/ui/Card";
 import { SignatureBadge } from "@/components/SignatureBadge";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { cn } from "@/lib/utils";
 import type { PolicyBundle } from "@/api/types";
 
@@ -142,17 +142,10 @@ function Field({
   copy?: boolean;
   truncate?: boolean;
 }) {
-  const [copied, setCopied] = useState(false);
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard API may be unavailable in non-secure contexts; swallow
-      // silently so the rest of the UI stays interactive.
-    }
-  };
+  // Field's `copy?: boolean` prop already binds the name `copy` in scope,
+  // so the hook's `copy` callback is renamed to avoid the shadowing collision.
+  const { copied, copy: copyToClipboard } = useCopyToClipboard({ resetMs: 1500 });
+  const handleCopy = () => void copyToClipboard(value);
   return (
     <div className="min-w-0">
       <dt className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">

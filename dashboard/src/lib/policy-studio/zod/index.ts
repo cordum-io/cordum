@@ -14,10 +14,6 @@ export {
 };
 
 export type {
-  EnvelopeFormValues,
-} from "./envelope";
-
-export type {
   InputRuleFormValues,
   OutputRuleFormValues,
   VelocityRuleFormValues,

@@ -49,12 +49,6 @@ const DEFAULT_OUTPUT_POLICY: GlobalPolicyOutputPolicy = {
   enabled: false,
   failMode: "closed",
 };
-const GLOBAL_RULE_ID_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-
-export function isValidGlobalRuleIdSlug(value: string): boolean {
-  return GLOBAL_RULE_ID_SLUG_PATTERN.test(value.trim());
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -633,13 +627,3 @@ export function serializeGlobalPolicyYaml(policy: GlobalPolicyDocument): string 
 
   return stringifyPolicyYaml(root);
 }
-
-export const __globalPolicyInternal = {
-  parseInputMatch,
-  parseConstraints,
-  parseOutputMatch,
-  serializeInputMatch,
-  serializeConstraints,
-  serializeOutputMatch,
-  isValidGlobalRuleIdSlug,
-};

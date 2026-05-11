@@ -17,8 +17,6 @@ export const chartColors = {
   muted: "#5a6a70",
 } as const;
 
-export type ChartColorKey = keyof typeof chartColors;
-
 /** Resolve a semantic key or pass through a raw hex color. */
 export function resolveChartColor(key: string): string {
   return (chartColors as Record<string, string>)[key] ?? key;
@@ -49,18 +47,6 @@ export const axisTickStyle = {
 export const gridProps = {
   strokeDasharray: "3 3",
   stroke: "rgba(255,255,255,0.04)",
-} as const;
-
-// ---------------------------------------------------------------------------
-// Tooltip surface
-// ---------------------------------------------------------------------------
-
-export const tooltipStyle = {
-  background: "var(--surface-2, #1f2a2e)",
-  border: "1px solid var(--border-color, #1f2a2e)",
-  borderRadius: 8,
-  padding: 12,
-  boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
 } as const;
 
 // ---------------------------------------------------------------------------

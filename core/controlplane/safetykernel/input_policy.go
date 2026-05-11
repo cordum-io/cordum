@@ -240,7 +240,9 @@ func evaluateInputRule(rule compiledInputRule, req inputEvaluateRequest, scanner
 
 	findings := make([]outputFinding, 0, 8)
 
-	// Structured scope evaluation (instruction-vs-cart comparison).
+	// Structured scope evaluation runs against raw content only; NFKC and
+	// zero-width/bidi stripping would alter JSON structure and break scope
+	// extraction semantics.
 	if rule.scope != nil {
 		violated, scopeFindings := evaluateScope(rule.scope, req.content)
 		for _, sf := range scopeFindings {
@@ -256,28 +258,44 @@ func evaluateInputRule(rule compiledInputRule, req inputEvaluateRequest, scanner
 		}
 	}
 
+	// Compute normalization candidates once for the substantive scanners; raw
+	// audit content (req.content) is never mutated.
+	cands := normalizeInputCandidates(req.content)
+	normalizedHit := false
+
 	// Run regex patterns (reuses output_policy scanWithContentPatterns infrastructure).
 	if len(rule.patterns) > 0 {
-		for _, pat := range rule.patterns {
-			if pat.re.Match(req.content) {
-				findings = append(findings, outputFinding{
-					Type:           "content_pattern_match",
-					Severity:       rule.severity,
-					Detail:         "input content matched pattern",
-					Scanner:        "regex",
-					MatchedPattern: pat.raw,
-				})
+		patternFindings, normFromPatterns := scanWithNormalization(cands, func(content []byte) []outputFinding {
+			out := make([]outputFinding, 0, len(rule.patterns))
+			for _, pat := range rule.patterns {
+				if pat.re.Match(content) {
+					out = append(out, outputFinding{
+						Type:           "content_pattern_match",
+						Severity:       rule.severity,
+						Detail:         "input content matched pattern",
+						Scanner:        "regex",
+						MatchedPattern: pat.raw,
+					})
+				}
 			}
+			return out
+		})
+		if normFromPatterns {
+			normalizedHit = true
 		}
-		if len(findings) == 0 {
+		if len(patternFindings) == 0 {
 			return false, nil
 		}
+		findings = append(findings, patternFindings...)
 	}
 
 	// Run keyword matching.
 	if len(rule.keywords) > 0 {
 		kwScanner := newKeywordScanner(rule.keywords)
-		kwFindings := kwScanner.Scan(req.content)
+		kwFindings, normFromKeywords := scanWithNormalization(cands, kwScanner.Scan)
+		if normFromKeywords {
+			normalizedHit = true
+		}
 		if len(kwFindings) == 0 && len(findings) == 0 {
 			return false, nil
 		}
@@ -286,7 +304,12 @@ func evaluateInputRule(rule compiledInputRule, req inputEvaluateRequest, scanner
 
 	// Run named scanners (PII, secrets, injection — same instances as output policy).
 	if len(rule.scanners) > 0 {
-		scannerFindings := scanWithScanners(req.content, rule.scanners, scanners)
+		scannerFindings, normFromScanners := scanWithNormalization(cands, func(content []byte) []outputFinding {
+			return scanWithScanners(content, rule.scanners, scanners)
+		})
+		if normFromScanners {
+			normalizedHit = true
+		}
 		if len(scannerFindings) == 0 && len(findings) == 0 {
 			return false, nil
 		}
@@ -296,6 +319,10 @@ func evaluateInputRule(rule compiledInputRule, req inputEvaluateRequest, scanner
 	// If rule specifies content criteria and no findings, no match.
 	if (len(rule.patterns) > 0 || len(rule.keywords) > 0 || len(rule.scanners) > 0) && len(findings) == 0 {
 		return false, nil
+	}
+
+	if normalizedHit {
+		findings = append(findings, normalizationFinding(rule.severity, cands))
 	}
 
 	return true, findings

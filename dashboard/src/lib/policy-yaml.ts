@@ -69,20 +69,6 @@ export function parsePolicyYaml(yamlStr: string): PolicyYamlParseResult {
   }
 }
 
-export function summarizePolicyYamlErrors(
-  errors: PolicyYamlParseError[],
-  maxItems = 2,
-): string | undefined {
-  if (errors.length === 0) return undefined;
-  const segments = errors
-    .slice(0, maxItems)
-    .map((error) => `line ${error.line}, column ${error.column}: ${error.message}`);
-  if (errors.length > maxItems) {
-    segments.push(`+${errors.length - maxItems} additional issue(s)`);
-  }
-  return segments.join(" | ");
-}
-
 export interface YamlValidationResult extends PolicyYamlParseResult {}
 
 export function validatePolicyYaml(yamlStr: string): YamlValidationResult {

@@ -1,14 +1,12 @@
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { get } from "../api/client";
-import type { Job, Worker, Pool } from "../api/types";
+import type { Job, Worker } from "../api/types";
 import {
   mapHeartbeatToWorker,
   mapJobRecord,
-  mapPoolResponse,
   type BackendHeartbeat,
   type BackendJobRecord,
-  type BackendPoolSummary,
 } from "../api/transform";
 
 // ---------------------------------------------------------------------------
@@ -66,34 +64,6 @@ export function useWorkerJobs(workerId: string | null | undefined) {
     },
     enabled: !!workerId,
     staleTime: 15_000,
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Pool hooks
-// ---------------------------------------------------------------------------
-
-export function usePools() {
-  return useQuery<Pool[]>({
-    queryKey: ["pools"],
-    queryFn: async () => {
-      const res = await get<{ items?: BackendPoolSummary[] }>("/pools");
-      return (res.items ?? []).map((bp) => mapPoolResponse(bp));
-    },
-    staleTime: 15_000,
-    refetchInterval: 30_000,
-  });
-}
-
-export function usePool(name: string | null | undefined) {
-  return useQuery<Pool>({
-    queryKey: ["pool", name],
-    queryFn: async () => {
-      if (!name) throw new Error("pool name is required");
-      const res = await get<BackendPoolSummary>(`/pools/${encodeURIComponent(name)}`);
-      return mapPoolResponse(res);
-    },
-    enabled: !!name,
   });
 }
 

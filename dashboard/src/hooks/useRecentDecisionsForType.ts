@@ -69,6 +69,3 @@ function normalizeEnvelope(env: PolicyAuditEnvelope): RecentDecisionsResult {
     hasMore: env.has_more === true,
   };
 }
-
-export const SIMULATOR_EVENT_LIMIT_VALUE = SIMULATOR_EVENT_LIMIT;
-export const SIMULATOR_CACHE_MS_VALUE = SIMULATOR_CACHE_MS;

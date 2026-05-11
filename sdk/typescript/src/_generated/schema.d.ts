@@ -1959,7 +1959,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get policy audit log */
+        /**
+         * Get policy audit log
+         * @description Returns a filtered, paginated list of policy audit events. Filters
+         *     match the gateway handler `handleListPolicyAudit` semantics: `action`
+         *     / `agent_id` / `rule_id` / `type` are case-insensitive exact matches;
+         *     `after` / `before` are lexicographic compares against `created_at`;
+         *     `search` is a substring match across `action + actor_id +
+         *     resource_type + resource_id + message` lowercased.
+         */
         get: operations["getPolicyAudit"];
         put?: never;
         post?: never;
@@ -2355,7 +2363,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List policy rules */
+        /**
+         * List policy rules
+         * @description Lists policy rules and includes `firing_last_7d`, a tenant-scoped seven-day UTC firing histogram computed in one bulk history scan for all returned rules. Rules with no matching events are zero-filled.
+         */
         get: operations["listPolicyRules"];
         put?: never;
         post?: never;
@@ -3504,6 +3515,13 @@ export interface components {
             session_ttl?: string;
             user_auth_enabled?: boolean;
         };
+        /**
+         * @description Authentication mechanism that validated the request. Mirrors the
+         *     `auth.AuthSource` typed enum at
+         *     `core/controlplane/gateway/auth/types.go`.
+         * @enum {string|null}
+         */
+        AuthSource: "api_key" | "jwt" | "oidc" | "session" | null;
         AuthUser: {
             /** Format: date-time */
             created_at?: string;
@@ -4667,15 +4685,104 @@ export interface components {
             /** @description Cursor for the next page (null if no more pages) */
             next_cursor?: string | null;
         };
+        /**
+         * @description One entry in the policy audit log. Mirrors `policybundles.PolicyAuditEntry`
+         *     in `core/controlplane/gateway/policybundles/types.go`. The legacy
+         *     `author` / `timestamp` / `bundle_id` (singular) / `snapshot_id`
+         *     fields are preserved for backwards-compat with consumers of the
+         *     v1 spec but are not populated by the current backend handler;
+         *     prefer `actor_id` / `created_at` / `bundle_ids` (plural) /
+         *     `snapshot_before` + `snapshot_after`.
+         */
         PolicyAuditEntry: {
-            action?: string;
+            action: string;
+            /** @description Identifier of the principal who performed the action. */
+            actor_id?: string | null;
+            agent_id?: string | null;
+            agent_name?: string | null;
+            agent_risk_tier?: string | null;
+            auth_source?: components["schemas"]["AuthSource"];
+            /**
+             * @deprecated
+             * @description Deprecated. The current backend handler does not populate this
+             *     field; it remains in the schema only to avoid breaking
+             *     consumers that read the v1 type.
+             */
             author?: string;
+            /**
+             * @deprecated
+             * @description Deprecated. Use `bundle_ids` (plural). The current backend
+             *     handler does not populate this field.
+             */
             bundle_id?: string | null;
-            id?: string;
+            /**
+             * @description Bundles affected by this audit event. Replaces the legacy
+             *     singular `bundle_id` field.
+             */
+            bundle_ids?: string[] | null;
+            /**
+             * @description RFC3339 timestamp when the audit entry was created. Plain
+             *     string (not `format: date-time`) because the backend stores
+             *     the raw value and lex-compares it against `after` / `before`
+             *     query params.
+             */
+            created_at: string;
+            decision?: string | null;
+            /**
+             * @description Free-form per-event metadata. Keys and values are emitted
+             *     verbatim from the gateway handler's audit-construction site.
+             */
+            extra?: {
+                [key: string]: string;
+            } | null;
+            id: string;
+            matched_rule?: string | null;
             message?: string | null;
+            policy_version?: string | null;
+            reason?: string | null;
+            resource_id?: string | null;
+            resource_name?: string | null;
+            /** @description Audited resource kind, e.g. `rule`, `bundle`, `input`, `output`. */
+            resource_type?: string | null;
+            role?: string | null;
+            /** @description Audit-chain hash of the resource state after the action. */
+            snapshot_after?: string | null;
+            /** @description Audit-chain hash of the resource state before the action. */
+            snapshot_before?: string | null;
+            /**
+             * @deprecated
+             * @description Deprecated. Use `snapshot_before` and `snapshot_after`. The
+             *     current backend handler does not populate this field.
+             */
             snapshot_id?: string | null;
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @deprecated
+             * @description Deprecated. Use `created_at`. The current backend handler
+             *     does not populate this field.
+             */
             timestamp?: string;
+        };
+        /**
+         * @description Paginated envelope returned by `GET /api/v1/policy/audit`. The
+         *     `type=output` special path on the same endpoint returns only the
+         *     `items` field; consumers should treat `total` / `has_more` /
+         *     `offset` as optional when filtering by that type.
+         */
+        PolicyAuditEnvelope: {
+            /** @description True when more entries are available past the current window. */
+            has_more?: boolean;
+            items: components["schemas"]["PolicyAuditEntry"][];
+            /**
+             * Format: int64
+             * @description Echo of the requested offset (default 0).
+             */
+            offset?: number;
+            /**
+             * Format: int64
+             * @description Total entries matching the filter (pre-pagination).
+             */
+            total?: number;
         };
         PolicyBundleDeploymentHistoryResponse: {
             items: components["schemas"]["BundleDeployment"][];
@@ -4852,6 +4959,8 @@ export interface components {
             };
             description?: string;
             enabled?: boolean;
+            /** @description Last seven UTC daily firing counts, oldest-to-newest, tenant-scoped and zero-filled when no matching events exist. */
+            firing_last_7d?: number[];
             id?: string;
             name?: string;
             priority?: number;
@@ -5039,6 +5148,15 @@ export interface components {
             };
         };
         RunStepStatus: {
+            /**
+             * @description Audit-chain hash for the safety decision applied to this step,
+             *     joined from the audit-chain entry produced when the step ran.
+             *     Unset for skipped or upstream-failed steps where no decision
+             *     was emitted. Dashboard surfaces this as a copy-on-click chip
+             *     in the WorkflowNodeGovernanceOverlay.
+             * @example 11473636023072616000
+             */
+            audit_hash?: string | null;
             /** Format: date-time */
             completed_at?: string | null;
             error?: string | null;
@@ -5440,6 +5558,16 @@ export interface components {
             depends_on?: string[];
             id: string;
             name?: string;
+            /**
+             * @description Optional design-time policy hint. Populated at workflow-save
+             *     time when the policy engine resolves a hint for this step.
+             *     Unset means "no hint" — clients render no design-time icon
+             *     and defer to runtime safety decision. NEVER defaults to
+             *     "allow" when unset.
+             * @example allow
+             * @enum {string}
+             */
+            policy_gate?: "allow" | "deny" | "require_approval";
             retry?: {
                 backoff_sec?: number;
                 max_attempts?: number;
@@ -9812,7 +9940,62 @@ export interface operations {
     };
     getPolicyAudit: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Case-insensitive exact match against the entry action verb.
+                 * @example rule.created
+                 */
+                action?: string;
+                /**
+                 * @description Inclusive lower-bound on `created_at`. Lexicographic compare on
+                 *     the raw string the backend stores (typically RFC3339).
+                 * @example 2026-05-01T00:00:00Z
+                 */
+                after?: string;
+                /**
+                 * @description Case-insensitive exact match against the entry's agent_id.
+                 * @example agent-claims-triage
+                 */
+                agent_id?: string;
+                /**
+                 * @description Exclusive upper-bound on `created_at`. Lexicographic compare on
+                 *     the raw string the backend stores (typically RFC3339).
+                 * @example 2026-05-09T00:00:00Z
+                 */
+                before?: string;
+                /**
+                 * @description Maximum number of entries to return (default 100).
+                 * @example 50
+                 */
+                limit?: number;
+                /**
+                 * @description Number of entries to skip (default 0).
+                 * @example 0
+                 */
+                offset?: number;
+                /**
+                 * @description Case-insensitive exact match against the entry's `resource_id`.
+                 *     Named `rule_id` for the common case where the audited resource is
+                 *     a policy rule.
+                 * @example rule-input-secrets
+                 */
+                rule_id?: string;
+                /**
+                 * @description Case-insensitive substring search across the lowercased
+                 *     concatenation of `action + actor_id + resource_type + resource_id
+                 *     + message`.
+                 * @example rule.created
+                 */
+                search?: string;
+                /**
+                 * @description Case-insensitive exact match against the entry's `resource_type`.
+                 *     The special value `output` returns only the legacy output-rule
+                 *     audit log via a separate code path that omits `total` / `has_more`
+                 *     / `offset` from the response envelope.
+                 * @example input
+                 */
+                type?: string;
+            };
             header: {
                 /** @description Tenant isolation header (required on all protected routes). */
                 "X-Tenant-ID": components["parameters"]["TenantID"];
@@ -9822,13 +10005,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Audit items */
+            /** @description Audit items envelope */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PolicyAuditEntry"][];
+                    "application/json": components["schemas"]["PolicyAuditEnvelope"];
                 };
             };
             401: components["responses"]["Unauthorized"];

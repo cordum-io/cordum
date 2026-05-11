@@ -17,8 +17,11 @@ import { Button } from "@/components/ui/Button";
 import { DetailList } from "@/components/ui/DetailList";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { InfoBanner } from "@/components/ui/InfoBanner";
+import { Input } from "@/components/ui/Input";
+import { LabeledField } from "@/components/ui/LabeledField";
 import { SkeletonCard } from "@/components/ui/Skeleton";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { Textarea } from "@/components/ui/Textarea";
 import { useLicense } from "@/hooks/useLicense";
 import { useSAMLConfig } from "@/hooks/useSAMLConfig";
 
@@ -450,31 +453,29 @@ export default function SettingsSSOPage() {
             </p>
 
             <div className="grid gap-3">
-              <label className="space-y-1.5 text-xs font-medium text-foreground">
-                <span>Groups claim name</span>
-                <input
+              <LabeledField label="Groups claim name">
+                <Input
                   name="oidcGroupsClaim"
                   value={oidcGroupsClaim}
                   onChange={(event) => setOIDCGroupsClaim(event.target.value)}
                   disabled={!oidcRuntimeEnabled || oidcSaving}
-                  className="h-9 w-full rounded-xl border border-border bg-background px-3 font-mono text-sm text-foreground outline-none transition focus:border-cordum/60 focus:ring-2 focus:ring-cordum/20 disabled:opacity-60"
+                  className="font-mono"
                   placeholder="groups"
                 />
-              </label>
+              </LabeledField>
 
-              <label className="space-y-1.5 text-xs font-medium text-foreground">
-                <span>Groups → roles mapping</span>
-                <textarea
+              <LabeledField label="Groups → roles mapping">
+                <Textarea
                   name="oidcGroupRoleMapping"
                   value={oidcGroupRoleMapping}
                   onChange={(event) => setOIDCGroupRoleMapping(event.target.value)}
                   disabled={!oidcRuntimeEnabled || oidcSaving}
                   rows={7}
                   spellCheck={false}
-                  className="w-full rounded-2xl border border-border bg-background px-3 py-2 font-mono text-xs leading-relaxed text-foreground outline-none transition focus:border-cordum/60 focus:ring-2 focus:ring-cordum/20 disabled:opacity-60"
+                  className="font-mono text-xs leading-relaxed"
                   placeholder='{"cordum-admins":"admin"}'
                 />
-              </label>
+              </LabeledField>
             </div>
 
             <div className="rounded-2xl border border-border/80 bg-background/70 p-3 text-xs text-muted-foreground">

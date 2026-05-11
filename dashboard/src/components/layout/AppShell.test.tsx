@@ -65,6 +65,7 @@ describe("AppShell GOVERN navigation", () => {
     expect(labels).toEqual([
       "Policy Studio",
       "Quarantine",
+      "Safety Controls",
       "Verification",
     ]);
   });
@@ -74,13 +75,14 @@ describe("AppShell GOVERN navigation", () => {
     expect(govern).toBeDefined();
 
     expect(govern?.items.map((item) => item.path)).toEqual([
-      "/govern/overview",
-      "/govern/quarantine",
+      "/policies",
+      "/security/quarantine",
+      "/security/safety",
       "/govern/verification",
     ]);
 
     const quarantine = govern?.items.find((item) => item.label === "Quarantine");
-    expect(quarantine?.path).toBe("/govern/quarantine");
+    expect(quarantine?.path).toBe("/security/quarantine");
     expect(quarantine?.badge).toBe("quarantine");
   });
 
@@ -115,12 +117,12 @@ describe("AppShell findActiveSection", () => {
     expect(findActiveSection("/edge/sessions/abc", APP_SHELL_NAV_SECTIONS)).toBe("Run");
   });
 
-  it("matches /govern/overview to Govern", () => {
-    expect(findActiveSection("/govern/overview", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
+  it("matches /policies to Govern (Policy Studio nav item)", () => {
+    expect(findActiveSection("/policies", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
   });
 
-  it("matches /govern/quarantine to Govern (badge route)", () => {
-    expect(findActiveSection("/govern/quarantine", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
+  it("matches /security/quarantine to Govern (badge route)", () => {
+    expect(findActiveSection("/security/quarantine", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
   });
 
   it("matches /packs/abc to Catalog", () => {
@@ -133,6 +135,11 @@ describe("AppShell findActiveSection", () => {
 
   it("matches /dlq to Audit", () => {
     expect(findActiveSection("/dlq", APP_SHELL_NAV_SECTIONS)).toBe("Audit");
+  });
+
+  it("matches canonical /jobs?status=dlq to Audit without stealing other Jobs filters", () => {
+    expect(findActiveSection("/jobs?status=dlq", APP_SHELL_NAV_SECTIONS)).toBe("Audit");
+    expect(findActiveSection("/jobs?status=failed", APP_SHELL_NAV_SECTIONS)).toBe("Run");
   });
 
   it("matches /settings/* sub-routes to Settings", () => {
@@ -165,8 +172,16 @@ describe("AppShell sidebar accordion structure", () => {
       "Jobs",
       "Edge Sessions",
       "Workflows",
+      "Runs",
       "Approvals",
     ]);
+  });
+
+  it("repoints Dead Letters to JobsPage DLQ status filter", () => {
+    const audit = APP_SHELL_NAV_SECTIONS.find((s) => s.label === "Audit");
+    expect(audit?.items.find((i) => i.label === "Dead Letters")?.path).toBe(
+      "/jobs?status=dlq",
+    );
   });
 
   it("Settings section has the Hub item with end:true to avoid prefix-matching sub-routes", () => {

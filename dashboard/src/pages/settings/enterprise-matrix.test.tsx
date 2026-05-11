@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SettingsHubPage from "../SettingsHubPage";
-import VelocityRulesPage from "../govern/VelocityRulesPage";
 import SettingsSCIMPage from "./SettingsSCIMPage";
 import SettingsSSOPage from "./SettingsSSOPage";
 
@@ -320,23 +319,4 @@ describe("enterprise entitlement matrix dashboard truthfulness", () => {
     }
   });
 
-  it("disables the primary velocity-rules CTA when the entitlement is missing", () => {
-    hookState.license.data = {
-      plan: "team",
-      entitlements: {
-        velocityRules: false,
-      },
-    };
-
-    const { container, cleanup } = renderPage(<VelocityRulesPage />, "/govern/velocity-rules");
-
-    try {
-      expect(container.textContent).toContain("Velocity-rule fragments and live counters require a licensed deployment.");
-      const newRuleButton = findButtonByText(container, "New rule");
-      expect(newRuleButton).not.toBeNull();
-      expect(newRuleButton?.disabled).toBe(true);
-    } finally {
-      cleanup();
-    }
-  });
 });

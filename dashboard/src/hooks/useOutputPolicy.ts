@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, del, get, post, put } from "../api/client";
-import { mapJobDetail, mapJobRecord, type BackendJobDetail, type BackendJobRecord } from "../api/transform";
-import type { ApiResponse, Job, OutputFinding } from "../api/types";
+import { ApiError, del, get, post } from "../api/client";
+import { mapJobRecord, type BackendJobRecord } from "../api/transform";
+import type { ApiResponse, Job } from "../api/types";
 import { logger } from "../lib/logger";
 import { queryKeys } from "../lib/queryKeys";
 import { useToastStore } from "../state/toast";
@@ -118,19 +118,6 @@ export function useConfirmQuarantine() {
         description: detail,
       });
     },
-  });
-}
-
-export function useOutputFindings(jobId: string) {
-  return useQuery<OutputFinding[]>({
-    queryKey: queryKeys.jobs.outputFindings(jobId),
-    queryFn: async () => {
-      const res = await get<BackendJobDetail>(`/jobs/${encodeURIComponent(jobId)}`);
-      const job = mapJobDetail(res);
-      return job.output_safety?.findings ?? [];
-    },
-    enabled: !!jobId,
-    staleTime: 5_000,
   });
 }
 
@@ -417,42 +404,6 @@ function mergeOutputPolicyConfig(
   };
 }
 
-function buildScopedConfigPayload(data: Record<string, unknown>): Record<string, unknown> {
-  return {
-    scope: "system",
-    scope_id: "default",
-    data,
-    meta: { scope: "output_policy", source: "dashboard" },
-  };
-}
-
-async function persistOutputPolicyConfig(data: Record<string, unknown>): Promise<void> {
-  const payload = buildScopedConfigPayload(data);
-  try {
-    await put<void>("/config", payload);
-  } catch (err) {
-    if (err instanceof ApiError && (err.status === 404 || err.status === 405)) {
-      await post<void>("/config", payload);
-      return;
-    }
-    throw err;
-  }
-}
-
-async function fetchSystemConfig(): Promise<Record<string, unknown>> {
-  try {
-    return await get<Record<string, unknown>>("/config?scope=system&scope_id=default");
-  } catch (err) {
-    if (err instanceof ApiError && (err.status === 404 || err.status === 405)) {
-      return get<Record<string, unknown>>("/config");
-    }
-    throw err;
-  }
-}
-
-async function fetchOutputPolicyConfigRaw(): Promise<Record<string, unknown>> {
-  return fetchSystemConfig();
-}
 
 function mapOutputPolicyStats(raw?: RawOutputPolicyStats): OutputPolicyStats {
   return {
@@ -461,49 +412,6 @@ function mapOutputPolicyStats(raw?: RawOutputPolicyStats): OutputPolicyStats {
     avgLatencyMs: raw?.avg_latency_ms ?? 0,
     lastCheckAt: raw?.last_check_at,
   };
-}
-
-export function useOutputPolicyConfig() {
-  return useQuery<OutputPolicyConfig>({
-    queryKey: queryKeys.outputPolicy.config(),
-    queryFn: async () => {
-      const raw = await fetchOutputPolicyConfigRaw();
-      return parseOutputPolicyConfig(raw);
-    },
-    staleTime: 10_000,
-  });
-}
-
-export function useUpdateOutputPolicy() {
-  const queryClient = useQueryClient();
-  return useMutation<void, Error, OutputPolicyConfig>({
-    mutationFn: async (next) => {
-      const current = await fetchSystemConfig();
-      const merged = mergeOutputPolicyConfig(current, next);
-      await persistOutputPolicyConfig(merged);
-    },
-    onSuccess: () => {
-      useToastStore.getState().addToast({
-        type: "success",
-        title: "Output Safety settings saved",
-      });
-      queryClient.invalidateQueries({ queryKey: queryKeys.outputPolicy.config() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.config.system() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.status.overview() });
-      queryClient.invalidateQueries({ queryKey: queryKeys.outputPolicy.stats() });
-    },
-    onError: (err) => {
-      const detail = describeOutputPolicyError(err);
-      logger.error("output-policy", "failed to update output policy config", {
-        error: detail,
-      });
-      useToastStore.getState().addToast({
-        type: "error",
-        title: "Failed to save Output Safety settings",
-        description: detail,
-      });
-    },
-  });
 }
 
 export function useOutputPolicyStats() {

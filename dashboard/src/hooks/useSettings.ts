@@ -1,6 +1,6 @@
 import { useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ApiError, get, post, del, put } from "../api/client";
+import { ApiError, get, post } from "../api/client";
 import { logger } from "../lib/logger";
 import { useToastStore } from "../state/toast";
 import type {
@@ -38,31 +38,6 @@ export function useConfig() {
     staleTime: 60_000,
     // Config may not exist on fresh installs — return empty object as placeholder
     placeholderData: {} as SystemConfig,
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Effective (merged) config
-// ---------------------------------------------------------------------------
-
-export interface EffectiveConfigParams {
-  orgId?: string;
-  teamId?: string;
-  workflowId?: string;
-  stepId?: string;
-}
-
-export function useEffectiveConfig(params?: EffectiveConfigParams) {
-  const qs = new URLSearchParams();
-  if (params?.orgId) qs.set("org_id", params.orgId);
-  if (params?.teamId) qs.set("team_id", params.teamId);
-  if (params?.workflowId) qs.set("workflow_id", params.workflowId);
-  if (params?.stepId) qs.set("step_id", params.stepId);
-  const query = qs.toString();
-  return useQuery<Record<string, unknown>>({
-    queryKey: ["effective-config", params ?? {}],
-    queryFn: () => get<Record<string, unknown>>(`/config/effective${query ? "?" + query : ""}`),
-    staleTime: 10_000,
   });
 }
 
@@ -184,25 +159,6 @@ export function useCreateApiKey() {
   });
 }
 
-export function useRevokeApiKey() {
-  const queryClient = useQueryClient();
-  return useMutation<void, Error, string>({
-    mutationFn: (id) => {
-      logger.info("settings", "Revoking API key", { id });
-      return del(`/auth/keys/${id}`);
-    },
-    onSuccess: (_, id) => {
-      logger.info("settings", "API key revoked", { id });
-      useToastStore.getState().addToast({ type: "success", title: "API key revoked" });
-      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-    },
-    onError: (err, id) => {
-      logger.error("settings", "API key revocation failed", { id, error: err.message });
-      useToastStore.getState().addToast({ type: "error", title: "Failed to revoke key", description: err.message });
-    },
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Users
 // ---------------------------------------------------------------------------
@@ -236,49 +192,6 @@ export function useCreateUser() {
     onError: (err) => {
       logger.error("settings", "User creation failed", { error: err.message });
       useToastStore.getState().addToast({ type: "error", title: "Failed to create user", description: err.message });
-    },
-  });
-}
-
-interface UpdateUserInput {
-  id: string;
-  data: Partial<Pick<User, "email" | "display_name" | "roles">>;
-}
-
-export function useUpdateUser() {
-  const queryClient = useQueryClient();
-  return useMutation<User, Error, UpdateUserInput>({
-    mutationFn: ({ id, data }) => {
-      logger.info("settings", "Updating user", { id });
-      return put<User>(`/users/${id}`, data);
-    },
-    onSuccess: (_, { id }) => {
-      logger.info("settings", "User updated", { id });
-      useToastStore.getState().addToast({ type: "success", title: "User updated" });
-      queryClient.invalidateQueries({ queryKey: ["users"] });
-    },
-    onError: (err, { id }) => {
-      logger.error("settings", "User update failed", { id, error: err.message });
-      useToastStore.getState().addToast({ type: "error", title: "Failed to update user", description: err.message });
-    },
-  });
-}
-
-export function useDeleteUser() {
-  const queryClient = useQueryClient();
-  return useMutation<void, Error, string>({
-    mutationFn: (id) => {
-      logger.info("settings", "Deleting user", { id });
-      return del(`/users/${id}`);
-    },
-    onSuccess: (_, id) => {
-      logger.info("settings", "User deleted", { id });
-      useToastStore.getState().addToast({ type: "success", title: "User deleted" });
-      queryClient.invalidateQueries({ queryKey: ["users"] });
-    },
-    onError: (err, id) => {
-      logger.error("settings", "User delete failed", { id, error: err.message });
-      useToastStore.getState().addToast({ type: "error", title: "Failed to delete user", description: err.message });
     },
   });
 }
@@ -447,25 +360,6 @@ export function useEnvironments() {
   }, [config]);
 
   return { data: environments, isLoading, isError, error, refetch };
-}
-
-export function useSaveEnvironment() {
-  const setConfig = useSetConfig();
-  const { data: environments } = useEnvironments();
-  const environmentsRef = useRef(environments);
-  environmentsRef.current = environments;
-
-  return useMutation<void, Error, Environment>({
-    mutationFn: (env) => {
-      const existing = environmentsRef.current ?? [];
-      const idx = existing.findIndex((e) => e.id === env.id);
-      const updated = idx >= 0
-        ? existing.map((e, i) => (i === idx ? env : e))
-        : [...existing, env];
-      logger.info("settings", "Saving environment", { id: env.id });
-      return setConfig.mutateAsync({ environments: updated });
-    },
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -847,17 +741,6 @@ export function useGeneralConfig() {
   }, [config]);
 
   return { data: generalConfig, isLoading, isError, refetch };
-}
-
-export function useSetGeneralConfig() {
-  const setConfig = useSetConfig();
-
-  return useMutation<void, Error, Partial<GeneralConfig>>({
-    mutationFn: (patch) => {
-      logger.info("settings", "Updating general config");
-      return setConfig.mutateAsync(patch as Partial<SystemConfig>);
-    },
-  });
 }
 
 /** @internal exported for unit tests */

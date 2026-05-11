@@ -1,4 +1,0 @@
-services:
-  mock-bank-ui:
-    ports: !override
-      - "13000:80"

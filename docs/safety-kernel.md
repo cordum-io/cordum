@@ -52,6 +52,22 @@ Approval binding behavior:
 - `approval_required` is true for `require_approval`.
 - `approval_ref` is set to the incoming `job_id`.
 
+### 2.1 Input Normalization Boundary (NFKC + zero-width/bidi)
+
+Before regex pattern matching, keyword scanning, and named scanner evaluation, input rule evaluation derives a transient normalized candidate from the raw request content. The boundary is intentionally narrow:
+
+- **In scope**: Unicode NFKC normalization, plus stripping of zero-width formatting controls (U+200B/U+200C/U+200D/U+2060/U+FEFF) and Unicode bidi controls (U+200E/U+200F/U+202A..U+202E/U+2066..U+2069).
+- **Out of scope**: arbitrary base64/ROT13/hex decoding, recursive content unwrapping, model-in-loop classifiers. Generic content classification belongs upstream of Cordum (see `docs/agentshield-scope-boundary.md`).
+
+Behavior contract:
+
+- Raw request content is preserved verbatim. The audit/evidence record carries the bytes the request arrived with — no normalization is applied to scope extraction (which would corrupt JSON structure) or to any field exposed to the audit chain.
+- Normalized content is held in memory only as a transient scanner candidate. It is never logged, returned in the policy reason, or written to disk.
+- Scanner findings from raw and normalized candidates are deduplicated by `(Type, Scanner, Detail, MatchedPattern)`; a normalized-only match contributes a single metadata-only `input_normalized` finding whose `Detail` lists the firing modes (for example, `nfkc+zero_width`). The metadata finding never includes payload text.
+- ASCII inputs short-circuit the strip pass via a fast pre-check on UTF-8 lead bytes; behavior for ASCII-only payloads is identical to the pre-normalization implementation.
+
+Implementation: `core/controlplane/safetykernel/input_normalization.go`. Tests: `input_normalization_test.go` (unit), `input_normalization_integration_test.go` (rule wiring), `input_normalization_mutation_test.go` (public + private holdout aggregate sweep).
+
 ## 3. MCP Label Filtering
 
 MCP request context is extracted from job labels:

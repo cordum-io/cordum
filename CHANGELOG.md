@@ -5,60 +5,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-### Deprecated
-
-#### Policy Studio Rewrite — Backend 5 migration window (epic-d9a6c0a1, task-aadaec4a)
-
-- Legacy evaluator surfaces remain functional but are marked deprecated while
-  clients migrate to unified `POST /api/v1/policy/evaluate` with
-  `PolicyEvaluateRequest`: `POST /api/v1/policy/simulate`,
-  `POST /api/v1/policy/explain`, legacy `PolicyCheckRequest` bodies on
-  `POST /api/v1/policy/evaluate`, and `POST /api/v1/edge/evaluate`.
-  Deprecated/legacy responses include `Deprecation: true` plus a
-  `Link: </api/v1/policy/evaluate>; rel="successor-version"` header. Removal
-  is deferred until the later Policy Studio cut-over after backend and
-  dashboard clients have moved to the unified evaluator.
-
 ### Added
 
-#### Policy Studio Rewrite — Backend 4 (epic-d9a6c0a1)
 
-Cordum Edge now participates in the unified Policy Studio decision stream
-without removing the legacy Edge evidence path:
+#### Policy Studio Dashboard 10b — Decisions audit-chain cross-link (2026-05-11, task-dca913fe)
 
-- Added a pure `policy.Rule{Type: edge}` adapter that compiles unified edge
-  Match/Decide JSON into the existing legacy Edge/Safety Kernel policy rule
-  shape.
-- Added an additive `policy.Decision{Source: edge}` emitter for Edge
-  decisions, mapping legacy Edge outcomes into unified decision types:
-  `ALLOW -> allow`, `DENY -> deny`, `REQUIRE_APPROVAL -> require_human`,
-  `THROTTLE -> throttle`, `CONSTRAIN -> redact`, and `RECORDED -> allow`
-  with an observation trace marker.
-- Edge evaluate and agentd decision-evidence paths now use Backend 3's shared
-  `AUDIT_UNIFIED_DECISION_MODE` transition helper. Default `dual` mode writes
-  legacy Edge audit first and `policy.decision.v2` second; `legacy` and
-  `unified` modes are honored by the same parser used for job decisions.
-- Edge policy mode resolution can read per-bundle `metadata.edge_mode` when a
-  session is bound to a policy bundle, while preserving the existing
-  session/global `EdgePolicyMode` fallback for operators that have not yet run
-  migration tooling.
+- Added a "View in full audit chain" Link to `DecisionExpandRow.tsx`'s Bundle context section. Conditional on `decision.audit_hash` truthy; navigates to `/audit?search=<encoded audit_hash>` via the existing `nuqs` `search` URL contract on `AuditLogPage`. `data-row-action="cross-link-decisions-audit"` + `aria-label="View this decision in the full audit chain"` mirror D10a's link conventions. Lucide `Link2` icon for visual.
+- Sibling task to D10a (task-ce11ca57, commit `ce217a28`) which shipped the 4 always-wireable cross-links (PoliciesPage Last-7d, BundleRulesTab "Add rule", TenantDetail "Active policies", AuditLog "View related decisions").
+- **Scope reframe vs original plan**: Phase 0 inventory found the 6 plan items reduced to 1 wireable + 3 backend-blocked + 2 already-shipped:
+  - **Already shipped** (verified on dashboard tip `250dc91e`): items 1 (Decisions row → Rule, D8b `DecisionExpandRow.tsx:148` + `DecisionsPage.tsx:154`), 2 (Decisions row → Bundle, D8b `DecisionsPage.tsx:170`), 6 (Charts "Top firing rules" → rule editor via D9b's per-rule list-link below the BarChart at `DecisionsChartsPanel.tsx:165` — equivalent to + better a11y than a `<Bar onClick>` would be).
+  - **Backend-blocked** (deferred to D10c): items 3/4/5 — Decisions row → /jobs/:id, /agents/:id, /edge/sessions/:sessionId. The unified `Decision` interface (`api/generated/model/decision.ts`) carries `{source, rule_id, bundle_id, bundle_version, type, trace, input_ref, output_ref, audit_hash, timestamp}` — no `job_id`/`agent_id`/`session_id` fields. **Backend 5e (task-adb200b0)** filed to extend the schema; D10c picks up the 3 deferred links once that ships.
+  - **Wired today**: item 7 (audit chain link).
+- 3 new test cases in `CrossLinks.test.tsx` (additive — D10a's 5 cases preserved): audit link rendered + URL-encoded + omitted-when-missing. 14/14 pass on targeted run (CrossLinks + DecisionExpandRow).
 
 
-#### Policy Studio Rewrite — Backend 3 (epic-d9a6c0a1)
+#### Policy Studio Dashboard 9b — Decisions Replay + What-if drawer + Charts panel (2026-05-10, task-e343469b)
 
-Safety Kernel now has an additive unified-policy boundary for the Policy
-Studio migration:
+- Added `dashboard/src/hooks/useReplayDecision.ts` — React Query useMutation wrapper around the generated `replayPolicyDecisions` (POST /api/v1/policy/replay). Adapts the bulk time-range endpoint to per-decision semantics by sending a 1-second window around `decision.timestamp` + `filters.original_decision = decision.type` + `use_current_policy = true` + `max_jobs = 1`. Derives `{was, now, bundleVersion, changed}` from `response.changes[0].new_decision` (changed branch) OR `summary.unchanged` (unchanged branch). `onSuccess` invalidates the `policy-studio-decisions` queryKey so the list refreshes if the active policy has rotated. Approximation is acknowledged in code comments — `policy.Decision` lacks `tenant_id`/`topic`/`principal_id`, so we can't pin the replay to exactly THIS decision; a sibling Backend 5e is the proper fix.
+- Wired Replay action in `dashboard/src/pages/policies/DecisionExpandRow.tsx` — replaces D8b's `stubAction()` no-op + `data-stub="d9b"` canary with `replay.mutate(decision)`. Inline `ReplayResult` panel renders three branches: loading skeleton (`data-testid="decision-replay-loading"`), error alert (`data-testid="decision-replay-error"`, `role="alert"`), success (`data-testid="decision-replay-result"`, `data-changed="true|false"`). Changed branch shows "If evaluated now: \<NowBadge\> (was: \<WasBadge\>)" with warning border; unchanged branch shows "No change: still \<Badge\> under the active policy" with neutral border; bundle snapshot right-aligned.
+- Added `dashboard/src/pages/policies/WhatIfDrawer.tsx` — hypothetical re-evaluation surface. Drawer (size=xl, label="What-if: \<rule_id\>") hosts side-by-side Actual / Hypothetical panels above the lazy `RuleMonacoEditor` (D3 reuse). Loads the firing rule via `useRuleAtVersion(decision.rule_id, decision.bundle_version)`; user edits YAML locally, clicks Re-evaluate to call `evaluatePolicy(editedRule, synthesizedContext)`. Spec § L141 no-save semantics: closing the drawer or unmounting discards the draft + hypothetical state via `useEffect [open=false]`; the component never imports `updatePolicyRule` or `createPolicyRule`. Test asserts PUT/POST to `/api/v1/policy/rules` MUST never fire while the drawer is open.
+- Added `dashboard/src/hooks/useRuleAtVersion.ts` — React Query useQuery wrapping `listPolicyRules({limit:500})`. 60s staleTime. Filters items client-side for `rule.id == ruleID`. When `bundleVersion` is provided, emits `logger.warn("decisions-whatif", "rule-version filter unsupported; returning latest rule", ...)` because Backend 5d's GET /policy/rules has no version query parameter yet — documented fallback to latest, sibling backend task tracks the version-pin.
+- Added `dashboard/src/pages/policies/DecisionsChartsPanel.tsx` — collapsible panel above the Decisions DataTable (rendered conditionally on D8b's `?charts=on` URL state). Four Recharts charts in a responsive 1-col/2-col grid: (1) Decision distribution (PieChart by `DecisionType`); (2) Top firing rules (horizontal BarChart, top 10; below the chart, top 5 surfaced as accessible `<Link>` anchors with `data-row-action="cross-link-decisions-rule"` matching D10b's cross-link-2 contract); (3) Decisions per minute (LineChart bucketed to ISO-minute UTC slugs); (4) Decisions by source (stacked BarChart x=source, stacks=DecisionType — Decision shape lacks `scope_kind` so `source` is the truthful proxy until Backend 5e). Each ChartCard exposes `data-decision-count` + a chart-specific `aria-label` for screen-reader announcements. Empty branch (total=0) renders four `data-testid="decisions-chart-empty"` placeholders instead of feeding Recharts a zero-row dataset.
+- Live-mode 1Hz throttle: co-located `useThrottledValue(value, intervalMs=1000)` emits leading-edge on first input + trailing-edge via `setTimeout(intervalMs - elapsed)`. Burst within window cancels prior pending timer + schedules new one. Tested: 100 prop updates inside 100ms → zero chart-data recomputes; trailing 1000ms advance → emit the latest snapshot. No external dep — lodash isn't in package.json.
+- Wired `DecisionsChartsPanel` into `dashboard/src/pages/policies/DecisionsPage.tsx` via `React.lazy(() => import("./DecisionsChartsPanel"))` inside Suspense. Replaced the D8b placeholder. Chunk separation verified: DecisionsPage-\*.js (26KB, eager, no Recharts), DecisionsChartsPanel-\*.js (6.6KB, lazy), generateCategoricalChart-\*.js (353KB Recharts, transitively lazy). Monaco was already lazy from Dashboard 3 reuse.
+- Test setup: added a no-op ResizeObserver shim to `dashboard/src/test-utils/setup.ts` so Recharts ResponsiveContainer mounts cleanly under jsdom; the shim is guarded by `typeof globalThis.ResizeObserver === "undefined"` so a future browser-like environment that ships one isn't shadowed.
+- 24 new tests across 5 files: `useReplayDecision.test.tsx` (5 — request shape, was/now derivation, unchanged branch, 500 error, cache invalidation), `DecisionExpandRow.replay.test.tsx` (5 — stub canary removed, inline result render, no-change branch, loading skeleton, inline error), `WhatIfDrawer.test.tsx` (7 — open/close, dialog labeling, loading state, actual panel, Re-evaluate flow, no-save semantics, rule fetch error), `DecisionsChartsPanel.test.tsx` (5 — 4 chart regions + aria-labels + empty state + cross-link contract + count signature), `DecisionsChartsPanel.live-throttle.test.tsx` (2 — 100/s burst lands at 1Hz + intermediate-values dropped). All 24 PASS; cumulative 30/30 across D9b's owned test surface (existing DecisionExpandRow D8b suite retained at 6/6 minus 2 obsolete stub assertions that DecisionExpandRow.replay.test.tsx now owns).
 
-- Added pure adapters that validate unified `core/policy.Rule` values and
-  compile them into today's input/output/velocity evaluator structs without
-  mutating or removing the legacy `core/infra/config` policy types.
-- Added a stateless unified `policy.Decision` emitter for job-side decisions,
-  including UTC timestamps, source=`job`, rule id, trace, and optional bundle
-  binding metadata while preserving existing Safety Kernel gRPC responses.
-- Added audit transition-window dual emission for job policy decisions:
-  `AUDIT_UNIFIED_DECISION_MODE=dual` writes legacy `safety.decision` followed
-  by unified `policy.decision.v2`; `legacy` writes only the old shape; and
-  `unified` writes only the new shape for matched-rule decisions.
+
+#### Policy Studio Dashboard 8b — Decisions live mode + expand-row + Charts toggle + cursor pagination (2026-05-10, task-66f9abcb)
+
+- Added `dashboard/src/hooks/useDecisionsStream.ts` — Live-mode hook with auto-fallback. WebSocket path connects to `GET /api/v1/policy/decisions/stream` (Backend 5b), prepends each frame into a 200-event ring buffer (newest first; oldest evicted on overflow); falls back to React Query polling (refetchInterval=2s, limit=100) when the WS fails to open within 3s OR after a post-open broker disconnect. Per Backend 5b's deviation, edge decisions stream end-to-end via WS while job decisions land in polling-mode until the cross-process NATS bridge ships. Subprotocol auth reuses the `cordum-api-key.<base64url>` scheme from useEventStream. Mode (`'ws' | 'polling' | 'closed'`) is exposed to callers so the filter bar's `Live ●` indicator can show connected/degraded/connecting states.
+- Added `dashboard/src/pages/policies/DecisionExpandRow.tsx` — Inline expand-row for the Decisions DataTable. Four sections: (1) Trace timeline (ordered `TraceStep[]` with rule_id + decision_type badge + optional bundle_id + reason); (2) Input artifact body (fetched via `useArtifact(decision.input_ref)`, rendered in a collapsible CodeBlock); (3) Bundle context (bundle_id, bundle_version, audit_hash inline-copy chip, source); (4) Actions row (Replay + What-if are D9b stubs marked `data-stub="d9b"` that log `logger.warn`; "Open rule" Link to `/policies?rule=<id>&open=editor` honors D10a's cross-link contract). Empty `decision.trace` renders an "Awaiting Backend 3/4 backfill" placeholder rather than fabricating a row.
+- Added `dashboard/src/hooks/useArtifact.ts` — Thin wrapper around the generated `getArtifact(ptr)` (`GET /api/v1/artifacts/{ptr}`). Decodes `ArtifactDetail.content_base64` via `TextDecoder("utf-8")` so non-ASCII payloads round-trip cleanly. Short-circuits with `{data: "", loading: false, error: null}` when `ref` is undefined or empty so callers can render the placeholder without firing a spurious request. 60s `staleTime` (artifact bodies are immutable for a given ptr).
+- Extended `dashboard/src/pages/policies/DecisionsFilterBar.tsx` with `Live ●` and `Charts ▾` toggles. `Live` writes `?live=on` URL state (parsed via `parseAsStringLiteral(["on"])` so URLs read naturally in design docs) and gates `useDecisionsStream` from DecisionsPage; status dot reflects the stream `mode` (emerald=ws, amber=polling, amber-pulse=connecting). `Charts` writes `?charts=on` URL state; D8b ships the toggle UI + URL roundtrip + an explicit `data-testid="decisions-charts-placeholder"` placeholder block, with the panel content arriving in D9b (task-e343469b).
+- Extended `dashboard/src/pages/policies/DecisionsPage.tsx` with row-click expand (`Set<string>` of expanded decision IDs in component state; toggled via `onRowClick`), live-mode source-of-truth selector (when `live && stream.mode !== "closed"`, the ring buffer becomes the data source; otherwise paginated history), and a "Load more" Button below the table that calls `list.fetchNextPage()` (only rendered when `!live && list.hasMore` so users can't pollute the paged history with stale-cursor advances while live ring-buffer is showing).
+- Migrated `dashboard/src/hooks/useDecisionsList.ts` from `useQuery` to `useInfiniteQuery` with `getNextPageParam: (lastPage) => lastPage.has_more && lastPage.next_cursor`. Exposes `{items, hasMore, fetchNextPage, isFetching, isFetchingNextPage, isError, refetch}`. The cursor is the server-emitted opaque token; the client just feeds it back. Cached pages survive Live ON/OFF flips so the user resumes at the same cursor position.
+- Extended `dashboard/src/components/primitives/DataTable.tsx` with additive `renderExpanded`, `expandedIds`, `getRowId` props. When all three are provided AND `getRowId(row)` is in the set, an extra `<tr data-row-expansion="true">` with `<td colSpan={visibleColumnsCount}>` is rendered below the row containing `renderExpanded(row)`. Only honored in the non-virtualized branch (≤100 rows); virtualized lists silently ignore the props (matches DecisionsPage's `limit=100`).
+- Added `dashboard/src/test-utils/ws.ts` — `MockWebSocket` class extracted from useEventStream.test.ts as 2nd consumer per the epic's SHARED CODE FIRST rail. Helpers `simulateOpen / simulateMessage / simulateMessageRaw / simulateClose` + static `instances` list + `resetInstances()`.
+- 28 new tests across 4 files: `useDecisionsStream.test.tsx` (11 — connect, ring-buffer overflow, 3s timeout → polling, filter-change re-init, cleanup), `DecisionExpandRow.test.tsx` (8 — Trace timeline + empty placeholder + Input artifact 4-state branch + Bundle context + D9b-stub buttons + D10a Open-rule link), `DecisionsPage.cursor-pagination.test.tsx` (3 — Load more visible/hidden + click appends rows), `DecisionsFilterBar.toggles.test.tsx` (6 — Live + Charts default-off + click flips aria-checked + URL roundtrip on mount).
+
+**Gotchas captured during implementation** (live in `feedback_*` memory entries for future workers):
+- MSW v2.14's WebSocket interceptor wraps `globalThis.WebSocket` when `setupServer(...)` is listening; a top-level `vi.stubGlobal("WebSocket", MockWebSocket)` is then replaced by MSW's wrapper. Fix: re-stub WebSocket INSIDE `beforeEach` AFTER `ensureMswServerListening()`.
+- `vi.useFakeTimers()` at module scope breaks `@testing-library/react`'s `waitFor` (which polls via setTimeout). Enable fake timers only inside the one test that needs to advance the 3s connect-timeout, then `vi.useRealTimers()` before any subsequent `waitFor`.
 
 
 #### Policy Studio Backend 5d — unified GET /api/v1/policy/rules with type field (2026-05-10, task-025a6ad9)
@@ -102,123 +90,98 @@ Studio migration:
 - Deferred to follow-up: scheduler→broker.Publish across-process fan-out (requires NATS bridge per architect's "out of scope today"). Job decisions surface via REST poll today; edge decisions surface via REST + WS. The contract is "WS may not see job decisions until the NATS bridge ships" — Dashboard 8 live mode should fall back to REST poll for job rows.
 
 
-#### Policy Studio Rewrite — Backend 5: unified evaluator entry-point (epic-d9a6c0a1, task-aadaec4a)
+#### Policy Studio Dashboard 6 — bundle deployment timeline (Gantt) (2026-05-10, task-7b2862f8)
 
-- Added canonical HTTP `POST /api/v1/policy/evaluate` unified evaluator for
-  both job and Edge policy contexts. Unified requests accept either an inline
-  `Rule` or `bundle_id` + `scope`, plus exactly one of `job_context` or
-  `edge_context`, and return the shared `Decision` envelope.
-- Added gRPC `PolicyEvaluator.EvaluateUnified` using the same evaluator helper
-  as HTTP, including tenant resolution, role checks, validation, and typed
-  status-code mapping.
-- Added Rule.type dispatch: `input` / `output` / `velocity` route to the
-  Safety Kernel adapters; `edge` routes to the Edge classifier adapter.
-  Type-confusion requests fail before downstream dispatch.
-- Added BundleStore-backed lifecycle gateway routes for immutable bundle
-  versions, deploy, deployment history, and rollback. These routes back the
-  OpenAPI paths used by the unified evaluator; no YAML-only endpoints were
-  introduced.
-- Added shared `policy.decision.v2` audit emission for unified evaluator
-  results while preserving transition-window dual emission with legacy audit
-  records.
-- Added [`docs/policy-evaluate-api.md`](docs/policy-evaluate-api.md) covering
-  HTTP/gRPC usage, dispatch rules, bundle resolution, error mapping, audit
-  behavior, and old-endpoint migration.
+- Added `BundleDeploymentTimeline` (Gantt-style horizontal chart) above the scope × version matrix on the Bundles "Deployments" tab. Each scope row shows colour-coded segments per active version; native SVG `<title>` tooltip surfaces version + scope + deployed_at; clicking any segment navigates to `/policies/bundles/:id?tab=versions&v=<version>`.
+- Range toolbar with 1d / 7d / 30d radio-group presets (default 30d). Zoom recomputes segment x-positions in-place; no re-fetch.
+- Mobile (< 720px): timeline hidden via `sm:hidden` Tailwind gate; matrix below remains the primary mobile view per the plan's "matrix-only on mobile" requirement.
+- Per-version colours rotate through 5 existing CSS-variable tokens (`--color-cordum`, `--color-success`, `--color-warning`, `--color-info`, `--color-accent`) — no new colour palette per epic rail. Rollback to a previous version reuses that version's colour for visual continuity.
+- Pure helper module `src/lib/policy-studio/timeline-segments.ts` (segment computation, scope key/label, version colour index) lives separate from the renderer for unit-testability without DOM mounts.
+- Architectural deviation flagged in PR body: DoD #5 says "Reuses Recharts" but Recharts has no Gantt primitive and forcing ScatterChart-with-custom-shape requires more custom rendering than the SVG-direct approach. SVG-direct keeps the bundle small (no new dep) and renders ~200 LOC of legible markup.
+- Path-A scope: tooltip shows version + scope + deployed_at only; author + audit_hash deferred to Backend 2.5 (which extends `BundleDeployment` with `deployed_by`, `audit_hash`, and an `action` enum). The component contract is shaped for a one-line additive update when 2.5 lands.
 
 
-#### Policy Studio Rewrite — Backend 8 (epic-d9a6c0a1)
+#### Policy Studio Dashboard 4 — templates gallery + cross-link contract (2026-05-10, task-f6872400)
 
-Rules-list responses now carry the sparkline data needed by the unified Rules
-surface without per-rule analytics requests:
-
-- `GET /api/v1/policy/rules` additively returns `firing_last_7d` on each rule:
-  seven UTC daily firing counts, oldest-to-newest, ending with the current UTC
-  day.
-- Counts are tenant-scoped before rule aggregation, so another tenant's event
-  with the same rule ID does not leak into the caller's summary.
-- Rules with no matching firing history remain visible and receive
-  `[0, 0, 0, 0, 0, 0, 0]`.
-- The gateway computes the summary with one bulk job-history scan for all
-  returned rule IDs plus batched metadata reads, preserving the no-N+1 contract
-  for dashboard sparklines.
-- OpenAPI documents the new field and the existing generated TypeScript SDK
-  schema has been regenerated from the canonical spec.
+- Added `PoliciesEmptyTemplatesGallery` rendered on `PoliciesPage` truly-empty state (no rows, no filters); responsive 3-col grid links to `/policies?new=true&type=<ruleType>&template=<id>&open=editor`. Filtered-empty state retains the existing "No rules match these filters" copy without the gallery to avoid misleading authors into thinking template creation clears active filters.
+- Added `output-pii-sanitize.yaml` template (8th total) to ensure DoD #1's "6+ templates spanning all 4 rule types" coverage; previously the set lacked an output rule.
+- Extended the `RuleEditorDrawer` URL contract to accept the alternate create-new entry point `?new=true&type=...` (in addition to 3A's `?rule=new&type=...`) and to read `?template=<id>` for Monaco pre-fill via `RULE_TEMPLATES`. `?bundle=<id>` is forwarded to drawer state for the eventual Save-to-bundle bind once Backend 5c lands.
+- Drawer's close handler now atomically clears all six editor query keys (`rule`, `open`, `type`, `new`, `template`, `bundle`) while preserving unrelated filters (`scope`, `status`, `search`).
+- Documented the Policy Studio cross-link contract in `dashboard/docs/policy-studio-editor.md`: which surface (Rules table / Decisions → Rule / Bundles → Add rule / empty-state gallery) emits which URL shape.
 
 
-#### Policy Studio Rewrite — Backend 2: bundle store (epic-d9a6c0a1, task-b349524a)
+#### AgentShield detector strategy boundary ADR (2026-05-09, task-3a25ba1f)
 
-Redis-backed `BundleStore` for the unified Policy Studio bundles
-introduced in Backend 1. Built additively under `core/policy/`; no
-existing stores modified.
-
-- `core/policy/bundle_store.go` — BundleStore interface (10 ops: Bundle
-  CRUD + version CRUD + Deploy/Rollback/GetActive/ListHistory) +
-  Deployment record + DeploymentAction enum (deploy|rollback) + 6 typed
-  errors.
-- `core/policy/bundle_store_keys.go` — Redis schema constants + 5 key
-  constructors. Confirmed-clean prefix space at
-  `policy:bundle:*` + `policy:scope:*` (no collision with workflow's
-  `cordum:wf:*`, edge's `edge:session:*`, registry's `sys:workers:*`).
-- `core/policy/bundle_store_redis.go` — `BundleRedisStore` impl with
-  atomic Lua scripts for the multi-key Deploy/Rollback paths. Per
-  memory `mem-12f1ceeb` go-redis WATCH+TxPipelined corrupts the
-  connection pool when miniredis returns errors, so single Lua EVAL is
-  the only safe pattern. Chained rollbacks unwind one step per call
-  (v3→v2→v1) by locating the deploy entry that established the current
-  active and walking past it.
-- `core/policy/bundle_store_keys_test.go` + `bundle_store_redis_test.go`
-  — 22 tests (6 key tests + 16 store tests) covering happy-path CRUD,
-  version idempotency, deploy lifecycle, rollback chain, scope
-  isolation, concurrent-deploy serialization, and 8 nil/empty-id
-  branches. miniredis-backed via the canonical pattern from
-  `core/workflow/store_redis_test.go`.
-- `docs/policy-bundle-store.md` — full Redis schema + CRUD/atomicity
-  table + bounded-history rationale + open questions for v3.
-
-`go build ./...` clean; `go test ./core/policy/... -count=3 -cover
--timeout 240s` clean at coverage 80.2% (clears DoD #3 80% bar).
+- Added ADR-011 documenting deterministic normalizers/cheap detectors vs upstream classifier boundaries, and linked the boundary from AgentShield/output-safety docs.
 
 
-#### Policy Studio Rewrite — Backend 1 (epic-d9a6c0a1)
+#### Policy Studio Backend 5 — unified evaluator entry-point (2026-05-09, task-aadaec4a)
 
-Foundation shapes for the Job + Edge unified policy surface. New shared
-`Rule` / `Decision` / `Bundle` types subsume today's split
-`InputPolicyRule`/`OutputPolicyRule`/`PolicyRule(velocity)` plus the
-`EdgeDecision`/`ActionClassification` edge surface, with a `RuleType`
-discriminator and per-type `Match`/`Decide` payloads carried as raw JSON
-for lossless roundtrip with the orval-generated dashboard types and the
-proto `google.protobuf.Struct` carriers.
+- Integrated `/api/v1/policy/evaluate`, gRPC evaluator conversion helpers, edge/job context dispatch, bundle lifecycle HTTP wiring, and deprecation headers for legacy edge evaluation during the migration window.
+- Added evaluator tests for unified HTTP/gRPC job and edge dispatch, audit output, and policy bundle lifecycle routes.
 
-**Additive only.** No existing types are modified or removed:
-`core/infra/config.SafetyPolicy`, `InputPolicyRule`, `InputPolicyMatch`,
-`OutputPolicyRule`, `OutputPolicyMatch`, `PolicyRule`, `PolicyMatch`,
-`PolicyDecision`, `MCPPolicy`, `TenantPolicy`, `core/edge.EdgeDecision`,
-`ActionClassification`, and the OpenAPI `OutputRule` / `VelocityRule` /
-`PolicyBundleSummary` schemas all remain in place during the migration
-window. Backwards-compat is locked in by
-`core/policy/backwards_compat_test.go` against pre-recorded golden JSON in
-`core/policy/testdata/`.
 
-- New Go package `core/policy/` with `Rule`, `Decision`, `TraceStep`,
-  `Bundle`, `BundleMetadata`, `BundleVersion`, `RuleScope`,
-  `AuditMetadata` structs and six typed enums (`RuleType`, `RuleStatus`,
-  `DecisionType`, `DecisionSource`, `RuleScopeKind`, `EdgeMode`).
-- New proto file `cap/proto/cordum/agent/v1/policy.proto` carrying the
-  unified shapes; references `safety.proto`'s existing `DecisionType` enum
-  rather than redeclaring it.
-- **[WIRE]** `safety.proto`'s `DecisionType` enum extended with
-  `DECISION_TYPE_QUARANTINE = 6` and `DECISION_TYPE_REDACT = 7` (CAP
-  append-only rule preserved; values 0–5 unchanged). Cap PR carries the
-  matching spec/CHANGELOG/conformance-fixture updates separately.
-- OpenAPI `info.version` bumped to `'2026-05-09.1'`; 14 new schema entries
-  appended under `components.schemas` (`Rule`, `Decision`, `TraceStep`,
-  `Bundle`, `BundleVersion`, `BundleMetadata`, `RuleScope`,
-  `AuditMetadata` + six enum schemas).
+#### Policy Studio Backend 8 — rules-list firing summaries (2026-05-09, task-d2a55ae2)
 
-The unified evaluator entry-points and the migration of
-`core/safetykernel` and `core/edge` to consume `Rule` + emit `Decision`
-land in follow-up Backend tasks (see the epic decomposition in
-[docs/specs/policy-studio-rewrite.md](docs/specs/policy-studio-rewrite.md)).
+- Integrated tenant-safe bulk `firing_last_7d` summaries on the rules-list path, with no per-rule N+1 query pattern and exact seven-bucket output for dashboard sparkline consumption.
+- Updated OpenAPI/API docs and SDK TypeScript schema artifact for the rules-list summary field.
+
+
+#### Policy Studio Backend 4 — edge unified rules + decisions (2026-05-09, task-50a912c1)
+
+- Integrated edge/gateway adapters that consume unified edge `policy.Rule` objects and emit unified edge `policy.Decision` audit records alongside legacy behavior.
+- Added edge-mode metadata fallback, fresh-agentd audit dedupe/regression coverage, and edge policy adapter tests.
+
+
+#### Policy Studio Backend 3 — safetykernel unified rules + dual decision emission (2026-05-09, task-14aa8783)
+
+- Integrated safetykernel adapters for unified `policy.Rule` consumption, unified `policy.Decision` helpers, and dual audit/decision emission during the migration window.
+- Added regression coverage for adapter mappings, unified-rule evaluation helpers, and audit dual-emission wiring.
+
+
+#### Policy Studio Backend 2 — Redis bundle store (2026-05-09, task-b349524a)
+
+- Integrated `core/policy` bundle-store interfaces and Redis-backed CRUD/deploy/rollback storage for unified policy bundles, versions, deployments, and scope indexes.
+- Added bundle-store key/unit coverage and `docs/policy-bundle-store.md` for storage semantics and operator notes.
+
+
+#### Policy Studio Rewrite — Backend 1 unified shapes (2026-05-09, task-3bf37e32)
+
+- Integrated the Cordum-core `core/policy/` foundation package for unified `Rule`, `Decision`, `Bundle`, scope, audit, metadata, and enum shapes shared by job and edge policy surfaces. Existing legacy safety/edge policy types remain additive during the migration window.
+- Backwards-compat coverage remains in `core/policy/backwards_compat_test.go` with golden fixtures for legacy input/output rule JSON.
+
+#### Safety Kernel input normalization hygiene (2026-05-09, task-63da1070)
+
+- Input policy scanners now evaluate raw request content first and (when content changed) a normalized candidate produced by Unicode NFKC plus stripping of zero-width controls (U+200B/U+200C/U+200D/U+2060/U+FEFF) and Unicode bidi controls (U+200E/U+200F/U+202A..U+202E/U+2066..U+2069). Audit/evidence content (`req.content`) is never mutated; the normalized candidate exists only as a transient in-memory scanner input. New helper `normalizeInputCandidates` lives in `core/controlplane/safetykernel/input_normalization.go`.
+- `evaluateInputRule` reuses regex/keyword/named-scanner findings from raw and dedupes normalized findings by (Type, Scanner, Detail, MatchedPattern); when at least one normalized-only match survives dedup, a single metadata-only `input_normalized` finding is appended naming which modes fired (e.g. `nfkc+zero_width`). The metadata finding never carries raw or normalized payload text.
+- Structured scope evaluation continues to run on raw bytes only — NFKC and zero-width/bidi stripping would alter JSON structure and break instruction-vs-cart scope semantics.
+- New mutation regression suite: `TestInputNormalization_PublicMutationSweep` proves 15 normalized-only catches across 18 fullwidth/zero-width/bidi mutations of injection prompts with 0 benign multilingual false positives; `TestInputNormalization_HoldoutMutationSweep_Aggregate` reads the restored private holdout corpus (env `CORDUM_PRIVATE_HOLDOUT_ROOT`, default `D:/Cordum/private-corpora/agentshield-cordum-holdout/current/cordum-holdout-corpus`), reports aggregate-only counts per category (no prompt content surfaced), and confirms 0 benign false positives across 252 other-category mutations.
+- Scope intentionally narrow: NFKC + zero-width/bidi stripping only. No base64/ROT13/hex decoding; no model-in-loop classifier.
+
+#### Dashboard 2 — Rules surface table + filters (2026-05-09, task-f339eead)
+
+- `/policies` now renders the Rules surface table shell: `PoliciesFilterBar` with nuqs URL state (`type`, `scope`, `status`, `search`), `primitives/DataTable` virtualization at >100 rows, type icons from `src/lib/policy-studio/rule-type.ts`, status badges, decision-tone left edge, and a last-7d firing sparkline when the rules-list response includes `firing_last_7d`.
+- New `useRulesList(filters)` React Query hook targets `/api/v1/policy/rules` without hand-editing generated API files; default MSW handler returns an empty unified rules page and tests assert filter-param serialization.
+- Empty-table states distinguish first-run (`No rules yet`) from filtered no-match (`No rules match these filters`) and deep-link the placeholder template CTA to `/policies?templates=1` for the Dashboard 4 template gallery.
+- Page tests cover MSW-backed table rendering, filter URL roundtrip into request params, filtered empty state, DataTable virtualization at 150 rows, all RuleType icon variants, and 300ms debounced search refetching. Drawer/editor behavior remains Dashboard 3 scope; Backend firing-count summary follow-up filed as `task-d2a55ae2`.
+
+#### AgentShield private holdout + mutation regression suite (2026-05-09, task-7fbc245d)
+
+- AgentShield benchmark hardening now has a verified-mode Cordum adapter path that strips benchmark-derived metadata and uses `job.default`, plus a public-safe private-holdout scaffold, deterministic mutation suite, regression JSON runner, baseline documentation, and CI/manual commands. Private holdout cases remain gitignored/internal-only; results report misses and false positives separately per epic-f3da4017 rails.
+
+#### AgentShield benchmark scope-boundary doc (2026-05-09, task-f4519eab)
+
+- New `cordum/docs/agentshield-scope-boundary.md` establishes honest framing for AgentShield-related public messaging from Cordum: public-corpus = smoke test (not a generalization metric), while the verified current Cordum adapter/config result is narrower — `/api/v1/policy/simulate` with benchmark-signaling metadata and `job.agentshield.benchmark` default-topic deny before input rules inspect prompt content. Private holdout (task-7fbc245d) is the real coverage gate; Cordum's differentiator is action-layer governance with backend-verified provenance, not content-policy classification. Doc includes explicit do-claim / don't-claim list per epic-f3da4017 rails + an upstream-content-classifier boundary section recommending that deep jailbreak / content classification sit upstream of Cordum.
+- Authored proactively per Yaron 2026-05-09 Q3 sign-off — there are zero existing AgentShield mentions in cordum/, Cordum-site/, or cordum-marketing/ (verified via grep across all three repos). The doc establishes the framing BEFORE public claims are made rather than walking back overstated claims later. Update policy: future public surfaces citing an AgentShield score MUST link to this doc instead of stating numbers in isolation.
+
+#### Dashboard 7 — Bundle deploy modal + scope picker + edgeMode override (2026-05-09, task-758788ea)
+
+- New `dashboard/src/pages/policies/DeployBundleModal.tsx` — Drawer-mounted modal launched from BundleVersionsTab's per-row "Deploy…" Button. Scope picker covers all 5 kinds (`global` / `tenant` / `workflow` / `edge_fleet` / `edge_user`); scopeValue Input auto-disabled + cleared for global; EdgeMode picker (`observe` / `enforce` / `enterprise-strict`) appears only for edge_fleet/edge_user with `bundle.metadata.edge_mode` preselected as default.
+- ConfirmDialog (destructive variant) gates the mutation; when the operator changes EdgeMode away from current bundle metadata, the dialog message renders a dual-effect warning: *"Bundle edge mode will also change to <new>"*.
+- `dashboard/src/hooks/useDeployBundle.ts` extended with optional `edge_mode?: "observe" | "enforce" | "enterprise-strict"`. Body conditionally includes the field; non-edge deploys omit it so Backend leaves metadata untouched. onSuccess invalidates `bundleStudio.deployments(id)` AND `bundleStudio.detail(id)` since metadata may change atomically.
+- `BundleVersionsTab.tsx` wires per-row "Deploy…" button; modal mounted-once at tab level (single `useState<string | null>(deployFor)` shared across rows — avoids state-sync bugs).
+- 5/5 new tests in `DeployBundleModal.test.tsx`: all 5 scope kinds, value-disabled-for-global, EdgeMode visibility on edge/non-edge swap, happy-path Deploy → ConfirmDialog → mutation, Cancel-without-firing.
+- DASHBOARD VERIFICATION RAIL: tsc 0 / vitest 242 files / 2069 tests / build 0. NO new shared primitive (reused Drawer/Select/Input/Button/ConfirmDialog).
 
 #### Dashboard Phase 5e — per-route error boundaries with route-scoped fallback (2026-05-09, task-adc04293)
 
@@ -305,46 +268,6 @@ land in follow-up Backend tasks (see the epic decomposition in
 - Gateway audit pipeline wiring passes the workflow store into both NATS consumer mode (`audit.WithStepHashSink`) and direct/chain-only senders, so new workflow runs populate the dashboard governance overlay's audit-hash chip as soon as their SIEMEvent is appended to the chain. Skipped/upstream-failed/no-entry steps remain unset.
 
 ### Fixed
-
-#### Policy Studio Rewrite — Backend 2 reopen #1 (epic-d9a6c0a1, task-b349524a)
-
-QA caught two correctness defects + two test gaps in the initial Backend
-2 ship; this entry covers the fix landed on top of PR #252.
-
-- `core/policy/bundle_store_redis.go` rollback semantics — the original
-  rollback walked history for "next deploy entry after the deploy
-  matching current active". After `deploy v1, deploy v2, rollback (→
-  v1), deploy v3, rollback`, the second rollback returned **v2** (the
-  raw second-most-recent deploy) instead of the active state
-  immediately before v3 was deployed (v1). Fix: each deploy event now
-  records the active pair at deploy-time as `prev_bundle_id` +
-  `prev_version` (read inside the same Lua script that writes the
-  event, so concurrent deploys serialize correctly). Rollback locates
-  the deploy event matching the current active pair and restores from
-  its `prev_*` fields. The `Deployment` Go struct gains matching
-  `PrevBundleID` + `PrevVersion` fields with `omitempty` JSON tags
-  so old golden fixtures continue to deserialize.
-- `core/policy/bundle_store_redis.go` `CreateBundleVersion` parent check
-  — the original `SETNX` pipeline accepted writes for non-existent
-  parent bundles, allowing orphan version blobs +
-  `policy:bundle:{id}:versions` index entries. Fix: `EXISTS
-  policy:bundle:{id}` precheck before the `SETNX`+`ZADD` pipeline
-  returns `ErrBundleNotFound` for missing parents. Safe non-atomic
-  precheck because the interface defines no `DeleteBundle`, so a
-  parent that exists at check-time still exists at write-time.
-- `core/policy/bundle_store_redis_test.go` — added
-  `TestDeployAfterRollback` (the QA repro permanently locked in:
-  asserts the prev-active fields on each deploy + that rollback after
-  deploy-after-rollback restores v1 with explicit regression error
-  text), `TestCreateBundleVersion_OrphanRejected` (orphan write
-  returns `ErrBundleNotFound` and the index ZSET stays empty), and
-  `TestDeploymentHistoryCapEnforced` (105 deploys → `len(hist) == 100`,
-  binding the LTRIM cap inside the deploy Lua).
-
-`go build ./...` clean. `go test ./core/policy/... -count=3 -cover
--timeout 240s` clean at 80.3% coverage. `go test ./core/workflow/...
-./core/edge/...` clean (no neighboring-store regression).
-
 
 #### UpdateRun lost-update race for concurrent AuditHash writes (2026-05-09, task-a45b8eb1 reopen #2)
 

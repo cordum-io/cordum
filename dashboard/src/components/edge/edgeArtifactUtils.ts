@@ -2,6 +2,11 @@ import type { AgentActionEvent, EdgeArtifactPointer } from "@/api/types";
 
 const DOWNLOAD_THRESHOLD_BYTES = 32 * 1024;
 
+// Edge-artifacts-specific formatter — preserves whole-integer KB rendering
+// (Math.round, no decimals) which is visually load-bearing for the artifacts
+// panel test contract (see EdgeArtifactsPanel.test.tsx). The shared
+// `formatBytes` in src/lib/format.ts uses 1-decimal KB precision instead;
+// adopting it here would render "64.0 KB" where the test expects "64 KB".
 export function formatBytes(value?: number): string {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "unknown size";
   if (value < 1024) return `${value} B`;

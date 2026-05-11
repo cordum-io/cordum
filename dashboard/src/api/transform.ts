@@ -27,7 +27,6 @@ import type {
   RunStatus,
   PolicyBundle,
   Worker,
-  Pool,
   DLQEntry,
   Pack,
   MarketplacePack,
@@ -39,7 +38,6 @@ import type {
   GovernanceDecision,
   GovernanceVerdict,
   EvalDataset,
-  EvalEntry,
   EvalRun,
   EvalRunStatus,
   EvalRunSummary,
@@ -72,7 +70,6 @@ import type {
   EdgeRedactionLevel,
   EdgeRetentionClass,
   EdgeSession,
-  EdgeSessionCreateResponse,
   EdgeSessionExportBundle,
   EdgeSessionPage,
   EdgeStreamPayload,
@@ -1736,29 +1733,6 @@ export function mapHeartbeatToWorker(hb: BackendHeartbeat): Worker | null {
 // Pool mapper
 // ---------------------------------------------------------------------------
 
-export interface BackendPoolSummary {
-  name: string;
-  workers: number;
-  active_jobs: number;
-  capacity: number;
-  utilization: number;
-  topics?: string[];
-  worker_list?: BackendHeartbeat[];
-  captured_at?: string;
-}
-
-export function mapPoolResponse(bp: BackendPoolSummary, mapWorker = mapHeartbeatToWorker): Pool {
-  return {
-    name: bp.name,
-    workerCount: bp.workers ?? 0,
-    activeJobs: bp.active_jobs ?? 0,
-    capacity: bp.capacity ?? 0,
-    utilization: Math.round((bp.utilization ?? 0) * 100),
-    topics: bp.topics ?? [],
-    workers: (bp.worker_list ?? []).map(mapWorker).filter((w): w is Worker => !!w),
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Evals mappers
 // ---------------------------------------------------------------------------
@@ -1795,17 +1769,6 @@ export interface BackendEvalDataset {
   created_at?: string;
   updated_at?: string;
   created_by?: string;
-}
-
-export interface BackendEvalEntry {
-  id?: string;
-  input?: Record<string, unknown>;
-  expected_decision?: string;
-  rule_id?: string;
-  metadata?: Record<string, unknown>;
-  source?: string;
-  source_ref?: string;
-  notes?: string;
 }
 
 export interface BackendEvalRunSummary {
@@ -1891,19 +1854,6 @@ export function mapEvalDataset(raw: BackendEvalDataset): EvalDataset {
     createdAt: raw.created_at ?? "",
     updatedAt: raw.updated_at ?? raw.created_at ?? "",
     createdBy: raw.created_by,
-  };
-}
-
-export function mapEvalEntry(raw: BackendEvalEntry): EvalEntry {
-  return {
-    id: raw.id ?? "",
-    input: raw.input ?? {},
-    expectedDecision: normalizeSafetyDecisionType(raw.expected_decision),
-    ruleId: raw.rule_id,
-    metadata: raw.metadata,
-    source: raw.source ?? "unknown",
-    sourceRef: raw.source_ref,
-    notes: raw.notes,
   };
 }
 
@@ -2062,21 +2012,6 @@ export interface BackendEdgeExecutionMetrics {
   llm_cost_usd?: unknown;
 }
 
-export interface BackendEdgeArtifactPointer {
-  artifact_type?: unknown;
-  session_id?: unknown;
-  execution_id?: unknown;
-  event_id?: unknown;
-  tenant_id?: unknown;
-  retention_class?: unknown;
-  redaction_level?: unknown;
-  sha256?: unknown;
-  uri?: unknown;
-  created_at?: unknown;
-  size_bytes?: unknown;
-  content_type?: unknown;
-}
-
 export interface BackendEdgeSession {
   session_id?: unknown;
   tenant_id?: unknown;
@@ -2188,38 +2123,6 @@ export interface BackendEdgePage<T> {
   nextCursor?: unknown;
 }
 
-export interface BackendEdgeSessionCreateResponse {
-  session_id?: unknown;
-  execution_id?: unknown;
-  trace_id?: unknown;
-  policy_snapshot?: unknown;
-  dashboard_url?: unknown;
-  session?: BackendEdgeSession;
-  execution?: BackendEdgeAgentExecution;
-}
-
-export interface BackendEdgeHeartbeatResponse {
-  session_id?: unknown;
-  heartbeat_alive?: unknown;
-}
-
-export interface BackendEdgeMissingArtifact {
-  uri?: unknown;
-  sha256?: unknown;
-  artifact_type?: unknown;
-  session_id?: unknown;
-  execution_id?: unknown;
-  event_id?: unknown;
-  reason?: unknown;
-}
-
-export interface BackendEdgeJobLink {
-  execution_id?: unknown;
-  job_id?: unknown;
-  workflow_run_id?: unknown;
-  step_id?: unknown;
-}
-
 export interface BackendEdgeExportTruncation {
   events_truncated?: unknown;
   event_count?: unknown;
@@ -2240,13 +2143,6 @@ export interface BackendEdgeSessionExportBundle {
   missing_artifacts?: unknown;
   job_links?: unknown;
   truncation?: BackendEdgeExportTruncation;
-}
-
-export interface BackendEdgeError {
-  code?: unknown;
-  message?: unknown;
-  request_id?: unknown;
-  details?: unknown;
 }
 
 export interface BackendEdgeEventStreamEnvelope {
@@ -2762,29 +2658,6 @@ export function mapAgentActionEventPage(
   raw: BackendEdgePage<BackendEdgeAgentActionEvent>,
 ): AgentActionEventPage {
   return mapEdgePage(raw, mapAgentActionEvent);
-}
-
-export function mapEdgeSessionCreateResponse(
-  raw: BackendEdgeSessionCreateResponse,
-): EdgeSessionCreateResponse {
-  return {
-    sessionId: edgeString(raw.session_id),
-    executionId: edgeString(raw.execution_id),
-    traceId: edgeString(raw.trace_id),
-    policySnapshot: edgeString(raw.policy_snapshot),
-    dashboardUrl: edgeString(raw.dashboard_url),
-    session: mapEdgeSession(raw.session ?? {}),
-    execution: mapAgentExecution(raw.execution ?? {}),
-  };
-}
-
-export function mapEdgeHeartbeatResponse(
-  raw: BackendEdgeHeartbeatResponse,
-): { sessionId: string; heartbeatAlive: boolean } {
-  return {
-    sessionId: edgeString(raw.session_id),
-    heartbeatAlive: edgeBoolean(raw.heartbeat_alive),
-  };
 }
 
 function mapEdgeMissingArtifact(raw: unknown): EdgeMissingArtifact | null {

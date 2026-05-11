@@ -44,5 +44,3 @@ export const envelopeSchema = z
     status: statusEnum,
   })
   .strict();
-
-export type EnvelopeFormValues = z.infer<typeof envelopeSchema>;

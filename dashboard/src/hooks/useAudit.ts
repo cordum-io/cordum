@@ -201,23 +201,6 @@ export function useAuditCorrelation(resourceId: string | null) {
   });
 }
 
-export function useAuditExport(
-  filters: AuditFilters,
-  format: ExportFormat,
-  enabled: boolean,
-) {
-  return useQuery<ApiResponse<AuditEntry[]>>({
-    queryKey: queryKeys.audit.export(filters, format),
-    queryFn: () => {
-      return get<{ items: BackendPolicyAuditEntry[] }>("/policy/audit").then((res) => ({
-        items: (res.items ?? []).map(mapPolicyAuditEntry),
-      }));
-    },
-    enabled,
-    staleTime: 0,
-  });
-}
-
 /** @internal exported for unit tests */
 export const __auditInternal = {
   applyFilters,

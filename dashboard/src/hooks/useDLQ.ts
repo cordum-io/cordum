@@ -15,6 +15,10 @@ export interface DLQFilters {
   cursor?: number;
 }
 
+export interface UseDLQOptions {
+  enabled?: boolean;
+}
+
 function buildParams(filters: DLQFilters): string {
   const params = new URLSearchParams();
   if (filters.limit !== undefined) params.set("limit", String(filters.limit));
@@ -29,7 +33,10 @@ function buildParams(filters: DLQFilters): string {
 // Queries
 // ---------------------------------------------------------------------------
 
-export function useDLQ(filters: DLQFilters = {}) {
+export function useDLQ(
+  filters: DLQFilters = {},
+  options: UseDLQOptions = {},
+) {
   return useQuery<ApiResponse<DLQEntry[]>>({
     queryKey: queryKeys.dlq.list(filters),
     queryFn: async () => {
@@ -42,6 +49,7 @@ export function useDLQ(filters: DLQFilters = {}) {
       };
     },
     staleTime: 10_000,
+    enabled: options.enabled ?? true,
   });
 }
 

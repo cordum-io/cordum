@@ -4,7 +4,6 @@ import { API_PATHS } from "../lib/constants";
 import { queryKeys } from "../lib/queryKeys";
 import type {
   AgentActionEventPage,
-  AgentExecution,
   AgentExecutionPage,
   EdgeApproval,
   EdgeApprovalListParams,
@@ -20,7 +19,6 @@ import type {
 } from "../api/types";
 import {
   mapAgentActionEventPage,
-  mapAgentExecution,
   mapAgentExecutionPage,
   mapEdgeApproval,
   mapEdgeApprovalPage,
@@ -186,12 +184,6 @@ export async function fetchEdgeExecutions(params: EdgeExecutionListParams = {}):
   return mapAgentExecutionPage(await get<BackendEdgePage<BackendEdgeAgentExecution>>(path));
 }
 
-export async function fetchEdgeExecution(executionId: string): Promise<AgentExecution> {
-  return mapAgentExecution(
-    await get<BackendEdgeAgentExecution>(`${API_PATHS.edge.executions}/${encodePathSegment(executionId)}`),
-  );
-}
-
 export async function fetchEdgeExecutionEvents(
   executionId: string,
   params: EdgeEventListParams = {},
@@ -220,12 +212,6 @@ export async function fetchEdgeApprovals(params: EdgeApprovalListParams = {}): P
     limit: params.limit,
   });
   return mapEdgeApprovalPage(await get<BackendEdgePage<BackendEdgeApproval>>(path));
-}
-
-export async function fetchEdgeApproval(approvalRef: string): Promise<EdgeApproval> {
-  return mapEdgeApproval(
-    await get<BackendEdgeApproval>(`${API_PATHS.edge.approvals}/${encodePathSegment(approvalRef)}`),
-  );
 }
 
 export async function approveEdgeApproval(input: ResolveEdgeApprovalInput): Promise<EdgeApproval> {
@@ -300,37 +286,10 @@ export function useEdgeExecutions(params: EdgeExecutionListParams = {}) {
   });
 }
 
-export function useEdgeExecution(executionId?: string | null) {
-  return useQuery<AgentExecution, ApiError>({
-    queryKey: queryKeys.edge.executions.detail(executionId),
-    queryFn: () => fetchEdgeExecution(executionId ?? ""),
-    enabled: Boolean(executionId),
-    staleTime: 5_000,
-  });
-}
-
-export function useEdgeExecutionEvents(executionId?: string | null, params: EdgeEventListParams = {}) {
-  return useQuery<AgentActionEventPage, ApiError>({
-    queryKey: queryKeys.edge.executions.events(executionId, params),
-    queryFn: () => fetchEdgeExecutionEvents(executionId ?? "", params),
-    enabled: Boolean(executionId),
-    staleTime: 5_000,
-  });
-}
-
 export function useEdgeApprovals(params: EdgeApprovalListParams = {}) {
   return useQuery<EdgeApprovalPage, ApiError>({
     queryKey: queryKeys.edge.approvals.list(params),
     queryFn: () => fetchEdgeApprovals(params),
-    staleTime: 5_000,
-  });
-}
-
-export function useEdgeApproval(approvalRef?: string | null) {
-  return useQuery<EdgeApproval, ApiError>({
-    queryKey: queryKeys.edge.approvals.detail(approvalRef),
-    queryFn: () => fetchEdgeApproval(approvalRef ?? ""),
-    enabled: Boolean(approvalRef),
     staleTime: 5_000,
   });
 }

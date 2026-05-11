@@ -33,11 +33,13 @@ import { DataTable, type DecisionTier } from "@/components/primitives/DataTable"
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useDLQ, useRetryDLQ, useDeleteDLQ } from "@/hooks/useDLQ";
 import {
+  type LucideIcon,
   Search,
   RefreshCw,
   ListChecks,
   Plus,
   Download,
+  MoreHorizontal,
   RotateCcw,
   Shield,
   Trash2,
@@ -296,7 +298,8 @@ type EnrichedJob = Job & {
  *                    operate on the DLQ entry id per useRetryDLQ/useDeleteDLQ
  *                    contract).
  *    topic         ← entry.originalTopic (the topic the failed job was on)
- *    status        ← "dlq" (literal — DLQ entries don't have a Job status)
+ *    status        ← "failed" (internal fallback only; the visible badge and
+ *                    CSV export use `_dlq` to render "dlq")
  *    updatedAt     ← entry.failedAt
  *    attempts      ← entry.retryCount
  *    safetyDecision/labels/etc — undefined; the safety-decision badge column
@@ -306,23 +309,112 @@ type EnrichedJob = Job & {
  *  callers to know about the EnrichedJob private type.
  */
 function dlqEntryToEnrichedJob(entry: DLQEntry): EnrichedJob {
-  const failedAt = entry.failedAt ?? new Date().toISOString();
+  const failedAt = entry.failedAt || entry.createdAt || new Date().toISOString();
+  const retryCount = entry.retryCount ?? entry.attempts ?? 0;
   return {
     id: entry.id,
     type: entry.originalTopic ?? "",
     topic: entry.originalTopic ?? "",
-    status: "denied", // closest Job status to "terminal failure"; row-render uses _dlq flag for the actual badge
-    pool: "",
+    status: "failed",
+    pool: "dlq",
     capabilities: [],
     riskTags: [],
-    metadata: {},
-    createdAt: failedAt,
+    metadata: {
+      job_id: entry.jobId,
+      ...(entry.reasonCode ? { reason_code: entry.reasonCode } : {}),
+      ...(entry.lastState ? { last_state: entry.lastState } : {}),
+    },
+    createdAt: entry.createdAt || failedAt,
     updatedAt: failedAt,
-    attempts: entry.retryCount,
+    attempts: retryCount,
+    errorMessage: entry.error || entry.reason,
+    lastState: entry.lastState,
     _safetyDecision: undefined,
     _matchedRules: [],
     _dlq: true,
   };
+}
+
+function DLQMenuItem({
+  icon: Icon,
+  label,
+  tone = "default",
+  onSelect,
+}: {
+  icon: LucideIcon;
+  label: string;
+  tone?: "default" | "destructive";
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs font-medium ${
+        tone === "destructive"
+          ? "text-destructive hover:bg-destructive/10"
+          : "text-foreground hover:bg-surface-2"
+      }`}
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelect();
+      }}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </button>
+  );
+}
+
+function DLQRowActions({
+  entryId,
+  open,
+  onToggle,
+  onReplay,
+  onDrop,
+}: {
+  entryId: string;
+  open: boolean;
+  onToggle: () => void;
+  onReplay: (entryId: string) => void;
+  onDrop: (entryId: string) => void;
+}) {
+  return (
+    <div className="relative inline-flex justify-end" data-row-action>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle();
+        }}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Actions for DLQ entry ${entryId}`}
+      >
+        <MoreHorizontal className="h-3.5 w-3.5" />
+        Actions
+      </Button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-9 z-20 min-w-36 overflow-hidden rounded-xl border border-border bg-surface-1 p-1 shadow-lift"
+        >
+          <DLQMenuItem
+            icon={RotateCcw}
+            label="Replay"
+            onSelect={() => onReplay(entryId)}
+          />
+          <DLQMenuItem
+            icon={Trash2}
+            label="Drop"
+            tone="destructive"
+            onSelect={() => onDrop(entryId)}
+          />
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function JobsPage() {
@@ -345,6 +437,7 @@ export default function JobsPage() {
   // id so the dialog's Confirm handler knows which row to operate on.
   const [pendingReplay, setPendingReplay] = useState<string | null>(null);
   const [pendingDrop, setPendingDrop] = useState<string | null>(null);
+  const [openActionMenu, setOpenActionMenu] = useState<string | null>(null);
 
   const isDlqMode = activeTab === "dlq";
 
@@ -377,7 +470,7 @@ export default function JobsPage() {
   // DLQEntry records — adapter coerces those into the same EnrichedJob row
   // shape so the DataTable column set works without conditional cell renderers
   // that branch on Job-vs-DLQEntry. Replay/Drop mutations live below.
-  const dlqQuery = useDLQ({ limit: 1000 });
+  const dlqQuery = useDLQ({ limit: 1000 }, { enabled: isDlqMode });
   const retryMutation = useRetryDLQ();
   const dropMutation = useDeleteDLQ();
 
@@ -440,8 +533,13 @@ export default function JobsPage() {
         label: "Failed",
         count: enrichedJobs.filter((j) => j.status === "failed").length,
       },
+      {
+        id: "dlq",
+        label: "DLQ",
+        count: isDlqMode ? enrichedJobs.length : 0,
+      },
     ],
-    [enrichedJobs],
+    [enrichedJobs, isDlqMode],
   );
 
   const safetyTabs = useMemo(
@@ -467,12 +565,12 @@ export default function JobsPage() {
           if (j.status !== "pending" && j.status !== "scheduled") return false;
         } else if (j.status !== activeTab) return false;
       }
-      if (safetyFilter !== "all" && j._safetyDecision !== safetyFilter)
+      if (!isDlqMode && safetyFilter !== "all" && j._safetyDecision !== safetyFilter)
         return false;
-      if (jobFilters.state && jobFilters.state.length > 0) {
+      if (!isDlqMode && jobFilters.state && jobFilters.state.length > 0) {
         if (!jobFilters.state.includes(j.status)) return false;
       }
-      if (jobFilters.decision && jobFilters.decision.length > 0) {
+      if (!isDlqMode && jobFilters.decision && jobFilters.decision.length > 0) {
         if (!j._safetyDecision || !jobFilters.decision.includes(j._safetyDecision))
           return false;
       }
@@ -487,13 +585,13 @@ export default function JobsPage() {
       }
       return true;
     });
-  }, [enrichedJobs, activeTab, safetyFilter, search, jobFilters]);
+  }, [enrichedJobs, activeTab, safetyFilter, search, jobFilters, isDlqMode]);
 
   const exportCSV = () => {
     const rows = filtered.map((j) =>
       [
         j.id,
-        j.status,
+        j._dlq ? "dlq" : j.status,
         j.topic ?? "",
         j._safetyDecision ?? "",
         j._matchedRules.join(";"),
@@ -605,58 +703,43 @@ export default function JobsPage() {
           </span>
         ),
       },
-      // Actions column — visible only in DLQ mode. Each row's Replay /
-      // Drop buttons set pending-action state, which opens the matching
-      // ConfirmDialog. Replay is idempotency-confirmed; Drop is type-to-confirm
-      // (destructive). data-row-action stops the row click from triggering
-      // navigation when the user clicks an action button (DataTable's
-      // isInteractiveTarget helper checks for this attribute).
+      // Actions column — visible only in DLQ mode. The row dropdown gates
+      // Replay / Drop behind ConfirmDialog; DataTable's isInteractiveTarget
+      // helper ignores clicks under data-row-action so rows don't navigate.
       ...(isDlqMode
         ? [
             {
               id: "actions",
               header: "Actions",
               enableSorting: false,
-              cell: ({ row }: { row: { original: EnrichedJob } }) => (
-                <div
-                  className="flex items-center justify-end gap-1"
-                  data-row-action
-                >
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPendingReplay(row.original.id);
+              cell: ({ row }) => {
+                const entryId = row.original.id;
+                return (
+                  <DLQRowActions
+                    entryId={entryId}
+                    open={openActionMenu === entryId}
+                    onToggle={() =>
+                      setOpenActionMenu((current) =>
+                        current === entryId ? null : entryId,
+                      )
+                    }
+                    onReplay={(id) => {
+                      setOpenActionMenu(null);
+                      setPendingReplay(id);
                     }}
-                    title="Replay this DLQ entry"
-                    aria-label={`Replay DLQ entry ${row.original.id}`}
-                  >
-                    <RotateCcw className="h-3.5 w-3.5 mr-1" />
-                    Replay
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-destructive hover:text-destructive"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPendingDrop(row.original.id);
+                    onDrop={(id) => {
+                      setOpenActionMenu(null);
+                      setPendingDrop(id);
                     }}
-                    title="Drop this DLQ entry permanently"
-                    aria-label={`Drop DLQ entry ${row.original.id}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5 mr-1" />
-                    Drop
-                  </Button>
-                </div>
-              ),
+                  />
+                );
+              },
               meta: { align: "right" },
             } satisfies ColumnDef<EnrichedJob>,
           ]
         : []),
     ],
-    [isDlqMode],
+    [isDlqMode, openActionMenu],
   );
 
   if (isError) {
@@ -744,8 +827,11 @@ export default function JobsPage() {
       {/* DLQ banner — renders only when ?status=dlq. Copy explicitly says
           "failed terminally" so users don't think these are still being retried. */}
       {isDlqMode && (
-        <InfoBanner variant="warning" title="Dead-letter queue">
-          Jobs that failed terminally and were dropped from live processing.
+        <InfoBanner
+          variant="warning"
+          title="Dead-letter queue — jobs that failed terminally and were dropped from live processing"
+        >
+          Replay re-enqueues an entry; Drop permanently removes it.
           {safetyFilter !== "all" && (
             <span className="ml-2 text-xs opacity-80">
               · Safety filter does not apply to DLQ entries (no decision was

@@ -3,7 +3,6 @@ import { type ReactNode, useState, useEffect, useRef, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { useUiStore } from "@/state/ui";
-import { FEATURE_FLAGS } from "@/config/flags";
 import { useApprovals } from "@/hooks/useApprovals";
 import { useDLQ } from "@/hooks/useDLQ";
 import { useLicense } from "@/hooks/useLicense";
@@ -40,7 +39,6 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
-  KeyRound,
   Package,
   Database,
   Hash,
@@ -82,17 +80,16 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
       { path: "/jobs", label: "Jobs", icon: ListChecks },
       { path: "/edge/sessions", label: "Edge Sessions", icon: ShieldCheck },
       { path: "/workflows", label: "Workflows", icon: Workflow },
+      { path: "/runs", label: "Runs", icon: ListChecks },
       { path: "/approvals", label: "Approvals", icon: UserCheck, badge: "approvals" },
     ],
   },
   {
     label: "Govern",
     items: [
-      { path: "/govern/overview", label: "Policy Studio", icon: Shield },
-      ...(FEATURE_FLAGS.delegationDashboard
-        ? [{ path: "/delegations", label: "Delegations", icon: KeyRound }]
-        : []),
-      { path: "/govern/quarantine", label: "Quarantine", icon: ShieldAlert, badge: "quarantine" },
+      { path: "/policies", label: "Policy Studio", icon: Shield },
+      { path: "/security/quarantine", label: "Quarantine", icon: ShieldAlert, badge: "quarantine" },
+      { path: "/security/safety", label: "Safety Controls", icon: ShieldCheck },
       { path: "/govern/verification", label: "Verification", icon: ShieldCheck },
     ],
   },
@@ -108,14 +105,7 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
     label: "Audit",
     items: [
       { path: "/audit", label: "Audit Log", icon: FileText },
-      // Dead Letters folded into JobsPage as a status filter (task-0bcb9411).
-      // The sidebar entry intentionally keeps `path: "/dlq"` rather than
-      // pointing at `/jobs?status=dlq` directly — the App.tsx Navigate
-      // redirect handles the routing, and keeping `/dlq` here preserves the
-      // active-section match (findActiveSection compares pathnames; pointing
-      // the entry at `/jobs?status=dlq` would either fail to match anything
-      // or conflict with the Run > Jobs entry on `/jobs`).
-      { path: "/dlq", label: "Dead Letters", icon: AlertTriangle, badge: "dlq" },
+      { path: "/jobs?status=dlq", label: "Dead Letters", icon: AlertTriangle, badge: "dlq" },
     ],
   },
   {
@@ -138,17 +128,35 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
  * via its Dashboard item.
  */
 export function findActiveSection(
-  pathname: string,
+  locationPath: string,
   sections: NavSection[],
 ): string | null {
+  if (locationPath === "/dlq" || locationPath.startsWith("/dlq/")) {
+    return "Audit";
+  }
+  for (const section of sections) {
+    if (section.items.some((item) => item.path === locationPath)) {
+      return section.label;
+    }
+  }
+  const pathname = locationPath.split("?")[0] || "/";
   for (const section of sections) {
     const match = section.items.some((item) => {
+      if (item.path.includes("?")) return false;
       if (item.path === "/") return pathname === "/";
       return pathname === item.path || pathname.startsWith(`${item.path}/`);
     });
     if (match) return section.label;
   }
   return null;
+}
+
+function isNavItemActive(item: NavItem, locationPath: string): boolean {
+  if (item.path.includes("?")) return item.path === locationPath;
+  const pathname = locationPath.split("?")[0] || "/";
+  if (item.path === "/") return pathname === "/";
+  if (item.end) return pathname === item.path;
+  return pathname === item.path || pathname.startsWith(`${item.path}/`);
 }
 
 // g+key navigation map — canonical source is useKeyboardShortcuts, re-exported for tests
@@ -213,20 +221,21 @@ export function aggregateSectionBadgeSeverity(
 
 export function AppShell({ children }: AppShellProps) {
   const location = useLocation();
+  const locationPath = `${location.pathname}${location.search}`;
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [openSection, setOpenSection] = useState<string | null>(() =>
-    findActiveSection(location.pathname, APP_SHELL_NAV_SECTIONS),
+    findActiveSection(locationPath, APP_SHELL_NAV_SECTIONS),
   );
   const theme = useUiStore((s) => s.resolvedTheme);
   const toggleTheme = useUiStore((s) => s.toggleTheme);
 
   // Auto-open whichever section owns the current route on every navigation.
   useEffect(() => {
-    const active = findActiveSection(location.pathname, APP_SHELL_NAV_SECTIONS);
+    const active = findActiveSection(locationPath, APP_SHELL_NAV_SECTIONS);
     if (active) setOpenSection(active);
-  }, [location.pathname]);
+  }, [locationPath]);
 
   const toggleSection = useCallback((label: string) => {
     setOpenSection((prev) => (prev === label ? null : label));
@@ -397,15 +406,16 @@ export function AppShell({ children }: AppShellProps) {
                         >
                           {section.items.map((item) => {
                             const badgeCount = getBadgeCount(item.badge);
+                            const itemActive = isNavItemActive(item, locationPath);
                             return (
                               <NavLink
                                 key={item.path}
                                 to={item.path}
                                 end={item.end}
-                                className={({ isActive }) =>
+                                className={() =>
                                   cn(
                                     "flex items-center gap-3 pl-8 pr-3 py-2 rounded-xl text-sm font-medium transition-all duration-150",
-                                    isActive
+                                    itemActive
                                       ? "bg-cordum/10 text-cordum"
                                       : "text-muted-foreground hover:text-foreground hover:bg-surface-2",
                                   )
@@ -524,6 +534,7 @@ export function AppShell({ children }: AppShellProps) {
                   >
                     {section.items.map((item) => {
                       const badgeCount = getBadgeCount(item.badge);
+                      const itemActive = isNavItemActive(item, locationPath);
                       return (
                         <NavLink
                           key={item.path}
@@ -531,19 +542,19 @@ export function AppShell({ children }: AppShellProps) {
                           end={item.end}
                           aria-label={collapsed ? item.label : undefined}
                           title={collapsed ? item.label : undefined}
-                          className={({ isActive }) =>
+                          className={() =>
                             cn(
                               "flex items-center gap-3 py-2 rounded-xl text-sm font-medium transition-all duration-150 group relative",
                               collapsed ? "justify-center px-0" : "pl-8 pr-3",
-                              isActive
+                              itemActive
                                 ? "bg-cordum/10 text-cordum"
                                 : "text-muted-foreground hover:text-foreground hover:bg-surface-2",
                             )
                           }
                         >
-                          {({ isActive }) => (
+                          {() => (
                             <>
-                              {isActive && (
+                              {itemActive && (
                                 <motion.div
                                   layoutId="sidebar-active"
                                   className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-cordum rounded-r-full"
