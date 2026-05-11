@@ -31,7 +31,7 @@ export type RuleTypeOrUnknown = RuleType | typeof UNKNOWN_RULE_TYPE;
 // PoliciesPage can render the sparkline column without per-row casts. The
 // `type` field is widened to admit the UNKNOWN_RULE_TYPE sentinel for rows
 // the normalizer cannot classify.
-export type NormalizedRule = Omit<Rule, "type"> & {
+export type NormalizedRule = Omit<Rule, "type" | "firing_last_7d"> & {
   type: RuleTypeOrUnknown;
   firing_last_7d?: unknown;
 };

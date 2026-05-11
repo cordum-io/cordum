@@ -27,5 +27,33 @@ export interface Decision {
   input_ref?: string;
   output_ref?: string;
   audit_hash?: string;
+  /** Populated by JOB-source decisions only (safetykernel emitter)
+when the evaluation context carries job identity. Empty for
+EDGE-source decisions.
+ */
+  job_id?: string;
+  /** Populated by EDGE-source decisions only (edge agentd emitter)
+when the persisted event carries an edge session reference.
+Empty for JOB-source decisions.
+ */
+  session_id?: string;
+  /** Acting agent identity at evaluation time. Populated by both
+JOB and EDGE emitters when the evaluation context/event
+carries it. For EDGE, derived from `agent_product`.
+ */
+  agent_id?: string;
+  /** Human or service principal owning the action. Populated by
+both JOB and EDGE emitters when context/event carries it.
+ */
+  principal_id?: string;
+  /** Tenant context used to load the rule scope. Populated by
+both JOB and EDGE emitters.
+ */
+  tenant_id?: string;
+  /** Action topic. For JOB-source decisions, the job topic; for
+EDGE-source, the action class (e.g. `bash.exec`). Populated
+by both emitters when context/event carries it.
+ */
+  topic?: string;
   timestamp: string;
 }
