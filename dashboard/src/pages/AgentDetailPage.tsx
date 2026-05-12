@@ -29,10 +29,8 @@ import { AgentDelegationsPanel } from "@/components/delegations/AgentDelegations
 import AgentIdentityPanel from "@/components/agents/AgentIdentityPanel";
 import { FEATURE_FLAGS } from "@/config/flags";
 
-const VALID_TABS = new Set(["overview", "activity", "identity", "delegations"]);
-
-function tabFromSearch(value: string | null): string {
-  if (!value || !VALID_TABS.has(value)) return "overview";
+function tabFromSearch(value: string | null, tabs: Array<{ id: string }>): string {
+  if (!value || !tabs.some((tab) => tab.id === value)) return "overview";
   return value;
 }
 
@@ -115,7 +113,6 @@ export default function AgentDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = tabFromSearch(searchParams.get("tab"));
   const setActiveTab = useCallback(
     (next: string) => {
       setSearchParams(
@@ -151,6 +148,7 @@ export default function AgentDetailPage() {
       ? [{ id: "delegations", label: "Delegations" }]
       : []),
   ];
+  const activeTab = tabFromSearch(searchParams.get("tab"), tabs);
 
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: ["worker", id] });
@@ -161,7 +159,7 @@ export default function AgentDetailPage() {
     ? ["online", "active", "idle", "busy"].includes(agent.status)
     : false;
 
-  if (agentError) {
+  if (agentError && activeTab !== "identity") {
     return (
       <div className="space-y-6">
         <PageHeader
@@ -189,7 +187,7 @@ export default function AgentDetailPage() {
     );
   }
 
-  if (agentLoading) {
+  if (agentLoading && activeTab !== "identity") {
     return (
       <div className="space-y-6">
         <PageHeader
@@ -212,7 +210,7 @@ export default function AgentDetailPage() {
     );
   }
 
-  if (jobsError) {
+  if (jobsError && (activeTab === "overview" || activeTab === "activity")) {
     return <ErrorBanner message={jobsErr instanceof Error ? jobsErr.message : "Failed to load agent jobs"} onRetry={() => void refetchJobs()} />;
   }
 
