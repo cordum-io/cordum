@@ -48,6 +48,19 @@ function jsonResponse(status: number, body: unknown, statusText = "OK"): Respons
   });
 }
 
+function textResponse(
+  status: number,
+  body: string,
+  contentType: string,
+  statusText = "OK",
+): Response {
+  return new Response(body, {
+    status,
+    statusText,
+    headers: { "Content-Type": contentType },
+  });
+}
+
 async function captureApiError(request: Promise<unknown>): Promise<ApiError> {
   try {
     await request;
@@ -608,6 +621,76 @@ describe("apiClient (orval mutator adapter)", () => {
     expect(url).toBe("https://api.example.test/api/v1/jobs");
     expect(url).not.toMatch(/\/api\/v1\/api\/v1\//);
   });
+
+  it("parses successful text/csv responses as text by content type", async () => {
+    fetchMock.mockResolvedValueOnce(
+      textResponse(200, "id,status\njob-1,succeeded\n", "text/csv"),
+    );
+
+    const result = await apiClient<string>({
+      url: "/audit/export",
+      method: "GET",
+    });
+
+    expect(result).toBe("id,status\njob-1,succeeded\n");
+  });
+
+  it("parses successful NDJSON responses as text by content type", async () => {
+    const ndjson = "{\"id\":\"evt-1\"}\n{\"id\":\"evt-2\"}\n";
+    fetchMock.mockResolvedValueOnce(
+      textResponse(200, ndjson, "application/x-ndjson"),
+    );
+
+    const result = await apiClient<string>({
+      url: "/audit/export",
+      method: "GET",
+    });
+
+    expect(result).toBe(ndjson);
+  });
+
+  it("honors explicit responseType=text even when the server marks the body as JSON", async () => {
+    fetchMock.mockResolvedValueOnce(
+      textResponse(200, "{\"raw\":true}", "application/json"),
+    );
+
+    const result = await apiClient<string>({
+      url: "/raw-json-text",
+      method: "GET",
+      responseType: "text",
+    });
+
+    expect(result).toBe("{\"raw\":true}");
+  });
+
+  it("honors explicit responseType=blob", async () => {
+    fetchMock.mockResolvedValueOnce(
+      textResponse(200, "binary-ish", "application/octet-stream"),
+    );
+
+    const result = await apiClient<Blob>({
+      url: "/artifact",
+      method: "GET",
+      responseType: "blob",
+    });
+
+    expect(result).toBeInstanceOf(Blob);
+    await expect(result.text()).resolves.toBe("binary-ish");
+  });
+
+  it("honors explicit responseType=arraybuffer", async () => {
+    fetchMock.mockResolvedValueOnce(
+      textResponse(200, "buffer-ish", "application/octet-stream"),
+    );
+
+    const result = await apiClient<ArrayBuffer>({
+      url: "/artifact",
+      method: "GET",
+      responseType: "arraybuffer",
+    });
+
+    expect(new TextDecoder().decode(result)).toBe("buffer-ish");
+  });
 });
 
 describe("apiClient — generated hook integration", () => {
@@ -654,5 +737,17 @@ describe("apiClient — generated hook integration", () => {
     expect(url).toBe("https://api.example.test/api/v1/jobs");
     expect(url).not.toMatch(/\/api\/v1\/api\/v1\//);
   });
-});
 
+  it("invokes generated audit export and returns CSV/NDJSON text instead of forcing JSON parse", async () => {
+    const { exportAuditCompliance } = await import("./generated/audit-export/audit-export");
+    fetchMock.mockResolvedValueOnce(
+      textResponse(200, "sequence,hash\n1,abc\n", "text/csv"),
+    );
+
+    const result = await exportAuditCompliance({ format: "csv" });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.example.test/api/v1/audit/export?format=csv");
+    expect(result).toBe("sequence,hash\n1,abc\n");
+  });
+});
