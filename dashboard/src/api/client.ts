@@ -56,7 +56,50 @@ function authHeaders(): Record<string, string> {
   return h;
 }
 
-async function handleResponse<T>(res: Response, meta: { method: string; path: string; requestId: string; startMs: number }): Promise<T> {
+type ApiResponseType = "json" | "text" | "blob" | "arraybuffer" | string;
+
+interface RequestOptions extends RequestInit {
+  responseType?: ApiResponseType;
+}
+
+async function parseSuccessfulResponse<T>(
+  res: Response,
+  responseType?: ApiResponseType,
+): Promise<T> {
+  const normalizedResponseType = responseType?.toLowerCase();
+  const contentType = res.headers.get("Content-Type")?.toLowerCase() ?? "";
+
+  if (normalizedResponseType === "blob") {
+    return res.blob() as Promise<T>;
+  }
+
+  if (normalizedResponseType === "arraybuffer") {
+    return res.arrayBuffer() as Promise<T>;
+  }
+
+  if (
+    normalizedResponseType === "text" ||
+    contentType.includes("text/") ||
+    contentType.includes("csv") ||
+    contentType.includes("ndjson") ||
+    contentType.includes("jsonl")
+  ) {
+    return res.text() as Promise<T>;
+  }
+
+  return res.json() as Promise<T>;
+}
+
+async function handleResponse<T>(
+  res: Response,
+  meta: {
+    method: string;
+    path: string;
+    requestId: string;
+    startMs: number;
+    responseType?: ApiResponseType;
+  },
+): Promise<T> {
   const durationMs = Math.round(performance.now() - meta.startMs);
 
   const traceId = res.headers.get("X-Trace-Id") ?? undefined;
@@ -70,7 +113,7 @@ async function handleResponse<T>(res: Response, meta: { method: string; path: st
     });
     // 204 No Content
     if (res.status === 204) return undefined as T;
-    return res.json() as Promise<T>;
+    return parseSuccessfulResponse<T>(res, meta.responseType);
   }
 
   let body: unknown;
@@ -131,12 +174,13 @@ async function handleResponse<T>(res: Response, meta: { method: string; path: st
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers = { ...authHeaders(), ...(init?.headers as Record<string, string> | undefined) };
+async function request<T>(path: string, init?: RequestOptions): Promise<T> {
+  const { responseType, ...fetchInit } = init ?? {};
+  const headers = { ...authHeaders(), ...(fetchInit.headers as Record<string, string> | undefined) };
   // FormData / Blob / URLSearchParams bodies must let the runtime set the
   // correct Content-Type (multipart boundary, url-encoded marker, etc.).
   // authHeaders() injects application/json by default, which breaks these.
-  const reqBody = init?.body;
+  const reqBody = fetchInit.body;
   if (
     reqBody instanceof FormData ||
     reqBody instanceof Blob ||
@@ -145,24 +189,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     delete headers["Content-Type"];
   }
   const reqId = headers["X-Request-Id"] ?? "unknown";
-  const method = init?.method ?? "GET";
+  const method = fetchInit.method ?? "GET";
 
   logger.debug("api-client", `${method} ${path}`, { requestId: reqId });
 
   const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-  const signal = init?.signal
-    ? AbortSignal.any([init.signal, timeoutSignal])
+  const signal = fetchInit.signal
+    ? AbortSignal.any([fetchInit.signal, timeoutSignal])
     : timeoutSignal;
 
   const startMs = performance.now();
   try {
     const res = await fetch(`${baseUrl()}${path}`, {
-      ...init,
+      ...fetchInit,
       headers,
       signal,
       credentials: "include",
     });
-    return await handleResponse<T>(res, { method, path, requestId: reqId, startMs });
+    return await handleResponse<T>(res, { method, path, requestId: reqId, startMs, responseType });
   } catch (err) {
     if (err instanceof ApiError) throw err;
     // Distinguish our internal timeout from caller cancellation by reading
@@ -316,6 +360,7 @@ export function apiClient<T>(config: ApiClientConfig): Promise<T> {
     method: config.method.toUpperCase(),
     body: serializeBody(config.data),
     headers: config.headers,
+    responseType: config.responseType,
     signal: config.signal,
   });
 }
