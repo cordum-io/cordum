@@ -451,6 +451,10 @@ func TestRedisStoreUpdateAuditHashPersistsByJobIndex(t *testing.T) {
 		t.Fatalf("conflicting update should be non-fatal: %v", err)
 	}
 	assertRunAuditHash(t, store, run.ID, "step-1", hash)
+	if err := store.UpdateAuditHash(ctx, jobID, "not-a-sha256-hex-digest"); err == nil {
+		t.Fatalf("invalid audit hash should be rejected")
+	}
+	assertRunAuditHash(t, store, run.ID, "step-1", hash)
 
 	run.Status = RunStatusSucceeded
 	if err := store.UpdateRun(ctx, run); err != nil {

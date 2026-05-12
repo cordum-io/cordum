@@ -119,6 +119,16 @@ describe("AppShell findActiveSection", () => {
     expect(findActiveSection("/govern/overview", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
   });
 
+  it("matches non-visible /govern deep links to Govern", () => {
+    expect(findActiveSection("/govern/bundles/bundle-1", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
+    expect(findActiveSection("/govern/replay", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
+    expect(findActiveSection("/govern/tenants/tenant-1", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
+  });
+
+  it("does NOT match /governance to Govern (avoids /govern prefix collision)", () => {
+    expect(findActiveSection("/governance", APP_SHELL_NAV_SECTIONS)).toBe(null);
+  });
+
   it("matches /govern/quarantine to Govern (badge route)", () => {
     expect(findActiveSection("/govern/quarantine", APP_SHELL_NAV_SECTIONS)).toBe("Govern");
   });

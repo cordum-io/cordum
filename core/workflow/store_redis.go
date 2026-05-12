@@ -645,6 +645,9 @@ func (s *RedisStore) UpdateAuditHash(ctx context.Context, jobID, auditHash strin
 	if jobID == "" || auditHash == "" {
 		return nil
 	}
+	if !isAuditHashHex(auditHash) {
+		return fmt.Errorf("audit hash must be a 64-character hex SHA-256 digest")
+	}
 
 	ref, found, err := s.lookupRunJobRef(ctx, jobID)
 	if err != nil {
@@ -777,6 +780,19 @@ func setStepRunAuditHashForJob(sr *StepRun, jobID, auditHash string) (matches, c
 		changed += c
 	}
 	return matches, changed
+}
+
+func isAuditHashHex(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, r := range value {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (s *RedisStore) applyPendingAuditHashes(ctx context.Context, run *WorkflowRun) []string {

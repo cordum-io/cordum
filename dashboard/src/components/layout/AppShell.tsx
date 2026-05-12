@@ -71,6 +71,8 @@ interface NavItem {
 interface NavSection {
   label: string;
   items: NavItem[];
+  /** Route prefixes owned by this section but not rendered as visible nav rows. */
+  matchPaths?: string[];
 }
 
 export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
@@ -87,6 +89,7 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
   },
   {
     label: "Govern",
+    matchPaths: ["/govern"],
     items: [
       { path: "/govern/overview", label: "Policy Studio", icon: Shield },
       ...(FEATURE_FLAGS.delegationDashboard
@@ -141,11 +144,15 @@ export function findActiveSection(
   pathname: string,
   sections: NavSection[],
 ): string | null {
+  const pathMatches = (path: string) => {
+    if (path === "/") return pathname === "/";
+    return pathname === path || pathname.startsWith(`${path}/`);
+  };
+
   for (const section of sections) {
-    const match = section.items.some((item) => {
-      if (item.path === "/") return pathname === "/";
-      return pathname === item.path || pathname.startsWith(`${item.path}/`);
-    });
+    const match =
+      section.items.some((item) => pathMatches(item.path)) ||
+      section.matchPaths?.some(pathMatches);
     if (match) return section.label;
   }
   return null;

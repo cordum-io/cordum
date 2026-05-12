@@ -67,6 +67,12 @@ vi.mock("@/components/delegations/AgentDelegationsPanel", () => ({
   ),
 }));
 
+vi.mock("@/components/agents/AgentIdentityPanel", () => ({
+  default: ({ agentId }: { agentId: string }) => (
+    <div data-testid="agent-identity-panel">identity for {agentId}</div>
+  ),
+}));
+
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   BarChart: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -117,14 +123,14 @@ function makeJob(overrides: Partial<Job> = {}): Job {
   } as Job;
 }
 
-function renderPage() {
+function renderPage(route = "/agents/worker-1") {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
 
   act(() => {
     root.render(
-      <MemoryRouter initialEntries={["/agents/worker-1"]}>
+      <MemoryRouter initialEntries={[route]}>
         <Routes>
           <Route path="/agents/:id" element={<AgentDetailPage />} />
         </Routes>
@@ -176,6 +182,35 @@ describe("AgentDetailPage", () => {
 
       expect(container.textContent).toContain("delegations for worker-1");
       expect(container.querySelector('[data-testid="agent-delegations-panel"]')).not.toBeNull();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("renders the identity tab from the URL even when worker/job detail calls fail", () => {
+    hookState.worker = null;
+    hookState.workerError = new Error("worker not found");
+    hookState.jobsError = new Error("jobs unavailable");
+
+    const { container, cleanup } = renderPage("/agents/worker-1?tab=identity");
+
+    try {
+      expect(container.querySelector('[data-testid="agent-identity-panel"]')).not.toBeNull();
+      expect(container.textContent).toContain("identity for worker-1");
+      expect(container.textContent).not.toContain("Failed to load agent");
+      expect(container.textContent).not.toContain("Failed to load agent jobs");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("falls back to Overview for unknown tab query values", () => {
+    const { container, cleanup } = renderPage("/agents/worker-1?tab=unknown");
+
+    try {
+      expect(container.textContent).toContain("Safety Decisions");
+      expect(container.querySelector('[data-testid="agent-identity-panel"]')).toBeNull();
+      expect(container.querySelector('[data-testid="agent-delegations-panel"]')).toBeNull();
     } finally {
       cleanup();
     }

@@ -163,6 +163,14 @@ jobs:
       working-directory: dashboard
       run: pnpm run check-api-codegen
 
+    - name: Lint dashboard
+      working-directory: dashboard
+      run: pnpm run lint
+
+    - name: Lint dashboard accessibility
+      working-directory: dashboard
+      run: pnpm run lint:a11y
+
     - name: Typecheck dashboard (noUnusedLocals + noUnusedParameters gate, task-dd1a5934)
       working-directory: dashboard
       run: pnpm exec tsc --noEmit
@@ -260,7 +268,8 @@ jobs:
           const path = require('path');
           const lhciDir = '.lighthouseci';
           const dashboardDir = 'dashboard';
-          let body = '### Lighthouse CI — `/login`\n\n';
+          const marker = '<!-- lighthouse-login-report -->';
+          let body = `${marker}\n### Lighthouse CI — \`/login\`\n\n`;
           try {
             const manifestPath = path.join(dashboardDir, lhciDir, 'manifest.json');
             const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -283,7 +292,23 @@ jobs:
           }
           const { owner, repo } = context.repo;
           const issue_number = context.payload.pull_request.number;
-          await github.rest.issues.createComment({ owner, repo, issue_number, body });
+          const comments = await github.paginate(github.rest.issues.listComments, {
+            owner,
+            repo,
+            issue_number,
+            per_page: 100,
+          });
+          const existing = comments.find(comment => comment.body?.includes(marker));
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner,
+              repo,
+              comment_id: existing.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+          }
 
     - name: Upload lhci artifacts
       if: always()
