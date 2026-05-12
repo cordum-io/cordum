@@ -9,12 +9,12 @@ import (
 // behavior on the happy path.
 func TestValidatePackAliasesAcceptsValidEntries(t *testing.T) {
 	cases := [][]string{
-		nil,                            // back-compat: no aliases is valid
-		{},                             // empty slice is valid
-		{"openclaw"},                   // single, plain lowercase
-		{"openclaw", "alt-pack"},       // hyphen
-		{"aa", "alt_pack"},             // 2-char min + underscore
-		{"a1", "alt-pack_v2"},          // digits + mix
+		nil,                      // back-compat: no aliases is valid
+		{},                       // empty slice is valid
+		{"openclaw"},             // single, plain lowercase
+		{"openclaw", "alt-pack"}, // hyphen
+		{"aa", "alt_pack"},       // 2-char min + underscore
+		{"a1", "alt-pack_v2"},    // digits + mix
 		{"a1", "b2", "c3", "d4", "e5", "f6", "g7", "h8"}, // exactly maxPackAliases
 	}
 	for _, aliases := range cases {
@@ -30,13 +30,13 @@ func TestValidatePackAliasesRejectsMalformed(t *testing.T) {
 		alias string
 		want  string
 	}{
-		{"Openclaw", "must match"},     // uppercase rejected
-		{"open!claw", "must match"},    // symbol rejected
-		{"1openclaw", "must match"},    // leading digit rejected
-		{"-openclaw", "must match"},    // leading hyphen rejected
-		{"_openclaw", "must match"},    // leading underscore rejected
-		{"open claw", "must match"},    // space rejected
-		{"", "empty alias"},            // empty rejected
+		{"Openclaw", "must match"},              // uppercase rejected
+		{"open!claw", "must match"},             // symbol rejected
+		{"1openclaw", "must match"},             // leading digit rejected
+		{"-openclaw", "must match"},             // leading hyphen rejected
+		{"_openclaw", "must match"},             // leading underscore rejected
+		{"open claw", "must match"},             // space rejected
+		{"", "empty alias"},                     // empty rejected
 		{strings.Repeat("a", 32), "must match"}, // 32 chars (max is 31)
 	}
 	for _, tc := range cases {
@@ -116,6 +116,90 @@ func TestValidatePackManifestAcceptsAliasedTopics(t *testing.T) {
 	}
 	if err := validatePackManifest(mfWrongAlias); err == nil || !strings.Contains(err.Error(), "must be namespaced under") {
 		t.Errorf("validatePackManifest(cordbar topic) = %v; want namespace error", err)
+	}
+}
+
+func TestValidatePackAliasOwnershipRejectsInstalledNamespaceCollisions(t *testing.T) {
+	installed := map[string]packRecord{
+		"openclaw": {
+			ID: "openclaw",
+			Manifest: packRecordManifest{
+				Metadata: packMetadata{ID: "openclaw", Aliases: []string{"oc"}},
+				Topics:   []packTopic{{Name: "job.openclaw.exec"}, {Name: "job.oc.run"}},
+			},
+		},
+	}
+	cases := []struct {
+		name    string
+		packID  string
+		aliases []string
+		topics  []packTopic
+		want    string
+	}{
+		{
+			name:    "alias equals installed pack id",
+			packID:  "cordclaw",
+			aliases: []string{"openclaw"},
+			topics:  []packTopic{{Name: "job.openclaw.exec"}},
+			want:    "already owned",
+		},
+		{
+			name:    "alias equals installed alias",
+			packID:  "cordclaw",
+			aliases: []string{"oc"},
+			topics:  []packTopic{{Name: "job.oc.exec"}},
+			want:    "already owned",
+		},
+		{
+			name:    "candidate id equals installed alias",
+			packID:  "oc",
+			aliases: nil,
+			topics:  []packTopic{{Name: "job.oc.exec"}},
+			want:    "already owned",
+		},
+		{
+			name:    "topic under requested namespace already owned",
+			packID:  "cordclaw",
+			aliases: []string{"oc"},
+			topics:  []packTopic{{Name: "job.cordclaw.exec"}},
+			want:    "already owned",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validatePackAliasOwnership(tc.packID, tc.aliases, tc.topics, installed)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validatePackAliasOwnership() = %v; want error containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidatePackAliasOwnershipAllowsSamePackUpgrade(t *testing.T) {
+	installed := map[string]packRecord{
+		"cordclaw": {
+			ID: "cordclaw",
+			Manifest: packRecordManifest{
+				Metadata: packMetadata{ID: "cordclaw", Aliases: []string{"openclaw"}},
+				Topics:   []packTopic{{Name: "job.openclaw.exec"}},
+			},
+		},
+	}
+	err := validatePackAliasOwnership(
+		"cordclaw",
+		[]string{"openclaw"},
+		[]packTopic{{Name: "job.openclaw.exec"}},
+		installed,
+	)
+	if err != nil {
+		t.Fatalf("same-pack alias upgrade rejected: %v", err)
+	}
+}
+
+func TestValidatePackAliasOwnershipRejectsAliasEqualToPackID(t *testing.T) {
+	err := validatePackAliasOwnership("cordclaw", []string{"cordclaw"}, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "duplicates metadata.id") {
+		t.Fatalf("validatePackAliasOwnership(alias=id) = %v; want duplicate-id error", err)
 	}
 }
 

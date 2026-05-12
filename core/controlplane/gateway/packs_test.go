@@ -168,6 +168,32 @@ func TestHandleInstallPack(t *testing.T) {
 	}
 }
 
+func TestValidatePackTopicRegistryOwnershipRejectsExistingNamespaces(t *testing.T) {
+	regs := []topicregistry.Registration{
+		{Name: "job.openclaw.exec", PackID: "cordclaw"},
+	}
+	existing := []topicregistry.Registration{
+		{Name: "job.openclaw.exec", PackID: "openclaw"},
+		{Name: "job.openclaw.other", PackID: "openclaw"},
+	}
+	err := validatePackTopicRegistryOwnership("cordclaw", []string{"openclaw"}, regs, existing)
+	if err == nil || !strings.Contains(err.Error(), "already registered") {
+		t.Fatalf("validatePackTopicRegistryOwnership() = %v; want collision error", err)
+	}
+}
+
+func TestValidatePackTopicRegistryOwnershipAllowsSamePackUpgrade(t *testing.T) {
+	regs := []topicregistry.Registration{
+		{Name: "job.openclaw.exec", PackID: "cordclaw"},
+	}
+	existing := []topicregistry.Registration{
+		{Name: "job.openclaw.exec", PackID: "cordclaw"},
+	}
+	if err := validatePackTopicRegistryOwnership("cordclaw", []string{"openclaw"}, regs, existing); err != nil {
+		t.Fatalf("same-pack topic registry ownership rejected: %v", err)
+	}
+}
+
 func TestPackBundlesSurviveConfigPushAfterInstall(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	installTestPack(t, s)

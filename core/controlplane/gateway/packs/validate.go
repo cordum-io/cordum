@@ -103,6 +103,96 @@ func ValidatePackAliases(aliases []string) error {
 	return nil
 }
 
+// ValidateAliasOwnership rejects namespace hijacks before a pack is installed.
+// Alias syntax alone is not enough: an alias becomes authority over
+// job.<alias>.* topics, so it must not collide with an installed pack id,
+// another pack's alias, or topics already recorded under that namespace.
+// The current pack id is ignored to allow idempotent upgrades/reinstalls.
+func ValidateAliasOwnership(packID string, aliases []string, topics []PackTopic, installed map[string]PackRecord) error {
+	packID = strings.TrimSpace(packID)
+	if packID == "" {
+		return errors.New("metadata.id required")
+	}
+	candidateNamespaces := map[string]struct{}{packID: {}}
+	for _, alias := range aliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" {
+			continue
+		}
+		if alias == packID {
+			return fmt.Errorf("metadata.aliases: %q duplicates metadata.id", alias)
+		}
+		candidateNamespaces[alias] = struct{}{}
+	}
+
+	for namespace, owner := range installedNamespaceOwners(installed, packID) {
+		if _, requested := candidateNamespaces[namespace]; requested {
+			return fmt.Errorf("metadata.aliases: namespace %q is already owned by installed pack %q", namespace, owner)
+		}
+	}
+
+	prefixes := PackTopicPrefixes(packID, aliases)
+	candidateTopics := make(map[string]struct{}, len(topics))
+	for _, topic := range topics {
+		name := strings.TrimSpace(topic.Name)
+		if name != "" {
+			candidateTopics[name] = struct{}{}
+		}
+	}
+	for key, record := range installed {
+		owner := packRecordOwnerID(key, record)
+		if owner == "" || owner == packID {
+			continue
+		}
+		for _, topic := range record.Manifest.Topics {
+			name := strings.TrimSpace(topic.Name)
+			if name == "" {
+				continue
+			}
+			if _, exact := candidateTopics[name]; exact || HasAnyPrefix(name, prefixes) {
+				return fmt.Errorf("topic %q is already owned by installed pack %q", name, owner)
+			}
+		}
+	}
+	return nil
+}
+
+func installedNamespaceOwners(installed map[string]PackRecord, currentPackID string) map[string]string {
+	owners := map[string]string{}
+	for key, record := range installed {
+		owner := packRecordOwnerID(key, record)
+		if owner == "" || owner == currentPackID {
+			continue
+		}
+		addNamespaceOwner(owners, strings.TrimSpace(key), owner)
+		addNamespaceOwner(owners, strings.TrimSpace(record.ID), owner)
+		addNamespaceOwner(owners, strings.TrimSpace(record.Manifest.Metadata.ID), owner)
+		for _, alias := range record.Manifest.Metadata.Aliases {
+			addNamespaceOwner(owners, strings.TrimSpace(alias), owner)
+		}
+	}
+	return owners
+}
+
+func packRecordOwnerID(key string, record PackRecord) string {
+	if id := strings.TrimSpace(record.ID); id != "" {
+		return id
+	}
+	if id := strings.TrimSpace(record.Manifest.Metadata.ID); id != "" {
+		return id
+	}
+	return strings.TrimSpace(key)
+}
+
+func addNamespaceOwner(owners map[string]string, namespace, owner string) {
+	if namespace == "" || owner == "" {
+		return
+	}
+	if _, exists := owners[namespace]; !exists {
+		owners[namespace] = owner
+	}
+}
+
 // PackTopicPrefixes returns the set of "job.<x>." prefixes a pack may
 // use for its topics. Always includes "job.<id>."; each declared alias
 // adds "job.<alias>.". The slice is small (<=9 entries given

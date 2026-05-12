@@ -52,10 +52,10 @@ type packManifest struct {
 }
 
 type packMetadata struct {
-	ID          string   `yaml:"id"`
-	Version     string   `yaml:"version"`
-	Title       string   `yaml:"title"`
-	Description string   `yaml:"description"`
+	ID          string `yaml:"id"`
+	Version     string `yaml:"version"`
+	Title       string `yaml:"title"`
+	Description string `yaml:"description"`
 	// Aliases declares additional namespace identifiers this pack owns,
 	// in addition to ID. When set, topic/pools-patch namespace checks
 	// accept `job.<id>.*` AND `job.<alias>.*` for each alias. Each alias
@@ -143,16 +143,16 @@ type packPolicySimulationRequest struct {
 }
 
 type packRecord struct {
-	ID           string                   `json:"id"`
-	Version      string                   `json:"version"`
-	Status       string                   `json:"status"`
-	InstalledAt  string                   `json:"installed_at,omitempty"`
-	InstalledBy  string                   `json:"installed_by,omitempty"`
-	Manifest     packRecordManifest       `json:"manifest,omitempty"`
-	Resources    packRecordResources      `json:"resources,omitempty"`
-	Overlays     packRecordOverlays       `json:"overlays,omitempty"`
-	Tests        packTests                `json:"tests,omitempty"`
-	Verification *packRecordVerification  `json:"verification,omitempty"`
+	ID           string                  `json:"id"`
+	Version      string                  `json:"version"`
+	Status       string                  `json:"status"`
+	InstalledAt  string                  `json:"installed_at,omitempty"`
+	InstalledBy  string                  `json:"installed_by,omitempty"`
+	Manifest     packRecordManifest      `json:"manifest,omitempty"`
+	Resources    packRecordResources     `json:"resources,omitempty"`
+	Overlays     packRecordOverlays      `json:"overlays,omitempty"`
+	Tests        packTests               `json:"tests,omitempty"`
+	Verification *packRecordVerification `json:"verification,omitempty"`
 }
 
 // packRecordVerification is the on-the-wire shape the gateway persists
@@ -345,6 +345,14 @@ func runPackInstall(args []string) error {
 	if *dryRun {
 		fmt.Printf("pack %s %s: dry-run\n", manifest.Metadata.ID, manifest.Metadata.Version)
 		return nil
+	}
+
+	installed, _, err := loadPackRegistry(ctx, client)
+	if err != nil {
+		return fmt.Errorf("load pack registry: %w", err)
+	}
+	if err := validatePackAliasOwnership(manifest.Metadata.ID, manifest.Metadata.Aliases, manifest.Topics, installed); err != nil {
+		return err
 	}
 
 	rollback := func(installErr error) error {
@@ -862,6 +870,95 @@ func validatePackAliases(aliases []string) error {
 		seen[alias] = struct{}{}
 	}
 	return nil
+}
+
+// validatePackAliasOwnership rejects namespace hijacks before install. Alias
+// syntax alone is insufficient because an alias grants authority over
+// job.<alias>.* topics; it must not collide with another installed pack id,
+// another installed alias, or topics that another pack already registered.
+func validatePackAliasOwnership(packID string, aliases []string, topics []packTopic, installed map[string]packRecord) error {
+	packID = strings.TrimSpace(packID)
+	if packID == "" {
+		return errors.New("metadata.id required")
+	}
+	candidateNamespaces := map[string]struct{}{packID: {}}
+	for _, alias := range aliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" {
+			continue
+		}
+		if alias == packID {
+			return fmt.Errorf("metadata.aliases: %q duplicates metadata.id", alias)
+		}
+		candidateNamespaces[alias] = struct{}{}
+	}
+
+	for namespace, owner := range installedPackNamespaceOwners(installed, packID) {
+		if _, requested := candidateNamespaces[namespace]; requested {
+			return fmt.Errorf("metadata.aliases: namespace %q is already owned by installed pack %q", namespace, owner)
+		}
+	}
+
+	prefixes := packTopicPrefixes(packID, aliases)
+	candidateTopics := make(map[string]struct{}, len(topics))
+	for _, topic := range topics {
+		name := strings.TrimSpace(topic.Name)
+		if name != "" {
+			candidateTopics[name] = struct{}{}
+		}
+	}
+	for key, record := range installed {
+		owner := packRecordOwnerID(key, record)
+		if owner == "" || owner == packID {
+			continue
+		}
+		for _, topic := range record.Manifest.Topics {
+			name := strings.TrimSpace(topic.Name)
+			if name == "" {
+				continue
+			}
+			if _, exact := candidateTopics[name]; exact || hasAnyPrefix(name, prefixes) {
+				return fmt.Errorf("topic %q is already owned by installed pack %q", name, owner)
+			}
+		}
+	}
+	return nil
+}
+
+func installedPackNamespaceOwners(installed map[string]packRecord, currentPackID string) map[string]string {
+	owners := map[string]string{}
+	for key, record := range installed {
+		owner := packRecordOwnerID(key, record)
+		if owner == "" || owner == currentPackID {
+			continue
+		}
+		addNamespaceOwner(owners, strings.TrimSpace(key), owner)
+		addNamespaceOwner(owners, strings.TrimSpace(record.ID), owner)
+		addNamespaceOwner(owners, strings.TrimSpace(record.Manifest.Metadata.ID), owner)
+		for _, alias := range record.Manifest.Metadata.Aliases {
+			addNamespaceOwner(owners, strings.TrimSpace(alias), owner)
+		}
+	}
+	return owners
+}
+
+func packRecordOwnerID(key string, record packRecord) string {
+	if id := strings.TrimSpace(record.ID); id != "" {
+		return id
+	}
+	if id := strings.TrimSpace(record.Manifest.Metadata.ID); id != "" {
+		return id
+	}
+	return strings.TrimSpace(key)
+}
+
+func addNamespaceOwner(owners map[string]string, namespace, owner string) {
+	if namespace == "" || owner == "" {
+		return
+	}
+	if _, exists := owners[namespace]; !exists {
+		owners[namespace] = owner
+	}
 }
 
 // packTopicPrefixes returns the set of "job.<x>." prefixes a pack may use

@@ -74,6 +74,90 @@ func TestValidatePackManifestGatewayBackcompat(t *testing.T) {
 	}
 }
 
+func TestValidateAliasOwnershipRejectsInstalledNamespaceCollisions(t *testing.T) {
+	installed := map[string]PackRecord{
+		"openclaw": {
+			ID: "openclaw",
+			Manifest: PackRecordManifest{
+				Metadata: PackMetadata{ID: "openclaw", Aliases: []string{"oc"}},
+				Topics:   []PackTopic{{Name: "job.openclaw.exec"}, {Name: "job.oc.run"}},
+			},
+		},
+	}
+	cases := []struct {
+		name    string
+		packID  string
+		aliases []string
+		topics  []PackTopic
+		want    string
+	}{
+		{
+			name:    "alias equals installed pack id",
+			packID:  "cordclaw",
+			aliases: []string{"openclaw"},
+			topics:  []PackTopic{{Name: "job.openclaw.exec"}},
+			want:    "already owned",
+		},
+		{
+			name:    "alias equals installed alias",
+			packID:  "cordclaw",
+			aliases: []string{"oc"},
+			topics:  []PackTopic{{Name: "job.oc.exec"}},
+			want:    "already owned",
+		},
+		{
+			name:    "candidate id equals installed alias",
+			packID:  "oc",
+			aliases: nil,
+			topics:  []PackTopic{{Name: "job.oc.exec"}},
+			want:    "already owned",
+		},
+		{
+			name:    "topic under requested namespace already owned",
+			packID:  "cordclaw",
+			aliases: []string{"oc"},
+			topics:  []PackTopic{{Name: "job.cordclaw.exec"}},
+			want:    "already owned",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateAliasOwnership(tc.packID, tc.aliases, tc.topics, installed)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateAliasOwnership() = %v; want error containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateAliasOwnershipAllowsSamePackUpgrade(t *testing.T) {
+	installed := map[string]PackRecord{
+		"cordclaw": {
+			ID: "cordclaw",
+			Manifest: PackRecordManifest{
+				Metadata: PackMetadata{ID: "cordclaw", Aliases: []string{"openclaw"}},
+				Topics:   []PackTopic{{Name: "job.openclaw.exec"}},
+			},
+		},
+	}
+	err := ValidateAliasOwnership(
+		"cordclaw",
+		[]string{"openclaw"},
+		[]PackTopic{{Name: "job.openclaw.exec"}},
+		installed,
+	)
+	if err != nil {
+		t.Fatalf("same-pack alias upgrade rejected: %v", err)
+	}
+}
+
+func TestValidateAliasOwnershipRejectsAliasEqualToPackID(t *testing.T) {
+	err := ValidateAliasOwnership("cordclaw", []string{"cordclaw"}, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "duplicates metadata.id") {
+		t.Fatalf("ValidateAliasOwnership(alias=id) = %v; want duplicate-id error", err)
+	}
+}
+
 func TestValidatePoolsPatchHonorsAliases(t *testing.T) {
 	patch := map[string]any{
 		"topics": map[string]any{"job.openclaw.tool_call": "openclaw-pool"},

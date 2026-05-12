@@ -181,6 +181,14 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 	}
 	defer release()
 
+	installed, _, err := s.loadPackRegistry(ctx)
+	if err != nil {
+		return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusInternalServerError, Err: fmt.Errorf("load pack registry: %w", err)}
+	}
+	if err := packs.ValidateAliasOwnership(manifest.Metadata.ID, manifest.Metadata.Aliases, manifest.Topics, installed); err != nil {
+		return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusConflict, Err: err}
+	}
+
 	schemaPlans, err := s.planSchemas(ctx, bundleDir, manifest, opts.Upgrade)
 	if err != nil {
 		return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
@@ -314,6 +322,15 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 		if err != nil {
 			rollback()
 			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusBadRequest, Err: err}
+		}
+		snapshot, err := s.topicRegistry.List(ctx)
+		if err != nil {
+			rollback()
+			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusInternalServerError, Err: fmt.Errorf("load topic registry: %w", err)}
+		}
+		if err := validatePackTopicRegistryOwnership(manifest.Metadata.ID, manifest.Metadata.Aliases, regs, snapshot.Items); err != nil {
+			rollback()
+			return packs.PackRecord{}, nil, &packs.PackInstallError{Status: http.StatusConflict, Err: err}
 		}
 		if err := s.topicRegistry.SetMany(ctx, regs); err != nil {
 			rollback()
@@ -487,6 +504,36 @@ func (s *server) packTopicRegistrations(ctx context.Context, manifest *packs.Pac
 		})
 	}
 	return out, nil
+}
+
+func validatePackTopicRegistryOwnership(packID string, aliases []string, regs []topicregistry.Registration, existing []topicregistry.Registration) error {
+	packID = strings.TrimSpace(packID)
+	if packID == "" {
+		return errors.New("pack id required")
+	}
+	prefixes := packs.PackTopicPrefixes(packID, aliases)
+	candidateNames := make(map[string]struct{}, len(regs))
+	for _, reg := range regs {
+		if name := strings.TrimSpace(reg.Name); name != "" {
+			candidateNames[name] = struct{}{}
+		}
+	}
+	for _, reg := range existing {
+		name := strings.TrimSpace(reg.Name)
+		if name == "" {
+			continue
+		}
+		owner := strings.TrimSpace(reg.PackID)
+		if owner == "" || owner == packID {
+			continue
+		}
+		_, exact := candidateNames[name]
+		if !exact && !packs.HasAnyPrefix(name, prefixes) {
+			continue
+		}
+		return fmt.Errorf("topic %q is already registered by %s", name, owner)
+	}
+	return nil
 }
 
 func (s *server) issuePackWorkerCredential(ctx context.Context, packID string, regs []topicregistry.Registration) (*packWorkerCredentialResponse, error) {
