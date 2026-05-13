@@ -674,7 +674,11 @@ describe("apiClient (orval mutator adapter)", () => {
       responseType: "blob",
     });
 
-    expect(result).toBeInstanceOf(Blob);
+    // Response.blob() may return a Blob from a different JS realm in CI
+    // (undici/jsdom), so avoid instanceof and assert the Blob contract instead.
+    expect(Object.prototype.toString.call(result)).toBe("[object Blob]");
+    expect(result.size).toBe("binary-ish".length);
+    expect(result.type).toBe("application/octet-stream");
     await expect(result.text()).resolves.toBe("binary-ish");
   });
 
