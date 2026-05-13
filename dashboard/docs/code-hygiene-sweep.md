@@ -30,7 +30,7 @@ landed.
 
 ### Unused files (full list)
 
-```
+```text
 src/components/StatusBadge.tsx
 src/components/ToastBridge.tsx
 src/components/agents/AgentIdentityPanel.tsx

@@ -208,17 +208,23 @@ jobs:
           ${{ runner.temp }}/bundle-stats.md
         retention-days: 14
 
+    - name: Find existing bundle-size comment
+      if: github.event_name == 'pull_request'
+      id: find-bundle-size-comment
+      uses: peter-evans/find-comment@v3
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: "github-actions[bot]"
+        body-includes: "<!-- bundle-size-report -->"
+
     - name: Post bundle-size comment to PR
       if: github.event_name == 'pull_request'
       uses: peter-evans/create-or-update-comment@v4
       with:
         issue-number: ${{ github.event.pull_request.number }}
+        comment-id: ${{ steps.find-bundle-size-comment.outputs.comment-id }}
         body-path: ${{ runner.temp }}/bundle-stats.md
-        # body-includes matches the HTML comment tag emitted by
-        # parse-bundle-stats.mjs so subsequent pushes update the same
-        # comment instead of appending a fresh one.
         edit-mode: replace
-        body-includes: "<!-- bundle-size-report -->"
 
   lhci-login:
     name: Lighthouse CI (/login)

@@ -14,7 +14,7 @@
 // numbers that match what nginx serves. stats.html stays useful for human
 // drill-down (treemap UI), but a 1.6MB HTML parse is overkill for a CI gate.
 
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { gzipSync, brotliCompressSync, constants as zlibConstants } from "node:zlib";
 import { readdirSync } from "node:fs";
 import { join, basename } from "node:path";
