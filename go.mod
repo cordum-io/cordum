@@ -1,10 +1,10 @@
 module github.com/cordum/cordum
 
-go 1.25.9
+go 1.25.10
 
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1
-	github.com/cordum-io/cap/v2 v2.9.3
+	github.com/cordum-io/cap/v2 v2.13.1
 	github.com/cordum/cordum/sdk v0.0.0
 	github.com/crewjam/saml v0.5.1
 	github.com/expr-lang/expr v1.17.8
