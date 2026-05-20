@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
@@ -277,11 +278,12 @@ func TestWorkerCredentials_ScopedToTenant(t *testing.T) {
 
 func TestWorkerCredentials_LicenseCASNoOvershoot(t *testing.T) {
 	s, _, _ := newTestGateway(t)
+	const maxWorkers = 10
 	setTestEntitlements(t, s, licensing.PlanTeam, func(e *licensing.Entitlements) {
-		e.MaxWorkers = 10
+		e.MaxWorkers = maxWorkers
 	})
 
-	const attempts = 100
+	const attempts = maxWorkers * 3
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	codes := make(chan int, attempts)
@@ -303,7 +305,16 @@ func TestWorkerCredentials_LicenseCASNoOvershoot(t *testing.T) {
 		}(i)
 	}
 	close(start)
-	wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for %d worker credential create attempts", attempts)
+	}
 	close(codes)
 
 	successes := 0
@@ -312,8 +323,8 @@ func TestWorkerCredentials_LicenseCASNoOvershoot(t *testing.T) {
 			successes++
 		}
 	}
-	if successes != 10 {
-		t.Fatalf("worker license CAS allowed %d creates, want exactly 10", successes)
+	if successes != maxWorkers {
+		t.Fatalf("worker license CAS allowed %d creates, want exactly %d", successes, maxWorkers)
 	}
 	records, err := s.workerCredentialStore.List(context.Background(), "default")
 	if err != nil {
@@ -325,8 +336,8 @@ func TestWorkerCredentials_LicenseCASNoOvershoot(t *testing.T) {
 			active++
 		}
 	}
-	if active != 10 {
-		t.Fatalf("stored active worker credentials = %d, want 10", active)
+	if active != maxWorkers {
+		t.Fatalf("stored active worker credentials = %d, want %d", active, maxWorkers)
 	}
 }
 

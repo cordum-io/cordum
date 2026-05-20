@@ -409,6 +409,9 @@ func TestDLQStoreAddConcurrent(t *testing.T) {
 // TestDLQStoreAddTrimMaintainsLimit verifies that the Add method's trim
 // logic correctly limits the index to dlqMaxEntries.
 func TestDLQStoreAddTrimMaintainsLimit(t *testing.T) {
+	const testDLQMaxEntries = int64(64)
+	t.Setenv(dlqMaxEntriesEnv, fmt.Sprint(testDLQMaxEntries))
+
 	srv, err := miniredis.Run()
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
@@ -419,10 +422,12 @@ func TestDLQStoreAddTrimMaintainsLimit(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = store.Close() }()
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	// Add more than dlqMaxEntries() entries
 	maxEntries := dlqMaxEntries()
+	require.Equal(t, testDLQMaxEntries, maxEntries)
 	total := int(maxEntries) + 50
 	for i := 0; i < total; i++ {
 		entry := DLQEntry{
@@ -431,7 +436,7 @@ func TestDLQStoreAddTrimMaintainsLimit(t *testing.T) {
 			CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Millisecond),
 		}
 		err := store.Add(ctx, entry)
-		require.NoError(t, err, "add %d", i)
+		require.NoError(t, err, "add %d of %d", i, total)
 	}
 
 	// Index should be trimmed to dlqMaxEntries()
