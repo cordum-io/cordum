@@ -1311,10 +1311,11 @@ func (s *server) requireStoreAndRole(w http.ResponseWriter, r *http.Request, rol
 }
 
 // requirePermissionOrRole enforces a named RBAC permission when advanced RBAC
-// is entitled, and otherwise falls back to the legacy role gate.
+// is entitled, while still applying any supplied legacy role gate.
 //
-// This preserves historical admin/operator/viewer behavior when RBAC is off,
-// while allowing custom roles to work in production when RBAC is on.
+// This preserves historical admin/operator/viewer route boundaries when RBAC
+// is on or off, so a custom role cannot bypass legacy admin/operator/viewer
+// checks by holding the named permission alone.
 func (s *server) requirePermissionOrRole(w http.ResponseWriter, r *http.Request, permission string, legacyRoles ...string) bool {
 	if strings.TrimSpace(permission) == "" {
 		if len(legacyRoles) == 0 {
