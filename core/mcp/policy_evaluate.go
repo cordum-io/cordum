@@ -771,13 +771,23 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 	}
 	// dedupeFinish must run on every return path below when we won the
 	// slot. Use a named return + deferred publisher so the singleflight
-	// waiters never deadlock on a panic or early-return path.
+	// waiters never deadlock on a panic or early-return path. The
+	// skipDedupeCache flag tells the defer to publish the outcome to
+	// in-process waiters AND delete the cross-process slot so a later
+	// retry re-evaluates: required for DENY decisions so a policy-bundle
+	// update flips behavior immediately instead of returning the cached
+	// DENY for the full MCPDedupeTTL.
 	var (
-		finalResult *ToolCallResult
-		finalErr    error
+		finalResult     *ToolCallResult
+		finalErr        error
+		skipDedupeCache bool
 	)
 	if winner != nil {
 		defer func() {
+			if skipDedupeCache {
+				dedupeFinishNoCache(deps, dedupeID, winner, finalResult, finalErr)
+				return
+			}
 			dedupeFinish(deps, dedupeID, winner, finalResult, finalErr)
 		}()
 	}
@@ -835,11 +845,19 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		return approvalPending, nil
 	case !dec.Allowed():
 		// EvaluateToolCall already emitted mcp.tool.failed for the deny.
+		// Do NOT cache the denial: a subsequent policy-bundle update that
+		// flips the tuple to ALLOW must take effect on the next call, not
+		// after MCPDedupeTTL expires (HIGH audit finding 2026-05-20).
+		// skipDedupeCache routes the defer through dedupeFinishNoCache so
+		// in-process waiters still observe the DENY outcome (no semantic
+		// drift between winner and waiter) but the cross-process slot is
+		// removed instead of being re-stored as a completed record.
 		denyResult := &ToolCallResult{
 			Content: []ContentItem{{Type: "text", Text: dec.Reason}},
 			IsError: true,
 		}
 		finalResult = denyResult
+		skipDedupeCache = true
 		return denyResult, nil
 	}
 	if deps.Upstream == nil {
@@ -978,11 +996,21 @@ func computeSemanticDedupeKey(tenant, server, tool, actionHash, session, executi
 }
 
 // semanticDedupeKeyForCall derives the dedupe key from the CallMetadata
-// stashed in ctx plus the tool-call's canonical action hash. Returns
-// the empty string when metadata is missing or any identity field is
-// blank; dedupeBegin treats an empty key as "dedupe disabled" so the
-// real fail-closed path (errMissingMCPMetadata in EvaluateToolCall)
+// stashed in ctx plus the tool-call's full canonical-arguments hash.
+// Returns the empty string when metadata is missing or any identity
+// field is blank; dedupeBegin treats an empty key as "dedupe disabled"
+// so the real fail-closed path (errMissingMCPMetadata in EvaluateToolCall)
 // stays the single source of identity validation.
+//
+// The action hash combines the (tenant, server, tool, targetPath) tuple
+// AND a SHA-256 over the canonical-JSON of params.Arguments. Without
+// the args-hash component, tools whose args carry no path-like key
+// (cordum_audit_query?q=, cordum_query_policy?bundle=, generic SQL
+// `query=`, any cordum_* tool with non-path args) collapsed every
+// distinct arg set into ONE dedupe slot for MCPDedupeTTL — call #2
+// with attacker-chosen args would receive call #1's cached result
+// without re-evaluating policy, calling upstream, or emitting a
+// pre-event audit row (CRITICAL audit finding 2026-05-20).
 func semanticDedupeKeyForCall(ctx context.Context, params ToolCallParams, server string) string {
 	meta, ok := CallMetadataFromContext(ctx)
 	if !ok || meta.Tenant == "" || meta.SessionID == "" || meta.ExecutionID == "" {
@@ -992,8 +1020,42 @@ func semanticDedupeKeyForCall(ctx context.Context, params ToolCallParams, server
 	if parsed, _ := parseArgsForDescriptor(params.Arguments); parsed != nil {
 		targetPath = extractTargetPathFromArgs(parsed)
 	}
-	actionHash := ActionTupleHash(meta.Tenant, server, params.Name, targetPath)
+	argsHash := canonicalArgumentsHash(params.Arguments)
+	actionHash := actionTupleHashWithArgs(meta.Tenant, server, params.Name, targetPath, argsHash)
 	return computeSemanticDedupeKey(meta.Tenant, server, params.Name, actionHash, meta.SessionID, meta.ExecutionID, meta.Principal)
+}
+
+// canonicalArgumentsHash returns the hex SHA-256 over the canonical-JSON
+// form of params.Arguments. Re-marshalling through json.Unmarshal +
+// json.Marshal normalises whitespace and key order so two retries with
+// equivalent JSON produce the same hash, while distinct argument values
+// produce distinct hashes regardless of which keys they live under.
+// Empty / unmarshalable args fall back to the raw byte hash so the
+// caller cannot opt out of args-hashing by sending malformed JSON.
+func canonicalArgumentsHash(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		sum := sha256.Sum256([]byte("{}"))
+		return hex.EncodeToString(sum[:])
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err == nil {
+		if canonical, err := json.Marshal(decoded); err == nil {
+			sum := sha256.Sum256(canonical)
+			return hex.EncodeToString(sum[:])
+		}
+	}
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+// actionTupleHashWithArgs binds the (tenant, server, tool, target_path,
+// args_hash) tuple into a single hex SHA-256. Mirrors ActionTupleHash
+// but folds the canonical-args hash into the canonical form so retries
+// with the same args dedupe and retries with different args do not.
+func actionTupleHashWithArgs(tenant, server, tool, targetPath, argsHash string) string {
+	canonical := fmt.Sprintf("%s|%s|%s|%s|%s", tenant, server, tool, normalizeTargetPath(targetPath), argsHash)
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])
 }
 
 // dedupeOutcome bundles the cached result a loser observes when the
@@ -1351,5 +1413,30 @@ func dedupeFinish(deps ToolCallDeps, key string, winner *dedupeWinner, result *T
 			return
 		}
 		deps.DedupeState.Store(key, rec)
+	}
+}
+
+// dedupeFinishNoCache publishes the outcome to in-process waiters but
+// deletes the cross-process slot — no completed record is written. Used
+// for DENY decisions so a later policy-bundle flip is observed on the
+// next call instead of being shadowed by a stale cached denial for the
+// full MCPDedupeTTL. In-process semantics match dedupeFinish: the done
+// channel still closes with (result, err) so concurrent waiters observe
+// the DENY outcome, but the cross-process Redis slot is cleared.
+func dedupeFinishNoCache(deps ToolCallDeps, key string, winner *dedupeWinner, result *ToolCallResult, err error) {
+	if winner == nil {
+		return
+	}
+	if deps.DedupeState != nil && key != "" {
+		deps.DedupeState.Delete(key)
+	}
+	if winner.inProcessEntry != nil {
+		entry := winner.inProcessEntry
+		if entry.done == nil {
+			return
+		}
+		entry.result = result
+		entry.err = err
+		close(entry.done)
 	}
 }

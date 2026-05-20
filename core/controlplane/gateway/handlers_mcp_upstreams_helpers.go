@@ -105,23 +105,47 @@ func mcpUpstreamRejectsCallerPolicyParams(r *http.Request) error {
 }
 
 func (s *server) mcpUpstreamPolicyInputs(r *http.Request, tenantID string) (string, []string) {
-	// Policy mode is NOT caller-controllable; only the trusted-config allowlist
-	// is consulted. PolicyMode is left empty so the validator runs its
-	// unconditional internal-host rejection but does not enforce strict-only
-	// constraints (HTTPS-only, allowlist gate). Per-tenant strict mode opt-in
-	// is tracked as a follow-up task.
+	// Policy mode is NOT caller-controllable; the trusted-config tenant
+	// settings (`safety.mcp.policy_mode` + `safety.mcp.allowed_upstreams`)
+	// are the only sources. Pre-fix this returned ("", allowlist)
+	// unconditionally, collapsing the validator's enterprise-strict
+	// branches (HTTPS-only, allowlist gate, fail-closed-on-DNS) into
+	// observe-mode semantics for every create/update — the strict
+	// branch was dead code on the API surface. Now we read mcp.policy_mode
+	// from the same configsvc Effective tree so an operator can opt the
+	// tenant in via config without code changes (HIGH audit finding
+	// 2026-05-20).
 	if s == nil || s.configSvc == nil {
 		return "", nil
 	}
-	return "", s.mcpAllowedUpstreamsFromConfig(r, tenantID)
-}
-
-func (s *server) mcpAllowedUpstreamsFromConfig(r *http.Request, tenantID string) []string {
 	effective, err := s.configSvc.Effective(r.Context(), tenantID, "", "", "")
 	if err != nil {
-		return nil
+		return "", nil
 	}
-	return extractStringSlice(effective, "safety", "mcp", "allowed_upstreams")
+	mode := extractMCPPolicyMode(effective)
+	allow := extractStringSlice(effective, "safety", "mcp", "allowed_upstreams")
+	return mode, allow
+}
+
+// extractMCPPolicyMode reads `safety.mcp.policy_mode` from the configsvc
+// Effective tree. Returns "" when unset so callers stay on the
+// non-strict default — the operator must explicitly opt in. Unknown
+// strings are passed through verbatim; the validator's isMCPEnterpriseStrict
+// is a case-insensitive prefix-of-canonical check so misspellings safely
+// fall back to non-strict rather than silently enabling strict mode.
+func extractMCPPolicyMode(data map[string]any) string {
+	var current any = data
+	for _, key := range []string{"safety", "mcp", "policy_mode"} {
+		m, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		current = m[key]
+	}
+	if s, ok := current.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return ""
 }
 
 func extractStringSlice(data map[string]any, keys ...string) []string {

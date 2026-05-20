@@ -13,6 +13,7 @@ const (
 	errorCodeMCPAgentIDRequired          = "MCP_AGENT_ID_REQUIRED"
 	errorCodeMCPAgentIdentityNotFound    = "MCP_AGENT_IDENTITY_NOT_FOUND"
 	errorCodeMCPVerifyRequestInvalid     = "MCP_VERIFY_REQUEST_INVALID"
+	errorCodeMCPVerifierUnavailable      = "MCP_VERIFIER_UNAVAILABLE"
 	errorCodeMCPHTTPTransportUnavailable = "MCP_HTTP_TRANSPORT_UNAVAILABLE"
 
 	errorCodeDelegationRequestInvalid = "DELEGATION_REQUEST_INVALID"

@@ -55,7 +55,7 @@ const (
 	edgeErrCodeIdempotencyWindowExpired = "idempotency_window_expired"
 	edgeErrCodeMaxExecutionsExceeded    = "max_executions_exceeded"
 	edgeErrCodeEventCapExceeded         = "event_cap_exceeded"
-	edgeErrCodeReplayWindowFull         = "REPLAY_WINDOW_FULL"
+	edgeErrCodeReplayWindowFull         = "replay_window_full"
 	// EDGE-065 — POST /api/v1/edge/sessions/{id}/export rejects max_events
 	// values that exceed the per-request cap (handlers_edge_export.go
 	// maxExportEventsRequest). Maps to HTTP 400 Bad Request.

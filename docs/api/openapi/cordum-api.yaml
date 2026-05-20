@@ -1582,7 +1582,7 @@ paths:
         '413':
           $ref: '#/components/responses/EdgePayloadTooLarge'
         '429':
-          description: Per-execution event cap exceeded, or runtime replay window cardinality exceeded (`REPLAY_WINDOW_FULL`)
+          description: Per-execution event cap exceeded, or runtime replay window cardinality exceeded (`replay_window_full`)
           content:
             application/json:
               schema:
@@ -8327,7 +8327,7 @@ paths:
         '503':
           description: >
             MCP verifier trust store is not configured. Existing stable error
-            `code`: `mcp_verifier_unavailable`.
+            `code`: `MCP_VERIFIER_UNAVAILABLE`.
           content:
             application/json:
               schema:
@@ -11436,7 +11436,7 @@ components:
           - idempotency_window_expired
           - max_executions_exceeded
           - event_cap_exceeded
-          - REPLAY_WINDOW_FULL
+          - replay_window_full
           example: idempotency_conflict
         message:
           type: string

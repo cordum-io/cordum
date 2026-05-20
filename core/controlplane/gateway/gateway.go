@@ -175,6 +175,13 @@ type server struct {
 	topicRegistry         *topicregistry.Service
 	workerCredentialStore *workercredentials.Service
 	agentIdentityStore    *store.AgentIdentityStore
+	// mcpVerifierPtr caches the per-server inbound MCP signature verifier.
+	// Pre-fix the trust store lived on a package-level sync.Once, which
+	// pinned it for the lifetime of the process and silently absorbed
+	// operator key rotation. Now an atomic.Pointer holds a composite
+	// (verifier, err) state so the lazy getter stays lock-free and
+	// s.reloadMCPVerifier() can clear the slot on rotation.
+	mcpVerifierPtr mcpVerifierPtrType
 	// evalDatasetStore holds curated, immutable policy-regression test
 	// fixtures that the sibling eval-runner task (epic-e1c4321a) will
 	// replay through the policy engine. Only the CRUD surface lives in

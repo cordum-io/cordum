@@ -1,6 +1,7 @@
 package outbound
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"encoding/base64"
 	"encoding/hex"
@@ -62,7 +63,7 @@ func TestSignAndVerify_RoundTrip(t *testing.T) {
 		t.Errorf("nonce not hex: %v", err)
 	}
 
-	if err := verifier.VerifyRequest(headers, method, params); err != nil {
+	if err := verifier.VerifyRequest(context.Background(), headers, method, params); err != nil {
 		t.Fatalf("VerifyRequest: %v", err)
 	}
 }
@@ -72,7 +73,7 @@ func TestVerify_RejectsTamperedParams(t *testing.T) {
 	signer, pub := newSigner(t, "k1")
 	verifier := newVerifier(t, "k1", pub, NewInMemoryNonceStore(), DefaultClockSkew)
 	headers, _ := signer.SignRequest("m", []byte(`{"a":1}`), "t", "a")
-	err := verifier.VerifyRequest(headers, "m", []byte(`{"a":2}`))
+	err := verifier.VerifyRequest(context.Background(), headers, "m", []byte(`{"a":2}`))
 	if !errors.Is(err, ErrSignatureInvalid) {
 		t.Errorf("want ErrSignatureInvalid, got %v", err)
 	}
@@ -83,7 +84,7 @@ func TestVerify_RejectsTamperedMethod(t *testing.T) {
 	signer, pub := newSigner(t, "k1")
 	verifier := newVerifier(t, "k1", pub, NewInMemoryNonceStore(), DefaultClockSkew)
 	headers, _ := signer.SignRequest("m1", []byte(`{"a":1}`), "t", "a")
-	err := verifier.VerifyRequest(headers, "m2", []byte(`{"a":1}`))
+	err := verifier.VerifyRequest(context.Background(), headers, "m2", []byte(`{"a":1}`))
 	if !errors.Is(err, ErrSignatureInvalid) {
 		t.Errorf("want ErrSignatureInvalid, got %v", err)
 	}
@@ -96,7 +97,7 @@ func TestVerify_RejectsExpiredTimestamp(t *testing.T) {
 	verifier := newVerifier(t, "k1", pub, NewInMemoryNonceStore(), 1*time.Second)
 	headers, _ := signer.SignRequest("m", []byte(`{}`), "t", "a")
 	headers[HeaderTimestamp] = strconv.FormatInt(time.Now().Add(-1*time.Hour).Unix(), 10)
-	err := verifier.VerifyRequest(headers, "m", []byte(`{}`))
+	err := verifier.VerifyRequest(context.Background(), headers, "m", []byte(`{}`))
 	if !errors.Is(err, ErrTimestampExpired) {
 		t.Errorf("want ErrTimestampExpired, got %v", err)
 	}
@@ -108,10 +109,10 @@ func TestVerify_RejectsReplay(t *testing.T) {
 	store := NewInMemoryNonceStore()
 	verifier := newVerifier(t, "k1", pub, store, DefaultClockSkew)
 	headers, _ := signer.SignRequest("m", []byte(`{}`), "t", "a")
-	if err := verifier.VerifyRequest(headers, "m", []byte(`{}`)); err != nil {
+	if err := verifier.VerifyRequest(context.Background(), headers, "m", []byte(`{}`)); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	err := verifier.VerifyRequest(headers, "m", []byte(`{}`))
+	err := verifier.VerifyRequest(context.Background(), headers, "m", []byte(`{}`))
 	if !errors.Is(err, ErrNonceReplayed) {
 		t.Errorf("want ErrNonceReplayed, got %v", err)
 	}
@@ -124,7 +125,7 @@ func TestVerify_RejectsUntrustedKey(t *testing.T) {
 	_, otherPub := newSigner(t, "real")
 	verifier := newVerifier(t, "real", otherPub, NewInMemoryNonceStore(), DefaultClockSkew)
 	headers, _ := signer.SignRequest("m", []byte(`{}`), "t", "a")
-	err := verifier.VerifyRequest(headers, "m", []byte(`{}`))
+	err := verifier.VerifyRequest(context.Background(), headers, "m", []byte(`{}`))
 	if !errors.Is(err, ErrUntrustedKey) {
 		t.Errorf("want ErrUntrustedKey, got %v", err)
 	}
@@ -134,7 +135,7 @@ func TestVerify_RejectsMissingHeader(t *testing.T) {
 	t.Parallel()
 	_, pub := newSigner(t, "k1")
 	verifier := newVerifier(t, "k1", pub, NewInMemoryNonceStore(), DefaultClockSkew)
-	err := verifier.VerifyRequest(map[string]string{}, "m", []byte(`{}`))
+	err := verifier.VerifyRequest(context.Background(), map[string]string{}, "m", []byte(`{}`))
 	if !errors.Is(err, ErrMissingHeaders) {
 		t.Errorf("want ErrMissingHeaders, got %v", err)
 	}
@@ -159,18 +160,18 @@ func TestInMemoryNonceStore_TTLExpiry(t *testing.T) {
 	t.Parallel()
 	// Inject a fast clock.
 	store := &InMemoryNonceStore{seen: make(map[string]time.Time), now: func() time.Time { return time.Unix(1000, 0) }}
-	seen, _ := store.SeenAndRecord("nonce-1", 1*time.Second)
+	seen, _ := store.SeenAndRecord(context.Background(), "nonce-1", 1*time.Second)
 	if seen {
 		t.Fatal("fresh nonce should be unseen")
 	}
 	// Same instant — should see.
-	seen, _ = store.SeenAndRecord("nonce-1", 1*time.Second)
+	seen, _ = store.SeenAndRecord(context.Background(), "nonce-1", 1*time.Second)
 	if !seen {
 		t.Fatal("second read should report seen")
 	}
 	// Advance past TTL.
 	store.now = func() time.Time { return time.Unix(1100, 0) }
-	seen, _ = store.SeenAndRecord("nonce-1", 1*time.Second)
+	seen, _ = store.SeenAndRecord(context.Background(), "nonce-1", 1*time.Second)
 	if seen {
 		t.Fatal("post-TTL read should report unseen")
 	}
