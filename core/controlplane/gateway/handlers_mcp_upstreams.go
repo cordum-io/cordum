@@ -178,8 +178,9 @@ func (s *server) decodeMCPUpstreamRequest(w http.ResponseWriter, r *http.Request
 		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest, err.Error(), nil)
 		return nil, false
 	}
-	policyMode, allowlist := s.mcpUpstreamPolicyInputs(r, tenantID)
-	if err := edgecore.ValidateMCPUpstream(r.Context(), &upstream, policyMode, allowlist); err != nil {
+	settings := s.mcpUpstreamPolicySettings(r, tenantID)
+	opts := edgecore.MCPUpstreamValidationOptions{AllowPlainHTTP: settings.allowPlainHTTP}
+	if err := edgecore.ValidateMCPUpstreamWithOptions(r.Context(), &upstream, settings.policyMode, settings.allowlist, opts); err != nil {
 		writeMCPUpstreamValidationError(w, r, err, tenantID, upstream.Name)
 		return nil, false
 	}

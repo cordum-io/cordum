@@ -97,6 +97,38 @@ func TestRevalidateMCPUpstreamAtUse_AcceptsUnchangedPublicIP(t *testing.T) {
 	}
 }
 
+// TestRevalidateMCPUpstreamAtUse_RejectsDifferentPublicIP ensures the
+// use-time guard compares current DNS against the registration-time pins,
+// not merely against the unsafe/private IP deny-set. Public-to-public DNS
+// drift is still DNS rebinding and must fail closed before dialing.
+func TestRevalidateMCPUpstreamAtUse_RejectsDifferentPublicIP(t *testing.T) {
+	prev := MCPHostLookup
+	t.Cleanup(func() { MCPHostLookup = prev })
+
+	MCPHostLookup = func(_ context.Context, host string) ([]net.IP, error) {
+		if host == "mcp.example.com" {
+			return []net.IP{net.ParseIP("203.0.113.10")}, nil
+		}
+		return nil, &net.DNSError{Err: "no such host", Name: host}
+	}
+	upstream := validMCPUpstream("tenant-a", "public-rebind")
+	upstream.Endpoint = "https://mcp.example.com/mcp"
+	if err := ValidateMCPUpstream(context.Background(), &upstream, string(PolicyModeObserve), nil); err != nil {
+		t.Fatalf("registration Validate: %v", err)
+	}
+
+	MCPHostLookup = func(_ context.Context, host string) ([]net.IP, error) {
+		if host == "mcp.example.com" {
+			return []net.IP{net.ParseIP("198.51.100.20")}, nil
+		}
+		return nil, &net.DNSError{Err: "no such host", Name: host}
+	}
+	err := RevalidateMCPUpstreamAtUse(context.Background(), &upstream)
+	if !errors.Is(err, ErrUnsafeEndpoint) {
+		t.Fatalf("RevalidateAtUse error = %v, want ErrUnsafeEndpoint for public IP drift", err)
+	}
+}
+
 // TestRevalidateMCPUpstreamAtUse_RejectsLiteralLoopback covers the
 // IP-literal endpoint case — RevalidateAtUse must still refuse a loopback
 // or RFC1918 IP literal even when DNS is not involved.

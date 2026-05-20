@@ -6,7 +6,6 @@ import (
 	"net"
 	"net/url"
 	"regexp"
-	"sort"
 	"strings"
 )
 
@@ -24,11 +23,21 @@ var MCPHostLookup = func(ctx context.Context, host string) ([]net.IP, error) {
 	return net.DefaultResolver.LookupIP(ctx, "ip", host)
 }
 
+// MCPUpstreamValidationOptions carries trusted operator-only exceptions.
+// Callers must never populate these from request query/body parameters.
+type MCPUpstreamValidationOptions struct {
+	AllowPlainHTTP bool
+}
+
 func Validate(ctx context.Context, upstream *UpstreamServer, policyMode string, allowlist []string) error {
 	return ValidateMCPUpstream(ctx, upstream, policyMode, allowlist)
 }
 
 func ValidateMCPUpstream(ctx context.Context, upstream *UpstreamServer, policyMode string, allowlist []string) error {
+	return ValidateMCPUpstreamWithOptions(ctx, upstream, policyMode, allowlist, MCPUpstreamValidationOptions{})
+}
+
+func ValidateMCPUpstreamWithOptions(ctx context.Context, upstream *UpstreamServer, policyMode string, allowlist []string, opts MCPUpstreamValidationOptions) error {
 	if upstream == nil {
 		return ErrInvalidUpstream
 	}
@@ -51,7 +60,7 @@ func ValidateMCPUpstream(ctx context.Context, upstream *UpstreamServer, policyMo
 	}
 	switch strings.TrimSpace(upstream.Transport) {
 	case "http", "sse":
-		if err := validateMCPUpstreamURL(ctx, upstream.Endpoint, policyMode); err != nil {
+		if err := validateMCPUpstreamURL(ctx, upstream.Endpoint, policyMode, opts); err != nil {
 			return err
 		}
 		upstream.ResolvedIPs = pinMCPUpstreamIPs(ctx, upstream.Endpoint)
@@ -77,73 +86,19 @@ func RevalidateMCPUpstreamAtUse(ctx context.Context, upstream *UpstreamServer) e
 	}
 	switch strings.TrimSpace(upstream.Transport) {
 	case "http", "sse":
-		return revalidateMCPUpstreamURLAtUse(ctx, upstream.Endpoint)
+		current, err := revalidateMCPUpstreamURLAtUse(ctx, upstream.Endpoint)
+		if err != nil {
+			return err
+		}
+		if !mcpResolvedIPsMatch(upstream.ResolvedIPs, current) {
+			return ErrUnsafeEndpoint
+		}
+		return nil
 	case "stdio", "":
 		return nil
 	default:
 		return ErrInvalidTransport
 	}
-}
-
-func revalidateMCPUpstreamURLAtUse(ctx context.Context, raw string) error {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return fmt.Errorf("%w: endpoint", ErrUnsafeEndpoint)
-	}
-	host := strings.TrimSpace(u.Hostname())
-	if i := strings.IndexByte(host, '%'); i >= 0 {
-		host = host[:i]
-	}
-	host = strings.TrimSuffix(host, ".")
-	if _, denied := mcpCloudMetadataHosts[strings.ToLower(host)]; denied {
-		return ErrUnsafeEndpoint
-	}
-	unsafe, err := mcpHostResolvesUnsafe(ctx, host)
-	if err != nil {
-		return ErrUnsafeEndpoint
-	}
-	if unsafe {
-		return ErrUnsafeEndpoint
-	}
-	return nil
-}
-
-// pinMCPUpstreamIPs records the registration-time DNS resolution of an
-// upstream's hostname so RevalidateMCPUpstreamAtUse can later detect a
-// drift to an internal IP. Returns nil on parse / DNS failure — pinning
-// is advisory; the strict gates remain enforced separately.
-func pinMCPUpstreamIPs(ctx context.Context, raw string) []string {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Host == "" {
-		return nil
-	}
-	host := strings.TrimSpace(u.Hostname())
-	if i := strings.IndexByte(host, '%'); i >= 0 {
-		host = host[:i]
-	}
-	host = strings.TrimSuffix(host, ".")
-	if host == "" {
-		return nil
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return []string{ip.String()}
-	}
-	ips, err := MCPHostLookup(ctx, host)
-	if err != nil {
-		return nil
-	}
-	out := make([]string, 0, len(ips))
-	seen := make(map[string]struct{}, len(ips))
-	for _, ip := range ips {
-		s := ip.String()
-		if _, dup := seen[s]; dup {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func validateMCPUpstreamSecret(ref string) error {
@@ -177,19 +132,13 @@ var mcpCloudMetadataHosts = map[string]struct{}{
 	"instance-data.ec2.internal": {},
 }
 
-func validateMCPUpstreamURL(ctx context.Context, raw, policyMode string) error {
+func validateMCPUpstreamURL(ctx context.Context, raw, policyMode string, opts MCPUpstreamValidationOptions) error {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return fmt.Errorf("%w: endpoint", ErrUnsafeEndpoint)
 	}
 	strict := isMCPEnterpriseStrict(policyMode)
-	host := strings.TrimSpace(u.Hostname())
-	// Strip IPv6 zone identifier (e.g. fe80::1%eth0) before classification.
-	if i := strings.IndexByte(host, '%'); i >= 0 {
-		host = host[:i]
-	}
-	// Strip trailing dot FQDN form.
-	host = strings.TrimSuffix(host, ".")
+	host := normalizeMCPUpstreamHost(u.Hostname())
 	// Cloud-metadata hostname check (pre-DNS): rejects in ALL modes.
 	if _, denied := mcpCloudMetadataHosts[strings.ToLower(host)]; denied {
 		return ErrUnsafeEndpoint
@@ -209,7 +158,7 @@ func validateMCPUpstreamURL(ctx context.Context, raw, policyMode string) error {
 	} else if unsafe {
 		return ErrUnsafeEndpoint
 	}
-	if strict && u.Scheme != "https" {
+	if u.Scheme == "http" && !opts.AllowPlainHTTP {
 		return ErrUnsafeEndpoint
 	}
 	if u.Scheme != "https" && u.Scheme != "http" {

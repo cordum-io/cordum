@@ -43,6 +43,11 @@ type GatewayDeps struct {
 	// CreateSession, CreateExecution, and AppendEvent on it.
 	Store edge.Store
 
+	// UpstreamRegistry stores approved tenant upstreams. When configured,
+	// HandleUpstream revalidates the selected enabled upstream immediately
+	// before use so DNS rebinding cannot bypass registration-time checks.
+	UpstreamRegistry edge.MCPUpstreamRegistry
+
 	// GatewayEnabled returns the per-tenant EDGE-100 gateway flag. Callers
 	// typically resolve this through MCPPolicy.GatewayEnabled.
 	GatewayEnabled func(ctx context.Context, tenantID string) (bool, error)
@@ -155,7 +160,7 @@ func (g *Gateway) HandleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"gateway_enabled":     enabled,
-		"upstream_count":      0,       // EDGE-101 populates from registry
+		"upstream_count":      g.upstreamCount(r.Context(), tenantID),
 		"upstream_forwarding": "no-op", // skeleton only; EDGE-101 enables
 	})
 }
@@ -192,6 +197,19 @@ func (g *Gateway) HandleUpstream(w http.ResponseWriter, r *http.Request) {
 		g.deps.Logger.Warn("mcp gateway: upstream failed-event append failed", "tenant", tenantID, "session", root.Session.SessionID, "err", err)
 		writeError(w, http.StatusInternalServerError, "event_append_failed", "could not persist mcp server failed event")
 		return
+	}
+	if upstream, ok, err := g.selectUsableUpstream(r.Context(), tenantID); err != nil {
+		g.deps.Logger.Warn("mcp gateway: upstream revalidation failed", "tenant", tenantID, "err", err)
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error":        strings.ToLower(http.StatusText(http.StatusBadGateway)),
+			"code":         "unsafe_upstream_endpoint",
+			"message":      "mcp gateway: upstream endpoint failed use-time validation",
+			"session_id":   root.Session.SessionID,
+			"execution_id": root.Execution.ExecutionID,
+		})
+		return
+	} else if ok {
+		g.deps.Logger.Warn("mcp gateway: upstream forwarding remains disabled", "tenant", tenantID, "upstream", upstream.Name)
 	}
 	writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 		"error":        strings.ToLower(http.StatusText(http.StatusServiceUnavailable)),

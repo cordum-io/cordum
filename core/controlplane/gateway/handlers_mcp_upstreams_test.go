@@ -186,6 +186,7 @@ func TestHandlerCreateRejectsPolicyModeQueryParam(t *testing.T) {
 		{"allowed_upstream_singular", "allowed_upstream=evil-host"},
 		{"allowed_upstreams_plural", "allowed_upstreams=169.254.169.254"},
 		{"allowed_upstreams_csv", "allowed_upstreams=a,b,c"},
+		{"allow_plain_http", "allow_plain_http=true"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

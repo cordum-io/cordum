@@ -56,6 +56,16 @@ func TestRegistryValidationRejectsStrictHTTPRemote(t *testing.T) {
 	}
 }
 
+func TestRegistryValidationAllowsHTTPOnlyWithExplicitOption(t *testing.T) {
+	upstream := validMCPUpstream("tenant-a", "remote-http")
+	upstream.Endpoint = "http://203.0.113.10/mcp"
+	opts := MCPUpstreamValidationOptions{AllowPlainHTTP: true}
+	err := ValidateMCPUpstreamWithOptions(context.Background(), &upstream, string(PolicyModeEnterpriseStrict), []string{"remote-http"}, opts)
+	if err != nil {
+		t.Fatalf("explicit AllowPlainHTTP validation error = %v, want nil", err)
+	}
+}
+
 func TestRegistryValidationRejectsUnsafeTenantID(t *testing.T) {
 	upstream := validMCPUpstream("*:malicious", "tenant-escape")
 	err := Validate(context.Background(), &upstream, string(PolicyModeObserve), nil)

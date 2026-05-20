@@ -96,7 +96,7 @@ func validateMCPUpstreamTenant(r *http.Request, headerTenant, bodyTenant string)
 // the caller believes they overrode strict mode).
 func mcpUpstreamRejectsCallerPolicyParams(r *http.Request) error {
 	q := r.URL.Query()
-	for _, name := range []string{"policy_mode", "allowed_upstream", "allowed_upstreams"} {
+	for _, name := range []string{"policy_mode", "allowed_upstream", "allowed_upstreams", "allow_plain_http"} {
 		if _, present := q[name]; present {
 			return fmt.Errorf("%s must be configured in tenant settings, not query string", name)
 		}
@@ -105,6 +105,17 @@ func mcpUpstreamRejectsCallerPolicyParams(r *http.Request) error {
 }
 
 func (s *server) mcpUpstreamPolicyInputs(r *http.Request, tenantID string) (string, []string) {
+	settings := s.mcpUpstreamPolicySettings(r, tenantID)
+	return settings.policyMode, settings.allowlist
+}
+
+type mcpUpstreamPolicySettings struct {
+	policyMode     string
+	allowlist      []string
+	allowPlainHTTP bool
+}
+
+func (s *server) mcpUpstreamPolicySettings(r *http.Request, tenantID string) mcpUpstreamPolicySettings {
 	// Policy mode is NOT caller-controllable; the trusted-config tenant
 	// settings (`safety.mcp.policy_mode` + `safety.mcp.allowed_upstreams`)
 	// are the only sources. Pre-fix this returned ("", allowlist)
@@ -117,19 +128,25 @@ func (s *server) mcpUpstreamPolicyInputs(r *http.Request, tenantID string) (stri
 	// 2026-05-20). When an allowlist is configured but policy_mode is
 	// unset, default to enterprise-strict so the operator's declaration
 	// of an allowlist actually gates registration (PR #276 audit fix).
+	// Plain HTTP is rejected by default in every mode and can only be
+	// restored via trusted `safety.mcp.allow_plain_http=true`.
 	if s == nil || s.configSvc == nil {
-		return "", nil
+		return mcpUpstreamPolicySettings{}
 	}
 	effective, err := s.configSvc.Effective(r.Context(), tenantID, "", "", "")
 	if err != nil {
-		return "", nil
+		return mcpUpstreamPolicySettings{}
 	}
 	mode := extractMCPPolicyMode(effective)
 	allow := extractStringSlice(effective, "safety", "mcp", "allowed_upstreams")
 	if mode == "" && len(allow) > 0 {
 		mode = string(edgecore.PolicyModeEnterpriseStrict)
 	}
-	return mode, allow
+	return mcpUpstreamPolicySettings{
+		policyMode:     mode,
+		allowlist:      allow,
+		allowPlainHTTP: extractBool(effective, "safety", "mcp", "allow_plain_http"),
+	}
 }
 
 // extractMCPPolicyMode reads `safety.mcp.policy_mode` from the configsvc
@@ -175,6 +192,19 @@ func extractStringSlice(data map[string]any, keys ...string) []string {
 		return out
 	}
 	return nil
+}
+
+func extractBool(data map[string]any, keys ...string) bool {
+	var current any = data
+	for _, key := range keys {
+		m, ok := current.(map[string]any)
+		if !ok {
+			return false
+		}
+		current = m[key]
+	}
+	v, ok := current.(bool)
+	return ok && v
 }
 
 func isMCPUpstreamValidateOnly(r *http.Request) bool {

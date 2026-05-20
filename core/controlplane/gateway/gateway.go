@@ -1629,7 +1629,8 @@ func mcpGatewayHandlers(s *server) (health, config, upstream, connect http.Handl
 		return stub, stub, stub, stub
 	}
 	g, err := mcp.NewGateway(mcp.GatewayDeps{
-		Store: s.edgeStore,
+		Store:            s.edgeStore,
+		UpstreamRegistry: mcpGatewayUpstreamRegistry(s),
 		GatewayEnabled: func(_ context.Context, _ string) (bool, error) {
 			// TODO(EDGE-101): look up per-tenant MCPPolicy.GatewayEnabled
 			// from the live config snapshot. Stubbed false here so the
@@ -1656,6 +1657,18 @@ func mcpGatewayHandlers(s *server) (health, config, upstream, connect http.Handl
 		return stub, stub, stub, stub
 	}
 	return g.HandleHealth, g.HandleConfig, g.HandleUpstream, g.HandleClientConnect
+}
+
+func mcpGatewayUpstreamRegistry(s *server) edgecore.MCPUpstreamRegistry {
+	if s == nil {
+		return nil
+	}
+	s.mcpUpstreamRegistryMu.Lock()
+	defer s.mcpUpstreamRegistryMu.Unlock()
+	if s.mcpUpstreamRegistry == nil && s.jobStore != nil && s.jobStore.Client() != nil {
+		s.mcpUpstreamRegistry = edgecore.NewRedisMCPUpstreamRegistryFromClient(s.jobStore.Client())
+	}
+	return s.mcpUpstreamRegistry
 }
 
 func (s *server) registerRoute(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {
