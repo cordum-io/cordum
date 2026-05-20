@@ -142,6 +142,9 @@ type server struct {
 	decisionLogStore      model.DecisionLogStore
 	copilotStore          copilot.Store
 	governanceHealthCache *governance.Cache
+	governanceEvalMu      sync.RWMutex
+	governanceEvaluator   governanceRunner
+	governancePolicy      config.GovernancePolicy
 	routeTable            []routeInfo
 	// approvalAnalyticsCache memoises approval-analytics responses
 	// per (tenant, window, group_by, limit) for
@@ -762,6 +765,7 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	// here turns previously-dead actiongates_http.go and gate-fire
 	// branches into the live request path.
 	s.wireActionGatePipeline()
+	s.wireGovernanceEvaluator()
 	s.syncApprovalQueueDepth(context.Background())
 	defer s.Close()
 	telemetryStore, err := telemetry.NewStore(cfg.RedisURL)

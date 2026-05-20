@@ -405,6 +405,7 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 		_ = lockStore.Close()
 	})
 
+	s.wireGovernanceEvaluator()
 	return s, bus, safetyClient
 }
 

@@ -12,10 +12,23 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/auth/delegation"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	governanceeval "github.com/cordum/cordum/core/governance/evaluator"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
 )
+
+type recordingGovernanceRunner struct {
+	called bool
+	input  *config.GovernanceInput
+	dec    governanceeval.Decision
+}
+
+func (r *recordingGovernanceRunner) Evaluate(_ context.Context, in *config.GovernanceInput, _ config.GovernancePolicy) governanceeval.Decision {
+	r.called = true
+	r.input = in
+	return r.dec
+}
 
 func setDelegationKeys(t *testing.T) delegation.SigningKey {
 	t.Helper()
@@ -204,6 +217,48 @@ func TestEvaluateGovernance_FiresOnDelegation(t *testing.T) {
 	}
 	if got := latestDelegationAuditExtra(sink, "governance_rule"); got != config.GovernanceRuleScopeEscalation {
 		t.Fatalf("governance_rule extra = %q, want %q; events=%#v", got, config.GovernanceRuleScopeEscalation, sink.events)
+	}
+}
+
+func TestEvaluateGovernance_DelegationUsesConfiguredEvaluator(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	setTestEntitlements(t, s, licensing.PlanEnterprise, func(e *licensing.Entitlements) {
+		e.AgentIdentity = true
+	})
+	setDelegationKeys(t)
+	sink := &recordingAuditSender{}
+	s.auditExporter = sink
+	fake := &recordingGovernanceRunner{dec: governanceeval.Decision{
+		Type:   governanceeval.DecisionDeny,
+		RuleID: "test_configured_governance",
+		Reason: "configured evaluator denied",
+	}}
+	s.SetGovernanceEvaluator(fake, config.DefaultGovernancePolicy())
+
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.alpha"})
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.alpha"})
+	createDelegationAgent(t, s, "default", "agent-c", []string{"read"}, []string{"job.alpha"})
+	parent := issueDelegationTokenForGovernanceTest(t, s)
+
+	body := `{"target_agent_id":"agent-c","allowed_actions":["read"],"allowed_topics":["job.alpha"],"parent_token":"` + parent + `"}`
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-b/delegate", strings.NewReader(body)))
+	req.SetPathValue("id", "agent-b")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleDelegateAgent(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !fake.called {
+		t.Fatal("configured governance evaluator was not called")
+	}
+	if fake.input == nil || fake.input.Operation != config.GovernanceOpDelegation || fake.input.Child.AgentID != "agent-c" {
+		t.Fatalf("governance input = %+v, want delegation for agent-c", fake.input)
+	}
+	if got := latestDelegationAuditExtra(sink, "governance_rule"); got != fake.dec.RuleID {
+		t.Fatalf("governance_rule extra = %q, want %q; events=%#v", got, fake.dec.RuleID, sink.events)
 	}
 }
 

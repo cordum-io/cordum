@@ -536,7 +536,7 @@ func (s *server) evaluateDelegationIssueGovernance(ctx context.Context, service 
 	if err := config.ValidateGovernanceInput(input); err != nil {
 		return governanceeval.Decision{}, err
 	}
-	return governanceeval.New().Evaluate(ctx, input, config.DefaultGovernancePolicy()), nil
+	return s.EvaluateGovernance(ctx, input), nil
 }
 
 func governanceDecisionName(decision governanceeval.DecisionKind) string {

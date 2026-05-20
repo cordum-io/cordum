@@ -405,6 +405,7 @@ func RunWithEntitlements(cfg *config.Config, resolver *licensing.EntitlementReso
 	if err := wireActionGatePipeline(srv, nil); err != nil {
 		return fmt.Errorf("wire action gate pipeline: %w", err)
 	}
+	srv.SetGovernanceEvaluator(evaluator.New(), config.DefaultGovernancePolicy())
 
 	// Phase-2 shadow dual-evaluation: constructs the shadow loader +
 	// evaluator and attaches them to srv via SetShadowEvaluator so
