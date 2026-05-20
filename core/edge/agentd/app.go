@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -342,6 +343,10 @@ func newHTTPServer(cfg Config, local *LocalServer, inherited ...net.Listener) (*
 	var ln net.Listener
 	if len(inherited) > 0 && inherited[0] != nil {
 		ln = inherited[0]
+		if err := validateInheritedHTTPListener(cfg.BindURL, ln); err != nil {
+			_ = ln.Close()
+			return nil, nil, err
+		}
 	} else {
 		ln, err = net.Listen("tcp", u.Host)
 		if err != nil {
@@ -366,4 +371,35 @@ func newHTTPServer(cfg Config, local *LocalServer, inherited ...net.Listener) (*
 		IdleTimeout: defaultLocalServerIdleTimeout,
 	}
 	return srv, ln, nil
+}
+
+func validateInheritedHTTPListener(rawURL string, ln net.Listener) error {
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		return fmt.Errorf("inherited agentd listener must be TCP loopback matching configured bind URL")
+	}
+	if addr.IP == nil || !addr.IP.IsLoopback() {
+		return fmt.Errorf("inherited agentd listener must be bound to loopback")
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid local agentd bind URL: %w", err)
+	}
+	wantHost, wantPort, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return fmt.Errorf("invalid local agentd bind URL host: %w", err)
+	}
+	if strconv.Itoa(addr.Port) != wantPort || !loopbackHostMatchesIP(wantHost, addr.IP) {
+		return fmt.Errorf("inherited agentd listener address does not match configured bind URL")
+	}
+	return nil
+}
+
+func loopbackHostMatchesIP(host string, ip net.IP) bool {
+	h := strings.ToLower(strings.Trim(host, "[]"))
+	if h == "localhost" {
+		return ip.IsLoopback()
+	}
+	want := net.ParseIP(h)
+	return want != nil && want.Equal(ip)
 }

@@ -16,6 +16,7 @@ import (
 	agentdcore "github.com/cordum/cordum/core/edge/agentd"
 	"github.com/cordum/cordum/core/edge/claude"
 	"github.com/cordum/cordum/core/edge/keychain"
+	"github.com/cordum/cordum/core/edge/listenerhandoff"
 	"github.com/cordum/cordum/core/infra/logging"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -171,17 +172,17 @@ func defaultRunOptionsWithRecorder(ctx context.Context, cfg runConfig, recorder 
 }
 
 func inheritedListenerFromEnv(env map[string]string) (net.Listener, error) {
-	raw := strings.TrimSpace(envValue(env, "CORDUM_AGENTD_LISTENER_FD"))
+	key, raw := listenerhandoff.ValueForCurrentPlatform(env)
 	if raw == "" {
 		return nil, nil
 	}
-	fd, err := strconv.Atoi(raw)
-	if err != nil || fd < 0 {
-		return nil, fmt.Errorf("CORDUM_AGENTD_LISTENER_FD invalid")
+	fd, err := strconv.ParseUint(raw, 10, 0)
+	if err != nil {
+		return nil, fmt.Errorf("%s invalid", key)
 	}
 	file := os.NewFile(uintptr(fd), "cordum-agentd-listener")
 	if file == nil {
-		return nil, fmt.Errorf("CORDUM_AGENTD_LISTENER_FD invalid")
+		return nil, fmt.Errorf("%s invalid", key)
 	}
 	defer func() { _ = file.Close() }()
 	ln, err := net.FileListener(file)

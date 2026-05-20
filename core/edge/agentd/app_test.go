@@ -102,13 +102,7 @@ func waitForHookStatus(t *testing.T, done <-chan error, bindURL, nonce, body str
 func TestNewHTTPServerSetsBoundedWriteAndIdleTimeouts(t *testing.T) {
 	bindURL := "http://" + freeLoopbackAddr(t) + "/v1/edge/hooks/claude"
 	cfg := testRunConfig(t, bindURL)
-	local, err := NewLocalServer(LocalServerConfig{
-		BindURL: bindURL,
-		Nonce:   base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
-	})
-	if err != nil {
-		t.Fatalf("NewLocalServer: %v", err)
-	}
+	local := testLocalServerForBind(t, bindURL)
 	srv, ln, err := newHTTPServer(cfg, local)
 	if err != nil {
 		t.Fatalf("newHTTPServer: %v", err)
@@ -130,6 +124,63 @@ func TestNewHTTPServerSetsBoundedWriteAndIdleTimeouts(t *testing.T) {
 	}
 	if srv.IdleTimeout <= 0 {
 		t.Fatalf("IdleTimeout = %v, want > 0 (defense-in-depth lurker guard); pre-fix value was 0 (infinite)", srv.IdleTimeout)
+	}
+}
+
+func TestNewHTTPServerUsesMatchingInheritedLoopbackListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen inherited loopback: %v", err)
+	}
+	bindURL := "http://" + ln.Addr().String() + "/v1/edge/hooks/claude"
+	local := testLocalServerForBind(t, bindURL)
+
+	_, got, err := newHTTPServer(testRunConfig(t, bindURL), local, ln)
+	if err != nil {
+		t.Fatalf("newHTTPServer with inherited listener returned error: %v", err)
+	}
+	if got != ln {
+		t.Fatalf("listener = %p, want inherited %p", got, ln)
+	}
+	defer func() { _ = got.Close() }()
+}
+
+func TestNewHTTPServerRejectsMismatchedInheritedListenerAndClosesIt(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen inherited loopback: %v", err)
+	}
+	addr := ln.Addr().String()
+	bindURL := "http://" + freeLoopbackAddr(t) + "/v1/edge/hooks/claude"
+	local := testLocalServerForBind(t, bindURL)
+
+	_, _, err = newHTTPServer(testRunConfig(t, bindURL), local, ln)
+	if err == nil || !strings.Contains(err.Error(), "inherited agentd listener address does not match") {
+		t.Fatalf("error = %v, want inherited listener mismatch", err)
+	}
+	attacker, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("mismatched inherited listener was not closed; re-listen %s: %v", addr, err)
+	}
+	_ = attacker.Close()
+}
+
+func TestNewHTTPServerRejectsNonLoopbackInheritedListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("listen non-loopback inherited listener: %v", err)
+	}
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		_ = ln.Close()
+		t.Fatalf("split listener addr: %v", err)
+	}
+	bindURL := "http://127.0.0.1:" + port + "/v1/edge/hooks/claude"
+	local := testLocalServerForBind(t, bindURL)
+
+	_, _, err = newHTTPServer(testRunConfig(t, bindURL), local, ln)
+	if err == nil || !strings.Contains(err.Error(), "inherited agentd listener must be bound to loopback") {
+		t.Fatalf("error = %v, want non-loopback inherited listener rejection", err)
 	}
 }
 
@@ -628,6 +679,18 @@ func testRunConfig(t *testing.T, bindURL string) Config {
 		HeartbeatInterval: 10 * time.Millisecond,
 		StateDir:          t.TempDir(),
 	}
+}
+
+func testLocalServerForBind(t *testing.T, bindURL string) *LocalServer {
+	t.Helper()
+	local, err := NewLocalServer(LocalServerConfig{
+		BindURL: bindURL,
+		Nonce:   base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
+	})
+	if err != nil {
+		t.Fatalf("NewLocalServer: %v", err)
+	}
+	return local
 }
 
 type shutdownRaceStateStore struct {

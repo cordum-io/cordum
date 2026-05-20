@@ -18,13 +18,13 @@ func startLaunchAgentd(ctx context.Context, cfg launchConfig, opts LaunchOptions
 	env := cfg.agentdEnv(meta)
 	var inheritedFile *os.File
 	if cfg.AgentdListener != nil {
-		file, envValue, err := listenerFileForInheritance(cfg.AgentdListener)
+		file, envKey, envValue, err := listenerFileForInheritance(cfg.AgentdListener)
 		if err != nil {
 			cancel()
 			return nil, err
 		}
 		inheritedFile = file
-		env = append(env, "CORDUM_AGENTD_LISTENER_FD="+envValue)
+		env = append(env, envKey+"="+envValue)
 	}
 	cmd, err := safeexec.CommandContext(agentdCtx, cfg.AgentdPath, nil, safeexec.Options{
 		Dir:            meta.CWD,
