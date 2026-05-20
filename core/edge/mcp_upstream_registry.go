@@ -22,6 +22,10 @@ var (
 // UpstreamServer is the runtime registry record for an approved upstream MCP
 // server. Config-layer bootstrap records live in core/infra/config; this type
 // adds tenant scope, lifecycle timestamps, and normalized validation metadata.
+//
+// ResolvedIPs pins the hostname's DNS resolution at registration time so
+// use-time callers (RevalidateMCPUpstreamAtUse) can detect DNS-rebinding
+// where the host later resolves to an internal/cloud-metadata IP.
 type UpstreamServer struct {
 	Name          string            `json:"name"`
 	Transport     string            `json:"transport"`
@@ -32,6 +36,7 @@ type UpstreamServer struct {
 	Labels        map[string]string `json:"labels,omitempty"`
 	Risk          string            `json:"risk"`
 	Enabled       bool              `json:"enabled"`
+	ResolvedIPs   []string          `json:"resolved_ips,omitempty"`
 	CreatedAt     time.Time         `json:"created_at"`
 	UpdatedAt     time.Time         `json:"updated_at"`
 }

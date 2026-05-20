@@ -182,6 +182,7 @@ func TestHandlerCreateRejectsPolicyModeQueryParam(t *testing.T) {
 		{"policy_mode_observe", "policy_mode=observe"},
 		{"policy_mode_enforce", "policy_mode=enforce"},
 		{"policy_mode_enterprise_strict", "policy_mode=enterprise-strict"},
+		{"policy_mode_permissive", "policy_mode=permissive"},
 		{"allowed_upstream_singular", "allowed_upstream=evil-host"},
 		{"allowed_upstreams_plural", "allowed_upstreams=169.254.169.254"},
 		{"allowed_upstreams_csv", "allowed_upstreams=a,b,c"},

@@ -114,7 +114,9 @@ func (s *server) mcpUpstreamPolicyInputs(r *http.Request, tenantID string) (stri
 	// branch was dead code on the API surface. Now we read mcp.policy_mode
 	// from the same configsvc Effective tree so an operator can opt the
 	// tenant in via config without code changes (HIGH audit finding
-	// 2026-05-20).
+	// 2026-05-20). When an allowlist is configured but policy_mode is
+	// unset, default to enterprise-strict so the operator's declaration
+	// of an allowlist actually gates registration (PR #276 audit fix).
 	if s == nil || s.configSvc == nil {
 		return "", nil
 	}
@@ -124,6 +126,9 @@ func (s *server) mcpUpstreamPolicyInputs(r *http.Request, tenantID string) (stri
 	}
 	mode := extractMCPPolicyMode(effective)
 	allow := extractStringSlice(effective, "safety", "mcp", "allowed_upstreams")
+	if mode == "" && len(allow) > 0 {
+		mode = string(edgecore.PolicyModeEnterpriseStrict)
+	}
 	return mode, allow
 }
 

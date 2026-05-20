@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -15,6 +16,13 @@ var (
 	mcpUpstreamNameRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
 	mcpUpstreamTenantRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
 )
+
+// MCPHostLookup resolves a hostname to IPs. Override in tests to inject
+// controlled DNS responses (e.g. to simulate DNS rebinding). Defaults to
+// the system resolver.
+var MCPHostLookup = func(ctx context.Context, host string) ([]net.IP, error) {
+	return net.DefaultResolver.LookupIP(ctx, "ip", host)
+}
 
 func Validate(ctx context.Context, upstream *UpstreamServer, policyMode string, allowlist []string) error {
 	return ValidateMCPUpstream(ctx, upstream, policyMode, allowlist)
@@ -43,12 +51,99 @@ func ValidateMCPUpstream(ctx context.Context, upstream *UpstreamServer, policyMo
 	}
 	switch strings.TrimSpace(upstream.Transport) {
 	case "http", "sse":
-		return validateMCPUpstreamURL(ctx, upstream.Endpoint, policyMode)
+		if err := validateMCPUpstreamURL(ctx, upstream.Endpoint, policyMode); err != nil {
+			return err
+		}
+		upstream.ResolvedIPs = pinMCPUpstreamIPs(ctx, upstream.Endpoint)
+		return nil
 	case "stdio":
 		return validateMCPUpstreamCommand(upstream.Command)
 	default:
 		return ErrInvalidTransport
 	}
+}
+
+// RevalidateMCPUpstreamAtUse re-resolves the upstream's hostname (or
+// re-parses its IP literal) and rejects the call if any current
+// resolution falls into the SSRF deny-set (loopback, RFC1918,
+// link-local incl. 169.254.169.254, IPv6 ULA, multicast, unspecified)
+// or if a cloud-metadata hostname is in play. Callers MUST invoke this
+// immediately before dialing an upstream so that a hostname which
+// resolved to a public IP at registration but has since been rebound
+// to internal infrastructure is refused at connect time.
+func RevalidateMCPUpstreamAtUse(ctx context.Context, upstream *UpstreamServer) error {
+	if upstream == nil {
+		return ErrInvalidUpstream
+	}
+	switch strings.TrimSpace(upstream.Transport) {
+	case "http", "sse":
+		return revalidateMCPUpstreamURLAtUse(ctx, upstream.Endpoint)
+	case "stdio", "":
+		return nil
+	default:
+		return ErrInvalidTransport
+	}
+}
+
+func revalidateMCPUpstreamURLAtUse(ctx context.Context, raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("%w: endpoint", ErrUnsafeEndpoint)
+	}
+	host := strings.TrimSpace(u.Hostname())
+	if i := strings.IndexByte(host, '%'); i >= 0 {
+		host = host[:i]
+	}
+	host = strings.TrimSuffix(host, ".")
+	if _, denied := mcpCloudMetadataHosts[strings.ToLower(host)]; denied {
+		return ErrUnsafeEndpoint
+	}
+	unsafe, err := mcpHostResolvesUnsafe(ctx, host)
+	if err != nil {
+		return ErrUnsafeEndpoint
+	}
+	if unsafe {
+		return ErrUnsafeEndpoint
+	}
+	return nil
+}
+
+// pinMCPUpstreamIPs records the registration-time DNS resolution of an
+// upstream's hostname so RevalidateMCPUpstreamAtUse can later detect a
+// drift to an internal IP. Returns nil on parse / DNS failure — pinning
+// is advisory; the strict gates remain enforced separately.
+func pinMCPUpstreamIPs(ctx context.Context, raw string) []string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return nil
+	}
+	host := strings.TrimSpace(u.Hostname())
+	if i := strings.IndexByte(host, '%'); i >= 0 {
+		host = host[:i]
+	}
+	host = strings.TrimSuffix(host, ".")
+	if host == "" {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return []string{ip.String()}
+	}
+	ips, err := MCPHostLookup(ctx, host)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(ips))
+	seen := make(map[string]struct{}, len(ips))
+	for _, ip := range ips {
+		s := ip.String()
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func validateMCPUpstreamSecret(ref string) error {
@@ -133,7 +228,7 @@ func mcpHostResolvesUnsafe(ctx context.Context, host string) (bool, error) {
 	if ip := net.ParseIP(host); ip != nil {
 		return mcpIPUnsafe(ip), nil
 	}
-	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	ips, err := MCPHostLookup(ctx, host)
 	if err != nil {
 		return false, err
 	}
