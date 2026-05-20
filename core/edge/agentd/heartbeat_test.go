@@ -203,3 +203,67 @@ func eventually(t *testing.T, timeout time.Duration, ok func() bool) {
 		t.Fatalf("condition not met within %s", timeout)
 	}
 }
+
+// TestHeartbeatServiceCallbackInvokedWithoutMutexHeld pins the
+// invariant that OnStatus is invoked OUTSIDE s.mu.
+//
+// Pre-fix recordResult took s.mu under defer-unlock and called
+// OnStatus while still holding it. Any callback path that ends up
+// acquiring s.mu (now or in the future) lock-order-inverts against
+// a caller that takes the same locks in the opposite order — a
+// latent deadlock waiting for the next maintainer.
+//
+// The test calls TryLock on s.mu from inside OnStatus: pre-fix it
+// returns false (mu held by recordResult), post-fix it returns true.
+func TestHeartbeatServiceCallbackInvokedWithoutMutexHeld(t *testing.T) {
+	t.Parallel()
+
+	var service *HeartbeatService
+	tryLockResult := make(chan bool, 1)
+
+	gateway := &stubHeartbeatGateway{
+		heartbeat: func(context.Context, string) (HeartbeatResponse, error) {
+			return HeartbeatResponse{}, errors.New("gateway unavailable")
+		},
+	}
+	ticks := make(chan time.Time)
+	service = NewHeartbeatService(HeartbeatConfig{
+		Gateway:                gateway,
+		SessionID:              "sess-callback",
+		Timeout:                time.Second,
+		MaxConsecutiveFailures: 1,
+		PolicyMode:             edgecore.PolicyModeObserve,
+		OnStatus: func(_ HeartbeatStatus) {
+			got := service.mu.TryLock()
+			if got {
+				service.mu.Unlock()
+			}
+			select {
+			case tryLockResult <- got:
+			default:
+			}
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		service.Run(ctx, ticks)
+	}()
+
+	ticks <- time.Now()
+
+	select {
+	case got := <-tryLockResult:
+		if !got {
+			t.Fatal("OnStatus invoked while HeartbeatService.mu still held — deadlock risk; callback must run after the mutex is released")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("watchdog: OnStatus never fired within 5s (possible deadlock during recordResult)")
+	}
+
+	cancel()
+	<-done
+}
