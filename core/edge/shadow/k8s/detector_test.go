@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -95,6 +96,23 @@ func newFixture(t *testing.T, cfg k8s.Config, objs ...runtime.Object) *detectorF
 		mr:       mr,
 		clock:    clock,
 	}
+}
+
+type lockedLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // listAll fetches every persisted finding for the given tenant; intended
@@ -234,7 +252,7 @@ func TestK8sDetector_Observability(t *testing.T) {
 }
 
 func TestDetectorRun_ScanErrorEmitsLog(t *testing.T) {
-	var logs bytes.Buffer
+	var logs lockedLogBuffer
 	prevLogger := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prevLogger) })

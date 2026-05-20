@@ -1251,8 +1251,10 @@ func TestFinding_ConcurrentCreatesCollisionFree(t *testing.T) {
 	mr := miniredis.RunT(t)
 	// Larger pool than newTestStore's PoolSize=1 so the contention
 	// surfaces at the ID-gen level instead of being serialised by a
-	// single Redis connection.
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 16})
+	// single Redis connection. Force RESP2 so go-redis does not perform
+	// RESP3 maintenance-notification option mutation while this race test
+	// concurrently uses Watch/Tx paths.
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 16, Protocol: 2})
 	t.Cleanup(func() { _ = client.Close(); mr.Close() })
 
 	// Construct the store with NO options so it falls back to the
