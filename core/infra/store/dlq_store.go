@@ -29,10 +29,10 @@ type DLQEntry struct {
 }
 
 const (
-	defaultDLQEntryTTL    = 30 * 24 * time.Hour
-	dlqEntryTTLDaysEnv    = "CORDUM_DLQ_ENTRY_TTL_DAYS"
-	defaultDLQMaxEntries  = 10000
-	dlqMaxEntriesEnv      = "SCHEDULER_DLQ_MAX_SIZE"
+	defaultDLQEntryTTL   = 30 * 24 * time.Hour
+	dlqEntryTTLDaysEnv   = "CORDUM_DLQ_ENTRY_TTL_DAYS"
+	defaultDLQMaxEntries = 10000
+	dlqMaxEntriesEnv     = "SCHEDULER_DLQ_MAX_SIZE"
 
 	dlqCleanupLockKey = "cordum:dlq:cleanup"
 )

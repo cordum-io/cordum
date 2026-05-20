@@ -367,7 +367,9 @@ func TestRedisDedupe_LoadOrStoreResolvesTransientNXRace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal pre-load record: %v", err)
 	}
-	mr.Set(MCPDedupeKeyPrefix+"k.transient-race", string(preloaded))
+	if err := mr.Set(MCPDedupeKeyPrefix+"k.transient-race", string(preloaded)); err != nil {
+		t.Fatalf("seed mr.Set: %v", err)
+	}
 	mr.SetTTL(MCPDedupeKeyPrefix+"k.transient-race", MCPDedupeTTL)
 
 	hookedClient := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 4})

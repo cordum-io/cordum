@@ -648,7 +648,6 @@ func TestEvaluateToolCall_AllowWithConstraintsPreCarriesConstraints(t *testing.T
 // (redaction levels, allowed hosts) that belong in the artifact-bound
 // event, not the live log stream. Adversarial-self-review item (e).
 func TestLogToolCallDecision_OmitsConstraintValues(t *testing.T) {
-	t.Parallel()
 	var buf bytes.Buffer
 	prev := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))

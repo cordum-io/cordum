@@ -27,6 +27,16 @@ export interface MCPUpstreamServer {
   labels?: MCPUpstreamServerLabels;
   risk: MCPUpstreamServerRisk;
   enabled: boolean;
+  /** Registration-time DNS resolution of the upstream hostname.
+Server-managed; clients MUST NOT submit values here on write.
+Use-time callers (`RevalidateMCPUpstreamAtUse`) re-resolve the
+hostname and refuse the dial if any current IP falls into the
+SSRF deny-set (loopback, RFC1918, link-local incl.
+169.254.169.254, IPv6 ULA, multicast, unspecified). Omitted
+for `stdio` transports and for hostnames that fail to resolve
+at registration.
+ */
+  resolved_ips?: string[];
   created_at?: string;
   updated_at?: string;
 }
