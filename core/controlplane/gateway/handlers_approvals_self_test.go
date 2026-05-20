@@ -60,36 +60,16 @@ func TestSelfApprovalBlocked(t *testing.T) {
 	s, _, safety := newTestGateway(t)
 	safety.setSnapshots([]string{"snap-test"})
 
-	// Submitter identity: apikey:abcd1234|principal:alice
-	submitterID := "apikey:abcd1234|principal:alice"
-	jobID := seedApprovalJob(t, s, submitterID)
+	jobID := seedApprovalJob(t, s, "")
 
 	// Attempt approval with the SAME identity → should be 403.
-	body := `{"reason":"approving my own job"}`
-	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+jobID+"/approve", strings.NewReader(body))
-	httpReq.Header.Set("X-Tenant-ID", "default")
-	httpReq.SetPathValue("job_id", jobID)
-	// Auth context that produces the same submitterIdentity hash.
-	httpReq = withAuth(httpReq, &auth.AuthContext{
-		APIKey:      "\xab\xcd\x12\x34", // produces apikey:abcd1234 after sha256[:4]
-		PrincipalID: "alice",
-		Role:        "admin",
-		Tenant:      "default",
-	})
-
-	// Since submitterIdentity hashes the API key, we need to match the stored value.
-	// The stored value is "apikey:abcd1234|principal:alice".
-	// The computed value from the auth context above will use sha256 of the API key bytes.
-	// They won't match exactly since stored value was set manually.
-	// Instead, let's test by setting the exact computed identity.
+	httpReq := approvalDecisionRequest(t, jobID, "approve", `{"reason":"approving my own job"}`, "sk-test-self-approval", "alice")
 	computedIdentity := submitterIdentity(httpReq)
 	if computedIdentity == "" {
 		t.Fatal("expected non-empty computed identity")
 	}
-
-	// Re-seed with the actual computed identity.
 	if err := s.jobStore.SetSubmittedBy(context.Background(), jobID, computedIdentity); err != nil {
-		t.Fatalf("re-set submitted_by: %v", err)
+		t.Fatalf("set submitted_by: %v", err)
 	}
 
 	rr := httptest.NewRecorder()
@@ -113,8 +93,8 @@ func TestSameAPIKeyDifferentPrincipalBlocked(t *testing.T) {
 	s, _, safety := newTestGateway(t)
 	safety.setSnapshots([]string{"snap-test"})
 
-	// Both submitter and approver use the same API key "shared-team-key".
-	sharedKey := "shared-team-key"
+	// Both submitter and approver use the same synthetic test API key.
+	sharedKey := "sk-test-shared-approval"
 	jobID := seedApprovalJob(t, s, "")
 
 	// Compute the submitter identity using alice + shared key.
@@ -161,7 +141,7 @@ func TestSameAPIKeyDifferentPrincipalBlocked(t *testing.T) {
 func TestSubmitterIdentity_NoCollisionAt100kKeys(t *testing.T) {
 	seen := make(map[string]string, 100_000)
 	for i := 0; i < 100_000; i++ {
-		key := "key-" + strconv.Itoa(i)
+		key := "sk-test-collision-" + strconv.Itoa(i)
 		req := httptest.NewRequest(http.MethodPost, "/test", nil)
 		req = withAuth(req, &auth.AuthContext{
 			APIKey:      key,
@@ -177,27 +157,34 @@ func TestSubmitterIdentity_NoCollisionAt100kKeys(t *testing.T) {
 }
 
 func TestIdentitiesOverlap_MatchesCompositePrincipal(t *testing.T) {
-	requester := submitterIdentityForTest("requester-key", "alice")
-	approver := submitterIdentityForTest("approver-key", "alice")
+	requester := submitterIdentityForTest("sk-test-requester", "alice")
+	approver := submitterIdentityForTest("sk-test-approver", "alice")
 	if requester == approver {
 		t.Fatal("fixture should use different API keys so overlap relies on principal")
 	}
 	if !identitiesOverlap(requester, approver) {
 		t.Fatalf("expected composite identities to overlap on principal: %q vs %q", requester, approver)
 	}
-	if identitiesOverlap(requester, submitterIdentityForTest("approver-key", "bob")) {
+	if identitiesOverlap(requester, submitterIdentityForTest("sk-test-approver", "bob")) {
 		t.Fatal("different API key and different principal should not overlap")
 	}
 }
 
+const (
+	approvalAuditBearerFixture = "Authorization: Bearer cordum_fake_token_approval_audit_0123456789"
+	approvalAuditSKFixture     = "sk-test-approval-audit-note-0123456789"
+	approvalLabelAPIKeyFixture = "APIKEY=cordum_fake_label_api_key_abc123"
+	approvalLabelBearerFixture = "Bearer cordum_fake_label_token_0123456789"
+)
+
 func TestApprovalAuditIncludesReasonAndNoteRedacted(t *testing.T) {
 	s, _, safety := newTestGateway(t)
 	safety.setSnapshots([]string{"snap-test"})
-	jobID := seedApprovalJob(t, s, submitterIdentityForTest("submit-key", "alice"))
+	jobID := seedApprovalJob(t, s, submitterIdentityForTest("sk-test-submit-audit", "alice"))
 
 	req := approvalDecisionRequest(t, jobID, "approve",
-		`{"reason":"approved with Authorization: Bearer secret-token","note":"note sk-12345678901234567890"}`,
-		"review-key", "bob")
+		`{"reason":"approved with `+approvalAuditBearerFixture+`","note":"note `+approvalAuditSKFixture+`"}`,
+		"sk-test-review-audit", "bob")
 	rr := httptest.NewRecorder()
 	s.handleApproveJob(rr, req)
 	if rr.Code != http.StatusOK {
@@ -209,7 +196,7 @@ func TestApprovalAuditIncludesReasonAndNoteRedacted(t *testing.T) {
 		t.Fatalf("audit reason/note missing: %+v", entry)
 	}
 	combined := entry.Reason + " " + entry.Extra["note"]
-	if strings.Contains(combined, "secret-token") || strings.Contains(combined, "sk-12345678901234567890") {
+	if strings.Contains(combined, approvalAuditBearerFixture) || strings.Contains(combined, approvalAuditSKFixture) {
 		t.Fatalf("audit leaked raw approval reason/note: %+v", entry)
 	}
 }
@@ -217,11 +204,11 @@ func TestApprovalAuditIncludesReasonAndNoteRedacted(t *testing.T) {
 func TestApprovalReasonNoteRedactedBeforePersistence(t *testing.T) {
 	s, _, safety := newTestGateway(t)
 	safety.setSnapshots([]string{"snap-test"})
-	jobID := seedApprovalJob(t, s, submitterIdentityForTest("submit-key-2", "alice"))
+	jobID := seedApprovalJob(t, s, submitterIdentityForTest("sk-test-submit-labels", "alice"))
 
 	req := approvalDecisionRequest(t, jobID, "approve",
-		`{"reason":"APIKEY=abc123","note":"Bearer label-secret-token"}`,
-		"review-key-2", "bob")
+		`{"reason":"`+approvalLabelAPIKeyFixture+`","note":"`+approvalLabelBearerFixture+`"}`,
+		"sk-test-review-labels", "bob")
 	rr := httptest.NewRecorder()
 	s.handleApproveJob(rr, req)
 	if rr.Code != http.StatusOK {
@@ -233,7 +220,7 @@ func TestApprovalReasonNoteRedactedBeforePersistence(t *testing.T) {
 		t.Fatalf("GetJobRequest: %v", err)
 	}
 	labels := stored.GetLabels()
-	if strings.Contains(labels["approval_reason"], "abc123") || strings.Contains(labels["approval_note"], "label-secret-token") {
+	if strings.Contains(labels["approval_reason"], approvalLabelAPIKeyFixture) || strings.Contains(labels["approval_note"], approvalLabelBearerFixture) {
 		t.Fatalf("approval labels leaked raw secrets: %#v", labels)
 	}
 	if labels["approval_reason"] == "" || labels["approval_note"] == "" {
@@ -281,7 +268,7 @@ func TestCrossUserApprovalAllowed(t *testing.T) {
 	safety.setSnapshots([]string{"snap-test"})
 
 	// Submitter is alice.
-	submitterID := "apikey:aaaa1111|principal:alice"
+	submitterID := submitterIdentityForTest("sk-test-submit-allowed", "alice")
 	jobID := seedApprovalJob(t, s, submitterID)
 
 	// Approver is bob with a different API key → should be allowed.
@@ -290,7 +277,7 @@ func TestCrossUserApprovalAllowed(t *testing.T) {
 	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
 	httpReq = withAuth(httpReq, &auth.AuthContext{
-		APIKey:      "different-key",
+		APIKey:      "sk-test-approver-allowed",
 		PrincipalID: "bob",
 		Role:        "admin",
 		Tenant:      "default",
@@ -313,7 +300,7 @@ func TestSelfRejectionBlocked(t *testing.T) {
 	rejectReq.Header.Set("X-Tenant-ID", "default")
 	rejectReq.SetPathValue("job_id", jobID)
 	rejectReq = withAuth(rejectReq, &auth.AuthContext{
-		APIKey:      "self-reject-key",
+		APIKey:      "sk-test-self-reject",
 		PrincipalID: "alice",
 		Role:        "admin",
 		Tenant:      "default",
@@ -355,7 +342,7 @@ func TestApprovalBackwardCompatibility(t *testing.T) {
 	httpReq.Header.Set("X-Tenant-ID", "default")
 	httpReq.SetPathValue("job_id", jobID)
 	httpReq = withAuth(httpReq, &auth.AuthContext{
-		APIKey:      "any-key",
+		APIKey:      "sk-test-legacy",
 		PrincipalID: "admin",
 		Role:        "admin",
 		Tenant:      "default",
