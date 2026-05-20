@@ -16,6 +16,21 @@ Use managed Claude Code settings for enterprise enforcement where users must not
 
 There is no settings-file flag that weakens those boundaries. Any future power-user exception must be delivered as a separately verified, signed trusted-config input; managed settings bytes alone are not trusted to enable HTTP hooks, alternate MCP servers, or arbitrary hook commands.
 
+## Provider base URL validation
+
+`ANTHROPIC_BASE_URL` is validated before the template writes it into managed
+settings. The managed-settings generator accepts HTTPS provider/LLM-proxy base
+URLs by default, canonicalizes the host to lowercase, and trims trailing path
+slashes. It rejects embedded credentials, non-HTTPS schemes, query strings,
+fragments, `localhost`, loopback/private/link-local/multicast/unspecified IP
+targets, known cloud metadata hostnames, and DNS results that resolve to unsafe
+IP ranges.
+
+This validation is a managed-settings safety check only: it prevents obviously
+unsafe provider base URLs from being persisted into Claude settings. Provider
+token mediation and full LLM proxy runtime policy enforcement remain P2/future
+work and are not claimed by this template.
+
 ## Synthetic `managed-settings.json` excerpt
 
 ```json
