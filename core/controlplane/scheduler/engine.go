@@ -1397,7 +1397,18 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
 		defer cancel()
 		a, err := e.jobStore.GetAttempts(ctx, jobID)
-		if err == nil {
+		if errors.Is(err, redis.Nil) {
+			attempts = 0
+		} else if err != nil {
+			slog.Warn("scheduler: GetAttempts error, treating as max scheduling retries",
+				"job_id", jobID,
+				"topic", topic,
+				"trace_id", traceID,
+				"max_attempts", maxSchedulingRetries,
+				"error", err,
+			)
+			attempts = maxSchedulingRetries
+		} else {
 			attempts = a
 		}
 	}
@@ -1607,20 +1618,31 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 		ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
 		defer cancel()
 		attempts, err := e.jobStore.GetAttempts(ctx, jobID)
-		if err == nil {
-			allowedAttempts := int(maxRetries) + 1
-			if attempts >= allowedAttempts {
-				reason := fmt.Sprintf("max retries exceeded (attempts=%d, max_retries=%d)", attempts, maxRetries)
-				if err := e.setJobState(jobID, JobStateFailed); err != nil {
-					slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
-					return RetryAfter(err, retryDelayStore)
-				}
-				if err := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED, reason, "max_retries_exceeded"); err != nil {
-					slog.Error("dlq emit failed, retrying", "job_id", jobID, "error", err)
-					return RetryAfter(err, retryDelayPublish)
-				}
-				return nil
+		allowedAttempts := int(maxRetries) + 1
+		if errors.Is(err, redis.Nil) {
+			attempts = 0
+		} else if err != nil {
+			slog.Warn("scheduler: GetAttempts error, treating as max policy retries",
+				"job_id", jobID,
+				"topic", topic,
+				"trace_id", traceID,
+				"max_retries", maxRetries,
+				"allowed_attempts", allowedAttempts,
+				"error", err,
+			)
+			attempts = allowedAttempts
+		}
+		if attempts >= allowedAttempts {
+			reason := fmt.Sprintf("max retries exceeded (attempts=%d, max_retries=%d)", attempts, maxRetries)
+			if err := e.setJobState(jobID, JobStateFailed); err != nil {
+				slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
+				return RetryAfter(err, retryDelayStore)
 			}
+			if err := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED, reason, "max_retries_exceeded"); err != nil {
+				slog.Error("dlq emit failed, retrying", "job_id", jobID, "error", err)
+				return RetryAfter(err, retryDelayPublish)
+			}
+			return nil
 		}
 	}
 

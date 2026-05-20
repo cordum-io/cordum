@@ -133,6 +133,11 @@ type failingGetSafetyDecisionStore struct {
 	err error
 }
 
+type failingGetAttemptsStore struct {
+	*fakeJobStore
+	err error
+}
+
 type fakeDecisionLogStore struct {
 	mu      sync.Mutex
 	records []model.DecisionLogRecord
@@ -406,6 +411,10 @@ func (s *fakeJobStore) GetAttempts(_ context.Context, jobID string) (int, error)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.attempts[jobID], nil
+}
+
+func (s *failingGetAttemptsStore) GetAttempts(_ context.Context, _ string) (int, error) {
+	return 0, s.err
 }
 
 func TestSchedulerRejectsUnknownTopicFromBus(t *testing.T) {
@@ -825,6 +834,16 @@ func (b *fakeBus) snapshotPublished() []publishedMsg {
 	out := make([]publishedMsg, len(b.published))
 	copy(out, b.published)
 	return out
+}
+
+func assertNoJobRequestPublished(t *testing.T, bus *fakeBus, subject, jobID string) {
+	t.Helper()
+	for _, msg := range bus.snapshotPublished() {
+		req := msg.packet.GetJobRequest()
+		if msg.subject == subject && req != nil && req.GetJobId() == jobID {
+			t.Fatalf("job %q was dispatched on %q despite unreadable attempts", jobID, subject)
+		}
+	}
 }
 
 func (b *fakeBus) Subscribe(subject, queue string, handler func(*pb.BusPacket) error) error {
@@ -2135,6 +2154,61 @@ func TestProcessJobMaxSchedulingRetriesFailsToDLQ(t *testing.T) {
 	result := bus.published[0].packet.GetJobResult()
 	if result == nil || result.GetErrorCode() != "max_scheduling_retries" {
 		t.Fatalf("expected error code max_scheduling_retries, got %v", result)
+	}
+}
+
+func TestEngine_RetryCapPreservedOnGetAttemptsError(t *testing.T) {
+	attemptsErr := errors.New("redis timeout")
+	baseStore := newFakeJobStore()
+	jobStore := &failingGetAttemptsStore{fakeJobStore: baseStore, err: attemptsErr}
+	bus := &fakeBus{}
+	engine := NewEngine(bus, &fixedSafetyRecordChecker{record: SafetyDecisionRecord{
+		Decision: SafetyAllowWithConstraints,
+		Constraints: &pb.PolicyConstraints{
+			Budgets: &pb.BudgetConstraints{MaxRetries: 3},
+		},
+	}}, newTestRegistry(t), NewNaiveStrategy(), jobStore, nil)
+
+	req := &pb.JobRequest{
+		JobId:    "job-max-retries-attempts-unreadable",
+		Topic:    "job.default",
+		TenantId: "tenant-a",
+	}
+	err := engine.processJob(testCtx(t), req, "trace-attempts-unreadable")
+	if err != nil && !errors.Is(err, attemptsErr) {
+		t.Fatalf("processJob() error = %v, want retryable store error or max-retry fail-closed", err)
+	}
+	assertNoJobRequestPublished(t, bus, req.Topic, req.JobId)
+	if err == nil && baseStore.states[req.JobId] != JobStateFailed {
+		t.Fatalf("state=%q want FAILED when unreadable attempts are treated as max", baseStore.states[req.JobId])
+	}
+	if state := baseStore.states[req.JobId]; state == JobStateDispatched || state == JobStateRunning {
+		t.Fatalf("state=%q shows job dispatched despite unreadable attempts", state)
+	}
+}
+
+func TestEngine_RetryCapPreservedOnGetAttemptsError_SchedulingBackoffGate(t *testing.T) {
+	attemptsErr := errors.New("redis timeout")
+	baseStore := newFakeJobStore()
+	jobStore := &failingGetAttemptsStore{fakeJobStore: baseStore, err: attemptsErr}
+	bus := &fakeBus{}
+	engine := NewEngine(bus, NewSafetyBasic(), newTestRegistry(t), &errStrategy{err: ErrNoWorkers}, jobStore, nil)
+
+	req := &pb.JobRequest{
+		JobId:    "job-scheduling-attempts-unreadable",
+		Topic:    "job.default",
+		TenantId: "tenant-a",
+	}
+	err := engine.processJob(testCtx(t), req, "trace-scheduling-attempts-unreadable")
+	if err != nil && !errors.Is(err, attemptsErr) {
+		t.Fatalf("processJob() error = %v, want retryable store error or max-scheduling fail-closed", err)
+	}
+	assertNoJobRequestPublished(t, bus, req.Topic, req.JobId)
+	if got := baseStore.attempts[req.JobId]; got != 0 {
+		t.Fatalf("attempts incremented to %d after unreadable counter; want fail-closed without retry loop", got)
+	}
+	if err == nil && baseStore.states[req.JobId] != JobStateFailed {
+		t.Fatalf("state=%q want FAILED when unreadable scheduling attempts are treated as max", baseStore.states[req.JobId])
 	}
 }
 
