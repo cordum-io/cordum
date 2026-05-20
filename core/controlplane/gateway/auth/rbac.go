@@ -3,8 +3,10 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -132,6 +134,21 @@ var AllPermissions = []string{
 	PermDelegationImpersonate, PermShadowExceptionHighRisk,
 }
 
+var roleNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{1,62}$`)
+
+// NormalizeRoleName returns the canonical stored form for a role name.
+func NormalizeRoleName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+// ValidateRoleName enforces the public role-name contract.
+func ValidateRoleName(name string) error {
+	if !roleNamePattern.MatchString(name) {
+		return fmt.Errorf("role name must match ^[a-z0-9][a-z0-9_-]{1,62}$: %q", name)
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // RoleDefinition
 // ---------------------------------------------------------------------------
@@ -160,6 +177,26 @@ func DefaultRoles() []*RoleDefinition {
 			UpdatedAt:   now,
 		},
 		{
+			Name:        "viewer",
+			Description: "Read-only access to all resources",
+			Permissions: []string{
+				PermJobsRead,
+				PermWorkflowsRead,
+				PermWorkersRead,
+				PermLocksRead,
+				PermTopicsRead,
+				PermConfigRead,
+				PermAuditRead,
+				PermSchemasRead,
+				PermPolicyRead,
+				PermGovernanceRead,
+				PermDelegationRead,
+			},
+			BuiltIn:   true,
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		{
 			Name:        "operator",
 			Description: "Manage jobs, workflows, approvals, packs, and schemas",
 			Permissions: []string{
@@ -177,26 +214,6 @@ func DefaultRoles() []*RoleDefinition {
 				PermConfigRead,
 			},
 			Inherits:  []string{"viewer"},
-			BuiltIn:   true,
-			CreatedAt: now,
-			UpdatedAt: now,
-		},
-		{
-			Name:        "viewer",
-			Description: "Read-only access to all resources",
-			Permissions: []string{
-				PermJobsRead,
-				PermWorkflowsRead,
-				PermWorkersRead,
-				PermLocksRead,
-				PermTopicsRead,
-				PermConfigRead,
-				PermAuditRead,
-				PermSchemasRead,
-				PermPolicyRead,
-				PermGovernanceRead,
-				PermDelegationRead,
-			},
 			BuiltIn:   true,
 			CreatedAt: now,
 			UpdatedAt: now,
@@ -297,7 +314,7 @@ func (s *RBACStore) BootstrapDefaultRoles(ctx context.Context) error {
 
 // GetRole retrieves a role definition by name.
 func (s *RBACStore) GetRole(ctx context.Context, name string) (*RoleDefinition, error) {
-	name = strings.ToLower(strings.TrimSpace(name))
+	name = NormalizeRoleName(name)
 	if name == "" {
 		return nil, fmt.Errorf("role name required")
 	}
@@ -354,49 +371,187 @@ func (s *RBACStore) PutRole(ctx context.Context, role *RoleDefinition) error {
 	if role == nil {
 		return fmt.Errorf("role required")
 	}
-	role.Name = strings.ToLower(strings.TrimSpace(role.Name))
+	role.Name = NormalizeRoleName(role.Name)
 	if role.Name == "" {
 		return fmt.Errorf("role name required")
+	}
+	if err := ValidateRoleName(role.Name); err != nil {
+		return err
 	}
 	if role.CreatedAt == "" {
 		role.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	role.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
-	data, err := json.Marshal(role)
+	keys, err := s.roleWatchKeys(ctx)
 	if err != nil {
-		return fmt.Errorf("marshal role: %w", err)
+		return err
 	}
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, rbacRoleKeyPrefix+role.Name, data, 0)
-	pipe.SAdd(ctx, rbacRoleSetKey, role.Name)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("redis put role: %w", err)
-	}
-	return nil
+	return s.client.Watch(ctx, func(tx *redis.Tx) error {
+		roles, err := loadRBACRoleSnapshot(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if existing, ok := roles[role.Name]; ok && role.CreatedAt == "" {
+			role.CreatedAt = existing.CreatedAt
+		}
+		roles[role.Name] = role
+		if err := validateInheritanceSnapshot(role.Name, role.Inherits, roles); err != nil {
+			return err
+		}
+		data, err := json.Marshal(role)
+		if err != nil {
+			return fmt.Errorf("marshal role: %w", err)
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(ctx, rbacRoleKeyPrefix+role.Name, data, 0)
+			pipe.SAdd(ctx, rbacRoleSetKey, role.Name)
+			return nil
+		})
+		return err
+	}, keys...)
 }
 
 // DeleteRole removes a role definition. Built-in roles cannot be deleted.
 func (s *RBACStore) DeleteRole(ctx context.Context, name string) error {
-	name = strings.ToLower(strings.TrimSpace(name))
+	name = NormalizeRoleName(name)
 	if name == "" {
 		return fmt.Errorf("role name required")
 	}
-	// Check if role exists and is not built-in
-	existing, err := s.GetRole(ctx, name)
+	if err := ValidateRoleName(name); err != nil {
+		return err
+	}
+	keys, err := s.roleWatchKeys(ctx)
 	if err != nil {
 		return err
 	}
-	if existing.BuiltIn {
-		return ErrBuiltInRole
+	return s.client.Watch(ctx, func(tx *redis.Tx) error {
+		roles, err := loadRBACRoleSnapshot(ctx, tx)
+		if err != nil {
+			return err
+		}
+		existing, ok := roles[name]
+		if !ok {
+			return ErrRoleNotFound
+		}
+		if existing.BuiltIn {
+			return ErrBuiltInRole
+		}
+		if refs := referencingRoles(name, roles); len(refs) > 0 {
+			return &RoleInUseError{Role: name, Referencing: refs}
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Del(ctx, rbacRoleKeyPrefix+name)
+			pipe.SRem(ctx, rbacRoleSetKey, name)
+			return nil
+		})
+		return err
+	}, keys...)
+}
+
+func (s *RBACStore) roleWatchKeys(ctx context.Context) ([]string, error) {
+	names, err := s.client.SMembers(ctx, rbacRoleSetKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis role keys: %w", err)
 	}
-	pipe := s.client.TxPipeline()
-	pipe.Del(ctx, rbacRoleKeyPrefix+name)
-	pipe.SRem(ctx, rbacRoleSetKey, name)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return fmt.Errorf("redis delete role: %w", err)
+	keys := make([]string, 0, len(names)+1)
+	keys = append(keys, rbacRoleSetKey)
+	for _, name := range names {
+		keys = append(keys, rbacRoleKeyPrefix+NormalizeRoleName(name))
+	}
+	return keys, nil
+}
+
+type roleSnapshotReader interface {
+	SMembers(context.Context, string) *redis.StringSliceCmd
+	Get(context.Context, string) *redis.StringCmd
+}
+
+func loadRBACRoleSnapshot(ctx context.Context, reader roleSnapshotReader) (map[string]*RoleDefinition, error) {
+	names, err := reader.SMembers(ctx, rbacRoleSetKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis smembers roles: %w", err)
+	}
+	roles := make(map[string]*RoleDefinition, len(names))
+	for _, name := range names {
+		role, err := loadRBACRole(ctx, reader, NormalizeRoleName(name))
+		if errors.Is(err, ErrRoleNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		roles[role.Name] = role
+	}
+	return roles, nil
+}
+
+func loadRBACRole(ctx context.Context, reader roleSnapshotReader, name string) (*RoleDefinition, error) {
+	data, err := reader.Get(ctx, rbacRoleKeyPrefix+name).Bytes()
+	if err == redis.Nil {
+		return nil, ErrRoleNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("redis get role: %w", err)
+	}
+	var role RoleDefinition
+	if err := json.Unmarshal(data, &role); err != nil {
+		return nil, fmt.Errorf("unmarshal role: %w", err)
+	}
+	role.Name = NormalizeRoleName(role.Name)
+	return &role, nil
+}
+
+func validateInheritanceSnapshot(roleName string, inherits []string, roles map[string]*RoleDefinition) error {
+	inProgress := map[string]struct{}{NormalizeRoleName(roleName): {}}
+	completed := make(map[string]struct{})
+	for _, parent := range inherits {
+		if err := checkInheritanceSnapshot(parent, roles, inProgress, completed); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func checkInheritanceSnapshot(roleName string, roles map[string]*RoleDefinition, inProgress, completed map[string]struct{}) error {
+	roleName = NormalizeRoleName(roleName)
+	if roleName == "" {
+		return nil
+	}
+	if _, ok := completed[roleName]; ok {
+		return nil
+	}
+	if _, ok := inProgress[roleName]; ok {
+		return fmt.Errorf("circular inheritance: role %q would create a cycle", roleName)
+	}
+	role, ok := roles[roleName]
+	if !ok {
+		return fmt.Errorf("unknown parent role %q: %w", roleName, ErrRoleNotFound)
+	}
+	inProgress[roleName] = struct{}{}
+	defer delete(inProgress, roleName)
+	for _, parent := range role.Inherits {
+		if err := checkInheritanceSnapshot(parent, roles, inProgress, completed); err != nil {
+			return err
+		}
+	}
+	completed[roleName] = struct{}{}
+	return nil
+}
+
+func referencingRoles(name string, roles map[string]*RoleDefinition) []string {
+	name = NormalizeRoleName(name)
+	refs := make([]string, 0)
+	for roleName, role := range roles {
+		for _, parent := range role.Inherits {
+			if NormalizeRoleName(parent) == name {
+				refs = append(refs, roleName)
+				break
+			}
+		}
+	}
+	sort.Strings(refs)
+	return refs
 }
 
 // Close closes the Redis client connection.
@@ -415,19 +570,24 @@ func (s *RBACStore) Close() error {
 // flattening the inheritance hierarchy. Returns an error if circular
 // inheritance is detected.
 func (s *RBACStore) ResolvePermissions(ctx context.Context, roleName string) ([]string, error) {
-	visited := make(map[string]bool)
-	return s.resolvePermissionsRecursive(ctx, roleName, visited)
+	inProgress := make(map[string]struct{})
+	completed := make(map[string][]string)
+	return s.resolvePermissionsRecursive(ctx, roleName, inProgress, completed)
 }
 
-func (s *RBACStore) resolvePermissionsRecursive(ctx context.Context, roleName string, visited map[string]bool) ([]string, error) {
-	roleName = strings.ToLower(strings.TrimSpace(roleName))
+func (s *RBACStore) resolvePermissionsRecursive(ctx context.Context, roleName string, inProgress map[string]struct{}, completed map[string][]string) ([]string, error) {
+	roleName = NormalizeRoleName(roleName)
 	if roleName == "" {
 		return nil, nil
 	}
-	if visited[roleName] {
+	if perms, ok := completed[roleName]; ok {
+		return append([]string(nil), perms...), nil
+	}
+	if _, ok := inProgress[roleName]; ok {
 		return nil, fmt.Errorf("circular inheritance detected: role %q", roleName)
 	}
-	visited[roleName] = true
+	inProgress[roleName] = struct{}{}
+	defer delete(inProgress, roleName)
 
 	role, err := s.GetRole(ctx, roleName)
 	if err != nil {
@@ -440,7 +600,7 @@ func (s *RBACStore) resolvePermissionsRecursive(ctx context.Context, roleName st
 	}
 
 	for _, parent := range role.Inherits {
-		inherited, err := s.resolvePermissionsRecursive(ctx, parent, visited)
+		inherited, err := s.resolvePermissionsRecursive(ctx, parent, inProgress, completed)
 		if err != nil {
 			return nil, err
 		}
@@ -454,41 +614,48 @@ func (s *RBACStore) resolvePermissionsRecursive(ctx context.Context, roleName st
 		perms = append(perms, p)
 	}
 	sort.Strings(perms)
-	return perms, nil
+	completed[roleName] = append([]string(nil), perms...)
+	return append([]string(nil), perms...), nil
 }
 
 // ValidateInheritance checks that a role's inheritance chain has no cycles
 // and all referenced parent roles exist.
 func (s *RBACStore) ValidateInheritance(ctx context.Context, roleName string, inherits []string) error {
-	// Build a temporary view: pretend the role has the given parents
-	visited := map[string]bool{strings.ToLower(strings.TrimSpace(roleName)): true}
+	roleName = NormalizeRoleName(roleName)
+	inProgress := map[string]struct{}{roleName: {}}
+	completed := make(map[string]struct{})
 	for _, parent := range inherits {
-		if err := s.checkInheritanceChain(ctx, parent, visited); err != nil {
+		if err := s.checkInheritanceChain(ctx, parent, inProgress, completed); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *RBACStore) checkInheritanceChain(ctx context.Context, roleName string, visited map[string]bool) error {
-	roleName = strings.ToLower(strings.TrimSpace(roleName))
+func (s *RBACStore) checkInheritanceChain(ctx context.Context, roleName string, inProgress, completed map[string]struct{}) error {
+	roleName = NormalizeRoleName(roleName)
 	if roleName == "" {
 		return nil
 	}
-	if visited[roleName] {
+	if _, ok := completed[roleName]; ok {
+		return nil
+	}
+	if _, ok := inProgress[roleName]; ok {
 		return fmt.Errorf("circular inheritance: role %q would create a cycle", roleName)
 	}
-	visited[roleName] = true
+	inProgress[roleName] = struct{}{}
+	defer delete(inProgress, roleName)
 
 	role, err := s.GetRole(ctx, roleName)
 	if err != nil {
 		return fmt.Errorf("unknown parent role %q: %w", roleName, err)
 	}
 	for _, parent := range role.Inherits {
-		if err := s.checkInheritanceChain(ctx, parent, visited); err != nil {
+		if err := s.checkInheritanceChain(ctx, parent, inProgress, completed); err != nil {
 			return err
 		}
 	}
+	completed[roleName] = struct{}{}
 	return nil
 }
 
@@ -500,7 +667,7 @@ func (s *RBACStore) checkInheritanceChain(ctx context.Context, roleName string, 
 // the inheritance hierarchy. When the RBAC entitlement is disabled, it uses
 // the basic role mapping.
 func HasPermission(ctx context.Context, store *RBACStore, roleName, permission string, rbacEntitled bool) bool {
-	roleName = strings.ToLower(strings.TrimSpace(roleName))
+	roleName = NormalizeRoleName(roleName)
 	permission = strings.TrimSpace(permission)
 	if roleName == "" || permission == "" {
 		return false
@@ -565,3 +732,17 @@ var (
 	ErrRoleNotFound = fmt.Errorf("role not found")
 	ErrBuiltInRole  = fmt.Errorf("cannot delete built-in role")
 )
+
+// RoleInUseError reports that a role cannot be deleted because other roles
+// inherit it. Referencing is sorted and safe to return in API responses.
+type RoleInUseError struct {
+	Role        string
+	Referencing []string
+}
+
+func (e *RoleInUseError) Error() string {
+	if e == nil {
+		return "role in use"
+	}
+	return fmt.Sprintf("role %q is inherited by: %s", e.Role, strings.Join(e.Referencing, ", "))
+}

@@ -214,7 +214,15 @@ func (s *server) handleDeleteTopic(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, r, "delete topic", err)
 		return
 	}
+	removedMapping, err := s.removeTopicFromPoolConfig(r.Context(), name)
+	if err != nil {
+		writeInternalError(w, r, "remove topic pool mapping", err)
+		return
+	}
 	s.publishConfigChanged("system", "topics")
+	if removedMapping {
+		s.publishConfigChanged("system", "default")
+	}
 	slog.Warn("topic registration deleted",
 		"topic", name,
 		"pool", existing.Pool,
@@ -224,6 +232,43 @@ func (s *server) handleDeleteTopic(w http.ResponseWriter, r *http.Request) {
 	)
 	s.appendAuditEntryNamed(r.Context(), "delete", "topic", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "delete topic "+name)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) removeTopicFromPoolConfig(ctx context.Context, topic string) (bool, error) {
+	if s.configSvc == nil {
+		return false, nil
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		removed, err := s.removeTopicFromPoolConfigOnce(ctx, topic)
+		if errors.Is(err, configsvc.ErrRevisionConflict) {
+			continue
+		}
+		return removed, err
+	}
+	return false, configsvc.ErrRevisionConflict
+}
+
+func (s *server) removeTopicFromPoolConfigOnce(ctx context.Context, topic string) (bool, error) {
+	doc, err := s.configSvc.Get(ctx, configsvc.ScopeSystem, "default")
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	topics, poolMap, err := extractPoolsFromConfig(doc)
+	if err != nil {
+		return false, err
+	}
+	if _, ok := topics[topic]; !ok {
+		return false, nil
+	}
+	delete(topics, topic)
+	writePoolsToConfig(doc, topics, poolMap)
+	if err := s.configSvc.Set(ctx, doc); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *server) ensurePoolExists(ctx context.Context, pool string) error {

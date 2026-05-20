@@ -23,6 +23,7 @@ const (
 
 	errorCodePoolInvalidConfig   = "POOL_INVALID_CONFIG"
 	errorCodePoolNotFound        = "POOL_NOT_FOUND"
+	errorCodePoolInUse           = "POOL_IN_USE"
 	errorCodePoolNameConflict    = "POOL_NAME_CONFLICT"
 	errorCodePoolVersionConflict = "POOL_VERSION_CONFLICT"
 
@@ -30,6 +31,7 @@ const (
 	errorCodeRBACPermissionInvalid = "RBAC_PERMISSION_INVALID"
 	errorCodeRBACRoleNotFound      = "RBAC_ROLE_NOT_FOUND"
 	errorCodeRBACRoleInUse         = "RBAC_ROLE_IN_USE"
+	errorCodeRBACRoleProtected     = "RBAC_ROLE_PROTECTED"
 
 	errorCodeTopicSchemaViolation = "TOPIC_SCHEMA_VIOLATION"
 	errorCodeTopicNotFound        = "TOPIC_NOT_FOUND"

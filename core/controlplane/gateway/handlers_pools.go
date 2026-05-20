@@ -1,12 +1,14 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,6 +17,8 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/gateway/pools"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 )
 
 var ErrPoolNotFound = errors.New("pool not found")
@@ -56,6 +60,20 @@ func (e topicPoolMappingNotFoundError) Error() string {
 
 func (e topicPoolMappingNotFoundError) Is(target error) bool {
 	return target == ErrTopicPoolMappingNotFound
+}
+
+type poolInUseError struct {
+	pool       string
+	status     string
+	queuedJobs int
+	agentIDs   []string
+}
+
+func (e *poolInUseError) Error() string {
+	if e == nil {
+		return "pool in use"
+	}
+	return fmt.Sprintf("pool %q is in use", e.pool)
 }
 
 // ---------------------------------------------------------------------------
@@ -290,31 +308,7 @@ func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	force := r.URL.Query().Get("force") == "true"
-
-	err := s.configSvc.SetWithRetry(r.Context(), configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
-		topics, poolMap, err := extractPoolsFromConfig(doc)
-		if err != nil {
-			return err
-		}
-		if _, ok := poolMap[name]; !ok {
-			return poolNotFoundError{pool: name}
-		}
-		if err := pools.ValidatePoolDelete(name, poolMap, topics, force); err != nil {
-			return err
-		}
-		delete(poolMap, name)
-		// Remove pool from all topic mappings
-		for topic, plist := range topics {
-			filtered := slices.DeleteFunc(plist, func(p string) bool { return p == name })
-			if len(filtered) == 0 {
-				delete(topics, topic)
-			} else {
-				topics[topic] = filtered
-			}
-		}
-		writePoolsToConfig(doc, topics, poolMap)
-		return nil
-	})
+	err := s.deletePoolFromConfig(r.Context(), name, force)
 	if err != nil {
 		if errors.Is(err, configsvc.ErrRevisionConflict) {
 			writeJSONError(w, http.StatusConflict, errorCodePoolVersionConflict, "config update conflict — retry")
@@ -322,6 +316,11 @@ func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, ErrPoolNotFound) {
 			writeJSONError(w, http.StatusNotFound, errorCodePoolNotFound, err.Error())
+			return
+		}
+		var inUse *poolInUseError
+		if errors.As(err, &inUse) {
+			writePoolInUseError(w, inUse)
 			return
 		}
 		if strings.Contains(err.Error(), "active topic mapping") {
@@ -338,6 +337,52 @@ func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *server) deletePoolFromConfig(ctx context.Context, name string, force bool) error {
+	return s.configSvc.SetWithRetry(ctx, configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
+		topics, poolMap, err := extractPoolsFromConfig(doc)
+		if err != nil {
+			return err
+		}
+		if err := s.validatePoolDelete(ctx, name, force, topics, poolMap); err != nil {
+			return err
+		}
+		delete(poolMap, name)
+		removePoolFromTopicMappings(name, topics)
+		writePoolsToConfig(doc, topics, poolMap)
+		return nil
+	})
+}
+
+func (s *server) validatePoolDelete(ctx context.Context, name string, force bool, topics map[string][]string, poolMap map[string]config.PoolConfig) error {
+	existing, ok := poolMap[name]
+	if !ok {
+		return poolNotFoundError{pool: name}
+	}
+	status := existing.EffectiveStatus()
+	if force && status != config.PoolStatusInactive {
+		return &poolInUseError{pool: name, status: status}
+	}
+	queuedJobs, agentIDs, err := s.poolDeleteBlockers(ctx, name, topics)
+	if err != nil {
+		return err
+	}
+	if queuedJobs > 0 || len(agentIDs) > 0 {
+		return &poolInUseError{pool: name, status: status, queuedJobs: queuedJobs, agentIDs: agentIDs}
+	}
+	return pools.ValidatePoolDelete(name, poolMap, topics, force)
+}
+
+func removePoolFromTopicMappings(name string, topics map[string][]string) {
+	for topic, plist := range topics {
+		filtered := slices.DeleteFunc(plist, func(p string) bool { return p == name })
+		if len(filtered) == 0 {
+			delete(topics, topic)
+			continue
+		}
+		topics[topic] = filtered
+	}
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/v1/pools/{name}/drain — start draining
 // ---------------------------------------------------------------------------
@@ -345,6 +390,11 @@ func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 type drainPoolRequest struct {
 	TimeoutSeconds int `json:"timeout_seconds"`
 }
+
+const (
+	defaultDrainTimeoutSeconds = 300
+	maxDrainTimeoutSeconds     = 3600
+)
 
 func (s *server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermPoolsWrite, "admin") {
@@ -362,7 +412,11 @@ func (s *server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.TimeoutSeconds <= 0 {
-		req.TimeoutSeconds = 300
+		req.TimeoutSeconds = defaultDrainTimeoutSeconds
+	}
+	if req.TimeoutSeconds > maxDrainTimeoutSeconds {
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, "timeout_seconds exceeds maximum")
+		return
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -485,6 +539,10 @@ func (s *server) handleRemoveTopicFromPool(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
 		return
 	}
+	if err := pools.ValidateTopicName(topic); err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
+		return
+	}
 
 	err := s.configSvc.SetWithRetry(r.Context(), configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
 		topics, poolMap, err := extractPoolsFromConfig(doc)
@@ -525,4 +583,95 @@ func (s *server) handleRemoveTopicFromPool(w http.ResponseWriter, r *http.Reques
 	s.appendAuditEntryNamed(r.Context(), "remove_topic", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 		fmt.Sprintf("remove topic %s from pool %s", topic, name))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) poolDeleteBlockers(ctx context.Context, pool string, topics map[string][]string) (int, []string, error) {
+	queuedJobs, err := s.countPoolQueuedJobs(ctx, pool, topics)
+	if err != nil {
+		return 0, nil, err
+	}
+	agentIDs, err := s.agentIDsReferencingPool(ctx, pool)
+	if err != nil {
+		return 0, nil, err
+	}
+	return queuedJobs, agentIDs, nil
+}
+
+func (s *server) countPoolQueuedJobs(ctx context.Context, pool string, topics map[string][]string) (int, error) {
+	if s.jobStore == nil {
+		return 0, nil
+	}
+	states := []model.JobState{
+		model.JobStatePending, model.JobStateApproval, model.JobStateScheduled,
+		model.JobStateDispatched, model.JobStateRunning, model.JobStateRetrying,
+	}
+	total := 0
+	before := time.Now().UTC().Add(time.Hour).UnixMicro()
+	for _, state := range states {
+		records, err := s.jobStore.ListJobsByState(ctx, state, before, 5000)
+		if err != nil {
+			return 0, err
+		}
+		for _, record := range records {
+			if topicUsesPool(record.Topic, topics, pool) {
+				total++
+			}
+		}
+	}
+	return total, nil
+}
+
+func (s *server) agentIDsReferencingPool(ctx context.Context, pool string) ([]string, error) {
+	if s.agentIdentityStore == nil {
+		return nil, nil
+	}
+	var ids []string
+	cursor := ""
+	for {
+		agents, next, err := s.agentIdentityStore.List(ctx, cursor, 200, store.AgentIdentityFilter{})
+		if err != nil {
+			return nil, err
+		}
+		for _, agent := range agents {
+			if agent != nil && slices.Contains(agent.AllowedPools, pool) {
+				ids = append(ids, agent.ID)
+			}
+		}
+		if next == "" || next == cursor {
+			break
+		}
+		cursor = next
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func topicUsesPool(topic string, topics map[string][]string, pool string) bool {
+	if topic == "" {
+		return false
+	}
+	return slices.Contains(topics[topic], pool)
+}
+
+func writePoolInUseError(w http.ResponseWriter, err *poolInUseError) {
+	resp := map[string]any{
+		"error":       errorCodePoolInUse,
+		"code":        errorCodePoolInUse,
+		"status":      http.StatusConflict,
+		"message":     "pool in use",
+		"pool":        "",
+		"pool_status": "",
+		"queued_jobs": 0,
+		"agent_ids":   []string{},
+	}
+	if err != nil {
+		resp["message"] = err.Error()
+		resp["pool"] = err.pool
+		resp["pool_status"] = err.status
+		resp["queued_jobs"] = err.queuedJobs
+		resp["agent_ids"] = append([]string{}, err.agentIDs...)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	_ = json.NewEncoder(w).Encode(resp)
 }

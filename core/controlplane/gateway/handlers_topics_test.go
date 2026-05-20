@@ -122,6 +122,55 @@ func TestHandleCreateDeleteTopic(t *testing.T) {
 	}
 }
 
+func TestDeleteTopicScrubsPoolMapping(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	ctx := context.Background()
+	if err := s.configSvc.Set(ctx, &configsvc.Document{
+		Scope:   configsvc.ScopeSystem,
+		ScopeID: "default",
+		Data: map[string]any{
+			"pools": map[string]any{
+				"topics": map[string]any{"job.to-delete": "pool-a"},
+				"pools": map[string]any{
+					"pool-a": map[string]any{"status": "active"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed pools config: %v", err)
+	}
+	if err := s.topicRegistry.Set(ctx, topicregistry.Registration{
+		Name:     "job.to-delete",
+		TenantID: "default",
+		Pool:     "pool-a",
+		Status:   topicregistry.StatusActive,
+	}); err != nil {
+		t.Fatalf("seed topic registry: %v", err)
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/topics/job.to-delete", nil), &auth.AuthContext{
+		Tenant: "default", Role: "admin",
+	})
+	req.SetPathValue("name", "job.to-delete")
+	rec := httptest.NewRecorder()
+	s.handleDeleteTopic(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	doc, err := s.configSvc.Get(ctx, configsvc.ScopeSystem, "default")
+	if err != nil {
+		t.Fatalf("get pools config: %v", err)
+	}
+	topics, _, err := extractPoolsFromConfig(doc)
+	if err != nil {
+		t.Fatalf("extract pools: %v", err)
+	}
+	if _, ok := topics["job.to-delete"]; ok {
+		t.Fatalf("expected delete topic to scrub pool mapping, got topics=%v", topics)
+	}
+}
+
 func TestHandleCreateTopicAllowsDisabledPackTopicWithoutPool(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 
