@@ -774,6 +774,79 @@ func TestRunCleanShutdownDoesNotEmitForcedMetric(t *testing.T) {
 	}
 }
 
+func TestOnStatusHeartbeatNoFalsePositiveOnCleanShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	gateway, thirdHeartbeatStarted := lateHeartbeatGatewayForCleanShutdown()
+	recorder := &captureRecorder{}
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, RunOptions{
+			Config: testRunConfig(t, "http://127.0.0.1:0/v1/edge/hooks/claude"),
+			Metadata: LocalSessionMetadata{
+				TenantID:      "tenant-a",
+				PrincipalID:   "principal-a",
+				PrincipalType: edgecore.PrincipalTypeHuman,
+				CWD:           "D:/Cordum/cordum",
+			},
+			Gateway:    gateway,
+			StateStore: NewMemoryStateStore(),
+			Recorder:   recorder,
+			Clock:      realClock{},
+		})
+	}()
+
+	select {
+	case <-thirdHeartbeatStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("third heartbeat did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after clean cancellation")
+	}
+	if got := recorder.shutdownForcedSnapshot(); len(got) != 0 {
+		t.Fatalf("clean shutdown emitted forced-shutdown metrics: %#v", got)
+	}
+}
+
+func lateHeartbeatGatewayForCleanShutdown() (*stubRunGateway, <-chan struct{}) {
+	var callsMu sync.Mutex
+	var calls int
+	thirdHeartbeatStarted := make(chan struct{})
+	var closeThird sync.Once
+	gateway := &stubRunGateway{
+		createSession: func(context.Context, CreateSessionRequest) (CreateSessionResponse, error) {
+			return CreateSessionResponse{
+				SessionID:      "sess-clean-late-heartbeat",
+				ExecutionID:    "exec-clean-late-heartbeat",
+				TraceID:        "trace-clean-late-heartbeat",
+				PolicySnapshot: "snap-clean-late-heartbeat",
+				DashboardURL:   "/edge/sessions/sess-clean-late-heartbeat",
+			}, nil
+		},
+		heartbeat: func(ctx context.Context, _ string) (HeartbeatResponse, error) {
+			callsMu.Lock()
+			calls++
+			current := calls
+			callsMu.Unlock()
+			if current < 3 {
+				return HeartbeatResponse{}, ErrGatewayTimeout
+			}
+			closeThird.Do(func() { close(thirdHeartbeatStarted) })
+			<-ctx.Done()
+			return HeartbeatResponse{}, ErrGatewayTimeout
+		},
+	}
+	return gateway, thirdHeartbeatStarted
+}
+
 func freeLoopbackAddr(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

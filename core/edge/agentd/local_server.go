@@ -176,6 +176,11 @@ func (s *LocalServer) handleHook(w http.ResponseWriter, r *http.Request) {
 	if s.evaluator != nil {
 		got, err := s.evaluateHookWithBuffer(r.Context(), req, buffer)
 		if err != nil {
+			bufferedEvents := buffer.Events()
+			if flushErr := s.flushHookEventBatch(r.Context(), bufferedEvents, s.hookBatchIdempotencyKey(req, bufferedEvents)); flushErr != nil {
+				writeLocalError(w, http.StatusServiceUnavailable, "agentd event writer unavailable")
+				return
+			}
 			writeLocalError(w, http.StatusServiceUnavailable, "agentd evaluator unavailable")
 			return
 		}
@@ -230,11 +235,15 @@ func (s *LocalServer) requestMatchesState(req claude.AgentdRequest) bool {
 	if s == nil {
 		return false
 	}
-	if s.state.SessionID != "" && req.SessionID != "" && req.SessionID != s.state.SessionID {
-		return false
+	if s.state.SessionID != "" {
+		if req.SessionID == "" || req.SessionID != s.state.SessionID {
+			return false
+		}
 	}
-	if s.state.ExecutionID != "" && req.ExecutionID != "" && req.ExecutionID != s.state.ExecutionID {
-		return false
+	if s.state.ExecutionID != "" {
+		if req.ExecutionID == "" || req.ExecutionID != s.state.ExecutionID {
+			return false
+		}
 	}
 	return true
 }
@@ -250,6 +259,9 @@ func (s *LocalServer) hookEventAt(req claude.AgentdRequest, receivedAt time.Time
 		labels["trace_id"] = s.state.TraceID
 	}
 	for k, v := range req.Labels {
+		if len(labels) >= edgecore.MaxLabelEntries {
+			break
+		}
 		if !isSensitiveMetadataKey(k) {
 			labels[boundMetadataString(k)] = boundMetadataString(redactSecretLike(v))
 		}

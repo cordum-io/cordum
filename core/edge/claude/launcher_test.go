@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,12 @@ func TestLaunchEdgeClaudeDryRunStartsAgentdAndOmitsNonceFromSettings(t *testing.
 	assertLauncherNonce(t, nonce)
 	if strings.Contains(env["CORDUM_AGENTD_SOCKET"], "nonce=") {
 		t.Fatalf("agentd URL leaked nonce in argv/env URL: %s", env["CORDUM_AGENTD_SOCKET"])
+	}
+	if supportsAgentdListenerInheritance() && strings.TrimSpace(env["CORDUM_AGENTD_LISTENER_FD"]) == "" {
+		t.Fatalf("agentd helper did not receive inherited listener fd: %#v", env)
+	}
+	if !supportsAgentdListenerInheritance() && strings.TrimSpace(env["CORDUM_AGENTD_LISTENER_FD"]) != "" {
+		t.Fatalf("agentd helper received unsupported listener fd on this platform: %#v", env)
 	}
 	assertSettingsOmitsRuntimeNonce(t, result.SettingsJSON, nonce)
 	if _, err := os.Stat(result.SettingsPath); !os.IsNotExist(err) {
@@ -185,9 +192,10 @@ func TestMain(m *testing.M) {
 
 func runLauncherAgentdHelper() int {
 	captureEnv(os.Getenv("CORDUM_TEST_AGENTD_ENV_PATH"), map[string]string{
-		"CORDUM_AGENTD_NONCE":  os.Getenv("CORDUM_AGENTD_NONCE"),
-		"CORDUM_AGENTD_SOCKET": os.Getenv("CORDUM_AGENTD_SOCKET"),
-		"CORDUM_API_KEY":       os.Getenv("CORDUM_API_KEY"),
+		"CORDUM_AGENTD_LISTENER_FD": os.Getenv("CORDUM_AGENTD_LISTENER_FD"),
+		"CORDUM_AGENTD_NONCE":       os.Getenv("CORDUM_AGENTD_NONCE"),
+		"CORDUM_AGENTD_SOCKET":      os.Getenv("CORDUM_AGENTD_SOCKET"),
+		"CORDUM_API_KEY":            os.Getenv("CORDUM_API_KEY"),
 	})
 	if os.Getenv("CORDUM_TEST_AGENTD_EXIT_EARLY") == "1" {
 		return 9
@@ -196,7 +204,7 @@ func runLauncherAgentdHelper() int {
 	if err != nil {
 		return 4
 	}
-	ln, err := net.Listen("tcp", u.Host)
+	ln, err := launcherAgentdHelperListener(u.Host)
 	if err != nil {
 		return 5
 	}
@@ -211,6 +219,22 @@ func runLauncherAgentdHelper() int {
 		}
 		_ = conn.Close()
 	}
+}
+
+func launcherAgentdHelperListener(host string) (net.Listener, error) {
+	if raw := strings.TrimSpace(os.Getenv("CORDUM_AGENTD_LISTENER_FD")); raw != "" {
+		fd, err := strconv.Atoi(raw)
+		if err != nil {
+			return nil, err
+		}
+		file := os.NewFile(uintptr(fd), "cordum-agentd-listener")
+		if file == nil {
+			return nil, os.ErrInvalid
+		}
+		defer func() { _ = file.Close() }()
+		return net.FileListener(file)
+	}
+	return net.Listen("tcp", host)
 }
 
 func runLauncherClaudeHelper() int {

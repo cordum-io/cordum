@@ -20,6 +20,7 @@ import (
 	"time"
 
 	edgecore "github.com/cordum/cordum/core/edge"
+	"github.com/cordum/cordum/core/edge/keychain"
 )
 
 type GatewayClient struct {
@@ -31,7 +32,10 @@ type GatewayClient struct {
 	client      httpDoer
 }
 
-var secretLikePattern = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+|sk-[A-Za-z0-9._~+/=-]+`)
+var (
+	keychainRedactionMarkerPattern = regexp.MustCompile(`\[REDACTED:[^\]]+\]`)
+	agentdApprovalURLPattern       = regexp.MustCompile(`/edge/approvals/[A-Za-z0-9_-]+`)
+)
 
 func NewGatewayClient(cfg GatewayClientConfig) (*GatewayClient, error) {
 	base := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
@@ -307,12 +311,25 @@ func boundedLabels(labels edgecore.Labels) edgecore.Labels {
 }
 
 func redactSecretLike(value string) string {
-	return secretLikePattern.ReplaceAllStringFunc(value, func(match string) string {
-		if strings.HasPrefix(strings.ToLower(match), "bearer ") {
-			return "Bearer [REDACTED]"
-		}
-		return "[REDACTED]"
+	protectedValue, restore := protectAgentdApprovalURLs(value)
+	out := keychain.RedactSecretLike(protectedValue)
+	out = restore(out)
+	out = strings.ReplaceAll(out, "[REDACTED:bearer]", "Bearer [REDACTED]")
+	return keychainRedactionMarkerPattern.ReplaceAllString(out, "[REDACTED]")
+}
+
+func protectAgentdApprovalURLs(value string) (string, func(string) string) {
+	var protected []string
+	out := agentdApprovalURLPattern.ReplaceAllStringFunc(value, func(match string) string {
+		protected = append(protected, match)
+		return fmt.Sprintf("\ue000CORDUM_APPROVAL_URL_%d\ue000", len(protected)-1)
 	})
+	return out, func(redacted string) string {
+		for i, original := range protected {
+			redacted = strings.ReplaceAll(redacted, fmt.Sprintf("\ue000CORDUM_APPROVAL_URL_%d\ue000", i), original)
+		}
+		return redacted
+	}
 }
 
 func randomHex(n int) string {

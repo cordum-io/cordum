@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cordum/cordum/core/edge/safeexec"
@@ -77,7 +78,26 @@ func removeAllWithRetry(root string, maxWait, interval time.Duration) {
 	}
 }
 
+var (
+	reservedLoopbackMu        sync.Mutex
+	reservedLoopbackListeners = map[string]net.Listener{}
+)
+
 func reserveLoopbackHookURL() (string, error) {
+	if !supportsAgentdListenerInheritance() {
+		return reserveLoopbackHookURLLegacy()
+	}
+	rawURL, ln, err := reserveLoopbackHookListener()
+	if err != nil {
+		return "", err
+	}
+	reservedLoopbackMu.Lock()
+	reservedLoopbackListeners[rawURL] = ln
+	reservedLoopbackMu.Unlock()
+	return rawURL, nil
+}
+
+func reserveLoopbackHookURLLegacy() (string, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", fmt.Errorf("reserve loopback agentd port: %w", err)
@@ -85,6 +105,28 @@ func reserveLoopbackHookURL() (string, error) {
 	addr := ln.Addr().String()
 	_ = ln.Close()
 	return "http://" + addr + "/v1/edge/hooks/claude", nil
+}
+
+func reserveLoopbackHookListener() (string, net.Listener, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", nil, fmt.Errorf("reserve loopback agentd listener: %w", err)
+	}
+	return "http://" + ln.Addr().String() + "/v1/edge/hooks/claude", ln, nil
+}
+
+func releaseReservedLoopbackHookURL(rawURL string) {
+	reservedLoopbackMu.Lock()
+	ln := reservedLoopbackListeners[rawURL]
+	delete(reservedLoopbackListeners, rawURL)
+	reservedLoopbackMu.Unlock()
+	if ln != nil {
+		_ = ln.Close()
+	}
+}
+
+func supportsAgentdListenerInheritance() bool {
+	return runtime.GOOS != "windows"
 }
 
 func resolveClaudePath(opts LaunchOptions) (string, error) {
@@ -202,7 +244,7 @@ func dialLoopback(host string) error {
 
 func rejectSettingsOverride(args []string) error {
 	for _, arg := range args {
-		if arg == "--settings" || strings.HasPrefix(arg, "--settings=") {
+		if strings.HasPrefix(arg, "--settings") {
 			return fmt.Errorf("refusing claude --settings override; Cordum supplies temporary governed settings")
 		}
 	}

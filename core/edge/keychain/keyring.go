@@ -227,13 +227,22 @@ func safeBackendError(err error) error {
 // never carries a credential.
 func redactBackendError(msg string) string {
 	const maxLen = 200
+	cleaned := RedactSecretLike(msg)
+	if len(cleaned) > maxLen {
+		cleaned = cleaned[:maxLen] + "...[truncated]"
+	}
+	return cleaned
+}
+
+// RedactSecretLike removes credential-shaped substrings from raw diagnostic
+// text. It is the canonical raw-string redaction primitive for Edge local
+// boundaries; callers that need JSON/value-preserving redaction should use
+// core/edge.RedactValue instead.
+func RedactSecretLike(msg string) string {
 	cleaned := strings.ReplaceAll(msg, "\n", " ")
 	cleaned = strings.ReplaceAll(cleaned, "\r", " ")
 	for _, p := range backendErrorRedactPatterns {
 		cleaned = p.MustCompile.ReplaceAllString(cleaned, p.Replacement)
-	}
-	if len(cleaned) > maxLen {
-		cleaned = cleaned[:maxLen] + "...[truncated]"
 	}
 	return cleaned
 }

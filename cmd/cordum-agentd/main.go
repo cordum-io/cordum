@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -143,6 +145,10 @@ func defaultRunOptionsWithRecorder(ctx context.Context, cfg runConfig, recorder 
 	if err != nil {
 		return agentdcore.RunOptions{}, err
 	}
+	inheritedListener, err := inheritedListenerFromEnv(env)
+	if err != nil {
+		return agentdcore.RunOptions{}, err
+	}
 	meta := agentdcore.GatherLocalMetadata(agentdcore.LocalMetadataOptions{Env: env})
 	nonce, err := agentdcore.ValidateExternalNonce(envValue(env, "CORDUM_AGENTD_NONCE"))
 	if err != nil {
@@ -156,11 +162,33 @@ func defaultRunOptionsWithRecorder(ctx context.Context, cfg runConfig, recorder 
 	// Prometheus registry as the rest of agentd's edge metrics.
 	claude.SetRedactionRecorder(recorder)
 	return agentdcore.RunOptions{
-		Config:   loaded,
-		Metadata: meta,
-		Nonce:    nonce,
-		Recorder: recorder,
+		Config:            loaded,
+		Metadata:          meta,
+		Nonce:             nonce,
+		Recorder:          recorder,
+		InheritedListener: inheritedListener,
 	}, nil
+}
+
+func inheritedListenerFromEnv(env map[string]string) (net.Listener, error) {
+	raw := strings.TrimSpace(envValue(env, "CORDUM_AGENTD_LISTENER_FD"))
+	if raw == "" {
+		return nil, nil
+	}
+	fd, err := strconv.Atoi(raw)
+	if err != nil || fd < 0 {
+		return nil, fmt.Errorf("CORDUM_AGENTD_LISTENER_FD invalid")
+	}
+	file := os.NewFile(uintptr(fd), "cordum-agentd-listener")
+	if file == nil {
+		return nil, fmt.Errorf("CORDUM_AGENTD_LISTENER_FD invalid")
+	}
+	defer func() { _ = file.Close() }()
+	ln, err := net.FileListener(file)
+	if err != nil {
+		return nil, fmt.Errorf("open inherited agentd listener: %w", err)
+	}
+	return ln, nil
 }
 
 func writeUsage(w io.Writer) {

@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/cordum/cordum/core/edge/safeexec"
@@ -14,24 +17,48 @@ import (
 
 func startLaunchAgentd(ctx context.Context, cfg launchConfig, opts LaunchOptions, meta LaunchMetadata, stderr io.Writer) (*launchAgentd, error) {
 	agentdCtx, cancel := context.WithCancel(ctx)
+	env := cfg.agentdEnv(meta)
+	var inheritedFile *os.File
+	if cfg.AgentdListener != nil {
+		file, err := listenerFileForInheritance(cfg.AgentdListener)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		inheritedFile = file
+		env = append(env, "CORDUM_AGENTD_LISTENER_FD=3")
+	}
 	cmd, err := safeexec.CommandContext(agentdCtx, cfg.AgentdPath, nil, safeexec.Options{
 		Dir:            meta.CWD,
-		Env:            cfg.agentdEnv(meta),
+		Env:            env,
 		AllowEnv:       []string{"CORDUMCTL_*"},
 		Stderr:         stderr,
 		MaxStdoutBytes: 1 << 20,
 		MaxStderrBytes: 1 << 20,
 	})
 	if err != nil {
+		if inheritedFile != nil {
+			_ = inheritedFile.Close()
+		}
 		cancel()
 		return nil, fmt.Errorf("prepare cordum-agentd: %w", err)
+	}
+	if inheritedFile != nil {
+		cmd.ExtraFiles = append(cmd.ExtraFiles, inheritedFile)
 	}
 	if opts.Verbose {
 		cmd.Stdout = safeexec.LimitWriter(stderr, 1<<20)
 	}
 	if err := cmd.Start(); err != nil {
+		if inheritedFile != nil {
+			_ = inheritedFile.Close()
+		}
 		cancel()
 		return nil, fmt.Errorf("start cordum-agentd: %w", err)
+	}
+	if inheritedFile != nil {
+		_ = inheritedFile.Close()
+		_ = cfg.AgentdListener.Close()
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -39,6 +66,21 @@ func startLaunchAgentd(ctx context.Context, cfg launchConfig, opts LaunchOptions
 		close(done)
 	}()
 	return &launchAgentd{cmd: cmd, cancel: cancel, done: done}, nil
+}
+
+func listenerFileForInheritance(ln net.Listener) (*os.File, error) {
+	if runtime.GOOS == "windows" {
+		return nil, errors.New("agentd listener fd inheritance is not supported on Windows")
+	}
+	tcp, ok := ln.(*net.TCPListener)
+	if !ok {
+		return nil, fmt.Errorf("agentd listener inheritance requires TCP listener, got %T", ln)
+	}
+	file, err := tcp.File()
+	if err != nil {
+		return nil, fmt.Errorf("prepare inherited agentd listener: %w", err)
+	}
+	return file, nil
 }
 
 type launchAgentd struct {

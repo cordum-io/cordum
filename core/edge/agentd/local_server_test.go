@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -412,6 +413,85 @@ func TestLocalServerRejectsMismatchedSessionIDsWithoutWritingEvent(t *testing.T)
 	}
 	if len(writer.events) != 0 {
 		t.Fatalf("events written on mismatch = %d, want 0", len(writer.events))
+	}
+}
+
+func TestRequestMatchesStateRejectsEmptySessionID(t *testing.T) {
+	t.Parallel()
+
+	writer := &stubEventWriter{}
+	server, err := NewLocalServer(LocalServerConfig{
+		BindURL:      "http://127.0.0.1:8765/v1/edge/hooks/claude",
+		Nonce:        "nonce-123",
+		MaxBodyBytes: 1 << 20,
+		State:        SessionState{SessionID: "sess-1", ExecutionID: "exec-1", TenantID: "tenant-a"},
+		EventWriter:  writer,
+	})
+	if err != nil {
+		t.Fatalf("NewLocalServer: %v", err)
+	}
+	body := `{"event_name":"PreToolUse","execution_id":"exec-1","tool_name":"Bash"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/edge/hooks/claude", strings.NewReader(body))
+	req.Header.Set("X-Cordum-Agentd-Nonce", "nonce-123")
+	rr := httptest.NewRecorder()
+
+	server.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%q, want 409 for empty session spoof", rr.Code, rr.Body.String())
+	}
+	if len(writer.events) != 0 {
+		t.Fatalf("events written for empty-session spoof = %d, want 0", len(writer.events))
+	}
+}
+
+func TestAgentdLocalServer503FlushesAuditEvent(t *testing.T) {
+	t.Parallel()
+
+	writer := &stubEventWriter{}
+	server := newAtomicHookTestServer(t, atomicHookTestState(), stubAgentdClientFunc(func(context.Context, claude.AgentdRequest) (claude.AgentdDecision, error) {
+		return claude.AgentdDecision{}, errors.New("gateway unavailable with sk-test-secret")
+	}), writer)
+
+	rr := serveAtomicHook(t, server, context.Background(), atomicHookRequestBody(t), "nonce-123")
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d body=%q, want 503", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "sk-test-secret") || strings.Contains(rr.Body.String(), "gateway unavailable") {
+		t.Fatalf("503 response leaked evaluator internals: %q", rr.Body.String())
+	}
+	if len(writer.events) == 0 {
+		t.Fatal("evaluator error dropped hook audit buffer; want receipt event flushed before 503")
+	}
+	if writer.events[0].Kind != edgecore.EventKindHookPreToolUse {
+		t.Fatalf("first flushed event kind = %q, want hook receipt", writer.events[0].Kind)
+	}
+}
+
+func TestRequestLabelsTruncatedAtIngress(t *testing.T) {
+	t.Parallel()
+
+	server, err := NewLocalServer(LocalServerConfig{
+		BindURL: "http://127.0.0.1:8765/v1/edge/hooks/claude",
+		Nonce:   "nonce-123",
+		State:   atomicHookTestState(),
+	})
+	if err != nil {
+		t.Fatalf("NewLocalServer: %v", err)
+	}
+	labels := make(map[string]string, edgecore.MaxLabelEntries+50)
+	for i := 0; i < edgecore.MaxLabelEntries+50; i++ {
+		labels[fmt.Sprintf("label_%03d", i)] = "value"
+	}
+
+	event := server.hookEventAt(claude.AgentdRequest{
+		EventName: "PreToolUse",
+		Labels:    labels,
+	}, time.Now().UTC())
+
+	if len(event.Labels) > edgecore.MaxLabelEntries {
+		t.Fatalf("labels persisted = %d, want <= MaxLabelEntries(%d)", len(event.Labels), edgecore.MaxLabelEntries)
 	}
 }
 
