@@ -137,7 +137,6 @@ func TestHandlerCreateRedactedResponse(t *testing.T) {
 		"transport":"http",
 		"endpoint":"https://mcp.example.com/tools",
 		"auth_secret_ref":"secret://vault/mcp/tenant-tools",
-		"resolved_token_for_attack":"sk-test-raw-token",
 		"labels":{"team":"platform"},
 		"risk":"high",
 		"enabled":true

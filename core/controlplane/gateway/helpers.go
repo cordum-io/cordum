@@ -1168,6 +1168,7 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
 	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -1330,6 +1331,12 @@ func (s *server) requirePermissionOrRole(w http.ResponseWriter, r *http.Request,
 		if err := s.permChecker.RequirePermission(r, permission); err != nil {
 			writeForbidden(w, r, err)
 			return false
+		}
+		if len(legacyRoles) > 0 {
+			if err := s.requireRole(r, legacyRoles...); err != nil {
+				writeForbidden(w, r, err)
+				return false
+			}
 		}
 		return s.requireLicensePermission(w, r, permission)
 	}

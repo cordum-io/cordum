@@ -165,6 +165,7 @@ type server struct {
 	tenant          string
 	started         time.Time
 	auth            auth.AuthProvider
+	oidcMappingMu   sync.Mutex
 	entitlements    *licensing.EntitlementResolver
 	telemetry       *telemetry.Collector
 	telemetryState  *telemetry.Store
@@ -1291,6 +1292,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))
 	s.registerRoute(mux, "GET /api/v1/workers/{id}", s.instrumented("/api/v1/workers/{id}", s.handleGetWorker))
 	s.registerRoute(mux, "GET /api/v1/workers/{id}/jobs", s.instrumented("/api/v1/workers/{id}/jobs", s.handleGetWorkerJobs))
+	s.registerRoute(mux, "POST /api/v1/workers/{id}/revoke-session", s.instrumented("/api/v1/workers/{id}/revoke-session", s.handleRevokeWorkerSession))
 	s.registerRoute(mux, "GET /api/v1/workers/credentials", s.instrumented("/api/v1/workers/credentials", s.handleListWorkerCredentials))
 	s.registerRoute(mux, "POST /api/v1/workers/credentials", s.instrumented("/api/v1/workers/credentials", s.handleCreateWorkerCredential))
 	s.registerRoute(mux, "DELETE /api/v1/workers/credentials/{worker_id}", s.instrumented("/api/v1/workers/credentials/{worker_id}", s.handleDeleteWorkerCredential))

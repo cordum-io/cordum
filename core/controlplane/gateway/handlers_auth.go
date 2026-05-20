@@ -163,10 +163,18 @@ func (s *server) emitAuthFailure(r *http.Request, username, authMethod, reason s
 		Extra: map[string]string{
 			"source_ip":   ip,
 			"auth_method": authMethod,
-			"path":        r.URL.Path,
+			"path":        sanitizeAuthFailurePath(r.URL.Path),
 		},
 	})
 	slog.Warn("auth failure audited", "ip", ip, "username", redactUsername(username), "method", authMethod, "reason", reason)
+}
+
+func sanitizeAuthFailurePath(path string) string {
+	path = strings.TrimSpace(path)
+	if strings.HasPrefix(path, "/api/v1/auth/keys/") {
+		return "/api/v1/auth/keys/{id}"
+	}
+	return path
 }
 
 // ---------------------------------------------------------------------------
@@ -284,6 +292,9 @@ func (s *server) handleUpdateOIDCGroupRoleMapping(w http.ResponseWriter, r *http
 		writeJSONDecodeError(w, err, "invalid json")
 		return
 	}
+
+	s.oidcMappingMu.Lock()
+	defer s.oidcMappingMu.Unlock()
 
 	// Capture the live provider's pre-update state so we can roll the live
 	// provider back if persistence subsequently fails. Without this rollback
@@ -462,19 +473,6 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err == nil && user != nil {
-			if user.Disabled {
-				// Burn a bcrypt cycle so the disabled path takes the same
-				// wall-clock time as a real wrong-password check; collapse the
-				// response shape to AUTH_INVALID_CREDENTIALS so the caller
-				// cannot distinguish "user disabled" from "wrong password".
-				// emitAuthFailure already records the specific reason in slog
-				// for server-side ops debugging.
-				_ = bcrypt.CompareHashAndPassword(loginTimingDummyHash, []byte(password)) //nolint:errcheck
-				s.emitAuthFailure(r, username, "password", "user_disabled")
-				writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid credentials")
-				return
-			}
-
 			// Brute-force protection: check throttle before password validation.
 			if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
 				if err := redisStore.CheckLoginThrottle(r.Context(), username, clientIP(r)); err != nil {
@@ -488,6 +486,21 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 					writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid credentials")
 					return
 				}
+			}
+			if user.Disabled {
+				// Burn a bcrypt cycle so the disabled path takes the same
+				// wall-clock time as a real wrong-password check; collapse the
+				// response shape to AUTH_INVALID_CREDENTIALS so the caller
+				// cannot distinguish "user disabled" from "wrong password".
+				// emitAuthFailure already records the specific reason in slog
+				// for server-side ops debugging.
+				_ = bcrypt.CompareHashAndPassword(loginTimingDummyHash, []byte(password)) //nolint:errcheck
+				s.emitAuthFailure(r, username, "password", "user_disabled")
+				if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
+					redisStore.RecordFailedLogin(r.Context(), username, clientIP(r))
+				}
+				writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid credentials")
+				return
 			}
 
 			if userStore.ValidatePassword(r.Context(), user, password) {
@@ -520,6 +533,11 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
 				redisStore.RecordFailedLogin(r.Context(), username, clientIP(r))
 			}
+		} else if err != nil && !errors.Is(err, auth.ErrUserNotFound) {
+			_ = bcrypt.CompareHashAndPassword(loginTimingDummyHash, []byte(password)) //nolint:errcheck
+			s.emitAuthFailure(r, username, "password", "user_store_error")
+			writeInternalError(w, r, "login user lookup", err)
+			return
 		} else if username != "" {
 			// Timing equalization: spend bcrypt time even when user is not found,
 			// preventing username enumeration via response time side-channel.
@@ -777,10 +795,14 @@ func (s *server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid current password")
 		return
 	}
+	if err := auth.ValidatePassword(req.NewPassword); err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthPasswordInvalid, err.Error())
+		return
+	}
 
 	// Update password
 	if err := userStore.UpdatePassword(r.Context(), user.ID, req.NewPassword); err != nil {
-		writeJSONError(w, http.StatusBadRequest, errorCodeAuthPasswordInvalid, err.Error())
+		writeInternalError(w, r, "change password", err)
 		return
 	}
 
@@ -990,8 +1012,10 @@ func (s *server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build update user with only the fields to change
-	update := &auth.User{ID: userID}
+	// Build update user with existing immutable identity fields plus only the
+	// mutable fields requested by the client. Passing username/tenant through
+	// avoids future store refactors losing the key context they need.
+	update := &auth.User{ID: userID, Username: existing.Username, Tenant: existing.Tenant}
 	if strings.TrimSpace(req.Email) != "" {
 		update.Email = strings.TrimSpace(req.Email)
 	}

@@ -518,6 +518,34 @@ func TestUserStore_DeleteAndGetReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestUserStoreSoftDelete_RemovesFromTenantIndex(t *testing.T) {
+	store, srv := newTestUserStore(t)
+	ctx := context.Background()
+	user := &User{Username: "tenant-index-delete", Tenant: "default", Role: "user"}
+	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	ok, err := srv.SIsMember(userTenantIndexPrefix+"default", user.ID)
+	if err != nil {
+		t.Fatalf("SIsMember precondition: %v", err)
+	}
+	if !ok {
+		t.Fatalf("precondition: tenant index does not contain user ID %q", user.ID)
+	}
+
+	if err := store.Delete(ctx, user.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	ok, err = srv.SIsMember(userTenantIndexPrefix+"default", user.ID)
+	if err != nil && !strings.Contains(err.Error(), "no such key") {
+		t.Fatalf("SIsMember after delete: %v", err)
+	}
+	if ok {
+		t.Fatalf("soft-delete left stale user ID %q in tenant index", user.ID)
+	}
+}
+
 func TestUserStore_TenantIsolation(t *testing.T) {
 	store, _ := newTestUserStore(t)
 	ctx := context.Background()

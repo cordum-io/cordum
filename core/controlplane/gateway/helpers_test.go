@@ -451,6 +451,34 @@ func setTestLicense(t *testing.T, s *server, claims licensing.Claims) {
 	resolver.ForceState(plan, entitlements, claims.Rights)
 }
 
+func TestRequirePermissionOrRoleKeepsLegacyRoleGateWhenRBACPermits(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = testAuthProvider{}
+	setTestEntitlements(t, s, licensing.PlanEnterprise, func(e *licensing.Entitlements) {
+		e.RBAC = true
+	})
+	if err := s.rbacStore.PutRole(context.Background(), &auth.RoleDefinition{
+		Name:        "config-writer",
+		Permissions: []string{auth.PermConfigWrite},
+	}); err != nil {
+		t.Fatalf("put role: %v", err)
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/config", strings.NewReader(`{}`)), &auth.AuthContext{
+		Tenant:      "default",
+		Role:        "config-writer",
+		PrincipalID: "writer",
+	})
+	rec := httptest.NewRecorder()
+
+	if s.requirePermissionOrRole(rec, req, auth.PermConfigWrite, "admin") {
+		t.Fatal("custom role with permission bypassed legacy admin role gate")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // failingSafetyClient is a test stub whose Evaluate always returns an error,
 // used to exercise the POLICY_CHECK_FAIL_MODE (open/closed) paths.
 type failingSafetyClient struct {

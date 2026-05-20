@@ -5741,6 +5741,45 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+  /api/v1/workers/{id}/revoke-session:
+    parameters:
+    - $ref: '#/components/parameters/WorkerID'
+    - $ref: '#/components/parameters/TenantID'
+    post:
+      operationId: revokeWorkerSession
+      x-cordum-error-codes:
+      - WORKER_SESSION_INVALID
+      summary: Revoke an active worker session
+      tags:
+      - Workers
+      responses:
+        '200':
+          description: Worker session revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  worker_id:
+                    type: string
+                  tenant:
+                    type: string
+                  revoked:
+                    type: boolean
+                required:
+                - worker_id
+                - tenant
+                - revoked
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/workers/credentials:
     get:
       operationId: listWorkerCredentials
@@ -13702,6 +13741,8 @@ components:
       properties:
         worker_id:
           type: string
+        tenant_id:
+          type: string
         allowed_pools:
           type: array
           items:
@@ -13722,6 +13763,7 @@ components:
           format: date-time
       required:
       - worker_id
+      - tenant_id
       - created_by
       - created_at
     WorkerCredentialIssue:

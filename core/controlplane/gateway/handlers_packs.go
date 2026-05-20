@@ -348,7 +348,7 @@ func (s *server) installPackFromDir(ctx context.Context, bundleDir string, opts 
 	}
 	if err := s.updatePackRegistry(ctx, record); err != nil {
 		if s.workerCredentialStore != nil && packCredential != nil {
-			_ = s.workerCredentialStore.Revoke(ctx, packCredential.WorkerID)
+			_ = s.workerCredentialStore.Revoke(ctx, packCredentialTenant(ctx, s.tenant), packCredential.WorkerID)
 		}
 		if s.topicRegistry != nil {
 			_ = s.topicRegistry.DeleteMany(ctx, registeredTopicNames)
@@ -458,7 +458,8 @@ func (s *server) handleUninstallPack(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if s.workerCredentialStore != nil {
-		if err := s.workerCredentialStore.Revoke(r.Context(), packWorkerID(packID)); err != nil && !errors.Is(err, workercredentials.ErrCredentialNotFound) {
+		tenant := packCredentialTenant(r.Context(), s.tenant)
+		if err := s.workerCredentialStore.Revoke(r.Context(), tenant, packWorkerID(packID)); err != nil && !errors.Is(err, workercredentials.ErrCredentialNotFound) {
 			writeInternalError(w, r, "pack worker credential cleanup", err)
 			return
 		}
@@ -552,6 +553,7 @@ func (s *server) issuePackWorkerCredential(ctx context.Context, packID string, r
 	}
 
 	issued, err := s.workerCredentialStore.Create(ctx, workercredentials.IssueInput{
+		TenantID:      packCredentialTenant(ctx, s.tenant),
 		WorkerID:      workerID,
 		AllowedPools:  allowedPools,
 		AllowedTopics: allowedTopics,
@@ -570,6 +572,17 @@ func (s *server) issuePackWorkerCredential(ctx context.Context, packID string, r
 		PackID:        issued.Credential.PackID,
 		CreatedAt:     issued.Credential.CreatedAt,
 	}, nil
+}
+
+func packCredentialTenant(ctx context.Context, fallback string) string {
+	if authCtx := auth.FromContext(ctx); authCtx != nil && strings.TrimSpace(authCtx.Tenant) != "" {
+		return strings.TrimSpace(authCtx.Tenant)
+	}
+	fallback = strings.TrimSpace(fallback)
+	if fallback == "" {
+		return "default"
+	}
+	return fallback
 }
 
 func packWorkerID(packID string) string {

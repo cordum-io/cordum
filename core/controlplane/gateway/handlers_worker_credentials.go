@@ -23,6 +23,7 @@ type createWorkerCredentialRequest struct {
 
 type workerCredentialResponse struct {
 	WorkerID      string   `json:"worker_id"`
+	TenantID      string   `json:"tenant_id,omitempty"`
 	AllowedPools  []string `json:"allowed_pools,omitempty"`
 	AllowedTopics []string `json:"allowed_topics,omitempty"`
 	PackID        string   `json:"pack_id,omitempty"`
@@ -52,6 +53,15 @@ func writeWorkerCredentialAccessError(w http.ResponseWriter, status int, err err
 	writeJSONError(w, status, code, err.Error())
 }
 
+func (s *server) workerCredentialTenant(w http.ResponseWriter, r *http.Request) (string, bool) {
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeAuthRequestInvalid, "tenant required")
+		return "", false
+	}
+	return tenant, true
+}
+
 func (s *server) handleListWorkerCredentials(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermWorkerCredentialsRead, "admin") {
 		return
@@ -60,8 +70,12 @@ func (s *server) handleListWorkerCredentials(w http.ResponseWriter, r *http.Requ
 		writeErrorJSON(w, http.StatusServiceUnavailable, "worker credential store unavailable")
 		return
 	}
+	tenant, ok := s.workerCredentialTenant(w, r)
+	if !ok {
+		return
+	}
 
-	records, err := s.workerCredentialStore.List(r.Context())
+	records, err := s.workerCredentialStore.List(r.Context(), tenant)
 	if err != nil {
 		writeInternalError(w, r, "list worker credentials", err)
 		return
@@ -80,6 +94,10 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 	}
 	if s.workerCredentialStore == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "worker credential store unavailable")
+		return
+	}
+	tenant, ok := s.workerCredentialTenant(w, r)
+	if !ok {
 		return
 	}
 
@@ -125,39 +143,37 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	existing, err := s.workerCredentialStore.Get(r.Context(), req.WorkerID)
+	existing, err := s.workerCredentialStore.Get(r.Context(), tenant, req.WorkerID)
 	if err != nil {
 		writeInternalError(w, r, "get worker credential", err)
 		return
-	}
-	if existing == nil {
-		registeredWorkers, connectedWorkers, _, err := s.effectiveWorkerCount(r.Context())
-		if err != nil {
-			writeInternalError(w, r, "count workers", err)
-			return
-		}
-		projectedWorkers := connectedWorkers
-		if registeredWorkers+1 > projectedWorkers {
-			projectedWorkers = registeredWorkers + 1
-		}
-		if limitErr := licensing.CheckWorkerLimit(int64(projectedWorkers), s.currentEntitlements()); limitErr != nil {
-			writeTierLimitJSON(w, limitErr)
-			return
-		}
 	}
 
 	createdBy := strings.TrimSpace(policybundles.PolicyActorID(r))
 	if createdBy == "" {
 		createdBy = "admin"
 	}
-	issued, err := s.workerCredentialStore.Create(r.Context(), workercredentials.IssueInput{
+	issued, err := s.workerCredentialStore.CreateWithLimit(r.Context(), workercredentials.IssueInput{
+		TenantID:      tenant,
 		WorkerID:      req.WorkerID,
 		AllowedPools:  req.AllowedPools,
 		AllowedTopics: req.AllowedTopics,
 		AgentID:       req.AgentID,
 		CreatedBy:     createdBy,
+	}, workercredentials.CreateLimit{
+		Entitlements:     s.currentEntitlements(),
+		ConnectedWorkers: s.connectedWorkerCount(),
 	})
 	if err != nil {
+		var limitErr *licensing.TierLimitError
+		if errors.As(err, &limitErr) {
+			writeTierLimitJSON(w, limitErr)
+			return
+		}
+		if errors.Is(err, workercredentials.ErrCredentialNotFound) {
+			writeJSONError(w, http.StatusNotFound, errorCodeWorkerCredNotFound, "worker credential not found")
+			return
+		}
 		writeJSONError(w, http.StatusBadRequest, errorCodeWorkerCredBindingInvalid, err.Error())
 		return
 	}
@@ -223,6 +239,10 @@ func (s *server) handleDeleteWorkerCredential(w http.ResponseWriter, r *http.Req
 		writeErrorJSON(w, http.StatusServiceUnavailable, "worker credential store unavailable")
 		return
 	}
+	tenant, ok := s.workerCredentialTenant(w, r)
+	if !ok {
+		return
+	}
 
 	workerID := strings.TrimSpace(r.PathValue("worker_id"))
 	if err := validateWorkerID(workerID); err != nil {
@@ -230,7 +250,7 @@ func (s *server) handleDeleteWorkerCredential(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	existing, err := s.workerCredentialStore.Get(r.Context(), workerID)
+	existing, err := s.workerCredentialStore.Get(r.Context(), tenant, workerID)
 	if err != nil {
 		writeInternalError(w, r, "get worker credential", err)
 		return
@@ -240,13 +260,19 @@ func (s *server) handleDeleteWorkerCredential(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := s.workerCredentialStore.Revoke(r.Context(), workerID); err != nil {
+	if err := s.workerCredentialStore.Revoke(r.Context(), tenant, workerID); err != nil {
 		if errors.Is(err, workercredentials.ErrCredentialNotFound) {
 			writeJSONError(w, http.StatusNotFound, errorCodeWorkerCredNotFound, "worker credential not found")
 			return
 		}
 		writeInternalError(w, r, "revoke worker credential", err)
 		return
+	}
+	if s.sessionIssuer != nil {
+		if err := s.sessionIssuer.RevokeByAgent(r.Context(), tenant, workerID); err != nil {
+			writeInternalError(w, r, "revoke worker session by credential", err)
+			return
+		}
 	}
 
 	// Clear agent reverse-lookup so revoked credentials don't inject stale agent_id.
@@ -314,6 +340,7 @@ func validateWorkerID(workerID string) error {
 func workerCredentialResponseFromRecord(record workercredentials.Credential) workerCredentialResponse {
 	return workerCredentialResponse{
 		WorkerID:      record.WorkerID,
+		TenantID:      record.TenantID,
 		AllowedPools:  record.AllowedPools,
 		AllowedTopics: record.AllowedTopics,
 		PackID:        record.PackID,
