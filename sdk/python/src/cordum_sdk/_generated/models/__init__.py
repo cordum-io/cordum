@@ -424,6 +424,7 @@ from .resolve_shadow_agent_finding_request import ResolveShadowAgentFindingReque
 from .retry_dlq_entry_response_200 import RetryDLQEntryResponse200
 from .revoke_delegation_token_body import RevokeDelegationTokenBody
 from .revoke_delegation_token_response_200 import RevokeDelegationTokenResponse200
+from .revoke_worker_session_response_200 import RevokeWorkerSessionResponse200
 from .revoke_shadow_exception_request import RevokeShadowExceptionRequest
 from .role_definition import RoleDefinition
 from .role_detail_response import RoleDetailResponse
@@ -908,6 +909,7 @@ __all__ = (
     "RetryDLQEntryResponse200",
     "RevokeDelegationTokenBody",
     "RevokeDelegationTokenResponse200",
+    "RevokeWorkerSessionResponse200",
     "RevokeShadowExceptionRequest",
     "RoleDefinition",
     "RoleDetailResponse",

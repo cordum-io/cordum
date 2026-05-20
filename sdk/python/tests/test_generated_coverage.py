@@ -48,3 +48,11 @@ def test_revoke_worker_session_endpoint_module_is_generated() -> None:
 
     for function_name in ("sync_detailed", "asyncio_detailed", "sync", "asyncio"):
         assert callable(getattr(module, function_name, None)), f"{module_name}.{function_name}"
+
+
+def test_revoke_worker_session_response_model_is_exported() -> None:
+    models = importlib.import_module("cordum_sdk._generated.models")
+    model_name = "RevokeWorkerSessionResponse200"
+
+    assert getattr(models, model_name, None) is not None, model_name
+    assert model_name in getattr(models, "__all__", ()), model_name
