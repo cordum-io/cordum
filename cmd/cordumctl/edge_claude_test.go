@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -53,11 +52,8 @@ func TestEdgeClaudeDryRunSettingsOutputRedactsSecrets(t *testing.T) {
 	if strings.Contains(env["CORDUM_AGENTD_SOCKET"], "nonce=") {
 		t.Fatalf("agentd socket URL leaked nonce: %s", env["CORDUM_AGENTD_SOCKET"])
 	}
-	if runtime.GOOS != "windows" && strings.TrimSpace(env["CORDUM_AGENTD_LISTENER_FD"]) == "" {
+	if strings.TrimSpace(env["CORDUM_AGENTD_LISTENER_FD"]) == "" {
 		t.Fatalf("agentd helper did not receive inherited listener fd: %#v", env)
-	}
-	if runtime.GOOS == "windows" && strings.TrimSpace(env["CORDUM_AGENTD_LISTENER_FD"]) != "" {
-		t.Fatalf("agentd helper received unsupported listener fd on Windows: %#v", env)
 	}
 }
 
