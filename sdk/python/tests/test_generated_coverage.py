@@ -40,3 +40,11 @@ def test_every_generated_endpoint_exports_sync_and_async_callables() -> None:
         asyncio_fn = getattr(module, "asyncio", None)
         if asyncio_fn is not None:
             assert callable(asyncio_fn), module_name
+
+
+def test_revoke_worker_session_endpoint_module_is_generated() -> None:
+    module_name = "cordum_sdk._generated.api.workers.revoke_worker_session"
+    module = importlib.import_module(module_name)
+
+    for function_name in ("sync_detailed", "asyncio_detailed", "sync", "asyncio"):
+        assert callable(getattr(module, function_name, None)), f"{module_name}.{function_name}"
