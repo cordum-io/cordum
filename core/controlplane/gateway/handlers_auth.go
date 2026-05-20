@@ -435,6 +435,11 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	password := strings.TrimSpace(req.Password)
 	if password == "" {
+		// Run bcrypt against the timing-pad so empty-password attempts spend
+		// the same wall-clock time as wrong-password attempts. Without this,
+		// an attacker can distinguish "blank field" from "credential check"
+		// purely from response latency.
+		_ = bcrypt.CompareHashAndPassword(loginTimingDummyHash, []byte(password)) //nolint:errcheck
 		s.emitAuthFailure(r, req.Username, "password", "empty_password")
 		writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid credentials")
 		return
@@ -458,17 +463,29 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 		if err == nil && user != nil {
 			if user.Disabled {
+				// Burn a bcrypt cycle so the disabled path takes the same
+				// wall-clock time as a real wrong-password check; collapse the
+				// response shape to AUTH_INVALID_CREDENTIALS so the caller
+				// cannot distinguish "user disabled" from "wrong password".
+				// emitAuthFailure already records the specific reason in slog
+				// for server-side ops debugging.
+				_ = bcrypt.CompareHashAndPassword(loginTimingDummyHash, []byte(password)) //nolint:errcheck
 				s.emitAuthFailure(r, username, "password", "user_disabled")
-				writeJSONError(w, http.StatusForbidden, errorCodeAuthUserDisabled, "invalid credentials")
+				writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid credentials")
 				return
 			}
 
 			// Brute-force protection: check throttle before password validation.
 			if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
 				if err := redisStore.CheckLoginThrottle(r.Context(), username, clientIP(r)); err != nil {
+					// Same shape as wrong-password — rate-limit must not be a
+					// user-enumeration oracle. Spend bcrypt time and emit
+					// AUTH_INVALID_CREDENTIALS; slog.Warn retains the throttle
+					// detail for ops.
+					_ = bcrypt.CompareHashAndPassword(loginTimingDummyHash, []byte(password)) //nolint:errcheck
 					s.emitAuthFailure(r, username, "password", "rate_limited")
 					slog.Warn("rate limit exceeded", "method", r.Method, "path", r.URL.Path, "error", err)
-					writeErrorJSON(w, http.StatusTooManyRequests, "rate limit exceeded")
+					writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid credentials")
 					return
 				}
 			}

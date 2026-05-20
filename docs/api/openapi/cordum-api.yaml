@@ -137,7 +137,6 @@ paths:
       operationId: login
       x-cordum-error-codes:
       - AUTH_INVALID_CREDENTIALS
-      - AUTH_USER_DISABLED
       summary: Authenticate with username and password
       tags:
       - Auth

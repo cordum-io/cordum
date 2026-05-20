@@ -2,7 +2,6 @@ package gateway
 
 const (
 	errorCodeAuthInvalidCredentials = "AUTH_INVALID_CREDENTIALS"
-	errorCodeAuthUserDisabled       = "AUTH_USER_DISABLED"
 	errorCodeAuthTokenInvalid       = "AUTH_TOKEN_INVALID"
 	errorCodeAuthOIDCCallbackFailed = "AUTH_OIDC_CALLBACK_FAILED"
 	errorCodeAuthRequestInvalid     = "AUTH_REQUEST_INVALID"
