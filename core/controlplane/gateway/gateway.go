@@ -168,10 +168,13 @@ type server struct {
 	tenant          string
 	started         time.Time
 	auth            auth.AuthProvider
-	oidcMappingMu   sync.Mutex
-	entitlements    *licensing.EntitlementResolver
-	telemetry       *telemetry.Collector
-	telemetryState  *telemetry.Store
+	// loginTimingCompare is nil in production and injectable in tests so
+	// login timing-equalization coverage does not rely on wall-clock bcrypt.
+	loginTimingCompare func(hash, password []byte) error
+	oidcMappingMu      sync.Mutex
+	entitlements       *licensing.EntitlementResolver
+	telemetry          *telemetry.Collector
+	telemetryState     *telemetry.Store
 
 	workflowStore         *wf.RedisStore
 	workflowEng           *wf.Engine

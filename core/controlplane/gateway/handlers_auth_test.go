@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -350,7 +349,8 @@ func TestHandleLogin_EntropyFailureReturns500(t *testing.T) {
 }
 
 // timingUserStore returns a user with a bcrypt hash for "exists" and
-// ErrUserNotFound for anything else, so we can measure bcrypt timing.
+// ErrUserNotFound for anything else, so login tests can exercise bcrypt-backed
+// password validation without Redis.
 type timingUserStore struct {
 	user *auth.User
 }
@@ -376,60 +376,6 @@ func (s *timingUserStore) ValidatePassword(_ context.Context, u *auth.User, pass
 	return bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)) == nil
 }
 func (s *timingUserStore) Close() error { return nil }
-
-func TestLoginTimingEqualization(t *testing.T) {
-	// Create a user with the same bcrypt cost as the timing dummy hash
-	// to ensure timing equalization works correctly.
-	hash, err := bcrypt.GenerateFromPassword([]byte("correct-password"), auth.BcryptCostFromEnv())
-	if err != nil {
-		t.Fatalf("generate hash: %v", err)
-	}
-	us := &timingUserStore{
-		user: &auth.User{
-			ID:           "u-timing",
-			Username:     "exists",
-			Tenant:       "default",
-			PasswordHash: string(hash),
-		},
-	}
-
-	provider := newBasicAuthForTest(t, map[string]string{
-		"CORDUM_API_KEYS": `[{"key":"fallback-key"}]`,
-	})
-	provider.SetUserStore(us)
-	s := &server{auth: provider, tenant: "default"}
-
-	// Measure: existing user + wrong password (bcrypt in ValidatePassword).
-	existsBody := `{"username":"exists","password":"wrong-password"}`
-	start := time.Now()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(existsBody))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	s.handleLogin(rec, req)
-	existsDuration := time.Since(start)
-
-	// Measure: non-existent user (should now do dummy bcrypt for timing equalization).
-	missingBody := `{"username":"missing","password":"wrong-password"}`
-	start = time.Now()
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(missingBody))
-	req.Header.Set("Content-Type", "application/json")
-	rec = httptest.NewRecorder()
-	s.handleLogin(rec, req)
-	missingDuration := time.Since(start)
-
-	// Both paths should take roughly the same time (bcrypt dominates).
-	// Allow up to 3x difference to account for system load variance.
-	ratio := float64(existsDuration) / float64(missingDuration)
-	if ratio > 3.0 || ratio < 0.33 {
-		t.Fatalf("timing oracle detected: exists=%v missing=%v ratio=%.2f (want 0.33-3.0)",
-			existsDuration, missingDuration, ratio)
-	}
-
-	// Both should take at least 30ms (bcrypt default cost is ~100ms).
-	if missingDuration < 30*time.Millisecond {
-		t.Fatalf("missing-user path too fast (%v) — timing equalization may not be working", missingDuration)
-	}
-}
 
 // ---- Login integration tests with RedisUserStore ----
 
@@ -597,87 +543,139 @@ func TestHandleAuthLogin_NoUserEnumerationViaResponseShape(t *testing.T) {
 	}
 }
 
-// authTimingResistanceTolerance bounds median variance between the
-// disabled-user early-return path and the known-good wrong-password path in
-// TestHandleAuthLogin_TimingResistantUnderEarlyReturn. The invariant we enforce
-// is "no whole-bcrypt-cycle gap" — not a specific microsecond bound. bcrypt
-// cost(12) is ~150-300ms on shared CI runners; 500ms covers scheduler noise
-// with margin while still catching any missing dummy-hash path.
-const authTimingResistanceTolerance = 500 * time.Millisecond
+type deterministicLoginTimingStore struct {
+	users         map[string]*auth.User
+	validateCalls int64
+}
 
-// TestHandleAuthLogin_TimingResistantUnderEarlyReturn bounds the variance
-// between a known-disabled login attempt (early-return path) and a known-good
-// user with the wrong password (full ValidatePassword path). Both must spend a
-// bcrypt cycle so response latency cannot enumerate disabled accounts.
-//
-// CI shared runners introduce scheduler noise on top of bcrypt cost(12)
-// (~250ms/hash), so the assertion uses an interleaved median plus
-// authTimingResistanceTolerance while the floor check still fails loudly on any
-// whole-bcrypt cycle gap.
+func newDeterministicLoginTimingStore() *deterministicLoginTimingStore {
+	return &deterministicLoginTimingStore{
+		users: map[string]*auth.User{
+			"blocked-user": {ID: "u-blocked", Username: "blocked-user", Tenant: "default", Role: "user", Disabled: true},
+			"good-user":    {ID: "u-good", Username: "good-user", Tenant: "default", Role: "user"},
+		},
+	}
+}
+
+func (s *deterministicLoginTimingStore) GetByUsername(_ context.Context, username, _ string) (*auth.User, error) {
+	if user, ok := s.users[username]; ok {
+		return user, nil
+	}
+	return nil, auth.ErrUserNotFound
+}
+func (s *deterministicLoginTimingStore) GetByEmail(_ context.Context, _, _ string) (*auth.User, error) {
+	return nil, auth.ErrUserNotFound
+}
+func (s *deterministicLoginTimingStore) GetByID(_ context.Context, _ string) (*auth.User, error) {
+	return nil, auth.ErrUserNotFound
+}
+func (s *deterministicLoginTimingStore) Create(_ context.Context, _ *auth.User, _ string) error {
+	return nil
+}
+func (s *deterministicLoginTimingStore) List(_ context.Context, _ string) ([]*auth.User, error) {
+	return nil, nil
+}
+func (s *deterministicLoginTimingStore) Update(_ context.Context, _ *auth.User) error { return nil }
+func (s *deterministicLoginTimingStore) Delete(_ context.Context, _ string) error     { return nil }
+func (s *deterministicLoginTimingStore) UpdatePassword(_ context.Context, _, _ string) error {
+	return nil
+}
+func (s *deterministicLoginTimingStore) ValidatePassword(_ context.Context, _ *auth.User, _ string) bool {
+	atomic.AddInt64(&s.validateCalls, 1)
+	return false
+}
+func (s *deterministicLoginTimingStore) Close() error { return nil }
+
+type loginTimingHarness struct {
+	server       *server
+	store        *deterministicLoginTimingStore
+	timingCalls  int64
+	lastPassword string
+}
+
+func newLoginTimingHarness(t *testing.T) *loginTimingHarness {
+	t.Helper()
+	store := newDeterministicLoginTimingStore()
+	provider := newBasicAuthForTest(t, map[string]string{
+		"CORDUM_API_KEYS": `[{"key":"fallback-api-key","role":"admin","principal_id":"api-admin","tenant":"default"}]`,
+	})
+	provider.SetUserStore(store)
+	h := &loginTimingHarness{store: store}
+	h.server = &server{auth: provider, tenant: "default", loginTimingCompare: h.compareTimingHash}
+	return h
+}
+
+func (h *loginTimingHarness) compareTimingHash(hash, password []byte) error {
+	atomic.AddInt64(&h.timingCalls, 1)
+	h.lastPassword = string(password)
+	if !bytes.Equal(hash, loginTimingDummyHash) {
+		panic("unexpected login timing hash")
+	}
+	return bcrypt.ErrMismatchedHashAndPassword
+}
+
+func (h *loginTimingHarness) reset() {
+	atomic.StoreInt64(&h.timingCalls, 0)
+	atomic.StoreInt64(&h.store.validateCalls, 0)
+	h.lastPassword = ""
+}
+
+func (h *loginTimingHarness) login(username, password string) *httptest.ResponseRecorder {
+	body := `{"username":"` + username + `","password":"` + password + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.server.handleLogin(rec, req)
+	return rec
+}
+
+func (h *loginTimingHarness) requireInvalidLogin(t *testing.T, username, password string) string {
+	t.Helper()
+	rec := h.login(username, password)
+	requireStableErrorCode(t, rec, http.StatusUnauthorized, "AUTH_INVALID_CREDENTIALS")
+	return rec.Body.String()
+}
+
+// TestHandleAuthLogin_TimingResistantUnderEarlyReturn proves the disabled-user
+// early-return path still executes the timing-equalization hash without relying
+// on shared-runner wall-clock measurements.
 func TestHandleAuthLogin_TimingResistantUnderEarlyReturn(t *testing.T) {
-	if testing.Short() {
-		t.Skip("timing test: skipped under -short")
-	}
-	s, store := setupLoginIntegration(t)
-	ctx := context.Background()
+	harness := newLoginTimingHarness(t)
 
-	if err := store.Create(ctx, &auth.User{Username: "good-user", Tenant: "default", Role: "user"}, "SecurePass1!xy"); err != nil {
-		t.Fatalf("create good-user: %v", err)
+	harness.reset()
+	blockedBody := harness.requireInvalidLogin(t, "blocked-user", "wrong-pass")
+	if calls := atomic.LoadInt64(&harness.timingCalls); calls != 1 {
+		t.Fatalf("disabled-user path must burn exactly one dummy hash, got %d", calls)
 	}
-	if err := store.Create(ctx, &auth.User{Username: "blocked-user", Tenant: "default", Role: "user", Disabled: true}, "SecurePass1!xy"); err != nil {
-		t.Fatalf("create blocked-user: %v", err)
+	if calls := atomic.LoadInt64(&harness.store.validateCalls); calls != 0 {
+		t.Fatalf("disabled-user path must not validate password, got %d calls", calls)
 	}
-
-	measureAttempt := func(username string, i int) time.Duration {
-		body := `{"username":"` + username + `","password":"wrong-pass"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(body))
-		req.Header.Set("Content-Type", "application/json")
-		// Keep each timed attempt below per-IP throttle thresholds. This
-		// test measures disabled-user vs wrong-password bcrypt work, not
-		// the rate-limit path (covered by TestLoginHandler_BruteForce...).
-		req.RemoteAddr = fmt.Sprintf("%s-timing-%02d", username, i)
-		rec := httptest.NewRecorder()
-		start := time.Now()
-		s.handleLogin(rec, req)
-		elapsed := time.Since(start)
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("%s attempt %d: expected 401, got %d body=%s", username, i, rec.Code, rec.Body.String())
-		}
-		return elapsed
-	}
-	median := func(d []time.Duration) time.Duration {
-		sorted := append([]time.Duration(nil), d...)
-		sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-		return sorted[len(sorted)/2]
+	if harness.lastPassword != "wrong-pass" {
+		t.Fatalf("dummy hash saw password %q, want wrong-pass", harness.lastPassword)
 	}
 
-	const iters = 9
-	blockedDurs := make([]time.Duration, 0, iters)
-	goodDurs := make([]time.Duration, 0, iters)
-	for i := 0; i < iters; i++ {
-		if i%2 == 0 {
-			blockedDurs = append(blockedDurs, measureAttempt("blocked-user", i))
-			goodDurs = append(goodDurs, measureAttempt("good-user", i))
-			continue
-		}
-		goodDurs = append(goodDurs, measureAttempt("good-user", i))
-		blockedDurs = append(blockedDurs, measureAttempt("blocked-user", i))
+	harness.reset()
+	goodBody := harness.requireInvalidLogin(t, "good-user", "wrong-pass")
+	if calls := atomic.LoadInt64(&harness.timingCalls); calls != 0 {
+		t.Fatalf("good-user wrong-password path should use ValidatePassword, got %d dummy hashes", calls)
+	}
+	if calls := atomic.LoadInt64(&harness.store.validateCalls); calls != 1 {
+		t.Fatalf("good-user wrong-password path must validate exactly once, got %d", calls)
+	}
+	if blockedBody != goodBody {
+		t.Fatalf("disabled-user and wrong-password responses diverged\nblocked=%s\ngood=%s", blockedBody, goodBody)
 	}
 
-	blockedMedian := median(blockedDurs)
-	goodMedian := median(goodDurs)
-	delta := blockedMedian - goodMedian
-	if delta < 0 {
-		delta = -delta
+	harness.reset()
+	harness.requireInvalidLogin(t, "missing-user", "wrong-pass")
+	if calls := atomic.LoadInt64(&harness.timingCalls); calls != 1 {
+		t.Fatalf("missing-user path must burn exactly one dummy hash, got %d", calls)
 	}
-	if delta > authTimingResistanceTolerance {
-		t.Fatalf("timing oracle: blocked-user median=%v vs good-user median=%v delta=%v (tolerance %v)",
-			blockedMedian, goodMedian, delta, authTimingResistanceTolerance)
-	}
-	// Both paths must spend a real bcrypt cycle — if blocked-user finishes in
-	// under 30ms the dummy hash is missing or not running at production cost.
-	if blockedMedian < 30*time.Millisecond {
-		t.Fatalf("blocked-user too fast (median=%v); bcrypt timing-equalization missing", blockedMedian)
+
+	harness.reset()
+	harness.requireInvalidLogin(t, "good-user", "")
+	if calls := atomic.LoadInt64(&harness.timingCalls); calls != 1 {
+		t.Fatalf("empty-password path must burn exactly one dummy hash, got %d", calls)
 	}
 }
 

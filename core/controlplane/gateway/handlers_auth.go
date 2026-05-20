@@ -388,6 +388,14 @@ func init() {
 	loginTimingDummyHash = hash
 }
 
+func (s *server) spendLoginTimingHash(password string) {
+	compare := bcrypt.CompareHashAndPassword
+	if s.loginTimingCompare != nil {
+		compare = s.loginTimingCompare
+	}
+	_ = compare(loginTimingDummyHash, []byte(password)) //nolint:errcheck
+}
+
 // AuthUser represents the authenticated user info returned to clients.
 type AuthUser struct {
 	ID          string   `json:"id"`
@@ -450,7 +458,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// the same wall-clock time as wrong-password attempts. Without this,
 		// an attacker can distinguish "blank field" from "credential check"
 		// purely from response latency.
-		_ = bcrypt.CompareHashAndPassword(loginTimingDummyHash, []byte(password)) //nolint:errcheck
+		s.spendLoginTimingHash(password)
 		s.emitAuthFailure(r, req.Username, "password", "empty_password")
 		writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid credentials")
 		return
@@ -480,7 +488,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 					// user-enumeration oracle. Spend bcrypt time and emit
 					// AUTH_INVALID_CREDENTIALS; slog.Warn retains the throttle
 					// detail for ops.
-					_ = bcrypt.CompareHashAndPassword(loginTimingDummyHash, []byte(password)) //nolint:errcheck
+					s.spendLoginTimingHash(password)
 					s.emitAuthFailure(r, username, "password", "rate_limited")
 					slog.Warn("rate limit exceeded", "method", r.Method, "path", r.URL.Path, "error", err)
 					writeJSONError(w, http.StatusUnauthorized, errorCodeAuthInvalidCredentials, "invalid credentials")
@@ -494,7 +502,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				// cannot distinguish "user disabled" from "wrong password".
 				// emitAuthFailure already records the specific reason in slog
 				// for server-side ops debugging.
-				_ = bcrypt.CompareHashAndPassword(loginTimingDummyHash, []byte(password)) //nolint:errcheck
+				s.spendLoginTimingHash(password)
 				s.emitAuthFailure(r, username, "password", "user_disabled")
 				if redisStore, ok := userStore.(*auth.RedisUserStore); ok {
 					redisStore.RecordFailedLogin(r.Context(), username, clientIP(r))
@@ -534,14 +542,14 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				redisStore.RecordFailedLogin(r.Context(), username, clientIP(r))
 			}
 		} else if err != nil && !errors.Is(err, auth.ErrUserNotFound) {
-			_ = bcrypt.CompareHashAndPassword(loginTimingDummyHash, []byte(password)) //nolint:errcheck
+			s.spendLoginTimingHash(password)
 			s.emitAuthFailure(r, username, "password", "user_store_error")
 			writeInternalError(w, r, "login user lookup", err)
 			return
 		} else if username != "" {
 			// Timing equalization: spend bcrypt time even when user is not found,
 			// preventing username enumeration via response time side-channel.
-			_ = bcrypt.CompareHashAndPassword(loginTimingDummyHash, []byte(password)) //nolint:errcheck
+			s.spendLoginTimingHash(password)
 		}
 	}
 
