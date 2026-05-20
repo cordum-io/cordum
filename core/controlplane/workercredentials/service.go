@@ -41,6 +41,11 @@ const (
 	maxPHCIterations   = uint64(10_000)
 	maxPHCParallelism  = uint64(16)
 	maxPHCEncodedBytes = 1024
+
+	// CreateWithLimit is intentionally exercised with many concurrent issuers:
+	// use enough CAS retries for legitimate contenders to observe the filled
+	// worker limit instead of surfacing transient config revision conflicts.
+	workerCredentialCreateCASAttempts = 32
 )
 
 var ErrCredentialNotFound = errors.New("worker credential not found")
@@ -125,7 +130,7 @@ func (s *Service) create(ctx context.Context, input IssueInput, limit *CreateLim
 		return IssuedCredential{}, err
 	}
 
-	if err := s.config.SetWithRetry(ctx, configsvc.ScopeSystem, scopeIDWorkers, 3, func(doc *configsvc.Document) error {
+	if err := s.config.SetWithRetry(ctx, configsvc.ScopeSystem, scopeIDWorkers, workerCredentialCreateCASAttempts, func(doc *configsvc.Document) error {
 		existing, err := decodeDocument(doc)
 		if err != nil {
 			return err
