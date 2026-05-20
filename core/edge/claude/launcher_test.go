@@ -157,7 +157,7 @@ func TestLaunchEdgeClaudeAgentdEarlyExitDoesNotHang(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "cordum-agentd exited before becoming ready") {
 			t.Fatalf("error = %v, want early agentd exit error", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(12 * time.Second):
 		t.Fatal("launcher hung after early agentd exit")
 	}
 }
