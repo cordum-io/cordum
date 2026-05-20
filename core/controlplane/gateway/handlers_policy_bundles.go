@@ -1286,20 +1286,3 @@ func (s *server) appendAuditEntryNamed(ctx context.Context, action, resourceType
 		Message:      message,
 	})
 }
-
-// appendAuditEntryWithAgent is like appendAuditEntryNamed but includes agent
-// identity fields in the audit event for SIEM export.
-func (s *server) appendAuditEntryWithAgent(ctx context.Context, action, resourceType, resourceID, resourceName, actorID, role, message, agentID, agentName, agentRiskTier string) {
-	_ = s.appendPolicyAudit(ctx, policybundles.PolicyAuditEntry{
-		Action:        action,
-		ResourceType:  resourceType,
-		ResourceID:    resourceID,
-		ResourceName:  resourceName,
-		ActorID:       actorID,
-		Role:          role,
-		Message:       message,
-		AgentID:       agentID,
-		AgentName:     agentName,
-		AgentRiskTier: agentRiskTier,
-	})
-}
