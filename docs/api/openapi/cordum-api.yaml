@@ -2947,8 +2947,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/workflows/{id}:
     parameters:
     - $ref: '#/components/parameters/WorkflowID'
@@ -2981,10 +2985,14 @@ paths:
           description: Workflow deleted
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/workflows/{id}/runs:
     parameters:
     - $ref: '#/components/parameters/WorkflowID'
@@ -11482,10 +11490,12 @@ components:
           - artifact_pointer_invalid
           - approval_conflict
           - approval_not_actionable
+          - step_up_required
           - self_approval_denied
           - idempotency_conflict
           - idempotency_key_invalid
           - idempotency_window_expired
+          - limit_exceeded
           - max_executions_exceeded
           - event_cap_exceeded
           - replay_window_full

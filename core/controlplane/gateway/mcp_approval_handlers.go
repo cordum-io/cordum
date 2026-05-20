@@ -231,20 +231,6 @@ func requesterMatchesApprover(requester, approverIdentity string) bool {
 	return false
 }
 
-// writeJSONError / writeJSONObject are already declared in helpers —
-// we redeclare thin wrappers here only if the existing helpers have
-// incompatible signatures. At the time of writing writeErrorJSON exists;
-// use it through thin wrappers so handler code stays readable.
-func writeJSONError(w http.ResponseWriter, status int, code, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"error":  message,
-		"code":   code,
-		"status": status,
-	})
-}
-
 func writeJSONObject(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

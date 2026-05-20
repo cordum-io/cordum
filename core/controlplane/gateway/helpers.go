@@ -1065,14 +1065,52 @@ func writeJSON(w http.ResponseWriter, v any) {
 	}
 }
 
-// writeErrorJSON writes a structured JSON error response with the given HTTP status.
-func writeErrorJSON(w http.ResponseWriter, status int, message string) {
+// writeJSONError writes the canonical non-Edge error envelope.
+func writeJSONError(w http.ResponseWriter, status int, code, message string) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = fallbackErrorCode(status, message)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	resp := map[string]any{"error": message, "status": status}
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"error":  message,
+		"code":   code,
+		"status": status,
+	}); err != nil {
 		slog.Warn("json encode error response failed", "error", err)
 	}
+}
+
+// writeErrorJSON preserves legacy call sites while emitting the canonical
+// `{error, code, status}` shape documented by components.schemas.Error.
+func writeErrorJSON(w http.ResponseWriter, status int, message string) {
+	writeJSONError(w, status, fallbackErrorCode(status, message), message)
+}
+
+func fallbackErrorCode(status int, message string) string {
+	source := strings.TrimSpace(message)
+	if source == "" {
+		source = http.StatusText(status)
+	}
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range strings.ToLower(source) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			b.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	code := strings.Trim(b.String(), "_")
+	if code == "" {
+		return "error"
+	}
+	return code
 }
 
 func writeTierLimitJSON(w http.ResponseWriter, limitErr *licensing.TierLimitError) {

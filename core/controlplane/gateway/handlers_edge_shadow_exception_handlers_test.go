@@ -163,6 +163,10 @@ func TestWriteShadowExceptionStoreError_LimitExceededUsesDedicatedCode(t *testin
 	}
 }
 
+func TestEdgeErrorEnum_IncludesStepUpAndLimitExceeded(t *testing.T) {
+	assertOpenAPIEdgeErrorEnumContains(t, edgeErrCodeStepUpRequired, edgeErrCodeLimitExceeded)
+}
+
 func TestShadowException_Create_HighRisk_RequiresStepUp(t *testing.T) {
 	s := newShadowGateway(t)
 	rec := postShadowAs(t, s, "user", "tenant-a", "/api/v1/edge/shadow/exception", validExceptionCreateBody())

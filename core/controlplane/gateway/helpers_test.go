@@ -866,3 +866,38 @@ func TestMaxConcurrentRuns_DefaultFallback(t *testing.T) {
 		t.Fatalf("default %d is too high — red-team #15 started 20 runs, must block at 10", limit)
 	}
 }
+
+func TestErrorHelpersUnified_AllEmitCodeField(t *testing.T) {
+	tests := []struct {
+		name  string
+		write func(http.ResponseWriter)
+	}{
+		{
+			name: "writeErrorJSON",
+			write: func(w http.ResponseWriter) {
+				writeErrorJSON(w, http.StatusBadRequest, "bad request")
+			},
+		},
+		{
+			name: "writeJSONError",
+			write: func(w http.ResponseWriter) {
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "bad request")
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			tc.write(rec)
+			var resp map[string]any
+			if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode response: %v; body=%s", err, rec.Body.String())
+			}
+			code, ok := resp["code"].(string)
+			if !ok || strings.TrimSpace(code) == "" {
+				t.Fatalf("%s response missing non-empty code field: %#v", tc.name, resp)
+			}
+		})
+	}
+}

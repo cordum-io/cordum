@@ -1501,7 +1501,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{
 				"error":             "unknown topic",
 				"status":            http.StatusBadRequest,
-				"error_code":        "unknown_topic",
+				"code":              "unknown_topic",
 				"registered_topics": registeredTopics,
 				"truncated":         truncated,
 				"topics_endpoint":   "/api/v1/topics",
@@ -1512,9 +1512,9 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			writeJSON(w, map[string]any{
-				"error":      "topic is disabled",
-				"status":     http.StatusBadRequest,
-				"error_code": "topic_disabled",
+				"error":  "topic is disabled",
+				"status": http.StatusBadRequest,
+				"code":   "topic_disabled",
 			})
 			return
 		}
@@ -1531,7 +1531,7 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{
 				"error":      "schema_validation_failed",
 				"status":     http.StatusBadRequest,
-				"error_code": "schema_validation_failed",
+				"code":       "schema_validation_failed",
 				"violations": violations,
 			})
 			return

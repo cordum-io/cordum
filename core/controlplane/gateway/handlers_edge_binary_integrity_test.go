@@ -127,6 +127,25 @@ func TestHandleBinaryIntegrityIngest_NoEventsReturnsEdgeError(t *testing.T) {
 	assertEdgeErrorShape(t, rec, http.StatusBadRequest, edgeErrCodeInvalidRequest)
 }
 
+func TestBinaryIntegrity_400ReturnsEdgeError(t *testing.T) {
+	s := newBinaryIntegrityGateway(t)
+	badEvent := validBinaryVerifyOK()
+	badEvent.Hash = "not-a-sha256"
+
+	rec := postBinaryIntegrityEvents(t, s, "tenant-a", binaryVerifyIngestRequest{
+		Events: []model.BinaryVerifyEvent{badEvent},
+	})
+
+	assertEdgeErrorShape(t, rec, http.StatusBadRequest, edgeErrCodeInvalidRequest)
+	var env edgeErrorEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode edge error envelope: %v", err)
+	}
+	if _, ok := env.Details["errors"]; !ok {
+		t.Fatalf("edge error details missing per-event errors: %#v; body=%s", env.Details, rec.Body.String())
+	}
+}
+
 func TestHandleBinaryIntegrityList_InvalidQueryReturnsEdgeError(t *testing.T) {
 	s := newBinaryIntegrityGateway(t)
 

@@ -205,7 +205,16 @@ func (s *server) handleIngestBinaryVerify(w http.ResponseWriter, r *http.Request
 
 	status := http.StatusAccepted
 	if accepted == 0 {
-		status = http.StatusBadRequest
+		details := map[string]any{
+			"accepted": accepted,
+			"rejected": len(rejected),
+		}
+		if len(rejected) > 0 {
+			details["errors"] = rejected
+		}
+		writeEdgeError(w, r, http.StatusBadRequest, edgeErrCodeInvalidRequest,
+			"all binary-verify events rejected", details)
+		return
 	}
 	resp := binaryVerifyIngestResponse{Accepted: accepted, Rejected: len(rejected)}
 	if len(rejected) > 0 {

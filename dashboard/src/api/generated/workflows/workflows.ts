@@ -27,9 +27,11 @@ import type {
   DryRunResult,
   DryRunWorkflowBody,
   Error,
+  ForbiddenResponse,
   InternalServerErrorResponse,
   NotFoundResponse,
   RunSummary,
+  ServiceUnavailableResponse,
   StartWorkflowRun200,
   StartWorkflowRunBody,
   UnauthorizedResponse,
@@ -181,7 +183,9 @@ export const getCreateWorkflowMutationOptions = <
   TError =
     | BadRequestResponse
     | UnauthorizedResponse
-    | InternalServerErrorResponse,
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -224,7 +228,9 @@ export type CreateWorkflowMutationBody = WorkflowDefinition;
 export type CreateWorkflowMutationError =
   | BadRequestResponse
   | UnauthorizedResponse
-  | InternalServerErrorResponse;
+  | ForbiddenResponse
+  | InternalServerErrorResponse
+  | ServiceUnavailableResponse;
 
 /**
  * @summary Create or update a workflow definition
@@ -233,7 +239,9 @@ export const useCreateWorkflow = <
   TError =
     | BadRequestResponse
     | UnauthorizedResponse
-    | InternalServerErrorResponse,
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
   TContext = unknown,
 >(
   options?: {
@@ -416,8 +424,10 @@ export const deleteWorkflow = (id: string) => {
 export const getDeleteWorkflowMutationOptions = <
   TError =
     | UnauthorizedResponse
+    | ForbiddenResponse
     | NotFoundResponse
-    | InternalServerErrorResponse,
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -459,8 +469,10 @@ export type DeleteWorkflowMutationResult = NonNullable<
 
 export type DeleteWorkflowMutationError =
   | UnauthorizedResponse
+  | ForbiddenResponse
   | NotFoundResponse
-  | InternalServerErrorResponse;
+  | InternalServerErrorResponse
+  | ServiceUnavailableResponse;
 
 /**
  * @summary Delete a workflow definition
@@ -468,8 +480,10 @@ export type DeleteWorkflowMutationError =
 export const useDeleteWorkflow = <
   TError =
     | UnauthorizedResponse
+    | ForbiddenResponse
     | NotFoundResponse
-    | InternalServerErrorResponse,
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
   TContext = unknown,
 >(
   options?: {
