@@ -274,8 +274,9 @@ func TestRedisStoreApprovalLifecycleEnqueueResolveListAndConsume(t *testing.T) {
 		PolicySnapshot: req.PolicySnapshot,
 		ConsumedAt:     consumedAt.Add(time.Second),
 	})
-	if err != nil {
-		t.Fatalf("second ClaimApproval: %v", err)
+	var consumedConflict *ApprovalConflictError
+	if !errors.As(err, &consumedConflict) || consumedConflict.Kind != ApprovalConflictKindConsumed {
+		t.Fatalf("second ClaimApproval err = %v, want consumed ApprovalConflictError", err)
 	}
 	if secondOK || secondClaim != nil {
 		t.Fatalf("second ClaimApproval = (%#v,%v), want nil,false consume-once", secondClaim, secondOK)
@@ -799,6 +800,31 @@ func TestRedisStoreApprovalExpireAndStaleParentsFailClosed(t *testing.T) {
 	}
 }
 
+func TestFirstLiveTupleApproval_ExcludesExpired(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 5, 1, 18, 0, 0, 0, time.UTC)
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return now }))
+	defer cleanup()
+
+	createApprovalParents(t, ctx, store, "tenant-a", "sess-expired-tuple", "exec-expired-tuple", "event-expired-tuple", now)
+	req := validApprovalRequest("tenant-a", "sess-expired-tuple", "exec-expired-tuple", "event-expired-tuple", now)
+	req.ExpiresAt = now.Add(time.Minute)
+	first, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval first: %v", err)
+	}
+
+	now = now.Add(2 * time.Minute)
+	req.ExpiresAt = now.Add(5 * time.Minute)
+	second, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval second: %v", err)
+	}
+	if second.ApprovalRef == first.ApprovalRef {
+		t.Fatalf("EnqueueApproval reused expired approval %q; want a fresh live tuple approval", first.ApprovalRef)
+	}
+}
+
 func TestRedisStoreApprovalRejectedAndExpiredCannotBeClaimed(t *testing.T) {
 	ctx := context.Background()
 	base := time.Date(2026, 5, 1, 16, 30, 0, 0, time.UTC)
@@ -1198,6 +1224,11 @@ func TestRedisStoreApprovalConcurrentClaimConsumesOnce(t *testing.T) {
 				ConsumedAt:     base.Add(2*time.Minute + time.Duration(i)*time.Microsecond),
 			})
 			if err != nil {
+				var conflict *ApprovalConflictError
+				if errors.As(err, &conflict) && conflict.Kind == ApprovalConflictKindConsumed {
+					results <- false
+					return
+				}
 				errs <- err
 				return
 			}
@@ -1496,7 +1527,22 @@ func assertRedisApprovalCannotBeClaimed(t *testing.T, ctx context.Context, store
 		ConsumedAt:     consumedAt,
 	})
 	if err != nil {
-		t.Fatalf("ClaimApproval terminal approval %q returned err=%v, want nil false result", approval.Status, err)
+		var conflict *ApprovalConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("ClaimApproval terminal approval %q err=%v, want typed ApprovalConflictError", approval.Status, err)
+		}
+		switch approval.Status {
+		case ApprovalStatusRejected:
+			if conflict.Kind != ApprovalConflictKindRejected {
+				t.Fatalf("ClaimApproval conflict kind = %q, want %q", conflict.Kind, ApprovalConflictKindRejected)
+			}
+		case ApprovalStatusExpired, ApprovalStatusInvalidated:
+			if conflict.Kind != ApprovalConflictKindExpired {
+				t.Fatalf("ClaimApproval conflict kind = %q, want %q", conflict.Kind, ApprovalConflictKindExpired)
+			}
+		}
+	} else {
+		t.Fatalf("ClaimApproval terminal approval %q returned nil err, want typed conflict", approval.Status)
 	}
 	if ok || claimed != nil {
 		t.Fatalf("ClaimApproval terminal approval %q = (%#v,%v), want nil,false", approval.Status, claimed, ok)
@@ -1858,11 +1904,8 @@ func TestApprovalActionHash_ZSetGrowthIsBounded(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ZRange action-hash index: %v", err)
 	}
-	if len(members) != maxApprovalActionHashMembers {
-		t.Fatalf("action-hash member len = %d, want %d", len(members), maxApprovalActionHashMembers)
-	}
-	if members[0] != refs[overflow] || members[len(members)-1] != refs[len(refs)-1] {
-		t.Fatalf("retained refs = first:%q last:%q, want first:%q last:%q", members[0], members[len(members)-1], refs[overflow], refs[len(refs)-1])
+	if len(members) != 0 {
+		t.Fatalf("action-hash member len = %d, want 0 terminal approvals retained in hot-path index", len(members))
 	}
 	old, ok, err := store.GetApproval(ctx, tenant, refs[0])
 	if err != nil || !ok || old == nil || old.Status != ApprovalStatusRejected {
@@ -1870,8 +1913,8 @@ func TestApprovalActionHash_ZSetGrowthIsBounded(t *testing.T) {
 	}
 	otherRef := enqueueRejectedApprovalForHash(t, ctx, store, &now, base, otherTenant, sharedHash, total+1)
 	otherMembers, err := client.ZRange(ctx, edgeApprovalActionHashIndexKey(otherTenant, sharedHash), 0, -1).Result()
-	if err != nil || !reflect.DeepEqual(otherMembers, []string{otherRef}) {
-		t.Fatalf("other-tenant action-hash members = %#v, %v; want only %q", otherMembers, err, otherRef)
+	if err != nil || !reflect.DeepEqual(otherMembers, []string{}) {
+		t.Fatalf("other-tenant action-hash members = %#v, %v; want no rejected approvals retained for %q", otherMembers, err, otherRef)
 	}
 }
 

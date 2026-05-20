@@ -13,6 +13,8 @@ import (
 	"github.com/cordum/cordum/core/auth/delegation"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	governanceeval "github.com/cordum/cordum/core/governance/evaluator"
+	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/store"
 )
 
@@ -179,6 +181,28 @@ func (s *server) handleDelegateAgent(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeServiceUnavailable(w, r, "delegation token service", err)
 		s.emitDelegationAudit(r, "issue", tenant, delegatingAgentID, req.TargetAgentID, "", 0, "error", err)
+		return
+	}
+	governanceDecision, err := s.evaluateDelegationIssueGovernance(r.Context(), service, authCtx, tenant, delegatingAgentID, req)
+	if err != nil {
+		status := delegationIssueStatus(err)
+		if status >= 500 {
+			writeInternalError(w, r, "evaluate delegation governance", err)
+			s.emitDelegationAudit(r, "issue", tenant, delegatingAgentID, req.TargetAgentID, "", 0, "error", err)
+			return
+		}
+		writeJSONError(w, status, delegationIssueErrorCode(err), delegationIssueMessage(err))
+		s.emitDelegationAudit(r, "issue", tenant, delegatingAgentID, req.TargetAgentID, "", 0, "denied", err)
+		return
+	}
+	if governanceDecision.Fired() && governanceDecision.Type != governanceeval.DecisionAllow {
+		denyErr := delegation.ErrScopeExceeded
+		writeJSONError(w, http.StatusBadRequest, delegationIssueErrorCode(denyErr), delegationIssueMessage(denyErr))
+		s.emitDelegationAuditWithExtra(r, "issue", tenant, delegatingAgentID, req.TargetAgentID, "", 0, "denied", denyErr, map[string]string{
+			"governance_rule":     governanceDecision.RuleID,
+			"governance_decision": governanceDecisionName(governanceDecision.Type),
+			"governance_reason":   governanceDecision.Reason,
+		})
 		return
 	}
 
@@ -480,6 +504,54 @@ func (s *server) delegationListStore() *delegation.RedisListStore {
 	return delegation.NewRedisListStoreFromClient(s.jobStore.Client())
 }
 
+func (s *server) evaluateDelegationIssueGovernance(ctx context.Context, service *delegation.TokenService, authCtx *auth.AuthContext, tenant, delegatingAgentID string, req delegateTokenRequest) (governanceeval.Decision, error) {
+	parentToken := strings.TrimSpace(req.ParentToken)
+	if parentToken == "" {
+		return governanceeval.Decision{}, nil
+	}
+	verified, err := service.VerifyDelegationToken(ctx, parentToken, delegatingAgentID)
+	if err != nil {
+		return governanceeval.Decision{}, err
+	}
+	scopes := append([]string{}, verified.AllowedActions...)
+	scopes = append(scopes, verified.AllowedTopics...)
+	capabilities := append([]string{}, req.AllowedActions...)
+	capabilities = append(capabilities, req.AllowedTopics...)
+	now := time.Now().UTC()
+	govAuth := *authCtx
+	govAuth.PrincipalID = strings.TrimSpace(delegatingAgentID)
+	govAuth.Tenant = strings.TrimSpace(tenant)
+	input := BuildGovernanceInput(BuildGovernanceInputParams{
+		Op:              config.GovernanceOpDelegation,
+		AuthCtx:         &govAuth,
+		DelegCtx:        projectVerifiedDelegationContext(verified),
+		ChildAgentID:    req.TargetAgentID,
+		ChildTenant:     tenant,
+		DelegatedScopes: scopes,
+		Capabilities:    capabilities,
+		ProvenanceRef:   verified.JTI,
+		VerifiedAt:      now.Unix(),
+		FreshnessSec:    int64(time.Until(verified.ExpiresAt).Seconds()),
+	})
+	if err := config.ValidateGovernanceInput(input); err != nil {
+		return governanceeval.Decision{}, err
+	}
+	return governanceeval.New().Evaluate(ctx, input, config.DefaultGovernancePolicy()), nil
+}
+
+func governanceDecisionName(decision governanceeval.DecisionKind) string {
+	switch decision {
+	case governanceeval.DecisionAllow:
+		return "ALLOW"
+	case governanceeval.DecisionDeny:
+		return "DENY"
+	case governanceeval.DecisionRequireHuman:
+		return "REQUIRE_HUMAN"
+	default:
+		return ""
+	}
+}
+
 func delegationIssuedView(tenant string, claims delegation.DelegationClaims, audience string) delegation.DelegationView {
 	rootIssuer := strings.TrimSpace(claims.Subject)
 	if len(claims.DelegationChain) > 0 {
@@ -504,23 +576,32 @@ func delegationIssuedView(tenant string, claims delegation.DelegationClaims, aud
 }
 
 func (s *server) emitDelegationAudit(r *http.Request, action, tenant, agentID, target, jti string, chainDepth int, outcome string, err error) {
+	s.emitDelegationAuditWithExtra(r, action, tenant, agentID, target, jti, chainDepth, outcome, err, nil)
+}
+
+func (s *server) emitDelegationAuditWithExtra(r *http.Request, action, tenant, agentID, target, jti string, chainDepth int, outcome string, err error, extra map[string]string) {
 	if s == nil || s.auditExporter == nil {
 		return
 	}
-	extra := map[string]string{
+	fields := map[string]string{
 		"outcome": outcome,
 	}
+	for key, value := range extra {
+		if strings.TrimSpace(key) != "" && strings.TrimSpace(value) != "" {
+			fields[key] = value
+		}
+	}
 	if target != "" {
-		extra["target"] = target
+		fields["target"] = target
 	}
 	if jti != "" {
-		extra["jti"] = jti
+		fields["jti"] = jti
 	}
 	if chainDepth > 0 {
-		extra["chain_depth"] = strconv.Itoa(chainDepth)
+		fields["chain_depth"] = strconv.Itoa(chainDepth)
 	}
 	if code := delegation.ErrorCode(err); code != "" {
-		extra["error_code"] = code
+		fields["error_code"] = code
 	}
 	s.auditExporter.Send(audit.SIEMEvent{
 		Timestamp: time.Now().UTC(),
@@ -531,7 +612,7 @@ func (s *server) emitDelegationAudit(r *http.Request, action, tenant, agentID, t
 		Action:    "delegation." + action,
 		Reason:    delegationAuditReason(action, outcome, err),
 		Identity:  policybundles.PolicyActorID(r),
-		Extra:     extra,
+		Extra:     fields,
 	})
 }
 

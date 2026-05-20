@@ -913,9 +913,16 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	if err != nil {
 		return fmt.Errorf("init edge session sweeper: %w", err)
 	}
+	edgeApprovalSweeper, err := edgecore.NewApprovalSweeper(edgeStore, edgecore.ApprovalSweeperOptions{
+		Interval: edgeSweepInterval,
+	})
+	if err != nil {
+		return fmt.Errorf("init edge approval sweeper: %w", err)
+	}
 	edgeSweepCtx, edgeSweepCancel := context.WithCancel(context.Background())
 	s.edgeSweeperCancel = edgeSweepCancel
 	go edgeSweeper.Run(edgeSweepCtx)
+	go edgeApprovalSweeper.Run(edgeSweepCtx)
 
 	return startHTTPServer(s, httpAddr, metricsAddr, grpcServer)
 }

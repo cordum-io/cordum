@@ -434,8 +434,9 @@ func (s *RedisStore) ClaimApproval(ctx context.Context, req ApprovalClaimRequest
 			return nil
 		}
 		if approval.Status != ApprovalStatusApproved || approval.ConsumedAt != nil {
-			result = nil
-			claimed = false
+			if kind, reason := terminalApprovalClaimConflict(approval); kind != ApprovalConflictKindUnknown {
+				claimErr = newApprovalConflict(kind, reason)
+			}
 			return nil
 		}
 		consumedAt := req.ConsumedAt.UTC()
@@ -490,6 +491,23 @@ func (s *RedisStore) ClaimApproval(ctx context.Context, req ApprovalClaimRequest
 		return nil, false, claimErr
 	}
 	return result, claimed, nil
+}
+
+func terminalApprovalClaimConflict(approval *EdgeApproval) (ApprovalConflictKind, string) {
+	if approval == nil {
+		return ApprovalConflictKindNotFound, "approval missing"
+	}
+	if approval.ConsumedAt != nil {
+		return ApprovalConflictKindConsumed, "approval already consumed"
+	}
+	switch approval.Status {
+	case ApprovalStatusRejected:
+		return ApprovalConflictKindRejected, "approval rejected"
+	case ApprovalStatusExpired, ApprovalStatusInvalidated:
+		return ApprovalConflictKindExpired, "approval expired"
+	default:
+		return ApprovalConflictKindUnknown, ""
+	}
 }
 
 func (s *RedisStore) ExpireApprovals(ctx context.Context, tenantID string, now time.Time) (int, error) {
@@ -612,6 +630,7 @@ func (s *RedisStore) resolveApproval(ctx context.Context, req ApprovalResolution
 			pipe.ZRem(ctx, edgeApprovalTenantIndexKey(next.TenantID), next.ApprovalRef)
 			if next.Status == ApprovalStatusRejected {
 				pipe.SRem(ctx, edgeApprovalTupleIndexKey(next.TenantID, next.SessionID, next.ExecutionID, next.ActionHash), next.ApprovalRef)
+				pipe.ZRem(ctx, edgeApprovalActionHashIndexKey(next.TenantID, next.ActionHash), next.ApprovalRef)
 			}
 			return nil
 		})
@@ -682,6 +701,7 @@ func (s *RedisStore) expireApproval(ctx context.Context, tenantID, approvalRef s
 			// index so list-without-filter returns only the active set.
 			pipe.ZRem(ctx, edgeApprovalTenantIndexKey(next.TenantID), next.ApprovalRef)
 			pipe.SRem(ctx, edgeApprovalTupleIndexKey(next.TenantID, next.SessionID, next.ExecutionID, next.ActionHash), next.ApprovalRef)
+			pipe.ZRem(ctx, edgeApprovalActionHashIndexKey(next.TenantID, next.ActionHash), next.ApprovalRef)
 			return nil
 		})
 		if err == nil {
@@ -713,6 +733,9 @@ func (s *RedisStore) firstLiveTupleApproval(ctx context.Context, tx *redis.Tx, t
 			return nil, err
 		}
 		if approval.TenantID != req.TenantID || approval.SessionID != req.SessionID || approval.ExecutionID != req.ExecutionID || approval.ActionHash != req.ActionHash {
+			continue
+		}
+		if approval.ExpiresAt != nil && !approval.ExpiresAt.After(s.now().UTC()) {
 			continue
 		}
 		switch approval.Status {

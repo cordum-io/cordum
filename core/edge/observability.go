@@ -77,6 +77,8 @@ type Recorder interface {
 	// Approval lifecycle.
 	RecordApprovalRequested(tenant, layer, kind string)
 	RecordApprovalResolved(tenant, layer, kind, outcome string) // approved | rejected | expired | timeout | invalidated
+	ObserveApprovalSweepDuration(duration time.Duration)
+	AddApprovalSweepExpired(count int)
 
 	// RecordApprovalEnqueueAborted emits a metric counter when EnqueueApproval
 	// refuses to enqueue a new approval because of a fail-closed safety guard
@@ -199,6 +201,8 @@ func (NoopRecorder) RecordActionDecision(string, string, string, string, string)
 func (NoopRecorder) RecordActionDenied(string, string, string, string)           {}
 func (NoopRecorder) RecordApprovalRequested(string, string, string)              {}
 func (NoopRecorder) RecordApprovalResolved(string, string, string, string)       {}
+func (NoopRecorder) ObserveApprovalSweepDuration(time.Duration)                  {}
+func (NoopRecorder) AddApprovalSweepExpired(int)                                 {}
 func (NoopRecorder) RecordApprovalEnqueueAborted(string)                         {}
 func (NoopRecorder) RecordAppendEventsAborted(string)                            {}
 func (NoopRecorder) RecordIdempotencyTTLExtended(string)                         {}

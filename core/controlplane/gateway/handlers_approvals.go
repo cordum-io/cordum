@@ -15,6 +15,7 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
+	edgecore "github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/bus"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/model"
@@ -26,6 +27,8 @@ import (
 )
 
 const errorCodeApprovalResultInvalidStatus = "RESULT_INVALID_STATUS"
+
+const approvalFreeTextMaxBytes = 512
 
 type approvalDecisionSummary struct {
 	Source           string   `json:"source,omitempty"`
@@ -626,12 +629,47 @@ func approvalConflictPayload(status int, code model.ApprovalConflictCode, messag
 	return payload
 }
 
+func sanitizeApprovalFreeText(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	result, err := edgecore.RedactValue(value, edgecore.RedactionOptions{
+		HashMode:       edgecore.RedactionHashNone,
+		MaxStringBytes: approvalFreeTextMaxBytes,
+		MaxTotalBytes:  approvalFreeTextMaxBytes,
+	})
+	if err != nil {
+		slog.Warn("approval free text redaction failed", "error", err)
+		return "<redacted>"
+	}
+	text, ok := result.Value.(string)
+	if !ok {
+		text = fmt.Sprint(result.Value)
+	}
+	return boundApprovalFreeText(strings.TrimSpace(text))
+}
+
+func boundApprovalFreeText(value string) string {
+	if len(value) <= approvalFreeTextMaxBytes {
+		return value
+	}
+	var b strings.Builder
+	for _, r := range value {
+		if b.Len()+len(string(r)) > approvalFreeTextMaxBytes {
+			break
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 func writeApprovalHandlerResult(w http.ResponseWriter, status int, body any, encodeLogMessage string) {
 	w.Header().Set("Content-Type", "application/json")
 	if status >= http.StatusBadRequest {
 		if msg, ok := body.(string); ok {
 			if status < http.StatusInternalServerError {
-				writeJSONError(w, status, errorCodeApprovalResultInvalidStatus, msg)
+				writeJSONError(w, status, approvalHandlerErrorCode(status), msg)
 				return
 			}
 			writeErrorJSON(w, status, msg)
@@ -644,6 +682,45 @@ func writeApprovalHandlerResult(w http.ResponseWriter, status int, body any, enc
 		return
 	}
 	writeJSON(w, body)
+}
+
+func approvalHandlerErrorCode(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "approval_bad_request"
+	case http.StatusForbidden:
+		return "approval_forbidden"
+	case http.StatusNotFound:
+		return "approval_not_found"
+	case http.StatusConflict:
+		return "approval_conflict"
+	default:
+		return errorCodeApprovalResultInvalidStatus
+	}
+}
+
+func (s *server) appendApprovalDecisionAudit(ctx context.Context, action, jobID, topic, actorID, role, reason, note, agentID, agentName, agentRiskTier string) {
+	extra := map[string]string{}
+	if note = strings.TrimSpace(note); note != "" {
+		extra["note"] = note
+	}
+	if len(extra) == 0 {
+		extra = nil
+	}
+	_ = s.appendPolicyAudit(ctx, policybundles.PolicyAuditEntry{
+		Action:        action,
+		ResourceType:  "job",
+		ResourceID:    jobID,
+		ResourceName:  topic,
+		ActorID:       actorID,
+		Role:          role,
+		Message:       action + " job " + jobID,
+		Reason:        strings.TrimSpace(reason),
+		AgentID:       agentID,
+		AgentName:     agentName,
+		AgentRiskTier: agentRiskTier,
+		Extra:         extra,
+	})
 }
 
 // withApprovalLock acquires a per-job distributed lock, executes fn, and
@@ -1236,8 +1313,8 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		reason := strings.TrimSpace(body.Reason)
-		note := strings.TrimSpace(body.Note)
+		reason := sanitizeApprovalFreeText(body.Reason)
+		note := sanitizeApprovalFreeText(body.Note)
 		approvedBy := strings.TrimSpace(policybundles.PolicyActorID(r))
 		if approvedBy == "" {
 			approvedBy = "system/unknown"
@@ -1324,7 +1401,7 @@ func (s *server) handleApproveJob(w http.ResponseWriter, r *http.Request) {
 		if resolved.Request != nil && resolved.Request.Labels != nil {
 			approveAgentID, approveAgentName, approveAgentRiskTier = s.resolveAgentForAudit(ctx, resolved.Request.Labels["agent_id"])
 		}
-		s.appendAuditEntryWithAgent(ctx, "approve", "job", jobID, resolved.Request.GetTopic(), policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "approve job "+jobID, approveAgentID, approveAgentName, approveAgentRiskTier)
+		s.appendApprovalDecisionAudit(ctx, "approve", jobID, resolved.Request.GetTopic(), policybundles.PolicyActorID(r), policybundles.PolicyRole(r), reason, note, approveAgentID, approveAgentName, approveAgentRiskTier)
 		result = handlerResult{http.StatusOK, map[string]string{"job_id": jobID, "trace_id": resolved.TraceID}}
 		return nil
 	})
@@ -1451,8 +1528,8 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("reject: safety decision unavailable, proceeding with empty record",
 				"job_id", jobID, "error", safetyErr)
 		}
-		reason := strings.TrimSpace(body.Reason)
-		note := strings.TrimSpace(body.Note)
+		reason := sanitizeApprovalFreeText(body.Reason)
+		note := sanitizeApprovalFreeText(body.Note)
 		approvedBy := strings.TrimSpace(policybundles.PolicyActorID(r))
 		if approvedBy == "" {
 			approvedBy = "system/unknown"
@@ -1529,7 +1606,7 @@ func (s *server) handleRejectJob(w http.ResponseWriter, r *http.Request) {
 		if resolved.Request != nil && resolved.Request.Labels != nil {
 			rejectAgentID, rejectAgentName, rejectAgentRiskTier = s.resolveAgentForAudit(ctx, resolved.Request.Labels["agent_id"])
 		}
-		s.appendAuditEntryWithAgent(ctx, "reject", "job", jobID, rejectTopic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), "reject job "+jobID, rejectAgentID, rejectAgentName, rejectAgentRiskTier)
+		s.appendApprovalDecisionAudit(ctx, "reject", jobID, rejectTopic, policybundles.PolicyActorID(r), policybundles.PolicyRole(r), reason, note, rejectAgentID, rejectAgentName, rejectAgentRiskTier)
 		result = handlerResult{http.StatusOK, map[string]string{"job_id": jobID}}
 		return nil
 	})

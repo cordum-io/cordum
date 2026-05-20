@@ -1437,7 +1437,7 @@ func submitterIdentity(r *http.Request) string {
 	var parts []string
 	if ac.APIKey != "" {
 		h := sha256.Sum256([]byte(ac.APIKey))
-		parts = append(parts, "apikey:"+hex.EncodeToString(h[:4]))
+		parts = append(parts, "apikey:"+hex.EncodeToString(h[:8]))
 	}
 	if ac.PrincipalID != "" {
 		parts = append(parts, "principal:"+ac.PrincipalID)
@@ -1452,13 +1452,19 @@ func identitiesOverlap(a, b string) bool {
 	if a == b {
 		return true
 	}
-	aKey := extractIdentityPart(a, "apikey:")
-	bKey := extractIdentityPart(b, "apikey:")
-	return aKey != "" && aKey == bKey
+	aKey := strings.TrimPrefix(extractIdentityPart(a, "apikey:"), "apikey:")
+	bKey := strings.TrimPrefix(extractIdentityPart(b, "apikey:"), "apikey:")
+	if aKey != "" && aKey == bKey {
+		return true
+	}
+	aPrincipal := strings.TrimPrefix(extractIdentityPart(a, "principal:"), "principal:")
+	bPrincipal := strings.TrimPrefix(extractIdentityPart(b, "principal:"), "principal:")
+	return aPrincipal != "" && aPrincipal == bPrincipal
 }
 
 func extractIdentityPart(identity, prefix string) string {
 	for _, part := range strings.Split(identity, "|") {
+		part = strings.TrimSpace(part)
 		if strings.HasPrefix(part, prefix) {
 			return part
 		}
@@ -1476,7 +1482,7 @@ func submitterIdentityFromContext(ctx context.Context) string {
 	var parts []string
 	if ac.APIKey != "" {
 		h := sha256.Sum256([]byte(ac.APIKey))
-		parts = append(parts, "apikey:"+hex.EncodeToString(h[:4]))
+		parts = append(parts, "apikey:"+hex.EncodeToString(h[:8]))
 	}
 	if ac.PrincipalID != "" {
 		parts = append(parts, "principal:"+ac.PrincipalID)

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/model"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
@@ -154,6 +156,124 @@ func TestSameAPIKeyDifferentPrincipalBlocked(t *testing.T) {
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for same-key/different-principal, got %d: %s", rr.Code, rr.Body.String())
 	}
+}
+
+func TestSubmitterIdentity_NoCollisionAt100kKeys(t *testing.T) {
+	seen := make(map[string]string, 100_000)
+	for i := 0; i < 100_000; i++ {
+		key := "key-" + strconv.Itoa(i)
+		req := httptest.NewRequest(http.MethodPost, "/test", nil)
+		req = withAuth(req, &auth.AuthContext{
+			APIKey:      key,
+			PrincipalID: "same-principal",
+			Tenant:      "default",
+		})
+		identity := submitterIdentity(req)
+		if prior, ok := seen[identity]; ok {
+			t.Fatalf("submitterIdentity collision for %q and %q: %s", prior, key, identity)
+		}
+		seen[identity] = key
+	}
+}
+
+func TestIdentitiesOverlap_MatchesCompositePrincipal(t *testing.T) {
+	requester := submitterIdentityForTest("requester-key", "alice")
+	approver := submitterIdentityForTest("approver-key", "alice")
+	if requester == approver {
+		t.Fatal("fixture should use different API keys so overlap relies on principal")
+	}
+	if !identitiesOverlap(requester, approver) {
+		t.Fatalf("expected composite identities to overlap on principal: %q vs %q", requester, approver)
+	}
+	if identitiesOverlap(requester, submitterIdentityForTest("approver-key", "bob")) {
+		t.Fatal("different API key and different principal should not overlap")
+	}
+}
+
+func TestApprovalAuditIncludesReasonAndNoteRedacted(t *testing.T) {
+	s, _, safety := newTestGateway(t)
+	safety.setSnapshots([]string{"snap-test"})
+	jobID := seedApprovalJob(t, s, submitterIdentityForTest("submit-key", "alice"))
+
+	req := approvalDecisionRequest(t, jobID, "approve",
+		`{"reason":"approved with Authorization: Bearer secret-token","note":"note sk-12345678901234567890"}`,
+		"review-key", "bob")
+	rr := httptest.NewRecorder()
+	s.handleApproveJob(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("approve status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	entry := latestApprovalAuditEntry(t, s, "approve", jobID)
+	if entry.Reason == "" || entry.Extra["note"] == "" {
+		t.Fatalf("audit reason/note missing: %+v", entry)
+	}
+	combined := entry.Reason + " " + entry.Extra["note"]
+	if strings.Contains(combined, "secret-token") || strings.Contains(combined, "sk-12345678901234567890") {
+		t.Fatalf("audit leaked raw approval reason/note: %+v", entry)
+	}
+}
+
+func TestApprovalReasonNoteRedactedBeforePersistence(t *testing.T) {
+	s, _, safety := newTestGateway(t)
+	safety.setSnapshots([]string{"snap-test"})
+	jobID := seedApprovalJob(t, s, submitterIdentityForTest("submit-key-2", "alice"))
+
+	req := approvalDecisionRequest(t, jobID, "approve",
+		`{"reason":"APIKEY=abc123","note":"Bearer label-secret-token"}`,
+		"review-key-2", "bob")
+	rr := httptest.NewRecorder()
+	s.handleApproveJob(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("approve status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	stored, err := s.jobStore.GetJobRequest(context.Background(), jobID)
+	if err != nil {
+		t.Fatalf("GetJobRequest: %v", err)
+	}
+	labels := stored.GetLabels()
+	if strings.Contains(labels["approval_reason"], "abc123") || strings.Contains(labels["approval_note"], "label-secret-token") {
+		t.Fatalf("approval labels leaked raw secrets: %#v", labels)
+	}
+	if labels["approval_reason"] == "" || labels["approval_note"] == "" {
+		t.Fatalf("approval labels missing redacted reason/note: %#v", labels)
+	}
+}
+
+func submitterIdentityForTest(apiKey, principal string) string {
+	req := httptest.NewRequest(http.MethodPost, "/test", nil)
+	req = withAuth(req, &auth.AuthContext{APIKey: apiKey, PrincipalID: principal, Tenant: "default"})
+	return submitterIdentity(req)
+}
+
+func approvalDecisionRequest(t *testing.T, jobID, action, body, apiKey, principal string) *http.Request {
+	t.Helper()
+	path := "/api/v1/approvals/" + jobID + "/" + action
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "default")
+	req.SetPathValue("job_id", jobID)
+	return withAuth(req, &auth.AuthContext{
+		APIKey:      apiKey,
+		PrincipalID: principal,
+		Role:        "admin",
+		Tenant:      "default",
+	})
+}
+
+func latestApprovalAuditEntry(t *testing.T, s *server, action, jobID string) policybundles.PolicyAuditEntry {
+	t.Helper()
+	entries, err := s.loadPolicyAudit(context.Background())
+	if err != nil {
+		t.Fatalf("loadPolicyAudit: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.Action == action && entry.ResourceID == jobID {
+			return entry
+		}
+	}
+	t.Fatalf("missing %s audit entry for job %s in %#v", action, jobID, entries)
+	return policybundles.PolicyAuditEntry{}
 }
 
 func TestCrossUserApprovalAllowed(t *testing.T) {

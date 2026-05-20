@@ -23,6 +23,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Runtime ingest append-failure cleanup releases nonce reservations with a detached 5s context so client disconnects/timeouts do not leave orphan replay entries. Parent session/execution validation now caches lookups per request, reducing same-parent 256-event batches to one session lookup and one execution lookup before append.
 - Runtime replay opt-out parsing now rejects unrecognized `CORDUM_EDGE_RUNTIME_REPLAY_REQUIRED` values instead of treating typos as the default, and runtime ingestion docs now match the adapter's `RedactionHashNone` behavior plus `invalid_request` raw-field error code.
 
+#### core/controlplane/gateway + core/edge — Approval governance fail-closed audit fixes (2026-05-20, task-433b0830)
+
+- Wired the governance evaluator into nested delegation issuance so scope escalation fires on real handler requests and records the firing governance rule in delegation SIEM audit extras.
+- Approval self-approval guards now persist/check composite requester identities (API-key hash + principal) for MCP and Edge approvals; submitter API-key hashes now use 8 sha256 bytes instead of 4.
+- Approval reason/note free text is redacted and size-capped before job-label persistence and audit emission; approve/reject audit entries now carry `reason` plus redacted note metadata.
+- Edge approval lifecycle cleanup now skips expired tuple approvals, sweeps pending expirations periodically with metrics, removes rejected/expired approvals from action-hash indexes, bounds approval-analytics cache entries, and returns typed claim conflicts for terminal approval states.
+- MCP approval handlers no longer echo raw internal errors to clients; they log full details server-side and return generic stable error codes, including `approval_already_resolved` for terminal-state conflicts.
+
 #### core/controlplane — Fail-closed output policy + scheduler retry caps on Redis read errors (2026-05-20, task-8b4077ba)
 
 - Output policy now fails closed when a result-pointer Redis `Get` returns a non-`redis.Nil` error: it emits a WARN with the pointer key and quarantines the output with a `pointer_unreadable` finding instead of scanning empty bytes and allowing by default.

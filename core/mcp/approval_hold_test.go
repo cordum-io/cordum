@@ -129,11 +129,9 @@ func TestProcessApprovalClaim_TypedConflictKind(t *testing.T) {
 		{"args_mismatch", edge.ApprovalConflictKindArgsMismatch},
 		{"policy_mismatch", edge.ApprovalConflictKindPolicyMismatch},
 		{"expired", edge.ApprovalConflictKindExpired},
-		// EDGE-103 DoD #4: duplicate consume + concurrent attempts MUST
-		// fail closed. The store CAS surfaces "consumed" on the second
-		// attempt; the wire adapter must pass it through verbatim so
-		// the JSON-RPC -32096 error.data.kind matches the snake_case
-		// enum the client branches on.
+		// Non-store-terminal fixtures pass through verbatim; Redis
+		// terminal reasons are covered below because the MCP adapter
+		// intentionally hides lifecycle state from callers.
 		{"consumed", edge.ApprovalConflictKindConsumed},
 		{"tuple_mismatch", edge.ApprovalConflictKindTupleMismatch},
 		{"cross_tenant", edge.ApprovalConflictKindCrossTenant},
@@ -162,6 +160,44 @@ func TestProcessApprovalClaim_TypedConflictKind(t *testing.T) {
 			}
 			if outcome.ConflictErr.Kind != tc.kind {
 				t.Fatalf("ConflictErr.Kind = %q; want %q", outcome.ConflictErr.Kind, tc.kind)
+			}
+		})
+	}
+}
+
+func TestProcessApprovalClaim_HidesStoreTerminalConflicts(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		kind   edge.ApprovalConflictKind
+		reason string
+	}{
+		{"store_consumed", edge.ApprovalConflictKindConsumed, "approval already consumed"},
+		{"store_rejected", edge.ApprovalConflictKindRejected, "approval rejected"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeApprovalClaimStore{
+				err: &edge.ApprovalConflictError{Kind: tc.kind, Reason: tc.reason},
+			}
+			outcome, err := ProcessApprovalClaim(newApprovalHoldCtx(), ApprovalHoldDeps{
+				Store:          store,
+				PolicySnapshot: func(_ context.Context) string { return "policy-v7" },
+			}, ToolCallParams{
+				Name:      "fs.write",
+				Arguments: json.RawMessage(`{"path":"/x","_approval_ref":"edge_appr_xyz"}`),
+			})
+			if err != nil {
+				t.Fatalf("ProcessApprovalClaim returned err: %v", err)
+			}
+			if outcome.ConflictErr == nil {
+				t.Fatal("ConflictErr is nil")
+			}
+			if outcome.ConflictErr.Kind != edge.ApprovalConflictKindNotFound {
+				t.Fatalf("ConflictErr.Kind = %q; want %q", outcome.ConflictErr.Kind, edge.ApprovalConflictKindNotFound)
+			}
+			if outcome.ConflictErr.Reason != "approval not claimable" {
+				t.Fatalf("ConflictErr.Reason = %q; want approval not claimable", outcome.ConflictErr.Reason)
 			}
 		})
 	}

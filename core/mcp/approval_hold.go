@@ -245,7 +245,7 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 		if errors.As(claimErr, &conflict) {
 			return ApprovalClaimOutcome{
 				ClaimRef:    approvalRef,
-				ConflictErr: conflict,
+				ConflictErr: mcpApprovalClaimConflict(conflict),
 			}, nil
 		}
 		if errors.Is(claimErr, edge.ErrApprovalConflict) {
@@ -274,6 +274,28 @@ func ProcessApprovalClaim(ctx context.Context, deps ApprovalHoldDeps, params Too
 		Approval:     approval,
 		StrippedArgs: strippedBytes,
 	}, nil
+}
+
+func mcpApprovalClaimConflict(conflict *edge.ApprovalConflictError) *edge.ApprovalConflictError {
+	if conflict == nil || !isStoreTerminalApprovalConflict(conflict) {
+		return conflict
+	}
+	return &edge.ApprovalConflictError{
+		Kind:   edge.ApprovalConflictKindNotFound,
+		Reason: "approval not claimable",
+	}
+}
+
+func isStoreTerminalApprovalConflict(conflict *edge.ApprovalConflictError) bool {
+	reason := strings.TrimSpace(conflict.Reason)
+	switch conflict.Kind {
+	case edge.ApprovalConflictKindRejected:
+		return reason == "" || strings.EqualFold(reason, "approval rejected")
+	case edge.ApprovalConflictKindConsumed:
+		return reason == "" || strings.EqualFold(reason, "approval already consumed")
+	default:
+		return false
+	}
 }
 
 // ApprovalConflictKindFromError extracts the typed

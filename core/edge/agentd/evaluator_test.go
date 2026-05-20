@@ -752,6 +752,9 @@ func (r *captureRecorder) RecordApprovalResolved(tenant, layer, kind, outcome st
 	r.approvalResolved = append(r.approvalResolved, recordApprovalResolvedCall{tenant: tenant, layer: layer, kind: kind, outcome: outcome})
 }
 
+func (r *captureRecorder) ObserveApprovalSweepDuration(time.Duration) {}
+func (r *captureRecorder) AddApprovalSweepExpired(int)                {}
+
 func (r *captureRecorder) RecordDegraded(tenant, mode, component, reasonCode string) {
 	r.degraded = append(r.degraded, recordReasonCall{tenant: tenant, mode: mode, component: component, reason: reasonCode})
 }

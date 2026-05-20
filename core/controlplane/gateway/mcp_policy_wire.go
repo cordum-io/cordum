@@ -169,6 +169,10 @@ func (g *gatewayApprovalGate) ConsumeActionGateDecision(ctx context.Context, _ m
 		ToolName: ctxData.Tool,
 		ArgsHash: argsHash,
 	}
+	if gatewayMeta, ok := MCPCallMetadataFromContext(ctx); ok {
+		req.Principal = strings.TrimSpace(gatewayMeta.Principal)
+		req.Requester = mcpRequesterIdentity(gatewayMeta)
+	}
 	rec, err := g.store.EnqueueMCPApproval(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("mcp gate: enqueue approval: %w", err)
@@ -208,13 +212,17 @@ func (g *gatewayApprovalGate) mintEdgeApprovalForActionGate(ctx context.Context,
 		mcp.ToolCallParams{Name: ctxData.Tool, Arguments: ctxData.Args},
 		policySnapshot,
 	)
+	requester := strings.TrimSpace(meta.Principal)
+	if gatewayMeta, ok := MCPCallMetadataFromContext(ctx); ok {
+		requester = mcpRequesterIdentity(gatewayMeta)
+	}
 	approval, err := g.edgeStore.EnqueueApproval(ctx, edge.EdgeApprovalRequest{
 		TenantID:       meta.Tenant,
 		SessionID:      meta.SessionID,
 		ExecutionID:    meta.ExecutionID,
 		EventID:        meta.AgentID,
 		PrincipalID:    meta.Principal,
-		Requester:      meta.Principal,
+		Requester:      requester,
 		Reason:         "policy gate REQUIRE_HUMAN",
 		ActionHash:     actionHash,
 		InputHash:      inputHash,

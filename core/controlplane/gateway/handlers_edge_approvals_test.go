@@ -102,6 +102,32 @@ func TestGatewayEdgeApprovalRejectsSelfApproval(t *testing.T) {
 	}
 }
 
+func TestEdgeApprovalSelfApprovalGuard_RejectsSameKeyDifferentPrincipal(t *testing.T) {
+	s, _ := newEdgeRouteTestServer(t)
+	sharedKey := "shared-edge-approval-key"
+	requesterIdentity := submitterIdentityForTest(sharedKey, "principal-edge-a")
+	approval := seedGatewayEdgeApprovalWithRequesterIdentity(t, s, edgeRouteTenant, "principal-edge-a", requesterIdentity, "same-key-spoof")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/edge/approvals/"+approval.ApprovalRef+"/approve", strings.NewReader(`{"reason":"spoofed principal"}`))
+	req.Header.Set("X-Tenant-ID", edgeRouteTenant)
+	req.SetPathValue("approval_ref", approval.ApprovalRef)
+	req = withAuth(req, &auth.AuthContext{
+		APIKey:      sharedKey,
+		PrincipalID: "principal-spoofed-bob",
+		Role:        "admin",
+		Tenant:      edgeRouteTenant,
+	})
+
+	rr := httptest.NewRecorder()
+	s.handleApproveEdgeApproval(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("same-key spoof status = %d, want 403 body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "self_approval_denied") {
+		t.Fatalf("body = %s, want self_approval_denied", rr.Body.String())
+	}
+}
+
 func assertSelfApprovalAuditEvent(t *testing.T, sink *testAuditSender, start int, approvalRef, reasonCode string) audit.SIEMEvent {
 	t.Helper()
 	for i := start; i < sink.Len(); i++ {
@@ -489,10 +515,20 @@ func TestGatewayEdgeApprovalErrors(t *testing.T) {
 
 func seedGatewayEdgeApproval(t *testing.T, s *server, tenantID, requester, suffix string) edgecore.EdgeApproval {
 	t.Helper()
-	return seedGatewayEdgeApprovalWithExpiresAt(t, s, tenantID, requester, suffix, time.Now().UTC().Add(5*time.Minute))
+	return seedGatewayEdgeApprovalWithRequesterIdentityAndExpires(t, s, tenantID, requester, requester, suffix, time.Now().UTC().Add(5*time.Minute))
+}
+
+func seedGatewayEdgeApprovalWithRequesterIdentity(t *testing.T, s *server, tenantID, principalID, requesterIdentity, suffix string) edgecore.EdgeApproval {
+	t.Helper()
+	return seedGatewayEdgeApprovalWithRequesterIdentityAndExpires(t, s, tenantID, principalID, requesterIdentity, suffix, time.Now().UTC().Add(5*time.Minute))
 }
 
 func seedGatewayEdgeApprovalWithExpiresAt(t *testing.T, s *server, tenantID, requester, suffix string, expires time.Time) edgecore.EdgeApproval {
+	t.Helper()
+	return seedGatewayEdgeApprovalWithRequesterIdentityAndExpires(t, s, tenantID, requester, requester, suffix, expires)
+}
+
+func seedGatewayEdgeApprovalWithRequesterIdentityAndExpires(t *testing.T, s *server, tenantID, requester, requesterIdentity, suffix string, expires time.Time) edgecore.EdgeApproval {
 	t.Helper()
 	ctx := context.Background()
 	started := time.Now().UTC().Add(-2 * time.Second).Truncate(time.Microsecond)
@@ -564,7 +600,7 @@ func seedGatewayEdgeApprovalWithExpiresAt(t *testing.T, s *server, tenantID, req
 		ExecutionID:    executionID,
 		EventID:        eventID,
 		PrincipalID:    requester,
-		Requester:      requester,
+		Requester:      requesterIdentity,
 		Reason:         "gateway approval test",
 		RuleID:         "claude-code.require-approval-for-edits",
 		PolicySnapshot: "policy-v1",

@@ -25,9 +25,10 @@ import (
 // invoking tools-call on behalf of an agent). Auditing records both so
 // the dashboard can show "agent-alpha called by alice@corp".
 type MCPCallMetadata struct {
-	Tenant    string
-	AgentID   string
-	Principal string
+	Tenant            string
+	AgentID           string
+	Principal         string
+	RequesterIdentity string
 }
 
 type mcpCallKey struct{}
@@ -45,6 +46,16 @@ func WithMCPCallMetadata(ctx context.Context, meta MCPCallMetadata) context.Cont
 func MCPCallMetadataFromContext(ctx context.Context) (MCPCallMetadata, bool) {
 	m, ok := ctx.Value(mcpCallKey{}).(MCPCallMetadata)
 	return m, ok
+}
+
+func mcpRequesterIdentity(meta MCPCallMetadata) string {
+	if requester := strings.TrimSpace(meta.RequesterIdentity); requester != "" {
+		return requester
+	}
+	if principal := strings.TrimSpace(meta.Principal); principal != "" {
+		return principal
+	}
+	return strings.TrimSpace(meta.AgentID)
 }
 
 // PreapprovalLookup answers whether an agent identity is explicitly
@@ -221,15 +232,11 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 		return nil, nil
 	}
 
-	// Requester is the authenticated principal (not the display agent_id)
-	// so the self-approval guard can compare principal to principal. When
-	// middleware didn't populate Principal we fall back to AgentID for
-	// backward-compat with tests and non-HTTP transports, but the HTTP
-	// middleware in registerMCPRoutes always sets Principal.
-	requester := meta.Principal
-	if requester == "" {
-		requester = meta.AgentID
-	}
+	// Requester is the authenticated composite identity when HTTP middleware
+	// can supply one (API-key hash + principal) so the self-approval guard
+	// can block same-key/principal-spoof attempts. Non-HTTP transports fall
+	// back to principal, then AgentID, for backward compatibility.
+	requester := mcpRequesterIdentity(meta)
 	req := &MCPApprovalRequest{
 		Tenant:    meta.Tenant,
 		AgentID:   meta.AgentID,
@@ -289,7 +296,7 @@ func (g *gatewayApprovalGate) Check(ctx context.Context, tool mcp.Tool, params j
 // approval_store_unavailable per DoD #5 in that case. nil errors include
 // both the success path and the legitimate-fallback path where Edge mint
 // was skipped (no edgeStore wired, or no CallMetadata in ctx).
-func (g *gatewayApprovalGate) dualWriteEdgeApproval(ctx context.Context, _ MCPCallMetadata, tool mcp.Tool, params json.RawMessage, rec *MCPApprovalRecord) (approvalRef, policySnapshot string, expiresAt time.Time, mintErr error) {
+func (g *gatewayApprovalGate) dualWriteEdgeApproval(ctx context.Context, meta MCPCallMetadata, tool mcp.Tool, params json.RawMessage, rec *MCPApprovalRecord) (approvalRef, policySnapshot string, expiresAt time.Time, mintErr error) {
 	approvalRef = rec.ID
 	if rec.ExpiresAt > 0 {
 		expiresAt = time.Unix(rec.ExpiresAt, 0).UTC()
@@ -316,7 +323,7 @@ func (g *gatewayApprovalGate) dualWriteEdgeApproval(ctx context.Context, _ MCPCa
 		ExecutionID:    edgeMeta.ExecutionID,
 		EventID:        edgeMeta.AgentID,
 		PrincipalID:    edgeMeta.Principal,
-		Requester:      edgeMeta.Principal,
+		Requester:      mcpRequesterIdentity(meta),
 		Reason:         rec.Reason,
 		RuleID:         tool.ApprovalScope,
 		PolicySnapshot: policySnapshot,

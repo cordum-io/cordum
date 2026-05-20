@@ -242,5 +242,5 @@ func TestHandleApprovalResult_InvalidStatusReturnsCode(t *testing.T) {
 
 	s.handleApproveJob(rec, req)
 
-	assertCodedError(t, rec, http.StatusNotFound, "RESULT_INVALID_STATUS")
+	assertCodedError(t, rec, http.StatusNotFound, "approval_not_found")
 }

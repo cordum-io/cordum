@@ -363,9 +363,10 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 			agentID = strings.TrimSpace(authCtx.PrincipalID)
 		}
 		mcpCtx := WithMCPCallMetadata(r.Context(), MCPCallMetadata{
-			Tenant:    tenantID,
-			AgentID:   agentID,
-			Principal: strings.TrimSpace(authCtx.PrincipalID),
+			Tenant:            tenantID,
+			AgentID:           agentID,
+			Principal:         strings.TrimSpace(authCtx.PrincipalID),
+			RequesterIdentity: submitterIdentity(r),
 		})
 		// Also stash tenant for the mcp.tool_called audit hook, which
 		// reads ctx via mcp.TenantFromContext (a separate ctx key from

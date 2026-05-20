@@ -12,6 +12,7 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/auth/delegation"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
 )
@@ -176,6 +177,59 @@ func TestHandleDelegateAgentCrossTenantAndScopeErrors(t *testing.T) {
 	scopeRec := httptest.NewRecorder()
 	s.handleDelegateAgent(scopeRec, scopeReq)
 	assertOperatorErrorCode(t, scopeRec, http.StatusBadRequest, "DELEGATION_SCOPE_EXCEEDED")
+}
+
+func TestEvaluateGovernance_FiresOnDelegation(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	setTestEntitlements(t, s, licensing.PlanEnterprise, func(e *licensing.Entitlements) {
+		e.AgentIdentity = true
+	})
+	setDelegationKeys(t)
+	sink := &recordingAuditSender{}
+	s.auditExporter = sink
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.alpha"})
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.alpha"})
+	createDelegationAgent(t, s, "default", "agent-c", []string{"write"}, []string{"job.alpha"})
+	parent := issueDelegationTokenForGovernanceTest(t, s)
+
+	body := `{"target_agent_id":"agent-c","allowed_actions":["write"],"allowed_topics":["job.alpha"],"parent_token":"` + parent + `"}`
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-b/delegate", strings.NewReader(body)))
+	req.SetPathValue("id", "agent-b")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleDelegateAgent(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := latestDelegationAuditExtra(sink, "governance_rule"); got != config.GovernanceRuleScopeEscalation {
+		t.Fatalf("governance_rule extra = %q, want %q; events=%#v", got, config.GovernanceRuleScopeEscalation, sink.events)
+	}
+}
+
+func issueDelegationTokenForGovernanceTest(t *testing.T, s *server) string {
+	t.Helper()
+	service, err := s.delegationTokenService()
+	if err != nil {
+		t.Fatalf("delegationTokenService() error = %v", err)
+	}
+	token, _, err := service.IssueDelegationToken(context.Background(), delegation.IssueRequest{
+		Tenant: "default", DelegatingAgentID: "agent-a", TargetAgentID: "agent-b",
+		AllowedActions: []string{"read"}, AllowedTopics: []string{"job.alpha"},
+	})
+	if err != nil {
+		t.Fatalf("IssueDelegationToken() error = %v", err)
+	}
+	return token
+}
+
+func latestDelegationAuditExtra(sink *recordingAuditSender, key string) string {
+	for i := len(sink.events) - 1; i >= 0; i-- {
+		if sink.events[i].Action == "delegation.issue" {
+			return sink.events[i].Extra[key]
+		}
+	}
+	return ""
 }
 
 func TestHandleDelegateAgentRejectsTooDeepChain(t *testing.T) {

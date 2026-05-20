@@ -39,6 +39,8 @@ type PrometheusRecorder struct {
 	actionsDenied             *prometheus.CounterVec
 	approvalRequested         *prometheus.CounterVec
 	approvalResolved          *prometheus.CounterVec
+	approvalSweepDuration     prometheus.Histogram
+	approvalSweepExpired      prometheus.Counter
 	approvalEnqueueAborts     *prometheus.CounterVec
 	appendEventsAborts        *prometheus.CounterVec
 	idempotencyTTLExtended    *prometheus.CounterVec
@@ -150,6 +152,15 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 			Namespace: ns, Name: "approvals_resolved_total",
 			Help: "Edge approvals resolved, labeled by layer, kind, and outcome.",
 		}, []string{"layer", "kind", "outcome"}),
+		approvalSweepDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Namespace: ns, Name: "approval_sweep_duration_seconds",
+			Help:    "Duration of periodic Edge approval expiry sweeps.",
+			Buckets: prometheus.DefBuckets,
+		}),
+		approvalSweepExpired: prometheus.NewCounter(prometheus.CounterOpts{
+			Namespace: ns, Name: "approval_sweep_expired_total",
+			Help: "Edge approvals expired by the periodic approval sweeper.",
+		}),
 		// EDGE-058 — counter for fail-closed EnqueueApproval aborts. `reason`
 		// collapses to {"event_list_too_large", "other", "unknown"} via
 		// boundedApprovalEnqueueAbortReason. Bounded cardinality.
@@ -274,7 +285,8 @@ func NewPrometheusRecorder(reg prometheus.Registerer) Recorder {
 		r.sessionSwept,
 		r.eventsPersisted, r.eventsRedacted, r.hookTimeouts,
 		r.actionDecisions, r.actionsDenied,
-		r.approvalRequested, r.approvalResolved, r.approvalEnqueueAborts,
+		r.approvalRequested, r.approvalResolved, r.approvalSweepDuration,
+		r.approvalSweepExpired, r.approvalEnqueueAborts,
 		r.appendEventsAborts,
 		r.idempotencyTTLExtended, r.idempotencyWindowExpired,
 		r.runtimeReplayFirstSeen, r.runtimeReplayReplayed, r.runtimeReplayWindowFull,
@@ -345,6 +357,14 @@ func (r *PrometheusRecorder) RecordApprovalRequested(_ /*tenant*/, layer, kind s
 }
 func (r *PrometheusRecorder) RecordApprovalResolved(_ /*tenant*/, layer, kind, outcome string) {
 	r.approvalResolved.WithLabelValues(NormalizeLayer(layer), NormalizeKind(kind), NormalizeApprovalOutcome(outcome)).Inc()
+}
+func (r *PrometheusRecorder) ObserveApprovalSweepDuration(duration time.Duration) {
+	r.approvalSweepDuration.Observe(duration.Seconds())
+}
+func (r *PrometheusRecorder) AddApprovalSweepExpired(count int) {
+	if count > 0 {
+		r.approvalSweepExpired.Add(float64(count))
+	}
 }
 func (r *PrometheusRecorder) RecordApprovalEnqueueAborted(reason string) {
 	r.approvalEnqueueAborts.WithLabelValues(boundedApprovalEnqueueAbortReason(reason)).Inc()
