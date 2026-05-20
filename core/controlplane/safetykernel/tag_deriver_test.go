@@ -289,7 +289,7 @@ func TestLoadTagDeriversFromTopics(t *testing.T) {
 	// Simulate pack-installed topic registrations with riskTagDeriver.
 	entries := []topicDeriverEntry{
 		{TopicName: "job.demo-mock-bank.transfer", DeriverName: "amount-threshold"},
-		{TopicName: "job.no-deriver-topic", DeriverName: ""},          // no deriver
+		{TopicName: "job.no-deriver-topic", DeriverName: ""},           // no deriver
 		{TopicName: "job.unknown-deriver-topic", DeriverName: "bogus"}, // unknown deriver
 	}
 

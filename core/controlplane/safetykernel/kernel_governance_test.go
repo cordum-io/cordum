@@ -13,9 +13,9 @@ import (
 // invocations + returns a canned decision. Used to prove the kernel
 // wiring forwards inputs without modification.
 type fakeGovernanceEvaluator struct {
-	calls    int
-	lastIn   *config.GovernanceInput
-	canned   evaluator.Decision
+	calls  int
+	lastIn *config.GovernanceInput
+	canned evaluator.Decision
 }
 
 func (f *fakeGovernanceEvaluator) Evaluate(_ context.Context, in *config.GovernanceInput, _ config.GovernancePolicy) evaluator.Decision {

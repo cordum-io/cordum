@@ -18,9 +18,9 @@ func scopeConfig() *config.ScopeConfig {
 			"grocery": {"produce", "dairy", "meat", "bakery", "beverages", "snacks", "frozen", "pantry", "household", "personal_care"},
 		},
 		Aliases: map[string]string{
-			"gift-card":  "gift_card",
-			"giftcard":   "gift_card",
-			"gift card":  "gift_card",
+			"gift-card": "gift_card",
+			"giftcard":  "gift_card",
+			"gift card": "gift_card",
 		},
 		OnMissingInput: "deny",
 		OnAmbiguous:    "deny",

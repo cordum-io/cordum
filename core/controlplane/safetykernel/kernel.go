@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/governance/evaluator"
 	"github.com/cordum/cordum/core/infra/bus"
@@ -34,7 +35,6 @@ import (
 	infraHealth "github.com/cordum/cordum/core/infra/health"
 	cordumotel "github.com/cordum/cordum/core/infra/otel"
 	"github.com/cordum/cordum/core/infra/redisutil"
-	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/licensing"
@@ -87,19 +87,19 @@ type server struct {
 	// Loaded from policy.RequireHuman at policy-load time. Zero value
 	// preserves legacy DENY-everything behavior.
 	requireHumanThreshold config.RequireHumanThreshold
-	scanners             map[string]OutputScanner
-	snapshot             string
-	snapshots            []string
-	resultClient         redis.UniversalClient
-	velocityChecker      *velocityChecker
-	policyVersion        atomic.Uint64
-	cacheMu              sync.Mutex
-	cacheTTL             time.Duration
-	cache                map[string]cacheEntry
-	cacheMaxSize         int
-	entitlements         *licensing.EntitlementResolver
-	customBundleCount    int
-	shadowEvaluator      *ShadowEvaluator
+	scanners              map[string]OutputScanner
+	snapshot              string
+	snapshots             []string
+	resultClient          redis.UniversalClient
+	velocityChecker       *velocityChecker
+	policyVersion         atomic.Uint64
+	cacheMu               sync.Mutex
+	cacheTTL              time.Duration
+	cache                 map[string]cacheEntry
+	cacheMaxSize          int
+	entitlements          *licensing.EntitlementResolver
+	customBundleCount     int
+	shadowEvaluator       *ShadowEvaluator
 
 	// Agent identity store for enriching policy evaluation with agent context.
 	agentStore    *store.AgentIdentityStore
