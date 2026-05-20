@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	edgecore "github.com/cordum/cordum/core/edge"
@@ -114,17 +115,14 @@ func (s *server) handleEdgeRuntimeIngest(w http.ResponseWriter, r *http.Request)
 	// pipeline's helper so missing-session and execution-session-mismatch
 	// errors land in the same envelope shape the rest of /api/v1/edge/*
 	// emits.
+	parentValidator := newRuntimeIngestParentValidator(store)
 	for _, ev := range result.Events {
-		if err := validateEdgeEventParents(r.Context(), store, ev); err != nil {
-			writeEdgeEventStoreError(w, r, err, "validate runtime event parents")
-			return
-		}
-		if err := validateRuntimeIngestCollectorParents(r.Context(), store, ev, collectorID); err != nil {
+		if err := parentValidator.validate(r.Context(), ev, collectorID); err != nil {
 			if errors.Is(err, errRuntimeIngestCollectorParentDenied) {
 				writeEdgeForbidden(w, r, err)
 				return
 			}
-			writeEdgeEventStoreError(w, r, err, "validate runtime collector binding")
+			writeEdgeEventStoreError(w, r, err, "validate runtime event parents")
 			return
 		}
 	}
@@ -208,7 +206,12 @@ func (s *server) releaseRuntimeIngestReplayReservation(ctx context.Context, tena
 	if window == nil {
 		return
 	}
-	if err := window.Release(ctx, tenantID, collectorID, nonce); err != nil {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := window.Release(releaseCtx, tenantID, collectorID, nonce); err != nil {
 		slog.Warn("release runtime replay reservation failed",
 			"tenant_id", tenantID,
 			"collector_id", collectorID,
@@ -304,24 +307,44 @@ func validateRuntimeIngestSourceID(w http.ResponseWriter, r *http.Request, sourc
 	return true
 }
 
-func validateRuntimeIngestCollectorParents(ctx context.Context, store edgecore.Store, ev edgecore.AgentActionEvent, collectorID string) error {
+type runtimeIngestParentKey struct {
+	tenantID string
+	id       string
+}
+
+type runtimeIngestParentValidator struct {
+	store      edgecore.Store
+	sessions   map[runtimeIngestParentKey]*edgecore.EdgeSession
+	executions map[runtimeIngestParentKey]*edgecore.AgentExecution
+}
+
+func newRuntimeIngestParentValidator(store edgecore.Store) *runtimeIngestParentValidator {
+	return &runtimeIngestParentValidator{
+		store:      store,
+		sessions:   make(map[runtimeIngestParentKey]*edgecore.EdgeSession),
+		executions: make(map[runtimeIngestParentKey]*edgecore.AgentExecution),
+	}
+}
+
+func (v *runtimeIngestParentValidator) validate(
+	ctx context.Context,
+	ev edgecore.AgentActionEvent,
+	collectorID string,
+) error {
 	collectorID = strings.TrimSpace(collectorID)
 	if collectorID == "" {
 		return errRuntimeIngestCollectorParentDenied
 	}
-	session, found, err := store.GetSession(ctx, ev.TenantID, ev.SessionID)
+	session, err := v.session(ctx, ev.TenantID, ev.SessionID)
 	if err != nil {
 		return err
 	}
-	if !found || session == nil {
-		return edgecore.ErrNotFound
-	}
-	execution, found, err := store.GetExecution(ctx, ev.TenantID, ev.ExecutionID)
+	execution, err := v.execution(ctx, ev.TenantID, ev.ExecutionID)
 	if err != nil {
 		return err
 	}
-	if !found || execution == nil {
-		return edgecore.ErrNotFound
+	if execution.SessionID != ev.SessionID {
+		return edgeEventRequestError{status: http.StatusBadRequest, message: "event session_id does not match execution"}
 	}
 	if strings.TrimSpace(session.PrincipalID) != collectorID {
 		return errRuntimeIngestCollectorParentDenied
@@ -330,6 +353,38 @@ func validateRuntimeIngestCollectorParents(ctx context.Context, store edgecore.S
 		return errRuntimeIngestCollectorParentDenied
 	}
 	return nil
+}
+
+func (v *runtimeIngestParentValidator) session(ctx context.Context, tenantID, sessionID string) (*edgecore.EdgeSession, error) {
+	key := runtimeIngestParentKey{tenantID: tenantID, id: sessionID}
+	if session, ok := v.sessions[key]; ok {
+		return session, nil
+	}
+	session, found, err := v.store.GetSession(ctx, tenantID, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !found || session == nil {
+		return nil, edgecore.ErrNotFound
+	}
+	v.sessions[key] = session
+	return session, nil
+}
+
+func (v *runtimeIngestParentValidator) execution(ctx context.Context, tenantID, executionID string) (*edgecore.AgentExecution, error) {
+	key := runtimeIngestParentKey{tenantID: tenantID, id: executionID}
+	if execution, ok := v.executions[key]; ok {
+		return execution, nil
+	}
+	execution, found, err := v.store.GetExecution(ctx, tenantID, executionID)
+	if err != nil {
+		return nil, err
+	}
+	if !found || execution == nil {
+		return nil, edgecore.ErrNotFound
+	}
+	v.executions[key] = execution
+	return execution, nil
 }
 
 // writeRuntimeIngestAdapterError maps Adapter.Map errors to the standard

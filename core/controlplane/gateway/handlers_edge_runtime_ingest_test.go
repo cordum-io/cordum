@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -61,6 +62,29 @@ func runtimeIngestBodyWithNonceForSource(sourceID, sessionID, executionID, tenan
 			"process": {"executable_basename":"curl","argument_count":1}
 		}]
 	}`
+}
+
+func runtimeIngestBatchBodyForEvents(sourceID, sessionID, executionID, tenantID, nonce string, count int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `{"source":{"source_id":%q},"nonce":%q,"events":[`, sourceID, nonce)
+	for i := range count {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		sourceEventID := fmt.Sprintf("rt-n1-%03d", i)
+		fmt.Fprintf(
+			&b,
+			`{"tenant_id":%q,"session_id":%q,"execution_id":%q,"source_event_id":%q,`+
+				`"observed_at":"2026-05-17T12:00:00Z","kind":"runtime.process.exec",`+
+				`"process":{"executable_basename":"curl","argument_count":1}}`,
+			tenantID,
+			sessionID,
+			executionID,
+			sourceEventID,
+		)
+	}
+	b.WriteString(`]}`)
+	return b.String()
 }
 
 func runtimeIngestNonce(seed string) string {
@@ -131,6 +155,24 @@ func postRuntimeIngestWithAuth(t *testing.T, s *server, authCtx *auth.AuthContex
 func postRuntimeIngestWithAuthForTenant(t *testing.T, s *server, authCtx *auth.AuthContext, headerTenant, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/edge/runtime/events", strings.NewReader(body))
+	req.Header.Set("X-Tenant-ID", headerTenant)
+	req.Header.Set("Content-Type", "application/json")
+	req = withAuth(req, authCtx)
+	rr := httptest.NewRecorder()
+	s.handleEdgeRuntimeIngest(rr, req)
+	return rr
+}
+
+func postRuntimeIngestWithAuthAndContext(
+	t *testing.T,
+	s *server,
+	ctx context.Context,
+	authCtx *auth.AuthContext,
+	headerTenant string,
+	body string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/edge/runtime/events", strings.NewReader(body)).WithContext(ctx)
 	req.Header.Set("X-Tenant-ID", headerTenant)
 	req.Header.Set("Content-Type", "application/json")
 	req = withAuth(req, authCtx)
@@ -587,14 +629,20 @@ func TestRuntimeIngestReplayWindowFullRefuses(t *testing.T) {
 	}
 }
 
-func TestRuntimeIngestCrossInstanceDedupViaSharedRedis(t *testing.T) {
+func TestRuntimeReplay_SharedRedisDedup(t *testing.T) {
 	enableRuntimeIngest(t)
 	s1, _ := newEdgeRouteTestServer(t)
 	setupRuntimeIngestRBAC(t, s1)
-	s2 := s1
-	s2.edgeStore = edgecore.NewRedisStoreFromClient(s1.jobStore.Client())
+
+	s2, _ := newEdgeRouteTestServer(t)
+	setupRuntimeIngestRBAC(t, s2)
+	if s1 == s2 {
+		t.Fatal("newEdgeRouteTestServer returned aliased server pointers; want independent instances")
+	}
+	sharedClient := s1.jobStore.Client()
+	s2.edgeStore = edgecore.NewRedisStoreFromClient(sharedClient)
 	s2.runtimeReplayWindow = runtimeingest.NewReplayWindow(
-		s1.jobStore.Client(),
+		sharedClient,
 		runtimeingest.ReplayWindowTTL,
 		runtimeingest.MaxReplayWindowCardinality,
 	)
@@ -618,6 +666,62 @@ func TestRuntimeIngestCrossInstanceDedupViaSharedRedis(t *testing.T) {
 	}
 	if got := len(runtimeEventsForExecution(t, s1, execution.ExecutionID)); got != 1 {
 		t.Fatalf("stored runtime events after cross-instance replay = %d, want 1", got)
+	}
+}
+
+func TestReplayRelease_SurvivesClientDisconnect(t *testing.T) {
+	enableRuntimeIngest(t)
+	s, _ := newEdgeRouteTestServer(t)
+	setupRuntimeIngestRBAC(t, s)
+	session, execution := createRuntimeIngestBoundParents(t, s, "release-cancel", "tetragon-test")
+	ctx, cancel := context.WithCancel(context.Background())
+	s.edgeStore = &runtimeIngestCancelAppendStore{Store: s.edgeStore, cancel: cancel}
+	const nonce = "nonce-release-cancel-1"
+	body := runtimeIngestBodyWithNonceForSource(
+		"tetragon-test",
+		session.SessionID,
+		execution.ExecutionID,
+		edgeRouteTenant,
+		nonce,
+		"rt-release-cancel",
+	)
+
+	first := postRuntimeIngestWithAuthAndContext(t, s, ctx, runtimeIngestAuthContext(testRuntimeCollectorRole, "tetragon-test"), edgeRouteTenant, body)
+	if first.Code != http.StatusInternalServerError {
+		t.Fatalf("first ingest status = %d, want 500 body=%s", first.Code, first.Body.String())
+	}
+	retry := postRuntimeIngestWithAuth(t, s, runtimeIngestAuthContext(testRuntimeCollectorRole, "tetragon-test"), body)
+	if retry.Code != http.StatusCreated {
+		t.Fatalf("retry after canceled append status = %d, want 201 body=%s", retry.Code, retry.Body.String())
+	}
+	if got := len(runtimeEventsForExecution(t, s, execution.ExecutionID)); got != 1 {
+		t.Fatalf("stored runtime events after retry = %d, want 1", got)
+	}
+}
+
+func TestRuntimeIngest_NoN1QueryPerEvent(t *testing.T) {
+	enableRuntimeIngest(t)
+	s, _ := newEdgeRouteTestServer(t)
+	setupRuntimeIngestRBAC(t, s)
+	session, execution := createRuntimeIngestBoundParents(t, s, "n1", "tetragon-test")
+	counting := &runtimeIngestParentCountingStore{Store: s.edgeStore}
+	s.edgeStore = counting
+
+	body := runtimeIngestBatchBodyForEvents(
+		"tetragon-test",
+		session.SessionID,
+		execution.ExecutionID,
+		edgeRouteTenant,
+		"nonce-n1-query-cache",
+		runtimeingest.MaxRuntimeBatchEvents,
+	)
+	rr := postRuntimeIngestWithAuth(t, s, runtimeIngestAuthContext(testRuntimeCollectorRole, "tetragon-test"), body)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("batch ingest status = %d, want 201 body=%s", rr.Code, rr.Body.String())
+	}
+	sessionGets, executionGets := counting.counts()
+	if sessionGets > 1 || executionGets > 1 {
+		t.Fatalf("parent lookups = session:%d execution:%d, want <=1 each for shared parents", sessionGets, executionGets)
 	}
 }
 
@@ -747,6 +851,66 @@ func (s *runtimeIngestAppendFailStore) AppendEvents(
 	}
 	s.mu.Unlock()
 	return s.Store.AppendEvents(ctx, events)
+}
+
+type runtimeIngestCancelAppendStore struct {
+	edgecore.Store
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	failed bool
+}
+
+func (s *runtimeIngestCancelAppendStore) AppendEvents(
+	ctx context.Context,
+	events []edgecore.AgentActionEvent,
+) ([]edgecore.AgentActionEvent, error) {
+	s.mu.Lock()
+	if !s.failed {
+		s.failed = true
+		cancel := s.cancel
+		s.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		return nil, context.Canceled
+	}
+	s.mu.Unlock()
+	return s.Store.AppendEvents(ctx, events)
+}
+
+type runtimeIngestParentCountingStore struct {
+	edgecore.Store
+	mu            sync.Mutex
+	sessionGets   int
+	executionGets int
+}
+
+func (s *runtimeIngestParentCountingStore) GetSession(
+	ctx context.Context,
+	tenantID string,
+	sessionID string,
+) (*edgecore.EdgeSession, bool, error) {
+	s.mu.Lock()
+	s.sessionGets++
+	s.mu.Unlock()
+	return s.Store.GetSession(ctx, tenantID, sessionID)
+}
+
+func (s *runtimeIngestParentCountingStore) GetExecution(
+	ctx context.Context,
+	tenantID string,
+	executionID string,
+) (*edgecore.AgentExecution, bool, error) {
+	s.mu.Lock()
+	s.executionGets++
+	s.mu.Unlock()
+	return s.Store.GetExecution(ctx, tenantID, executionID)
+}
+
+func (s *runtimeIngestParentCountingStore) counts() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sessionGets, s.executionGets
 }
 
 // TestRuntimeIngestEnabledStoresRedactedRuntimeEvent is the

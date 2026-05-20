@@ -105,7 +105,13 @@ func (r *ReplayWindow) keyAndValue(tenantID, collectorID, nonce string) (string,
 	if tenantID == "" || collectorID == "" || nonce == "" {
 		return "", "", fmt.Errorf("runtime replay window requires tenant_id, collector_id, and nonce")
 	}
-	return ReplayWindowKeyPrefix + tenantID + ":" + collectorID, replayNonceDigest(nonce), nil
+	key := ReplayWindowKeyPrefix + replayKeyComponentDigest(tenantID) + ":" + replayKeyComponentDigest(collectorID)
+	return key, replayNonceDigest(nonce), nil
+}
+
+func replayKeyComponentDigest(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }
 
 func replayNonceDigest(nonce string) string {

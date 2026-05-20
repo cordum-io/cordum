@@ -17,6 +17,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+#### core/edge/runtimeingest — Runtime replay correctness sweep (2026-05-20, task-bdd3e81d)
+
+- Runtime ingest replay keys now use `sha256(tenant_id):sha256(collector_id)` under `edge:rt:nonce:*`, preventing delimiter collisions between tenant/collector tuples that contain `:`. **Operator migration:** this key format is wire-incompatible with existing replay-window entries; wait one `ReplayWindowTTL` (1 hour) after deploy for old keys to age out, or flush matching `edge:rt:nonce:*` keys during rollout.
+- Runtime ingest append-failure cleanup releases nonce reservations with a detached 5s context so client disconnects/timeouts do not leave orphan replay entries. Parent session/execution validation now caches lookups per request, reducing same-parent 256-event batches to one session lookup and one execution lookup before append.
+- Runtime replay opt-out parsing now rejects unrecognized `CORDUM_EDGE_RUNTIME_REPLAY_REQUIRED` values instead of treating typos as the default, and runtime ingestion docs now match the adapter's `RedactionHashNone` behavior plus `invalid_request` raw-field error code.
+
 #### core/controlplane — Fail-closed output policy + scheduler retry caps on Redis read errors (2026-05-20, task-8b4077ba)
 
 - Output policy now fails closed when a result-pointer Redis `Get` returns a non-`redis.Nil` error: it emits a WARN with the pointer key and quarantines the output with a `pointer_unreadable` finding instead of scanning empty bytes and allowing by default.

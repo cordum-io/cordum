@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -617,6 +618,44 @@ func TestDecodeBatch_NonceOptionalWhenFlagDisabled(t *testing.T) {
 
 	if _, err := DecodeBatch(bytes.NewReader(body)); err != nil {
 		t.Fatalf("DecodeBatch with replay-required flag disabled: %v", err)
+	}
+}
+
+func TestDecodeBatch_RejectsUnrecognizedReplayRequiredFlag(t *testing.T) {
+	t.Setenv("CORDUM_EDGE_RUNTIME_REPLAY_REQUIRED", "disable")
+	body := []byte(`{"source":{"source_id":"tetragon-test"},"nonce":"nonce-flag-typo-01","events":[]}`)
+
+	_, err := DecodeBatch(bytes.NewReader(body))
+	if !errors.Is(err, ErrInvalidBatch) {
+		t.Fatalf("DecodeBatch with unrecognized replay-required flag err = %v, want ErrInvalidBatch", err)
+	}
+}
+
+func TestAdapterRedactionHashMatchesDocs(t *testing.T) {
+	doc, err := os.ReadFile("../../../docs/edge/runtime-ingestion.md")
+	if err != nil {
+		t.Fatalf("read runtime ingestion docs: %v", err)
+	}
+	text := string(doc)
+	if strings.Contains(text, "RedactionHashBoth") {
+		t.Fatal("runtime ingestion docs claim RedactionHashBoth; adapter uses RedactionHashNone")
+	}
+	if !strings.Contains(text, "RedactionHashNone") {
+		t.Fatal("runtime ingestion docs must name RedactionHashNone to match adapter")
+	}
+}
+
+func TestRuntimeIngestionDocsMatchForbiddenRawKeyErrorCode(t *testing.T) {
+	doc, err := os.ReadFile("../../../docs/edge/runtime-ingestion.md")
+	if err != nil {
+		t.Fatalf("read runtime ingestion docs: %v", err)
+	}
+	text := string(doc)
+	if strings.Contains(text, "raw_payload_rejected") {
+		t.Fatal("runtime ingestion docs mention raw_payload_rejected; implementation returns invalid_request")
+	}
+	if !strings.Contains(text, "Forbidden raw-field key present             | 400  | `invalid_request`") {
+		t.Fatal("runtime ingestion docs must map forbidden raw-field keys to invalid_request")
 	}
 }
 

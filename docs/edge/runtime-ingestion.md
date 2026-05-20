@@ -101,8 +101,10 @@ Field rules:
 - Top-level `source.source_id`, `nonce`, and `events` are **required** by
   default. Missing or empty source identity / nonce → 400 `invalid_request`.
   `nonce` accepts `^[A-Za-z0-9-]{16,64}$` (UUIDv7 or random 128-bit values).
-  `CORDUM_EDGE_RUNTIME_REPLAY_REQUIRED=false` is a transitional non-production
-  opt-out for clients that cannot yet send nonces.
+  `CORDUM_EDGE_RUNTIME_REPLAY_REQUIRED=false|0|no` is a transitional
+  non-production opt-out for clients that cannot yet send nonces. Any other
+  non-empty value must be one of `true|1|yes` or the request is rejected as
+  `invalid_request`.
 - `batch_id` is operator correlation only. Replay protection uses `nonce`, not
   `batch_id`.
 - Per-event `tenant_id`, `session_id`, `execution_id`, `source_event_id`,
@@ -117,7 +119,7 @@ Field rules:
   `passwords`, `api_key`, `apikey`, `private_key`, `dns_response`, or
   `response`.
 - Path / host / qname fields go through the existing edge redactor
-  (`edge.RedactValue` with `RedactionHashBoth`) before persistence.
+  (`edge.RedactValue` with `RedactionHashNone`) before persistence.
 - Any large evidence (full PCAP, raw script body, full exec trace) must
   use `artifact_ptrs` with the existing `artifact:` / `edge-artifact:`
   URI schemes; the adapter never inlines raw bytes.
@@ -246,7 +248,7 @@ Error mapping (all via the existing edge envelope):
 | Decoded events > MaxRuntimeBatchEvents      | 413  | `request_too_large`     |
 | Empty batch                                 | 400  | `invalid_request`       |
 | Unknown / non-runtime `kind`                | 400  | `invalid_request`       |
-| Forbidden raw-field key present             | 400  | `raw_payload_rejected`  |
+| Forbidden raw-field key present             | 400  | `invalid_request`       |
 | Per-event redacted size > MaxRuntime…Bytes  | 413  | `request_too_large`     |
 | Missing parent session                      | 404  | `not_found`             |
 | Missing parent execution                    | 404  | `not_found`             |

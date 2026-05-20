@@ -23,6 +23,15 @@ func newReplayWindowTestClient(t *testing.T) (*redis.Client, *miniredis.Miniredi
 	return client, mr
 }
 
+func mustReplayWindowKey(t *testing.T, window *ReplayWindow, tenantID, collectorID string) string {
+	t.Helper()
+	key, _, err := window.keyAndValue(tenantID, collectorID, "nonce-key-probe")
+	if err != nil {
+		t.Fatalf("keyAndValue: %v", err)
+	}
+	return key
+}
+
 func TestReplayWindow_FirstNonceAccepted(t *testing.T) {
 	ctx := context.Background()
 	client, mr := newReplayWindowTestClient(t)
@@ -36,7 +45,7 @@ func TestReplayWindow_FirstNonceAccepted(t *testing.T) {
 		t.Fatal("Reserve first nonce accepted=false; want true")
 	}
 
-	key := ReplayWindowKeyPrefix + "tenant-a:collector-x"
+	key := mustReplayWindowKey(t, window, "tenant-a", "collector-x")
 	if !mr.Exists(key) {
 		t.Fatalf("expected replay key %q to exist", key)
 	}
@@ -93,7 +102,8 @@ func TestReplayWindow_DoesNotPersistRawNonce(t *testing.T) {
 	if err != nil || !accepted {
 		t.Fatalf("Reserve = (%v, %v); want (true, nil)", accepted, err)
 	}
-	members, err := client.SMembers(ctx, ReplayWindowKeyPrefix+"tenant-a:collector-x").Result()
+	key := mustReplayWindowKey(t, window, "tenant-a", "collector-x")
+	members, err := client.SMembers(ctx, key).Result()
 	if err != nil {
 		t.Fatalf("SMembers replay key: %v", err)
 	}
@@ -131,6 +141,22 @@ func TestReplayWindow_CrossTenantIsolated(t *testing.T) {
 	}
 	if ok, err := window.Reserve(ctx, "tenant-b", "collector-x", "nonce-000000000001"); err != nil || !ok {
 		t.Fatalf("tenant-b Reserve = (%v, %v); want (true, nil)", ok, err)
+	}
+}
+
+func TestReplayWindow_TenantKeyDelimCollisionFree(t *testing.T) {
+	ctx := context.Background()
+	client, _ := newReplayWindowTestClient(t)
+	window := NewReplayWindow(client, ReplayWindowTTL, MaxReplayWindowCardinality)
+	nonce := "nonce-delim-collision"
+
+	first, err := window.Reserve(ctx, "a:b", "c", nonce)
+	if err != nil || !first {
+		t.Fatalf("first Reserve = (%v, %v); want (true, nil)", first, err)
+	}
+	second, err := window.Reserve(ctx, "a", "b:c", nonce)
+	if err != nil || !second {
+		t.Fatalf("second Reserve with distinct tenant/collector tuple = (%v, %v); want (true, nil)", second, err)
 	}
 }
 
@@ -215,7 +241,7 @@ func TestReplayWindow_ReserveAtomicUnderConcurrency(t *testing.T) {
 	close(ready)
 	wg.Wait()
 
-	key := ReplayWindowKeyPrefix + "tenant-a:collector-x"
+	key := mustReplayWindowKey(t, window, "tenant-a", "collector-x")
 	size, err := client.SCard(ctx, key).Result()
 	if err != nil {
 		t.Fatalf("post-race SCard: %v", err)
@@ -237,7 +263,7 @@ func TestReplayWindow_ReserveAlwaysAppliesTTL(t *testing.T) {
 	ctx := context.Background()
 	client, mr := newReplayWindowTestClient(t)
 	window := NewReplayWindow(client, ReplayWindowTTL, MaxReplayWindowCardinality)
-	key := ReplayWindowKeyPrefix + "tenant-a:collector-x"
+	key := mustReplayWindowKey(t, window, "tenant-a", "collector-x")
 
 	for i := range 25 {
 		nonce := fmt.Sprintf("nonce-ttl-%06d", i)
@@ -280,7 +306,7 @@ func TestReplayWindow_ReserveAtomicNoOrphanOnExpireFailure(t *testing.T) {
 	// outcome is acceptable. The invariant is the post-state, not the
 	// return value.
 
-	key := ReplayWindowKeyPrefix + "tenant-a:collector-x"
+	key := mustReplayWindowKey(t, window, "tenant-a", "collector-x")
 	members, err := plainClient.SCard(ctx, key).Result()
 	if err != nil {
 		t.Fatalf("post-failure SCard via plain client: %v", err)

@@ -528,9 +528,13 @@ func DecodeBatch(r io.Reader) (RuntimeBatch, error) {
 }
 
 func validateRuntimeBatchNonce(nonce string) error {
+	required, err := runtimeReplayRequired()
+	if err != nil {
+		return err
+	}
 	nonce = strings.TrimSpace(nonce)
 	if nonce == "" {
-		if !runtimeReplayRequired() {
+		if !required {
 			return nil
 		}
 		return fmt.Errorf("%w: nonce required", ErrInvalidBatch)
@@ -547,11 +551,14 @@ func validateRuntimeBatchNonce(nonce string) error {
 	return nil
 }
 
-func runtimeReplayRequired() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("CORDUM_EDGE_RUNTIME_REPLAY_REQUIRED"))) {
+func runtimeReplayRequired() (bool, error) {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("CORDUM_EDGE_RUNTIME_REPLAY_REQUIRED")))
+	switch value {
+	case "", "true", "1", "yes":
+		return true, nil
 	case "false", "0", "no":
-		return false
+		return false, nil
 	default:
-		return true
+		return false, fmt.Errorf("%w: CORDUM_EDGE_RUNTIME_REPLAY_REQUIRED must be true/false/1/0/yes/no", ErrInvalidBatch)
 	}
 }
