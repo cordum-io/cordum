@@ -244,7 +244,7 @@ func TestAuditChainSenderTenantlessCounterOnAuthFailureMix(t *testing.T) {
 		t.Fatalf("miniredis: %v", err)
 	}
 	defer mr.Close()
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(testRedisOptions(mr.Addr()))
 	defer func() { _ = client.Close() }()
 
 	var buf bytes.Buffer

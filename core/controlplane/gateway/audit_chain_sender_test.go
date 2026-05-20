@@ -21,7 +21,7 @@ func TestAuditChainSenderChainsAndForwards(t *testing.T) {
 	}
 	defer mr.Close()
 
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(testRedisOptions(mr.Addr()))
 	defer func() { _ = client.Close() }()
 
 	chainer := audit.NewChainer(client, "")
@@ -69,7 +69,7 @@ func TestAuditChainSenderAttributesTenantlessEventsToDefaultTenant(t *testing.T)
 	}
 	defer mr.Close()
 
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(testRedisOptions(mr.Addr()))
 	defer func() { _ = client.Close() }()
 
 	chainer := audit.NewChainer(client, "")
@@ -127,7 +127,7 @@ func TestAuditChainSenderTenantlessFallbackEmitsWarn(t *testing.T) {
 		t.Fatalf("miniredis: %v", err)
 	}
 	defer mr.Close()
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(testRedisOptions(mr.Addr()))
 	defer func() { _ = client.Close() }()
 
 	var buf bytes.Buffer
@@ -172,7 +172,7 @@ func TestAuditChainSender_DefaultTenantWarningRedactsIdentity(t *testing.T) {
 		t.Fatalf("miniredis: %v", err)
 	}
 	defer mr.Close()
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(testRedisOptions(mr.Addr()))
 	defer func() { _ = client.Close() }()
 
 	var buf bytes.Buffer

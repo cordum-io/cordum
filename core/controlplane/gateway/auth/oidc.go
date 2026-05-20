@@ -321,6 +321,16 @@ func NewOIDCProviderFromEnv() (*OIDCProvider, error) {
 func (p *OIDCProvider) Close() {
 	close(p.stopCh)
 	<-p.done
+	closeOIDCIdleConnections(p.httpClient)
+}
+
+func closeOIDCIdleConnections(client *http.Client) {
+	if client == nil || client.Transport == nil {
+		return
+	}
+	if closer, ok := client.Transport.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
 }
 
 // ValidateJWT parses and validates a JWT token string against the cached JWKS.

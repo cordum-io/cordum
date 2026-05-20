@@ -35,7 +35,7 @@ func newAggregatorFixture(t *testing.T) (*miniredis.Miniredis, redis.UniversalCl
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(mr.Close)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	rdb := redis.NewClient(testRedisOptions(mr.Addr()))
 	t.Cleanup(func() { _ = rdb.Close() })
 	chainer := audit.NewChainer(rdb, "")
 	return mr, rdb, chainer.StreamKey("tenant-acme")

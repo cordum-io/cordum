@@ -1,10 +1,19 @@
 package gateway
 
 import (
+	"net/url"
+	"strconv"
 	"testing"
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/redis/go-redis/v9"
+)
+
+const (
+	gatewayTestRedisPoolSize     = 3
+	gatewayTestRedisMinIdleConns = 0
+	gatewayTestRedisMaxRetries   = 3
 )
 
 // maxLoginAttempts mirrors auth.maxLoginAttempts for gateway handler tests.
@@ -23,11 +32,33 @@ func newTestUserStore(t *testing.T) (*auth.RedisUserStore, *miniredis.Miniredis)
 	}
 	t.Cleanup(srv.Close)
 
-	store, err := auth.NewRedisUserStore("redis://" + srv.Addr())
+	store, err := auth.NewRedisUserStore(testRedisURL(srv.Addr()))
 	if err != nil {
 		t.Fatalf("NewRedisUserStore: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
 	return store, srv
+}
+
+func testRedisOptions(addr string) *redis.Options {
+	return &redis.Options{
+		Addr:         addr,
+		PoolSize:     1,
+		MinIdleConns: 0,
+		MaxRetries:   1,
+	}
+}
+
+func testRedisURL(addr string) string {
+	u := url.URL{
+		Scheme: "redis",
+		Host:   addr,
+	}
+	q := u.Query()
+	q.Set("pool_size", strconv.Itoa(gatewayTestRedisPoolSize))
+	q.Set("min_idle_conns", strconv.Itoa(gatewayTestRedisMinIdleConns))
+	q.Set("max_retries", strconv.Itoa(gatewayTestRedisMaxRetries))
+	u.RawQuery = q.Encode()
+	return u.String()
 }

@@ -73,6 +73,11 @@ func NewDLQStore(url string, entryTTL time.Duration) (*DLQStore, error) {
 	return &DLQStore{client: client, entryTTL: resolved}, nil
 }
 
+// NewDLQStoreFromClient constructs a DLQ store from a shared Redis client.
+func NewDLQStoreFromClient(client redis.UniversalClient, entryTTL time.Duration) *DLQStore {
+	return &DLQStore{client: client, entryTTL: resolveDLQEntryTTL(entryTTL)}
+}
+
 func (s *DLQStore) Close() error {
 	if s.client == nil {
 		return nil

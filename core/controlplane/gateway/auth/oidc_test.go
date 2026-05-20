@@ -111,7 +111,38 @@ func (m *mockOIDCServer) validClaims() map[string]any {
 	}
 }
 
+type closeTrackingTransport struct {
+	closed atomic.Bool
+}
+
+func (t *closeTrackingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, fmt.Errorf("unexpected test RoundTrip")
+}
+
+func (t *closeTrackingTransport) CloseIdleConnections() {
+	t.closed.Store(true)
+}
+
 // ---------- OIDCProvider tests ----------
+
+func TestOIDCProviderCloseClosesIdleHTTPConnections(t *testing.T) {
+	transport := &closeTrackingTransport{}
+	provider := &OIDCProvider{
+		httpClient: &http.Client{Transport: transport},
+		stopCh:     make(chan struct{}),
+		done:       make(chan struct{}),
+	}
+	go func() {
+		<-provider.stopCh
+		close(provider.done)
+	}()
+
+	provider.Close()
+
+	if !transport.closed.Load() {
+		t.Fatal("Close did not close idle OIDC HTTP connections")
+	}
+}
 
 func TestOIDC_ValidJWT(t *testing.T) {
 	m := newMockOIDCServer(t)

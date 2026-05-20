@@ -530,6 +530,32 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 		url = defaultRedisURL
 	}
 
+	ttl := redisJobStoreMetaTTL()
+	client, err := redisutil.NewClient(url)
+	if err != nil {
+		return nil, fmt.Errorf("parse redis url: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("connect redis: %w", err)
+	}
+
+	idempotencyTTL := redisJobStoreIdempotencyTTL()
+	slog.Debug("job store connected", "component", "store", "metaTTL", ttl.String(), "idempotencyTTL", idempotencyTTL.String())
+	return &RedisJobStore{client: client, metaTTL: ttl, idempotencyTTL: idempotencyTTL}, nil
+}
+
+// NewRedisJobStoreFromClient constructs a Redis-backed JobStore from a shared client.
+func NewRedisJobStoreFromClient(client redis.UniversalClient) *RedisJobStore {
+	return &RedisJobStore{
+		client:         client,
+		metaTTL:        redisJobStoreMetaTTL(),
+		idempotencyTTL: redisJobStoreIdempotencyTTL(),
+	}
+}
+
+func redisJobStoreMetaTTL() time.Duration {
 	ttl := defaultJobMetaTTL
 	if v := os.Getenv(envJobMetaTTLSeconds); v != "" {
 		secs, err := strconv.Atoi(v)
@@ -551,18 +577,10 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 			ttl = parsed
 		}
 	}
-	client, err := redisutil.NewClient(url)
-	if err != nil {
-		return nil, fmt.Errorf("parse redis url: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("connect redis: %w", err)
-	}
+	return ttl
+}
 
-	// Idempotency keys must outlive the job lifecycle to prevent
-	// duplicate jobs on late retries. Default: 90 days.
+func redisJobStoreIdempotencyTTL() time.Duration {
 	idempotencyTTL := 90 * 24 * time.Hour
 	if v := os.Getenv("CORDUM_IDEMPOTENCY_TTL"); v != "" {
 		if parsed, err := time.ParseDuration(v); err != nil {
@@ -571,9 +589,7 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 			idempotencyTTL = parsed
 		}
 	}
-
-	slog.Debug("job store connected", "component", "store", "metaTTL", ttl.String(), "idempotencyTTL", idempotencyTTL.String())
-	return &RedisJobStore{client: client, metaTTL: ttl, idempotencyTTL: idempotencyTTL}, nil
+	return idempotencyTTL
 }
 
 func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state model.JobState) error {

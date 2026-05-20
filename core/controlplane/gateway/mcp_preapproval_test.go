@@ -36,7 +36,7 @@ func TestMatchToolPattern(t *testing.T) {
 func TestAgentIdentityPreapprovalLookup_RealStore(t *testing.T) {
 	t.Parallel()
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(testRedisOptions(mr.Addr()))
 	t.Cleanup(func() { _ = client.Close() })
 	s := store.NewAgentIdentityStoreFromClient(client)
 	if s == nil {

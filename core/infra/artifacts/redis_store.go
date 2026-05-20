@@ -55,6 +55,16 @@ func NewRedisStore(url string) (*RedisStore, error) {
 	}, nil
 }
 
+// NewRedisStoreFromClient constructs an artifact store from a shared Redis client.
+func NewRedisStoreFromClient(client redis.UniversalClient) *RedisStore {
+	return &RedisStore{
+		client:      client,
+		ttlShort:    parseDurationEnv(envArtifactTTLShort, defaultShortTTL),
+		ttlStandard: parseDurationEnv(envArtifactTTLStandard, defaultStandardTTL),
+		ttlAudit:    parseDurationEnv(envArtifactTTLAudit, defaultAuditTTL),
+	}
+}
+
 // Close closes the underlying Redis client.
 func (s *RedisStore) Close() error {
 	if s == nil || s.client == nil {

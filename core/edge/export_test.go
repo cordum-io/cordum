@@ -451,7 +451,7 @@ func TestSessionExportAssemblerTruncatesAtMaxEventsAndReportsTotal(t *testing.T)
 // to these keys.
 func rewriteEventInRedis(t *testing.T, mr *miniredis.Miniredis, event AgentActionEvent) {
 	t.Helper()
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 1, MinIdleConns: 0})
 	defer func() { _ = client.Close() }()
 
 	listKey := edgeEventsKey(event.ExecutionID)
