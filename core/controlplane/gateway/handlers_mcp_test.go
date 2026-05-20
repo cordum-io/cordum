@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,6 +53,42 @@ func (a mcpTestAuth) ResolveTenant(_ *http.Request, requested, fallback string) 
 func (a mcpTestAuth) RequireTenantAccess(*http.Request, string) error { return nil }
 
 func (a mcpTestAuth) ResolvePrincipal(_ *http.Request, requested string) (string, error) {
+	return requested, nil
+}
+
+type mcpReauthTestAuth struct {
+	calls atomic.Int32
+}
+
+func (a *mcpReauthTestAuth) AuthenticateHTTP(*http.Request) (*auth.AuthContext, error) {
+	if call := a.calls.Add(1); call > 1 {
+		return nil, errors.New("credential revoked")
+	}
+	return &auth.AuthContext{
+		APIKey:      "test-key",
+		Tenant:      "default",
+		PrincipalID: "tester",
+		Role:        "admin",
+		AuthSource:  auth.AuthSourceAPIKey,
+	}, nil
+}
+
+func (a *mcpReauthTestAuth) AuthenticateGRPC(context.Context) (*auth.AuthContext, error) {
+	return &auth.AuthContext{Tenant: "default"}, nil
+}
+
+func (a *mcpReauthTestAuth) RequireRole(*http.Request, ...string) error { return nil }
+
+func (a *mcpReauthTestAuth) ResolveTenant(_ *http.Request, requested, fallback string) (string, error) {
+	if strings.TrimSpace(requested) != "" {
+		return requested, nil
+	}
+	return fallback, nil
+}
+
+func (a *mcpReauthTestAuth) RequireTenantAccess(*http.Request, string) error { return nil }
+
+func (a *mcpReauthTestAuth) ResolvePrincipal(_ *http.Request, requested string) (string, error) {
 	return requested, nil
 }
 
@@ -447,6 +484,47 @@ func TestHandleSetConfigReloadsMCPRuntimeConfig(t *testing.T) {
 	}
 	if got := len(resources.List()); got != 0 {
 		t.Fatalf("expected resource disabled after mcp reload, got %d", got)
+	}
+}
+
+func TestMCPSSEReauthFirstTickRevokedCredentialDisconnectsWithinTwoSeconds(t *testing.T) {
+	authProvider := &mcpReauthTestAuth{}
+	transport := mcp.NewHTTPTransport(mcp.DefaultMaxMessageBytes, mcp.DefaultHTTPResponseTimeout)
+	s := &server{auth: authProvider}
+	s.setMCPRuntime(&mcpRuntimeState{transport: "http", httpTransport: transport})
+	t.Cleanup(func() {
+		_ = transport.Close()
+		s.clearMCPRuntime()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/mcp/sse", nil).WithContext(ctx)
+	req.Header.Set("X-API-Key", "test-key")
+	req.Header.Set("X-Tenant-ID", "default")
+	rr := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.mcpAuth(s.handleMCPSSE)(rr, req)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+		t.Fatalf("SSE handler did not disconnect within 2s after revoked re-auth; auth calls=%d", authProvider.calls.Load())
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("SSE status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if calls := authProvider.calls.Load(); calls < 2 {
+		t.Fatalf("AuthenticateHTTP calls = %d, want initial auth plus first re-auth", calls)
 	}
 }
 
