@@ -156,10 +156,6 @@ func writeLaunchSettings(root string, cfg launchConfig, meta LaunchMetadata, sta
 	return path, settings, nil
 }
 
-func waitForLaunchState(ctx context.Context, dir string, timeout time.Duration) (launchSessionState, error) {
-	return waitForLaunchStateOrAgentdExit(ctx, dir, timeout, nil)
-}
-
 func waitForLaunchStateOrAgentdExit(ctx context.Context, dir string, timeout time.Duration, done <-chan error) (launchSessionState, error) {
 	deadline, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
