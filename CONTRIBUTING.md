@@ -42,6 +42,8 @@ License on the Change Date (see `LICENSE`).
 - Wrap external errors with context using `fmt.Errorf("context: %w", err)`.
 - Keep functions small and focused.
 - Follow existing naming conventions (`NewXxx`, `Engine`, `XxxStrategy`).
+- For shared Redis records, every Get→mutate→Set sequence must use WATCH/CAS
+  (or an equivalent atomic primitive) to avoid lost updates under concurrency.
 
 ## Reporting bugs
 

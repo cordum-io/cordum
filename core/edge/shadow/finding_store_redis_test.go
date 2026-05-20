@@ -15,6 +15,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func setStaleCleanupStartHookForTest(t *testing.T, s *RedisStore, hook func(context.Context, string, []string)) {
+	t.Helper()
+	s.staleCleanupMu.Lock()
+	defer s.staleCleanupMu.Unlock()
+	s.staleCleanupStartHook = hook
+}
+
 func newTestStore(t *testing.T, opts ...StoreOption) (*RedisStore, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
@@ -410,6 +417,69 @@ func TestListFindings_StaleCleanupDoesNotDeleteCrossTenantFinding(t *testing.T) 
 	assertZSetMemberCount(t, ctx, s.client, sourceIndexKey(SourceTypeLocal), created.FindingID, 1)
 }
 
+func TestOpportunisticCleanup_WATCHvsConcurrentCreateFinding(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	tenant := "tenant-cleanup-race"
+	id := "edge_shadow_cleanup-race-id"
+	if err := s.client.ZAdd(ctx, tenantIndexKey(tenant), redis.Z{Score: 1, Member: id}).Err(); err != nil {
+		t.Fatalf("ZAdd stale member: %v", err)
+	}
+
+	setStaleCleanupStartHookForTest(t, s, func(context.Context, string, []string) {
+		req := minimalCreateReq(tenant, "owner-race", "principal-race", "claude-code",
+			FindingRiskHigh, "config_file", "fresh create during stale cleanup")
+		req.FindingID = id
+		if _, err := s.CreateFinding(context.Background(), req); err != nil {
+			t.Errorf("CreateFinding during cleanup: %v", err)
+		}
+	})
+
+	s.opportunisticCleanup(ctx, tenant, []string{id})
+
+	got, err := s.GetFinding(ctx, tenant, id)
+	if err != nil {
+		t.Fatalf("fresh finding was deleted by stale cleanup: %v", err)
+	}
+	if got.FindingID != id || got.TenantID != tenant {
+		t.Fatalf("fresh finding = %+v, want id %q tenant %q", got, id, tenant)
+	}
+	assertZSetMemberCount(t, ctx, s.client, tenantIndexKey(tenant), id, 1)
+}
+
+func TestStaleCleanupStartHook_NoRace(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	tenant := "tenant-hook-race"
+	id := "hook-race-id"
+	stop := make(chan struct{})
+	var writes atomic.Int32
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				setStaleCleanupStartHookForTest(t, s, func(context.Context, string, []string) {
+					writes.Add(1)
+				})
+			}
+		}
+	}()
+
+	for i := 0; i < 200; i++ {
+		s.opportunisticCleanup(ctx, tenant, []string{id})
+	}
+	close(stop)
+	wg.Wait()
+	if writes.Load() == 0 {
+		t.Fatal("cleanup hook was never invoked; race test did not exercise the hook path")
+	}
+}
+
 func TestListFindings_StaleCleanupSchedulingIsBounded(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := context.Background()
@@ -429,14 +499,14 @@ func TestListFindings_StaleCleanupSchedulingIsBounded(t *testing.T) {
 	release := make(chan struct{})
 	var closeRelease sync.Once
 	var calls atomic.Int32
-	s.staleCleanupStartHook = func(_ context.Context, cleanupTenant string, ids []string) {
+	setStaleCleanupStartHookForTest(t, s, func(_ context.Context, cleanupTenant string, ids []string) {
 		if cleanupTenant != tenant {
 			t.Errorf("cleanup tenant = %q, want %q", cleanupTenant, tenant)
 		}
 		calls.Add(1)
 		started <- ids
 		<-release
-	}
+	})
 	releaseCleanup := func() {
 		closeRelease.Do(func() {
 			close(release)
@@ -492,7 +562,7 @@ func TestGetFinding_ExpiredCleanupUsesCallerContext(t *testing.T) {
 	clock = clock.Add(2 * time.Hour)
 
 	result := make(chan error, 1)
-	store.staleCleanupStartHook = func(ctx context.Context, tenant string, ids []string) {
+	setStaleCleanupStartHookForTest(t, store, func(ctx context.Context, tenant string, ids []string) {
 		if tenant != "tenant-a" {
 			result <- fmt.Errorf("cleanup tenant = %q, want tenant-a", tenant)
 			return
@@ -506,7 +576,7 @@ func TestGetFinding_ExpiredCleanupUsesCallerContext(t *testing.T) {
 			return
 		}
 		result <- nil
-	}
+	})
 
 	ctx := context.WithValue(context.Background(), cleanupContextMarker{}, "caller-context")
 	if _, err := store.GetFinding(ctx, "tenant-a", f.FindingID); !errors.Is(err, ErrNotFound) {
@@ -538,12 +608,12 @@ func TestStaleCleanupSchedulerCapsDedupesAndPreservesIndexCleanup(t *testing.T) 
 	}
 
 	started := make(chan []string, 1)
-	s.staleCleanupStartHook = func(_ context.Context, cleanupTenant string, cleanupIDs []string) {
+	setStaleCleanupStartHookForTest(t, s, func(_ context.Context, cleanupTenant string, cleanupIDs []string) {
 		if cleanupTenant != tenant {
 			t.Errorf("cleanup tenant = %q, want %q", cleanupTenant, tenant)
 		}
 		started <- cleanupIDs
-	}
+	})
 	input := append(append([]string(nil), ids...), ids[0], ids[1], "", " ")
 	s.scheduleStaleCleanup(ctx, tenant, input)
 
@@ -560,7 +630,7 @@ func TestStaleCleanupSchedulerCapsDedupesAndPreservesIndexCleanup(t *testing.T) 
 	waitForZSetCard(t, ctx, s.client, sourceIndexKey(SourceTypeLocal), wantRemaining)
 }
 
-func TestStaleCleanupSchedulerRespectsCanceledContext(t *testing.T) {
+func TestRunScheduledStaleCleanup_DetachedContext(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := context.Background()
 	tenant := "tenant-canceled-cleanup"
@@ -570,17 +640,17 @@ func TestStaleCleanupSchedulerRespectsCanceledContext(t *testing.T) {
 	}
 
 	result := make(chan error, 1)
-	s.staleCleanupStartHook = func(ctx context.Context, cleanupTenant string, cleanupIDs []string) {
+	setStaleCleanupStartHookForTest(t, s, func(ctx context.Context, cleanupTenant string, cleanupIDs []string) {
 		if cleanupTenant != tenant || len(cleanupIDs) != 1 || cleanupIDs[0] != id {
 			result <- fmt.Errorf("cleanup call = tenant %q ids %v, want tenant %q id %q", cleanupTenant, cleanupIDs, tenant, id)
 			return
 		}
-		if ctx.Err() == nil {
-			result <- errors.New("cleanup context is not canceled")
+		if err := ctx.Err(); err != nil {
+			result <- fmt.Errorf("cleanup context is canceled: %w", err)
 			return
 		}
 		result <- nil
-	}
+	})
 
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -589,7 +659,7 @@ func TestStaleCleanupSchedulerRespectsCanceledContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForCleanupIdle(t, s)
-	waitForZSetCard(t, ctx, s.client, tenantIndexKey(tenant), 1)
+	waitForZSetCard(t, ctx, s.client, tenantIndexKey(tenant), 0)
 }
 
 func TestCreateFinding_ArtifactPointerTenantMustMatch(t *testing.T) {

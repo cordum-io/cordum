@@ -154,21 +154,30 @@ func productFromExecutable(tok string) string {
 // image but missing the Cordum heartbeat label. §14 N-poll gate: only
 // promote after Config.HeartbeatMissedThreshold consecutive scans.
 func (d *Detector) heartbeatMissingSignal(pods []corev1.Pod) []signalCandidate {
+	if d.state == nil {
+		d.state = &scanState{}
+	}
+	if d.state.heartbeatMissCount == nil {
+		d.state.heartbeatMissCount = map[string]int{}
+	}
 	var out []signalCandidate
+	current := make(map[string]struct{}, len(pods))
 	for i := range pods {
 		pod := &pods[i]
+		key := podKey(pod.Namespace, pod.Name)
+		current[key] = struct{}{}
 		if len(pod.Spec.Containers) == 0 {
 			continue
 		}
 		product := d.matchKnownAgentImage(pod.Spec.Containers[0].Image)
 		if product == "" {
+			delete(d.state.heartbeatMissCount, key)
 			continue
 		}
 		if _, ok := pod.Labels[d.config.HeartbeatLabelKey]; ok {
-			delete(d.state.heartbeatMissCount, podKey(pod.Namespace, pod.Name))
+			delete(d.state.heartbeatMissCount, key)
 			continue
 		}
-		key := podKey(pod.Namespace, pod.Name)
 		d.state.heartbeatMissCount[key]++
 		if d.state.heartbeatMissCount[key] < d.config.HeartbeatMissedThreshold {
 			continue
@@ -186,6 +195,11 @@ func (d *Detector) heartbeatMissingSignal(pods []corev1.Pod) []signalCandidate {
 			SignalSet:       []string{"heartbeat_missing"},
 			SourcePod:       pod,
 		})
+	}
+	for key := range d.state.heartbeatMissCount {
+		if _, ok := current[key]; !ok {
+			delete(d.state.heartbeatMissCount, key)
+		}
 	}
 	return out
 }
@@ -642,6 +656,7 @@ func (d *Detector) emit(ctx context.Context, cand signalCandidate, nsByName map[
 	}
 	finding, err := d.store.CreateFinding(ctx, req)
 	if err != nil || finding == nil {
+		d.emitFindingStoreFailure(now, tenantID, tenantSource, principalSource, cand, err)
 		return
 	}
 	d.observer.RecordFindingEmit(cand.Signal, string(cand.Risk))
@@ -660,6 +675,38 @@ func (d *Detector) emit(ctx context.Context, cand signalCandidate, nsByName map[
 			"workload":      cand.WorkloadKind + "/" + cand.WorkloadName,
 			"tenant_src":    tenantSource,
 			"principal_src": principalSource,
+		},
+	})
+}
+
+func (d *Detector) emitFindingStoreFailure(
+	now time.Time,
+	tenantID string,
+	tenantSource string,
+	principalSource string,
+	cand signalCandidate,
+	err error,
+) {
+	errText := "nil_finding"
+	if err != nil {
+		errText = redactField(err.Error())
+	}
+	d.observer.RecordFindingEmit(cand.Signal, string(cand.Risk))
+	d.observer.EmitAudit(audit.SIEMEvent{
+		Timestamp: now,
+		EventType: "edge.shadow_finding_create_failed",
+		Severity:  severityForRisk(cand.Risk),
+		TenantID:  tenantID,
+		Action:    "shadow_agent.observe_failed",
+		Decision:  "error",
+		Extra: map[string]string{
+			"source_type":   shadow.SourceTypeKubernetes,
+			"signal":        cand.Signal,
+			"cluster_id":    redactField(d.config.ClusterID),
+			"workload":      cand.WorkloadKind + "/" + cand.WorkloadName,
+			"tenant_src":    tenantSource,
+			"principal_src": principalSource,
+			"error":         errText,
 		},
 	})
 }

@@ -52,6 +52,7 @@ const (
 	overScanFactor            = 3
 	createFindingMaxTxRetries = 5
 	transitionMaxTxRetries    = 5
+	staleCleanupMaxTxRetries  = 3
 	staleCleanupMaxIDs        = MaxListPageSize * overScanFactor
 	staleCleanupMaxConcurrent = 1
 	staleCleanupTimeout       = 2 * time.Second
@@ -268,32 +269,14 @@ func (s *RedisStore) CreateFinding(ctx context.Context, req CreateFindingRequest
 	// stream. The shadow_agent.exception_applied audit event is emitted
 	// by the gateway handler after CreateFinding returns (the store
 	// does not own the audit exporter).
-	if finding.ExceptionID == "" {
-		matches, matchErr := s.MatchActiveExceptions(ctx, finding)
-		if matchErr != nil {
-			return nil, matchErr
-		}
-		if len(matches) > 0 {
-			applied := matches[0]
-			finding.ExceptionID = applied.ExceptionID
-			finding.FalsePositiveReason = FalsePositiveReasonOperatorException
-			finding.Status = FindingStatusManagedSkip
-		}
-	}
-
-	payload, err := json.Marshal(finding)
-	if err != nil {
-		return nil, fmt.Errorf("shadow finding: marshal: %w", err)
-	}
-
 	key := findingKey(finding.FindingID)
-	created, err := s.createFindingAtomically(ctx, key, finding, payload)
+	created, inserted, err := s.createFindingAtomically(ctx, key, finding)
 	if err != nil {
 		return nil, err
 	}
 	// EDGE-143.6 — record membership in the exception's per-exception
 	// finding index. Best-effort; index churn must not fail the create.
-	if created == finding && created.ExceptionID != "" {
+	if inserted && created.ExceptionID != "" {
 		_ = s.recordExceptionMembership(ctx, created.ExceptionID, created.FindingID, created.CreatedAt)
 	}
 	return created, nil
@@ -303,48 +286,78 @@ func (s *RedisStore) createFindingAtomically(
 	ctx context.Context,
 	key string,
 	finding *ShadowAgentFinding,
-	payload []byte,
-) (*ShadowAgentFinding, error) {
+) (*ShadowAgentFinding, bool, error) {
 	var created *ShadowAgentFinding
+	var inserted bool
+	watchKeys := []string{key}
+	if finding.ExceptionID == "" {
+		watchKeys = append(watchKeys, exceptionTenantIndexKey(finding.TenantID))
+	}
 	for attempt := 0; attempt < createFindingMaxTxRetries; attempt++ {
 		err := s.client.Watch(ctx, func(tx *redis.Tx) error {
+			candidate := *finding
+			if candidate.ExceptionID == "" {
+				if err := s.applyActiveExceptionMatch(ctx, tx, &candidate); err != nil {
+					return err
+				}
+			}
+			payload, err := json.Marshal(&candidate)
+			if err != nil {
+				return fmt.Errorf("shadow finding: marshal: %w", err)
+			}
 			existing, getErr := tx.Get(ctx, key).Bytes()
 			if getErr == nil {
 				prev, err := decodeExistingFindingForCreate(existing)
 				if err != nil {
 					return err
 				}
-				if prev.TenantID == finding.TenantID && bytes.Equal(existing, payload) {
+				if prev.TenantID == candidate.TenantID && bytes.Equal(existing, payload) {
 					created = prev
 					return nil
 				}
-				return fmt.Errorf("%w: finding_id %s", ErrAlreadyExists, finding.FindingID)
+				return fmt.Errorf("%w: finding_id %s", ErrAlreadyExists, candidate.FindingID)
 			}
 			if !errors.Is(getErr, redis.Nil) {
 				return fmt.Errorf("shadow finding: probe: %w", getErr)
 			}
-			_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 				pipe.Set(ctx, key, payload, 0)
-				addFindingIndexWrites(ctx, pipe, finding, float64(finding.CreatedAt.UnixMilli()))
+				addFindingIndexWrites(ctx, pipe, &candidate, float64(candidate.CreatedAt.UnixMilli()))
 				return nil
 			})
 			if err != nil {
 				return fmt.Errorf("shadow finding: create transaction: %w", err)
 			}
-			created = finding
+			created = &candidate
+			inserted = true
 			return nil
-		}, key)
+		}, watchKeys...)
 		if errors.Is(err, redis.TxFailedErr) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if created != nil {
-			return created, nil
+			return created, inserted, nil
 		}
 	}
-	return nil, fmt.Errorf("shadow finding: create transaction retries exhausted: %w", redis.TxFailedErr)
+	return nil, false, fmt.Errorf("shadow finding: create transaction retries exhausted: %w", redis.TxFailedErr)
+}
+
+func (s *RedisStore) applyActiveExceptionMatch(ctx context.Context, tx exceptionReadClient, finding *ShadowAgentFinding) error {
+	matches, err := s.matchActiveExceptions(ctx, tx, finding)
+	if err != nil {
+		return err
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+	applied := matches[0]
+	finding.ExceptionID = applied.ExceptionID
+	finding.FalsePositiveReason = FalsePositiveReasonOperatorException
+	finding.Status = FindingStatusManagedSkip
+	return nil
 }
 
 func decodeExistingFindingForCreate(raw []byte) (*ShadowAgentFinding, error) {
@@ -879,7 +892,10 @@ func (s *RedisStore) acquireStaleCleanupSlot() bool {
 func (s *RedisStore) runScheduledStaleCleanup(ctx context.Context, tenant string, ids []string) {
 	defer s.releaseStaleCleanupSlot()
 	defer s.clearStaleCleanupInFlight(ids)
-	cleanupCtx, cancel := context.WithTimeout(ctx, staleCleanupTimeout)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), staleCleanupTimeout)
 	defer cancel()
 	s.opportunisticCleanup(cleanupCtx, tenant, ids)
 }
@@ -909,29 +925,64 @@ func (s *RedisStore) opportunisticCleanup(ctx context.Context, tenant string, id
 	if s == nil || s.client == nil || len(ids) == 0 {
 		return
 	}
-	if s.staleCleanupStartHook != nil {
-		s.staleCleanupStartHook(ctx, tenant, append([]string(nil), ids...))
+	if hook := s.getStaleCleanupStartHook(); hook != nil {
+		hook(ctx, tenant, append([]string(nil), ids...))
 	}
-	pipe := s.client.Pipeline()
 	for _, id := range ids {
-		raw, err := s.client.Get(ctx, findingKey(id)).Bytes()
-		if err == nil {
-			var current ShadowAgentFinding
-			if json.Unmarshal(raw, &current) == nil {
-				applyReadDefaults(&current)
-				if current.TenantID != "" && current.TenantID != tenant {
-					addTenantScopedFindingCleanup(ctx, pipe, tenant, id)
-					continue
-				}
-			}
-		} else if !errors.Is(err, redis.Nil) {
+		s.cleanupStaleID(ctx, tenant, id)
+	}
+}
+
+func (s *RedisStore) getStaleCleanupStartHook() func(context.Context, string, []string) {
+	s.staleCleanupMu.Lock()
+	defer s.staleCleanupMu.Unlock()
+	return s.staleCleanupStartHook
+}
+
+func (s *RedisStore) cleanupStaleID(ctx context.Context, tenant, id string) {
+	key := findingKey(id)
+	for attempt := 0; attempt < staleCleanupMaxTxRetries; attempt++ {
+		err := s.client.Watch(ctx, func(tx *redis.Tx) error {
+			return s.cleanupStaleIDTx(ctx, tx, tenant, id, key)
+		}, key)
+		if errors.Is(err, redis.TxFailedErr) {
 			continue
 		}
-		pipe.Del(ctx, findingKey(id))
+		return
+	}
+}
+
+func (s *RedisStore) cleanupStaleIDTx(ctx context.Context, tx *redis.Tx, tenant, id, key string) error {
+	raw, err := tx.Get(ctx, key).Bytes()
+	if err == nil {
+		var current ShadowAgentFinding
+		if json.Unmarshal(raw, &current) == nil {
+			applyReadDefaults(&current)
+			if current.TenantID != "" && current.TenantID != tenant {
+				return txTenantScopedCleanup(ctx, tx, tenant, id)
+			}
+			if current.TenantID == tenant && !s.isExpiredTerminal(&current) {
+				return nil
+			}
+		}
+	} else if !errors.Is(err, redis.Nil) {
+		return nil
+	}
+	_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Del(ctx, key)
 		addTenantScopedFindingCleanup(ctx, pipe, tenant, id)
 		addSharedFindingCleanup(ctx, pipe, id)
-	}
-	_, _ = pipe.Exec(ctx)
+		return nil
+	})
+	return err
+}
+
+func txTenantScopedCleanup(ctx context.Context, tx *redis.Tx, tenant, id string) error {
+	_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		addTenantScopedFindingCleanup(ctx, pipe, tenant, id)
+		return nil
+	})
+	return err
 }
 
 func addTenantScopedFindingCleanup(ctx context.Context, pipe redis.Pipeliner, tenant, id string) {

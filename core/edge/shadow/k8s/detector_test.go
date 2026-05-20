@@ -251,6 +251,31 @@ func TestK8sDetector_Observability(t *testing.T) {
 	}
 }
 
+func TestK8sEmit_ObservabilityOnStoreFailure(t *testing.T) {
+	pod := podWith("agent-pod", "agents", "evil.example.com/claude-agent:latest",
+		map[string]string{testTenantLabel: testTenantA}, nil)
+	ns := nsWith("agents", map[string]string{testTenantLabel: testTenantA})
+	f := newFixture(t, k8s.Config{}, pod, ns)
+	f.mr.Close()
+
+	if err := f.detector.Scan(context.Background()); err != nil {
+		t.Fatalf("Scan should continue in observe mode despite store failure: %v", err)
+	}
+	if len(f.observer.emits) == 0 {
+		t.Fatalf("store failure produced no metric; want RecordFindingEmit for bounded signal/risk labels")
+	}
+	if len(f.observer.audits) == 0 {
+		t.Fatalf("store failure produced no audit event")
+	}
+	got := f.observer.audits[0]
+	if got.Action != "shadow_agent.observe_failed" || got.Decision != "error" {
+		t.Fatalf("failure audit = action %q decision %q, want shadow_agent.observe_failed/error", got.Action, got.Decision)
+	}
+	if got.Extra["signal"] == "" || got.Extra["source_type"] != shadow.SourceTypeKubernetes {
+		t.Fatalf("failure audit missing bounded metadata: %+v", got.Extra)
+	}
+}
+
 func TestDetectorRun_ScanErrorEmitsLog(t *testing.T) {
 	var logs lockedLogBuffer
 	prevLogger := slog.Default()

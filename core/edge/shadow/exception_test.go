@@ -8,8 +8,11 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2/server"
 )
 
 func minimalCreateExceptionReq(tenant string) CreateExceptionRequest {
@@ -241,6 +244,77 @@ func TestException_AppliedAtEmit_SuppressMatching(t *testing.T) {
 	if !found {
 		t.Errorf("include_managed_skip ListFindings missing suppressed finding %s", finding.FindingID)
 	}
+}
+
+func TestCreateFinding_ExceptionRevokeBetweenMatchAndPersist(t *testing.T) {
+	s, mr := newExceptionCapTestStore(t, 4)
+	ctx := context.Background()
+	created, err := s.CreateException(ctx, minimalCreateExceptionReq("tenant-a"))
+	if err != nil {
+		t.Fatalf("CreateException: %v", err)
+	}
+
+	const findingID = "edge_shadow_exception-revoke-race-finding"
+	var triggered atomic.Bool
+	mr.Server().SetPreHook(func(_ *server.Peer, cmd string, args ...string) bool {
+		if !strings.EqualFold(cmd, "watch") || !hasArg(args, findingKey(findingID)) {
+			return false
+		}
+		if !triggered.CompareAndSwap(false, true) {
+			return false
+		}
+		done := make(chan error, 1)
+		go func() {
+			_, err := s.RevokeException(context.Background(), created.TenantID, created.ExceptionID, RevokeExceptionRequest{
+				RevokedBy: "bob@example.com",
+				Reason:    "revoke before create commit",
+			})
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("RevokeException during CreateFinding: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("timed out revoking exception during CreateFinding")
+		}
+		return false
+	})
+	t.Cleanup(func() { mr.Server().SetPreHook(nil) })
+
+	req := fullCreateReq("tenant-a")
+	req.FindingID = findingID
+	req.Risk = FindingRiskHigh
+	req.SourceType = "kubernetes"
+	req.SourceID = "k8s-detector-1"
+	req.SignalSet = []string{"k8s_unmanaged_process"}
+	finding, err := s.CreateFinding(ctx, req)
+	if err != nil {
+		t.Fatalf("CreateFinding: %v", err)
+	}
+	if !triggered.Load() {
+		t.Fatal("test hook did not revoke between exception match and finding persistence")
+	}
+	if finding.ExceptionID != "" {
+		t.Fatalf("CreateFinding returned stale exception_id %q after concurrent revoke", finding.ExceptionID)
+	}
+	got, err := s.GetFinding(ctx, "tenant-a", findingID)
+	if err != nil {
+		t.Fatalf("GetFinding: %v", err)
+	}
+	if got.ExceptionID != "" || got.Status == FindingStatusManagedSkip {
+		t.Fatalf("persisted finding kept stale exception state: %+v", got)
+	}
+}
+
+func hasArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestException_AppliedAtEmit_NoMatch(t *testing.T) {

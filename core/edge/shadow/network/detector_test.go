@@ -125,6 +125,9 @@ func newFixture(t *testing.T, cfg network.Config) *detectorFixture {
 	if err != nil {
 		t.Fatalf("NewRedisStore: %v", err)
 	}
+	if err := rdb.Ping(context.Background()).Err(); err != nil {
+		t.Fatalf("warm redis client: %v", err)
+	}
 
 	observer := &spyObserver{}
 	if cfg.SourceID == "" {
@@ -544,6 +547,44 @@ func TestNetworkDetector_RiskClassification_NoAttach(t *testing.T) {
 	}
 	if findings[0].Risk != shadow.FindingRiskMedium {
 		t.Errorf("no-attach: risk=%q, want medium", findings[0].Risk)
+	}
+}
+
+func TestNetworkDetector_ConfigMapsImmutable(t *testing.T) {
+	attachTime := time.Date(2026, 5, 17, 16, 0, 0, 0, time.UTC)
+	workloadMap := map[string]string{"runner-immutable": testTenantA}
+	attachMap := map[string]time.Time{"runner-immutable": attachTime}
+	providerMap := network.DefaultProviderHostnames()
+	fx := newFixture(t, network.Config{
+		ProviderHostnames:       providerMap,
+		WorkloadTenantMap:       workloadMap,
+		KnownAttachWorkloadIDs:  attachMap,
+		HeartbeatStaleThreshold: time.Hour,
+	})
+
+	workloadMap["runner-immutable"] = "tenant-mutated"
+	delete(attachMap, "runner-immutable")
+	providerMap["api.anthropic.com"] = "mutated_category"
+
+	rec := network.LogRecord{
+		Timestamp:    fx.clock,
+		Hostname:     "api.anthropic.com",
+		WorkloadID:   "runner-immutable",
+		EndpointHash: "Himmutable",
+		Count:        1,
+	}
+	if err := fx.detector.ProcessRecord(context.Background(), rec, "test"); err != nil {
+		t.Fatalf("ProcessRecord: %v", err)
+	}
+	findings := fx.listAll(t, testTenantA)
+	if len(findings) != 1 {
+		t.Fatalf("want finding in original tenant %q after caller-map mutation, got %d", testTenantA, len(findings))
+	}
+	if findings[0].Risk != shadow.FindingRiskLow {
+		t.Fatalf("risk after caller-map mutation = %q, want low from copied fresh attach map", findings[0].Risk)
+	}
+	if strings.Contains(findings[0].EvidenceSummary, "mutated_category") {
+		t.Fatalf("provider map mutation leaked into evidence summary: %q", findings[0].EvidenceSummary)
 	}
 }
 

@@ -127,7 +127,33 @@ func (c *Config) fillDefaults() error {
 	if len(c.ProviderHostnames) == 0 {
 		c.ProviderHostnames = DefaultProviderHostnames()
 	}
+	c.ProviderHostnames = cloneStringMap(c.ProviderHostnames)
+	c.WorkloadTenantMap = cloneStringMap(c.WorkloadTenantMap)
+	c.OIDCTenantMap = cloneStringMap(c.OIDCTenantMap)
+	c.KnownAttachWorkloadIDs = cloneTimeMap(c.KnownAttachWorkloadIDs)
 	return nil
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneTimeMap(in map[string]time.Time) map[string]time.Time {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]time.Time, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // defaultQuarantineTenant mirrors k8s.QuarantineTenant so cross-

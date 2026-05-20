@@ -475,12 +475,25 @@ func TestExtensionsIndexes_CreateZADD(t *testing.T) {
 // stale members; this is an accepted compromise that matches the
 // existing agent/owner cleanup pattern at finding_store_redis.go:430.
 func TestExtensionsIndexes_CleanupZREM(t *testing.T) {
-	s, _ := newTestStore(t)
+	clock := time.Date(2026, 5, 17, 13, 0, 0, 0, time.UTC)
+	s, _ := newTestStore(t,
+		WithClock(func() time.Time { return clock }),
+		WithTerminalRetention(time.Hour),
+	)
 	ctx := context.Background()
-	created, err := s.CreateFinding(ctx, fullCreateReq("tenant-a"))
+	req := fullCreateReq("tenant-a")
+	req.RetentionClass = ""
+	created, err := s.CreateFinding(ctx, req)
 	if err != nil {
 		t.Fatalf("CreateFinding: %v", err)
 	}
+	if _, err := s.ResolveFinding(ctx, "tenant-a", created.FindingID, ResolveRequest{
+		ResolvedBy: "alice@example.com",
+		Reason:     "terminal retention elapsed",
+	}); err != nil {
+		t.Fatalf("ResolveFinding: %v", err)
+	}
+	clock = clock.Add(2 * time.Hour)
 	s.opportunisticCleanup(ctx, "tenant-a", []string{created.FindingID})
 
 	members, err := s.client.ZRange(ctx, "edge:shadow:index:source:kubernetes", 0, -1).Result()

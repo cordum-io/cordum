@@ -178,3 +178,52 @@ func TestShadowException_PerTenantCapIsTenantIsolated(t *testing.T) {
 		requireExceptionTenantIndexCount(t, mr, fmt.Sprintf("tenant-other-%d", i), 1)
 	}
 }
+
+func TestRevokeException_ConcurrentRevokeProducesOneWinner(t *testing.T) {
+	s, mr := newExceptionCapTestStore(t, 4)
+	ctx := context.Background()
+	created, err := s.CreateException(ctx, minimalCreateExceptionReq("tenant-race-revoke"))
+	if err != nil {
+		t.Fatalf("CreateException: %v", err)
+	}
+	installMultiBarrier(t, mr, 2)
+
+	type outcome struct {
+		revoker string
+		err     error
+	}
+	start := make(chan struct{})
+	results := make(chan outcome, 2)
+	var wg sync.WaitGroup
+	for _, revoker := range []string{"alice@example.com", "bob@example.com"} {
+		revoker := revoker
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := s.RevokeException(ctx, created.TenantID, created.ExceptionID, RevokeExceptionRequest{
+				RevokedBy: revoker,
+				Reason:    "concurrent operator correction",
+			})
+			results <- outcome{revoker: revoker, err: err}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	var succeeded, conflicted int
+	for res := range results {
+		switch {
+		case res.err == nil:
+			succeeded++
+		case errors.Is(res.err, ErrTerminalConflict):
+			conflicted++
+		default:
+			t.Fatalf("RevokeException by %s err = %v, want nil or ErrTerminalConflict", res.revoker, res.err)
+		}
+	}
+	if succeeded != 1 || conflicted != 1 {
+		t.Fatalf("concurrent revokes succeeded=%d conflicted=%d, want exactly one winner and one ErrTerminalConflict", succeeded, conflicted)
+	}
+}

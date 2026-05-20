@@ -1,6 +1,12 @@
 package k8s
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
 
 func TestApplyEphemeralCorroboration_RejectsEmptyNamespace(t *testing.T) {
 	in := []signalCandidate{
@@ -24,6 +30,38 @@ func TestApplyEphemeralCorroboration_RejectsEmptyNamespace(t *testing.T) {
 	}
 	if !hasSignalCandidate(got, "namespace_untenanted", "", "cluster-corroborator") {
 		t.Fatalf("non-ephemeral cluster-scoped signal was dropped: %#v", got)
+	}
+}
+
+func TestHeartbeatMissCount_BoundedAcrossCycles(t *testing.T) {
+	cfg := Config{
+		KnownAgentImages:         []string{"anthropic/claude-code"},
+		HeartbeatMissedThreshold: 2,
+	}
+	cfg.fillDefaults()
+	d := &Detector{
+		config: cfg,
+		state: &scanState{
+			heartbeatMissCount: map[string]int{},
+		},
+	}
+
+	for i := 0; i < 100; i++ {
+		pod := corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "agents",
+				Name:      fmt.Sprintf("agent-%03d", i),
+				Labels:    map[string]string{},
+			},
+			Spec: corev1.PodSpec{Containers: []corev1.Container{{
+				Name:  "main",
+				Image: "anthropic/claude-code:v1",
+			}}},
+		}
+		_ = d.heartbeatMissingSignal([]corev1.Pod{pod})
+		if got := len(d.state.heartbeatMissCount); got > 1 {
+			t.Fatalf("heartbeatMissCount size after cycle %d = %d, want bounded to current pod set", i, got)
+		}
 	}
 }
 

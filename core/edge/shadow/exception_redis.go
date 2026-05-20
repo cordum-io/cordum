@@ -35,7 +35,13 @@ const (
 	// pagination ceremony for the common case.
 	exceptionListDefaultLimit     = 50
 	exceptionCreateCASMaxAttempts = 10
+	exceptionRevokeCASMaxAttempts = 5
 )
+
+type exceptionReadClient interface {
+	ZRevRange(ctx context.Context, key string, start, stop int64) *redis.StringSliceCmd
+	MGet(ctx context.Context, keys ...string) *redis.SliceCmd
+}
 
 // exceptionKey returns the per-record JSON key.
 func exceptionKey(id string) string {
@@ -264,7 +270,31 @@ func (s *RedisStore) RevokeException(ctx context.Context, tenantID, exceptionID 
 	}
 
 	key := exceptionKey(exceptionID)
-	data, err := s.client.Get(ctx, key).Bytes()
+	reason := strings.TrimSpace(req.Reason)
+	var revoked *Exception
+	err := redisutil.Retry(ctx, s.client, func(tx *redis.Tx) error {
+		next, err := s.revokeExceptionTx(ctx, tx, key, tenantID, exceptionID, revoker, reason)
+		if err != nil {
+			return err
+		}
+		revoked = next
+		return nil
+	}, redisutil.WithKeys(key), redisutil.WithMaxAttempts(exceptionRevokeCASMaxAttempts))
+	if errors.Is(err, redisutil.ErrMaxAttemptsExceeded) {
+		return nil, fmt.Errorf("%w: revoke retry exhausted", ErrTerminalConflict)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return revoked, nil
+}
+
+func (s *RedisStore) revokeExceptionTx(
+	ctx context.Context,
+	tx *redis.Tx,
+	key, tenantID, exceptionID, revoker, reason string,
+) (*Exception, error) {
+	data, err := tx.Get(ctx, key).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return nil, ErrNotFound
 	}
@@ -278,38 +308,46 @@ func (s *RedisStore) RevokeException(ctx context.Context, tenantID, exceptionID 
 	if exc.TenantID != tenantID {
 		return nil, ErrNotFound
 	}
-
-	switch exc.Status {
-	case ExceptionStatusActive:
-		// Proceed.
-	case ExceptionStatusRevoked:
-		// Idempotent same-state when RevokedBy matches; conflict otherwise.
-		if exc.RevokedBy == revoker {
+	if err := prepareExceptionRevoke(&exc, revoker, reason, s.now()); err != nil {
+		if errors.Is(err, errExceptionRevokeIdempotent) {
 			return &exc, nil
 		}
-		return nil, fmt.Errorf("%w: already revoked by %s", ErrTerminalConflict, exc.RevokedBy)
-	case ExceptionStatusExpired:
-		return nil, fmt.Errorf("%w: exception already expired", ErrTerminalConflict)
+		return nil, err
 	}
-
-	now := s.now()
-	exc.Status = ExceptionStatusRevoked
-	exc.RevokedBy = revoker
-	revokedAt := now
-	exc.RevokedAt = &revokedAt
-	exc.RevocationReason = strings.TrimSpace(req.Reason)
-
 	payload, err := json.Marshal(&exc)
 	if err != nil {
 		return nil, fmt.Errorf("shadow exception: marshal: %w", err)
 	}
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, key, payload, 0)
-	pipe.ZRem(ctx, exceptionTenantIndexKey(tenantID), exceptionID)
-	if _, err := pipe.Exec(ctx); err != nil {
+	_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		pipe.Set(ctx, key, payload, 0)
+		pipe.ZRem(ctx, exceptionTenantIndexKey(tenantID), exceptionID)
+		return nil
+	})
+	if err != nil {
 		return nil, fmt.Errorf("shadow exception: revoke pipeline: %w", err)
 	}
 	return &exc, nil
+}
+
+var errExceptionRevokeIdempotent = errors.New("shadow exception: revoke idempotent")
+
+func prepareExceptionRevoke(exc *Exception, revoker, reason string, now time.Time) error {
+	switch exc.Status {
+	case ExceptionStatusActive:
+	case ExceptionStatusRevoked:
+		if exc.RevokedBy == revoker {
+			return errExceptionRevokeIdempotent
+		}
+		return fmt.Errorf("%w: already revoked by %s", ErrTerminalConflict, exc.RevokedBy)
+	case ExceptionStatusExpired:
+		return fmt.Errorf("%w: exception already expired", ErrTerminalConflict)
+	}
+	exc.Status = ExceptionStatusRevoked
+	exc.RevokedBy = revoker
+	revokedAt := now
+	exc.RevokedAt = &revokedAt
+	exc.RevocationReason = reason
+	return nil
 }
 
 // MatchActiveExceptions scans the tenant's active exception index and
@@ -320,10 +358,14 @@ func (s *RedisStore) MatchActiveExceptions(ctx context.Context, f *ShadowAgentFi
 	if s == nil || s.client == nil {
 		return nil, ErrStoreUnavailable
 	}
+	return s.matchActiveExceptions(ctx, s.client, f)
+}
+
+func (s *RedisStore) matchActiveExceptions(ctx context.Context, client exceptionReadClient, f *ShadowAgentFinding) ([]Exception, error) {
 	if f == nil || strings.TrimSpace(f.TenantID) == "" {
 		return nil, nil
 	}
-	ids, err := s.client.ZRevRange(ctx, exceptionTenantIndexKey(f.TenantID), 0, int64(maxExceptionsPerTenant)-1).Result()
+	ids, err := client.ZRevRange(ctx, exceptionTenantIndexKey(f.TenantID), 0, int64(maxExceptionsPerTenant)-1).Result()
 	if err != nil {
 		return nil, fmt.Errorf("shadow exception: tenant index range: %w", err)
 	}
@@ -334,7 +376,7 @@ func (s *RedisStore) MatchActiveExceptions(ctx context.Context, f *ShadowAgentFi
 	for i, id := range ids {
 		keys[i] = exceptionKey(id)
 	}
-	raws, err := s.client.MGet(ctx, keys...).Result()
+	raws, err := client.MGet(ctx, keys...).Result()
 	if err != nil {
 		return nil, fmt.Errorf("shadow exception: mget: %w", err)
 	}
