@@ -30,17 +30,29 @@ func initLegalHoldStore(redisURL string) *audit.LegalHoldStore {
 // a 403 response if not entitled. Returns true if the caller should return.
 func (s *server) requireLegalHoldEntitlement(w http.ResponseWriter) bool {
 	if err := audit.RequireLegalHoldEntitlement(s.entitlementResolver()); err != nil {
-		var tierErr *licensing.TierLimitError
-		if errors.As(err, &tierErr) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			_ = json.NewEncoder(w).Encode(tierErr.ToHTTPError())
-		} else {
-			writeErrorJSON(w, http.StatusForbidden, "legal hold requires Enterprise license")
-		}
+		writeLegalHoldTierLimit(w, legalHoldTierLimitHTTPError(err))
 		return true
 	}
 	return false
+}
+
+func legalHoldTierLimitHTTPError(err error) licensing.TierLimitHTTPError {
+	var tierErr *licensing.TierLimitError
+	if errors.As(err, &tierErr) {
+		return tierErr.ToHTTPError()
+	}
+	return licensing.TierLimitHTTPError{
+		Code:       "tier_limit_exceeded",
+		Message:    "legal hold requires Enterprise license",
+		Limit:      "legal_hold",
+		UpgradeURL: licensing.DefaultUpgradeURL,
+	}
+}
+
+func writeLegalHoldTierLimit(w http.ResponseWriter, body licensing.TierLimitHTTPError) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // handleCreateLegalHold creates a legal hold on a tenant's audit data.

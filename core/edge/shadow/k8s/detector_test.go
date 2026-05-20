@@ -46,6 +46,11 @@ type detectorFixture struct {
 
 func newFixture(t *testing.T, cfg k8s.Config, objs ...runtime.Object) *detectorFixture {
 	t.Helper()
+	return newFixtureWithObserver(t, cfg, newSpyObserver(), objs...)
+}
+
+func newFixtureWithObserver(t *testing.T, cfg k8s.Config, observer k8s.Observer, objs ...runtime.Object) *detectorFixture {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 1})
 	t.Cleanup(func() { _ = rdb.Close(); mr.Close() })
@@ -58,7 +63,7 @@ func newFixture(t *testing.T, cfg k8s.Config, objs ...runtime.Object) *detectorF
 	}
 
 	client := fake.NewSimpleClientset(objs...)
-	observer := newSpyObserver()
+	spy, _ := observer.(*spyObserver)
 
 	if cfg.ClusterID == "" {
 		cfg.ClusterID = testClusterID
@@ -92,7 +97,7 @@ func newFixture(t *testing.T, cfg k8s.Config, objs ...runtime.Object) *detectorF
 		detector: detector,
 		store:    store,
 		client:   client,
-		observer: observer,
+		observer: spy,
 		mr:       mr,
 		clock:    clock,
 	}
@@ -251,6 +256,43 @@ func TestK8sDetector_Observability(t *testing.T) {
 	}
 }
 
+func TestDetector_ScanReleasesLockBeforeEmit(t *testing.T) {
+	pod := podWith("agent-pod", "agents", "evil.example.com/claude-agent:latest",
+		map[string]string{testTenantLabel: testTenantA}, nil)
+	ns := nsWith("agents", map[string]string{testTenantLabel: testTenantA})
+	observer := newBlockingObserver()
+	f := newFixtureWithObserver(t, k8s.Config{}, observer, pod, ns)
+
+	scanDone := make(chan error, 1)
+	go func() { scanDone <- f.detector.Scan(context.Background()) }()
+
+	select {
+	case <-observer.entered:
+	case err := <-scanDone:
+		t.Fatalf("Scan returned before blocking observer emit: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("observer emit was not reached")
+	}
+
+	setClockDone := make(chan struct{})
+	go func() {
+		f.detector.SetClock(func() time.Time { return f.clock.Add(time.Minute) })
+		close(setClockDone)
+	}()
+
+	select {
+	case <-setClockDone:
+	case <-time.After(250 * time.Millisecond):
+		close(observer.release)
+		t.Fatal("SetClock blocked while emit I/O was in progress; Scan still holds detector mutex")
+	}
+
+	close(observer.release)
+	if err := <-scanDone; err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+}
+
 func TestK8sEmit_ObservabilityOnStoreFailure(t *testing.T) {
 	pod := podWith("agent-pod", "agents", "evil.example.com/claude-agent:latest",
 		map[string]string{testTenantLabel: testTenantA}, nil)
@@ -365,6 +407,26 @@ func (s *spyObserver) RecordFindingEmit(signal, risk string) {
 
 func (s *spyObserver) EmitAudit(event audit.SIEMEvent) {
 	s.audits = append(s.audits, event)
+}
+
+type blockingObserver struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newBlockingObserver() *blockingObserver {
+	return &blockingObserver{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+func (b *blockingObserver) RecordFindingEmit(string, string) {}
+
+func (b *blockingObserver) EmitAudit(audit.SIEMEvent) {
+	b.once.Do(func() { close(b.entered) })
+	<-b.release
 }
 
 // --- fixture builders ---

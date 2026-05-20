@@ -280,9 +280,8 @@ func (d *Detector) Scan(ctx context.Context) error {
 		return err
 	}
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
 	nsByName := indexNamespaces(namespaces)
+	d.mu.Lock()
 	now := d.clock()
 
 	// collectSignals reads prior-scan state (priorPodKeys /
@@ -292,6 +291,7 @@ func (d *Detector) Scan(ctx context.Context) error {
 	candidates := d.collectSignals(ctx, pods, namespaces, services, netpols, now)
 	candidates = applyEphemeralCorroboration(candidates)
 	d.updateInventory(pods, now)
+	d.mu.Unlock()
 	for _, cand := range candidates {
 		d.emit(ctx, cand, nsByName, now)
 	}

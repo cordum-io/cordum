@@ -113,9 +113,10 @@ func (c *SafeAllowCache) Put(req SafeAllowCacheRequest, resp EvaluateResponse) b
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, exists := c.records[key]; !exists {
-		c.order = append(c.order, key)
+	if _, exists := c.records[key]; exists {
+		c.removeOrderKeyLocked(key)
 	}
+	c.order = append(c.order, key)
 	c.records[key] = record
 	c.evictOverflowLocked()
 	return true

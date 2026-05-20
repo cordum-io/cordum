@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -47,11 +48,22 @@ func newShadowGateway(t *testing.T) *server {
 }
 
 type shadowFindingAuditExporter struct {
+	mu     sync.Mutex
 	events []audit.SIEMEvent
 }
 
 func (e *shadowFindingAuditExporter) Send(ev audit.SIEMEvent) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.events = append(e.events, ev)
+}
+
+func (e *shadowFindingAuditExporter) Events() []audit.SIEMEvent {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]audit.SIEMEvent, len(e.events))
+	copy(out, e.events)
+	return out
 }
 
 func (e *shadowFindingAuditExporter) Close() error { return nil }
@@ -154,14 +166,14 @@ func TestShadowAgents_CreateGetList_HappyPath(t *testing.T) {
 
 	// Audit assertion: detected event recorded; severity HIGH for high-risk;
 	// no raw secret-shaped strings or full local paths.
-	exp := s.auditExporter.(*shadowFindingAuditExporter)
-	if len(exp.events) != 1 || exp.events[0].EventType != audit.EventShadowAgentDetected {
-		t.Fatalf("audit events = %+v, want one EventShadowAgentDetected", exp.events)
+	events := s.auditExporter.(*shadowFindingAuditExporter).Events()
+	if len(events) != 1 || events[0].EventType != audit.EventShadowAgentDetected {
+		t.Fatalf("audit events = %+v, want one EventShadowAgentDetected", events)
 	}
-	if exp.events[0].TenantID != "tenant-a" || exp.events[0].Severity != audit.SeverityHigh {
-		t.Fatalf("audit event identity wrong: %+v", exp.events[0])
+	if events[0].TenantID != "tenant-a" || events[0].Severity != audit.SeverityHigh {
+		t.Fatalf("audit event identity wrong: %+v", events[0])
 	}
-	if rp := exp.events[0].Extra["redacted_path"]; strings.Contains(rp, "/home/dev/") {
+	if rp := events[0].Extra["redacted_path"]; strings.Contains(rp, "/home/dev/") {
 		t.Fatalf("audit redacted_path leak: %q", rp)
 	}
 }
@@ -290,12 +302,12 @@ func TestShadowAgents_ResolveAndSuppress_EmitAudit(t *testing.T) {
 
 	// Audit assertions: detected + resolved emitted (no suppressed, because
 	// the suppress call hit the 409 path before audit).
-	exp := s.auditExporter.(*shadowFindingAuditExporter)
-	if len(exp.events) != 2 ||
-		exp.events[0].EventType != audit.EventShadowAgentDetected ||
-		exp.events[1].EventType != audit.EventShadowAgentResolved {
-		gotTypes := make([]string, len(exp.events))
-		for i, e := range exp.events {
+	events := s.auditExporter.(*shadowFindingAuditExporter).Events()
+	if len(events) != 2 ||
+		events[0].EventType != audit.EventShadowAgentDetected ||
+		events[1].EventType != audit.EventShadowAgentResolved {
+		gotTypes := make([]string, len(events))
+		for i, e := range events {
 			gotTypes[i] = e.EventType
 		}
 		t.Fatalf("audit event types = %v, want [detected resolved]", gotTypes)

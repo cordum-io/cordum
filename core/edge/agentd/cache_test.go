@@ -139,6 +139,42 @@ func TestSafeAllowCacheTTLEvictionAndDisable(t *testing.T) {
 	}
 }
 
+func TestSafeAllowCache_LRUEvictionAfterOverwrite(t *testing.T) {
+	t.Parallel()
+
+	clock := &cacheTestClock{now: time.Date(2026, 5, 2, 13, 45, 0, 0, time.UTC)}
+	cache := NewSafeAllowCache(SafeAllowCacheConfig{Enabled: true, TTL: time.Minute, MaxEntries: 2}, clock)
+	first := safeAllowCacheTestRequest()
+	second := mutateSafeAllowCacheRequest(first, func(v *SafeAllowCacheRequest) { v.ActionHash = "sha256:action-2" })
+	third := mutateSafeAllowCacheRequest(first, func(v *SafeAllowCacheRequest) { v.ActionHash = "sha256:action-3" })
+
+	if !cache.Put(first, safeAllowCacheTestResponse()) || !cache.Put(second, safeAllowCacheTestResponse()) {
+		t.Fatal("Put returned false for initial safe entries")
+	}
+	if !cache.Put(first, mutateSafeAllowCacheResponse(safeAllowCacheTestResponse(), func(v *EvaluateResponse) {
+		v.RuleID = "safe-cache-rule-overwritten"
+	})) {
+		t.Fatal("Put returned false for overwritten safe entry")
+	}
+	if !cache.Put(third, safeAllowCacheTestResponse()) {
+		t.Fatal("Put returned false for third safe entry")
+	}
+
+	if got, ok := cache.Get(second); ok {
+		t.Fatalf("second entry hit after overwrite made first most-recently-used: %#v", got)
+	}
+	got, ok := cache.Get(first)
+	if !ok {
+		t.Fatal("overwritten first entry was evicted; want it retained as most-recently-used")
+	}
+	if got.RuleID != "safe-cache-rule-overwritten" {
+		t.Fatalf("first entry RuleID = %q, want overwritten response", got.RuleID)
+	}
+	if _, ok := cache.Get(third); !ok {
+		t.Fatal("third entry missed after insert")
+	}
+}
+
 func TestSafeAllowCacheRejectsUnsafeOrIneligibleDecisions(t *testing.T) {
 	t.Parallel()
 

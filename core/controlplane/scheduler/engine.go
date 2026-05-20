@@ -1222,9 +1222,11 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 
 		currentState := JobState("")
 		if e.jobStore != nil {
-			ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-			defer cancel()
-			state, err := e.jobStore.GetState(ctx, jobID)
+			state, err := func() (JobState, error) {
+				ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
+				defer cancel()
+				return e.jobStore.GetState(ctx, jobID)
+			}()
 			if err == nil {
 				currentState = state
 				if state == JobStateDispatched || state == JobStateRunning {
@@ -1258,25 +1260,30 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 		e.incJobsReceived(topic)
 
 		if e.jobStore != nil {
-			ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-			defer cancel()
-			if traceID != "" {
-				if err := e.jobStore.AddJobToTrace(ctx, traceID, jobID); err != nil {
-					slog.Error("failed to add job to trace", "job_id", jobID, "trace_id", traceID, "error", err)
+			if err := func() error {
+				ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
+				defer cancel()
+				if traceID != "" {
+					if err := e.jobStore.AddJobToTrace(ctx, traceID, jobID); err != nil {
+						slog.Error("failed to add job to trace", "job_id", jobID, "trace_id", traceID, "error", err)
+						return RetryAfter(err, retryDelayStore)
+					}
+				}
+				if err := e.jobStore.SetJobMeta(ctx, req); err != nil {
+					slog.Error("failed to persist job metadata", "job_id", jobID, "error", err)
 					return RetryAfter(err, retryDelayStore)
 				}
-			}
-			if err := e.jobStore.SetJobMeta(ctx, req); err != nil {
-				slog.Error("failed to persist job metadata", "job_id", jobID, "error", err)
-				return RetryAfter(err, retryDelayStore)
-			}
-			if store, ok := e.jobStore.(interface {
-				SetJobRequest(context.Context, *pb.JobRequest) error
-			}); ok {
-				if err := store.SetJobRequest(ctx, req); err != nil {
-					slog.Error("failed to persist job request", "job_id", jobID, "error", err)
-					return RetryAfter(err, retryDelayStore)
+				if store, ok := e.jobStore.(interface {
+					SetJobRequest(context.Context, *pb.JobRequest) error
+				}); ok {
+					if err := store.SetJobRequest(ctx, req); err != nil {
+						slog.Error("failed to persist job request", "job_id", jobID, "error", err)
+						return RetryAfter(err, retryDelayStore)
+					}
 				}
+				return nil
+			}(); err != nil {
+				return err
 			}
 		}
 
@@ -1395,8 +1402,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	attempts := 0
 	if e.jobStore != nil {
 		ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-		defer cancel()
 		a, err := e.jobStore.GetAttempts(ctx, jobID)
+		cancel()
 		if errors.Is(err, redis.Nil) {
 			attempts = 0
 		} else if err != nil {
@@ -1616,8 +1623,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 
 	if maxRetries := maxRetriesFromConstraints(record.Constraints); maxRetries > 0 && e.jobStore != nil {
 		ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-		defer cancel()
 		attempts, err := e.jobStore.GetAttempts(ctx, jobID)
+		cancel()
 		allowedAttempts := int(maxRetries) + 1
 		if errors.Is(err, redis.Nil) {
 			attempts = 0
@@ -1688,8 +1695,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 
 	if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 && e.jobStore != nil {
 		ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-		defer cancel()
 		err := e.jobStore.SetDeadline(ctx, jobID, time.Now().Add(time.Duration(budget.GetDeadlineMs())*time.Millisecond))
+		cancel()
 		if err != nil {
 			return RetryAfter(err, retryDelayStore)
 		}

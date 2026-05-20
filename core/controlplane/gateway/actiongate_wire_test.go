@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/cordum/cordum/core/infra/config"
@@ -78,6 +80,13 @@ func TestEncodeActionDescriptorLabel_RoundTrip(t *testing.T) {
 	}
 	if len(encoded) > config.ActionArgsMaxSerializedBytes {
 		t.Fatalf("encode exceeds size cap: %d > %d", len(encoded), config.ActionArgsMaxSerializedBytes)
+	}
+	var got config.ActionDescriptor
+	if err := json.Unmarshal([]byte(encoded), &got); err != nil {
+		t.Fatalf("decode encoded descriptor: %v", err)
+	}
+	if !reflect.DeepEqual(*desc, got) {
+		t.Fatalf("decoded descriptor = %#v, want %#v", got, *desc)
 	}
 }
 
