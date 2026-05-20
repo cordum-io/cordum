@@ -5,6 +5,7 @@ type MockUser = { id: string } | null;
 interface MockConfigState {
   apiBaseUrl: string;
   apiKey: string;
+  authMode: "apikey" | "session" | "anonymous";
   tenantId: string;
   principalId: string;
   principalRole: string;
@@ -81,6 +82,7 @@ describe("api client - get", () => {
     mockConfigState = {
       apiBaseUrl: "https://api.example.test/api/v1/",
       apiKey: "api-key-1",
+      authMode: "apikey",
       tenantId: "tenant-1",
       principalId: "principal-1",
       principalRole: "admin",
@@ -99,6 +101,38 @@ describe("api client - get", () => {
     randomUUIDSpy.mockRestore();
     performanceNowSpy.mockRestore();
     vi.unstubAllGlobals();
+  });
+
+  it("session-mode authMode does NOT send X-API-Key even when apiKey slot is non-empty (login-loop regression)", async () => {
+    // Customer-reported bug: password/SSO login is session-based. Even if a
+    // stale `apiKey` value lingers in the store, authMode="session" gates the
+    // X-API-Key header off so the cookie is the only auth signal sent.
+    mockConfigState.authMode = "session";
+    mockConfigState.apiKey = "stale-session-token"; // would have triggered the loop
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await get("/topics");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers["X-API-Key"]).toBeUndefined();
+    // Tenant + principal headers still flow normally
+    expect(headers["X-Tenant-ID"]).toBe("tenant-1");
+    expect(headers["X-Principal-Id"]).toBe("principal-1");
+    // credentials: "include" carries the httpOnly cookie auth
+    expect(init.credentials).toBe("include");
+  });
+
+  it("anonymous authMode sends no X-API-Key regardless of apiKey contents", async () => {
+    mockConfigState.authMode = "anonymous";
+    mockConfigState.apiKey = "leftover-from-prior-logout";
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await get("/topics");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers["X-API-Key"]).toBeUndefined();
   });
 
   it("constructs GET request URL + auth headers and parses JSON response", async () => {
@@ -140,6 +174,7 @@ describe("api client - write methods", () => {
     mockConfigState = {
       apiBaseUrl: "https://api.example.test/api/v1",
       apiKey: "api-key-1",
+      authMode: "apikey",
       tenantId: "tenant-1",
       principalId: "principal-1",
       principalRole: "admin",
@@ -215,6 +250,7 @@ describe("api client - error handling", () => {
     mockConfigState = {
       apiBaseUrl: "https://api.example.test/api/v1",
       apiKey: "api-key-1",
+      authMode: "apikey",
       tenantId: "tenant-1",
       principalId: "principal-1",
       principalRole: "admin",
@@ -380,6 +416,7 @@ describe("api client - baseUrl and auth header edge cases", () => {
     mockConfigState = {
       apiBaseUrl: "",
       apiKey: "",
+      authMode: "anonymous",
       tenantId: "",
       principalId: "",
       principalRole: "",
@@ -507,6 +544,7 @@ describe("apiClient (orval mutator adapter)", () => {
     mockConfigState = {
       apiBaseUrl: "https://api.example.test/api/v1/",
       apiKey: "api-key-1",
+      authMode: "apikey",
       tenantId: "tenant-1",
       principalId: "principal-1",
       principalRole: "admin",
@@ -705,6 +743,7 @@ describe("apiClient — generated hook integration", () => {
     mockConfigState = {
       apiBaseUrl: "https://api.example.test/api/v1/",
       apiKey: "api-key-1",
+      authMode: "apikey",
       tenantId: "tenant-1",
       principalId: "principal-1",
       principalRole: "admin",
