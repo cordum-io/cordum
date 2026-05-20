@@ -92,15 +92,35 @@ func NewRedisDedupeStore(client redis.Cmdable) *RedisDedupeStore {
 	}
 }
 
+// maxRedisDedupeNxRaceRetries bounds how many times LoadOrStore re-attempts
+// the SETNX→GET dance when it observes the benign NX-miss-then-Get-Nil race:
+// another gateway instance called Delete on the key between our SETNX-miss
+// and our GET. A small bound is sufficient — the race window is one Redis
+// round-trip wide, so multiple consecutive losses indicate sustained
+// contention rather than a single slipped step.
+const maxRedisDedupeNxRaceRetries = 3
+
 // LoadOrStore performs the cross-process winner selection. The first
 // caller across all gateway instances wins via `SET NX EX`; subsequent
 // callers see SET return zero rows (NX miss) and fall through to GET +
 // decode of the stored record.
 //
-// Fail-soft: any Redis error → in-process fallback. The caller cannot
-// distinguish a Redis-backed entry from a fallback entry, which is
-// intentional: the dedupe semantics are the same and the gate must
-// not surface backend health as a tool-call error.
+// Fail-soft on Redis OUTAGE: any non-Nil Redis error → in-process
+// fallback. The caller cannot distinguish a Redis-backed entry from a
+// fallback entry, which is intentional: the dedupe semantics are the
+// same and the gate must not surface backend health as a tool-call error.
+//
+// Fail-CLOSED on NX-miss-then-Nil RACE: another gateway process Deleted
+// the key between our SETNX-miss and our GET. Falling back to the per-
+// instance map here would promote BOTH instances to local-winner and
+// produce duplicate upstream side effects (double tool invocation,
+// double audit). Instead we retry SETNX a bounded number of times; if
+// retries exhaust we return a pending wire record with loaded=true so
+// the caller enters waitForRedisDedupe polling and a downstream cycle
+// observes the real cross-process state. The trade-off vs the outage
+// path: a transient race adds at most one polling-interval of latency,
+// while the outage path keeps the gate non-blocking by absorbing the
+// per-instance dedupe loss.
 func (s *RedisDedupeStore) LoadOrStore(key string, value any) (any, bool) {
 	if s.client == nil {
 		return s.fallback.LoadOrStore(key, value)
@@ -109,30 +129,44 @@ func (s *RedisDedupeStore) LoadOrStore(key string, value any) (any, bool) {
 	if !ok {
 		return s.fallback.LoadOrStore(key, value)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), redisDedupeCommandTimeout)
-	defer cancel()
-	stored, setErr := s.client.SetNX(ctx, MCPDedupeKeyPrefix+key, encoded, MCPDedupeTTL).Result()
-	if setErr != nil {
-		return s.fallback.LoadOrStore(key, value)
+	fullKey := MCPDedupeKeyPrefix + key
+	for range maxRedisDedupeNxRaceRetries {
+		ctx, cancel := context.WithTimeout(context.Background(), redisDedupeCommandTimeout)
+		stored, setErr := s.client.SetNX(ctx, fullKey, encoded, MCPDedupeTTL).Result()
+		if setErr != nil {
+			cancel()
+			return s.fallback.LoadOrStore(key, value)
+		}
+		if stored {
+			cancel()
+			return value, false
+		}
+		raw, getErr := s.client.Get(ctx, fullKey).Bytes()
+		cancel()
+		if errors.Is(getErr, redis.Nil) {
+			// Benign race: entry vanished between our SETNX-miss and GET.
+			// Re-attempt SETNX — if it wins, we are the new legitimate
+			// cross-process winner; if it loses again, the next Get
+			// observes the new tenant of the slot.
+			continue
+		}
+		if getErr != nil {
+			return s.fallback.LoadOrStore(key, value)
+		}
+		decoded, decodeErr := decodeRedisDedupeRecord(raw)
+		if decodeErr != nil {
+			return s.fallback.LoadOrStore(key, value)
+		}
+		return decoded, true
 	}
-	if stored {
-		// Winner: no existing entry, our value is now persisted. Return
-		// the caller's value verbatim so the in-process and Redis store
-		// both surface the "supplied value, loaded=false" contract.
-		return value, false
-	}
-	// NX miss: fetch the existing record. A subsequent decode failure
-	// degrades to the fallback path rather than synthesizing an empty
-	// record that would falsely short-circuit dedupeBegin.
-	raw, getErr := s.client.Get(ctx, MCPDedupeKeyPrefix+key).Bytes()
-	if getErr != nil {
-		return s.fallback.LoadOrStore(key, value)
-	}
-	decoded, decodeErr := decodeRedisDedupeRecord(raw)
-	if decodeErr != nil {
-		return s.fallback.LoadOrStore(key, value)
-	}
-	return decoded, true
+	// Race retried out without resolving. Returning a pending wire record
+	// with loaded=true routes the caller into waitForRedisDedupe polling
+	// (see policy_evaluate.go dedupeBegin's type switch) instead of
+	// firing a duplicate upstream call via the fallback's local winner
+	// path. Polling re-reads the cross-process state and either observes
+	// the winner's completed record or eventually takes the slot via the
+	// deadline-breaker — both are safe outcomes.
+	return &redisDedupeRecord{State: redisDedupeStatePending}, true
 }
 
 // Store publishes a completed record (or any updated wire value) with

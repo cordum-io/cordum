@@ -3,7 +3,9 @@ package mcp
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -290,5 +292,150 @@ func TestRedisDedupeStore_FailSoftFallbackSharedAcrossCalls(t *testing.T) {
 	}
 	if actual != completed {
 		t.Fatalf("post-Store fail-soft LoadOrStore actual=%#v; want completed record %#v", actual, completed)
+	}
+}
+
+// TestRedisDedupe_LoadOrStoreNoFalseWinnerOnNXMissThenNil is the regression
+// test for the PR #276 audit finding (RACE CRITICAL). The pre-fix sequence
+// is:
+//
+//  1. SetNX returns stored=false (an existing pending/completed entry).
+//  2. Get returns redis.Nil because another gateway process called Delete
+//     between our SetNX-miss and our Get (a benign race: the prior winner
+//     finished + cleaned up its slot).
+//  3. The Get error causes the store to fall back to the in-process map,
+//     which is per-instance and empty here, so it reports the caller as the
+//     local winner (loaded=false).
+//
+// Two gateway instances both hitting this race both win locally and both
+// fire the upstream MCP tool call → duplicate side effects (double policy
+// evaluation, double audit, etc).
+//
+// The fix retries SETNX→GET internally to resolve the benign race, and if
+// retries exhaust it returns a pending wire record with loaded=true so the
+// caller polls via waitForRedisDedupe instead of firing upstream. This
+// test injects redis.Nil on every Get to force the race-exhausted path and
+// asserts the caller-side outcome is "retry/wait" (loaded=true with a
+// pending record), NOT "local-win" (loaded=false).
+func TestRedisDedupe_LoadOrStoreNoFalseWinnerOnNXMissThenNil(t *testing.T) {
+	t.Parallel()
+	plainClient, mr := newMiniRedisDedupeBackend(t)
+	// Pre-populate a record so SetNX returns stored=false on first attempt.
+	storeA := NewRedisDedupeStore(plainClient)
+	if _, loaded := storeA.LoadOrStore("k.nx-then-nil", &redisDedupeRecord{State: redisDedupeStatePending}); loaded {
+		t.Fatalf("preload: first LoadOrStore loaded=true on empty backend; want false")
+	}
+
+	hookedClient := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 4})
+	t.Cleanup(func() { _ = hookedClient.Close() })
+	getNilHook := &injectGetNilHook{}
+	hookedClient.AddHook(getNilHook)
+	storeB := NewRedisDedupeStore(hookedClient)
+
+	// SetNX from storeB will hit the pre-populated key and return false,
+	// then Get is intercepted by the hook and returns redis.Nil. The fix
+	// must NOT promote storeB to local-winner; it must signal retry/wait.
+	loserSupplied := &redisDedupeRecord{State: redisDedupeStatePending}
+	actual, loaded := storeB.LoadOrStore("k.nx-then-nil", loserSupplied)
+
+	if !loaded {
+		t.Fatalf("LoadOrStore under NX-miss-then-Nil reported loaded=false (false-winner — DUPLICATE upstream call risk); want loaded=true so caller enters waitForRedisDedupe polling path")
+	}
+	rec, ok := actual.(*redisDedupeRecord)
+	if !ok {
+		t.Fatalf("LoadOrStore returned %T; want *redisDedupeRecord so caller's type switch routes to polling path", actual)
+	}
+	if rec.State != redisDedupeStatePending {
+		t.Fatalf("LoadOrStore returned state=%q; want %q so caller enters waitForRedisDedupe polling instead of short-circuiting on a fake completed record", rec.State, redisDedupeStatePending)
+	}
+	if atomic.LoadInt32(&getNilHook.gets) == 0 {
+		t.Fatal("test never injected redis.Nil on Get; LoadOrStore is not exercising the NX-miss-then-Get path")
+	}
+}
+
+// TestRedisDedupe_LoadOrStoreResolvesTransientNXRace asserts the retry path
+// succeeds when the race is benign: SetNX→Get fails once, then on retry the
+// key is gone so SetNX wins and the caller becomes the legitimate winner.
+// This proves the fix doesn't degrade the happy path of "prior winner
+// finished+cleared, we should claim the slot".
+func TestRedisDedupe_LoadOrStoreResolvesTransientNXRace(t *testing.T) {
+	t.Parallel()
+	_, mr := newMiniRedisDedupeBackend(t)
+	// Pre-populate so first SetNX returns false; the hook will Delete and
+	// inject Nil on the first Get to simulate the cross-process race.
+	preloaded, err := json.Marshal(&redisDedupeRecord{State: redisDedupeStatePending})
+	if err != nil {
+		t.Fatalf("marshal pre-load record: %v", err)
+	}
+	mr.Set(MCPDedupeKeyPrefix+"k.transient-race", string(preloaded))
+	mr.SetTTL(MCPDedupeKeyPrefix+"k.transient-race", MCPDedupeTTL)
+
+	hookedClient := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 4})
+	t.Cleanup(func() { _ = hookedClient.Close() })
+
+	var oneShot atomic.Bool
+	hookedClient.AddHook(&interceptHook{
+		onProcess: func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error {
+			if cmd.Name() == "get" && !oneShot.Swap(true) {
+				mr.Del(MCPDedupeKeyPrefix + "k.transient-race")
+				cmd.SetErr(redis.Nil)
+				return redis.Nil
+			}
+			return next(ctx, cmd)
+		},
+	})
+
+	store := NewRedisDedupeStore(hookedClient)
+	supplied := &redisDedupeRecord{State: redisDedupeStatePending}
+	actual, loaded := store.LoadOrStore("k.transient-race", supplied)
+	if loaded {
+		t.Fatal("transient race: LoadOrStore loaded=true; want false (retry SETNX should win after race resolved)")
+	}
+	if actual != supplied {
+		t.Fatalf("transient race: LoadOrStore actual=%#v; want supplied value (winner path)", actual)
+	}
+	// The winner must persist their record in Redis via SETNX retry, not
+	// merely in the per-instance fallback. Cross-process dedupe semantics
+	// require the next gateway instance to observe the winner via SETNX
+	// returning stored=false on the same key.
+	if !mr.Exists(MCPDedupeKeyPrefix + "k.transient-race") {
+		t.Fatal("transient race: Redis key missing after win; the retry path landed on local fallback rather than re-attempting SETNX (cross-process collapse broken)")
+	}
+}
+
+// injectGetNilHook returns redis.Nil for every Get command. Used to force
+// the LoadOrStore NX-miss-then-Get-Nil race path.
+type injectGetNilHook struct {
+	gets int32
+}
+
+func (h *injectGetNilHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h *injectGetNilHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+func (h *injectGetNilHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if cmd.Name() == "get" {
+			atomic.AddInt32(&h.gets, 1)
+			cmd.SetErr(redis.Nil)
+			return redis.Nil
+		}
+		return next(ctx, cmd)
+	}
+}
+
+// interceptHook is a programmable hook for per-command behavior tweaks
+// (e.g. delete-then-Nil on first Get, normal afterward).
+type interceptHook struct {
+	onProcess func(ctx context.Context, cmd redis.Cmder, next redis.ProcessHook) error
+}
+
+func (h *interceptHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h *interceptHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+func (h *interceptHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		return h.onProcess(ctx, cmd, next)
 	}
 }

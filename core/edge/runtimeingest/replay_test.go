@@ -3,6 +3,8 @@ package runtimeingest
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -181,5 +183,131 @@ func TestReplayWindow_TTLExpiryAcceptsAgain(t *testing.T) {
 	mr.FastForward(2 * time.Hour)
 	if ok, err := window.Reserve(ctx, "tenant-a", "collector-x", "nonce-000000000001"); err != nil || !ok {
 		t.Fatalf("post-expiry Reserve = (%v, %v); want (true, nil)", ok, err)
+	}
+}
+
+// TestReplayWindow_ReserveAtomicUnderConcurrency races N goroutines (N > maxCard)
+// at the same tenant/collector key with distinct nonces and asserts the set
+// cardinality never exceeds maxCard. The pre-fix Reserve sequence (SCARD →
+// SISMEMBER → SADD → EXPIRE on the round-tripped go-redis client) is a TOCTOU:
+// every goroutine observes count < maxCard via SCARD before any one of them
+// runs SADD, so the cap is approximate rather than enforced. A single-Lua-EVAL
+// fix makes SCARD/SISMEMBER/SADD/EXPIRE one atomic step and the cap holds.
+func TestReplayWindow_ReserveAtomicUnderConcurrency(t *testing.T) {
+	ctx := context.Background()
+	client, _ := newReplayWindowTestClient(t)
+	const maxCard = int64(10)
+	const goroutines = 50
+	window := NewReplayWindow(client, ReplayWindowTTL, maxCard)
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	ready := make(chan struct{})
+	for i := range goroutines {
+		nonce := fmt.Sprintf("nonce-race-%06d", i)
+		go func(n string) {
+			defer wg.Done()
+			<-ready
+			_, _ = window.Reserve(ctx, "tenant-a", "collector-x", n)
+		}(nonce)
+	}
+	// Release all goroutines simultaneously to widen the race window.
+	close(ready)
+	wg.Wait()
+
+	key := ReplayWindowKeyPrefix + "tenant-a:collector-x"
+	size, err := client.SCard(ctx, key).Result()
+	if err != nil {
+		t.Fatalf("post-race SCard: %v", err)
+	}
+	if size > maxCard {
+		t.Fatalf("post-race SCard = %d; want <= maxCard=%d (atomicity violated — concurrent SCARD/SADD raced past cap)", size, maxCard)
+	}
+}
+
+// TestReplayWindow_ReserveAlwaysAppliesTTL is the no-orphan regression guard
+// for DoD-2. With the pre-fix code, an Expire failure between SADD and EXPIRE
+// (network blip, command timeout, miniredis close mid-flight) leaves a new
+// member in a key with no TTL — the key never expires and the set grows
+// unbounded across reboots. The Lua EVAL fix makes SADD and EXPIRE one
+// atomic operation: either both happen or neither does. We assert the
+// invariant by Reserving many distinct nonces and verifying the key always
+// has a positive TTL.
+func TestReplayWindow_ReserveAlwaysAppliesTTL(t *testing.T) {
+	ctx := context.Background()
+	client, mr := newReplayWindowTestClient(t)
+	window := NewReplayWindow(client, ReplayWindowTTL, MaxReplayWindowCardinality)
+	key := ReplayWindowKeyPrefix + "tenant-a:collector-x"
+
+	for i := range 25 {
+		nonce := fmt.Sprintf("nonce-ttl-%06d", i)
+		ok, err := window.Reserve(ctx, "tenant-a", "collector-x", nonce)
+		if err != nil || !ok {
+			t.Fatalf("Reserve(%s) = (%v, %v); want (true, nil)", nonce, ok, err)
+		}
+		ttl := mr.TTL(key)
+		if ttl <= 0 {
+			t.Fatalf("after Reserve(%s): TTL(%s) = %v; want >0 (no orphan SADD without EXPIRE)", nonce, key, ttl)
+		}
+		if ttl > ReplayWindowTTL {
+			t.Fatalf("after Reserve(%s): TTL(%s) = %v; want <= %v", nonce, key, ttl, ReplayWindowTTL)
+		}
+	}
+}
+
+// TestReplayWindow_ReserveAtomicNoOrphanOnExpireFailure is the DoD-2
+// regression test for the "SADD-succeeded-but-EXPIRE-failed" orphan-member
+// scenario the PR #276 audit flagged. We inject a fault on the Redis
+// EXPIRE command:
+//
+//   - Pre-Lua-fix code: SADD succeeds (network call 1), then EXPIRE fails
+//     (network call 2) → 1 orphan member with no TTL. The set grows forever.
+//   - Post-Lua-fix code: SADD+EXPIRE happen inside the same EVAL call.
+//     A network-level "expire" command is never sent, so the hook never
+//     fires and the script runs atomically (members > 0 ↔ TTL > 0).
+//
+// Invariant under test: if the key has members, it has a TTL.
+func TestReplayWindow_ReserveAtomicNoOrphanOnExpireFailure(t *testing.T) {
+	ctx := context.Background()
+	plainClient, mr := newReplayWindowTestClient(t)
+	hookedClient := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 4})
+	t.Cleanup(func() { _ = hookedClient.Close() })
+	hookedClient.AddHook(&failExpireHook{err: errors.New("injected expire failure")})
+
+	window := NewReplayWindow(hookedClient, ReplayWindowTTL, MaxReplayWindowCardinality)
+	_, _ = window.Reserve(ctx, "tenant-a", "collector-x", "nonce-orphan-test")
+	// Reserve may return an error (pre-fix) or succeed (post-fix); either
+	// outcome is acceptable. The invariant is the post-state, not the
+	// return value.
+
+	key := ReplayWindowKeyPrefix + "tenant-a:collector-x"
+	members, err := plainClient.SCard(ctx, key).Result()
+	if err != nil {
+		t.Fatalf("post-failure SCard via plain client: %v", err)
+	}
+	ttl := mr.TTL(key)
+	if members > 0 && ttl <= 0 {
+		t.Fatalf("orphan detected: SCard=%d members but TTL=%v (no expiry); SADD+EXPIRE atomicity violated", members, ttl)
+	}
+}
+
+// failExpireHook returns an injected error on the Redis EXPIRE command;
+// all other commands pass through. Used to simulate the network failure
+// mode that exposed the pre-Lua-fix orphan-member bug.
+type failExpireHook struct {
+	err error
+}
+
+func (h *failExpireHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h *failExpireHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+func (h *failExpireHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if cmd.Name() == "expire" {
+			cmd.SetErr(h.err)
+			return h.err
+		}
+		return next(ctx, cmd)
 	}
 }

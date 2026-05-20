@@ -20,6 +20,32 @@ const (
 
 var ErrReplayWindowFull = errors.New("runtime replay window cap exhausted")
 
+// reserveScript performs the entire Reserve sequence (membership check,
+// cap check, SADD, EXPIRE) as one atomic Lua call. The earlier sequence
+// of separate go-redis round trips (SCARD → SISMEMBER → SADD → EXPIRE)
+// was a TOCTOU: concurrent callers all observed count<maxCard before any
+// of them ran SADD, so the cap was approximate rather than enforced;
+// and an Expire that failed after SAdd already added a NEW member left
+// the key without a TTL, growing memory unboundedly.
+//
+// Return codes (Redis Lua integer):
+//
+//	0  → first-seen, member added with TTL applied
+//	1  → already a member (replayed), no state change
+//	-1 → cap exhausted and member not present (refusal)
+const reserveScript = `
+if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 1 then
+  return 1
+end
+local sc = redis.call('SCARD', KEYS[1])
+if sc >= tonumber(ARGV[3]) then
+  return -1
+end
+redis.call('SADD', KEYS[1], ARGV[1])
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+return 0
+`
+
 type ReplayWindow struct {
 	client  redis.Cmdable
 	ttl     time.Duration
@@ -41,31 +67,24 @@ func (r *ReplayWindow) Reserve(ctx context.Context, tenantID, collectorID, nonce
 	if err != nil {
 		return false, err
 	}
-	count, err := r.client.SCard(ctx, key).Result()
+	ttlSeconds := int64(r.ttl / time.Second)
+	if ttlSeconds <= 0 {
+		ttlSeconds = 1
+	}
+	res, err := r.client.Eval(ctx, reserveScript, []string{key}, value, ttlSeconds, r.maxCard).Int64()
 	if err != nil {
 		return false, err
 	}
-	if count >= r.maxCard {
-		seen, err := r.client.SIsMember(ctx, key, value).Result()
-		if err != nil {
-			return false, err
-		}
-		if seen {
-			return false, nil
-		}
-		return false, ErrReplayWindowFull
-	}
-	added, err := r.client.SAdd(ctx, key, value).Result()
-	if err != nil {
-		return false, err
-	}
-	if added == 0 {
+	switch res {
+	case 0:
+		return true, nil
+	case 1:
 		return false, nil
+	case -1:
+		return false, ErrReplayWindowFull
+	default:
+		return false, fmt.Errorf("runtime replay window: unexpected script result %d", res)
 	}
-	if err := r.client.Expire(ctx, key, r.ttl).Err(); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 func (r *ReplayWindow) Release(ctx context.Context, tenantID, collectorID, nonce string) error {
