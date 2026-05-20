@@ -51,8 +51,13 @@ func (s *server) handleListTopics(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "topic registry unavailable")
 		return
 	}
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeTopicSchemaViolation, err.Error())
+		return
+	}
 
-	snap, err := s.topicRegistry.List(r.Context())
+	snap, err := s.topicRegistry.ListForTenant(r.Context(), tenant)
 	if err != nil {
 		writeInternalError(w, r, "list topics", err)
 		return
@@ -89,6 +94,11 @@ func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.topicRegistry == nil || s.configSvc == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "topic registry unavailable")
+		return
+	}
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeTopicSchemaViolation, err.Error())
 		return
 	}
 
@@ -129,7 +139,7 @@ func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	existing, _, err := s.topicRegistry.Get(r.Context(), req.Name)
+	existing, _, err := s.topicRegistry.GetForTenant(r.Context(), tenant, req.Name)
 	if err != nil {
 		writeInternalError(w, r, "get topic", err)
 		return
@@ -137,6 +147,7 @@ func (s *server) handleCreateTopic(w http.ResponseWriter, r *http.Request) {
 
 	record := topicregistry.Registration{
 		Name:           req.Name,
+		TenantID:       tenant,
 		Pool:           req.Pool,
 		InputSchemaID:  req.InputSchemaID,
 		OutputSchemaID: req.OutputSchemaID,
@@ -177,21 +188,29 @@ func (s *server) handleDeleteTopic(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "topic registry unavailable")
 		return
 	}
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeTopicSchemaViolation, err.Error())
+		return
+	}
 	name := strings.TrimSpace(r.PathValue("name"))
 	if err := pools.ValidateTopicName(name); err != nil {
 		writeJSONError(w, http.StatusBadRequest, errorCodeTopicSchemaViolation, err.Error())
 		return
 	}
-	existing, _, err := s.topicRegistry.Get(r.Context(), name)
+	// GetForTenant filters by tenant: an admin in another tenant sees the
+	// same response shape as if the topic does not exist (404 + no leak),
+	// which is the existence-oracle hardening the audit demanded.
+	existing, _, err := s.topicRegistry.GetForTenant(r.Context(), tenant, name)
 	if err != nil {
 		writeInternalError(w, r, "get topic", err)
 		return
 	}
-	if existing == nil {
+	if existing == nil || existing.TenantID != tenant {
 		writeJSONError(w, http.StatusNotFound, errorCodeTopicNotFound, "topic not found")
 		return
 	}
-	if err := s.topicRegistry.Delete(r.Context(), name); err != nil {
+	if err := s.topicRegistry.DeleteForTenant(r.Context(), tenant, []string{name}); err != nil {
 		writeInternalError(w, r, "delete topic", err)
 		return
 	}

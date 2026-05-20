@@ -100,7 +100,7 @@ func (r *AgentResolver) resolveFromStores(ctx context.Context, workerID string) 
 		return AgentInfo{AgentID: agentID, Name: agentID, RiskTier: ""}
 	}
 
-	identity, err := r.agentStore.Get(ctx, agentID)
+	identity, err := r.agentStore.Get(ctx, "", agentID)
 	if err != nil || identity == nil {
 		return AgentInfo{AgentID: agentID, Name: agentID, RiskTier: ""}
 	}

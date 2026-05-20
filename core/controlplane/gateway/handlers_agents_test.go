@@ -399,7 +399,7 @@ func TestAgentStatsHighVolume(t *testing.T) {
 
 	// Create an agent identity.
 	agent, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
-		Name: "high-vol-agent", Owner: "admin", RiskTier: "high",
+		TenantID: "default", Name: "high-vol-agent", Owner: "admin", RiskTier: "high",
 	})
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
@@ -480,6 +480,149 @@ func TestAgentStatsHighVolume(t *testing.T) {
 	}
 }
 
+// TestHandleCreateAgent_PersistsTenantID verifies that handleCreateAgent
+// stamps the caller tenant onto the persisted AgentIdentity instead of
+// writing a global tenant_id="" entry that any tenant can read.
+// Regression for PR #276 audit finding (CRITICAL, handlers_agents.go:80-127).
+func TestHandleCreateAgent_PersistsTenantID(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+
+	body := bytes.NewBufferString(`{"name":"tenant-a-bot","owner":"admin","risk_tier":"low"}`)
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &auth.AuthContext{
+		Tenant: "tenant-a", Role: "admin", PrincipalID: "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.handleCreateAgent(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp agentResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Persisted record MUST carry TenantID = caller tenant, not "".
+	stored, err := s.agentIdentityStore.Get(ctx, "tenant-a", resp.ID)
+	if err != nil {
+		t.Fatalf("get persisted agent: %v", err)
+	}
+	if stored == nil {
+		t.Fatalf("persisted agent not found under tenant-a — likely written with empty TenantID")
+	}
+	if stored.TenantID != "tenant-a" {
+		t.Fatalf("expected TenantID=tenant-a on persisted record, got %q — record is GLOBAL and visible to every tenant", stored.TenantID)
+	}
+}
+
+// TestHandleAgentByID_RejectsCrossTenant verifies that handleGetAgent,
+// handleUpdateAgent, handleDeleteAgent, and handleAgentStats all reject
+// access to another tenant's agent identity by UUID guess with 404 (not 403)
+// to avoid existence-oracle leakage.
+// Regression for PR #276 audit finding (CRITICAL, handlers_agents.go:244-403).
+func TestHandleAgentByID_RejectsCrossTenant(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+
+	// Seed tenant-b's agent directly via store.
+	victim, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "tenant-b", Name: "victim", Owner: "admin", RiskTier: "low",
+	})
+	if err != nil {
+		t.Fatalf("seed victim agent: %v", err)
+	}
+
+	cases := []struct {
+		op                     string
+		exec                   func() *httptest.ResponseRecorder
+		wantStatusOnSoftDelete int
+	}{
+		{
+			op: "GET",
+			exec: func() *httptest.ResponseRecorder {
+				req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+victim.ID, nil), &auth.AuthContext{
+					Tenant: "tenant-a", Role: "admin",
+				})
+				req.SetPathValue("id", victim.ID)
+				rr := httptest.NewRecorder()
+				s.handleGetAgent(rr, req)
+				return rr
+			},
+		},
+		{
+			op: "UPDATE",
+			exec: func() *httptest.ResponseRecorder {
+				body := bytes.NewBufferString(`{"risk_tier":"critical"}`)
+				req := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+victim.ID, body), &auth.AuthContext{
+					Tenant: "tenant-a", Role: "admin",
+				})
+				req.Header.Set("Content-Type", "application/json")
+				req.SetPathValue("id", victim.ID)
+				rr := httptest.NewRecorder()
+				s.handleUpdateAgent(rr, req)
+				return rr
+			},
+		},
+		{
+			op: "DELETE",
+			exec: func() *httptest.ResponseRecorder {
+				req := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/agents/"+victim.ID, nil), &auth.AuthContext{
+					Tenant: "tenant-a", Role: "admin",
+				})
+				req.SetPathValue("id", victim.ID)
+				rr := httptest.NewRecorder()
+				s.handleDeleteAgent(rr, req)
+				return rr
+			},
+		},
+		{
+			op: "STATS",
+			exec: func() *httptest.ResponseRecorder {
+				req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+victim.ID+"/stats", nil), &auth.AuthContext{
+					Tenant: "tenant-a", Role: "admin",
+				})
+				req.SetPathValue("id", victim.ID)
+				rr := httptest.NewRecorder()
+				s.handleAgentStats(rr, req)
+				return rr
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.op, func(t *testing.T) {
+			rr := tc.exec()
+			if rr.Code != http.StatusNotFound {
+				t.Fatalf("CROSS-TENANT %s ALLOWED: tenant-a accessed tenant-b's agent; expected 404, got %d (body=%s)", tc.op, rr.Code, rr.Body.String())
+			}
+			// Existence-oracle hardening: must return AGENT_NOT_FOUND, not a
+			// FORBIDDEN-style code (which would leak that the ID exists).
+			if !bytes.Contains(rr.Body.Bytes(), []byte("AGENT_NOT_FOUND")) {
+				t.Fatalf("expected AGENT_NOT_FOUND (existence-oracle hardening), got: %s", rr.Body.String())
+			}
+		})
+	}
+
+	// Victim record must be intact: same TenantID, original Name, unmodified RiskTier, not revoked.
+	after, err := s.agentIdentityStore.Get(ctx, "tenant-b", victim.ID)
+	if err != nil {
+		t.Fatalf("get victim after cross-tenant attempts: %v", err)
+	}
+	if after == nil {
+		t.Fatalf("REGRESSION: victim agent was deleted by cross-tenant DELETE")
+	}
+	if after.RiskTier != "low" {
+		t.Fatalf("REGRESSION: victim risk_tier mutated by cross-tenant UPDATE (got %q, want low)", after.RiskTier)
+	}
+	if after.Status == "revoked" {
+		t.Fatalf("REGRESSION: victim status set to revoked by cross-tenant DELETE")
+	}
+}
+
 func TestListAgentsIncludesLastActive(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableAgentIdentityEntitlement(t, s)
@@ -487,13 +630,13 @@ func TestListAgentsIncludesLastActive(t *testing.T) {
 
 	// Create two agents.
 	agentA, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
-		Name: "active-agent", Owner: "admin", RiskTier: "low",
+		TenantID: "default", Name: "active-agent", Owner: "admin", RiskTier: "low",
 	})
 	if err != nil {
 		t.Fatalf("create agent A: %v", err)
 	}
 	agentB, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
-		Name: "quiet-agent", Owner: "admin", RiskTier: "low",
+		TenantID: "default", Name: "quiet-agent", Owner: "admin", RiskTier: "low",
 	})
 	if err != nil {
 		t.Fatalf("create agent B: %v", err)

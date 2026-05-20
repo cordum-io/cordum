@@ -88,6 +88,11 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "agent identity store unavailable")
 		return
 	}
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeAgentRequestInvalid, err.Error())
+		return
+	}
 
 	var req createAgentRequest
 	if err := decodeJSONBody(w, r, &req); err != nil {
@@ -96,6 +101,7 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	identity := store.AgentIdentity{
+		TenantID:            tenant,
 		Name:                strings.TrimSpace(req.Name),
 		Description:         strings.TrimSpace(req.Description),
 		Owner:               strings.TrimSpace(req.Owner),
@@ -252,6 +258,11 @@ func (s *server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "agent identity store unavailable")
 		return
 	}
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeAgentRequestInvalid, err.Error())
+		return
+	}
 
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
@@ -259,7 +270,10 @@ func (s *server) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	identity, err := s.agentIdentityStore.Get(r.Context(), id)
+	// Get returns nil when the stored identity's TenantID does not match
+	// (existence-oracle hardening — cross-tenant ID probes look identical
+	// to misses).
+	identity, err := s.agentIdentityStore.Get(r.Context(), tenant, id)
 	if err != nil {
 		writeInternalError(w, r, "get agent identity", err)
 		return
@@ -281,6 +295,11 @@ func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.agentIdentityStore == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "agent identity store unavailable")
+		return
+	}
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeAgentRequestInvalid, err.Error())
 		return
 	}
 
@@ -309,7 +328,10 @@ func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		DataClassifications: req.DataClassifications,
 	}
 
-	updated, err := s.agentIdentityStore.Update(r.Context(), id, updates)
+	// Update returns "not found" when the stored identity's TenantID does
+	// not match (existence-oracle hardening — cross-tenant writes look
+	// identical to misses; no leaked existence signal).
+	updated, err := s.agentIdentityStore.Update(r.Context(), tenant, id, updates)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			writeJSONError(w, http.StatusNotFound, errorCodeAgentNotFound, "agent identity not found")
@@ -341,6 +363,11 @@ func (s *server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "agent identity store unavailable")
 		return
 	}
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeAgentRequestInvalid, err.Error())
+		return
+	}
 
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
@@ -348,7 +375,10 @@ func (s *server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := s.agentIdentityStore.Get(r.Context(), id)
+	// Tenant-scoped Get returns nil when the stored identity's TenantID
+	// does not match (existence-oracle hardening — cross-tenant ID probes
+	// look like misses).
+	existing, err := s.agentIdentityStore.Get(r.Context(), tenant, id)
 	if err != nil {
 		writeInternalError(w, r, "get agent identity", err)
 		return
@@ -358,7 +388,7 @@ func (s *server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.agentIdentityStore.Delete(r.Context(), id); err != nil {
+	if err := s.agentIdentityStore.Delete(r.Context(), tenant, id); err != nil {
 		writeInternalError(w, r, "delete agent identity", err)
 		return
 	}
@@ -385,6 +415,11 @@ func (s *server) handleAgentStats(w http.ResponseWriter, r *http.Request) {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "agent identity store unavailable")
 		return
 	}
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeAgentRequestInvalid, err.Error())
+		return
+	}
 
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
@@ -392,7 +427,9 @@ func (s *server) handleAgentStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	identity, err := s.agentIdentityStore.Get(r.Context(), id)
+	// Tenant-scoped Get prevents cross-tenant agents from showing stats
+	// (existence-oracle hardening — cross-tenant ID probes look like misses).
+	identity, err := s.agentIdentityStore.Get(r.Context(), tenant, id)
 	if err != nil {
 		writeInternalError(w, r, "get agent identity", err)
 		return
@@ -473,7 +510,10 @@ func (s *server) resolveAgentForAudit(ctx context.Context, agentID string) (stri
 	if s.agentIdentityStore == nil {
 		return agentID, agentID, ""
 	}
-	agent, err := s.agentIdentityStore.Get(ctx, agentID)
+	// Audit enrichment is a system-internal lookup — tenant scoping is
+	// enforced at the calling handler boundary, not here. Pass empty
+	// tenantID to skip the store-level tenant check.
+	agent, err := s.agentIdentityStore.Get(ctx, "", agentID)
 	if err != nil || agent == nil {
 		return agentID, agentID, ""
 	}

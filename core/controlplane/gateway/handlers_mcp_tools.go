@@ -9,6 +9,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/mcp"
 )
 
@@ -95,7 +96,25 @@ func (s *server) handleListMCPTools(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	s.writeAgentToolVisibility(w, r, runtime, agentID)
+	if s.agentIdentityStore == nil {
+		writeErrorJSON(w, http.StatusServiceUnavailable, "agent identity store unavailable")
+		return
+	}
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeMCPAgentIDRequired, err.Error())
+		return
+	}
+	stored, err := s.agentIdentityStore.Get(r.Context(), tenant, agentID)
+	if err != nil {
+		writeInternalError(w, r, "get agent identity", err)
+		return
+	}
+	if stored == nil {
+		writeJSONError(w, http.StatusNotFound, errorCodeMCPAgentIdentityNotFound, "agent identity not found")
+		return
+	}
+	s.writeAgentToolVisibility(w, r, runtime, stored)
 }
 
 // handleAgentToolVisibility serves GET /api/v1/agents/{id}/tools.
@@ -108,20 +127,20 @@ func (s *server) handleAgentToolVisibility(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusBadRequest, errorCodeMCPAgentIDRequired, "agent id required")
 		return
 	}
-	runtime := s.getMCPRuntime()
-	if runtime == nil || runtime.toolRegistry == nil {
-		writeJSON(w, map[string]any{"tools": []mcp.Tool{}, "agent_id": agentID, "filtered": true})
-		return
-	}
-	s.writeAgentToolVisibility(w, r, runtime, agentID)
-}
-
-func (s *server) writeAgentToolVisibility(w http.ResponseWriter, r *http.Request, runtime *mcpRuntimeState, agentID string) {
 	if s.agentIdentityStore == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "agent identity store unavailable")
 		return
 	}
-	stored, err := s.agentIdentityStore.Get(r.Context(), agentID)
+	// Tenant scoping runs before the runtime/toolRegistry availability
+	// check so a cross-tenant admin sees the same 404 regardless of MCP
+	// runtime state — no existence oracle for AllowedTools + RiskTier
+	// enumeration across tenants.
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeMCPAgentIDRequired, err.Error())
+		return
+	}
+	stored, err := s.agentIdentityStore.Get(r.Context(), tenant, agentID)
 	if err != nil {
 		writeInternalError(w, r, "get agent identity", err)
 		return
@@ -130,11 +149,20 @@ func (s *server) writeAgentToolVisibility(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusNotFound, errorCodeMCPAgentIdentityNotFound, "agent identity not found")
 		return
 	}
+	runtime := s.getMCPRuntime()
+	if runtime == nil || runtime.toolRegistry == nil {
+		writeJSON(w, map[string]any{"tools": []mcp.Tool{}, "agent_id": agentID, "filtered": true})
+		return
+	}
+	s.writeAgentToolVisibility(w, r, runtime, stored)
+}
+
+func (s *server) writeAgentToolVisibility(w http.ResponseWriter, r *http.Request, runtime *mcpRuntimeState, stored *store.AgentIdentity) {
 	identity := mcpIdentityFromStore(stored)
 	if identity == nil {
 		writeJSON(w, map[string]any{
 			"tools":    []mcp.Tool{},
-			"agent_id": agentID,
+			"agent_id": stored.ID,
 			"filtered": true,
 			"note":     "identity is revoked or suspended",
 		})
@@ -145,7 +173,7 @@ func (s *server) writeAgentToolVisibility(w http.ResponseWriter, r *http.Request
 	sortTools(tools)
 	writeJSON(w, map[string]any{
 		"tools":    tools,
-		"agent_id": agentID,
+		"agent_id": stored.ID,
 		"filtered": true,
 	})
 }

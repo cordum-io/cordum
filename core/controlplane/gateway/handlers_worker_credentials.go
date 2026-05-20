@@ -106,7 +106,7 @@ func (s *server) handleCreateWorkerCredential(w http.ResponseWriter, r *http.Req
 	}
 	req.AgentID = strings.TrimSpace(req.AgentID)
 	if req.AgentID != "" && s.agentIdentityStore != nil {
-		agent, err := s.agentIdentityStore.Get(r.Context(), req.AgentID)
+		agent, err := s.agentIdentityStore.Get(r.Context(), "", req.AgentID)
 		if err != nil {
 			writeInternalError(w, r, "validate agent identity", err)
 			return

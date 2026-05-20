@@ -134,8 +134,13 @@ func (s *AgentIdentityStore) Create(ctx context.Context, identity AgentIdentity)
 	return &identity, nil
 }
 
-// Get returns the agent identity by ID, or nil if not found.
-func (s *AgentIdentityStore) Get(ctx context.Context, id string) (*AgentIdentity, error) {
+// Get returns the agent identity by ID scoped to tenantID, or nil if not
+// found OR if the stored TenantID does not match. An empty tenantID bypasses
+// the tenant check and is reserved for internal/system lookups (audit
+// enrichment, worker handshake) where the caller is not a tenant principal.
+// Returning nil (not a forbidden error) on mismatch prevents an existence
+// oracle for cross-tenant ID guesses.
+func (s *AgentIdentityStore) Get(ctx context.Context, tenantID, id string) (*AgentIdentity, error) {
 	if s == nil || s.client == nil {
 		return nil, fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
@@ -155,6 +160,11 @@ func (s *AgentIdentityStore) Get(ctx context.Context, id string) (*AgentIdentity
 	var identity AgentIdentity
 	if err := json.Unmarshal(data, &identity); err != nil {
 		return nil, fmt.Errorf("unmarshal agent identity %s: %w", id, err)
+	}
+	if tenantID = strings.TrimSpace(tenantID); tenantID != "" {
+		if strings.TrimSpace(identity.TenantID) != tenantID {
+			return nil, nil
+		}
 	}
 	return &identity, nil
 }
@@ -243,7 +253,7 @@ func (s *AgentIdentityStore) List(ctx context.Context, cursor string, limit int,
 			}
 			itemsAtLastScore++
 
-			identity, err := s.Get(ctx, id)
+			identity, err := s.Get(ctx, "", id)
 			if err != nil {
 				slog.Warn("list agent identities: skip unreadable entry", "id", id, "error", err)
 				continue
@@ -301,8 +311,12 @@ func (s *AgentIdentityStore) List(ctx context.Context, cursor string, limit int,
 	return results, nextCursorStr, nil
 }
 
-// Update applies partial updates to an existing agent identity.
-func (s *AgentIdentityStore) Update(ctx context.Context, id string, updates AgentIdentity) (*AgentIdentity, error) {
+// Update applies partial updates to an existing agent identity scoped to
+// tenantID. An empty tenantID bypasses the tenant check. When tenantID is
+// set and the stored identity's TenantID differs, Update returns a "not
+// found" error — the same error class as a missing record — to avoid an
+// existence oracle for cross-tenant probes.
+func (s *AgentIdentityStore) Update(ctx context.Context, tenantID, id string, updates AgentIdentity) (*AgentIdentity, error) {
 	if s == nil || s.client == nil {
 		return nil, fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
@@ -311,7 +325,7 @@ func (s *AgentIdentityStore) Update(ctx context.Context, id string, updates Agen
 		return nil, fmt.Errorf("agent identity id required")
 	}
 
-	existing, err := s.Get(ctx, id)
+	existing, err := s.Get(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -370,8 +384,12 @@ func (s *AgentIdentityStore) Update(ctx context.Context, id string, updates Agen
 	return existing, nil
 }
 
-// Delete soft-deletes an agent identity by setting status to "revoked".
-func (s *AgentIdentityStore) Delete(ctx context.Context, id string) error {
+// Delete soft-deletes an agent identity by setting status to "revoked",
+// scoped to tenantID. An empty tenantID bypasses the tenant check. When
+// tenantID is set and the stored identity's TenantID differs, Delete
+// returns a "not found" error — the same error class as a missing record
+// — to avoid an existence oracle for cross-tenant probes.
+func (s *AgentIdentityStore) Delete(ctx context.Context, tenantID, id string) error {
 	if s == nil || s.client == nil {
 		return fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
@@ -380,7 +398,7 @@ func (s *AgentIdentityStore) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("agent identity id required")
 	}
 
-	existing, err := s.Get(ctx, id)
+	existing, err := s.Get(ctx, tenantID, id)
 	if err != nil {
 		return err
 	}
@@ -418,7 +436,7 @@ func (s *AgentIdentityStore) GetByWorkerID(ctx context.Context, workerID string)
 		}
 		return nil, fmt.Errorf("get agent by worker %s: %w", workerID, err)
 	}
-	return s.Get(ctx, agentID)
+	return s.Get(ctx, "", agentID)
 }
 
 // LinkWorker creates a reverse-lookup mapping from worker ID to agent identity ID.

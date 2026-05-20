@@ -33,7 +33,7 @@ func (l *agentIdentityPreapprovalLookup) IsPreapproved(ctx context.Context, tena
 	if agentID == "" || toolName == "" {
 		return false
 	}
-	identity, err := l.store.Get(ctx, agentID)
+	identity, err := l.store.Get(ctx, "", agentID)
 	if err != nil || identity == nil {
 		return false
 	}

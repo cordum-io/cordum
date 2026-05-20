@@ -188,12 +188,17 @@ func (s *Service) SetMany(ctx context.Context, regs []Registration) error {
 	})
 }
 
-// Delete removes one topic registration.
+// Delete removes one topic registration. Migrations-only — cross-tenant scope.
+// Runtime handlers MUST call DeleteForTenant instead so admins in one tenant
+// cannot delete records owned by another tenant by name guess.
 func (s *Service) Delete(ctx context.Context, name string) error {
 	return s.DeleteMany(ctx, []string{name})
 }
 
-// DeleteMany removes the named topic registrations.
+// DeleteMany removes the named topic registrations across every tenant.
+// Migrations-only — cross-tenant scope. Runtime handlers MUST call
+// DeleteForTenant instead so admins in one tenant cannot delete records
+// owned by another tenant by name guess.
 func (s *Service) DeleteMany(ctx context.Context, names []string) error {
 	if s == nil || s.config == nil {
 		return fmt.Errorf("topic registry unavailable")
@@ -220,6 +225,49 @@ func (s *Service) DeleteMany(ctx context.Context, names []string) error {
 			if _, ok := targets[reg.Name]; ok {
 				delete(existing, key)
 			}
+		}
+		doc.Scope = configsvc.ScopeSystem
+		doc.ScopeID = scopeIDTopics
+		doc.Data = encodeDocument(existing)
+		return nil
+	})
+}
+
+// DeleteForTenant removes the named topic registrations scoped to tenantID.
+// Records with a different TenantID are untouched. An empty tenantID deletes
+// only global (no-tenant) records — it does NOT cascade to tenant-scoped
+// records sharing the same name.
+func (s *Service) DeleteForTenant(ctx context.Context, tenantID string, names []string) error {
+	if s == nil || s.config == nil {
+		return fmt.Errorf("topic registry unavailable")
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	targets := map[string]struct{}{}
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			targets[name] = struct{}{}
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	return s.config.SetWithRetry(ctx, configsvc.ScopeSystem, scopeIDTopics, 3, func(doc *configsvc.Document) error {
+		existing, err := decodeDocument(doc)
+		if err != nil {
+			return err
+		}
+		for key, reg := range existing {
+			if _, ok := targets[reg.Name]; !ok {
+				continue
+			}
+			if reg.TenantID != tenantID {
+				continue
+			}
+			delete(existing, key)
 		}
 		doc.Scope = configsvc.ScopeSystem
 		doc.ScopeID = scopeIDTopics

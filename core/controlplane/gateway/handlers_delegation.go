@@ -79,7 +79,7 @@ func (r gatewayDelegationPermissionsResolver) ResolveAgentPermissions(ctx contex
 	if r.store == nil {
 		return delegation.AgentPermissions{}, fmt.Errorf("agent identity store unavailable")
 	}
-	identity, err := r.store.Get(ctx, agentID)
+	identity, err := r.store.Get(ctx, "", agentID)
 	if err != nil {
 		return delegation.AgentPermissions{}, err
 	}
@@ -410,7 +410,11 @@ func (s *server) loadDelegationAgent(w http.ResponseWriter, r *http.Request, age
 		writeErrorJSON(w, http.StatusServiceUnavailable, "service unavailable")
 		return nil, false
 	}
-	identity, err := s.agentIdentityStore.Get(r.Context(), agentID)
+	// Tenant scoping: AgentIdentity carries a TenantID field and the store
+	// returns nil when the record's TenantID does not match the supplied
+	// tenant (existence-oracle hardening — cross-tenant probes look the
+	// same as misses).
+	identity, err := s.agentIdentityStore.Get(r.Context(), tenant, agentID)
 	if err != nil {
 		writeInternalError(w, r, "load delegation agent", err)
 		return nil, false
@@ -419,14 +423,6 @@ func (s *server) loadDelegationAgent(w http.ResponseWriter, r *http.Request, age
 		writeJSONError(w, http.StatusNotFound, errorCodeDelegationAgentNotFound, "agent identity not found")
 		return nil, false
 	}
-	// Tenant scoping: store.AgentIdentity does not currently carry a
-	// tenant field — agent IDs live in a flat `agent:identity:<id>`
-	// keyspace. Cross-tenant isolation for this endpoint relies on the
-	// upstream tenant middleware (tenantFromRequest + auth context)
-	// already pinning the caller to their tenant. Adding per-agent
-	// tenant binding to the store is tracked separately; until it
-	// lands, this helper treats the tenant argument as advisory.
-	_ = tenant
 	return identity, true
 }
 

@@ -144,7 +144,7 @@ func (r gatewayMCPIdentityResolver) ResolveMCPIdentity(ctx context.Context, _ st
 	if r.store == nil {
 		return nil, nil
 	}
-	identity, err := r.store.Get(ctx, agentID)
+	identity, err := r.store.Get(ctx, "", agentID)
 	if err != nil {
 		return nil, err
 	}

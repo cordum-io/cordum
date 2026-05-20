@@ -58,7 +58,7 @@ func TestAgentIdentityCreateAndGet(t *testing.T) {
 		t.Fatalf("expected 2 data classifications, got %d", len(created.DataClassifications))
 	}
 
-	got, err := s.Get(ctx, created.ID)
+	got, err := s.Get(ctx, "", created.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestAgentIdentityUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	updated, err := s.Update(ctx, created.ID, AgentIdentity{
+	updated, err := s.Update(ctx, "", created.ID, AgentIdentity{
 		Name:     "updated-name",
 		RiskTier: "high",
 	})
@@ -203,7 +203,7 @@ func TestAgentIdentityUpdate(t *testing.T) {
 	}
 
 	// Verify persisted correctly by re-reading
-	refetched, err := s.Get(ctx, created.ID)
+	refetched, err := s.Get(ctx, "", created.ID)
 	if err != nil {
 		t.Fatalf("Get after update: %v", err)
 	}
@@ -215,13 +215,13 @@ func TestAgentIdentityUpdate(t *testing.T) {
 	}
 
 	// Verify invalid update is rejected
-	_, err = s.Update(ctx, created.ID, AgentIdentity{RiskTier: "extreme"})
+	_, err = s.Update(ctx, "", created.ID, AgentIdentity{RiskTier: "extreme"})
 	if err == nil {
 		t.Fatal("expected error for invalid risk_tier")
 	}
 
 	// Verify update of non-existent identity returns error
-	_, err = s.Update(ctx, "nonexistent", AgentIdentity{Name: "x"})
+	_, err = s.Update(ctx, "", "nonexistent", AgentIdentity{Name: "x"})
 	if err == nil {
 		t.Fatal("expected error for nonexistent identity")
 	}
@@ -240,12 +240,12 @@ func TestAgentIdentityDelete(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	if err := s.Delete(ctx, created.ID); err != nil {
+	if err := s.Delete(ctx, "", created.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
 
 	// Should still be retrievable with revoked status
-	got, err := s.Get(ctx, created.ID)
+	got, err := s.Get(ctx, "", created.ID)
 	if err != nil {
 		t.Fatalf("Get after delete: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestAgentIdentityDelete(t *testing.T) {
 	}
 
 	// Delete of non-existent should error
-	if err := s.Delete(ctx, "nonexistent"); err == nil {
+	if err := s.Delete(ctx, "", "nonexistent"); err == nil {
 		t.Fatal("expected error for nonexistent identity")
 	}
 }
@@ -395,7 +395,7 @@ func TestAgentIdentityGetNotFound(t *testing.T) {
 	s := newTestAgentIdentityStore(t)
 	ctx := context.Background()
 
-	got, err := s.Get(ctx, "nonexistent-id")
+	got, err := s.Get(ctx, "", "nonexistent-id")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}

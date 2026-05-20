@@ -39,12 +39,9 @@ func setDelegationKeys(t *testing.T) delegation.SigningKey {
 
 func createDelegationAgent(t *testing.T, s *server, tenant, id string, actions, topics []string) *store.AgentIdentity {
 	t.Helper()
-	_ = tenant // store.AgentIdentity has no tenant field today; tenant
-	// scoping is enforced upstream at the gateway middleware. The
-	// parameter is kept so existing call sites don't need to change
-	// once per-agent tenant binding lands in the store.
 	created, err := s.agentIdentityStore.Create(context.Background(), store.AgentIdentity{
 		ID:            id,
+		TenantID:      tenant,
 		Name:          id,
 		Owner:         "admin",
 		RiskTier:      "low",
