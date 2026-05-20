@@ -143,26 +143,42 @@ func MergeRedactionRules(base, overrides []RedactionRule) []RedactionRule {
 		return append([]RedactionRule(nil), base...)
 	}
 	seen := make(map[string]int)
+	seenRegex := make(map[string]struct{})
 	merged := make([]RedactionRule, 0)
 	for _, r := range base {
-		if r.FieldName != "" {
-			key := strings.ToLower(strings.TrimSpace(r.FieldName))
+		if key := redactionFieldKey(r.FieldName); key != "" {
 			seen[key] = len(merged)
+		}
+		if key := redactionRegexKey(r.Regex); key != "" {
+			seenRegex[key] = struct{}{}
 		}
 		merged = append(merged, r)
 	}
 	for _, r := range overrides {
-		if r.FieldName != "" {
-			key := strings.ToLower(strings.TrimSpace(r.FieldName))
+		if key := redactionFieldKey(r.FieldName); key != "" {
 			if idx, ok := seen[key]; ok {
 				merged[idx] = r
 				continue
 			}
 			seen[key] = len(merged)
 		}
+		if key := redactionRegexKey(r.Regex); key != "" {
+			if _, ok := seenRegex[key]; ok {
+				continue
+			}
+			seenRegex[key] = struct{}{}
+		}
 		merged = append(merged, r)
 	}
 	return merged
+}
+
+func redactionFieldKey(field string) string {
+	return strings.ToLower(strings.TrimSpace(field))
+}
+
+func redactionRegexKey(pattern string) string {
+	return strings.TrimSpace(pattern)
 }
 
 // NewPolicyRedactor compiles a rule set into a redactor. Invalid

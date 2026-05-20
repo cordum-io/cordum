@@ -13,6 +13,7 @@ package k8s
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -237,14 +238,16 @@ func (d *Detector) SetClock(fn func() time.Time) {
 
 // Run blocks until ctx is canceled, invoking Scan on each
 // config.ScanInterval tick. Returns ctx.Err() on cancellation; never
-// returns a per-scan error (scan failures are observed via the
-// degraded counter the wiring layer registers).
+// returns a per-scan error (scan failures are logged before the next tick).
 func (d *Detector) Run(ctx context.Context) error {
 	ticker := time.NewTicker(d.config.ScanInterval)
 	defer ticker.Stop()
 	for {
-		if err := d.Scan(ctx); err != nil && ctx.Err() != nil {
-			return ctx.Err()
+		if err := d.Scan(ctx); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			slog.Error("k8s detector: scan error", "err", err)
 		}
 		select {
 		case <-ctx.Done():

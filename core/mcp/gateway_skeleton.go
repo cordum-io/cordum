@@ -9,7 +9,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cordum/cordum/core/edge"
@@ -330,15 +333,18 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 
 // newGatewayID returns a short prefixed hex id. crypto/rand is the source so
 // IDs are unguessable even when emitted in audit-readable form.
+var gatewayRandRead = rand.Read
+var gatewayIDCounter atomic.Uint64
+
 func newGatewayID(prefix string) (string, error) {
 	var b [12]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	if _, err := gatewayRandRead(b[:]); err != nil {
 		return "", err
 	}
 	return prefix + "_" + hex.EncodeToString(b[:]), nil
 }
 
-// mustGatewayID returns a newGatewayID or falls back to a timestamp suffix.
+// mustGatewayID returns a newGatewayID or falls back to a PID+counter suffix.
 // Only used on the event-emission path where a Store-side validation will
 // still catch malformed IDs.
 func mustGatewayID(prefix string) string {
@@ -346,5 +352,5 @@ func mustGatewayID(prefix string) string {
 	if err == nil {
 		return id
 	}
-	return prefix + "_fallback_" + time.Now().UTC().Format("20060102T150405.000000000")
+	return prefix + "_fb_" + strconv.Itoa(os.Getpid()) + "_" + strconv.FormatUint(gatewayIDCounter.Add(1), 36)
 }

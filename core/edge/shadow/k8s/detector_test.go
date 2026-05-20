@@ -1,7 +1,10 @@
 package k8s_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -227,6 +230,47 @@ func TestK8sDetector_Observability(t *testing.T) {
 	}
 	if got := f.observer.audits[0].Decision; got != "observed" {
 		t.Errorf("audit.Decision = %q, want %q", got, "observed")
+	}
+}
+
+func TestDetectorRun_ScanErrorEmitsLog(t *testing.T) {
+	var logs bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	f := newFixture(t, k8s.Config{ScanInterval: time.Hour})
+	scanErr := errors.New("k8s api auth lapse")
+	f.client.PrependReactor("list", "pods", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, scanErr
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- f.detector.Run(ctx) }()
+
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.After(500 * time.Millisecond)
+	for {
+		select {
+		case err := <-done:
+			t.Fatalf("Run returned before emitting scan-error log: err=%v logs=%q", err, logs.String())
+		case <-ticker.C:
+			if strings.Contains(logs.String(), "k8s detector: scan error") &&
+				strings.Contains(logs.String(), scanErr.Error()) {
+				cancel()
+				if err := <-done; !errors.Is(err, context.Canceled) {
+					t.Fatalf("Run after cancel = %v, want context.Canceled", err)
+				}
+				return
+			}
+		case <-timeout:
+			cancel()
+			<-done
+			t.Fatalf("scan error was not logged; logs=%q", logs.String())
+		}
 	}
 }
 

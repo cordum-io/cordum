@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -710,6 +711,44 @@ func TestEvaluateToolCall_ArtifactStoreFailureFailsClosed(t *testing.T) {
 	if len(emitter.events) != 0 {
 		t.Fatalf("expected zero events when artifact store fails, got %d", len(emitter.events))
 	}
+}
+
+func TestPolicy_AKIAPatternAlignment(t *testing.T) {
+	redactor := awsUpstreamErrorPattern(t)
+	completeness := awsCompletenessPattern(t)
+
+	canonical := "AKIA" + "ABCDEFGHIJKLMNOP"
+	truncated := "AKIA" + "ABCDEFGHIJKLM"
+	for _, token := range []string{canonical, truncated} {
+		if !redactor.MatchString(token) {
+			t.Fatalf("upstream redactor AKIA pattern did not catch %q (%s)", token, redactor)
+		}
+		if !completeness.MatchString(token) {
+			t.Fatalf("completeness AKIA pattern did not catch %q (%s)", token, completeness)
+		}
+	}
+}
+
+func awsUpstreamErrorPattern(t *testing.T) *regexp.Regexp {
+	t.Helper()
+	for _, rule := range upstreamErrorRedactPatterns {
+		if rule.replacement == "[REDACTED:aws_key]" {
+			return rule.pattern
+		}
+	}
+	t.Fatal("upstream AKIA redaction pattern not found")
+	return nil
+}
+
+func awsCompletenessPattern(t *testing.T) *regexp.Regexp {
+	t.Helper()
+	for _, pattern := range redactionCompletenessPatterns {
+		if strings.Contains(pattern.String(), "AKIA") {
+			return pattern
+		}
+	}
+	t.Fatal("completeness AKIA pattern not found")
+	return nil
 }
 
 // TestPolicyEvaluate_BlankLinkage_FailsClosed is the PR #276 Sub-E

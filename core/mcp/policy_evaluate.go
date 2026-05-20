@@ -53,7 +53,7 @@ var upstreamErrorRedactPatterns = []struct {
 // guardrail check here so a partial drop in either layer still trips
 // the closed-fail path.
 var redactionCompletenessPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
+	regexp.MustCompile(`AKIA[0-9A-Z]{12,}`),
 	regexp.MustCompile(`sk_live_[a-zA-Z0-9]{24,}`),
 	regexp.MustCompile(`sk-[A-Za-z0-9_\-]{16,}`),
 	regexp.MustCompile(`gh[opusr]_[A-Za-z0-9]{16,}`),

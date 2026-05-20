@@ -82,12 +82,18 @@ func applyEphemeralCorroboration(in []signalCandidate) []signalCandidate {
 		if c.Signal == "ephemeral_indicator" {
 			continue
 		}
+		if c.Namespace == "" {
+			continue
+		}
 		corroboratingNs[c.Namespace] = struct{}{}
 	}
 	out := make([]signalCandidate, 0, len(in))
 	for _, c := range in {
 		if c.Signal != "ephemeral_indicator" {
 			out = append(out, c)
+			continue
+		}
+		if c.Namespace == "" {
 			continue
 		}
 		if _, ok := corroboratingNs[c.Namespace]; ok {

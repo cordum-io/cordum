@@ -224,6 +224,50 @@ func TestDefaultRedactor_GitHubTokenFamilies(t *testing.T) {
 	}
 }
 
+func TestMergeRedactionRules_EmptyFieldNameAndRegexDedupe(t *testing.T) {
+	base := []RedactionRule{
+		{
+			FieldName:   " \t ",
+			Regex:       `token-[A-Z]+`,
+			Replacement: "[REDACTED:base-token]",
+			Description: "base-token",
+		},
+		{
+			FieldName:   "api_key",
+			Replacement: "[REDACTED:base-api]",
+			Description: "base-api",
+		},
+	}
+	overrides := []RedactionRule{
+		{FieldName: " ", Replacement: "[REDACTED:empty-one]", Description: "empty-one"},
+		{FieldName: "\t", Replacement: "[REDACTED:empty-two]", Description: "empty-two"},
+		{Regex: `token-[A-Z]+`, Replacement: "[REDACTED:dup-token]", Description: "dup-token"},
+		{Regex: ` token-[A-Z]+ `, Replacement: "[REDACTED:dup-token-spaced]", Description: "dup-token-spaced"},
+	}
+
+	merged := MergeRedactionRules(base, overrides)
+
+	if merged[0].Regex != `token-[A-Z]+` || merged[0].Replacement != "[REDACTED:base-token]" {
+		t.Fatalf("empty FieldName override overwrote first base rule: %#v", merged)
+	}
+	if merged[1].FieldName != "api_key" || merged[1].Replacement != "[REDACTED:base-api]" {
+		t.Fatalf("named base rule changed unexpectedly: %#v", merged)
+	}
+	if countRegexRule(merged, `token-[A-Z]+`) != 1 {
+		t.Fatalf("duplicate regex rules were not deduped: %#v", merged)
+	}
+}
+
+func countRegexRule(rules []RedactionRule, pattern string) int {
+	count := 0
+	for _, rule := range rules {
+		if strings.TrimSpace(rule.Regex) == pattern {
+			count++
+		}
+	}
+	return count
+}
+
 func BenchmarkRedactLarge(b *testing.B) {
 	r := DefaultRedactor()
 	// 10 KB payload with mixed secret/non-secret fields.

@@ -269,6 +269,41 @@ func TestMCPGatewayConfigRouteRedacted(t *testing.T) {
 	}
 }
 
+func TestMustGatewayID_NoCollisionUnderRandFailure(t *testing.T) {
+	prevRandRead := gatewayRandRead
+	gatewayRandRead = func([]byte) (int, error) {
+		return 0, errors.New("rand unavailable")
+	}
+	t.Cleanup(func() { gatewayRandRead = prevRandRead })
+
+	const calls = 1000
+	ids := make(chan string, calls)
+	var wg sync.WaitGroup
+	wg.Add(calls)
+	for i := 0; i < calls; i++ {
+		go func() {
+			defer wg.Done()
+			ids <- mustGatewayID("event")
+		}()
+	}
+	wg.Wait()
+	close(ids)
+
+	seen := make(map[string]struct{}, calls)
+	for id := range ids {
+		if !strings.Contains(id, "_fb_") {
+			t.Fatalf("fallback gateway ID uses unexpected form %q", id)
+		}
+		if _, ok := seen[id]; ok {
+			t.Fatalf("duplicate fallback gateway ID %q", id)
+		}
+		seen[id] = struct{}{}
+	}
+	if len(seen) != calls {
+		t.Fatalf("unique fallback IDs = %d, want %d", len(seen), calls)
+	}
+}
+
 // TestMCPGatewayDisabledByDefault — when GatewayEnabled=false the upstream
 // route family returns 503 with a structured error body, and crucially does
 // NOT touch the Store (no spurious session/execution creation).
