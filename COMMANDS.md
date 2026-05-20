@@ -59,10 +59,14 @@ go test ./core/safety/...
 go test ./core/workflow/...
 
 # Windows/MSYS full gateway+edge flake sweep
-# Use package serialization to avoid localhost TIME_WAIT exhaustion from the
-# gateway/auth/edge miniredis + httptest fixtures under default package
-# parallelism. Linux CI and focused package tests can keep default `go test`.
+# Use serialized package execution locally to avoid localhost/miniredis port
+# exhaustion on shared Windows runners. Linux CI and focused package tests can keep default `go test`.
 go test -p 1 -count=3 -timeout 900s ./core/controlplane/gateway/... ./core/edge/...
+
+# Windows/MSYS shared runners: if a full-core local sweep fails only with
+# localhost/miniredis/httptest port-exhaustion errors, use the serialized gate.
+# Focused package tests should still run without -p 1.
+go test -p 1 ./core/... -count=1
 
 # Run tests with verbose output
 go test -v ./core/safety/...

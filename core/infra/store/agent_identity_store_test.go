@@ -7,6 +7,7 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/cordum/cordum/core/internal/testredis"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -18,8 +19,7 @@ func newTestAgentIdentityStore(t *testing.T) *AgentIdentityStore {
 	}
 	t.Cleanup(srv.Close)
 
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	client := testredis.NewClient(t, srv.Addr())
 
 	return NewAgentIdentityStoreFromClient(client)
 }
@@ -327,8 +327,7 @@ func TestAgentIdentityListPaginationSameScore(t *testing.T) {
 	}
 	t.Cleanup(srv.Close)
 
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	client := testredis.NewClient(t, srv.Addr())
 
 	s := NewAgentIdentityStoreFromClient(client)
 	ctx := context.Background()
