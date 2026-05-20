@@ -1928,7 +1928,16 @@ func (s *server) handleSubmitJobHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := s.persistSubmitDelegationToken(r.Context(), jobID, req.DelegationToken, delegationExpectedAudience); err != nil {
 				slog.Error("failed to persist approval delegation token", "job_id", jobID, "error", err)
-				_ = s.jobStore.SetState(r.Context(), jobID, model.JobStateFailed)
+				// Cleanup half-persisted approval state. The job hash, topic,
+				// tenant, etc. were written before the delegation persist; pin
+				// the job into Failed so it does not stick in Approval with no
+				// valid delegation token (a 503 loop for the caller's retries).
+				// We surface 503 either way — the cleanup is best-effort and
+				// observability-only on its failure path.
+				if cleanupErr := s.jobStore.SetState(r.Context(), jobID, model.JobStateFailed); cleanupErr != nil {
+					slog.Error("failed to clean up half-persisted approval state after delegation persist failure",
+						"job_id", jobID, "delegation_err", err, "set_state_err", cleanupErr)
+				}
 				writeErrorJSON(w, http.StatusServiceUnavailable, "failed to persist delegation metadata")
 				return
 			}

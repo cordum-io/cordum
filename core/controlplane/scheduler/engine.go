@@ -544,6 +544,20 @@ func isApprovalGateTopic(topic string) bool {
 
 // Start registers subscriptions for the scheduler.
 func (e *Engine) Start() error {
+	// Log resolved fail-mode configuration at startup so operators have a
+	// durable record of which fail-mode origin will apply on safety-kernel
+	// outage. Audit-fix task-2a52e7da finding #11 — surfaces "are we in
+	// global fail-open vs per-tenant fail-open mode?" without grepping logs
+	// for the per-job WARN line.
+	failModeOrigin := "global_default"
+	if e.failModeResolver != nil {
+		failModeOrigin = "per_tenant_resolver"
+	}
+	slog.Info("scheduler input fail-mode resolved at startup",
+		"input_fail_open", e.inputFailOpen.Load(),
+		"async_fail_open", e.asyncFailOpen.Load(),
+		"fail_mode_origin", failModeOrigin,
+	)
 	// Heartbeats must be broadcast to all schedulers to keep a complete view
 	// of the worker pool when running multiple scheduler replicas.
 	if err := e.bus.Subscribe(capsdk.SubjectHeartbeat, "", e.HandlePacket); err != nil {
@@ -1521,6 +1535,11 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			if e.counterClient != nil {
 				e.counterClient.Incr(lockCtx, "cordum:scheduler:input_fail_open_total")
 			}
+			// Emit dedicated audit event so SIEM can detect bypass-on-unavailable
+			// without inferring it from WARN logs. The event carries fail_mode_origin
+			// so reviewers can distinguish global-default fail-open (env var) from
+			// per-tenant fail-open (FailModeResolver). Audit-fix task-2a52e7da #11.
+			e.emitSafetyBypassAuditEvent(lockCtx, req, topic, record.Reason)
 			record.Decision = SafetyAllow
 			record.Reason = "fail-open: safety unavailable — " + record.Reason
 			// Tag job so dashboard can show bypass warning
@@ -2254,7 +2273,13 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 		case pb.JobStatus_JOB_STATUS_FAILED:
 			state = JobStateFailed
 		case pb.JobStatus_JOB_STATUS_FAILED_RETRYABLE:
-			state = JobStateFailed
+			// Map to non-terminal Retrying — the workflow engine (or higher-level
+			// retry coordinator) will re-dispatch with a fresh jobID. Marking
+			// terminal Failed here (combined with the DLQ-suppression at the
+			// FAILED_RETRYABLE branch below) would silently drop retries because
+			// any subsequent dispatch packet for the same jobID short-circuits at
+			// the terminal-state guard in handleJobRequest.
+			state = JobStateRetrying
 		case pb.JobStatus_JOB_STATUS_FAILED_FATAL:
 			state = JobStateFailed
 		case pb.JobStatus_JOB_STATUS_TIMEOUT:
@@ -3096,6 +3121,39 @@ func mapStringToErrorCode(code string) pb.ErrorCode {
 	default:
 		return pb.ErrorCode_ERROR_CODE_UNSPECIFIED
 	}
+}
+
+// emitSafetyBypassAuditEvent records a SIEM audit event for the fail-open
+// admit path so reviewers can correlate bypassed jobs without inferring from
+// WARN logs. Carries fail_mode_origin to distinguish global-default fail-open
+// from a per-tenant override. Audit-fix task-2a52e7da finding #11.
+func (e *Engine) emitSafetyBypassAuditEvent(ctx context.Context, req *pb.JobRequest, topic, reason string) {
+	if e == nil || e.dispatchAuditSink == nil || req == nil {
+		return
+	}
+	origin := "global_default"
+	if e.failModeResolver != nil {
+		origin = "tenant_override"
+	}
+	extra := map[string]string{
+		"fail_mode_origin": origin,
+	}
+	if topic != "" {
+		extra["topic"] = topic
+	}
+	if r := strings.TrimSpace(reason); r != "" {
+		extra["reason"] = r
+	}
+	e.dispatchAuditSink.Emit(ctx, audit.SIEMEvent{
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventSafetyBypassAdmit,
+		Severity:  audit.SeverityHigh,
+		TenantID:  strings.TrimSpace(req.GetTenantId()),
+		JobID:     strings.TrimSpace(req.GetJobId()),
+		Action:    "admit",
+		Reason:    strings.TrimSpace(reason),
+		Extra:     extra,
+	})
 }
 
 func (e *Engine) emitOutputAuditEvent(jobID, topic, code, reason string, decision OutputDecision) {

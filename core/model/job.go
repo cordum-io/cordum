@@ -4,11 +4,18 @@ package model
 type JobState string
 
 const (
-	JobStatePending     JobState = "PENDING"
-	JobStateApproval    JobState = "APPROVAL_REQUIRED"
-	JobStateScheduled   JobState = "SCHEDULED"
-	JobStateDispatched  JobState = "DISPATCHED"
-	JobStateRunning     JobState = "RUNNING"
+	JobStatePending    JobState = "PENDING"
+	JobStateApproval   JobState = "APPROVAL_REQUIRED"
+	JobStateScheduled  JobState = "SCHEDULED"
+	JobStateDispatched JobState = "DISPATCHED"
+	JobStateRunning    JobState = "RUNNING"
+	// JobStateRetrying is a non-terminal "awaiting retry re-dispatch" state.
+	// Returned by the scheduler when a worker reports JOB_STATUS_FAILED_RETRYABLE
+	// — the workflow engine (or higher-level retry coordinator) is expected to
+	// re-dispatch with a fresh attempt counter. Distinguishes retry-pending
+	// failures from terminal JobStateFailed so retries are not silently dropped
+	// by the terminal-state short-circuit in handleJobRequest.
+	JobStateRetrying    JobState = "RETRYING"
 	JobStateSucceeded   JobState = "SUCCEEDED"
 	JobStateFailed      JobState = "FAILED"
 	JobStateCancelled   JobState = "CANCELLED"

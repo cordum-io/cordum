@@ -786,15 +786,30 @@ func (e jobBackpressureError) Error() string {
 // The scheduler separately enforces a per-job policy concurrency limit from the
 // safety kernel (PolicyConstraints.Budgets.MaxConcurrentJobs) against the same
 // active count — that is the policy-enforcement gate.
+//
+// Failure semantics (audit-fix task-2a52e7da #8):
+//   - nil configSvc: log warning and return nil (allow). Production deployments
+//     must wire configSvc; tests intentionally skip backpressure.
+//   - configSvc.Effective error: fail-closed. A misconfigured config service
+//     must not silently disable the system-capacity gate.
+//   - Missing or zero limits in config: return nil (allow). Operators may
+//     intentionally configure unlimited capacity.
 func (s *server) enforceJobBackpressure(ctx context.Context, orgID, teamID string) error {
 	if s == nil || s.jobStore == nil {
 		return nil
 	}
 	if s.configSvc == nil {
+		slog.Warn("enforceJobBackpressure: configSvc not wired — backpressure disabled",
+			"tenant", orgID, "team", teamID)
 		return nil
 	}
 	cfg, err := s.configSvc.Effective(ctx, orgID, teamID, "", "")
-	if err != nil || cfg == nil {
+	if err != nil {
+		// Fail-closed: do not silently bypass capacity enforcement when the
+		// config service is broken. Surfaces as 503 at the caller.
+		return fmt.Errorf("config service unavailable: %w", err)
+	}
+	if cfg == nil {
 		return nil
 	}
 	limit := lookupIntPath(cfg, "limits", "max_concurrent_jobs")
@@ -917,6 +932,14 @@ func (s *server) enforceMemoryID(ctx context.Context, orgID, teamID, workflowID,
 	}
 	cfg, ok := config.ParseEffectiveContextMap(cfgMap)
 	if !ok {
+		// ParseEffectiveContextMap returns ok=false either because no "context"
+		// section is configured (legitimate absence — allow) or because a
+		// "context" section exists but is malformed (fail-closed — a malformed
+		// policy must not silently bypass memory-id enforcement).
+		// Audit-fix task-2a52e7da #9.
+		if rawCtx, hasContext := cfgMap["context"]; hasContext && rawCtx != nil {
+			return memoryPolicyError{status: http.StatusServiceUnavailable, msg: "memory policy config malformed"}
+		}
 		return nil
 	}
 	allowed, reason := config.MemoryIDAllowed(cfg, memoryID)

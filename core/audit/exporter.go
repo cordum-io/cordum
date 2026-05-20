@@ -129,6 +129,17 @@ const (
 	EventEdgeApprovalExpired   = "edge.approval_expired"
 	EventEdgeArtifactExported  = "edge.artifact_exported"
 
+	// EventSafetyBypassAdmit is emitted whenever the scheduler's safety-kernel
+	// fail-open path admits a job because the kernel was unavailable AND the
+	// resolved fail-mode for the tenant (system default or per-tenant override
+	// via FailModeResolver) is "open". Extra carries tenant, topic, reason
+	// (the safety-unavailable cause), and fail_mode_origin (one of
+	// "global_default", "tenant_override") so SIEM rules can flag
+	// per-tenant fail-open toggles and detect kernel outages that admit
+	// jobs without policy enforcement. Severity is HIGH because every
+	// admitted-on-bypass job is a security-relevant event.
+	EventSafetyBypassAdmit = "safety.bypass_admit"
+
 	// EventShadowAgent* are emitted by the Edge Gateway shadow-finding
 	// lifecycle handlers (EDGE-141). Extra carries finding_id, agent_product,
 	// agent_id, risk, evidence_type, redacted_path (already home-prefix

@@ -91,17 +91,32 @@ var (
 		model.JobStateQuarantined: true,
 	}
 	allowedTransitions = map[model.JobState][]model.JobState{
-		"":                     {model.JobStatePending, model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateFailed},
-		model.JobStatePending:  {model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded},
-		model.JobStateApproval: {model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded},
+		// Initial "" → Cancelled allowed for early-cancel races where a workflow
+		// cancellation arrives before the scheduler has written any state.
+		"":                    {model.JobStatePending, model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateFailed, model.JobStateCancelled},
+		model.JobStatePending: {model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateRetrying},
+		// Approval → Cancelled: workflow CancelRun routinely cancels approval-gate
+		// jobs; the scheduler-side setJobState on JOB_STATUS_CANCELLED must succeed
+		// for any in-flight approval job whose worker returns CANCELLED.
+		model.JobStateApproval: {model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled},
 		// Quarantined transitions from active states: output policy 2-phase evaluation
 		// can quarantine a job at any point during execution if the output scanner
 		// detects unsafe content. See ADR-005 (output-policy-2-phase).
 		// SCHEDULED self-transition allowed for dispatch publish rollback
 		// (DISPATCHED→SCHEDULED fails, second replay starts at SCHEDULED).
-		model.JobStateScheduled:  {model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateQuarantined},
-		model.JobStateDispatched: {model.JobStateScheduled, model.JobStateRunning, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
-		model.JobStateRunning:    {model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
+		model.JobStateScheduled:  {model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateQuarantined, model.JobStateRetrying},
+		model.JobStateDispatched: {model.JobStateScheduled, model.JobStateRunning, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined, model.JobStateRetrying},
+		// Running → Running: a no-op self-transition tolerated so worker
+		// progress/heartbeat redeliveries (or scheduler re-dispatch loops on the
+		// same jobID before the worker finalizes) do not trip invalid-transition
+		// errors. Idempotent — the state, timestamp index, and event log are all
+		// re-asserted with the same value.
+		model.JobStateRunning: {model.JobStateRunning, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined, model.JobStateRetrying},
+		// Retrying is a non-terminal "awaiting retry re-dispatch" state. Workflow
+		// engines that exhaust their retry budget transition Retrying → Failed;
+		// successful re-dispatch transitions Retrying → Dispatched/Running; a
+		// cancellation while retry-pending transitions Retrying → Cancelled.
+		model.JobStateRetrying: {model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateRetrying, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout},
 		// Succeeded → Quarantined: async output scanning may flag content after the
 		// job completes. This is the only allowed post-success transition.
 		model.JobStateSucceeded:   {model.JobStateQuarantined},
