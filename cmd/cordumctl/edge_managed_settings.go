@@ -261,6 +261,11 @@ func atomicWriteManagedSettings(path string, payload []byte) error {
 		cleanup()
 		return fmt.Errorf("chmod temp file %s: %w", tmpName, err)
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("sync temp file %s: %w", tmpName, err)
+	}
 	if err := tmp.Close(); err != nil {
 		cleanup()
 		return fmt.Errorf("close temp file %s: %w", tmpName, err)

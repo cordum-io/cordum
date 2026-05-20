@@ -169,7 +169,7 @@ func (r *RedisMCPUpstreamRegistry) ensureReady() error {
 		return fmt.Errorf("mcp upstream registry unavailable")
 	}
 	if r.now == nil {
-		r.now = time.Now
+		return fmt.Errorf("mcp upstream registry unavailable: clock not configured")
 	}
 	return nil
 }

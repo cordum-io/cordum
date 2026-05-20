@@ -197,11 +197,10 @@ type webhookSecretEnvCase struct {
 func TestWithWebhookSecret_RejectsEmptyAndShortSecrets(t *testing.T) {
 	tests := []webhookSecretEnvCase{
 		{
-			name:      "webhook_empty_warns_unsigned",
-			typ:       "webhook",
-			secret:    "",
-			wantWarn:  "payloads will be UNSIGNED",
-			wantClean: true,
+			name:    "webhook_empty_rejected",
+			typ:     "webhook",
+			secret:  "",
+			wantErr: "CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET required",
 		},
 		{
 			name:    "webhook_short_rejected",

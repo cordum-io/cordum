@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -48,8 +49,23 @@ func (i *FileIngestor) Stream(ctx context.Context, out chan<- LogRecord) error {
 	if err != nil {
 		return fmt.Errorf("network: open %q: %w", i.path, err)
 	}
-	defer func() { _ = f.Close() }()
+	return streamFile(ctx, f, i.path, out)
+}
 
+func streamFile(ctx context.Context, f io.ReadCloser, label string, out chan<- LogRecord) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	done := make(chan struct{})
+	defer close(done)
+	defer func() { _ = f.Close() }()
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = f.Close()
+		case <-done:
+		}
+	}()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), fileScanBufferMax)
 	for sc.Scan() {
@@ -66,8 +82,11 @@ func (i *FileIngestor) Stream(ctx context.Context, out chan<- LogRecord) error {
 		case out <- rec:
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := sc.Err(); err != nil {
-		return fmt.Errorf("network: scan %q: %w", i.path, err)
+		return fmt.Errorf("network: scan %q: %w", label, err)
 	}
 	return nil
 }

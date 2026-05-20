@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -71,6 +72,28 @@ func postBinaryIntegrityRaw(t *testing.T, s *server, tenant, body string) *httpt
 	rec := httptest.NewRecorder()
 	s.handleIngestBinaryVerify(rec, req)
 	return rec
+}
+
+type binaryVerifyMaxBytesSentinel struct{}
+
+func (binaryVerifyMaxBytesSentinel) Error() string { return "oversized body" }
+
+func (binaryVerifyMaxBytesSentinel) As(target any) bool {
+	maxErr, ok := target.(**http.MaxBytesError)
+	if !ok {
+		return false
+	}
+	*maxErr = &http.MaxBytesError{Limit: MaxBinaryVerifyRequestBodyBytes}
+	return true
+}
+
+func TestBinaryIntegrity_MaxBytesErrorTypedCheck(t *testing.T) {
+	if !isBinaryVerifyRequestTooLarge(binaryVerifyMaxBytesSentinel{}) {
+		t.Fatal("MaxBytesError-compatible value was not detected via errors.As")
+	}
+	if isBinaryVerifyRequestTooLarge(errors.New("request body too large")) {
+		t.Fatal("plain string fallback matched; body-too-large detection must be typed")
+	}
 }
 
 func listBinaryIntegrityEvents(t *testing.T, s *server, tenant, query string) *httptest.ResponseRecorder {

@@ -77,6 +77,18 @@ func TestRedisMCPUpstreamCreateTenantCapConcurrent(t *testing.T) {
 	}
 }
 
+func TestRedisMCPUpstreamRegistryEnsureReadyDoesNotMutateClock(t *testing.T) {
+	_, _, client := newConcreteMCPUpstreamRegistryForTest(t, 1)
+	registry := &RedisMCPUpstreamRegistry{client: client}
+
+	if err := registry.ensureReady(); err == nil {
+		t.Fatal("ensureReady() with nil clock succeeded; direct construction must fail closed")
+	}
+	if registry.now != nil {
+		t.Fatal("ensureReady() mutated r.now; the registry clock must be constructor-owned")
+	}
+}
+
 func TestRedisMCPUpstreamListUsesBoundedScan(t *testing.T) {
 	ctx, registry, _ := newConcreteMCPUpstreamRegistryForTest(t, 1)
 	registry.listScanBatchSize = 4

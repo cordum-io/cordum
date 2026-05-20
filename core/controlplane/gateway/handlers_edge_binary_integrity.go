@@ -146,7 +146,7 @@ func (s *server) handleIngestBinaryVerify(w http.ResponseWriter, r *http.Request
 	defer func() { _ = body.Close() }()
 	raw, readErr := io.ReadAll(body)
 	if readErr != nil {
-		if errors.Is(readErr, &http.MaxBytesError{}) || strings.Contains(readErr.Error(), "request body too large") {
+		if isBinaryVerifyRequestTooLarge(readErr) {
 			writeEdgeError(w, r, http.StatusRequestEntityTooLarge, edgeErrCodeRequestTooLarge,
 				fmt.Sprintf("body exceeds %d bytes", MaxBinaryVerifyRequestBodyBytes), nil)
 			return
@@ -501,6 +501,11 @@ func sanitiseBinaryVerifyEndpoint(s string) string {
 		return s[:256]
 	}
 	return s
+}
+
+func isBinaryVerifyRequestTooLarge(err error) bool {
+	var maxErr *http.MaxBytesError
+	return errors.As(err, &maxErr)
 }
 
 // writeJSONWithStatus is a small helper for handlers that need a non-200

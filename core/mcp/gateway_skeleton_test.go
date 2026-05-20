@@ -239,6 +239,22 @@ func TestMCPGatewayHealthRouteAlwaysOn(t *testing.T) {
 	}
 }
 
+func TestHandleHealth_RejectsUnauthenticated(t *testing.T) {
+	store := &fakeGatewayStore{}
+	mux := newGatewayTestMux(t, testDeps(store, true))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/mcp/gateway/health", nil)
+	rr := httptest.NewRecorder()
+
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("health without tenant = %d body=%q, want 401", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "gateway_enabled") {
+		t.Fatalf("health unauthenticated leaked gateway status body=%q", rr.Body.String())
+	}
+}
+
 // TestMCPGatewayConfigRouteRedacted — /api/v1/mcp/gateway/config returns the
 // effective gateway config without leaking secret-shaped values. Even if a
 // future operator misconfigures an upstream URL with an embedded bearer

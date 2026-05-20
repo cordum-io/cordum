@@ -128,18 +128,20 @@ type gatewayEvidenceRoot struct {
 	Execution edge.AgentExecution
 }
 
-// handleHealth always reports 200; the body indicates whether upstream
-// forwarding is enabled for the requesting tenant so operators can probe
-// a disabled deployment without having to hit /upstream and parse 503s.
-// Never touches the Store.
+// handleHealth reports whether upstream forwarding is enabled for the
+// authenticated requesting tenant. Tenant resolution failures are 401s,
+// matching the other gateway handlers so unauthenticated probes do not
+// learn this endpoint's tenant-scoped gateway state. Never touches the Store.
 func (g *Gateway) HandleHealth(w http.ResponseWriter, r *http.Request) {
-	tenantID, _, _ := g.deps.ResolveTenant(r)
+	tenantID, _, err := g.deps.ResolveTenant(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "tenant_missing", "X-Tenant-ID required")
+		return
+	}
 	enabled := false
-	if tenantID != "" {
-		ok, err := g.deps.GatewayEnabled(r.Context(), tenantID)
-		if err == nil {
-			enabled = ok
-		}
+	ok, err := g.deps.GatewayEnabled(r.Context(), tenantID)
+	if err == nil {
+		enabled = ok
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":          "ok",

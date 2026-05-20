@@ -81,6 +81,20 @@ func TestVerifyVersionFloor_InvalidCandidate(t *testing.T) {
 	}
 }
 
+func TestAdvanceFloor_CleanupOnErrorUsesSuccessFlag(t *testing.T) {
+	raw, err := os.ReadFile("version.go")
+	if err != nil {
+		t.Fatalf("read version.go: %v", err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, "success := false") || !strings.Contains(body, "if !success") {
+		t.Fatal("AdvanceFloor cleanup must be guarded by an explicit success flag")
+	}
+	if strings.Contains(body, "os.Stat(path)") {
+		t.Fatal("AdvanceFloor cleanup must not depend on destination path existence")
+	}
+}
+
 func TestVerifyVersionFloor_PreRelease(t *testing.T) {
 	// pre-release lower than release of same M.N.P
 	if err := sign.VerifyVersionFloor("v1.0.0-rc1", "v1.0.0"); !errors.Is(err, sign.ErrDowngradeAttempt) {

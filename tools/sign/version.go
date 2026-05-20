@@ -275,12 +275,13 @@ func AdvanceFloor(path string, newVersion string, meta FloorMetadata) error {
 	}
 	tmpName := tmp.Name()
 	closed := false
+	success := false
 	defer func() {
 		if !closed {
 			_ = tmp.Close()
 		}
 		// On any non-success path remove the temp file so we never leave litter.
-		if _, statErr := os.Stat(path); statErr == nil {
+		if !success {
 			_ = os.Remove(tmpName)
 		}
 	}()
@@ -295,9 +296,9 @@ func AdvanceFloor(path string, newVersion string, meta FloorMetadata) error {
 	}
 	closed = true
 	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
 		return fmt.Errorf("%w: rename: %v", ErrFloorAdvanceFailed, err)
 	}
+	success = true
 	return nil
 }
 

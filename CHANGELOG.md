@@ -17,6 +17,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+#### Cross-cutting Go hygiene fail-closed sweep (2026-05-20, task-0c2d2ffe)
+
+- Binary integrity request-size handling now uses typed `errors.As(*http.MaxBytesError)` detection; Redis MCP upstream registry readiness no longer mutates the clock function during concurrent access; cordumctl atomic settings/config writers fsync temp files before close+rename; `AdvanceFloor` removes temp files on every non-success path; file log ingestion closes the active file on context cancellation; MCP policy dedupe publishes panic errors before re-panicking so duplicate callers fail closed; MCP gateway health now returns 401 when tenant resolution fails.
+- Audit webhook export now fails closed when `CORDUM_AUDIT_EXPORT_WEBHOOK_URL` is set without a 32+ character `CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET`, matching the existing short-secret rejection and surfacing unsigned-webhook misconfiguration at startup.
+
 #### core/edge/runtimeingest — Runtime replay correctness sweep (2026-05-20, task-bdd3e81d)
 
 - Runtime ingest replay keys now use `sha256(tenant_id):sha256(collector_id)` under `edge:rt:nonce:*`, preventing delimiter collisions between tenant/collector tuples that contain `:`. **Operator migration:** this key format is wire-incompatible with existing replay-window entries; wait one `ReplayWindowTTL` (1 hour) after deploy for old keys to age out, or flush matching `edge:rt:nonce:*` keys during rollout.

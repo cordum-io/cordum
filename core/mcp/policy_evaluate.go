@@ -784,6 +784,15 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 	)
 	if winner != nil {
 		defer func() {
+			if rec := recover(); rec != nil {
+				finalErr = fmt.Errorf("panic: %v", rec)
+				if skipDedupeCache {
+					dedupeFinishNoCache(deps, dedupeID, winner, finalResult, finalErr)
+				} else {
+					dedupeFinish(deps, dedupeID, winner, finalResult, finalErr)
+				}
+				panic(rec)
+			}
 			if skipDedupeCache {
 				dedupeFinishNoCache(deps, dedupeID, winner, finalResult, finalErr)
 				return
@@ -808,7 +817,8 @@ func InvokeToolWithPolicy(ctx context.Context, deps ToolCallDeps, params ToolCal
 		// while the approval-hold resume contract is keyed on the agent
 		// identity that the tool-call is being attributed to.
 		if deps.ApprovalHandoff == nil {
-			return nil, errors.New("deps.ApprovalHandoff is required for REQUIRE_HUMAN decisions")
+			finalErr = errors.New("deps.ApprovalHandoff is required for REQUIRE_HUMAN decisions")
+			return nil, finalErr
 		}
 		callMeta, _ := CallMetadataFromContext(ctx)
 		// Sub-E #15: route the mint-side ActionHash through the SAME

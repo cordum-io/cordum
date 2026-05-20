@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -22,6 +23,32 @@ type erroringUpstreamCaller struct {
 func (e *erroringUpstreamCaller) Invoke(_ context.Context, _ ToolCallParams) (*ToolCallResult, error) {
 	e.count.Add(1)
 	return nil, e.err
+}
+
+type blockingPanicUpstreamCaller struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (p *blockingPanicUpstreamCaller) Invoke(context.Context, ToolCallParams) (*ToolCallResult, error) {
+	p.once.Do(func() { close(p.entered) })
+	<-p.release
+	panic("panic from upstream")
+}
+
+type loadedSignalDedupeStore struct {
+	DedupeStore
+	loaded chan struct{}
+	once   sync.Once
+}
+
+func (s *loadedSignalDedupeStore) LoadOrStore(key string, value any) (any, bool) {
+	actual, loaded := s.DedupeStore.LoadOrStore(key, value)
+	if loaded {
+		s.once.Do(func() { close(s.loaded) })
+	}
+	return actual, loaded
 }
 
 type deleteGateDedupeStore struct {
@@ -69,6 +96,56 @@ func (s *deleteGateDedupeStore) Delete(key string) {
 
 func (s *deleteGateDedupeStore) release() {
 	s.releaseOnce.Do(func() { close(s.releaseDelete) })
+}
+
+func TestPolicyEvaluate_DedupeFinishOnPanic(t *testing.T) {
+	upstream := &blockingPanicUpstreamCaller{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	store := &loadedSignalDedupeStore{
+		DedupeStore: NewInProcessDedupeStore(),
+		loaded:      make(chan struct{}),
+	}
+	deps := newToolCallDepsFixture(&fakePolicyDispatcher{}, &fakeEventEmitter{}, &fakeArtifactStore{})
+	deps.Upstream = upstream
+	deps.DedupeState = store
+	ctx := newAuthedToolCallCtx()
+	params := ToolCallParams{Name: "fs.read_file", Arguments: json.RawMessage(`{"path":"/tmp/a"}`)}
+
+	recovered := make(chan any, 1)
+	go invokeAndRecoverPanic(ctx, deps, params, recovered)
+	waitForPanicTestSignal(t, upstream.entered)
+
+	loserErr := make(chan error, 1)
+	go func() {
+		_, err := InvokeToolWithPolicy(ctx, deps, params, "local-fs")
+		loserErr <- err
+	}()
+	waitForPanicTestSignal(t, store.loaded)
+	close(upstream.release)
+
+	if rec := <-recovered; rec == nil {
+		t.Fatal("InvokeToolWithPolicy did not propagate upstream panic")
+	}
+	err := <-loserErr
+	if err == nil || !strings.Contains(err.Error(), "panic from upstream") {
+		t.Fatalf("dedupe loser error = %v, want panic failure", err)
+	}
+}
+
+func invokeAndRecoverPanic(ctx context.Context, deps ToolCallDeps, params ToolCallParams, recovered chan<- any) {
+	defer func() { recovered <- recover() }()
+	_, _ = InvokeToolWithPolicy(ctx, deps, params, "local-fs")
+}
+
+func waitForPanicTestSignal(t *testing.T, ch <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for panic test synchronization")
+	}
 }
 
 // TestInProcessDedupeStore_RetryCollapses asserts the in-process store

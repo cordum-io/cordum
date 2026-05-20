@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/cordum/cordum/core/edge/listenerhandoff"
 )
 
 func TestEdgeClaudeDryRunSettingsOutputRedactsSecrets(t *testing.T) {
@@ -52,8 +54,9 @@ func TestEdgeClaudeDryRunSettingsOutputRedactsSecrets(t *testing.T) {
 	if strings.Contains(env["CORDUM_AGENTD_SOCKET"], "nonce=") {
 		t.Fatalf("agentd socket URL leaked nonce: %s", env["CORDUM_AGENTD_SOCKET"])
 	}
-	if strings.TrimSpace(env["CORDUM_AGENTD_LISTENER_FD"]) == "" {
-		t.Fatalf("agentd helper did not receive inherited listener fd: %#v", env)
+	listenerKey, listenerValue := listenerhandoff.ValueForCurrentPlatform(env)
+	if listenerValue == "" {
+		t.Fatalf("agentd helper did not receive inherited listener %s: %#v", listenerKey, env)
 	}
 }
 
@@ -66,10 +69,11 @@ func TestMain(m *testing.M) {
 
 func runCordumctlAgentdHelper() int {
 	captureCLIEnv(os.Getenv("CORDUMCTL_TEST_AGENTD_ENV_PATH"), map[string]string{
-		"CORDUM_AGENTD_LISTENER_FD": os.Getenv("CORDUM_AGENTD_LISTENER_FD"),
-		"CORDUM_AGENTD_NONCE":       os.Getenv("CORDUM_AGENTD_NONCE"),
-		"CORDUM_AGENTD_SOCKET":      os.Getenv("CORDUM_AGENTD_SOCKET"),
-		"CORDUM_API_KEY":            os.Getenv("CORDUM_API_KEY"),
+		listenerhandoff.FDEnv:     os.Getenv(listenerhandoff.FDEnv),
+		listenerhandoff.HandleEnv: os.Getenv(listenerhandoff.HandleEnv),
+		"CORDUM_AGENTD_NONCE":     os.Getenv("CORDUM_AGENTD_NONCE"),
+		"CORDUM_AGENTD_SOCKET":    os.Getenv("CORDUM_AGENTD_SOCKET"),
+		"CORDUM_API_KEY":          os.Getenv("CORDUM_API_KEY"),
 	})
 	u, err := url.Parse(os.Getenv("CORDUM_AGENTD_SOCKET"))
 	if err != nil {
@@ -93,7 +97,11 @@ func runCordumctlAgentdHelper() int {
 }
 
 func cordumctlAgentdHelperListener(host string) (net.Listener, error) {
-	if raw := strings.TrimSpace(os.Getenv("CORDUM_AGENTD_LISTENER_FD")); raw != "" {
+	_, raw := listenerhandoff.ValueForCurrentPlatform(map[string]string{
+		listenerhandoff.FDEnv:     os.Getenv(listenerhandoff.FDEnv),
+		listenerhandoff.HandleEnv: os.Getenv(listenerhandoff.HandleEnv),
+	})
+	if raw != "" {
 		fd, err := strconv.Atoi(raw)
 		if err != nil {
 			return nil, err
