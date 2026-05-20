@@ -185,12 +185,14 @@ collector-only permission because runtime telemetry is trusted sidecar input:
    the session's `PrincipalID` and execution's `WorkerID` are bound to the
    authenticated collector. Cross-tenant, cross-session, or unbound events are
    rejected before any append.
-6. Replay validation — the gateway reserves `sha256(nonce)` in Redis key
-   `edge:rt:nonce:<tenant_id>:<collector_id>` after auth/source/parent checks
-   and before append. First-seen nonces append normally. Duplicate nonces
-   return `200 OK` with `replayed: true` and append nothing. If append fails
-   after a reservation, the gateway releases the nonce so the collector can
-   retry safely.
+6. Replay validation — the gateway reserves `sha256(nonce)` as a set member in
+   Redis key `edge:rt:nonce:<sha256(tenant_id)>:<sha256(collector_id)>` after
+   auth/source/parent checks and before append. First-seen nonces append
+   normally. Duplicate nonces return `200 OK` with `replayed: true` and append
+   nothing. If append fails after a reservation, the gateway releases the nonce
+   so the collector can retry safely. The key uses hashed tenant/collector
+   components to avoid delimiter collisions and requires a one-hour cooldown
+   after rollout for legacy replay keys to expire.
 
 No new auth provider, no new tenant header, no new API key path.
 

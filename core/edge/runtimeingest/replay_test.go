@@ -212,42 +212,85 @@ func TestReplayWindow_TTLExpiryAcceptsAgain(t *testing.T) {
 	}
 }
 
-// TestReplayWindow_ReserveAtomicUnderConcurrency races N goroutines (N > maxCard)
-// at the same tenant/collector key with distinct nonces and asserts the set
-// cardinality never exceeds maxCard. The pre-fix Reserve sequence (SCARD →
+// TestReplayWindow_ReserveAtomicUnderConcurrency races N goroutines (N >
+// maxCard) at the same tenant/collector key with distinct nonces and asserts
+// the exact accepted/full split. The pre-fix Reserve sequence (SCARD →
 // SISMEMBER → SADD → EXPIRE on the round-tripped go-redis client) is a TOCTOU:
 // every goroutine observes count < maxCard via SCARD before any one of them
 // runs SADD, so the cap is approximate rather than enforced. A single-Lua-EVAL
-// fix makes SCARD/SISMEMBER/SADD/EXPIRE one atomic step and the cap holds.
+// fix makes SCARD/SISMEMBER/SADD/EXPIRE one atomic step: exactly maxCard new
+// nonces are accepted, the rest fail with ErrReplayWindowFull, and the key has
+// a TTL.
 func TestReplayWindow_ReserveAtomicUnderConcurrency(t *testing.T) {
 	ctx := context.Background()
-	client, _ := newReplayWindowTestClient(t)
-	const maxCard = int64(10)
-	const goroutines = 50
+	client, mr := newReplayWindowTestClient(t)
+	const maxCard = int64(50)
+	const goroutines = 100
 	window := NewReplayWindow(client, ReplayWindowTTL, maxCard)
 
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 	ready := make(chan struct{})
+	type reserveOutcome struct {
+		accepted bool
+		err      error
+	}
+	outcomes := make(chan reserveOutcome, goroutines)
 	for i := range goroutines {
 		nonce := fmt.Sprintf("nonce-race-%06d", i)
 		go func(n string) {
 			defer wg.Done()
 			<-ready
-			_, _ = window.Reserve(ctx, "tenant-a", "collector-x", n)
+			accepted, err := window.Reserve(ctx, "tenant-a", "collector-x", n)
+			outcomes <- reserveOutcome{accepted: accepted, err: err}
 		}(nonce)
 	}
 	// Release all goroutines simultaneously to widen the race window.
 	close(ready)
 	wg.Wait()
+	close(outcomes)
+
+	var accepted, full, replayed int
+	var unexpected []error
+	for outcome := range outcomes {
+		switch {
+		case outcome.accepted && outcome.err == nil:
+			accepted++
+		case !outcome.accepted && errors.Is(outcome.err, ErrReplayWindowFull):
+			full++
+		case !outcome.accepted && outcome.err == nil:
+			replayed++
+		default:
+			unexpected = append(unexpected, outcome.err)
+		}
+	}
+	if len(unexpected) > 0 {
+		t.Fatalf("Reserve returned %d unexpected errors, first=%v", len(unexpected), unexpected[0])
+	}
+	if accepted != int(maxCard) {
+		t.Fatalf("accepted reserves = %d; want %d", accepted, maxCard)
+	}
+	if full != goroutines-int(maxCard) {
+		t.Fatalf("ErrReplayWindowFull reserves = %d; want %d", full, goroutines-int(maxCard))
+	}
+	if replayed != 0 {
+		t.Fatalf("replayed reserves = %d; want 0 for unique concurrent nonces", replayed)
+	}
 
 	key := mustReplayWindowKey(t, window, "tenant-a", "collector-x")
 	size, err := client.SCard(ctx, key).Result()
 	if err != nil {
 		t.Fatalf("post-race SCard: %v", err)
 	}
-	if size > maxCard {
-		t.Fatalf("post-race SCard = %d; want <= maxCard=%d (atomicity violated — concurrent SCARD/SADD raced past cap)", size, maxCard)
+	if size != maxCard {
+		t.Fatalf("post-race SCard = %d; want exactly maxCard=%d", size, maxCard)
+	}
+	ttl := mr.TTL(key)
+	if ttl <= 0 {
+		t.Fatalf("post-race TTL(%s) = %v; want >0", key, ttl)
+	}
+	if ttl > ReplayWindowTTL {
+		t.Fatalf("post-race TTL(%s) = %v; want <= %v", key, ttl, ReplayWindowTTL)
 	}
 }
 
