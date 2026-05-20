@@ -83,22 +83,7 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
       { path: "/jobs", label: "Jobs", icon: ListChecks },
       { path: "/workflows", label: "Workflows", icon: Workflow },
       { path: "/approvals", label: "Approvals", icon: UserCheck, badge: "approvals" },
-    ],
-  },
-  {
-    // task-266f21ad: Edge promoted to a first-class top-level section so
-    // the Edge subsystem (Sessions / Approvals / Audit) has visible
-    // breadth in the IA instead of being buried as one item in Run.
-    // The Approvals + Audit items use dedicated /edge/* paths that are
-    // Navigate-redirects to the global pages with edge-scoped query
-    // filters (see App.tsx). This keeps findActiveSection's pathname-
-    // prefix match highlighting Edge at the moment the user clicks.
-    label: "Edge",
-    matchPaths: ["/edge"],
-    items: [
       { path: "/edge/sessions", label: "Edge Sessions", icon: ShieldCheck },
-      { path: "/edge/approvals", label: "Edge Approvals", icon: UserCheck },
-      { path: "/edge/audit", label: "Edge Audit", icon: FileText },
     ],
   },
   {
@@ -733,4 +718,3 @@ export function AppShell({ children }: AppShellProps) {
     </div>
   );
 }
-

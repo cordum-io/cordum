@@ -3,13 +3,13 @@
  *
  * v2.5 hero rewrite (task-55f813b3):
  *  - Filters serialised to URL via nuqs (URL roundtrip restores state).
- *  - Hand-rolled <table> swapped for primitives/DataTable (auto-virtualizes
- *    when row count > 100; decision-identity 3px left edge).
+ *  - Hand-rolled <table> swapped for primitives/DataTable; Audit Log opts
+ *    into page scrolling so the trail is not trapped in a fixed table box.
  *  - Row-click opens a Drawer with event detail + chain-signature drilldown
  *    (DoD #4 amended via comment-832277b0 — drilldown derives per-event
  *    chain status from the cached /audit/verify result, no N+1).
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryState, parseAsString } from "nuqs";
 import { parseAsSearchTerm } from "@/lib/url-state";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -59,9 +59,9 @@ import { useIsAdmin } from "@/hooks/usePermission";
 // `useGetPolicyAudit` which only exposed the policy-bundle audit subset
 // — Yaron's bug report ("I DONT SEE ALL LOGS RECORD IN AUDIT LOG PAGE")
 // pinned that gap. Cursor pagination via the server's `next_cursor` is
-// the next-page mechanism (server caps a single page at 200); the
-// "Load more" button below the table fetches the next page so tenants
-// with > 200 SIEM events can still reach older records. See
+// the next-page mechanism (server caps a single page at 200); an
+// IntersectionObserver sentinel near the end of the trail fetches the next
+// page automatically, with a button retained as an accessible fallback. See
 // docs/audit/list-api.md for the contract.
 
 interface AuditEvent {
@@ -210,6 +210,8 @@ interface AgentOption {
 }
 
 export default function AuditLogPage() {
+  const nextPageSentinelRef = useRef<HTMLDivElement | null>(null);
+  const nextPageFetchPendingRef = useRef(false);
   const tenantId = useConfigStore((s) => s.tenantId);
   const isAdmin = useIsAdmin();
 
@@ -299,6 +301,33 @@ export default function AuditLogPage() {
     isFetchingNextPage,
   } = useInfiniteAuditEvents(auditFilters);
 
+  useEffect(() => {
+    if (!isFetchingNextPage) {
+      nextPageFetchPendingRef.current = false;
+    }
+  }, [isFetchingNextPage]);
+
+  useEffect(() => {
+    const node = nextPageSentinelRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (
+          shouldFetchNextAuditPage(entries, !!hasNextPage, isFetchingNextPage) &&
+          !nextPageFetchPendingRef.current
+        ) {
+          nextPageFetchPendingRef.current = true;
+          void fetchNextPage().finally(() => {
+            nextPageFetchPendingRef.current = false;
+          });
+        }
+      },
+      { rootMargin: "320px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
+
   const events: AuditEvent[] = useMemo(() => {
     const raw = pages.flatMap((p) => p.items as SiemAuditEvent[]);
     let mapped = raw.map(mapEvent);
@@ -316,7 +345,7 @@ export default function AuditLogPage() {
   // cursor pagination is unbounded by design (a global count would
   // require an O(stream) scan). The render below shows the running
   // count across all loaded pages plus "more available" when the
-  // cursor is non-empty; the "Load more" affordance handles depth.
+  // cursor is non-empty; the scroll sentinel handles depth.
   const expandedEvent = useMemo(
     () => events.find((e) => e.id === expandedEventId) ?? null,
     [events, expandedEventId],
@@ -670,6 +699,7 @@ export default function AuditLogPage() {
             columns={columns}
             data={events}
             decisionAccessor={decisionAccessor}
+            disableVirtualization
             onRowClick={(event) => setExpandedEventId(event.id)}
             emptyState={
               <EmptyState
@@ -683,19 +713,30 @@ export default function AuditLogPage() {
               />
             }
           />
-          {hasNextPage && (
-            <div className="flex justify-center border-t border-border bg-surface-1 p-4">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void fetchNextPage()}
-                disabled={isFetchingNextPage}
-                aria-label="Load more audit events"
-              >
-                {isFetchingNextPage ? "Loading…" : "Load more"}
-              </Button>
-            </div>
-          )}
+          <div ref={nextPageSentinelRef} aria-hidden="true" className="h-px" />
+          <div
+            className="flex flex-wrap items-center justify-center gap-3 border-t border-border bg-surface-1 p-4 text-sm text-muted-foreground"
+            aria-live="polite"
+          >
+            {isFetchingNextPage ? (
+              <span>Loading more audit events…</span>
+            ) : hasNextPage ? (
+              <>
+                <span>Scroll for older audit events.</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void fetchNextPage()}
+                  disabled={isFetchingNextPage}
+                  aria-label="Load more audit events"
+                >
+                  Load more
+                </Button>
+              </>
+            ) : events.length > 0 ? (
+              <span>End of audit trail.</span>
+            ) : null}
+          </div>
         </div>
       )}
 

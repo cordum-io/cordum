@@ -45,11 +45,11 @@ describe("App.tsx route registration (regression guard)", () => {
 // component (just a <Navigate> child), so REGISTERED_ROUTES isn't the
 // right shape. Each entry asserts the path is registered AND that the
 // Navigate target matches the expected destination query string.
-describe("App.tsx redirect routes (task-266f21ad Edge nav + DLQ preservation)", () => {
+describe("App.tsx redirect routes (Edge deep-link + DLQ preservation)", () => {
   it("registers /edge/approvals redirecting to /approvals?lane=edge", () => {
     expect(
       appSource,
-      "App.tsx must register the /edge/approvals → /approvals?lane=edge redirect so the Edge sidebar item lands on the laned ApprovalsPage view.",
+      "App.tsx must preserve /edge/approvals → /approvals?lane=edge for bookmarked Edge deep links.",
     ).toMatch(/path=["']\/edge\/approvals["']/);
     expect(
       appSource,
@@ -60,7 +60,7 @@ describe("App.tsx redirect routes (task-266f21ad Edge nav + DLQ preservation)", 
   it("registers /edge/audit redirecting to /audit?event_type_prefix=edge", () => {
     expect(
       appSource,
-      "App.tsx must register the /edge/audit → /audit?event_type_prefix=edge redirect so the Edge sidebar item lands on the prefix-filtered Audit Log.",
+      "App.tsx must preserve /edge/audit → /audit?event_type_prefix=edge for bookmarked Edge deep links.",
     ).toMatch(/path=["']\/edge\/audit["']/);
     expect(
       appSource,

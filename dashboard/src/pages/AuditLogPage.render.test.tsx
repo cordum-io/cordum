@@ -10,7 +10,7 @@
  * pill into a row-click Drawer drilldown deriving per-event verdict
  * from the cached chain-wide /audit/verify result.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { NuqsTestingAdapter } from "nuqs/adapters/testing";
 import {
@@ -66,6 +66,43 @@ function makeEntry(
   };
 }
 
+let latestIntersectionCallback: IntersectionObserverCallback | null = null;
+
+class MockIntersectionObserver {
+  readonly root = null;
+  readonly rootMargin: string;
+  readonly thresholds: ReadonlyArray<number> = [];
+
+  constructor(
+    callback: IntersectionObserverCallback,
+    options?: IntersectionObserverInit,
+  ) {
+    latestIntersectionCallback = callback;
+    this.rootMargin = options?.rootMargin ?? "";
+  }
+
+  disconnect = vi.fn();
+  observe = vi.fn();
+  takeRecords = vi.fn((): IntersectionObserverEntry[] => []);
+  unobserve = vi.fn();
+}
+
+beforeEach(() => {
+  latestIntersectionCallback = null;
+  vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+function triggerAuditSentinel(isIntersecting: boolean): void {
+  latestIntersectionCallback?.(
+    [{ isIntersecting } as IntersectionObserverEntry],
+    {} as IntersectionObserver,
+  );
+}
+
 describe("AuditLogPage Block B — DataTable rendering", () => {
   it("decision-identity 3px left edge: rows carry data-decision-tier per decision", async () => {
     server.use(
@@ -106,22 +143,15 @@ describe("AuditLogPage Block B — DataTable rendering", () => {
     expect(rowsWithoutTier.length).toBeGreaterThan(0);
   });
 
-  it("virtualizes when row count > 100 (data-virtualized container engaged)", async () => {
-    // Note: jsdom does not lay out elements (clientHeight = 0), so
-    // @tanstack/react-virtual's measurement loop never paints rows in
-    // this environment. We assert the virtualization branch is engaged
-    // via the data-virtualized="true" wrapper instead — DataTable's
-    // contract (rows.length > VIRTUALIZE_THRESHOLD => VirtualizedBody)
-    // is the actual unit under test here. Real DOM-bounded behavior is
-    // verified in the manual smoke step (DoD #7) under a real layout.
-    const items: RawAuditEntry[] = Array.from({ length: 500 }, (_, i) =>
+  it("uses page scrolling for row count > 100 instead of the fixed virtualized box", async () => {
+    const items: RawAuditEntry[] = Array.from({ length: 125 }, (_, i) =>
       makeEntry(i),
     );
     server.use(
       http.get("*/api/v1/audit/events", () =>
         HttpResponse.json({
           items,
-          total: 500,
+          total: 125,
           next_cursor: "",
           returned: 0,
         }),
@@ -135,10 +165,10 @@ describe("AuditLogPage Block B — DataTable rendering", () => {
     );
 
     await waitFor(() => {
-      expect(
-        container.querySelector("[data-virtualized='true']"),
-      ).toBeTruthy();
+      expect(container.querySelectorAll("tbody tr").length).toBe(125);
     });
+    expect(container.querySelector("[data-virtualized='true']")).toBeNull();
+    expect(container.textContent).toContain("End of audit trail.");
   });
 
   it("non-virtualized path renders all rows when count <= 100", async () => {
@@ -168,6 +198,54 @@ describe("AuditLogPage Block B — DataTable rendering", () => {
     expect(
       container.querySelector("[data-virtualized='true']"),
     ).toBeNull();
+  });
+
+  it("loads the next cursor page when the audit trail sentinel intersects", async () => {
+    const requestedCursors: string[] = [];
+    server.use(
+      http.get("*/api/v1/audit/events", ({ request }) => {
+        const cursor = new URL(request.url).searchParams.get("cursor") ?? "";
+        requestedCursors.push(cursor);
+
+        if (cursor === "") {
+          return HttpResponse.json({
+            items: [makeEntry(1, { id: "evt-page-1" })],
+            total: 2,
+            next_cursor: "cursor-2",
+            returned: 1,
+          });
+        }
+
+        return HttpResponse.json({
+          items: [makeEntry(2, { id: "evt-page-2" })],
+          total: 2,
+          next_cursor: "",
+          returned: 1,
+        });
+      }),
+    );
+
+    const { container } = renderWithProviders(
+      <NuqsTestingAdapter searchParams="">
+        <AuditLogPage />
+      </NuqsTestingAdapter>,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelectorAll("tbody tr").length).toBe(1);
+      expect(container.textContent).toContain("Scroll for older audit events.");
+    });
+    expect(container.textContent).toContain("Load more");
+
+    triggerAuditSentinel(true);
+    triggerAuditSentinel(true);
+
+    await waitFor(() => {
+      expect(requestedCursors).toContain("cursor-2");
+      expect(container.querySelectorAll("tbody tr").length).toBe(2);
+    });
+    expect(requestedCursors.filter((cursor) => cursor === "cursor-2")).toHaveLength(1);
+    expect(container.textContent).toContain("End of audit trail.");
   });
 });
 

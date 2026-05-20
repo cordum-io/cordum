@@ -107,20 +107,20 @@ describe("AppShell findActiveSection", () => {
     expect(findActiveSection("/agents/abc", APP_SHELL_NAV_SECTIONS)).toBe("Run");
   });
 
-  it("matches /edge/sessions to Edge (top-level section)", () => {
-    expect(findActiveSection("/edge/sessions", APP_SHELL_NAV_SECTIONS)).toBe("Edge");
+  it("matches /edge/sessions to Run via the visible Edge Sessions item", () => {
+    expect(findActiveSection("/edge/sessions", APP_SHELL_NAV_SECTIONS)).toBe("Run");
   });
 
-  it("matches /edge/sessions/abc detail path to Edge", () => {
-    expect(findActiveSection("/edge/sessions/abc", APP_SHELL_NAV_SECTIONS)).toBe("Edge");
+  it("matches /edge/sessions/abc detail path to Run", () => {
+    expect(findActiveSection("/edge/sessions/abc", APP_SHELL_NAV_SECTIONS)).toBe("Run");
   });
 
-  it("matches /edge/approvals to Edge (sidebar redirect-route)", () => {
-    expect(findActiveSection("/edge/approvals", APP_SHELL_NAV_SECTIONS)).toBe("Edge");
+  it("does NOT match /edge/approvals because it is a hidden compatibility redirect", () => {
+    expect(findActiveSection("/edge/approvals", APP_SHELL_NAV_SECTIONS)).toBe(null);
   });
 
-  it("matches /edge/audit to Edge (sidebar redirect-route)", () => {
-    expect(findActiveSection("/edge/audit", APP_SHELL_NAV_SECTIONS)).toBe("Edge");
+  it("does NOT match /edge/audit because it is a hidden compatibility redirect", () => {
+    expect(findActiveSection("/edge/audit", APP_SHELL_NAV_SECTIONS)).toBe(null);
   });
 
   it("matches /govern/overview to Govern", () => {
@@ -169,21 +169,18 @@ describe("AppShell findActiveSection", () => {
 });
 
 describe("AppShell sidebar accordion structure", () => {
-  it("groups items into 6 customer-language sections with Edge between Run and Govern", () => {
-    // task-266f21ad: Edge promoted to a first-class top-level section so
-    // the Edge subsystem (Sessions / Approvals / Audit) has visible
-    // breadth in the IA instead of being buried as one item in Run.
+  it("groups items into 5 customer-language sections without a standalone Edge section", () => {
     expect(APP_SHELL_NAV_SECTIONS.map((s) => s.label)).toEqual([
       "Run",
-      "Edge",
       "Govern",
       "Catalog",
       "Audit",
       "Settings",
     ]);
+    expect(APP_SHELL_NAV_SECTIONS.some((s) => s.label === "Edge")).toBe(false);
   });
 
-  it("Run section no longer owns Edge Sessions (relocated to Edge)", () => {
+  it("Run section owns the single visible Edge Sessions destination", () => {
     const run = APP_SHELL_NAV_SECTIONS.find((s) => s.label === "Run");
     expect(run?.items.map((i) => i.label)).toEqual([
       "Dashboard",
@@ -191,18 +188,13 @@ describe("AppShell sidebar accordion structure", () => {
       "Jobs",
       "Workflows",
       "Approvals",
+      "Edge Sessions",
     ]);
-    expect(run?.items.map((i) => i.path)).not.toContain("/edge/sessions");
-  });
-
-  it("Edge section surfaces Sessions, Approvals, and Audit as its three items", () => {
-    const edge = APP_SHELL_NAV_SECTIONS.find((s) => s.label === "Edge");
-    expect(edge).toBeDefined();
-    expect(edge?.items.map((i) => ({ path: i.path, label: i.label }))).toEqual([
-      { path: "/edge/sessions", label: "Edge Sessions" },
-      { path: "/edge/approvals", label: "Edge Approvals" },
-      { path: "/edge/audit", label: "Edge Audit" },
-    ]);
+    expect(run?.items.map((i) => i.path)).toContain("/edge/sessions");
+    expect(run?.items.map((i) => i.path)).not.toContain("/edge/approvals");
+    expect(run?.items.map((i) => i.path)).not.toContain("/edge/audit");
+    expect(APP_SHELL_NAV_SECTIONS.flatMap((s) => s.items.map((i) => i.label))).not.toContain("Edge Approvals");
+    expect(APP_SHELL_NAV_SECTIONS.flatMap((s) => s.items.map((i) => i.label))).not.toContain("Edge Audit");
   });
 
   it("Audit section no longer surfaces Dead Letters (folded into Jobs?status=dlq)", () => {
