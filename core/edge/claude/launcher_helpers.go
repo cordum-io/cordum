@@ -125,10 +125,6 @@ func releaseReservedLoopbackHookURL(rawURL string) {
 	}
 }
 
-func supportsAgentdListenerInheritance() bool {
-	return runtime.GOOS != "windows"
-}
-
 func resolveClaudePath(opts LaunchOptions) (string, error) {
 	if strings.TrimSpace(opts.ClaudePath) == "" && (opts.DryRun || opts.NoLaunch) {
 		if path, err := exec.LookPath(defaultClaudeExecutable); err == nil {

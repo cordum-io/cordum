@@ -142,7 +142,7 @@ func LaunchEdgeClaude(ctx context.Context, opts LaunchOptions) (LaunchResult, er
 	if err := waitForAgentdReady(ctx, cfg.AgentdURL, agentd.done); err != nil {
 		return LaunchResult{}, err
 	}
-	state, err := waitForLaunchState(ctx, cfg.StateDir, defaultLaunchSessionStateWait)
+	state, err := waitForLaunchStateOrAgentdExit(ctx, cfg.StateDir, defaultLaunchSessionStateWait, agentd.done)
 	if err != nil {
 		return LaunchResult{}, err
 	}

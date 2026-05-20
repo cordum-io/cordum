@@ -105,9 +105,6 @@ func TestFilepathExt(t *testing.T) {
 }
 
 func TestLoopbackReservationNoTOCTOU(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fd inheritance for loopback TCP listeners is not implemented on Windows yet")
-	}
 	rawURL, err := reserveLoopbackHookURL()
 	if err != nil {
 		t.Fatalf("reserveLoopbackHookURL: %v", err)
