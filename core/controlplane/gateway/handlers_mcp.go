@@ -543,14 +543,6 @@ func (s *server) mcpHTTPTransport() *mcp.HTTPTransport {
 // expired token, etc.) the SSE connection is terminated.
 const mcpSSEReauthInterval = 5 * time.Minute
 
-// mcpSSEReauthFirstTick fires the very first re-auth shortly after the
-// SSE session establishes so a credential revoked between the initial
-// handshake and the first scheduled tick disconnects within seconds
-// rather than minutes. Pre-fix the first tick waited a full
-// mcpSSEReauthInterval (5 min), giving a revoked API key a full
-// 5-minute usable window on an established SSE.
-const mcpSSEReauthFirstTick = time.Second
-
 func (s *server) handleMCPSSE(w http.ResponseWriter, r *http.Request) {
 	transport := s.mcpHTTPTransport()
 	if transport == nil {
@@ -573,13 +565,9 @@ func (s *server) handleMCPSSE(w http.ResponseWriter, r *http.Request) {
 	// Start a background goroutine that periodically re-validates the
 	// original credentials. If validation fails, the context is cancelled
 	// which causes the SSE event loop in the transport to exit cleanly.
-	// The first tick fires after mcpSSEReauthFirstTick so a revoked
-	// credential is caught within seconds; subsequent ticks revert to
-	// the longer mcpSSEReauthInterval cadence.
 	go func() {
-		ticker := time.NewTicker(mcpSSEReauthFirstTick)
+		ticker := time.NewTicker(mcpSSEReauthInterval)
 		defer ticker.Stop()
-		firstTickFired := false
 		for {
 			select {
 			case <-ctx.Done():
@@ -592,10 +580,6 @@ func (s *server) handleMCPSSE(w http.ResponseWriter, r *http.Request) {
 					)
 					cancel()
 					return
-				}
-				if !firstTickFired {
-					firstTickFired = true
-					ticker.Reset(mcpSSEReauthInterval)
 				}
 			}
 		}
