@@ -1,9 +1,11 @@
 package claude
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/url"
 	"os"
@@ -141,10 +143,21 @@ func TestPrepareLaunchTempRootCleanupRemovesNestedSettingsPath(t *testing.T) {
 func TestLaunchEdgeClaudeAgentdEarlyExitDoesNotHang(t *testing.T) {
 	helperPath := os.Args[0]
 	cwd := t.TempDir()
+	capture := filepath.Join(t.TempDir(), "agentd-env.json")
+	var stdout, stderr bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
 	done := make(chan error, 1)
 	go func() {
-		_, err := LaunchEdgeClaude(context.Background(), LaunchOptions{
-			Env:     envWith("CORDUM_TEST_HELPER_PROCESS", "1", "CORDUM_TEST_AGENTD_EXIT_EARLY", "1"),
+		_, err := LaunchEdgeClaude(ctx, LaunchOptions{
+			Env: envWith(
+				"CORDUM_TEST_HELPER_PROCESS", "1",
+				"CORDUM_TEST_AGENTD_EXIT_EARLY", "1",
+				"CORDUM_TEST_AGENTD_ENV_PATH", capture,
+			),
+			Stdout:  &stdout,
+			Stderr:  &stderr,
 			Gateway: "http://gateway.local", APIKey: "secret-token", TenantID: "tenant-a",
 			PrincipalID: "user-a", CWD: cwd, AgentdPath: helperPath,
 			HookCommand: helperPath,
@@ -155,10 +168,31 @@ func TestLaunchEdgeClaudeAgentdEarlyExitDoesNotHang(t *testing.T) {
 	select {
 	case err := <-done:
 		if err == nil || !strings.Contains(err.Error(), "cordum-agentd exited before becoming ready") {
-			t.Fatalf("error = %v, want early agentd exit error", err)
+			t.Fatalf("error = %v, want early agentd exit error; stdout=%q stderr=%q env=%s",
+				err, stdout.String(), stderr.String(), readFileIfExists(capture))
 		}
-	case <-time.After(12 * time.Second):
-		t.Fatal("launcher hung after early agentd exit")
+	case <-time.After(5 * time.Second):
+		t.Fatalf("launcher hung after early agentd exit; stdout=%q stderr=%q env=%s",
+			stdout.String(), stderr.String(), readFileIfExists(capture))
+	}
+}
+
+func TestWaitForAgentdReadyPrefersEarlyExitOverStaleListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen stale agentd port: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	done := make(chan error, 1)
+	done <- errors.New("agentd helper exited 9")
+	err = waitForAgentdReady(
+		context.Background(),
+		"http://"+ln.Addr().String()+"/v1/edge/hooks/claude",
+		done,
+	)
+	if err == nil || !strings.Contains(err.Error(), "cordum-agentd exited before becoming ready") {
+		t.Fatalf("error = %v, want early agentd exit to win over stale listener readiness", err)
 	}
 }
 
@@ -302,6 +336,14 @@ func readJSONMap(t *testing.T, path string) map[string]string {
 		t.Fatalf("decode capture: %v", err)
 	}
 	return out
+}
+
+func readFileIfExists(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "<missing: " + err.Error() + ">"
+	}
+	return string(data)
 }
 
 func assertLauncherNonce(t *testing.T, nonce string) {

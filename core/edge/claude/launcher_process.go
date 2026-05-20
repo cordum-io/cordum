@@ -118,20 +118,34 @@ func waitForAgentdReady(ctx context.Context, endpoint string, done <-chan error)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		select {
+		case err := <-done:
+			return agentdExitedBeforeReadyError(err)
+		default:
+		}
 		if dialLoopback(host) == nil {
+			select {
+			case err := <-done:
+				return agentdExitedBeforeReadyError(err)
+			default:
+			}
 			return nil
 		}
 		select {
 		case err := <-done:
-			if err == nil {
-				return errors.New("cordum-agentd exited before becoming ready")
-			}
-			return fmt.Errorf("cordum-agentd exited before becoming ready: %w", err)
+			return agentdExitedBeforeReadyError(err)
 		case <-deadline.Done():
 			return fmt.Errorf("timed out waiting for cordum-agentd at %s", endpoint)
 		case <-ticker.C:
 		}
 	}
+}
+
+func agentdExitedBeforeReadyError(err error) error {
+	if err == nil {
+		return errors.New("cordum-agentd exited before becoming ready")
+	}
+	return fmt.Errorf("cordum-agentd exited before becoming ready: %w", err)
 }
 
 func runClaudeProcess(ctx context.Context, cfg launchConfig, opts LaunchOptions, meta LaunchMetadata, state launchSessionState, settingsPath, claudePath string) (int, error) {
