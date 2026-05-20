@@ -6,13 +6,8 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export interface WorkerCredential {
+export type RevokeWorkerSession200 = {
   worker_id: string;
-  tenant_id: string;
-  allowed_pools?: string[];
-  allowed_topics?: string[];
-  pack_id?: string;
-  created_by: string;
-  created_at: string;
-  revoked_at?: string;
-}
+  tenant: string;
+  revoked: boolean;
+};

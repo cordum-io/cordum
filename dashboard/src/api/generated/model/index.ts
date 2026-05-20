@@ -464,6 +464,7 @@ export * from "./retryDLQEntry200";
 export * from "./revokeDelegationToken200";
 export * from "./revokeDelegationTokenBody";
 export * from "./revokeShadowExceptionRequest";
+export * from "./revokeWorkerSession200";
 export * from "./roleDefinition";
 export * from "./roleDetailResponse";
 export * from "./roleListResponse";

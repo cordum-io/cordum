@@ -5,15 +5,18 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
   DefinedUseQueryResult,
+  MutationFunction,
   QueryClient,
   QueryFunction,
   QueryKey,
   UndefinedInitialDataOptions,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
 } from "@tanstack/react-query";
@@ -26,6 +29,8 @@ import type {
   InternalServerErrorResponse,
   ListWorkers200,
   NotFoundResponse,
+  RevokeWorkerSession200,
+  ServiceUnavailableResponse,
   UnauthorizedResponse,
   WorkerRuntime,
 } from ".././model";
@@ -502,3 +507,99 @@ export function useGetWorkerJobs<
 
   return query;
 }
+
+/**
+ * @summary Revoke an active worker session
+ */
+export const revokeWorkerSession = (id: string, signal?: AbortSignal) => {
+  return apiClient<RevokeWorkerSession200>({
+    url: `/api/v1/workers/${id}/revoke-session`,
+    method: "POST",
+    signal,
+  });
+};
+
+export const getRevokeWorkerSessionMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof revokeWorkerSession>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof revokeWorkerSession>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["revokeWorkerSession"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof revokeWorkerSession>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return revokeWorkerSession(id);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RevokeWorkerSessionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof revokeWorkerSession>>
+>;
+
+export type RevokeWorkerSessionMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse
+  | ServiceUnavailableResponse;
+
+/**
+ * @summary Revoke an active worker session
+ */
+export const useRevokeWorkerSession = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof revokeWorkerSession>>,
+      TError,
+      { id: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof revokeWorkerSession>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationOptions = getRevokeWorkerSessionMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
