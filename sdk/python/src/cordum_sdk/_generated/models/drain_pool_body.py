@@ -12,38 +12,29 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="DrainPoolBody")
 
 
 @_attrs_define
 class DrainPoolBody:
-    """ 
-        Attributes:
-            timeout_seconds (Union[Unset, int]):
-     """
+    """
+    Attributes:
+        timeout_seconds (Union[Unset, int]):
+    """
 
     timeout_seconds: Union[Unset, int] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         timeout_seconds = self.timeout_seconds
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if timeout_seconds is not UNSET:
             field_dict["timeout_seconds"] = timeout_seconds
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -53,7 +44,6 @@ class DrainPoolBody:
         drain_pool_body = cls(
             timeout_seconds=timeout_seconds,
         )
-
 
         drain_pool_body.additional_properties = d
         return drain_pool_body

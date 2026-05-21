@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
@@ -14,24 +15,48 @@ import (
 
 func startLaunchAgentd(ctx context.Context, cfg launchConfig, opts LaunchOptions, meta LaunchMetadata, stderr io.Writer) (*launchAgentd, error) {
 	agentdCtx, cancel := context.WithCancel(ctx)
+	env := cfg.agentdEnv(meta)
+	var inheritedFile *os.File
+	if cfg.AgentdListener != nil {
+		file, envKey, envValue, err := listenerFileForInheritance(cfg.AgentdListener)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		inheritedFile = file
+		env = append(env, envKey+"="+envValue)
+	}
 	cmd, err := safeexec.CommandContext(agentdCtx, cfg.AgentdPath, nil, safeexec.Options{
 		Dir:            meta.CWD,
-		Env:            cfg.agentdEnv(meta),
+		Env:            env,
 		AllowEnv:       []string{"CORDUMCTL_*"},
 		Stderr:         stderr,
 		MaxStdoutBytes: 1 << 20,
 		MaxStderrBytes: 1 << 20,
 	})
 	if err != nil {
+		if inheritedFile != nil {
+			_ = inheritedFile.Close()
+		}
 		cancel()
 		return nil, fmt.Errorf("prepare cordum-agentd: %w", err)
+	}
+	if inheritedFile != nil {
+		configureInheritedListener(cmd, inheritedFile)
 	}
 	if opts.Verbose {
 		cmd.Stdout = safeexec.LimitWriter(stderr, 1<<20)
 	}
 	if err := cmd.Start(); err != nil {
+		if inheritedFile != nil {
+			closeInheritedListenerFile(inheritedFile)
+		}
 		cancel()
 		return nil, fmt.Errorf("start cordum-agentd: %w", err)
+	}
+	if inheritedFile != nil {
+		closeInheritedListenerFile(inheritedFile)
+		_ = cfg.AgentdListener.Close()
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -76,20 +101,34 @@ func waitForAgentdReady(ctx context.Context, endpoint string, done <-chan error)
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		select {
+		case err := <-done:
+			return agentdExitedBeforeReadyError(err)
+		default:
+		}
 		if dialLoopback(host) == nil {
+			select {
+			case err := <-done:
+				return agentdExitedBeforeReadyError(err)
+			default:
+			}
 			return nil
 		}
 		select {
 		case err := <-done:
-			if err == nil {
-				return errors.New("cordum-agentd exited before becoming ready")
-			}
-			return fmt.Errorf("cordum-agentd exited before becoming ready: %w", err)
+			return agentdExitedBeforeReadyError(err)
 		case <-deadline.Done():
 			return fmt.Errorf("timed out waiting for cordum-agentd at %s", endpoint)
 		case <-ticker.C:
 		}
 	}
+}
+
+func agentdExitedBeforeReadyError(err error) error {
+	if err == nil {
+		return errors.New("cordum-agentd exited before becoming ready")
+	}
+	return fmt.Errorf("cordum-agentd exited before becoming ready: %w", err)
 }
 
 func runClaudeProcess(ctx context.Context, cfg launchConfig, opts LaunchOptions, meta LaunchMetadata, state launchSessionState, settingsPath, claudePath string) (int, error) {

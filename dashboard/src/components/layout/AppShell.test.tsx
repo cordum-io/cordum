@@ -107,12 +107,20 @@ describe("AppShell findActiveSection", () => {
     expect(findActiveSection("/agents/abc", APP_SHELL_NAV_SECTIONS)).toBe("Run");
   });
 
-  it("matches /edge/sessions to Run", () => {
+  it("matches /edge/sessions to Run via the visible Edge Sessions item", () => {
     expect(findActiveSection("/edge/sessions", APP_SHELL_NAV_SECTIONS)).toBe("Run");
   });
 
   it("matches /edge/sessions/abc detail path to Run", () => {
     expect(findActiveSection("/edge/sessions/abc", APP_SHELL_NAV_SECTIONS)).toBe("Run");
+  });
+
+  it("does NOT match /edge/approvals because it is a hidden compatibility redirect", () => {
+    expect(findActiveSection("/edge/approvals", APP_SHELL_NAV_SECTIONS)).toBe(null);
+  });
+
+  it("does NOT match /edge/audit because it is a hidden compatibility redirect", () => {
+    expect(findActiveSection("/edge/audit", APP_SHELL_NAV_SECTIONS)).toBe(null);
   });
 
   it("matches /govern/overview to Govern", () => {
@@ -141,8 +149,12 @@ describe("AppShell findActiveSection", () => {
     expect(findActiveSection("/audit", APP_SHELL_NAV_SECTIONS)).toBe("Audit");
   });
 
-  it("matches /dlq to Audit", () => {
-    expect(findActiveSection("/dlq", APP_SHELL_NAV_SECTIONS)).toBe("Audit");
+  it("does NOT match /dlq to any section after Dead Letters sidebar removal", () => {
+    // task-266f21ad: Dead Letters sidebar entry removed (DLQ folded into
+    // JobsPage as ?status=dlq). The /dlq URL still redirects via
+    // App.tsx::DlqRouteRedirect for bookmarked links, but no sidebar
+    // section claims the pathname any more.
+    expect(findActiveSection("/dlq", APP_SHELL_NAV_SECTIONS)).toBe(null);
   });
 
   it("matches /settings/* sub-routes to Settings", () => {
@@ -157,7 +169,7 @@ describe("AppShell findActiveSection", () => {
 });
 
 describe("AppShell sidebar accordion structure", () => {
-  it("groups items into 5 customer-language sections", () => {
+  it("groups items into 5 customer-language sections without a standalone Edge section", () => {
     expect(APP_SHELL_NAV_SECTIONS.map((s) => s.label)).toEqual([
       "Run",
       "Govern",
@@ -165,18 +177,30 @@ describe("AppShell sidebar accordion structure", () => {
       "Audit",
       "Settings",
     ]);
+    expect(APP_SHELL_NAV_SECTIONS.some((s) => s.label === "Edge")).toBe(false);
   });
 
-  it("Run section absorbs Workflows and Approvals", () => {
+  it("Run section owns the single visible Edge Sessions destination", () => {
     const run = APP_SHELL_NAV_SECTIONS.find((s) => s.label === "Run");
     expect(run?.items.map((i) => i.label)).toEqual([
       "Dashboard",
       "Agents",
       "Jobs",
-      "Edge Sessions",
       "Workflows",
       "Approvals",
+      "Edge Sessions",
     ]);
+    expect(run?.items.map((i) => i.path)).toContain("/edge/sessions");
+    expect(run?.items.map((i) => i.path)).not.toContain("/edge/approvals");
+    expect(run?.items.map((i) => i.path)).not.toContain("/edge/audit");
+    expect(APP_SHELL_NAV_SECTIONS.flatMap((s) => s.items.map((i) => i.label))).not.toContain("Edge Approvals");
+    expect(APP_SHELL_NAV_SECTIONS.flatMap((s) => s.items.map((i) => i.label))).not.toContain("Edge Audit");
+  });
+
+  it("Audit section no longer surfaces Dead Letters (folded into Jobs?status=dlq)", () => {
+    const audit = APP_SHELL_NAV_SECTIONS.find((s) => s.label === "Audit");
+    expect(audit?.items.map((i) => i.path)).toEqual(["/audit"]);
+    expect(audit?.items.map((i) => i.path)).not.toContain("/dlq");
   });
 
   it("Settings section has the Hub item with end:true to avoid prefix-matching sub-routes", () => {

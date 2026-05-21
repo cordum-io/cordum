@@ -5,10 +5,10 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { EdgeApprovalStatus } from './edgeApprovalStatus';
-import type { EdgeApprovalDecision } from './edgeApprovalDecision';
-import type { EdgeLabels } from './edgeLabels';
-import type { EdgeApprovalMetadata } from './edgeApprovalMetadata';
+import type { EdgeApprovalStatus } from "./edgeApprovalStatus";
+import type { EdgeApprovalDecision } from "./edgeApprovalDecision";
+import type { EdgeLabels } from "./edgeLabels";
+import type { EdgeApprovalMetadata } from "./edgeApprovalMetadata";
 
 /**
  * Tenant-scoped action approval bound to an Edge session/execution/event, action hash, and policy snapshot. Raw action/tool payloads are not stored here; use hashes and artifact pointers for evidence.

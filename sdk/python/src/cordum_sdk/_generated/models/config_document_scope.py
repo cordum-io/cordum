@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class ConfigDocumentScope(str, Enum):
     ORG = "org"
     STEP = "step"

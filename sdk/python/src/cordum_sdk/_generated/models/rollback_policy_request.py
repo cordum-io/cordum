@@ -12,29 +12,24 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="RollbackPolicyRequest")
 
 
 @_attrs_define
 class RollbackPolicyRequest:
-    """ 
-        Attributes:
-            snapshot_id (str):
-            author (str):
-            message (Union[Unset, str]):
-            note (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        snapshot_id (str):
+        author (str):
+        message (Union[Unset, str]):
+        note (Union[Unset, str]):
+    """
 
     snapshot_id: str
     author: str
     message: Union[Unset, str] = UNSET
     note: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         snapshot_id = self.snapshot_id
@@ -45,21 +40,20 @@ class RollbackPolicyRequest:
 
         note = self.note
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "snapshot_id": snapshot_id,
-            "author": author,
-        })
+        field_dict.update(
+            {
+                "snapshot_id": snapshot_id,
+                "author": author,
+            }
+        )
         if message is not UNSET:
             field_dict["message"] = message
         if note is not UNSET:
             field_dict["note"] = note
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -78,7 +72,6 @@ class RollbackPolicyRequest:
             message=message,
             note=note,
         )
-
 
         rollback_policy_request.additional_properties = d
         return rollback_policy_request

@@ -40,7 +40,7 @@ type signerOutcome struct {
 //   - outcome.Status=500 for internal errors (malformed key)
 //
 // Key material is never logged.
-func signPolicyBundleContent(ctx context.Context, content []byte) signerOutcome {
+func signPolicyBundleContent(_ context.Context, content []byte) signerOutcome {
 	mode, err := policysign.ModeFromEnv()
 	if err != nil {
 		slog.Warn("policy bundle signing: invalid CORDUM_POLICY_STRICT value, defaulting to warn", "error", err)

@@ -12,44 +12,35 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="StatusResponseNats")
 
 
 @_attrs_define
 class StatusResponseNats:
-    """ 
-        Attributes:
-            connected (Union[Unset, bool]):
-            url (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        connected (Union[Unset, bool]):
+        url (Union[Unset, str]):
+    """
 
     connected: Union[Unset, bool] = UNSET
     url: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         connected = self.connected
 
         url = self.url
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if connected is not UNSET:
             field_dict["connected"] = connected
         if url is not UNSET:
             field_dict["url"] = url
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -62,7 +53,6 @@ class StatusResponseNats:
             connected=connected,
             url=url,
         )
-
 
         status_response_nats.additional_properties = d
         return status_response_nats

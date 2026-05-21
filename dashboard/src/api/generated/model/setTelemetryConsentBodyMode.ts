@@ -6,12 +6,12 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type SetTelemetryConsentBodyMode = typeof SetTelemetryConsentBodyMode[keyof typeof SetTelemetryConsentBodyMode];
-
+export type SetTelemetryConsentBodyMode =
+  (typeof SetTelemetryConsentBodyMode)[keyof typeof SetTelemetryConsentBodyMode];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const SetTelemetryConsentBodyMode = {
-  off: 'off',
-  local_only: 'local_only',
-  anonymous: 'anonymous',
+  off: "off",
+  local_only: "local_only",
+  anonymous: "anonymous",
 } as const;

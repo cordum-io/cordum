@@ -14,10 +14,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.lock import Lock
-
-
-
+    from ..models.lock import Lock
 
 
 T = TypeVar("T", bound="ReleaseLockResponse200")
@@ -25,30 +22,28 @@ T = TypeVar("T", bound="ReleaseLockResponse200")
 
 @_attrs_define
 class ReleaseLockResponse200:
-    """ 
-        Attributes:
-            lock (Union[Unset, Lock]):
-            released (Union[Unset, bool]):
-     """
+    """
+    Attributes:
+        lock (Union[Unset, Lock]):
+        released (Union[Unset, bool]):
+    """
 
-    lock: Union[Unset, 'Lock'] = UNSET
+    lock: Union[Unset, "Lock"] = UNSET
     released: Union[Unset, bool] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         from ..models.lock import Lock
+
         lock: Union[Unset, Dict[str, Any]] = UNSET
         if not isinstance(self.lock, Unset):
             lock = self.lock.to_dict()
 
         released = self.released
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if lock is not UNSET:
             field_dict["lock"] = lock
         if released is not UNSET:
@@ -56,21 +51,17 @@ class ReleaseLockResponse200:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.lock import Lock
+
         d = src_dict.copy()
         _lock = d.pop("lock", UNSET)
         lock: Union[Unset, Lock]
-        if isinstance(_lock,  Unset):
+        if isinstance(_lock, Unset):
             lock = UNSET
         else:
             lock = Lock.from_dict(_lock)
-
-
-
 
         released = d.pop("released", UNSET)
 
@@ -78,7 +69,6 @@ class ReleaseLockResponse200:
             lock=lock,
             released=released,
         )
-
 
         release_lock_response_200.additional_properties = d
         return release_lock_response_200

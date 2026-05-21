@@ -43,7 +43,7 @@ incomplete pass.
 | `PreToolUse` events are stored and streamed. | Gateway events/stream tests from EDGE-028; fake-hook E2E; dashboard timeline. | Backend Edge tests; `bash tools/scripts/edge_fake_hook_e2e.sh`; dashboard smoke. | EDGE-032 steps 4-7 | Pass |
 | `Read .env` is denied by policy. | PRD §24.7; policy/classifier/evaluate tests; fake-hook `edge_pretooluse_deny`. | Backend Edge tests; strict fake-hook E2E. | EDGE-032 steps 4-5 | Pass |
 | `Edit` can require approval. | Approval store/API tests; fake-hook `edge_approval_flow`; approval drawer from EDGE-025. | Backend Edge tests; strict fake-hook E2E; dashboard smoke. | EDGE-032 steps 4-7 | Pass |
-| Approval in dashboard allows the approval-requested action. | EDGE-011/012/012.1/012.2 APIs; EDGE-025 dashboard drawer; fake-hook retry/consume flow. | Strict fake-hook E2E; dashboard approval smoke. | EDGE-032 steps 5-7 | Pass |
+| Approval in dashboard allows the held action after resolution and retry. | EDGE-011/012/012.1/012.2 APIs; EDGE-025 dashboard drawer; fake-hook retry/consume flow; destructive ProvenanceGate requires resolved approval audit evidence, not the requested row alone. | Strict fake-hook E2E; dashboard approval smoke. | EDGE-032 steps 5-7 | Pass |
 | `PostToolUse` creates audit events and artifacts. | EDGE-013/014/016; fake-hook `edge_posttooluse_artifact`; export tests. | Backend Edge tests; strict fake-hook E2E. | EDGE-032 steps 4-5, 7 | Pass |
 | Session can export evidence bundle. | EDGE-013 export; EDGE-028 export tests; fake-hook `edge_evidence_export`. | Backend Edge tests; strict fake-hook E2E; export smoke. | EDGE-032 steps 4-7 | Pass |
 | Logs are structured and redacted. | EDGE-014 observability; `TestEdgeObservabilitySecretLeakMatrix`; `TestWriteEdgeErrorRedactsSecretDetails`; threat model row for raw prompt/tool-output leakage. | Backend Edge tests plus security checklist review. | EDGE-032 steps 4, 9 | Pass |
@@ -477,12 +477,15 @@ Gateway trace summary:
   are reused by every evaluate/event/export assertion.
 - PreToolUse policy decision events are persisted and streamed with exact event
   IDs, decisions, rule IDs, and the session policy snapshot.
-- Approval-requested edit flow returns `REQUIRE_APPROVAL`, a generated
+- Approval-required edit flow returns `REQUIRE_APPROVAL`, a generated
   `approval_ref`, dashboard approval URL shape, matching action/input hashes,
   and `manual_approval` / `approve_then_retry` guidance.
 - Operator approval consumes exactly once: first retry returns `ALLOW` with the
   same approval/action/input hashes; duplicate retry returns `DENY` with
   `request_new_approval` guidance.
+- Destructive action provenance requires the resolved approval audit event
+  (`EventEdgeApprovalResolved` / `edge.approval_resolved`) for the same
+  tenant/ref/hash; an approval-requested row alone is not sufficient evidence.
 - PostToolUse-style artifact event stores metadata-only artifact pointers; the
   export bundle includes session/execution IDs, ordered event IDs, approval
   issue/approve/consume timestamps, resolver identity, and missing-artifact

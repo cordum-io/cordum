@@ -9,30 +9,24 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 
-
-
-
-
-
 T = TypeVar("T", bound="AdminLock")
 
 
 @_attrs_define
 class AdminLock:
-    """ 
-        Attributes:
-            key (str):
-            holder (str):
-            ttl_remaining_ms (int):
-            type (str):
-     """
+    """
+    Attributes:
+        key (str):
+        holder (str):
+        ttl_remaining_ms (int):
+        type (str):
+    """
 
     key: str
     holder: str
     ttl_remaining_ms: int
     type: str
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         key = self.key
@@ -43,19 +37,18 @@ class AdminLock:
 
         type = self.type
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "key": key,
-            "holder": holder,
-            "ttl_remaining_ms": ttl_remaining_ms,
-            "type": type,
-        })
+        field_dict.update(
+            {
+                "key": key,
+                "holder": holder,
+                "ttl_remaining_ms": ttl_remaining_ms,
+                "type": type,
+            }
+        )
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -74,7 +67,6 @@ class AdminLock:
             ttl_remaining_ms=ttl_remaining_ms,
             type=type,
         )
-
 
         admin_lock.additional_properties = d
         return admin_lock

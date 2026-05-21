@@ -29,10 +29,10 @@ type DLQEntry struct {
 }
 
 const (
-	defaultDLQEntryTTL    = 30 * 24 * time.Hour
-	dlqEntryTTLDaysEnv    = "CORDUM_DLQ_ENTRY_TTL_DAYS"
-	defaultDLQMaxEntries  = 10000
-	dlqMaxEntriesEnv      = "SCHEDULER_DLQ_MAX_SIZE"
+	defaultDLQEntryTTL   = 30 * 24 * time.Hour
+	dlqEntryTTLDaysEnv   = "CORDUM_DLQ_ENTRY_TTL_DAYS"
+	defaultDLQMaxEntries = 10000
+	dlqMaxEntriesEnv     = "SCHEDULER_DLQ_MAX_SIZE"
 
 	dlqCleanupLockKey = "cordum:dlq:cleanup"
 )
@@ -71,6 +71,11 @@ func NewDLQStore(url string, entryTTL time.Duration) (*DLQStore, error) {
 	resolved := resolveDLQEntryTTL(entryTTL)
 	slog.Debug("dlq store connected", "component", "store", "entryTTL", resolved.String())
 	return &DLQStore{client: client, entryTTL: resolved}, nil
+}
+
+// NewDLQStoreFromClient constructs a DLQ store from a shared Redis client.
+func NewDLQStoreFromClient(client redis.UniversalClient, entryTTL time.Duration) *DLQStore {
+	return &DLQStore{client: client, entryTTL: resolveDLQEntryTTL(entryTTL)}
 }
 
 func (s *DLQStore) Close() error {

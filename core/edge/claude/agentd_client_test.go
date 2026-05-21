@@ -157,6 +157,52 @@ func TestHTTPAgentdClientRejectsRemoteGatewayURLs(t *testing.T) {
 	}
 }
 
+func TestNewHTTPAgentdClientStrictLoopbackContract(t *testing.T) {
+	for _, rawURL := range []string{
+		"http://127.0.0.1:8765/v1/edge/hooks/claude",
+		"http://[::1]:8765/v1/edge/hooks/claude",
+		"http://localhost:8765/v1/edge/hooks/claude",
+	} {
+		t.Run("accept_"+rawURL, func(t *testing.T) {
+			if _, err := NewHTTPAgentdClient(rawURL, time.Second); err != nil {
+				t.Fatalf("NewHTTPAgentdClient(%q) returned error: %v", rawURL, err)
+			}
+		})
+	}
+	t.Run("reject_non_canonical_127_alias", func(t *testing.T) {
+		rawURL := "http://127.0.0.5:8765/v1/edge/hooks/claude"
+		_, err := NewHTTPAgentdClient(rawURL, time.Second)
+		if err == nil {
+			t.Fatalf("NewHTTPAgentdClient(%q) returned nil error", rawURL)
+		}
+		if !strings.Contains(err.Error(), "loopback/local") {
+			t.Fatalf("NewHTTPAgentdClient(%q) err = %v, want loopback/local", rawURL, err)
+		}
+	})
+}
+
+func TestIsLoopbackHost_StrictAllowlist(t *testing.T) {
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{host: "127.0.0.1", want: true},
+		{host: "::1", want: true},
+		{host: "localhost", want: true},
+		{host: "127.0.0.5", want: false},
+		{host: "127.1.2.3", want: false},
+		{host: "10.0.0.1", want: false},
+		{host: "example.com", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.host, func(t *testing.T) {
+			if got := isLoopbackHost(tc.host); got != tc.want {
+				t.Fatalf("isLoopbackHost(%q) = %v, want %v", tc.host, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRunUsesLoopbackAgentdURLFromEnvironment(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

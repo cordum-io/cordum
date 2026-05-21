@@ -6,12 +6,12 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeEvaluateResponseWaitStrategy = typeof EdgeEvaluateResponseWaitStrategy[keyof typeof EdgeEvaluateResponseWaitStrategy];
-
+export type EdgeEvaluateResponseWaitStrategy =
+  (typeof EdgeEvaluateResponseWaitStrategy)[keyof typeof EdgeEvaluateResponseWaitStrategy];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeEvaluateResponseWaitStrategy = {
-  manual_approval: 'manual_approval',
-  backoff: 'backoff',
-  retry: 'retry',
+  manual_approval: "manual_approval",
+  backoff: "backoff",
+  retry: "retry",
 } as const;

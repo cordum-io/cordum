@@ -36,7 +36,7 @@ func (r schedulerDelegationPermissionsResolver) ResolveAgentPermissions(ctx cont
 	if r.store == nil {
 		return delegation.AgentPermissions{}, fmt.Errorf("agent identity store unavailable")
 	}
-	identity, err := r.store.Get(ctx, agentID)
+	identity, err := r.store.Get(ctx, "", agentID)
 	if err != nil {
 		return delegation.AgentPermissions{}, err
 	}

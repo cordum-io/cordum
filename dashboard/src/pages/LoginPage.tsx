@@ -282,7 +282,11 @@ export default function LoginPage() {
       return;
     }
 
-    login(payload.token, payload.user);
+    // SAML callback: the gateway has set the `cordum_session` httpOnly cookie;
+    // payload.token is echoed in the URL fragment for backward-compat with
+    // non-browser clients. We deliberately do NOT store the token — cookie
+    // auth is the source of truth for browser sessions.
+    login({ mode: "session" }, payload.user);
     showSuccessToast("Signed in");
     window.history.replaceState(null, "", window.location.pathname + window.location.search);
     navigate(returnUrl, { replace: true });
@@ -329,7 +333,7 @@ export default function LoginPage() {
         );
         return;
       }
-      login(apiKey.trim(), user);
+      login({ mode: "apikey", key: apiKey.trim() }, user);
       showSuccessToast("Connected to Cordum");
       navigate(returnUrl);
     } catch (err) {
@@ -378,10 +382,19 @@ export default function LoginPage() {
         );
         return;
       }
+      // Password login is session-based: the gateway sets the `cordum_session`
+      // httpOnly cookie which the browser sends automatically on every
+      // subsequent fetch. The token in the body is a backward-compat echo for
+      // non-browser clients — we deliberately do NOT store it as `apiKey`
+      // (that would cause apiClient to send it as `X-API-Key`, which the
+      // gateway rejects → instant logout loop).
+      //
+      // We still keep the parsed-user-or-fallback resolution so the UI has
+      // an identity to render even if the server omits the optional `user`
+      // body field; the cookie is the auth artefact, not the user object.
       const parsedUser = parseLoginUser(data.user);
-      // Fallback user when server returns { token } without user data.
       login(
-        data.token || "session",
+        { mode: "session" },
         parsedUser || buildPasswordFallbackUser(username),
       );
       showSuccessToast("Logged in");

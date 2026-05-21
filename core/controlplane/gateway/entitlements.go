@@ -138,11 +138,11 @@ func (s *server) connectedWorkerCount() int {
 	return len(s.activeWorkersSnapshot(now))
 }
 
-func (s *server) registeredWorkerCount(ctx context.Context) (int, error) {
+func (s *server) registeredWorkerCount(ctx context.Context, tenantID string) (int, error) {
 	if s == nil || s.workerCredentialStore == nil {
 		return 0, nil
 	}
-	records, err := s.workerCredentialStore.List(ctx)
+	records, err := s.workerCredentialStore.List(ctx, tenantID)
 	if err != nil {
 		return 0, err
 	}
@@ -155,8 +155,8 @@ func (s *server) registeredWorkerCount(ctx context.Context) (int, error) {
 	return count, nil
 }
 
-func (s *server) effectiveWorkerCount(ctx context.Context) (registered, connected, current int, err error) {
-	registered, err = s.registeredWorkerCount(ctx)
+func (s *server) effectiveWorkerCount(ctx context.Context, tenantID string) (registered, connected, current int, err error) {
+	registered, err = s.registeredWorkerCount(ctx, tenantID)
 	if err != nil {
 		return 0, 0, 0, err
 	}

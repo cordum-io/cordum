@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class SetTelemetryConsentBodyMode(str, Enum):
     ANONYMOUS = "anonymous"
     LOCAL_ONLY = "local_only"

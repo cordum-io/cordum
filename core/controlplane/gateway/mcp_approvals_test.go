@@ -22,7 +22,7 @@ func newTestMCPStore(t *testing.T) *MCPApprovalStore {
 		t.Fatalf("miniredis: %v", err)
 	}
 	t.Cleanup(mr.Close)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(testRedisOptions(mr.Addr()))
 	t.Cleanup(func() { _ = client.Close() })
 	return NewMCPApprovalStore(client)
 }

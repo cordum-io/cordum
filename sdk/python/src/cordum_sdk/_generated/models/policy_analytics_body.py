@@ -15,27 +15,22 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="PolicyAnalyticsBody")
 
 
 @_attrs_define
 class PolicyAnalyticsBody:
-    """ 
-        Attributes:
-            from_ (datetime.datetime): Start of analysis window (RFC3339)
-            to (datetime.datetime): End of analysis window (RFC3339, max 7 days from 'from')
-            rule_filter (Union[Unset, str]): Optional rule ID to restrict analysis to a single rule
-     """
+    """
+    Attributes:
+        from_ (datetime.datetime): Start of analysis window (RFC3339)
+        to (datetime.datetime): End of analysis window (RFC3339, max 7 days from 'from')
+        rule_filter (Union[Unset, str]): Optional rule ID to restrict analysis to a single rule
+    """
 
     from_: datetime.datetime
     to: datetime.datetime
     rule_filter: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from_ = self.from_.isoformat()
@@ -44,32 +39,25 @@ class PolicyAnalyticsBody:
 
         rule_filter = self.rule_filter
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "from": from_,
-            "to": to,
-        })
+        field_dict.update(
+            {
+                "from": from_,
+                "to": to,
+            }
+        )
         if rule_filter is not UNSET:
             field_dict["rule_filter"] = rule_filter
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
         from_ = isoparse(d.pop("from"))
 
-
-
-
         to = isoparse(d.pop("to"))
-
-
-
 
         rule_filter = d.pop("rule_filter", UNSET)
 
@@ -78,7 +66,6 @@ class PolicyAnalyticsBody:
             to=to,
             rule_filter=rule_filter,
         )
-
 
         policy_analytics_body.additional_properties = d
         return policy_analytics_body

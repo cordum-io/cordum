@@ -13,29 +13,24 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="PostChatRequest")
 
 
 @_attrs_define
 class PostChatRequest:
-    """ 
-        Attributes:
-            content (str):
-            role (PostChatRequestRole):
-            step_id (Union[Unset, str]):
-            job_id (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        content (str):
+        role (PostChatRequestRole):
+        step_id (Union[Unset, str]):
+        job_id (Union[Unset, str]):
+    """
 
     content: str
     role: PostChatRequestRole
     step_id: Union[Unset, str] = UNSET
     job_id: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         content = self.content
@@ -46,13 +41,14 @@ class PostChatRequest:
 
         job_id = self.job_id
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "content": content,
-            "role": role,
-        })
+        field_dict.update(
+            {
+                "content": content,
+                "role": role,
+            }
+        )
         if step_id is not UNSET:
             field_dict["step_id"] = step_id
         if job_id is not UNSET:
@@ -60,17 +56,12 @@ class PostChatRequest:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
         content = d.pop("content")
 
         role = PostChatRequestRole(d.pop("role"))
-
-
-
 
         step_id = d.pop("step_id", UNSET)
 
@@ -82,7 +73,6 @@ class PostChatRequest:
             step_id=step_id,
             job_id=job_id,
         )
-
 
         post_chat_request.additional_properties = d
         return post_chat_request

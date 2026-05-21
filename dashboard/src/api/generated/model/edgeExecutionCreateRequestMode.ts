@@ -6,14 +6,14 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeExecutionCreateRequestMode = typeof EdgeExecutionCreateRequestMode[keyof typeof EdgeExecutionCreateRequestMode];
-
+export type EdgeExecutionCreateRequestMode =
+  (typeof EdgeExecutionCreateRequestMode)[keyof typeof EdgeExecutionCreateRequestMode];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeExecutionCreateRequestMode = {
-  'local-dev': 'local-dev',
-  'enterprise-managed': 'enterprise-managed',
-  workflow: 'workflow',
-  ci: 'ci',
-  'prod-runner': 'prod-runner',
+  "local-dev": "local-dev",
+  "enterprise-managed": "enterprise-managed",
+  workflow: "workflow",
+  ci: "ci",
+  "prod-runner": "prod-runner",
 } as const;

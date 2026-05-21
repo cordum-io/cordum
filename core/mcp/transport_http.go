@@ -279,6 +279,13 @@ func (t *HTTPTransport) HandleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Explicit Timer + defer Stop ensures the timer is released on
+	// every early-return path. The throwaway-channel idiom would keep
+	// the runtime timer entry alive until t.responseTimeout elapses
+	// even when resp arrives first, accumulating heap pressure
+	// proportional to RPS in long-lived gateway processes.
+	timer := time.NewTimer(t.responseTimeout)
+	defer timer.Stop()
 	select {
 	case <-t.done:
 		t.writeJSONRPCError(w, msg.ID, -32603, "transport closed", http.StatusServiceUnavailable)
@@ -286,7 +293,7 @@ func (t *HTTPTransport) HandleMessage(w http.ResponseWriter, r *http.Request) {
 	case <-r.Context().Done():
 		t.writeJSONRPCError(w, msg.ID, -32603, "request canceled", http.StatusRequestTimeout)
 		return
-	case <-time.After(t.responseTimeout):
+	case <-timer.C:
 		t.writeJSONRPCError(w, msg.ID, -32603, "request timeout", http.StatusGatewayTimeout)
 		return
 	case resp, ok := <-responseCh:

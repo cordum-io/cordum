@@ -1,4 +1,5 @@
-""" Contains some shared types for properties """
+"""Contains some shared types for properties"""
+
 from http import HTTPStatus
 from typing import Any, BinaryIO, Generic, MutableMapping, Optional, Tuple, TypeVar, Literal
 
@@ -17,14 +18,14 @@ FileJsonType = Tuple[Optional[str], BinaryIO, Optional[str]]
 
 @define
 class File:
-    """ Contains information for file uploads """
+    """Contains information for file uploads"""
 
     payload: BinaryIO
     file_name: Optional[str] = None
     mime_type: Optional[str] = None
 
     def to_tuple(self) -> FileJsonType:
-        """ Return a tuple representation that httpx will accept for multipart/form-data """
+        """Return a tuple representation that httpx will accept for multipart/form-data"""
         return self.file_name, self.payload, self.mime_type
 
 
@@ -33,7 +34,7 @@ T = TypeVar("T")
 
 @define
 class Response(Generic[T]):
-    """ A response from an endpoint """
+    """A response from an endpoint"""
 
     status_code: HTTPStatus
     content: bytes

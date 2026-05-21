@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Read-only ServiceBridge methods for the MCP discovery surface
@@ -32,7 +33,13 @@ import (
 var ErrReadOnlyUnsupported = errors.New("mcp: read-only bridge surface not supported by this transport")
 
 // getJSON fetches a gateway JSON endpoint under the bridge's auth and
-// decodes the response. 4xx/5xx are mapped to BridgeError.
+// decodes the response. 4xx/5xx are mapped to BridgeError. Routes through
+// the same validateAndResolveOutboundURL + pinnedDialer guard used by
+// doRequest so every read-only path (jobs/runs/workflows/packs/topics/
+// workers/agents/approvals/audit-query/audit-verify/status) is protected
+// against DNS-rebinding TOCTOU on b.baseURL — pre-fix the GET surface
+// skipped both the host allowlist and IP pinning (HIGH audit finding
+// 2026-05-20).
 func (b *HTTPServiceBridge) getJSON(ctx context.Context, path string, query url.Values, out any) error {
 	u := b.baseURL + path
 	if len(query) > 0 {
@@ -46,6 +53,10 @@ func (b *HTTPServiceBridge) getJSON(ctx context.Context, path string, query url.
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
+	pinnedIPs, err := validateAndResolveOutboundURL(req.Context(), req.URL, b.allowedHosts, b.allowPrivateHosts)
+	if err != nil {
+		return fmt.Errorf("validate request target: %w", err)
+	}
 	if b.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+b.apiKey)
 	}
@@ -53,7 +64,24 @@ func (b *HTTPServiceBridge) getJSON(ctx context.Context, path string, query url.
 		req.Header.Set("X-Tenant-ID", b.tenantID)
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := b.httpClient.Do(req)
+
+	client := b.httpClient
+	if client == nil {
+		client = SafeHTTPClient(10 * time.Second)
+	}
+	// Pin DNS resolution to the IPs validateAndResolveOutboundURL
+	// returned so a hostile resolver cannot flip the target to a
+	// private address between validation and dial. Mirror doRequest's
+	// transport build so behaviour stays uniform across GET/POST.
+	if len(pinnedIPs) > 0 {
+		client = &http.Client{
+			Timeout:       client.Timeout,
+			CheckRedirect: client.CheckRedirect,
+			Transport:     &http.Transport{DialContext: pinnedDialer(pinnedIPs)},
+		}
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("http get %s: %w", path, err)
 	}

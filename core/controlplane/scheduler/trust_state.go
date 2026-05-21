@@ -39,10 +39,10 @@ import (
 // resolver populates exactly one Reason per call so callers logging
 // or auditing the decision can pin a stable string.
 const (
-	TrustReasonValid       = "valid"
-	TrustReasonNoSession   = "no_session"
-	TrustReasonExpired     = "session_expired"
-	TrustReasonRevoked     = "session_revoked"
+	TrustReasonValid        = "valid"
+	TrustReasonNoSession    = "no_session"
+	TrustReasonExpired      = "session_expired"
+	TrustReasonRevoked      = "session_revoked"
 	TrustReasonStoreUnready = "trust_store_unready"
 )
 

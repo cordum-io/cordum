@@ -9,8 +9,10 @@
 /**
  * Keyed by section name. Only listed sections are written; absent sections remain unchanged.
  */
-export type UpdatePolicyGlobalRequestSections = {[key: string]: {
-  /** YAML SafetyPolicy fragment. Empty content deletes the section's bundle. */
-  content?: string;
-  enabled?: boolean;
-}};
+export type UpdatePolicyGlobalRequestSections = {
+  [key: string]: {
+    /** YAML SafetyPolicy fragment. Empty content deletes the section's bundle. */
+    content?: string;
+    enabled?: boolean;
+  };
+};

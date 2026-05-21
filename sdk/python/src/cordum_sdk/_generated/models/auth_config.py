@@ -9,12 +9,13 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 from ..types import UNSET, Unset
+from typing import cast
 from typing import cast, List
+from typing import Dict
 from typing import Union
 
-
-
-
+if TYPE_CHECKING:
+    from ..models.auth_config_oidc_group_role_mapping import AuthConfigOidcGroupRoleMapping
 
 
 T = TypeVar("T", bound="AuthConfig")
@@ -22,26 +23,29 @@ T = TypeVar("T", bound="AuthConfig")
 
 @_attrs_define
 class AuthConfig:
-    """ 
-        Attributes:
-            password_enabled (Union[Unset, bool]):
-            user_auth_enabled (Union[Unset, bool]):
-            saml_enabled (Union[Unset, bool]):
-            saml_enterprise (Union[Unset, bool]):
-            saml_login_url (Union[Unset, str]):
-            saml_metadata_url (Union[Unset, str]):
-            oidc_enabled (Union[Unset, bool]):
-            oidc_issuer (Union[Unset, str]):
-            oidc_login_url (Union[Unset, str]):
-            oidc_client_id (Union[Unset, str]):
-            oidc_redirect_uri (Union[Unset, str]):
-            oidc_scopes (Union[Unset, List[str]]):
-            oidc_client_secret_masked (Union[Unset, str]):
-            session_ttl (Union[Unset, str]):
-            require_rbac (Union[Unset, bool]):
-            require_principal (Union[Unset, bool]):
-            default_tenant (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        password_enabled (Union[Unset, bool]):
+        user_auth_enabled (Union[Unset, bool]):
+        saml_enabled (Union[Unset, bool]):
+        saml_enterprise (Union[Unset, bool]):
+        saml_login_url (Union[Unset, str]):
+        saml_metadata_url (Union[Unset, str]):
+        oidc_enabled (Union[Unset, bool]):
+        oidc_issuer (Union[Unset, str]):
+        oidc_login_url (Union[Unset, str]):
+        oidc_client_id (Union[Unset, str]):
+        oidc_redirect_uri (Union[Unset, str]):
+        oidc_scopes (Union[Unset, List[str]]):
+        oidc_groups_claim (Union[Unset, str]): OIDC claim containing IdP group names, defaulting to groups.
+        oidc_group_role_mapping (Union[Unset, AuthConfigOidcGroupRoleMapping]): Case-insensitive group name to Cordum
+            role mapping.
+        oidc_client_secret_masked (Union[Unset, str]):
+        session_ttl (Union[Unset, str]):
+        require_rbac (Union[Unset, bool]):
+        require_principal (Union[Unset, bool]):
+        default_tenant (Union[Unset, str]):
+    """
 
     password_enabled: Union[Unset, bool] = UNSET
     user_auth_enabled: Union[Unset, bool] = UNSET
@@ -55,6 +59,8 @@ class AuthConfig:
     oidc_client_id: Union[Unset, str] = UNSET
     oidc_redirect_uri: Union[Unset, str] = UNSET
     oidc_scopes: Union[Unset, List[str]] = UNSET
+    oidc_groups_claim: Union[Unset, str] = UNSET
+    oidc_group_role_mapping: Union[Unset, "AuthConfigOidcGroupRoleMapping"] = UNSET
     oidc_client_secret_masked: Union[Unset, str] = UNSET
     session_ttl: Union[Unset, str] = UNSET
     require_rbac: Union[Unset, bool] = UNSET
@@ -62,8 +68,9 @@ class AuthConfig:
     default_tenant: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
+        from ..models.auth_config_oidc_group_role_mapping import AuthConfigOidcGroupRoleMapping
+
         password_enabled = self.password_enabled
 
         user_auth_enabled = self.user_auth_enabled
@@ -90,7 +97,11 @@ class AuthConfig:
         if not isinstance(self.oidc_scopes, Unset):
             oidc_scopes = self.oidc_scopes
 
+        oidc_groups_claim = self.oidc_groups_claim
 
+        oidc_group_role_mapping: Union[Unset, Dict[str, Any]] = UNSET
+        if not isinstance(self.oidc_group_role_mapping, Unset):
+            oidc_group_role_mapping = self.oidc_group_role_mapping.to_dict()
 
         oidc_client_secret_masked = self.oidc_client_secret_masked
 
@@ -102,11 +113,9 @@ class AuthConfig:
 
         default_tenant = self.default_tenant
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if password_enabled is not UNSET:
             field_dict["password_enabled"] = password_enabled
         if user_auth_enabled is not UNSET:
@@ -131,6 +140,10 @@ class AuthConfig:
             field_dict["oidc_redirect_uri"] = oidc_redirect_uri
         if oidc_scopes is not UNSET:
             field_dict["oidc_scopes"] = oidc_scopes
+        if oidc_groups_claim is not UNSET:
+            field_dict["oidc_groups_claim"] = oidc_groups_claim
+        if oidc_group_role_mapping is not UNSET:
+            field_dict["oidc_group_role_mapping"] = oidc_group_role_mapping
         if oidc_client_secret_masked is not UNSET:
             field_dict["oidc_client_secret_masked"] = oidc_client_secret_masked
         if session_ttl is not UNSET:
@@ -144,10 +157,10 @@ class AuthConfig:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
+        from ..models.auth_config_oidc_group_role_mapping import AuthConfigOidcGroupRoleMapping
+
         d = src_dict.copy()
         password_enabled = d.pop("password_enabled", UNSET)
 
@@ -173,6 +186,16 @@ class AuthConfig:
 
         oidc_scopes = cast(List[str], d.pop("oidc_scopes", UNSET))
 
+        oidc_groups_claim = d.pop("oidc_groups_claim", UNSET)
+
+        _oidc_group_role_mapping = d.pop("oidc_group_role_mapping", UNSET)
+        oidc_group_role_mapping: Union[Unset, AuthConfigOidcGroupRoleMapping]
+        if isinstance(_oidc_group_role_mapping, Unset):
+            oidc_group_role_mapping = UNSET
+        else:
+            oidc_group_role_mapping = AuthConfigOidcGroupRoleMapping.from_dict(
+                _oidc_group_role_mapping
+            )
 
         oidc_client_secret_masked = d.pop("oidc_client_secret_masked", UNSET)
 
@@ -197,13 +220,14 @@ class AuthConfig:
             oidc_client_id=oidc_client_id,
             oidc_redirect_uri=oidc_redirect_uri,
             oidc_scopes=oidc_scopes,
+            oidc_groups_claim=oidc_groups_claim,
+            oidc_group_role_mapping=oidc_group_role_mapping,
             oidc_client_secret_masked=oidc_client_secret_masked,
             session_ttl=session_ttl,
             require_rbac=require_rbac,
             require_principal=require_principal,
             default_tenant=default_tenant,
         )
-
 
         auth_config.additional_properties = d
         return auth_config

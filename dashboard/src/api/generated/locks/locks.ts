@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,8 +18,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   ConflictResponse,
@@ -35,388 +32,566 @@ import type {
   NotFoundResponse,
   ReleaseLock200,
   ServiceUnavailableResponse,
-  UnauthorizedResponse
-} from '.././model';
+  UnauthorizedResponse,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * @summary Get lock status for a resource
  */
-export const getLock = (
-    params: GetLockParams,
- signal?: AbortSignal
+export const getLock = (params: GetLockParams, signal?: AbortSignal) => {
+  return apiClient<Lock>({
+    url: `/api/v1/locks`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
+
+export const getGetLockQueryKey = (params?: GetLockParams) => {
+  return [`/api/v1/locks`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetLockQueryOptions = <
+  TData = Awaited<ReturnType<typeof getLock>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  params: GetLockParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getLock>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<Lock>(
-      {url: `/api/v1/locks`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetLockQueryKey(params);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getLock>>> = ({
+    signal,
+  }) => getLock(params, signal);
 
-export const getGetLockQueryKey = (params?: GetLockParams,) => {
-    return [
-    `/api/v1/locks`, ...(params ? [params]: [])
-    ] as const;
-    }
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getLock>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetLockQueryOptions = <TData = Awaited<ReturnType<typeof getLock>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(params: GetLockParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLock>>, TError, TData>>, }
-) => {
+export type GetLockQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getLock>>
+>;
+export type GetLockQueryError =
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetLockQueryKey(params);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getLock>>> = ({ signal }) => getLock(params, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getLock>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetLockQueryResult = NonNullable<Awaited<ReturnType<typeof getLock>>>
-export type GetLockQueryError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-
-export function useGetLock<TData = Awaited<ReturnType<typeof getLock>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- params: GetLockParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLock>>, TError, TData>> & Pick<
+export function useGetLock<
+  TData = Awaited<ReturnType<typeof getLock>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  params: GetLockParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getLock>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getLock>>,
           TError,
           Awaited<ReturnType<typeof getLock>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetLock<TData = Awaited<ReturnType<typeof getLock>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- params: GetLockParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLock>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetLock<
+  TData = Awaited<ReturnType<typeof getLock>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  params: GetLockParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getLock>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getLock>>,
           TError,
           Awaited<ReturnType<typeof getLock>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetLock<TData = Awaited<ReturnType<typeof getLock>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- params: GetLockParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLock>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetLock<
+  TData = Awaited<ReturnType<typeof getLock>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  params: GetLockParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getLock>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get lock status for a resource
  */
 
-export function useGetLock<TData = Awaited<ReturnType<typeof getLock>>, TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse>(
- params: GetLockParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getLock>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetLock<
+  TData = Awaited<ReturnType<typeof getLock>>,
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  params: GetLockParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getLock>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetLockQueryOptions(params, options);
 
-  const queryOptions = getGetLockQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
+/**
+ * @summary Acquire a distributed lock
+ */
+export const acquireLock = (lockRequest: LockRequest, signal?: AbortSignal) => {
+  return apiClient<Lock>({
+    url: `/api/v1/locks/acquire`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: lockRequest,
+    signal,
+  });
+};
 
+export const getAcquireLockMutationOptions = <
+  TError =
+    | UnauthorizedResponse
+    | ConflictResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof acquireLock>>,
+    TError,
+    { data: LockRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof acquireLock>>,
+  TError,
+  { data: LockRequest },
+  TContext
+> => {
+  const mutationKey = ["acquireLock"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof acquireLock>>,
+    { data: LockRequest }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return acquireLock(data);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AcquireLockMutationResult = NonNullable<
+  Awaited<ReturnType<typeof acquireLock>>
+>;
+export type AcquireLockMutationBody = LockRequest;
+export type AcquireLockMutationError =
+  | UnauthorizedResponse
+  | ConflictResponse
+  | InternalServerErrorResponse;
 
 /**
  * @summary Acquire a distributed lock
  */
-export const acquireLock = (
-    lockRequest: LockRequest,
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<Lock>(
-      {url: `/api/v1/locks/acquire`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: lockRequest, signal
-    },
-      );
-    }
-  
+export const useAcquireLock = <
+  TError =
+    | UnauthorizedResponse
+    | ConflictResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof acquireLock>>,
+      TError,
+      { data: LockRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof acquireLock>>,
+  TError,
+  { data: LockRequest },
+  TContext
+> => {
+  const mutationOptions = getAcquireLockMutationOptions(options);
 
-
-export const getAcquireLockMutationOptions = <TError = UnauthorizedResponse | ConflictResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acquireLock>>, TError,{data: LockRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof acquireLock>>, TError,{data: LockRequest}, TContext> => {
-
-const mutationKey = ['acquireLock'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof acquireLock>>, {data: LockRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  acquireLock(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type AcquireLockMutationResult = NonNullable<Awaited<ReturnType<typeof acquireLock>>>
-    export type AcquireLockMutationBody = LockRequest
-    export type AcquireLockMutationError = UnauthorizedResponse | ConflictResponse | InternalServerErrorResponse
-
-    /**
- * @summary Acquire a distributed lock
- */
-export const useAcquireLock = <TError = UnauthorizedResponse | ConflictResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acquireLock>>, TError,{data: LockRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof acquireLock>>,
-        TError,
-        {data: LockRequest},
-        TContext
-      > => {
-
-      const mutationOptions = getAcquireLockMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Release a distributed lock
  */
-export const releaseLock = (
-    lockRequest: LockRequest,
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<ReleaseLock200>(
-      {url: `/api/v1/locks/release`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: lockRequest, signal
-    },
-      );
-    }
-  
+export const releaseLock = (lockRequest: LockRequest, signal?: AbortSignal) => {
+  return apiClient<ReleaseLock200>({
+    url: `/api/v1/locks/release`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: lockRequest,
+    signal,
+  });
+};
 
+export const getReleaseLockMutationOptions = <
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof releaseLock>>,
+    TError,
+    { data: LockRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof releaseLock>>,
+  TError,
+  { data: LockRequest },
+  TContext
+> => {
+  const mutationKey = ["releaseLock"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getReleaseLockMutationOptions = <TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof releaseLock>>, TError,{data: LockRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof releaseLock>>, TError,{data: LockRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof releaseLock>>,
+    { data: LockRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['releaseLock'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return releaseLock(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type ReleaseLockMutationResult = NonNullable<
+  Awaited<ReturnType<typeof releaseLock>>
+>;
+export type ReleaseLockMutationBody = LockRequest;
+export type ReleaseLockMutationError =
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof releaseLock>>, {data: LockRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  releaseLock(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ReleaseLockMutationResult = NonNullable<Awaited<ReturnType<typeof releaseLock>>>
-    export type ReleaseLockMutationBody = LockRequest
-    export type ReleaseLockMutationError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Release a distributed lock
  */
-export const useReleaseLock = <TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof releaseLock>>, TError,{data: LockRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof releaseLock>>,
-        TError,
-        {data: LockRequest},
-        TContext
-      > => {
+export const useReleaseLock = <
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof releaseLock>>,
+      TError,
+      { data: LockRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof releaseLock>>,
+  TError,
+  { data: LockRequest },
+  TContext
+> => {
+  const mutationOptions = getReleaseLockMutationOptions(options);
 
-      const mutationOptions = getReleaseLockMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Renew a distributed lock TTL
  */
-export const renewLock = (
-    lockRequest: LockRequest,
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<Lock>(
-      {url: `/api/v1/locks/renew`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: lockRequest, signal
-    },
-      );
-    }
-  
+export const renewLock = (lockRequest: LockRequest, signal?: AbortSignal) => {
+  return apiClient<Lock>({
+    url: `/api/v1/locks/renew`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: lockRequest,
+    signal,
+  });
+};
 
+export const getRenewLockMutationOptions = <
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof renewLock>>,
+    TError,
+    { data: LockRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof renewLock>>,
+  TError,
+  { data: LockRequest },
+  TContext
+> => {
+  const mutationKey = ["renewLock"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getRenewLockMutationOptions = <TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof renewLock>>, TError,{data: LockRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof renewLock>>, TError,{data: LockRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof renewLock>>,
+    { data: LockRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['renewLock'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return renewLock(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type RenewLockMutationResult = NonNullable<
+  Awaited<ReturnType<typeof renewLock>>
+>;
+export type RenewLockMutationBody = LockRequest;
+export type RenewLockMutationError =
+  | UnauthorizedResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof renewLock>>, {data: LockRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  renewLock(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type RenewLockMutationResult = NonNullable<Awaited<ReturnType<typeof renewLock>>>
-    export type RenewLockMutationBody = LockRequest
-    export type RenewLockMutationError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Renew a distributed lock TTL
  */
-export const useRenewLock = <TError = UnauthorizedResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof renewLock>>, TError,{data: LockRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof renewLock>>,
-        TError,
-        {data: LockRequest},
-        TContext
-      > => {
+export const useRenewLock = <
+  TError =
+    | UnauthorizedResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof renewLock>>,
+      TError,
+      { data: LockRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof renewLock>>,
+  TError,
+  { data: LockRequest },
+  TContext
+> => {
+  const mutationOptions = getRenewLockMutationOptions(options);
 
-      const mutationOptions = getRenewLockMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary List active distributed locks
  */
-export const listAdminLocks = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<ListAdminLocks200>(
-      {url: `/api/v1/admin/locks`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const listAdminLocks = (signal?: AbortSignal) => {
+  return apiClient<ListAdminLocks200>({
+    url: `/api/v1/admin/locks`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getListAdminLocksQueryKey = () => {
-    return [
-    `/api/v1/admin/locks`
-    ] as const;
-    }
+  return [`/api/v1/admin/locks`] as const;
+};
 
-    
-export const getListAdminLocksQueryOptions = <TData = Awaited<ReturnType<typeof listAdminLocks>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAdminLocks>>, TError, TData>>, }
-) => {
+export const getListAdminLocksQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAdminLocks>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof listAdminLocks>>, TError, TData>
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListAdminLocksQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getListAdminLocksQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminLocks>>> = ({
+    signal,
+  }) => listAdminLocks(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAdminLocks>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminLocks>>> = ({ signal }) => listAdminLocks(signal);
+export type ListAdminLocksQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAdminLocks>>
+>;
+export type ListAdminLocksQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminLocks>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListAdminLocksQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminLocks>>>
-export type ListAdminLocksQueryError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useListAdminLocks<TData = Awaited<ReturnType<typeof listAdminLocks>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAdminLocks>>, TError, TData>> & Pick<
+export function useListAdminLocks<
+  TData = Awaited<ReturnType<typeof listAdminLocks>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listAdminLocks>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listAdminLocks>>,
           TError,
           Awaited<ReturnType<typeof listAdminLocks>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListAdminLocks<TData = Awaited<ReturnType<typeof listAdminLocks>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAdminLocks>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListAdminLocks<
+  TData = Awaited<ReturnType<typeof listAdminLocks>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listAdminLocks>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listAdminLocks>>,
           TError,
           Awaited<ReturnType<typeof listAdminLocks>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListAdminLocks<TData = Awaited<ReturnType<typeof listAdminLocks>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAdminLocks>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListAdminLocks<
+  TData = Awaited<ReturnType<typeof listAdminLocks>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listAdminLocks>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List active distributed locks
  */
 
-export function useListAdminLocks<TData = Awaited<ReturnType<typeof listAdminLocks>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAdminLocks>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListAdminLocks<
+  TData = Awaited<ReturnType<typeof listAdminLocks>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listAdminLocks>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListAdminLocksQueryOptions(options);
 
-  const queryOptions = getListAdminLocksQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
-

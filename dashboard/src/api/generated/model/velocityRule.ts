@@ -5,7 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { VelocityRuleMatch } from './velocityRuleMatch';
+import type { VelocityRuleMatch } from "./velocityRuleMatch";
 
 export interface VelocityRule {
   id: string;

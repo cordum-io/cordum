@@ -1101,6 +1101,7 @@ export interface AgentIdentity {
   allowed_topics?: string[];
   allowed_pools?: string[];
   allowed_tools?: string[];
+  preapproved_mutating_tools?: string[];
   data_classifications?: string[];
   status: "active" | "suspended" | "revoked";
   created_at: string;

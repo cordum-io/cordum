@@ -12,4 +12,4 @@ verbatim from the gateway handler's audit-construction site.
 
  * @nullable
  */
-export type PolicyAuditEntryExtra = {[key: string]: string} | null;
+export type PolicyAuditEntryExtra = { [key: string]: string } | null;

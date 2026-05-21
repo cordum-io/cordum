@@ -8,7 +8,9 @@ from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
 
-from ..models.installed_pack_verification_signature_algorithm import InstalledPackVerificationSignatureAlgorithm
+from ..models.installed_pack_verification_signature_algorithm import (
+    InstalledPackVerificationSignatureAlgorithm,
+)
 from ..types import UNSET, Unset
 from dateutil.parser import isoparse
 from typing import cast
@@ -17,16 +19,12 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="InstalledPackVerification")
 
 
 @_attrs_define
 class InstalledPackVerification:
-    """ Pack-signature verification outcome computed by the gateway at
+    """Pack-signature verification outcome computed by the gateway at
     install time. Never client-supplied — the gateway discards any
     `verification` field on the install payload and computes its own.
     Pre-existing installs default to {signed: false} when this object
@@ -47,7 +45,7 @@ class InstalledPackVerification:
             warnings (Union[Unset, List[str]]): Non-fatal warnings the gateway wants to surface alongside the
                 verification outcome (for example, "pack accepted unsigned —
                 gateway strict mode disabled").
-     """
+    """
 
     signed: bool
     publisher_id: Union[Unset, str] = UNSET
@@ -58,7 +56,6 @@ class InstalledPackVerification:
     pack_signature_version: Union[Unset, int] = UNSET
     warnings: Union[Unset, List[str]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         signed = self.signed
@@ -77,21 +74,19 @@ class InstalledPackVerification:
         if not isinstance(self.signature_algorithm, Unset):
             signature_algorithm = self.signature_algorithm.value
 
-
         pack_signature_version = self.pack_signature_version
 
         warnings: Union[Unset, List[str]] = UNSET
         if not isinstance(self.warnings, Unset):
             warnings = self.warnings
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "signed": signed,
-        })
+        field_dict.update(
+            {
+                "signed": signed,
+            }
+        )
         if publisher_id is not UNSET:
             field_dict["publisher_id"] = publisher_id
         if kid is not UNSET:
@@ -109,8 +104,6 @@ class InstalledPackVerification:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -122,30 +115,23 @@ class InstalledPackVerification:
 
         _verified_at = d.pop("verified_at", UNSET)
         verified_at: Union[Unset, datetime.datetime]
-        if isinstance(_verified_at,  Unset):
+        if isinstance(_verified_at, Unset):
             verified_at = UNSET
         else:
             verified_at = isoparse(_verified_at)
-
-
-
 
         has_cordum_counter_sig = d.pop("has_cordum_counter_sig", UNSET)
 
         _signature_algorithm = d.pop("signature_algorithm", UNSET)
         signature_algorithm: Union[Unset, InstalledPackVerificationSignatureAlgorithm]
-        if isinstance(_signature_algorithm,  Unset):
+        if isinstance(_signature_algorithm, Unset):
             signature_algorithm = UNSET
         else:
             signature_algorithm = InstalledPackVerificationSignatureAlgorithm(_signature_algorithm)
 
-
-
-
         pack_signature_version = d.pop("pack_signature_version", UNSET)
 
         warnings = cast(List[str], d.pop("warnings", UNSET))
-
 
         installed_pack_verification = cls(
             signed=signed,
@@ -157,7 +143,6 @@ class InstalledPackVerification:
             pack_signature_version=pack_signature_version,
             warnings=warnings,
         )
-
 
         installed_pack_verification.additional_properties = d
         return installed_pack_verification

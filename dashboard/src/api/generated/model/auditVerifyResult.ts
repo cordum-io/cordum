@@ -5,8 +5,8 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { AuditVerifyResultStatus } from './auditVerifyResultStatus';
-import type { AuditVerifyGap } from './auditVerifyGap';
+import type { AuditVerifyResultStatus } from "./auditVerifyResultStatus";
+import type { AuditVerifyGap } from "./auditVerifyGap";
 
 export interface AuditVerifyResult {
   status: AuditVerifyResultStatus;

@@ -22,6 +22,7 @@ import (
 	"github.com/cordum/cordum/core/mcp"
 	mcpresources "github.com/cordum/cordum/core/mcp/resources"
 	mcptools "github.com/cordum/cordum/core/mcp/tools"
+	"github.com/cordum/cordum/core/model"
 )
 
 // mcpAgentIDHeader is the request header that identifies the calling
@@ -33,7 +34,13 @@ type mcpGatewayConfig struct {
 	Enabled   bool
 	Transport string
 	Port      int
-	Raw       map[string]any
+	// PolicyGateEnabled gates the WithPolicyGate / WithApprovalHold
+	// wiring at boot. Defaults to false so legacy deploys keep the
+	// direct-dispatch path until operators explicitly opt in via
+	// `mcp.policy_gate_enabled: true` in config. The "must explicitly
+	// opt in" posture is mandated by feedback_dont_change_deployment_defaults.
+	PolicyGateEnabled bool
+	Raw               map[string]any
 }
 
 type mcpRuntimeState struct {
@@ -115,6 +122,11 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 	// elsewhere, so reaching this path in prod means degraded mode.
 	var approvalStore *MCPApprovalStore
 	var approvalHandler *mcpApprovalHandler
+	// approvalGate is hoisted to function scope so the EDGE-102 boot
+	// wiring below can hand it to attachMCPPolicyDeps. nil when Redis
+	// is unavailable; the gate's nil-check inside BuildMCPPolicyDeps
+	// fails closed without crashing the boot path.
+	var approvalGate *gatewayApprovalGate
 	if client := s.redisClient(); client != nil {
 		approvalStore = NewMCPApprovalStore(client).WithAuditHook(s.mcpApprovalAuditHook())
 		approvalHandler = newMCPApprovalHandler(approvalStore)
@@ -143,6 +155,7 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		})
 		rawGate, gate := s.wireMCPApprovalGate(approvalStore, invariantLookup)
 		toolRegistry.SetApprovalGate(rawGate)
+		approvalGate = gate
 		if gate != nil {
 			slog.Info("mcp approval gate enabled",
 				"preapproval", gate.preapproval != nil,
@@ -234,6 +247,44 @@ func (s *server) startMCPRuntimeFromConfig(cfg mcpGatewayConfig) error {
 		ProtocolVersion: mcp.DefaultProtocolVersion,
 		RequestTimeout:  30 * time.Second,
 	}).WithAuditor(invocationAuditor).WithPrompts(promptRegistry)
+	// EDGE-102 / EDGE-103 policy + approval-hold wiring. Gated by
+	// `mcp.policy_gate_enabled` so legacy deploys keep the direct-dispatch
+	// path until operators explicitly opt in (feedback_dont_change_deployment_defaults).
+	// Three terminal states — operators grep one of these lines:
+	//   * `mcp.policy_gate skipped` — flag off, by design.
+	//   * `mcp.policy_gate wired`   — flag on, every required dep present,
+	//                                HasPolicyGate()==true post-attach.
+	//   * `mcp.policy_gate degraded` — flag on but attach refused to wire
+	//                                because a required dep was missing
+	//                                (reason names the dep). HasPolicyGate()
+	//                                must read false in this branch.
+	if cfg.PolicyGateEnabled {
+		var skipReason string
+		mcpServer, skipReason = s.attachMCPPolicyDeps(mcpServer, approvalGate)
+		if mcpServer.HasPolicyGate() {
+			slog.Info("mcp.policy_gate wired",
+				"server_name", mcpServer.PolicyServerName(),
+				"policy_gate_active", true,
+				"approval_hold_active", mcpServer.HasApprovalHold(),
+				"emitter", "edge.RedisStore",
+				"artifact_store", "artifacts.RedisStore",
+			)
+		} else {
+			if skipReason == "" {
+				skipReason = "WithPolicyGate partial-wiring guard reset deps"
+			}
+			slog.Warn("mcp.policy_gate degraded",
+				"policy_gate_active", false,
+				"approval_hold_active", mcpServer.HasApprovalHold(),
+				"reason", skipReason,
+			)
+		}
+	} else {
+		slog.Info("mcp.policy_gate skipped",
+			"policy_gate_active", false,
+			"reason", "policy_gate_enabled config flag is false",
+		)
+	}
 	sweeperStop := make(chan struct{})
 	if approvalStore != nil {
 		go runMCPApprovalSweeper(approvalStore, sweeperStop)
@@ -312,9 +363,10 @@ func (s *server) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
 			agentID = strings.TrimSpace(authCtx.PrincipalID)
 		}
 		mcpCtx := WithMCPCallMetadata(r.Context(), MCPCallMetadata{
-			Tenant:    tenantID,
-			AgentID:   agentID,
-			Principal: strings.TrimSpace(authCtx.PrincipalID),
+			Tenant:            tenantID,
+			AgentID:           agentID,
+			Principal:         strings.TrimSpace(authCtx.PrincipalID),
+			RequesterIdentity: submitterIdentity(r),
 		})
 		// Also stash tenant for the mcp.tool_called audit hook, which
 		// reads ctx via mcp.TenantFromContext (a separate ctx key from
@@ -350,7 +402,7 @@ func (s *server) resolveMCPIdentity(r *http.Request) *mcp.AgentIdentity {
 	}
 	ctx := r.Context()
 	if id := strings.TrimSpace(r.Header.Get(mcpAgentIDHeader)); id != "" {
-		identity, err := s.agentIdentityStore.Get(ctx, id)
+		identity, err := s.agentIdentityStore.Get(ctx, "", id)
 		if err != nil || identity == nil {
 			return nil
 		}
@@ -413,6 +465,13 @@ func (s *server) mcpToolCallAuditHook() mcp.ToolCallAuditHook {
 	}
 	sender := s.auditExporter
 	return func(event audit.SIEMEvent) {
+		// Defense-in-depth: core/mcp/audit_invocation.go defaults the
+		// handle's tenant at Start{Inbound,Outbound}, but a future
+		// producer site that bypasses the auditor and constructs a
+		// SIEMEvent directly would slip through to the chain sender's
+		// slog.Warn fallback. Default here so the gateway boundary is
+		// the explicit catch-all. task-3fad45d3.
+		event.TenantID = model.ResolveTenantForAudit(event.TenantID, "")
 		sender.Send(event)
 	}
 }
@@ -427,6 +486,12 @@ func (s *server) mcpApprovalAuditHook() MCPAuditHook {
 	}
 	sender := s.auditExporter
 	return func(event audit.SIEMEvent) {
+		// Same defense-in-depth as mcpToolCallAuditHook above:
+		// MCPApprovalStore populates Tenant from validated request
+		// records, but a future enqueue path that skips the validator
+		// would emit a tenantless event. Default at the gateway
+		// boundary. task-3fad45d3.
+		event.TenantID = model.ResolveTenantForAudit(event.TenantID, "")
 		sender.Send(event)
 	}
 }
@@ -460,6 +525,9 @@ func (s *server) loadMCPConfig(ctx context.Context) mcpGatewayConfig {
 	if port := lookupIntPath(effective, "mcp", "port"); port > 0 {
 		cfg.Port = port
 	}
+	if enabled, ok := lookupBoolPath(effective, "mcp", "policy_gate_enabled"); ok {
+		cfg.PolicyGateEnabled = enabled
+	}
 	return cfg
 }
 
@@ -476,10 +544,14 @@ func (s *server) mcpHTTPTransport() *mcp.HTTPTransport {
 // expired token, etc.) the SSE connection is terminated.
 const mcpSSEReauthInterval = 5 * time.Minute
 
+// mcpSSEReauthFirstTick fires the first re-auth soon after SSE establishment
+// so credentials revoked after the initial handshake disconnect within seconds.
+const mcpSSEReauthFirstTick = time.Second
+
 func (s *server) handleMCPSSE(w http.ResponseWriter, r *http.Request) {
 	transport := s.mcpHTTPTransport()
 	if transport == nil {
-		writeErrorJSON(w, http.StatusServiceUnavailable, "mcp http transport unavailable")
+		writeJSONError(w, http.StatusServiceUnavailable, errorCodeMCPHTTPTransportUnavailable, "mcp http transport unavailable")
 		return
 	}
 
@@ -499,8 +571,9 @@ func (s *server) handleMCPSSE(w http.ResponseWriter, r *http.Request) {
 	// original credentials. If validation fails, the context is cancelled
 	// which causes the SSE event loop in the transport to exit cleanly.
 	go func() {
-		ticker := time.NewTicker(mcpSSEReauthInterval)
+		ticker := time.NewTicker(mcpSSEReauthFirstTick)
 		defer ticker.Stop()
+		firstTickFired := false
 		for {
 			select {
 			case <-ctx.Done():
@@ -514,6 +587,10 @@ func (s *server) handleMCPSSE(w http.ResponseWriter, r *http.Request) {
 					cancel()
 					return
 				}
+				if !firstTickFired {
+					firstTickFired = true
+					ticker.Reset(mcpSSEReauthInterval)
+				}
 			}
 		}
 	}()
@@ -524,7 +601,7 @@ func (s *server) handleMCPSSE(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleMCPMessage(w http.ResponseWriter, r *http.Request) {
 	transport := s.mcpHTTPTransport()
 	if transport == nil {
-		writeErrorJSON(w, http.StatusServiceUnavailable, "mcp http transport unavailable")
+		writeJSONError(w, http.StatusServiceUnavailable, errorCodeMCPHTTPTransportUnavailable, "mcp http transport unavailable")
 		return
 	}
 	transport.HandleMessage(w, r)
@@ -878,6 +955,17 @@ func (s *server) wireMCPApprovalGate(approvalStore *MCPApprovalStore, invariantL
 	if invariantLookup != nil {
 		gate.WithInvariantLookup(invariantLookup)
 	}
+	// EDGE-103 reopen #1: wire Edge approval mint so the gate can
+	// dual-write a consumable EdgeApproval alongside the legacy
+	// MCPApprovalStore record. Falls back to legacy-only when the
+	// Edge store is nil (dev/test) or when the request lacks
+	// mcp.CallMetadata SessionID/ExecutionID (transports without an
+	// EdgeSession). The same snapshot provider used by WithApprovalHold
+	// is reused so the mint + consume paths bind to identical
+	// PolicySnapshot strings.
+	if s.edgeStore != nil {
+		gate.WithEdgeApprovalMint(s.edgeStore, s.mcpPolicySnapshotFunc(), mcpPolicyServerName)
+	}
 	return gate, gate
 }
 
@@ -1110,8 +1198,8 @@ func (s *server) invokeMCPJSONHandler(
 	if len(payload) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if req.Header.Get("X-Tenant-ID") == "" {
-		req.Header.Set("X-Tenant-ID", s.mcpTenantFromContext(ctx))
+	if status, payload, raw, ok := s.stampMCPBridgeTenant(req, ctx); !ok {
+		return status, payload, raw, nil
 	}
 	for key, value := range headers {
 		key = strings.TrimSpace(key)
@@ -1166,8 +1254,8 @@ func (s *server) invokeMCPAnyHandler(
 	if len(payload) > 0 {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if req.Header.Get("X-Tenant-ID") == "" {
-		req.Header.Set("X-Tenant-ID", s.mcpTenantFromContext(ctx))
+	if status, payload, raw, ok := s.stampMCPBridgeTenant(req, ctx); !ok {
+		return status, payload, raw, nil
 	}
 	for key, value := range headers {
 		key = strings.TrimSpace(key)
@@ -1192,16 +1280,43 @@ func (s *server) invokeMCPAnyHandler(
 	return rr.Code, decoded, raw, nil
 }
 
+func (s *server) stampMCPBridgeTenant(req *http.Request, ctx context.Context) (int, map[string]any, []byte, bool) {
+	if req.Header.Get("X-Tenant-ID") != "" {
+		return 0, nil, nil, true
+	}
+	tenant := s.mcpTenantFromContext(ctx)
+	if tenant == "" {
+		status, payload, raw := mcpMissingTenantBridgeResponse()
+		return status, payload, raw, false
+	}
+	req.Header.Set("X-Tenant-ID", tenant)
+	return 0, nil, nil, true
+}
+
+func mcpMissingTenantBridgeResponse() (int, map[string]any, []byte) {
+	payload := map[string]any{
+		"code":  "unauthorized",
+		"error": "mcp bridge requires tenant context",
+	}
+	raw, _ := json.Marshal(payload)
+	return http.StatusUnauthorized, payload, raw
+}
+
+// mcpTenantFromContext resolves only explicit auth/server tenant state.
+// It deliberately returns blank rather than model.DefaultTenant so bridge
+// invocations fail closed when middleware/auth context is missing.
 func (s *server) mcpTenantFromContext(ctx context.Context) string {
 	if auth := auth.FromContext(ctx); auth != nil {
 		if tenant := strings.TrimSpace(auth.Tenant); tenant != "" {
 			return tenant
 		}
 	}
-	if tenant := strings.TrimSpace(s.tenant); tenant != "" {
-		return tenant
+	if s != nil {
+		if tenant := strings.TrimSpace(s.tenant); tenant != "" {
+			return tenant
+		}
 	}
-	return "default"
+	return ""
 }
 
 func mcpBridgeString(v any) string {

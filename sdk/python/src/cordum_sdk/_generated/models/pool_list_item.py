@@ -12,23 +12,19 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="PoolListItem")
 
 
 @_attrs_define
 class PoolListItem:
-    """ 
-        Attributes:
-            name (str):
-            workers (Union[Unset, int]):
-            active_jobs (Union[Unset, int]):
-            capacity (Union[Unset, int]):
-            utilization (Union[Unset, float]):
-     """
+    """
+    Attributes:
+        name (str):
+        workers (Union[Unset, int]):
+        active_jobs (Union[Unset, int]):
+        capacity (Union[Unset, int]):
+        utilization (Union[Unset, float]):
+    """
 
     name: str
     workers: Union[Unset, int] = UNSET
@@ -36,7 +32,6 @@ class PoolListItem:
     capacity: Union[Unset, int] = UNSET
     utilization: Union[Unset, float] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         name = self.name
@@ -49,12 +44,13 @@ class PoolListItem:
 
         utilization = self.utilization
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "name": name,
-        })
+        field_dict.update(
+            {
+                "name": name,
+            }
+        )
         if workers is not UNSET:
             field_dict["workers"] = workers
         if active_jobs is not UNSET:
@@ -65,8 +61,6 @@ class PoolListItem:
             field_dict["utilization"] = utilization
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -88,7 +82,6 @@ class PoolListItem:
             capacity=capacity,
             utilization=utilization,
         )
-
 
         pool_list_item.additional_properties = d
         return pool_list_item

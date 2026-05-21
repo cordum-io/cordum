@@ -6,14 +6,14 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeEvaluateResponseDecision = typeof EdgeEvaluateResponseDecision[keyof typeof EdgeEvaluateResponseDecision];
-
+export type EdgeEvaluateResponseDecision =
+  (typeof EdgeEvaluateResponseDecision)[keyof typeof EdgeEvaluateResponseDecision];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeEvaluateResponseDecision = {
-  ALLOW: 'ALLOW',
-  DENY: 'DENY',
-  REQUIRE_APPROVAL: 'REQUIRE_APPROVAL',
-  THROTTLE: 'THROTTLE',
-  CONSTRAIN: 'CONSTRAIN',
+  ALLOW: "ALLOW",
+  DENY: "DENY",
+  REQUIRE_APPROVAL: "REQUIRE_APPROVAL",
+  THROTTLE: "THROTTLE",
+  CONSTRAIN: "CONSTRAIN",
 } as const;

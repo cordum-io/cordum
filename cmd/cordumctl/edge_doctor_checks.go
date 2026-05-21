@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
+	"github.com/cordum/cordum/core/edge/claude"
 )
 
 var edgeDemoPolicyRequiredRules = []string{
@@ -230,4 +232,61 @@ func missingEdgeDemoRules(items []struct {
 		}
 	}
 	return missing
+}
+
+// edgeCheckManagedSettings runs the managed-settings invariant check when
+// `--managed-settings-path` (or CORDUM_EDGE_MANAGED_SETTINGS_PATH) points
+// to a managed-settings.json. Empty path skips the check so non-enterprise
+// deployments do not see a spurious failure.
+func edgeCheckManagedSettings(_ context.Context, env *edgeDoctorEnv) checkResult {
+	path := strings.TrimSpace(env.managedSettingsPath)
+	if path == "" {
+		return checkResult{State: stateSkip, Detail: "managed-settings-path not configured; skip for non-enterprise deployments"}
+	}
+	res, err := claude.VerifyManagedSettingsFromPath(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return checkResult{
+				State:  stateFail,
+				Detail: "managed-settings.json not found at " + path,
+				Fix:    "generate via cordumctl edge managed-settings export --output <dir>",
+			}
+		}
+		return checkResult{
+			State:  stateFail,
+			Detail: "managed-settings.json read error: " + edgeDoctorRedact(err.Error(), env.base.apiKey),
+			Fix:    "regenerate with cordumctl edge managed-settings export",
+		}
+	}
+	if res.OK {
+		return checkResult{State: stateOK, Detail: "managed-settings.json matches Cordum Edge invariants"}
+	}
+	return checkResult{
+		State:  stateFail,
+		Detail: "managed settings drift: " + summariseManagedSettingsDrifts(res.Drifts, 3),
+		Fix:    "regenerate with cordumctl edge managed-settings export",
+	}
+}
+
+// summariseManagedSettingsDrifts emits a deterministic, low-cardinality
+// drift summary for human + JSON doctor output. The cap protects the
+// summary from blowing past doctor's per-line width when many invariants
+// fail at once; the full set is still available via `cordumctl edge
+// managed-settings verify --json`.
+func summariseManagedSettingsDrifts(drifts []claude.ManagedSettingsDrift, cap int) string {
+	if len(drifts) == 0 {
+		return ""
+	}
+	if cap <= 0 || cap > len(drifts) {
+		cap = len(drifts)
+	}
+	parts := make([]string, 0, cap)
+	for i := 0; i < cap; i++ {
+		d := drifts[i]
+		parts = append(parts, fmt.Sprintf("%s (got=%s want=%s severity=%s)", d.Field, d.Got, d.Want, d.Severity))
+	}
+	if len(drifts) > cap {
+		parts = append(parts, fmt.Sprintf("(+%d more)", len(drifts)-cap))
+	}
+	return strings.Join(parts, "; ")
 }

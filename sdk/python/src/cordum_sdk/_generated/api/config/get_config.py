@@ -15,21 +15,15 @@ from typing import Dict
 from typing import Union
 
 
-
 def _get_kwargs(
     *,
     scope: Union[Unset, GetConfigScope] = UNSET,
     scope_id: Union[Unset, str] = UNSET,
     envelope: Union[Unset, bool] = True,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
@@ -43,9 +37,7 @@ def _get_kwargs(
 
     params["envelope"] = envelope
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -53,16 +45,15 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, ConfigDocument]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, ConfigDocument]]:
     if response.status_code == 200:
         response_200 = ConfigDocument.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 401:
@@ -77,7 +68,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, ConfigDocument]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, ConfigDocument]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -93,9 +86,8 @@ def sync_detailed(
     scope_id: Union[Unset, str] = UNSET,
     envelope: Union[Unset, bool] = True,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ConfigDocument]]:
-    """ Get configuration
+    """Get configuration
 
     Args:
         scope (Union[Unset, GetConfigScope]):
@@ -109,15 +101,13 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, ConfigDocument]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         scope=scope,
-scope_id=scope_id,
-envelope=envelope,
-x_tenant_id=x_tenant_id,
-
+        scope_id=scope_id,
+        envelope=envelope,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -126,6 +116,7 @@ x_tenant_id=x_tenant_id,
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
@@ -133,9 +124,8 @@ def sync(
     scope_id: Union[Unset, str] = UNSET,
     envelope: Union[Unset, bool] = True,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ConfigDocument]]:
-    """ Get configuration
+    """Get configuration
 
     Args:
         scope (Union[Unset, GetConfigScope]):
@@ -149,17 +139,16 @@ def sync(
 
     Returns:
         Union[Any, ConfigDocument]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-scope=scope,
-scope_id=scope_id,
-envelope=envelope,
-x_tenant_id=x_tenant_id,
-
+        scope=scope,
+        scope_id=scope_id,
+        envelope=envelope,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
@@ -168,9 +157,8 @@ async def asyncio_detailed(
     scope_id: Union[Unset, str] = UNSET,
     envelope: Union[Unset, bool] = True,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ConfigDocument]]:
-    """ Get configuration
+    """Get configuration
 
     Args:
         scope (Union[Unset, GetConfigScope]):
@@ -184,22 +172,19 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, ConfigDocument]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         scope=scope,
-scope_id=scope_id,
-envelope=envelope,
-x_tenant_id=x_tenant_id,
-
+        scope_id=scope_id,
+        envelope=envelope,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
@@ -208,9 +193,8 @@ async def asyncio(
     scope_id: Union[Unset, str] = UNSET,
     envelope: Union[Unset, bool] = True,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ConfigDocument]]:
-    """ Get configuration
+    """Get configuration
 
     Args:
         scope (Union[Unset, GetConfigScope]):
@@ -224,14 +208,14 @@ async def asyncio(
 
     Returns:
         Union[Any, ConfigDocument]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-scope=scope,
-scope_id=scope_id,
-envelope=envelope,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            scope=scope,
+            scope_id=scope_id,
+            envelope=envelope,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

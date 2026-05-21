@@ -1,0 +1,216 @@
+name: edge-fake-hook-e2e
+
+# Strict-mode integration gate for tools/scripts/edge_fake_hook_e2e.sh.
+# Brings up a 2-key gateway stack so the approval-lifecycle gates
+# (edge_approval_flow / edge_approval_rejected / edge_approval_expired)
+# can exercise distinct REQUESTER vs APPROVER principals without tripping
+# edgeApprovalRequesterMatchesResolver + identitiesOverlap
+# (core/controlplane/gateway/helpers.go:1428-1434).
+#
+# The 2-key configuration is provisioned via docker-compose.ci.yml override
+# (CORDUM_API_KEYS env passthrough on api-gateway) layered on top of the
+# default docker-compose.yml — production single-key adoption-friction is
+# unchanged per [[feedback_dont_change_deployment_defaults]].
+
+on:
+  pull_request:
+    paths:
+      - "tools/scripts/edge_fake_hook_e2e.sh"
+      - "core/edge/**"
+      - "cmd/cordum-hook/**"
+      - "cmd/cordum-agentd/**"
+      - "cmd/cordumctl/edge_*"
+      - "core/controlplane/gateway/handlers_edge_*"
+      - "core/controlplane/gateway/helpers.go"
+      - "core/controlplane/gateway/auth/**"
+      - "docker-compose.yml"
+      - "docker-compose.ci.yml"
+      - ".github/workflows/edge-fake-hook-e2e.yml"
+  push:
+    branches:
+      - main
+      - wip/2026-05-15-orphan-rescue
+
+jobs:
+  edge-fake-hook-e2e:
+    name: edge-fake-hook-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Generate two distinct API keys
+        # Two random 32-byte hex strings — sha256-prefix collision probability
+        # is negligible, so identitiesOverlap (helpers.go:1428-1434) will
+        # treat the requester and approver as distinct principals.
+        run: |
+          {
+            echo "CORDUM_API_KEY=$(openssl rand -hex 32)"
+            echo "CORDUM_APPROVER_API_KEY=$(openssl rand -hex 32)"
+          } >> "$GITHUB_ENV"
+
+      - name: Assert key-prefix distinctness
+        # Defence-in-depth: refuse to boot if openssl(1) somehow produced two
+        # identical first-4-byte sha256 prefixes (the exact field
+        # identitiesOverlap compares).
+        run: |
+          req_prefix=$(printf '%s' "${CORDUM_API_KEY}" | sha256sum | cut -c1-8)
+          appr_prefix=$(printf '%s' "${CORDUM_APPROVER_API_KEY}" | sha256sum | cut -c1-8)
+          echo "requester sha256-prefix: ${req_prefix}"
+          echo "approver  sha256-prefix: ${appr_prefix}"
+          if [ "${req_prefix}" = "${appr_prefix}" ]; then
+            echo "::error::CORDUM_API_KEY and CORDUM_APPROVER_API_KEY share sha256[:4] prefix (${req_prefix}); identitiesOverlap would reject. Regenerate." >&2
+            exit 1
+          fi
+
+      - name: Build CORDUM_API_KEYS JSON for approver
+        # Registers CORDUM_APPROVER_API_KEY as a second admin-role key on the
+        # gateway via the JSON env loader (auth/basic.go:539). The original
+        # CORDUM_API_KEY single-env path is preserved by docker-compose.yml
+        # line 259, so both keys end up in the merged keys map.
+        run: |
+          payload=$(printf '[{"key":"%s","role":"admin","tenant":"default","principal_id":"edge-fake-hook-e2e-approver"}]' "${CORDUM_APPROVER_API_KEY}")
+          echo "CORDUM_API_KEYS=${payload}" >> "$GITHUB_ENV"
+
+      - name: Generate Redis password
+        run: echo "REDIS_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Generate TLS certificates
+        run: |
+          go run ./cmd/cordumctl generate-certs --dir ./certs
+          chmod -R a+rX ./certs
+
+      - name: Start services (2-key stack via docker-compose.ci.yml override)
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --build
+        env:
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          CORDUM_API_KEYS: ${{ env.CORDUM_API_KEYS }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+
+      - name: Wait for gateway health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -ksf -H "X-API-Key: ${CORDUM_API_KEY}" https://127.0.0.1:8081/api/v1/status > edge-fake-hook-e2e-health.json; then
+              echo "Gateway healthy after $((i * 2))s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Timed out waiting for https://127.0.0.1:8081/api/v1/status" >&2
+          exit 1
+
+      # Bootstrap the cordum-edge-pack policy overlay so the strict-PASS
+      # assertion below has a green gate. Chosen approach per task-c94f1770:
+      # (A-light) — install via cordumctl from the runner against the gateway.
+      #
+      # Decision rationale (architect amendment comment-2843a2f6 Item 2):
+      # - (C) compose-mount: non-viable. Safety Kernel loads policy fragments
+      #   only via configSvc/Redis (core/controlplane/safetykernel/kernel.go
+      #   loadFragments:1653). No env-driven disk-fragment loader exists; adding
+      #   one would touch core gateway code, out of scope.
+      # - (A-full) scheduler+worker compose services: heavier than needed. The
+      #   gateway's POST /api/v1/packs/install (handlers_packs.go:88
+      #   handleInstallPack → installPackFromDir:143) applies overlays directly
+      #   to configSvc; no scheduler/worker dispatch involved.
+      # - (A-light) cordumctl from runner: production install path, zero extra
+      #   compose services. cordum-edge-pack is unsigned; gateway default
+      #   CORDUM_GATEWAY_PACK_STRICT=false accepts unsigned packs.
+      - name: Install cordum-edge-pack policy overlay
+        run: go run ./cmd/cordumctl pack install ./examples/cordum-edge-pack
+        env:
+          CORDUM_GATEWAY: https://localhost:8081
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          CORDUM_TENANT_ID: default
+          CORDUM_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+
+      - name: Wait for pack-loaded state
+        # Poll the pack registry endpoint until cordum-edge-pack returns 200,
+        # confirming installPackFromDir wrote the policy overlay to configSvc
+        # and the registry is queryable. 60s timeout (30 * 2s).
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -ks -o /dev/null -w '%{http_code}' \
+              --cacert "${{ github.workspace }}/certs/ca/ca.crt" \
+              -H "X-API-Key: ${CORDUM_API_KEY}" \
+              https://127.0.0.1:8081/api/v1/packs/cordum-edge-pack)
+            if [ "${code}" = "200" ]; then
+              echo "cordum-edge-pack loaded after $((i * 2))s"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::cordum-edge-pack not loaded after 60s (last status: ${code})" >&2
+          exit 1
+
+      - name: Run edge_fake_hook_e2e.sh (strict + bypass mode)
+        # Strict mode (CORDUM_INTEGRATION=1) treats every missing prerequisite
+        # as FAIL. Bypass mode (CORDUM_EDGE_E2E_BYPASS_HOOK=1) drives gates
+        # via /api/v1/edge/* directly without requiring built cordum-hook /
+        # cordum-agentd binaries on PATH — this CI lane proves the gateway
+        # contract end-to-end; the binaries' build is exercised by
+        # binaries-pr-validation.yml.
+        run: bash tools/scripts/edge_fake_hook_e2e.sh 2>&1 | tee edge-fake-hook-e2e.log
+        env:
+          CORDUM_INTEGRATION: "1"
+          CORDUM_EDGE_E2E_BYPASS_HOOK: "1"
+          CORDUM_API_KEY: ${{ env.CORDUM_API_KEY }}
+          CORDUM_APPROVER_API_KEY: ${{ env.CORDUM_APPROVER_API_KEY }}
+          CORDUM_GATEWAY: https://localhost:8081
+          CORDUM_TLS_CA: ${{ github.workspace }}/certs/ca/ca.crt
+
+      - name: Assert 7 PASS lines
+        # Strict-PASS gate live per task-c94f1770 (governor amendment
+        # comment-2843a2f6 Item 3). The pack-bootstrap steps above install
+        # cordum-edge-pack so the script's gate_pretooluse_deny finds the
+        # demo policy overlay and emits DENY for secret-like fixtures.
+        # All 7 expected PASS lines (script lines 201-208) must be present;
+        # any missing line OR a count mismatch fails the job.
+        run: |
+          expected=(
+            "PASS edge_session_setup"
+            "PASS edge_pretooluse_deny"
+            "PASS edge_approval_flow"
+            "PASS edge_approval_rejected"
+            "PASS edge_approval_expired"
+            "PASS edge_posttooluse_artifact"
+            "PASS edge_evidence_export"
+          )
+          for line in "${expected[@]}"; do
+            if ! grep -Fqx -- "${line}" edge-fake-hook-e2e.log; then
+              echo "::error::missing expected PASS line: ${line}" >&2
+              grep '^PASS ' edge-fake-hook-e2e.log || true
+              grep '^FAIL ' edge-fake-hook-e2e.log || true
+              exit 1
+            fi
+          done
+          actual=$(grep -c '^PASS ' edge-fake-hook-e2e.log)
+          if [ "${actual}" -ne "${#expected[@]}" ]; then
+            echo "::error::PASS line count mismatch: got ${actual}, want ${#expected[@]}" >&2
+            grep '^PASS ' edge-fake-hook-e2e.log || true
+            exit 1
+          fi
+          echo "All ${#expected[@]} PASS lines present."
+
+      - name: Capture docker compose logs
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml logs > docker-compose-edge-fake-hook-e2e.log 2>&1 || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: edge-fake-hook-e2e-artifacts
+          path: |
+            edge-fake-hook-e2e.log
+            edge-fake-hook-e2e-health.json
+            docker-compose-edge-fake-hook-e2e.log
+
+      - name: Tear down services
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v

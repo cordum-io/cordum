@@ -13,24 +13,20 @@ from typing import cast, Union
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="EvalRunSummary")
 
 
 @_attrs_define
 class EvalRunSummary:
-    """ 
-        Attributes:
-            total (int):
-            passed (int):
-            failed (int):
-            regressions (int):
-            errored (int):
-            score_percent (Union[None, Unset, float]):
-     """
+    """
+    Attributes:
+        total (int):
+        passed (int):
+        failed (int):
+        regressions (int):
+        errored (int):
+        score_percent (Union[None, Unset, float]):
+    """
 
     total: int
     passed: int
@@ -39,7 +35,6 @@ class EvalRunSummary:
     errored: int
     score_percent: Union[None, Unset, float] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         total = self.total
@@ -58,22 +53,21 @@ class EvalRunSummary:
         else:
             score_percent = self.score_percent
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "total": total,
-            "passed": passed,
-            "failed": failed,
-            "regressions": regressions,
-            "errored": errored,
-        })
+        field_dict.update(
+            {
+                "total": total,
+                "passed": passed,
+                "failed": failed,
+                "regressions": regressions,
+                "errored": errored,
+            }
+        )
         if score_percent is not UNSET:
             field_dict["score_percent"] = score_percent
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -97,7 +91,6 @@ class EvalRunSummary:
 
         score_percent = _parse_score_percent(d.pop("score_percent", UNSET))
 
-
         eval_run_summary = cls(
             total=total,
             passed=passed,
@@ -106,7 +99,6 @@ class EvalRunSummary:
             errored=errored,
             score_percent=score_percent,
         )
-
 
         eval_run_summary.additional_properties = d
         return eval_run_summary

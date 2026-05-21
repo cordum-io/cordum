@@ -13,28 +13,24 @@ from typing import cast, Union
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="ApprovalAnalyticsGroup")
 
 
 @_attrs_define
 class ApprovalAnalyticsGroup:
-    """ 
-        Attributes:
-            key (str): Group identifier (rule id, agent id, or topic string).
-            label (str):
-            total (int):
-            approved (int):
-            rejected (int):
-            expired (int):
-            auto_count (int):
-            manual_count (int):
-            avg_ttar_seconds (Union[None, Unset, float]):
-            p90_seconds (Union[None, Unset, float]):
-     """
+    """
+    Attributes:
+        key (str): Group identifier (rule id, agent id, or topic string).
+        label (str):
+        total (int):
+        approved (int):
+        rejected (int):
+        expired (int):
+        auto_count (int):
+        manual_count (int):
+        avg_ttar_seconds (Union[None, Unset, float]):
+        p90_seconds (Union[None, Unset, float]):
+    """
 
     key: str
     label: str
@@ -47,7 +43,6 @@ class ApprovalAnalyticsGroup:
     avg_ttar_seconds: Union[None, Unset, float] = UNSET
     p90_seconds: Union[None, Unset, float] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         key = self.key
@@ -78,27 +73,26 @@ class ApprovalAnalyticsGroup:
         else:
             p90_seconds = self.p90_seconds
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "key": key,
-            "label": label,
-            "total": total,
-            "approved": approved,
-            "rejected": rejected,
-            "expired": expired,
-            "auto_count": auto_count,
-            "manual_count": manual_count,
-        })
+        field_dict.update(
+            {
+                "key": key,
+                "label": label,
+                "total": total,
+                "approved": approved,
+                "rejected": rejected,
+                "expired": expired,
+                "auto_count": auto_count,
+                "manual_count": manual_count,
+            }
+        )
         if avg_ttar_seconds is not UNSET:
             field_dict["avg_ttar_seconds"] = avg_ttar_seconds
         if p90_seconds is not UNSET:
             field_dict["p90_seconds"] = p90_seconds
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -128,7 +122,6 @@ class ApprovalAnalyticsGroup:
 
         avg_ttar_seconds = _parse_avg_ttar_seconds(d.pop("avg_ttar_seconds", UNSET))
 
-
         def _parse_p90_seconds(data: object) -> Union[None, Unset, float]:
             if data is None:
                 return data
@@ -137,7 +130,6 @@ class ApprovalAnalyticsGroup:
             return cast(Union[None, Unset, float], data)
 
         p90_seconds = _parse_p90_seconds(d.pop("p90_seconds", UNSET))
-
 
         approval_analytics_group = cls(
             key=key,
@@ -151,7 +143,6 @@ class ApprovalAnalyticsGroup:
             avg_ttar_seconds=avg_ttar_seconds,
             p90_seconds=p90_seconds,
         )
-
 
         approval_analytics_group.additional_properties = d
         return approval_analytics_group

@@ -12,26 +12,22 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="MarketplacePack")
 
 
 @_attrs_define
 class MarketplacePack:
-    """ 
-        Attributes:
-            catalog_id (Union[Unset, str]):
-            pack_id (Union[Unset, str]):
-            name (Union[Unset, str]):
-            version (Union[Unset, str]):
-            description (Union[Unset, str]):
-            author (Union[Unset, str]):
-            sha256 (Union[Unset, str]):
-            url (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        catalog_id (Union[Unset, str]):
+        pack_id (Union[Unset, str]):
+        name (Union[Unset, str]):
+        version (Union[Unset, str]):
+        description (Union[Unset, str]):
+        author (Union[Unset, str]):
+        sha256 (Union[Unset, str]):
+        url (Union[Unset, str]):
+    """
 
     catalog_id: Union[Unset, str] = UNSET
     pack_id: Union[Unset, str] = UNSET
@@ -42,7 +38,6 @@ class MarketplacePack:
     sha256: Union[Unset, str] = UNSET
     url: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         catalog_id = self.catalog_id
@@ -61,11 +56,9 @@ class MarketplacePack:
 
         url = self.url
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if catalog_id is not UNSET:
             field_dict["catalog_id"] = catalog_id
         if pack_id is not UNSET:
@@ -84,8 +77,6 @@ class MarketplacePack:
             field_dict["url"] = url
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -116,7 +107,6 @@ class MarketplacePack:
             sha256=sha256,
             url=url,
         )
-
 
         marketplace_pack.additional_properties = d
         return marketplace_pack

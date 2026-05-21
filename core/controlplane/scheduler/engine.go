@@ -544,6 +544,20 @@ func isApprovalGateTopic(topic string) bool {
 
 // Start registers subscriptions for the scheduler.
 func (e *Engine) Start() error {
+	// Log resolved fail-mode configuration at startup so operators have a
+	// durable record of which fail-mode origin will apply on safety-kernel
+	// outage. Audit-fix task-2a52e7da finding #11 — surfaces "are we in
+	// global fail-open vs per-tenant fail-open mode?" without grepping logs
+	// for the per-job WARN line.
+	failModeOrigin := "global_default"
+	if e.failModeResolver != nil {
+		failModeOrigin = "per_tenant_resolver"
+	}
+	slog.Info("scheduler input fail-mode resolved at startup",
+		"input_fail_open", e.inputFailOpen.Load(),
+		"async_fail_open", e.asyncFailOpen.Load(),
+		"fail_mode_origin", failModeOrigin,
+	)
 	// Heartbeats must be broadcast to all schedulers to keep a complete view
 	// of the worker pool when running multiple scheduler replicas.
 	if err := e.bus.Subscribe(capsdk.SubjectHeartbeat, "", e.HandlePacket); err != nil {
@@ -1208,9 +1222,11 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 
 		currentState := JobState("")
 		if e.jobStore != nil {
-			ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-			defer cancel()
-			state, err := e.jobStore.GetState(ctx, jobID)
+			state, err := func() (JobState, error) {
+				ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
+				defer cancel()
+				return e.jobStore.GetState(ctx, jobID)
+			}()
 			if err == nil {
 				currentState = state
 				if state == JobStateDispatched || state == JobStateRunning {
@@ -1244,25 +1260,30 @@ func (e *Engine) handleJobRequest(req *pb.JobRequest, traceID string) error {
 		e.incJobsReceived(topic)
 
 		if e.jobStore != nil {
-			ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-			defer cancel()
-			if traceID != "" {
-				if err := e.jobStore.AddJobToTrace(ctx, traceID, jobID); err != nil {
-					slog.Error("failed to add job to trace", "job_id", jobID, "trace_id", traceID, "error", err)
+			if err := func() error {
+				ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
+				defer cancel()
+				if traceID != "" {
+					if err := e.jobStore.AddJobToTrace(ctx, traceID, jobID); err != nil {
+						slog.Error("failed to add job to trace", "job_id", jobID, "trace_id", traceID, "error", err)
+						return RetryAfter(err, retryDelayStore)
+					}
+				}
+				if err := e.jobStore.SetJobMeta(ctx, req); err != nil {
+					slog.Error("failed to persist job metadata", "job_id", jobID, "error", err)
 					return RetryAfter(err, retryDelayStore)
 				}
-			}
-			if err := e.jobStore.SetJobMeta(ctx, req); err != nil {
-				slog.Error("failed to persist job metadata", "job_id", jobID, "error", err)
-				return RetryAfter(err, retryDelayStore)
-			}
-			if store, ok := e.jobStore.(interface {
-				SetJobRequest(context.Context, *pb.JobRequest) error
-			}); ok {
-				if err := store.SetJobRequest(ctx, req); err != nil {
-					slog.Error("failed to persist job request", "job_id", jobID, "error", err)
-					return RetryAfter(err, retryDelayStore)
+				if store, ok := e.jobStore.(interface {
+					SetJobRequest(context.Context, *pb.JobRequest) error
+				}); ok {
+					if err := store.SetJobRequest(ctx, req); err != nil {
+						slog.Error("failed to persist job request", "job_id", jobID, "error", err)
+						return RetryAfter(err, retryDelayStore)
+					}
 				}
+				return nil
+			}(); err != nil {
+				return err
 			}
 		}
 
@@ -1353,7 +1374,7 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	jobID := strings.TrimSpace(req.JobId)
 	topic := strings.TrimSpace(req.Topic)
 	dispatchStart := time.Now()
-	reg, registryEmpty, err := e.topicRegistration(lockCtx, topic)
+	reg, registryEmpty, err := e.topicRegistration(lockCtx, req.GetTenantId(), topic)
 	if err != nil {
 		return RetryAfter(err, retryDelayStore)
 	} else if !registryEmpty && (reg == nil || reg.Status == topicregistry.StatusDisabled) {
@@ -1381,9 +1402,20 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 	attempts := 0
 	if e.jobStore != nil {
 		ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-		defer cancel()
 		a, err := e.jobStore.GetAttempts(ctx, jobID)
-		if err == nil {
+		cancel()
+		if errors.Is(err, redis.Nil) {
+			attempts = 0
+		} else if err != nil {
+			slog.Warn("scheduler: GetAttempts error, treating as max scheduling retries",
+				"job_id", jobID,
+				"topic", topic,
+				"trace_id", traceID,
+				"max_attempts", maxSchedulingRetries,
+				"error", err,
+			)
+			attempts = maxSchedulingRetries
+		} else {
 			attempts = a
 		}
 	}
@@ -1521,6 +1553,11 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 			if e.counterClient != nil {
 				e.counterClient.Incr(lockCtx, "cordum:scheduler:input_fail_open_total")
 			}
+			// Emit dedicated audit event so SIEM can detect bypass-on-unavailable
+			// without inferring it from WARN logs. The event carries fail_mode_origin
+			// so reviewers can distinguish global-default fail-open (env var) from
+			// per-tenant fail-open (FailModeResolver). Audit-fix task-2a52e7da #11.
+			e.emitSafetyBypassAuditEvent(lockCtx, req, topic, record.Reason)
 			record.Decision = SafetyAllow
 			record.Reason = "fail-open: safety unavailable — " + record.Reason
 			// Tag job so dashboard can show bypass warning
@@ -1586,22 +1623,33 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 
 	if maxRetries := maxRetriesFromConstraints(record.Constraints); maxRetries > 0 && e.jobStore != nil {
 		ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-		defer cancel()
 		attempts, err := e.jobStore.GetAttempts(ctx, jobID)
-		if err == nil {
-			allowedAttempts := int(maxRetries) + 1
-			if attempts >= allowedAttempts {
-				reason := fmt.Sprintf("max retries exceeded (attempts=%d, max_retries=%d)", attempts, maxRetries)
-				if err := e.setJobState(jobID, JobStateFailed); err != nil {
-					slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
-					return RetryAfter(err, retryDelayStore)
-				}
-				if err := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED, reason, "max_retries_exceeded"); err != nil {
-					slog.Error("dlq emit failed, retrying", "job_id", jobID, "error", err)
-					return RetryAfter(err, retryDelayPublish)
-				}
-				return nil
+		cancel()
+		allowedAttempts := int(maxRetries) + 1
+		if errors.Is(err, redis.Nil) {
+			attempts = 0
+		} else if err != nil {
+			slog.Warn("scheduler: GetAttempts error, treating as max policy retries",
+				"job_id", jobID,
+				"topic", topic,
+				"trace_id", traceID,
+				"max_retries", maxRetries,
+				"allowed_attempts", allowedAttempts,
+				"error", err,
+			)
+			attempts = allowedAttempts
+		}
+		if attempts >= allowedAttempts {
+			reason := fmt.Sprintf("max retries exceeded (attempts=%d, max_retries=%d)", attempts, maxRetries)
+			if err := e.setJobState(jobID, JobStateFailed); err != nil {
+				slog.Error("state transition failed, retrying", "job_id", jobID, "target_state", JobStateFailed, "error", err)
+				return RetryAfter(err, retryDelayStore)
 			}
+			if err := e.emitDLQWithRetry(jobID, topic, pb.JobStatus_JOB_STATUS_FAILED, reason, "max_retries_exceeded"); err != nil {
+				slog.Error("dlq emit failed, retrying", "job_id", jobID, "error", err)
+				return RetryAfter(err, retryDelayPublish)
+			}
+			return nil
 		}
 	}
 
@@ -1647,8 +1695,8 @@ func (e *Engine) processJob(lockCtx context.Context, req *pb.JobRequest, traceID
 
 	if budget := req.GetBudget(); budget != nil && budget.GetDeadlineMs() > 0 && e.jobStore != nil {
 		ctx, cancel := context.WithTimeout(lockCtx, storeOpTimeout)
-		defer cancel()
 		err := e.jobStore.SetDeadline(ctx, jobID, time.Now().Add(time.Duration(budget.GetDeadlineMs())*time.Millisecond))
+		cancel()
 		if err != nil {
 			return RetryAfter(err, retryDelayStore)
 		}
@@ -1831,7 +1879,7 @@ func reasonCodeForSchedulingError(err error) string {
 	}
 }
 
-func (e *Engine) topicRegistration(ctx context.Context, topic string) (*topicregistry.Registration, bool, error) {
+func (e *Engine) topicRegistration(ctx context.Context, tenantID, topic string) (*topicregistry.Registration, bool, error) {
 	if e == nil {
 		return nil, true, nil
 	}
@@ -1848,7 +1896,7 @@ func (e *Engine) topicRegistration(ctx context.Context, topic string) (*topicreg
 		}
 		return nil, true, nil
 	}
-	return e.topicRegistry.Get(ctx, topic)
+	return e.topicRegistry.GetForTenant(ctx, tenantID, topic)
 }
 
 func (e *Engine) applySubmitSchemaValidation(ctx context.Context, req *pb.JobRequest, traceID string, reg *topicregistry.Registration) (bool, error) {
@@ -2254,7 +2302,13 @@ func (e *Engine) handleJobResult(res *pb.JobResult) error {
 		case pb.JobStatus_JOB_STATUS_FAILED:
 			state = JobStateFailed
 		case pb.JobStatus_JOB_STATUS_FAILED_RETRYABLE:
-			state = JobStateFailed
+			// Map to non-terminal Retrying — the workflow engine (or higher-level
+			// retry coordinator) will re-dispatch with a fresh jobID. Marking
+			// terminal Failed here (combined with the DLQ-suppression at the
+			// FAILED_RETRYABLE branch below) would silently drop retries because
+			// any subsequent dispatch packet for the same jobID short-circuits at
+			// the terminal-state guard in handleJobRequest.
+			state = JobStateRetrying
 		case pb.JobStatus_JOB_STATUS_FAILED_FATAL:
 			state = JobStateFailed
 		case pb.JobStatus_JOB_STATUS_TIMEOUT:
@@ -3096,6 +3150,39 @@ func mapStringToErrorCode(code string) pb.ErrorCode {
 	default:
 		return pb.ErrorCode_ERROR_CODE_UNSPECIFIED
 	}
+}
+
+// emitSafetyBypassAuditEvent records a SIEM audit event for the fail-open
+// admit path so reviewers can correlate bypassed jobs without inferring from
+// WARN logs. Carries fail_mode_origin to distinguish global-default fail-open
+// from a per-tenant override. Audit-fix task-2a52e7da finding #11.
+func (e *Engine) emitSafetyBypassAuditEvent(ctx context.Context, req *pb.JobRequest, topic, reason string) {
+	if e == nil || e.dispatchAuditSink == nil || req == nil {
+		return
+	}
+	origin := "global_default"
+	if e.failModeResolver != nil {
+		origin = "tenant_override"
+	}
+	extra := map[string]string{
+		"fail_mode_origin": origin,
+	}
+	if topic != "" {
+		extra["topic"] = topic
+	}
+	if r := strings.TrimSpace(reason); r != "" {
+		extra["reason"] = r
+	}
+	e.dispatchAuditSink.Emit(ctx, audit.SIEMEvent{
+		Timestamp: time.Now().UTC(),
+		EventType: audit.EventSafetyBypassAdmit,
+		Severity:  audit.SeverityHigh,
+		TenantID:  strings.TrimSpace(req.GetTenantId()),
+		JobID:     strings.TrimSpace(req.GetJobId()),
+		Action:    "admit",
+		Reason:    strings.TrimSpace(reason),
+		Extra:     extra,
+	})
 }
 
 func (e *Engine) emitOutputAuditEvent(jobID, topic, code, reason string, decision OutputDecision) {

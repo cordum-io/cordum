@@ -12,27 +12,22 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="StatusResponseBuild")
 
 
 @_attrs_define
 class StatusResponseBuild:
-    """ 
-        Attributes:
-            version (Union[Unset, str]):
-            commit (Union[Unset, str]):
-            date (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        version (Union[Unset, str]):
+        commit (Union[Unset, str]):
+        date (Union[Unset, str]):
+    """
 
     version: Union[Unset, str] = UNSET
     commit: Union[Unset, str] = UNSET
     date: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         version = self.version
@@ -41,11 +36,9 @@ class StatusResponseBuild:
 
         date = self.date
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if version is not UNSET:
             field_dict["version"] = version
         if commit is not UNSET:
@@ -54,8 +47,6 @@ class StatusResponseBuild:
             field_dict["date"] = date
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -71,7 +62,6 @@ class StatusResponseBuild:
             commit=commit,
             date=date,
         )
-
 
         status_response_build.additional_properties = d
         return status_response_build

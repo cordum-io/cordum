@@ -17,25 +17,21 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="ChatMessage")
 
 
 @_attrs_define
 class ChatMessage:
-    """ 
-        Attributes:
-            id (Union[Unset, str]):
-            run_id (Union[Unset, str]):
-            content (Union[Unset, str]):
-            role (Union[Unset, ChatMessageRole]):
-            step_id (Union[None, Unset, str]):
-            job_id (Union[None, Unset, str]):
-            created_at (Union[Unset, datetime.datetime]):
-     """
+    """
+    Attributes:
+        id (Union[Unset, str]):
+        run_id (Union[Unset, str]):
+        content (Union[Unset, str]):
+        role (Union[Unset, ChatMessageRole]):
+        step_id (Union[None, Unset, str]):
+        job_id (Union[None, Unset, str]):
+        created_at (Union[Unset, datetime.datetime]):
+    """
 
     id: Union[Unset, str] = UNSET
     run_id: Union[Unset, str] = UNSET
@@ -45,7 +41,6 @@ class ChatMessage:
     job_id: Union[None, Unset, str] = UNSET
     created_at: Union[Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         id = self.id
@@ -57,7 +52,6 @@ class ChatMessage:
         role: Union[Unset, str] = UNSET
         if not isinstance(self.role, Unset):
             role = self.role.value
-
 
         step_id: Union[None, Unset, str]
         if isinstance(self.step_id, Unset):
@@ -75,11 +69,9 @@ class ChatMessage:
         if not isinstance(self.created_at, Unset):
             created_at = self.created_at.isoformat()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if id is not UNSET:
             field_dict["id"] = id
         if run_id is not UNSET:
@@ -97,8 +89,6 @@ class ChatMessage:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -110,13 +100,10 @@ class ChatMessage:
 
         _role = d.pop("role", UNSET)
         role: Union[Unset, ChatMessageRole]
-        if isinstance(_role,  Unset):
+        if isinstance(_role, Unset):
             role = UNSET
         else:
             role = ChatMessageRole(_role)
-
-
-
 
         def _parse_step_id(data: object) -> Union[None, Unset, str]:
             if data is None:
@@ -127,7 +114,6 @@ class ChatMessage:
 
         step_id = _parse_step_id(d.pop("step_id", UNSET))
 
-
         def _parse_job_id(data: object) -> Union[None, Unset, str]:
             if data is None:
                 return data
@@ -137,16 +123,12 @@ class ChatMessage:
 
         job_id = _parse_job_id(d.pop("job_id", UNSET))
 
-
         _created_at = d.pop("created_at", UNSET)
         created_at: Union[Unset, datetime.datetime]
-        if isinstance(_created_at,  Unset):
+        if isinstance(_created_at, Unset):
             created_at = UNSET
         else:
             created_at = isoparse(_created_at)
-
-
-
 
         chat_message = cls(
             id=id,
@@ -157,7 +139,6 @@ class ChatMessage:
             job_id=job_id,
             created_at=created_at,
         )
-
 
         chat_message.additional_properties = d
         return chat_message

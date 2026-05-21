@@ -5,7 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { PolicyGlobalDocumentSections } from './policyGlobalDocumentSections';
+import type { PolicyGlobalDocumentSections } from "./policyGlobalDocumentSections";
 
 /**
  * EDGE-052 — five-section view of the Global policy authority. The

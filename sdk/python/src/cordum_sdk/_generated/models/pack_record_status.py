@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class PackRecordStatus(str, Enum):
     ACTIVE = "ACTIVE"
     ERROR = "ERROR"

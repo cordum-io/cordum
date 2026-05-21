@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class RunSummaryStatus(str, Enum):
     CANCELLED = "cancelled"
     DENIED = "denied"

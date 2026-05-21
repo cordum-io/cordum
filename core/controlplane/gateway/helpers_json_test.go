@@ -107,6 +107,24 @@ func TestMaxBodyMiddleware_PassesNormalRequest(t *testing.T) {
 	}
 }
 
+func TestDecodeJSONBody_RejectsUnknownFields(t *testing.T) {
+	type request struct {
+		Name string `json:"name"`
+	}
+	var dst request
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/example", strings.NewReader(`{"name":"ok","extra":"reject"}`))
+	rec := httptest.NewRecorder()
+
+	err := decodeJSONBody(rec, req, &dst)
+	if err == nil {
+		t.Fatal("expected unknown JSON field to be rejected")
+	}
+	writeJSONDecodeError(rec, err, "invalid request body")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown field, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestMaxBodyMiddleware_SkipsGET(t *testing.T) {
 	called := false
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

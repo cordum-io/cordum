@@ -15,11 +15,12 @@ import (
 // the EDGE-052 reopen #1 regression test. It builds the gate via the
 // production wiring path (s.wireMCPApprovalGate), passes an invariant
 // lookup as the helper's parameter, and verifies that:
-//   (a) the helper attaches the lookup (gate.invariants != nil after
-//       construction — this was nil in production before the fix),
-//   (b) an invariant DENY blocks a RequiresApproval=true tool call
-//       through the wired gate WITHOUT the test caller ever invoking
-//       gate.WithInvariantLookup directly.
+//
+//	(a) the helper attaches the lookup (gate.invariants != nil after
+//	    construction — this was nil in production before the fix),
+//	(b) an invariant DENY blocks a RequiresApproval=true tool call
+//	    through the wired gate WITHOUT the test caller ever invoking
+//	    gate.WithInvariantLookup directly.
 //
 // The pre-fix code at handlers_mcp.go:93-99 created the gate via
 // NewGatewayApprovalGate, wired only gate.preapproval, and called

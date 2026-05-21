@@ -128,8 +128,71 @@ const (
 	EventEdgeApprovalRejected  = "edge.approval_rejected"
 	EventEdgeApprovalExpired   = "edge.approval_expired"
 	EventEdgeArtifactExported  = "edge.artifact_exported"
-	EventEdgeAgentdDegraded    = "edge.agentd_degraded"
-	EventEdgeFailClosed        = "edge.fail_closed"
+
+	// EventSafetyBypassAdmit is emitted whenever the scheduler's safety-kernel
+	// fail-open path admits a job because the kernel was unavailable AND the
+	// resolved fail-mode for the tenant (system default or per-tenant override
+	// via FailModeResolver) is "open". Extra carries tenant, topic, reason
+	// (the safety-unavailable cause), and fail_mode_origin (one of
+	// "global_default", "tenant_override") so SIEM rules can flag
+	// per-tenant fail-open toggles and detect kernel outages that admit
+	// jobs without policy enforcement. Severity is HIGH because every
+	// admitted-on-bypass job is a security-relevant event.
+	EventSafetyBypassAdmit = "safety.bypass_admit"
+
+	// EventShadowAgent* are emitted by the Edge Gateway shadow-finding
+	// lifecycle handlers (EDGE-141). Extra carries finding_id, agent_product,
+	// agent_id, risk, evidence_type, redacted_path (already home-prefix
+	// stripped), and the optional artifact pointer URI/SHA256. Raw evidence
+	// summaries are NEVER attached — only the already-redacted
+	// shadow.RedactConfigSummary output, capped at 2 KiB.
+	EventShadowAgentDetected   = "shadow_agent.detected"
+	EventShadowAgentResolved   = "shadow_agent.resolved"
+	EventShadowAgentSuppressed = "shadow_agent.suppressed"
+
+	// EventShadowAgentException* are emitted by the EDGE-143.6 exception
+	// API handlers + the store's emit-time suppression hook. Extra
+	// carries exception_id, scope_source_type, scope_risk_level,
+	// expires_at, and step_up_factor (mfa_recent / signed_admin_token /
+	// none) so SIEM rules can pivot on whether the operator's auth tier
+	// matched the Q8 step-up requirement at the time of action.
+	// .exception_applied additionally carries finding_id for the
+	// suppressed finding.
+	EventShadowAgentExceptionCreated = "shadow_agent.exception_created"
+	EventShadowAgentExceptionRevoked = "shadow_agent.exception_revoked"
+	EventShadowAgentExceptionApplied = "shadow_agent.exception_applied"
+
+	// EventActionGateDenied is emitted by the Safety Kernel when an
+	// action-layer gate (tenant / file / url / mcp / mutation /
+	// provenance) short-circuits the legacy rule loop with a non-ALLOW
+	// decision. Extra carries gate=<gateID>, sub_reason=<subreason>,
+	// and target_type (when known). Severity is HIGH for cross-tenant
+	// access, credential paths, exfil destinations, and self-approval;
+	// MEDIUM for REQUIRE_HUMAN outcomes. SIEM rules pivot on this
+	// event to surface privilege-escalation probes that never reached
+	// the existing rule evaluator.
+	EventActionGateDenied   = "actiongate.denied"
+	EventEdgeAgentdDegraded = "edge.agentd_degraded"
+	EventEdgeFailClosed     = "edge.fail_closed"
+
+	// EventGovernanceDecision is emitted by the multi-agent governance
+	// evaluator for every non-ALLOW decision (DENY or REQUIRE_HUMAN).
+	// Extra carries `operation`, `rule_id` (ma_*), `decision`,
+	// `parent_agent_id`, `child_agent_id`, `issuer_root`, `provenance_verified`,
+	// `approval_ref` when present, and `sub_reason`. Raw tokens,
+	// prompts, secrets, and full shared-memory payloads are NEVER
+	// recorded. Severity is HIGH for cross-tenant, child-bypass,
+	// scope/resource escalation, shared-context-unverified-writer, and
+	// approval-bypass-missing-record rules; MEDIUM for REQUIRE_HUMAN
+	// outcomes (recoverable missing provenance).
+	EventGovernanceDecision = "governance.decision"
+
+	// EventGovernanceLabelSpoof is emitted when a client supplied a
+	// reserved `_governance.*` or `_ma.*` label on job submit. Severity
+	// LOW (it's an attempt, not a breach — the strip already blocked
+	// it). SIEM rules pivot on repeated label-spoof attempts from the
+	// same actor as a probe signal.
+	EventGovernanceLabelSpoof = "governance.label_spoof"
 )
 
 // Severity levels for SIEM events.
@@ -268,9 +331,14 @@ func exporterFromEnv() (Exporter, error) {
 			return nil, fmt.Errorf("audit config: CORDUM_AUDIT_EXPORT_WEBHOOK_URL required for webhook export")
 		}
 		var opts []WebhookOption
-		if secret := os.Getenv("CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET"); secret != "" {
-			opts = append(opts, WithWebhookSecret(secret))
+		secret := strings.TrimSpace(os.Getenv("CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET"))
+		if secret == "" {
+			return nil, fmt.Errorf("audit config: CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET required for webhook export (32+ chars)")
 		}
+		if err := validateWebhookSecret(secret); err != nil {
+			return nil, err
+		}
+		opts = append(opts, WithWebhookSecret(secret))
 		exp = NewWebhookExporter(url, opts...)
 
 	case "syslog":

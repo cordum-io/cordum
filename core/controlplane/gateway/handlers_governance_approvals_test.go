@@ -127,6 +127,26 @@ func TestApprovalAnalyticsCache_TTLExpires(t *testing.T) {
 	}
 }
 
+func TestApprovalAnalyticsCache_BoundsEntryCount(t *testing.T) {
+	cache := &approvalAnalyticsMemCache{
+		ttl:        time.Minute,
+		maxEntries: 2,
+		entries:    map[string]approvalAnalyticsCacheEntry{},
+	}
+	cache.set("a", approvalAnalyticsResponse{Summary: approvalAnalyticsSummary{Total: 1}})
+	cache.set("b", approvalAnalyticsResponse{Summary: approvalAnalyticsSummary{Total: 2}})
+	cache.set("c", approvalAnalyticsResponse{Summary: approvalAnalyticsSummary{Total: 3}})
+
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if len(cache.entries) != 2 {
+		t.Fatalf("cache entry count = %d, want bounded at 2", len(cache.entries))
+	}
+	if _, ok := cache.entries["c"]; !ok {
+		t.Fatal("cache should retain newly inserted entry after eviction")
+	}
+}
+
 func TestSummariseApprovalSamples_EmptyYieldsNullPercentiles(t *testing.T) {
 	sum := summariseApprovalSamples(nil)
 	if sum.Total != 0 || sum.Approved != 0 {

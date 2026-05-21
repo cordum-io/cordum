@@ -6,13 +6,13 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type GetApprovalAnalyticsGroupBy = typeof GetApprovalAnalyticsGroupBy[keyof typeof GetApprovalAnalyticsGroupBy];
-
+export type GetApprovalAnalyticsGroupBy =
+  (typeof GetApprovalAnalyticsGroupBy)[keyof typeof GetApprovalAnalyticsGroupBy];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const GetApprovalAnalyticsGroupBy = {
-  overall: 'overall',
-  rule: 'rule',
-  agent: 'agent',
-  topic: 'topic',
+  overall: "overall",
+  rule: "rule",
+  agent: "agent",
+  topic: "topic",
 } as const;

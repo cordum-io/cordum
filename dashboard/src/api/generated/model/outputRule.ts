@@ -5,8 +5,8 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { OutputRuleAction } from './outputRuleAction';
-import type { OutputRuleConfig } from './outputRuleConfig';
+import type { OutputRuleAction } from "./outputRuleAction";
+import type { OutputRuleConfig } from "./outputRuleConfig";
 
 export interface OutputRule {
   id?: string;

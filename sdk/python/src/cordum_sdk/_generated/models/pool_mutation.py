@@ -16,24 +16,20 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="PoolMutation")
 
 
 @_attrs_define
 class PoolMutation:
-    """ 
-        Attributes:
-            name (str):
-            status (str):
-            requires (Union[Unset, List[str]]):
-            description (Union[Unset, str]):
-            drain_started_at (Union[Unset, datetime.datetime]):
-            drain_timeout_seconds (Union[Unset, int]):
-     """
+    """
+    Attributes:
+        name (str):
+        status (str):
+        requires (Union[Unset, List[str]]):
+        description (Union[Unset, str]):
+        drain_started_at (Union[Unset, datetime.datetime]):
+        drain_timeout_seconds (Union[Unset, int]):
+    """
 
     name: str
     status: str
@@ -42,7 +38,6 @@ class PoolMutation:
     drain_started_at: Union[Unset, datetime.datetime] = UNSET
     drain_timeout_seconds: Union[Unset, int] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         name = self.name
@@ -53,8 +48,6 @@ class PoolMutation:
         if not isinstance(self.requires, Unset):
             requires = self.requires
 
-
-
         description = self.description
 
         drain_started_at: Union[Unset, str] = UNSET
@@ -63,13 +56,14 @@ class PoolMutation:
 
         drain_timeout_seconds = self.drain_timeout_seconds
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "name": name,
-            "status": status,
-        })
+        field_dict.update(
+            {
+                "name": name,
+                "status": status,
+            }
+        )
         if requires is not UNSET:
             field_dict["requires"] = requires
         if description is not UNSET:
@@ -81,8 +75,6 @@ class PoolMutation:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -92,18 +84,14 @@ class PoolMutation:
 
         requires = cast(List[str], d.pop("requires", UNSET))
 
-
         description = d.pop("description", UNSET)
 
         _drain_started_at = d.pop("drain_started_at", UNSET)
         drain_started_at: Union[Unset, datetime.datetime]
-        if isinstance(_drain_started_at,  Unset):
+        if isinstance(_drain_started_at, Unset):
             drain_started_at = UNSET
         else:
             drain_started_at = isoparse(_drain_started_at)
-
-
-
 
         drain_timeout_seconds = d.pop("drain_timeout_seconds", UNSET)
 
@@ -115,7 +103,6 @@ class PoolMutation:
             drain_started_at=drain_started_at,
             drain_timeout_seconds=drain_timeout_seconds,
         )
-
 
         pool_mutation.additional_properties = d
         return pool_mutation

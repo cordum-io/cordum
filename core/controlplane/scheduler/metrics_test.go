@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
+	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
-	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
 
 func mustRegisterMetrics(t *testing.T) (*WorkerTrustMetrics, *prometheus.Registry) {

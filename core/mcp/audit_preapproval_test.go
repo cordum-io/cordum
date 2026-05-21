@@ -38,10 +38,10 @@ func TestInvocationHandle_MarkApprovalPreapproved_NilReceiver(t *testing.T) {
 func TestInvocationHandle_ApprovalStatusMatrix(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name   string
-		mark   func(h *InvocationHandle)
-		want   string
-		hasID  bool
+		name  string
+		mark  func(h *InvocationHandle)
+		want  string
+		hasID bool
 	}{
 		{"required", func(h *InvocationHandle) { h.MarkApprovalRequired("apr-1") }, "required", true},
 		{"consumed", func(h *InvocationHandle) { h.MarkApprovalConsumed("apr-2") }, "consumed", true},

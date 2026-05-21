@@ -30,6 +30,8 @@ import (
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	edgecore "github.com/cordum/cordum/core/edge"
+	"github.com/cordum/cordum/core/edge/runtimeingest"
+	"github.com/cordum/cordum/core/edge/shadow"
 	"github.com/cordum/cordum/core/governance"
 	"github.com/cordum/cordum/core/infra/artifacts"
 	"github.com/cordum/cordum/core/infra/buildinfo"
@@ -46,7 +48,9 @@ import (
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/infra/tlsreload"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/cordum/cordum/core/mcp"
 	"github.com/cordum/cordum/core/model"
+	"github.com/cordum/cordum/core/policy/actiongates"
 	"github.com/cordum/cordum/core/policyshadow"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"github.com/cordum/cordum/core/telemetry"
@@ -106,6 +110,7 @@ const (
 	envGRPCServerEnforcementMinTime = "CORDUM_GRPC_SERVER_ENFORCEMENT_MIN_TIME"
 	envEdgeSessionRetentionTTL      = "CORDUM_EDGE_SESSION_RETENTION_TTL"
 	envEdgeSessionSweepInterval     = "CORDUM_EDGE_SESSION_SWEEP_INTERVAL"
+	envEdgeApprovalMaxTTL           = "CORDUM_EDGE_APPROVAL_MAX_TTL"
 )
 
 var (
@@ -124,12 +129,22 @@ const (
 
 type server struct {
 	pb.UnimplementedCordumApiServer
-	memStore              store.Store
-	jobStore              *store.RedisJobStore // Typed for ListRecentJobs
-	edgeStore             edgecore.Store
+	memStore            store.Store
+	jobStore            *store.RedisJobStore // Typed for ListRecentJobs
+	edgeStore           edgecore.Store
+	runtimeReplayWindow *runtimeingest.ReplayWindow
+	shadowFindingStore  shadow.Store
+	mcpUpstreamRegistry edgecore.MCPUpstreamRegistry
+	// mcpUpstreamRegistryMu guards lazy fallback initialization for
+	// test/minimal server instances that do not set mcpUpstreamRegistry
+	// during construction.
+	mcpUpstreamRegistryMu sync.Mutex
 	decisionLogStore      model.DecisionLogStore
 	copilotStore          copilot.Store
 	governanceHealthCache *governance.Cache
+	governanceEvalMu      sync.RWMutex
+	governanceEvaluator   governanceRunner
+	governancePolicy      config.GovernancePolicy
 	routeTable            []routeInfo
 	// approvalAnalyticsCache memoises approval-analytics responses
 	// per (tenant, window, group_by, limit) for
@@ -153,9 +168,13 @@ type server struct {
 	tenant          string
 	started         time.Time
 	auth            auth.AuthProvider
-	entitlements    *licensing.EntitlementResolver
-	telemetry       *telemetry.Collector
-	telemetryState  *telemetry.Store
+	// loginTimingCompare is nil in production and injectable in tests so
+	// login timing-equalization coverage does not rely on wall-clock bcrypt.
+	loginTimingCompare func(hash, password []byte) error
+	oidcMappingMu      sync.Mutex
+	entitlements       *licensing.EntitlementResolver
+	telemetry          *telemetry.Collector
+	telemetryState     *telemetry.Store
 
 	workflowStore         *wf.RedisStore
 	workflowEng           *wf.Engine
@@ -163,6 +182,13 @@ type server struct {
 	topicRegistry         *topicregistry.Service
 	workerCredentialStore *workercredentials.Service
 	agentIdentityStore    *store.AgentIdentityStore
+	// mcpVerifierPtr caches the per-server inbound MCP signature verifier.
+	// Pre-fix the trust store lived on a package-level sync.Once, which
+	// pinned it for the lifetime of the process and silently absorbed
+	// operator key rotation. Now an atomic.Pointer holds a composite
+	// (verifier, err) state so the lazy getter stays lock-free and
+	// s.reloadMCPVerifier() can clear the slot on rotation.
+	mcpVerifierPtr mcpVerifierPtrType
 	// evalDatasetStore holds curated, immutable policy-regression test
 	// fixtures that the sibling eval-runner task (epic-e1c4321a) will
 	// replay through the policy engine. Only the CRUD surface lives in
@@ -177,10 +203,16 @@ type server struct {
 	schemaEnforcement schema.EnforcementMode
 	safetyConn        *grpc.ClientConn
 	safetyClient      pb.SafetyKernelClient
-	userStore         auth.UserStore
-	keyStore          auth.KeyStore
-	rbacStore         *auth.RBACStore
-	permChecker       *auth.PermissionChecker
+	// actionGatePipeline runs deterministic pre-rule action-layer gates
+	// (tenant/file/url/mcp/mutation/provenance) for HTTP policy + edge
+	// evaluate endpoints. Production wires this at startup; tests inject
+	// a stub. nil = action gates disabled (falls through to legacy
+	// safetyClient.Evaluate / Simulate / Explain).
+	actionGatePipeline *actiongates.Pipeline
+	userStore          auth.UserStore
+	keyStore           auth.KeyStore
+	rbacStore          *auth.RBACStore
+	permChecker        *auth.PermissionChecker
 
 	auditExporter       audit.AuditSender
 	auditChainer        *audit.Chainer
@@ -326,6 +358,10 @@ func edgeSessionRetentionTTLFromEnv() (time.Duration, error) {
 
 func edgeSessionSweepIntervalFromEnv() (time.Duration, error) {
 	return positiveDurationFromEnv(envEdgeSessionSweepInterval, edgecore.DefaultSessionSweepInterval)
+}
+
+func edgeApprovalMaxTTLFromEnv() (time.Duration, error) {
+	return positiveDurationFromEnv(envEdgeApprovalMaxTTL, edgecore.DefaultApprovalMaxTTL)
 }
 
 func positiveDurationFromEnv(key string, fallback time.Duration) (time.Duration, error) {
@@ -645,11 +681,38 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	if err != nil {
 		return err
 	}
-	edgeStore := edgecore.NewRedisStoreFromClient(jobStore.Client(), edgecore.WithRecorder(edgeRecorder))
+	edgeApprovalMaxTTL, err := edgeApprovalMaxTTLFromEnv()
+	if err != nil {
+		return err
+	}
+	edgeStore := edgecore.NewRedisStoreFromClient(
+		jobStore.Client(),
+		edgecore.WithRecorder(edgeRecorder),
+		edgecore.WithApprovalMaxTTL(edgeApprovalMaxTTL),
+	)
+	runtimeReplayWindow := runtimeingest.NewReplayWindow(
+		jobStore.Client(),
+		runtimeingest.ReplayWindowTTL,
+		runtimeingest.MaxReplayWindowCardinality,
+	)
+	// EDGE-141 — Shadow finding store shares the existing Redis client; it
+	// does NOT own connection lifecycle. nil-safe: NewRedisStore returns
+	// nil when the client is nil so unit-test gateways without Redis
+	// continue to surface a clean 503 envelope via shadowFindingStoreOrUnavailable.
+	// EDGE-143.5: signature is (*RedisStore, error); the error surfaces
+	// CORDUM_EDGE_SHADOW_RETENTION_* parse failures fail-fast at startup
+	// per §10.5 "positive durations; 0/negative fail at startup".
+	shadowFindingStore, err := shadow.NewRedisStore(jobStore.Client())
+	if err != nil {
+		return fmt.Errorf("shadow finding store: %w", err)
+	}
 	s := &server{
 		memStore:               memStore,
 		jobStore:               jobStore,
 		edgeStore:              edgeStore,
+		runtimeReplayWindow:    runtimeReplayWindow,
+		shadowFindingStore:     shadowFindingStore,
+		mcpUpstreamRegistry:    edgecore.NewRedisMCPUpstreamRegistryFromClient(jobStore.Client()),
 		decisionLogStore:       decisionLogStore,
 		copilotStore:           copilot.NotImplementedStore{},
 		governanceHealthCache:  governance.NewCache(60 * time.Second),
@@ -697,6 +760,15 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 		heartbeatMode:          scheduler.ParseHeartbeatMode(os.Getenv(scheduler.EnvHeartbeatMode)),
 		shutdownCh:             make(chan struct{}),
 	}
+	// Production action-gate pipeline wiring. Must be called after the
+	// server struct is populated (edgeStore + agentIdentityStore must be
+	// non-nil for the gate dependencies to bind) and before any HTTP
+	// handler can fire — so before middleware chain assembly and Serve.
+	// handlers_policy.go consults s.actionGatePipeline; populating it
+	// here turns previously-dead actiongates_http.go and gate-fire
+	// branches into the live request path.
+	s.wireActionGatePipeline()
+	s.wireGovernanceEvaluator()
 	s.syncApprovalQueueDepth(context.Background())
 	defer s.Close()
 	telemetryStore, err := telemetry.NewStore(cfg.RedisURL)
@@ -849,9 +921,16 @@ func RunWithAuth(cfg *config.Config, provider auth.AuthProvider, entitlementReso
 	if err != nil {
 		return fmt.Errorf("init edge session sweeper: %w", err)
 	}
+	edgeApprovalSweeper, err := edgecore.NewApprovalSweeper(edgeStore, edgecore.ApprovalSweeperOptions{
+		Interval: edgeSweepInterval,
+	})
+	if err != nil {
+		return fmt.Errorf("init edge approval sweeper: %w", err)
+	}
 	edgeSweepCtx, edgeSweepCancel := context.WithCancel(context.Background())
 	s.edgeSweeperCancel = edgeSweepCancel
 	go edgeSweeper.Run(edgeSweepCtx)
+	go edgeApprovalSweeper.Run(edgeSweepCtx)
 
 	return startHTTPServer(s, httpAddr, metricsAddr, grpcServer)
 }
@@ -1220,6 +1299,7 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "GET /api/v1/workers", s.instrumented("/api/v1/workers", s.handleGetWorkers))
 	s.registerRoute(mux, "GET /api/v1/workers/{id}", s.instrumented("/api/v1/workers/{id}", s.handleGetWorker))
 	s.registerRoute(mux, "GET /api/v1/workers/{id}/jobs", s.instrumented("/api/v1/workers/{id}/jobs", s.handleGetWorkerJobs))
+	s.registerRoute(mux, "POST /api/v1/workers/{id}/revoke-session", s.instrumented("/api/v1/workers/{id}/revoke-session", s.handleRevokeWorkerSession))
 	s.registerRoute(mux, "GET /api/v1/workers/credentials", s.instrumented("/api/v1/workers/credentials", s.handleListWorkerCredentials))
 	s.registerRoute(mux, "POST /api/v1/workers/credentials", s.instrumented("/api/v1/workers/credentials", s.handleCreateWorkerCredential))
 	s.registerRoute(mux, "DELETE /api/v1/workers/credentials/{worker_id}", s.instrumented("/api/v1/workers/credentials/{worker_id}", s.handleDeleteWorkerCredential))
@@ -1278,6 +1358,14 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	// that had /api/v1/audit/verify 404ing on fresh deploys despite the
 	// handler being fully implemented and unit-tested.
 	s.registerRoute(mux, "GET /api/v1/audit/verify", s.instrumented("/api/v1/audit/verify", s.handleAuditVerify))
+
+	// 2.7.2 Audit chain list (audit.read) — SIEM-feed read endpoint for the
+	// dashboard's Audit Log page. Distinct from /audit/verify (integrity
+	// check) and /policy/audit (policy-bundle subset): /audit/events walks
+	// the per-tenant Redis Stream populated from NATS sys.audit.export so
+	// MCP / edge / worker / output policy / delegation events all surface.
+	s.registerRoute(mux, "GET /api/v1/audit/events", s.instrumented("/api/v1/audit/events", s.handleListAuditEvents))
+
 	s.registerRoute(mux, "GET /api/v1/governance/health", s.instrumented("/api/v1/governance/health", s.handleGovernanceHealth))
 
 	// 2.8 Legal hold management (admin only, entitlement-gated)
@@ -1312,11 +1400,37 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "POST /api/v1/edge/approvals/{approval_ref}/reject", s.instrumented("/api/v1/edge/approvals/{approval_ref}/reject", s.handleRejectEdgeApproval))
 	s.registerRoute(mux, "POST /api/v1/edge/approvals/{approval_ref}/wait", s.instrumented("/api/v1/edge/approvals/{approval_ref}/wait", s.handleWaitEdgeApproval))
 	s.registerRoute(mux, "POST /api/v1/edge/evaluate", s.instrumented("/api/v1/edge/evaluate", s.handleEdgeEvaluate))
+	// EDGE-151-DASHBOARD — binary-verify outcomes from install.{sh,ps1}
+	// (docs/security/binary-signing.md §8) flow through the audit chain.
+	s.registerRoute(mux, "POST /api/v1/edge/binary-integrity/events", s.instrumented("/api/v1/edge/binary-integrity/events", s.handleIngestBinaryVerify))
+	s.registerRoute(mux, "GET /api/v1/edge/binary-integrity/events", s.instrumented("/api/v1/edge/binary-integrity/events", s.handleListBinaryVerify))
+	// EDGE-141 — Shadow agent finding lifecycle.
+	s.registerRoute(mux, "POST /api/v1/edge/shadow-agents", s.instrumented("/api/v1/edge/shadow-agents", s.handleCreateShadowAgentFinding))
+	s.registerRoute(mux, "GET /api/v1/edge/shadow-agents", s.instrumented("/api/v1/edge/shadow-agents", s.handleListShadowAgentFindings))
+	s.registerRoute(mux, "GET /api/v1/edge/shadow-agents/{finding_id}", s.instrumented("/api/v1/edge/shadow-agents/{finding_id}", s.handleGetShadowAgentFinding))
+	s.registerRoute(mux, "POST /api/v1/edge/shadow-agents/{finding_id}/resolve", s.instrumented("/api/v1/edge/shadow-agents/{finding_id}/resolve", s.handleResolveShadowAgentFinding))
+	s.registerRoute(mux, "POST /api/v1/edge/shadow-agents/{finding_id}/suppress", s.instrumented("/api/v1/edge/shadow-agents/{finding_id}/suppress", s.handleSuppressShadowAgentFinding))
+	s.registerRoute(mux, "POST /api/v1/edge/shadow-agents/{finding_id}/ignore", s.instrumented("/api/v1/edge/shadow-agents/{finding_id}/ignore", s.handleSuppressShadowAgentFinding))
+	s.registerRoute(mux, "POST /api/v1/edge/shadow-agents/{finding_id}/remediation", s.instrumented("/api/v1/edge/shadow-agents/{finding_id}/remediation", s.handleGenerateShadowAgentRemediation))
+	// EDGE-143.6 — Shadow exception declarations (§10.3). Step-up auth
+	// (Q8 binding ruling) gates risk=high CREATE + matching REVOKE.
+	s.registerRoute(mux, "POST /api/v1/edge/shadow/exception", s.instrumented("/api/v1/edge/shadow/exception", s.handleCreateShadowException))
+	s.registerRoute(mux, "GET /api/v1/edge/shadow/exception/{exception_id}", s.instrumented("/api/v1/edge/shadow/exception/{exception_id}", s.handleGetShadowException))
+	s.registerRoute(mux, "DELETE /api/v1/edge/shadow/exception/{exception_id}", s.instrumented("/api/v1/edge/shadow/exception/{exception_id}", s.handleRevokeShadowException))
+	s.registerRoute(mux, "GET /api/v1/edge/shadow/exceptions", s.instrumented("/api/v1/edge/shadow/exceptions", s.handleListShadowExceptions))
+	s.registerRoute(mux, "GET /api/v1/edge/mcp/upstreams", s.instrumented("/api/v1/edge/mcp/upstreams", s.handleListMCPUpstreams))
+	s.registerRoute(mux, "GET /api/v1/edge/mcp/upstreams/list", s.instrumented("/api/v1/edge/mcp/upstreams/list", s.handleListMCPUpstreams))
+	s.registerRoute(mux, "POST /api/v1/edge/mcp/upstreams", s.instrumented("/api/v1/edge/mcp/upstreams", s.handleCreateMCPUpstream))
+	s.registerRoute(mux, "GET /api/v1/edge/mcp/upstreams/{name}", s.instrumented("/api/v1/edge/mcp/upstreams/{name}", s.handleGetMCPUpstream))
+	s.registerRoute(mux, "PUT /api/v1/edge/mcp/upstreams/{name}", s.instrumented("/api/v1/edge/mcp/upstreams/{name}", s.handleUpdateMCPUpstream))
+	s.registerRoute(mux, "POST /api/v1/edge/mcp/upstreams/{name}/disable", s.instrumented("/api/v1/edge/mcp/upstreams/{name}/disable", s.handleDisableMCPUpstream))
+	s.registerRoute(mux, "POST /api/v1/edge/mcp/upstreams/{name}/enable", s.instrumented("/api/v1/edge/mcp/upstreams/{name}/enable", s.handleEnableMCPUpstream))
 	s.registerRoute(mux, "POST /api/v1/edge/events", s.instrumented("/api/v1/edge/events", s.handleCreateEdgeEvent))
 	s.registerRoute(mux, "POST /api/v1/edge/events/batch", s.instrumented("/api/v1/edge/events/batch", s.handleCreateEdgeEventsBatch))
 	s.registerRoute(mux, "GET /api/v1/edge/sessions/{session_id}/events", s.instrumented("/api/v1/edge/sessions/{session_id}/events", s.handleListEdgeSessionEvents))
 	s.registerRoute(mux, "GET /api/v1/edge/executions/{execution_id}/events", s.instrumented("/api/v1/edge/executions/{execution_id}/events", s.handleListEdgeExecutionEvents))
 	s.registerRoute(mux, "POST /api/v1/edge/sessions/{session_id}/export", s.instrumented("/api/v1/edge/sessions/{session_id}/export", s.handleExportEdgeSession))
+	s.registerRoute(mux, "POST /api/v1/edge/runtime/events", s.instrumented("/api/v1/edge/runtime/events", s.handleEdgeRuntimeIngest))
 
 	// 4.5 Memory pointers (debug)
 	s.registerRoute(mux, "GET /api/v1/memory", s.instrumented("/api/v1/memory", s.handleGetMemory))
@@ -1401,6 +1515,30 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	s.registerRoute(mux, "GET /api/v1/mcp/tools", s.instrumented("/api/v1/mcp/tools", s.handleListMCPTools))
 	s.registerRoute(mux, "GET /api/v1/agents/{id}/tools", s.instrumented("/api/v1/agents/{id}/tools", s.handleAgentToolVisibility))
 	s.registerRoute(mux, "GET /api/v1/agents/{id}/denied-events", s.instrumented("/api/v1/agents/{id}/denied-events", s.handleAgentDeniedEvents))
+
+	// EDGE-100: register MCP Gateway skeleton routes UNCONDITIONALLY so the
+	// route table stays consistent across test environments where
+	// s.edgeStore may be nil. Construction failure falls back to a stub
+	// gateway whose handlers respond 503 "gateway_unavailable" — surfaces
+	// the misconfiguration in audit instead of silently dropping routes.
+	// Disabled-by-default upstream forwarding is enforced via the
+	// GatewayEnabled callback inside mcpGatewayHandlers; EDGE-101 will
+	// wire per-tenant MCPPolicy.GatewayEnabled lookup, until then it
+	// returns false so the upstream route family fails closed with 503
+	// "gateway disabled" on every tenant. Health + config remain probeable
+	// so operators can observe a disabled deployment.
+	mcpGatewayHealth, mcpGatewayConfig, mcpGatewayUpstream, mcpGatewayConnect := mcpGatewayHandlers(s)
+	s.registerRoute(mux, "GET /api/v1/mcp/gateway/health", s.instrumented("/api/v1/mcp/gateway/health", mcpGatewayHealth))
+	s.registerRoute(mux, "GET /api/v1/mcp/gateway/config", s.instrumented("/api/v1/mcp/gateway/config", mcpGatewayConfig))
+	// Two routes for the upstream forwarding catch-all:
+	//   POST /api/v1/mcp/gateway/upstream    — canonical OpenAPI surface
+	//   /api/v1/mcp/gateway/upstream/        — any-method subroute prefix
+	// Together they cover both the operator-visible POST and any future
+	// EDGE-1xx subpath dispatch while keeping the spec free of an invalid
+	// trailing-slash path (see x-subroute-dispatch in cordum-api.yaml).
+	s.registerRoute(mux, "POST /api/v1/mcp/gateway/upstream", s.instrumented("/api/v1/mcp/gateway/upstream", mcpGatewayUpstream))
+	s.registerRoute(mux, "/api/v1/mcp/gateway/upstream/", s.instrumented("/api/v1/mcp/gateway/upstream/", mcpGatewayUpstream))
+	s.registerRoute(mux, "POST /api/v1/mcp/gateway/clients/connect", s.instrumented("/api/v1/mcp/gateway/clients/connect", mcpGatewayConnect))
 
 	// 12. Policy endpoints
 	s.registerRoute(mux, "POST /api/v1/policy/evaluate", s.instrumented("/api/v1/policy/evaluate", s.handlePolicyEvaluate))
@@ -1489,6 +1627,64 @@ func (s *server) registerRoutes(mux *http.ServeMux) error {
 	}
 
 	return nil
+}
+
+// mcpGatewayHandlers constructs the EDGE-100 MCP Gateway skeleton's four
+// handlers wired to the server's edge store and tenant/auth helpers. When
+// any required dep is missing (e.g. s.edgeStore nil in unit-test gateways)
+// every handler returns 503 "gateway_unavailable" so the route table stays
+// consistent across environments and the misconfiguration is observable
+// without crashing boot.
+func mcpGatewayHandlers(s *server) (health, config, upstream, connect http.HandlerFunc) {
+	stub := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"service unavailable","code":"gateway_unavailable","message":"mcp gateway not initialized"}`))
+	}
+	if s == nil || s.edgeStore == nil {
+		return stub, stub, stub, stub
+	}
+	g, err := mcp.NewGateway(mcp.GatewayDeps{
+		Store:            s.edgeStore,
+		UpstreamRegistry: mcpGatewayUpstreamRegistry(s),
+		GatewayEnabled: func(_ context.Context, _ string) (bool, error) {
+			// TODO(EDGE-101): look up per-tenant MCPPolicy.GatewayEnabled
+			// from the live config snapshot. Stubbed false here so the
+			// upstream family ships fail-closed per EDGE-100 DoD #1.
+			return false, nil
+		},
+		ResolveTenant: func(r *http.Request) (string, string, error) {
+			tenant, terr := s.resolveTenant(r, "")
+			if terr != nil {
+				return "", "", terr
+			}
+			if terr := s.requireTenantAccess(r, tenant); terr != nil {
+				return "", "", terr
+			}
+			authCtx := auth.FromRequest(r)
+			if authCtx == nil {
+				return "", "", errors.New("auth context missing")
+			}
+			return tenant, authCtx.PrincipalID, nil
+		},
+	})
+	if err != nil {
+		slog.Warn("mcp gateway: skeleton construction failed; routes wired to 503 stub", "err", err)
+		return stub, stub, stub, stub
+	}
+	return g.HandleHealth, g.HandleConfig, g.HandleUpstream, g.HandleClientConnect
+}
+
+func mcpGatewayUpstreamRegistry(s *server) edgecore.MCPUpstreamRegistry {
+	if s == nil {
+		return nil
+	}
+	s.mcpUpstreamRegistryMu.Lock()
+	defer s.mcpUpstreamRegistryMu.Unlock()
+	if s.mcpUpstreamRegistry == nil && s.jobStore != nil && s.jobStore.Client() != nil {
+		s.mcpUpstreamRegistry = edgecore.NewRedisMCPUpstreamRegistryFromClient(s.jobStore.Client())
+	}
+	return s.mcpUpstreamRegistry
 }
 
 func (s *server) registerRoute(mux *http.ServeMux, pattern string, handler http.HandlerFunc) {

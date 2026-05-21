@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- EDGE-105 — Edge Session detail timeline now renders a dedicated MCP lane below the P0 hook timeline. The lane surfaces `mcp.server.connected/failed`, `mcp.tool.pre/post/failed`, and `approval.*` (when `layer=mcp`) events with chip-toggle filters (Servers / Tools / Approvals / Failures) that persist via the `?mcp_lane=` URL query. Clicking a row expands an inline inspector showing upstream server, tool name, decision, approval link (`/approvals/<ref>`), and redacted args/result, plus an artifact-pointer chip when an artifact URI is present. A client-side defense-in-depth sanitizer (`src/lib/redaction.ts`) enforces the project's `_redacted`-suffix contract: server-side redaction is trusted verbatim; bare sensitive fields are replaced with `"[redacted by client sanitizer]"` before display. Reuses the existing `AgentActionEvent` typed payload — no new transformer, no P0 lane reorder. Strict axe gate passes (0 violations). Reduced motion is honored automatically via the global `<MotionConfig reducedMotion="user">` wrapper (task-a04699dc).
 - Replace Copilot Session detail placeholder with full timeline (messages,
   governance decisions, linked jobs) backed by the new
   `/api/v1/copilot/sessions/:sessionId` endpoint and `useCopilotSession` hook

@@ -22,16 +22,16 @@ var randRead = cryptoRand.Read
 // used by the CLI keygen and by roundtrip tests so they don't need to
 // import x509 directly.
 var (
-	x509MarshalECPrivateKey = x509.MarshalECPrivateKey
+	x509MarshalECPrivateKey  = x509.MarshalECPrivateKey
 	x509MarshalPKIXPublicKey = x509.MarshalPKIXPublicKey
 )
 
 // Env var names for outbound signing / inbound trust-store. Kept as
 // constants so operator docs can reference one source of truth.
 const (
-	EnvSigningKey     = "CORDUM_MCP_OUTBOUND_SIGNING_KEY"
-	EnvSigningKeyPath = "CORDUM_MCP_OUTBOUND_SIGNING_KEY_PATH"
-	EnvSigningKeyID   = "CORDUM_MCP_OUTBOUND_SIGNING_KEY_ID"
+	EnvSigningKey       = "CORDUM_MCP_OUTBOUND_SIGNING_KEY"
+	EnvSigningKeyPath   = "CORDUM_MCP_OUTBOUND_SIGNING_KEY_PATH"
+	EnvSigningKeyID     = "CORDUM_MCP_OUTBOUND_SIGNING_KEY_ID"
 	EnvTrustedKeyPrefix = "CORDUM_MCP_INBOUND_TRUSTED_KEY_"
 )
 

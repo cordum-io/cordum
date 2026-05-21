@@ -13,10 +13,7 @@ from typing import cast, List
 from typing import Dict
 
 if TYPE_CHECKING:
-  from ..models.pool_list_item import PoolListItem
-
-
-
+    from ..models.pool_list_item import PoolListItem
 
 
 T = TypeVar("T", bound="ListPoolsResponse200")
@@ -24,53 +21,47 @@ T = TypeVar("T", bound="ListPoolsResponse200")
 
 @_attrs_define
 class ListPoolsResponse200:
-    """ 
-        Attributes:
-            items (List['PoolListItem']):
-     """
+    """
+    Attributes:
+        items (List['PoolListItem']):
+    """
 
-    items: List['PoolListItem']
+    items: List["PoolListItem"]
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.pool_list_item import PoolListItem
+
         items = []
         for items_item_data in self.items:
             items_item = items_item_data.to_dict()
             items.append(items_item)
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "items": items,
-        })
+        field_dict.update(
+            {
+                "items": items,
+            }
+        )
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.pool_list_item import PoolListItem
+
         d = src_dict.copy()
         items = []
         _items = d.pop("items")
-        for items_item_data in (_items):
+        for items_item_data in _items:
             items_item = PoolListItem.from_dict(items_item_data)
 
-
-
             items.append(items_item)
-
 
         list_pools_response_200 = cls(
             items=items,
         )
-
 
         list_pools_response_200.additional_properties = d
         return list_pools_response_200

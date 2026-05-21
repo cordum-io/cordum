@@ -3,6 +3,8 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/cordum/cordum/core/audit"
@@ -82,6 +84,45 @@ func TestMCPProdBoot_ToolCallAuditHookFires(t *testing.T) {
 	}
 	if got := captured.Extra["tenant"]; got != "tenant-wiring" {
 		t.Errorf("Extra[tenant] = %q want tenant-wiring (mcpAuth stashes this via mcp.WithTenant)", got)
+	}
+}
+
+func TestMCPGatewayCanonicalUpstreamRouteRegistered(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	mux := http.NewServeMux()
+	if err := s.registerRoutes(mux); err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+
+	cases := []struct {
+		name        string
+		path        string
+		wantPattern string
+	}{
+		{
+			name:        "canonical",
+			path:        "/api/v1/mcp/gateway/upstream",
+			wantPattern: "POST /api/v1/mcp/gateway/upstream",
+		},
+		{
+			name:        "subroute",
+			path:        "/api/v1/mcp/gateway/upstream/tools/list",
+			wantPattern: "/api/v1/mcp/gateway/upstream/",
+		},
+		{
+			name:        "legacy_bare_route_is_not_alias",
+			path:        "/api/v1/mcp/gateway",
+			wantPattern: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tc.path, nil)
+			_, pattern := mux.Handler(req)
+			if pattern != tc.wantPattern {
+				t.Fatalf("pattern for POST %s = %q; want %q", tc.path, pattern, tc.wantPattern)
+			}
+		})
 	}
 }
 

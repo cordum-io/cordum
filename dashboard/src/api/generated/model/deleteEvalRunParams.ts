@@ -7,5 +7,5 @@
  */
 
 export type DeleteEvalRunParams = {
-force?: boolean;
+  force?: boolean;
 };

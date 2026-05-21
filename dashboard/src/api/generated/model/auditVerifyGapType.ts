@@ -6,13 +6,13 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type AuditVerifyGapType = typeof AuditVerifyGapType[keyof typeof AuditVerifyGapType];
-
+export type AuditVerifyGapType =
+  (typeof AuditVerifyGapType)[keyof typeof AuditVerifyGapType];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const AuditVerifyGapType = {
-  missing: 'missing',
-  out_of_order: 'out_of_order',
-  hash_mismatch: 'hash_mismatch',
-  retention_trimmed: 'retention_trimmed',
+  missing: "missing",
+  out_of_order: "out_of_order",
+  hash_mismatch: "hash_mismatch",
+  retention_trimmed: "retention_trimmed",
 } as const;

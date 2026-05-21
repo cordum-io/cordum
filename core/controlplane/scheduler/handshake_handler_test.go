@@ -32,10 +32,10 @@ func (f *fakeIdentityResolver) Get(_ context.Context, id string) (*store.AgentId
 
 // memoryNonceStore is a thread-safe in-memory NonceStore.
 type memoryNonceStore struct {
-	mu    sync.Mutex
-	seen  map[string]time.Time
-	err   error
-	now   func() time.Time
+	mu   sync.Mutex
+	seen map[string]time.Time
+	err  error
+	now  func() time.Time
 }
 
 func newMemoryNonceStore() *memoryNonceStore {

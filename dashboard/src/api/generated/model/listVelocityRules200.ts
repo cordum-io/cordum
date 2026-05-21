@@ -5,8 +5,8 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { VelocityRule } from './velocityRule';
-import type { GenericObject } from './genericObject';
+import type { VelocityRule } from "./velocityRule";
+import type { GenericObject } from "./genericObject";
 
 export type ListVelocityRules200 = {
   items: VelocityRule[];

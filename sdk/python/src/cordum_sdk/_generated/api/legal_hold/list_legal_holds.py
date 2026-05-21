@@ -14,27 +14,19 @@ from typing import Dict
 from typing import Union
 
 
-
 def _get_kwargs(
     *,
     tenant: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
     params["tenant"] = tenant
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -42,16 +34,15 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, GenericObject]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, GenericObject]]:
     if response.status_code == 200:
         response_200 = GenericObject.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 401:
@@ -69,7 +60,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, GenericObject]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, GenericObject]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -83,9 +76,8 @@ def sync_detailed(
     client: Union[AuthenticatedClient, Client],
     tenant: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, GenericObject]]:
-    """ List legal holds
+    """List legal holds
 
     Args:
         tenant (Union[Unset, str]):
@@ -97,13 +89,11 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, GenericObject]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         tenant=tenant,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -112,14 +102,14 @@ x_tenant_id=x_tenant_id,
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     tenant: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, GenericObject]]:
-    """ List legal holds
+    """List legal holds
 
     Args:
         tenant (Union[Unset, str]):
@@ -131,24 +121,22 @@ def sync(
 
     Returns:
         Union[Any, GenericObject]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-tenant=tenant,
-x_tenant_id=x_tenant_id,
-
+        tenant=tenant,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     tenant: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, GenericObject]]:
-    """ List legal holds
+    """List legal holds
 
     Args:
         tenant (Union[Unset, str]):
@@ -160,29 +148,25 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, GenericObject]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         tenant=tenant,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     tenant: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, GenericObject]]:
-    """ List legal holds
+    """List legal holds
 
     Args:
         tenant (Union[Unset, str]):
@@ -194,12 +178,12 @@ async def asyncio(
 
     Returns:
         Union[Any, GenericObject]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-tenant=tenant,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            tenant=tenant,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

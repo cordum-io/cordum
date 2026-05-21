@@ -5,9 +5,9 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { PolicyCheckResponseDecision } from './policyCheckResponseDecision';
-import type { PolicyCheckResponseConstraints } from './policyCheckResponseConstraints';
-import type { SafetyDecision } from './safetyDecision';
+import type { PolicyCheckResponseDecision } from "./policyCheckResponseDecision";
+import type { PolicyCheckResponseConstraints } from "./policyCheckResponseConstraints";
+import type { SafetyDecision } from "./safetyDecision";
 
 export interface PolicyCheckResponse {
   decision?: PolicyCheckResponseDecision;

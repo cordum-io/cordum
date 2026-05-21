@@ -5,8 +5,8 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { PolicyCheckRequestContext } from './policyCheckRequestContext';
-import type { PolicyCheckRequestLabels } from './policyCheckRequestLabels';
+import type { PolicyCheckRequestContext } from "./policyCheckRequestContext";
+import type { PolicyCheckRequestLabels } from "./policyCheckRequestLabels";
 
 export interface PolicyCheckRequest {
   job_id?: string;

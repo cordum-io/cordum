@@ -24,7 +24,7 @@ var (
 
 // scopeFinding describes a specific scope violation found by the evaluator.
 type scopeFinding struct {
-	Type     string `json:"type"`     // "scope_violation", "missing_input", "ambiguous_intent", "malformed_payload"
+	Type     string `json:"type"` // "scope_violation", "missing_input", "ambiguous_intent", "malformed_payload"
 	Detail   string `json:"detail"`
 	Item     string `json:"item,omitempty"`
 	Category string `json:"category,omitempty"`

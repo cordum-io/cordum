@@ -26,7 +26,6 @@ import {
   Workflow,
   Cpu,
   UserCheck,
-  AlertTriangle,
   FileText,
   Settings,
   ChevronDown,
@@ -82,9 +81,9 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
       { path: "/", label: "Dashboard", icon: LayoutGrid, end: true },
       { path: "/agents", label: "Agents", icon: Cpu },
       { path: "/jobs", label: "Jobs", icon: ListChecks },
-      { path: "/edge/sessions", label: "Edge Sessions", icon: ShieldCheck },
       { path: "/workflows", label: "Workflows", icon: Workflow },
       { path: "/approvals", label: "Approvals", icon: UserCheck, badge: "approvals" },
+      { path: "/edge/sessions", label: "Edge Sessions", icon: ShieldCheck },
     ],
   },
   {
@@ -108,17 +107,14 @@ export const APP_SHELL_NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    // task-266f21ad: Dead Letters removed from the sidebar — DLQ content
+    // is folded into JobsPage as ?status=dlq (task-0bcb9411). The /dlq
+    // URL still redirects via App.tsx::DlqRouteRedirect for bookmarked
+    // links; the sidebar entry was a redirect-stub adding navigation
+    // noise without a dedicated destination.
     label: "Audit",
     items: [
       { path: "/audit", label: "Audit Log", icon: FileText },
-      // Dead Letters folded into JobsPage as a status filter (task-0bcb9411).
-      // The sidebar entry intentionally keeps `path: "/dlq"` rather than
-      // pointing at `/jobs?status=dlq` directly — the App.tsx Navigate
-      // redirect handles the routing, and keeping `/dlq` here preserves the
-      // active-section match (findActiveSection compares pathnames; pointing
-      // the entry at `/jobs?status=dlq` would either fail to match anything
-      // or conflict with the Run > Jobs entry on `/jobs`).
-      { path: "/dlq", label: "Dead Letters", icon: AlertTriangle, badge: "dlq" },
     ],
   },
   {
@@ -722,4 +718,3 @@ export function AppShell({ children }: AppShellProps) {
     </div>
   );
 }
-

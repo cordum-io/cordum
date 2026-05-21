@@ -16,10 +16,7 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.artifact_detail_metadata_labels import ArtifactDetailMetadataLabels
-
-
-
+    from ..models.artifact_detail_metadata_labels import ArtifactDetailMetadataLabels
 
 
 T = TypeVar("T", bound="ArtifactDetailMetadata")
@@ -27,25 +24,25 @@ T = TypeVar("T", bound="ArtifactDetailMetadata")
 
 @_attrs_define
 class ArtifactDetailMetadata:
-    """ 
-        Attributes:
-            content_type (Union[Unset, str]):
-            size_bytes (Union[Unset, int]):
-            created_at (Union[Unset, datetime.datetime]):
-            retention (Union[Unset, str]):
-            labels (Union[Unset, ArtifactDetailMetadataLabels]):
-     """
+    """
+    Attributes:
+        content_type (Union[Unset, str]):
+        size_bytes (Union[Unset, int]):
+        created_at (Union[Unset, datetime.datetime]):
+        retention (Union[Unset, str]):
+        labels (Union[Unset, ArtifactDetailMetadataLabels]):
+    """
 
     content_type: Union[Unset, str] = UNSET
     size_bytes: Union[Unset, int] = UNSET
     created_at: Union[Unset, datetime.datetime] = UNSET
     retention: Union[Unset, str] = UNSET
-    labels: Union[Unset, 'ArtifactDetailMetadataLabels'] = UNSET
+    labels: Union[Unset, "ArtifactDetailMetadataLabels"] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.artifact_detail_metadata_labels import ArtifactDetailMetadataLabels
+
         content_type = self.content_type
 
         size_bytes = self.size_bytes
@@ -60,11 +57,9 @@ class ArtifactDetailMetadata:
         if not isinstance(self.labels, Unset):
             labels = self.labels.to_dict()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if content_type is not UNSET:
             field_dict["content_type"] = content_type
         if size_bytes is not UNSET:
@@ -78,11 +73,10 @@ class ArtifactDetailMetadata:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.artifact_detail_metadata_labels import ArtifactDetailMetadataLabels
+
         d = src_dict.copy()
         content_type = d.pop("content_type", UNSET)
 
@@ -90,25 +84,19 @@ class ArtifactDetailMetadata:
 
         _created_at = d.pop("created_at", UNSET)
         created_at: Union[Unset, datetime.datetime]
-        if isinstance(_created_at,  Unset):
+        if isinstance(_created_at, Unset):
             created_at = UNSET
         else:
             created_at = isoparse(_created_at)
-
-
-
 
         retention = d.pop("retention", UNSET)
 
         _labels = d.pop("labels", UNSET)
         labels: Union[Unset, ArtifactDetailMetadataLabels]
-        if isinstance(_labels,  Unset):
+        if isinstance(_labels, Unset):
             labels = UNSET
         else:
             labels = ArtifactDetailMetadataLabels.from_dict(_labels)
-
-
-
 
         artifact_detail_metadata = cls(
             content_type=content_type,
@@ -117,7 +105,6 @@ class ArtifactDetailMetadata:
             retention=retention,
             labels=labels,
         )
-
 
         artifact_detail_metadata.additional_properties = d
         return artifact_detail_metadata

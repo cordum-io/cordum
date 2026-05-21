@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
+	"github.com/cordum/cordum/core/mcp"
 	"github.com/cordum/cordum/core/model"
 	redis "github.com/redis/go-redis/v9"
 )
@@ -75,6 +77,214 @@ func TestCreateAgent(t *testing.T) {
 	}
 }
 
+func TestAgentIdentityAPISurfacesMCPAllowlists(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+
+	created := createAgentWithMCPAllowlists(t, s)
+	requireAgentMCPFields(t, created, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+	requireAgentPreapprovedFields(t, created, []string{"cordum_install_pack"})
+
+	stored, err := s.agentIdentityStore.Get(ctx, "default", created.ID)
+	if err != nil {
+		t.Fatalf("get stored agent: %v", err)
+	}
+	requireStoreMCPFields(t, stored, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+	requireStorePreapprovedFields(t, stored, []string{"cordum_install_pack"})
+
+	got := getAgentViaHandler(t, s, created.ID)
+	requireAgentMCPFields(t, got, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+	requireAgentPreapprovedFields(t, got, []string{"cordum_install_pack"})
+
+	listed := listAgentViaHandler(t, s, created.ID)
+	requireAgentMCPFields(t, listed, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+	requireAgentPreapprovedFields(t, listed, []string{"cordum_install_pack"})
+
+	updated := updateAgentMCPAllowlists(t, s, created.ID)
+	requireAgentMCPFields(t, updated, []string{"stage-mcp"}, []string{"repo.*"}, nil, []string{"repo.write"})
+	requireAgentPreapprovedFields(t, updated, []string{"cordum_publish_release"})
+	afterUpdate, err := s.agentIdentityStore.Get(ctx, "default", created.ID)
+	if err != nil {
+		t.Fatalf("get updated stored agent: %v", err)
+	}
+	requireStoreMCPFields(t, afterUpdate, []string{"stage-mcp"}, []string{"repo.*"}, []string{}, []string{"repo.write"})
+	requireStorePreapprovedFields(t, afterUpdate, []string{"cordum_publish_release"})
+	assertStringSlice(t, "AllowedTopics preserved", afterUpdate.AllowedTopics, []string{"job.repo"})
+	assertStringSlice(t, "DataClassifications preserved", afterUpdate.DataClassifications, []string{"internal"})
+
+	cleared := clearAgentPreapprovals(t, s, created.ID)
+	requireAgentPreapprovedFields(t, cleared, []string{})
+	afterClear, err := s.agentIdentityStore.Get(ctx, "default", created.ID)
+	if err != nil {
+		t.Fatalf("get cleared stored agent: %v", err)
+	}
+	requireStorePreapprovedFields(t, afterClear, []string{})
+}
+
+func TestAgentResponseFromIdentityCopiesAllowlistSlices(t *testing.T) {
+	src := &store.AgentIdentity{
+		ID: "agent-copy", Name: "copy", Owner: "admin", RiskTier: "high", Status: "active",
+		AllowedServers: []string{"prod-mcp"}, AllowedTools: []string{"repo.*"},
+		AllowedResources: []string{"cordum://repos/*"}, Entitlements: []string{"repo.read"},
+		PreapprovedMutatingTools: []string{"cordum_install_pack"},
+	}
+	resp := agentResponseFromIdentity(src)
+	resp.AllowedServers[0] = "mutated-server"
+	resp.AllowedTools[0] = "mutated-tool"
+	resp.AllowedResources[0] = "mutated-resource"
+	resp.Entitlements[0] = "mutated-entitlement"
+	resp.PreapprovedMutatingTools[0] = "mutated-preapproval"
+	requireStoreMCPFields(t, src, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+	requireStorePreapprovedFields(t, src, []string{"cordum_install_pack"})
+}
+
+func createAgentWithMCPAllowlists(t *testing.T, s *server) agentResponse {
+	t.Helper()
+	body := bytes.NewBufferString(`{
+		"name":"repo-bot","owner":"admin","risk_tier":"high",
+		"allowed_topics":["job.repo"],"allowed_tools":["repo.*"],
+		"allowed_servers":["prod-mcp"],"allowed_resources":["cordum://repos/*"],
+		"entitlements":["repo.read"],"preapproved_mutating_tools":["cordum_install_pack"],
+		"data_classifications":["internal"]
+	}`)
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &auth.AuthContext{
+		Tenant: "default", Role: "admin", PrincipalID: "admin-user",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.handleCreateAgent(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create agent: got %d: %s", rr.Code, rr.Body.String())
+	}
+	return decodeAgentResponse(t, rr)
+}
+
+func getAgentViaHandler(t *testing.T, s *server, id string) agentResponse {
+	t.Helper()
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+id, nil), &auth.AuthContext{
+		Tenant: "default", Role: "admin", PrincipalID: "admin-user",
+	})
+	req.SetPathValue("id", id)
+	rr := httptest.NewRecorder()
+	s.handleGetAgent(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get agent: got %d: %s", rr.Code, rr.Body.String())
+	}
+	return decodeAgentResponse(t, rr)
+}
+
+func listAgentViaHandler(t *testing.T, s *server, id string) agentResponse {
+	t.Helper()
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &auth.AuthContext{
+		Tenant: "default", Role: "admin", PrincipalID: "admin-user",
+	})
+	rr := httptest.NewRecorder()
+	s.handleListAgents(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list agents: got %d: %s", rr.Code, rr.Body.String())
+	}
+	var listResp struct {
+		Items []agentResponse `json:"items"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	for _, item := range listResp.Items {
+		if item.ID == id {
+			return item
+		}
+	}
+	t.Fatalf("agent %s not found in list response", id)
+	return agentResponse{}
+}
+
+func updateAgentMCPAllowlists(t *testing.T, s *server, id string) agentResponse {
+	t.Helper()
+	body := bytes.NewBufferString(`{
+		"allowed_servers":["stage-mcp"],
+		"allowed_resources":[],
+		"entitlements":["repo.write"],
+		"preapproved_mutating_tools":["cordum_publish_release"]
+	}`)
+	req := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+id, body), &auth.AuthContext{
+		Tenant: "default", Role: "admin", PrincipalID: "admin-user",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", id)
+	rr := httptest.NewRecorder()
+	s.handleUpdateAgent(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update agent: got %d: %s", rr.Code, rr.Body.String())
+	}
+	return decodeAgentResponse(t, rr)
+}
+
+func clearAgentPreapprovals(t *testing.T, s *server, id string) agentResponse {
+	t.Helper()
+	body := bytes.NewBufferString(`{"preapproved_mutating_tools":[]}`)
+	req := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+id, body), &auth.AuthContext{
+		Tenant: "default", Role: "admin", PrincipalID: "admin-user",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", id)
+	rr := httptest.NewRecorder()
+	s.handleUpdateAgent(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("clear preapprovals: got %d: %s", rr.Code, rr.Body.String())
+	}
+	return decodeAgentResponse(t, rr)
+}
+
+func decodeAgentResponse(t *testing.T, rr *httptest.ResponseRecorder) agentResponse {
+	t.Helper()
+	var resp agentResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode agent response: %v", err)
+	}
+	return resp
+}
+
+func requireAgentMCPFields(
+	t *testing.T,
+	got agentResponse,
+	servers, tools, resources, entitlements []string,
+) {
+	t.Helper()
+	assertStringSlice(t, "response AllowedServers", got.AllowedServers, servers)
+	assertStringSlice(t, "response AllowedTools", got.AllowedTools, tools)
+	assertStringSlice(t, "response AllowedResources", got.AllowedResources, resources)
+	assertStringSlice(t, "response Entitlements", got.Entitlements, entitlements)
+}
+
+func requireAgentPreapprovedFields(t *testing.T, got agentResponse, preapproved []string) {
+	t.Helper()
+	assertStringSlice(t, "response PreapprovedMutatingTools", got.PreapprovedMutatingTools, preapproved)
+}
+
+func requireStoreMCPFields(
+	t *testing.T,
+	got *store.AgentIdentity,
+	servers, tools, resources, entitlements []string,
+) {
+	t.Helper()
+	if got == nil {
+		t.Fatal("stored identity is nil")
+	}
+	assertStringSlice(t, "store AllowedServers", got.AllowedServers, servers)
+	assertStringSlice(t, "store AllowedTools", got.AllowedTools, tools)
+	assertStringSlice(t, "store AllowedResources", got.AllowedResources, resources)
+	assertStringSlice(t, "store Entitlements", got.Entitlements, entitlements)
+}
+
+func requireStorePreapprovedFields(t *testing.T, got *store.AgentIdentity, preapproved []string) {
+	t.Helper()
+	if got == nil {
+		t.Fatal("stored identity is nil")
+	}
+	assertStringSlice(t, "store PreapprovedMutatingTools", got.PreapprovedMutatingTools, preapproved)
+}
+
 func TestCreateAgentValidation(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableAgentIdentityEntitlement(t, s)
@@ -118,6 +328,7 @@ func TestCreateAgentValidation(t *testing.T) {
 			if rr.Code != tt.wantCode {
 				t.Fatalf("expected %d, got %d: %s", tt.wantCode, rr.Code, rr.Body.String())
 			}
+			requireStableErrorCode(t, rr, tt.wantCode, "AGENT_REQUEST_INVALID")
 		})
 	}
 }
@@ -242,6 +453,7 @@ func TestGetAgent(t *testing.T) {
 	if notFoundRR.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", notFoundRR.Code)
 	}
+	requireStableErrorCode(t, notFoundRR, http.StatusNotFound, "AGENT_NOT_FOUND")
 }
 
 func TestDeleteAgent(t *testing.T) {
@@ -314,6 +526,7 @@ func TestDeleteAgentNotFound(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
 	}
+	requireStableErrorCode(t, rr, http.StatusNotFound, "AGENT_NOT_FOUND")
 }
 
 func TestUpdateAgentNotFound(t *testing.T) {
@@ -333,6 +546,7 @@ func TestUpdateAgentNotFound(t *testing.T) {
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", rr.Code, rr.Body.String())
 	}
+	requireStableErrorCode(t, rr, http.StatusNotFound, "AGENT_NOT_FOUND")
 }
 
 func TestUpdateAgent(t *testing.T) {
@@ -395,7 +609,7 @@ func TestAgentStatsHighVolume(t *testing.T) {
 
 	// Create an agent identity.
 	agent, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
-		Name: "high-vol-agent", Owner: "admin", RiskTier: "high",
+		TenantID: "default", Name: "high-vol-agent", Owner: "admin", RiskTier: "high",
 	})
 	if err != nil {
 		t.Fatalf("create agent: %v", err)
@@ -476,6 +690,288 @@ func TestAgentStatsHighVolume(t *testing.T) {
 	}
 }
 
+// TestHandleCreateAgent_PersistsTenantID verifies that handleCreateAgent
+// stamps the caller tenant onto the persisted AgentIdentity instead of
+// writing a global tenant_id="" entry that any tenant can read.
+// Regression for PR #276 audit finding (CRITICAL, handlers_agents.go:80-127).
+func TestHandleCreateAgent_PersistsTenantID(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+
+	body := bytes.NewBufferString(`{"name":"tenant-a-bot","owner":"admin","risk_tier":"low"}`)
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &auth.AuthContext{
+		Tenant: "tenant-a", Role: "admin", PrincipalID: "admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.handleCreateAgent(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp agentResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Persisted record MUST carry TenantID = caller tenant, not "".
+	stored, err := s.agentIdentityStore.Get(ctx, "tenant-a", resp.ID)
+	if err != nil {
+		t.Fatalf("get persisted agent: %v", err)
+	}
+	if stored == nil {
+		t.Fatalf("persisted agent not found under tenant-a — likely written with empty TenantID")
+	}
+	if stored.TenantID != "tenant-a" {
+		t.Fatalf("expected TenantID=tenant-a on persisted record, got %q — record is GLOBAL and visible to every tenant", stored.TenantID)
+	}
+}
+
+// TestHandleAgentByID_RejectsCrossTenant verifies that handleGetAgent,
+// handleUpdateAgent, handleDeleteAgent, and handleAgentStats all reject
+// access to another tenant's agent identity by UUID guess with 404 (not 403)
+// to avoid existence-oracle leakage.
+// Regression for PR #276 audit finding (CRITICAL, handlers_agents.go:244-403).
+func TestHandleAgentByID_RejectsCrossTenant(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+
+	// Seed tenant-b's agent directly via store.
+	victim, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "tenant-b", Name: "victim", Owner: "admin", RiskTier: "low",
+	})
+	if err != nil {
+		t.Fatalf("seed victim agent: %v", err)
+	}
+
+	cases := []struct {
+		op                     string
+		exec                   func() *httptest.ResponseRecorder
+		wantStatusOnSoftDelete int
+	}{
+		{
+			op: "GET",
+			exec: func() *httptest.ResponseRecorder {
+				req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+victim.ID, nil), &auth.AuthContext{
+					Tenant: "tenant-a", Role: "admin",
+				})
+				req.SetPathValue("id", victim.ID)
+				rr := httptest.NewRecorder()
+				s.handleGetAgent(rr, req)
+				return rr
+			},
+		},
+		{
+			op: "UPDATE",
+			exec: func() *httptest.ResponseRecorder {
+				body := bytes.NewBufferString(`{"risk_tier":"critical"}`)
+				req := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+victim.ID, body), &auth.AuthContext{
+					Tenant: "tenant-a", Role: "admin",
+				})
+				req.Header.Set("Content-Type", "application/json")
+				req.SetPathValue("id", victim.ID)
+				rr := httptest.NewRecorder()
+				s.handleUpdateAgent(rr, req)
+				return rr
+			},
+		},
+		{
+			op: "DELETE",
+			exec: func() *httptest.ResponseRecorder {
+				req := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/agents/"+victim.ID, nil), &auth.AuthContext{
+					Tenant: "tenant-a", Role: "admin",
+				})
+				req.SetPathValue("id", victim.ID)
+				rr := httptest.NewRecorder()
+				s.handleDeleteAgent(rr, req)
+				return rr
+			},
+		},
+		{
+			op: "STATS",
+			exec: func() *httptest.ResponseRecorder {
+				req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+victim.ID+"/stats", nil), &auth.AuthContext{
+					Tenant: "tenant-a", Role: "admin",
+				})
+				req.SetPathValue("id", victim.ID)
+				rr := httptest.NewRecorder()
+				s.handleAgentStats(rr, req)
+				return rr
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.op, func(t *testing.T) {
+			rr := tc.exec()
+			if rr.Code != http.StatusNotFound {
+				t.Fatalf("CROSS-TENANT %s ALLOWED: tenant-a accessed tenant-b's agent; expected 404, got %d (body=%s)", tc.op, rr.Code, rr.Body.String())
+			}
+			// Existence-oracle hardening: must return AGENT_NOT_FOUND, not a
+			// FORBIDDEN-style code (which would leak that the ID exists).
+			if !bytes.Contains(rr.Body.Bytes(), []byte("AGENT_NOT_FOUND")) {
+				t.Fatalf("expected AGENT_NOT_FOUND (existence-oracle hardening), got: %s", rr.Body.String())
+			}
+		})
+	}
+
+	// Victim record must be intact: same TenantID, original Name, unmodified RiskTier, not revoked.
+	after, err := s.agentIdentityStore.Get(ctx, "tenant-b", victim.ID)
+	if err != nil {
+		t.Fatalf("get victim after cross-tenant attempts: %v", err)
+	}
+	if after == nil {
+		t.Fatalf("REGRESSION: victim agent was deleted by cross-tenant DELETE")
+	}
+	if after.RiskTier != "low" {
+		t.Fatalf("REGRESSION: victim risk_tier mutated by cross-tenant UPDATE (got %q, want low)", after.RiskTier)
+	}
+	if after.Status == "revoked" {
+		t.Fatalf("REGRESSION: victim status set to revoked by cross-tenant DELETE")
+	}
+}
+
+func TestHandleListAgentsTenantScoped(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+
+	seeded := []store.AgentIdentity{
+		{
+			TenantID:                 "tenant-a",
+			ID:                       "agent-tenant-a",
+			Name:                     "tenant-a-agent",
+			Owner:                    "tenant-a-owner",
+			Team:                     "red",
+			RiskTier:                 "high",
+			AllowedServers:           []string{"tenant-a-mcp"},
+			AllowedTools:             []string{"tenant-a.tool"},
+			AllowedResources:         []string{"cordum://tenant-a/*"},
+			Entitlements:             []string{"tenant-a.entitlement"},
+			PreapprovedMutatingTools: []string{"tenant-a.mutate"},
+		},
+		{
+			TenantID:                 "tenant-b",
+			ID:                       "agent-tenant-b",
+			Name:                     "tenant-b-agent",
+			Owner:                    "tenant-b-owner",
+			Team:                     "blue",
+			RiskTier:                 "critical",
+			AllowedServers:           []string{"tenant-b-mcp"},
+			AllowedTools:             []string{"tenant-b.tool"},
+			AllowedResources:         []string{"cordum://tenant-b/*"},
+			Entitlements:             []string{"tenant-b.entitlement"},
+			PreapprovedMutatingTools: []string{"tenant-b.mutate"},
+		},
+	}
+	for _, identity := range seeded {
+		if _, err := s.agentIdentityStore.Create(ctx, identity); err != nil {
+			t.Fatalf("seed %s: %v", identity.ID, err)
+		}
+	}
+
+	tenantA := listAgentsForTenant(t, s, "tenant-a")
+	requireSingleTenantAgent(t, tenantA, "agent-tenant-a", "tenant-a-mcp", "tenant-a.tool", "cordum://tenant-a/*", "tenant-a.entitlement", "tenant-a.mutate")
+	tenantB := listAgentsForTenant(t, s, "tenant-b")
+	requireSingleTenantAgent(t, tenantB, "agent-tenant-b", "tenant-b-mcp", "tenant-b.tool", "cordum://tenant-b/*", "tenant-b.entitlement", "tenant-b.mutate")
+}
+
+func TestMCPSetAgentScopeRoundTripPreapprovedMutatingTools(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+	agent, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
+		TenantID: "default",
+		ID:       "mcp-scope-agent",
+		Name:     "MCP Scope Agent",
+		Owner:    "ops",
+		RiskTier: "high",
+	})
+	if err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || !strings.HasPrefix(r.URL.Path, "/api/v1/agents/") {
+			t.Errorf("unexpected bridge request %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected request", http.StatusNotFound)
+			return
+		}
+		r.SetPathValue("id", strings.TrimPrefix(r.URL.Path, "/api/v1/agents/"))
+		authed := withAuth(r, &auth.AuthContext{
+			Tenant:      "default",
+			Role:        "admin",
+			PrincipalID: "mcp-operator",
+		})
+		s.handleUpdateAgent(w, authed)
+	}))
+	t.Cleanup(srv.Close)
+
+	bridge := mcp.NewHTTPServiceBridge(mcp.HTTPServiceBridgeConfig{
+		BaseURL:           srv.URL,
+		TenantID:          "default",
+		HTTPClient:        srv.Client(),
+		AllowPrivateHosts: true,
+	})
+	out, err := bridge.SetAgentScope(ctx, mcp.SetAgentScopeInput{
+		AgentID:                  agent.ID,
+		AllowedTools:             []string{"cordum_list_jobs"},
+		PreapprovedMutatingTools: []string{"cordum_install_pack"},
+	})
+	if err != nil {
+		t.Fatalf("SetAgentScope: %v", err)
+	}
+	assertStringSlice(t, "bridge PreapprovedMutatingTools", out.PreapprovedMutatingTools, []string{"cordum_install_pack"})
+
+	stored, err := s.agentIdentityStore.Get(ctx, "default", agent.ID)
+	if err != nil {
+		t.Fatalf("get stored agent: %v", err)
+	}
+	assertStringSlice(t, "stored AllowedTools", stored.AllowedTools, []string{"cordum_list_jobs"})
+	requireStorePreapprovedFields(t, stored, []string{"cordum_install_pack"})
+}
+
+func listAgentsForTenant(t *testing.T, s *server, tenant string) []agentResponse {
+	t.Helper()
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &auth.AuthContext{
+		Tenant: tenant, Role: "admin", PrincipalID: "admin-" + tenant,
+	})
+	rr := httptest.NewRecorder()
+	s.handleListAgents(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list agents for %s: got %d: %s", tenant, rr.Code, rr.Body.String())
+	}
+	var listResp struct {
+		Items []agentResponse `json:"items"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode list for %s: %v", tenant, err)
+	}
+	return listResp.Items
+}
+
+func requireSingleTenantAgent(
+	t *testing.T,
+	items []agentResponse,
+	wantID, wantServer, wantTool, wantResource, wantEntitlement, wantPreapproved string,
+) {
+	t.Helper()
+	if len(items) != 1 {
+		t.Fatalf("expected one tenant-scoped item, got %d: %#v", len(items), items)
+	}
+	got := items[0]
+	if got.ID != wantID {
+		t.Fatalf("list returned agent %q, want %q", got.ID, wantID)
+	}
+	assertStringSlice(t, "AllowedServers", got.AllowedServers, []string{wantServer})
+	assertStringSlice(t, "AllowedTools", got.AllowedTools, []string{wantTool})
+	assertStringSlice(t, "AllowedResources", got.AllowedResources, []string{wantResource})
+	assertStringSlice(t, "Entitlements", got.Entitlements, []string{wantEntitlement})
+	assertStringSlice(t, "PreapprovedMutatingTools", got.PreapprovedMutatingTools, []string{wantPreapproved})
+}
+
 func TestListAgentsIncludesLastActive(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableAgentIdentityEntitlement(t, s)
@@ -483,13 +979,13 @@ func TestListAgentsIncludesLastActive(t *testing.T) {
 
 	// Create two agents.
 	agentA, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
-		Name: "active-agent", Owner: "admin", RiskTier: "low",
+		TenantID: "default", Name: "active-agent", Owner: "admin", RiskTier: "low",
 	})
 	if err != nil {
 		t.Fatalf("create agent A: %v", err)
 	}
 	agentB, err := s.agentIdentityStore.Create(ctx, store.AgentIdentity{
-		Name: "quiet-agent", Owner: "admin", RiskTier: "low",
+		TenantID: "default", Name: "quiet-agent", Owner: "admin", RiskTier: "low",
 	})
 	if err != nil {
 		t.Fatalf("create agent B: %v", err)

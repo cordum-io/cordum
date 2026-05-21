@@ -39,6 +39,11 @@ func NewRegistry(url string) (*Registry, error) {
 	return &Registry{client: client}, nil
 }
 
+// NewRegistryFromClient constructs a schema registry from a shared Redis client.
+func NewRegistryFromClient(client redis.UniversalClient) *Registry {
+	return &Registry{client: client}
+}
+
 // Close closes the underlying Redis client.
 func (r *Registry) Close() error {
 	if r == nil || r.client == nil {

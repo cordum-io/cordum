@@ -6,14 +6,14 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeAgentExecutionMode = typeof EdgeAgentExecutionMode[keyof typeof EdgeAgentExecutionMode];
-
+export type EdgeAgentExecutionMode =
+  (typeof EdgeAgentExecutionMode)[keyof typeof EdgeAgentExecutionMode];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeAgentExecutionMode = {
-  'local-dev': 'local-dev',
-  'enterprise-managed': 'enterprise-managed',
-  workflow: 'workflow',
-  ci: 'ci',
-  'prod-runner': 'prod-runner',
+  "local-dev": "local-dev",
+  "enterprise-managed": "enterprise-managed",
+  workflow: "workflow",
+  ci: "ci",
+  "prod-runner": "prod-runner",
 } as const;

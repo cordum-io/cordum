@@ -38,10 +38,10 @@ func TestServer_HandleToolsCall_EmitsInvocationAudit(t *testing.T) {
 		AllowedTools: []string{"*"},
 	}
 	transport.in <- &JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      json.RawMessage(`1`),
-		Method:  MethodToolsCall,
-		Params:  json.RawMessage(`{"name":"login","arguments":{"user":"alice","password":"s3cr3t"}}`),
+		JSONRPC:  JSONRPCVersion,
+		ID:       json.RawMessage(`1`),
+		Method:   MethodToolsCall,
+		Params:   json.RawMessage(`{"name":"login","arguments":{"user":"alice","password":"s3cr3t"}}`),
 		identity: identity,
 	}
 	resp := awaitResponse(t, transport.out)
@@ -107,10 +107,10 @@ func TestServer_HandleToolsCall_ErrorEmitsAudit(t *testing.T) {
 	errCh := startServer(t, srv, transport)
 
 	transport.in <- &JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      json.RawMessage(`2`),
-		Method:  MethodToolsCall,
-		Params:  json.RawMessage(`{"name":"flaky","arguments":{}}`),
+		JSONRPC:  JSONRPCVersion,
+		ID:       json.RawMessage(`2`),
+		Method:   MethodToolsCall,
+		Params:   json.RawMessage(`{"name":"flaky","arguments":{}}`),
 		identity: &AgentIdentity{ID: "agent-x", RiskTier: "critical", AllowedTools: []string{"*"}},
 	}
 	resp := awaitResponse(t, transport.out)
@@ -194,9 +194,9 @@ func TestServer_HandleToolsCall_DenyAuditsWithDecisionDeny(t *testing.T) {
 // response so the test can exercise the approval-required and
 // consumed paths without a Redis store.
 type stubApprovalGate struct {
-	required   *ApprovalRequired
-	claimedID  string
-	calls      int
+	required  *ApprovalRequired
+	claimedID string
+	calls     int
 }
 
 func (g *stubApprovalGate) Check(ctx context.Context, _ Tool, _ json.RawMessage) (*ApprovalRequired, error) {

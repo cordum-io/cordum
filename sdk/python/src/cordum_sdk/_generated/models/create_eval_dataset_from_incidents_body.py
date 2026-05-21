@@ -13,29 +13,25 @@ from typing import cast, List
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="CreateEvalDatasetFromIncidentsBody")
 
 
 @_attrs_define
 class CreateEvalDatasetFromIncidentsBody:
-    """ 
-        Attributes:
-            name (str):
-            tenant (Union[Unset, str]):
-            since (Union[Unset, str]):
-            until (Union[Unset, str]):
-            topic (Union[Unset, str]):
-            rule_id (Union[Unset, str]):
-            verdicts (Union[Unset, List[str]]):
-            agent_id (Union[Unset, str]):
-            max_entries (Union[Unset, int]):
-            description (Union[Unset, str]):
-            dry_run (Union[Unset, bool]):
-     """
+    """
+    Attributes:
+        name (str):
+        tenant (Union[Unset, str]):
+        since (Union[Unset, str]):
+        until (Union[Unset, str]):
+        topic (Union[Unset, str]):
+        rule_id (Union[Unset, str]):
+        verdicts (Union[Unset, List[str]]):
+        agent_id (Union[Unset, str]):
+        max_entries (Union[Unset, int]):
+        description (Union[Unset, str]):
+        dry_run (Union[Unset, bool]):
+    """
 
     name: str
     tenant: Union[Unset, str] = UNSET
@@ -49,7 +45,6 @@ class CreateEvalDatasetFromIncidentsBody:
     description: Union[Unset, str] = UNSET
     dry_run: Union[Unset, bool] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         name = self.name
@@ -68,8 +63,6 @@ class CreateEvalDatasetFromIncidentsBody:
         if not isinstance(self.verdicts, Unset):
             verdicts = self.verdicts
 
-
-
         agent_id = self.agent_id
 
         max_entries = self.max_entries
@@ -78,12 +71,13 @@ class CreateEvalDatasetFromIncidentsBody:
 
         dry_run = self.dry_run
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "name": name,
-        })
+        field_dict.update(
+            {
+                "name": name,
+            }
+        )
         if tenant is not UNSET:
             field_dict["tenant"] = tenant
         if since is not UNSET:
@@ -107,8 +101,6 @@ class CreateEvalDatasetFromIncidentsBody:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -125,7 +117,6 @@ class CreateEvalDatasetFromIncidentsBody:
         rule_id = d.pop("rule_id", UNSET)
 
         verdicts = cast(List[str], d.pop("verdicts", UNSET))
-
 
         agent_id = d.pop("agent_id", UNSET)
 
@@ -148,7 +139,6 @@ class CreateEvalDatasetFromIncidentsBody:
             description=description,
             dry_run=dry_run,
         )
-
 
         create_eval_dataset_from_incidents_body.additional_properties = d
         return create_eval_dataset_from_incidents_body

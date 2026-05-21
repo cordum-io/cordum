@@ -9,38 +9,31 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 
-
-
-
-
-
 T = TypeVar("T", bound="ResetUserPasswordBody")
 
 
 @_attrs_define
 class ResetUserPasswordBody:
-    """ 
-        Attributes:
-            password (str):
-     """
+    """
+    Attributes:
+        password (str):
+    """
 
     password: str
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         password = self.password
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "password": password,
-        })
+        field_dict.update(
+            {
+                "password": password,
+            }
+        )
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -50,7 +43,6 @@ class ResetUserPasswordBody:
         reset_user_password_body = cls(
             password=password,
         )
-
 
         reset_user_password_body.additional_properties = d
         return reset_user_password_body

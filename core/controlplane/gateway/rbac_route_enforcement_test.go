@@ -46,8 +46,19 @@ func TestRBACRoutePermissions_ConfigAndSchema(t *testing.T) {
 	})
 	getRR := httptest.NewRecorder()
 	s.handleGetConfig(getRR, getReq)
-	if getRR.Code != http.StatusOK {
-		t.Fatalf("config read status = %d, want %d body=%s", getRR.Code, http.StatusOK, getRR.Body.String())
+	if getRR.Code != http.StatusForbidden {
+		t.Fatalf("config-reader read status = %d, want %d body=%s", getRR.Code, http.StatusForbidden, getRR.Body.String())
+	}
+
+	adminGetReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/config?scope=system&scope_id=default", nil), &auth.AuthContext{
+		Tenant:      "default",
+		Role:        "admin",
+		PrincipalID: "admin-1",
+	})
+	adminGetRR := httptest.NewRecorder()
+	s.handleGetConfig(adminGetRR, adminGetReq)
+	if adminGetRR.Code != http.StatusOK {
+		t.Fatalf("admin config read status = %d, want %d body=%s", adminGetRR.Code, http.StatusOK, adminGetRR.Body.String())
 	}
 
 	setReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/config", bytes.NewBufferString(`{"feature":"on"}`)), &auth.AuthContext{
@@ -69,8 +80,19 @@ func TestRBACRoutePermissions_ConfigAndSchema(t *testing.T) {
 	})
 	listSchemasRR := httptest.NewRecorder()
 	s.handleListSchemas(listSchemasRR, listSchemasReq)
-	if listSchemasRR.Code != http.StatusOK {
-		t.Fatalf("schema list status = %d, want %d body=%s", listSchemasRR.Code, http.StatusOK, listSchemasRR.Body.String())
+	if listSchemasRR.Code != http.StatusForbidden {
+		t.Fatalf("config-reader schema list status = %d, want %d body=%s", listSchemasRR.Code, http.StatusForbidden, listSchemasRR.Body.String())
+	}
+
+	viewerSchemasReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/schemas", nil), &auth.AuthContext{
+		Tenant:      "default",
+		Role:        "viewer",
+		PrincipalID: "viewer-1",
+	})
+	viewerSchemasRR := httptest.NewRecorder()
+	s.handleListSchemas(viewerSchemasRR, viewerSchemasReq)
+	if viewerSchemasRR.Code != http.StatusOK {
+		t.Fatalf("viewer schema list status = %d, want %d body=%s", viewerSchemasRR.Code, http.StatusOK, viewerSchemasRR.Body.String())
 	}
 
 	registerSchemaReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/schemas", bytes.NewBufferString(`{"id":"sample","schema":{"type":"object"}}`)), &auth.AuthContext{
@@ -102,8 +124,19 @@ func TestRBACRoutePermissions_PolicyAndAudit(t *testing.T) {
 	})
 	listBundlesRR := httptest.NewRecorder()
 	s.handlePolicyBundles(listBundlesRR, listBundlesReq)
-	if listBundlesRR.Code != http.StatusOK {
-		t.Fatalf("policy bundles status = %d, want %d body=%s", listBundlesRR.Code, http.StatusOK, listBundlesRR.Body.String())
+	if listBundlesRR.Code != http.StatusForbidden {
+		t.Fatalf("policy-auditor bundles status = %d, want %d body=%s", listBundlesRR.Code, http.StatusForbidden, listBundlesRR.Body.String())
+	}
+
+	adminBundlesReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/policy/bundles", nil), &auth.AuthContext{
+		Tenant:      "default",
+		Role:        "admin",
+		PrincipalID: "admin-1",
+	})
+	adminBundlesRR := httptest.NewRecorder()
+	s.handlePolicyBundles(adminBundlesRR, adminBundlesReq)
+	if adminBundlesRR.Code != http.StatusOK {
+		t.Fatalf("admin policy bundles status = %d, want %d body=%s", adminBundlesRR.Code, http.StatusOK, adminBundlesRR.Body.String())
 	}
 
 	putBundleReq := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/policy/bundles/sample", bytes.NewBufferString(`{"content":"package main\nallow = true"}`)), &auth.AuthContext{
@@ -126,8 +159,19 @@ func TestRBACRoutePermissions_PolicyAndAudit(t *testing.T) {
 	})
 	auditRR := httptest.NewRecorder()
 	s.handleAuditExportConfig(auditRR, auditReq)
-	if auditRR.Code != http.StatusOK {
-		t.Fatalf("audit export config status = %d, want %d body=%s", auditRR.Code, http.StatusOK, auditRR.Body.String())
+	if auditRR.Code != http.StatusForbidden {
+		t.Fatalf("policy-auditor audit export config status = %d, want %d body=%s", auditRR.Code, http.StatusForbidden, auditRR.Body.String())
+	}
+
+	adminAuditReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/audit/export/config", nil), &auth.AuthContext{
+		Tenant:      "default",
+		Role:        "admin",
+		PrincipalID: "admin-1",
+	})
+	adminAuditRR := httptest.NewRecorder()
+	s.handleAuditExportConfig(adminAuditRR, adminAuditReq)
+	if adminAuditRR.Code != http.StatusOK {
+		t.Fatalf("admin audit export config status = %d, want %d body=%s", adminAuditRR.Code, http.StatusOK, adminAuditRR.Body.String())
 	}
 }
 
@@ -159,8 +203,19 @@ func TestRBACRoutePermissions_ApprovalsAndAgents(t *testing.T) {
 	})
 	approvalsRR := httptest.NewRecorder()
 	s.handleListApprovals(approvalsRR, approvalsReq)
-	if approvalsRR.Code != http.StatusOK {
-		t.Fatalf("approval list status = %d, want %d body=%s", approvalsRR.Code, http.StatusOK, approvalsRR.Body.String())
+	if approvalsRR.Code != http.StatusForbidden {
+		t.Fatalf("reviewer approval list status = %d, want %d body=%s", approvalsRR.Code, http.StatusForbidden, approvalsRR.Body.String())
+	}
+
+	adminApprovalsReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/approvals", nil), &auth.AuthContext{
+		Tenant:      "default",
+		Role:        "admin",
+		PrincipalID: "admin-1",
+	})
+	adminApprovalsRR := httptest.NewRecorder()
+	s.handleListApprovals(adminApprovalsRR, adminApprovalsReq)
+	if adminApprovalsRR.Code != http.StatusOK {
+		t.Fatalf("admin approval list status = %d, want %d body=%s", adminApprovalsRR.Code, http.StatusOK, adminApprovalsRR.Body.String())
 	}
 
 	listAgentsReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &auth.AuthContext{
@@ -170,8 +225,19 @@ func TestRBACRoutePermissions_ApprovalsAndAgents(t *testing.T) {
 	})
 	listAgentsRR := httptest.NewRecorder()
 	s.handleListAgents(listAgentsRR, listAgentsReq)
-	if listAgentsRR.Code != http.StatusOK {
-		t.Fatalf("agent list status = %d, want %d body=%s", listAgentsRR.Code, http.StatusOK, listAgentsRR.Body.String())
+	if listAgentsRR.Code != http.StatusForbidden {
+		t.Fatalf("reviewer agent list status = %d, want %d body=%s", listAgentsRR.Code, http.StatusForbidden, listAgentsRR.Body.String())
+	}
+
+	adminListAgentsReq := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &auth.AuthContext{
+		Tenant:      "default",
+		Role:        "admin",
+		PrincipalID: "admin-1",
+	})
+	adminListAgentsRR := httptest.NewRecorder()
+	s.handleListAgents(adminListAgentsRR, adminListAgentsReq)
+	if adminListAgentsRR.Code != http.StatusOK {
+		t.Fatalf("admin agent list status = %d, want %d body=%s", adminListAgentsRR.Code, http.StatusOK, adminListAgentsRR.Body.String())
 	}
 
 	createAgentReq := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewBufferString(`{"name":"blocked-agent","owner":"reviewer","risk_tier":"low"}`)), &auth.AuthContext{

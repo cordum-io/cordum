@@ -12,26 +12,22 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="MarketplaceInstallRequest")
 
 
 @_attrs_define
 class MarketplaceInstallRequest:
-    """ 
-        Attributes:
-            catalog_id (str):
-            pack_id (str):
-            version (str):
-            url (Union[Unset, str]):
-            sha256 (Union[Unset, str]):
-            force (Union[Unset, bool]):  Default: False.
-            upgrade (Union[Unset, bool]):  Default: False.
-            inactive (Union[Unset, bool]):  Default: False.
-     """
+    """
+    Attributes:
+        catalog_id (str):
+        pack_id (str):
+        version (str):
+        url (Union[Unset, str]):
+        sha256 (Union[Unset, str]):
+        force (Union[Unset, bool]):  Default: False.
+        upgrade (Union[Unset, bool]):  Default: False.
+        inactive (Union[Unset, bool]):  Default: False.
+    """
 
     catalog_id: str
     pack_id: str
@@ -42,7 +38,6 @@ class MarketplaceInstallRequest:
     upgrade: Union[Unset, bool] = False
     inactive: Union[Unset, bool] = False
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         catalog_id = self.catalog_id
@@ -61,14 +56,15 @@ class MarketplaceInstallRequest:
 
         inactive = self.inactive
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "catalog_id": catalog_id,
-            "pack_id": pack_id,
-            "version": version,
-        })
+        field_dict.update(
+            {
+                "catalog_id": catalog_id,
+                "pack_id": pack_id,
+                "version": version,
+            }
+        )
         if url is not UNSET:
             field_dict["url"] = url
         if sha256 is not UNSET:
@@ -81,8 +77,6 @@ class MarketplaceInstallRequest:
             field_dict["inactive"] = inactive
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -113,7 +107,6 @@ class MarketplaceInstallRequest:
             upgrade=upgrade,
             inactive=inactive,
         )
-
 
         marketplace_install_request.additional_properties = d
         return marketplace_install_request

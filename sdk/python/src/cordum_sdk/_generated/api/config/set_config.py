@@ -12,21 +12,13 @@ from typing import cast
 from typing import Dict
 
 
-
 def _get_kwargs(
     *,
     body: ConfigDocument,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
-
-    
 
     _kwargs: Dict[str, Any] = {
         "method": "post",
@@ -35,7 +27,6 @@ def _get_kwargs(
 
     _body = body.to_dict()
 
-
     _kwargs["json"] = _body
     headers["Content-Type"] = "application/json"
 
@@ -43,7 +34,9 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Any]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Any]:
     if response.status_code == 204:
         return None
     if response.status_code == 400:
@@ -60,7 +53,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Any]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Any]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -74,9 +69,8 @@ def sync_detailed(
     client: Union[AuthenticatedClient, Client],
     body: ConfigDocument,
     x_tenant_id: str,
-
 ) -> Response[Any]:
-    """ Set configuration
+    """Set configuration
 
     Args:
         x_tenant_id (str):
@@ -88,13 +82,11 @@ def sync_detailed(
 
     Returns:
         Response[Any]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         body=body,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -109,9 +101,8 @@ async def asyncio_detailed(
     client: Union[AuthenticatedClient, Client],
     body: ConfigDocument,
     x_tenant_id: str,
-
 ) -> Response[Any]:
-    """ Set configuration
+    """Set configuration
 
     Args:
         x_tenant_id (str):
@@ -123,18 +114,13 @@ async def asyncio_detailed(
 
     Returns:
         Response[Any]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         body=body,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
-

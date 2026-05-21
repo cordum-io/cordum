@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class McpStatusTransport(str, Enum):
     SSE = "sse"
     STDIO = "stdio"

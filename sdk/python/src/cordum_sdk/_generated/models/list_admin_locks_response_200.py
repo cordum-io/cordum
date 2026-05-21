@@ -13,10 +13,7 @@ from typing import cast, List
 from typing import Dict
 
 if TYPE_CHECKING:
-  from ..models.admin_lock import AdminLock
-
-
-
+    from ..models.admin_lock import AdminLock
 
 
 T = TypeVar("T", bound="ListAdminLocksResponse200")
@@ -24,53 +21,47 @@ T = TypeVar("T", bound="ListAdminLocksResponse200")
 
 @_attrs_define
 class ListAdminLocksResponse200:
-    """ 
-        Attributes:
-            locks (List['AdminLock']):
-     """
+    """
+    Attributes:
+        locks (List['AdminLock']):
+    """
 
-    locks: List['AdminLock']
+    locks: List["AdminLock"]
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.admin_lock import AdminLock
+
         locks = []
         for locks_item_data in self.locks:
             locks_item = locks_item_data.to_dict()
             locks.append(locks_item)
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "locks": locks,
-        })
+        field_dict.update(
+            {
+                "locks": locks,
+            }
+        )
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.admin_lock import AdminLock
+
         d = src_dict.copy()
         locks = []
         _locks = d.pop("locks")
-        for locks_item_data in (_locks):
+        for locks_item_data in _locks:
             locks_item = AdminLock.from_dict(locks_item_data)
 
-
-
             locks.append(locks_item)
-
 
         list_admin_locks_response_200 = cls(
             locks=locks,
         )
-
 
         list_admin_locks_response_200.additional_properties = d
         return list_admin_locks_response_200

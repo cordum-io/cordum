@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class SubmitJobRequestPriority(str, Enum):
     BATCH = "batch"
     CRITICAL = "critical"

@@ -17,11 +17,8 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.marketplace_catalog_catalogs_item import MarketplaceCatalogCatalogsItem
-  from ..models.marketplace_pack import MarketplacePack
-
-
-
+    from ..models.marketplace_pack import MarketplacePack
+    from ..models.marketplace_catalog_catalogs_item import MarketplaceCatalogCatalogsItem
 
 
 T = TypeVar("T", bound="MarketplaceCatalog")
@@ -29,32 +26,30 @@ T = TypeVar("T", bound="MarketplaceCatalog")
 
 @_attrs_define
 class MarketplaceCatalog:
-    """ 
-        Attributes:
-            catalogs (Union[Unset, List['MarketplaceCatalogCatalogsItem']]):
-            items (Union[Unset, List['MarketplacePack']]):
-            fetched_at (Union[Unset, datetime.datetime]):
-            cached (Union[Unset, bool]):
-     """
+    """
+    Attributes:
+        catalogs (Union[Unset, List['MarketplaceCatalogCatalogsItem']]):
+        items (Union[Unset, List['MarketplacePack']]):
+        fetched_at (Union[Unset, datetime.datetime]):
+        cached (Union[Unset, bool]):
+    """
 
-    catalogs: Union[Unset, List['MarketplaceCatalogCatalogsItem']] = UNSET
-    items: Union[Unset, List['MarketplacePack']] = UNSET
+    catalogs: Union[Unset, List["MarketplaceCatalogCatalogsItem"]] = UNSET
+    items: Union[Unset, List["MarketplacePack"]] = UNSET
     fetched_at: Union[Unset, datetime.datetime] = UNSET
     cached: Union[Unset, bool] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.marketplace_catalog_catalogs_item import MarketplaceCatalogCatalogsItem
         from ..models.marketplace_pack import MarketplacePack
+        from ..models.marketplace_catalog_catalogs_item import MarketplaceCatalogCatalogsItem
+
         catalogs: Union[Unset, List[Dict[str, Any]]] = UNSET
         if not isinstance(self.catalogs, Unset):
             catalogs = []
             for catalogs_item_data in self.catalogs:
                 catalogs_item = catalogs_item_data.to_dict()
                 catalogs.append(catalogs_item)
-
-
 
         items: Union[Unset, List[Dict[str, Any]]] = UNSET
         if not isinstance(self.items, Unset):
@@ -63,19 +58,15 @@ class MarketplaceCatalog:
                 items_item = items_item_data.to_dict()
                 items.append(items_item)
 
-
-
         fetched_at: Union[Unset, str] = UNSET
         if not isinstance(self.fetched_at, Unset):
             fetched_at = self.fetched_at.isoformat()
 
         cached = self.cached
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if catalogs is not UNSET:
             field_dict["catalogs"] = catalogs
         if items is not UNSET:
@@ -87,42 +78,32 @@ class MarketplaceCatalog:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.marketplace_catalog_catalogs_item import MarketplaceCatalogCatalogsItem
         from ..models.marketplace_pack import MarketplacePack
+        from ..models.marketplace_catalog_catalogs_item import MarketplaceCatalogCatalogsItem
+
         d = src_dict.copy()
         catalogs = []
         _catalogs = d.pop("catalogs", UNSET)
-        for catalogs_item_data in (_catalogs or []):
+        for catalogs_item_data in _catalogs or []:
             catalogs_item = MarketplaceCatalogCatalogsItem.from_dict(catalogs_item_data)
-
-
 
             catalogs.append(catalogs_item)
 
-
         items = []
         _items = d.pop("items", UNSET)
-        for items_item_data in (_items or []):
+        for items_item_data in _items or []:
             items_item = MarketplacePack.from_dict(items_item_data)
-
-
 
             items.append(items_item)
 
-
         _fetched_at = d.pop("fetched_at", UNSET)
         fetched_at: Union[Unset, datetime.datetime]
-        if isinstance(_fetched_at,  Unset):
+        if isinstance(_fetched_at, Unset):
             fetched_at = UNSET
         else:
             fetched_at = isoparse(_fetched_at)
-
-
-
 
         cached = d.pop("cached", UNSET)
 
@@ -132,7 +113,6 @@ class MarketplaceCatalog:
             fetched_at=fetched_at,
             cached=cached,
         )
-
 
         marketplace_catalog.additional_properties = d
         return marketplace_catalog

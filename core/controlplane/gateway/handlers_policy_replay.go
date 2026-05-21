@@ -151,20 +151,20 @@ func (s *server) handlePolicyReplay(w http.ResponseWriter, r *http.Request) {
 	// Parse and validate time range.
 	fromTime, err := time.Parse(time.RFC3339, strings.TrimSpace(body.From))
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid 'from' timestamp: must be RFC3339")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "invalid 'from' timestamp: must be RFC3339")
 		return
 	}
 	toTime, err := time.Parse(time.RFC3339, strings.TrimSpace(body.To))
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid 'to' timestamp: must be RFC3339")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "invalid 'to' timestamp: must be RFC3339")
 		return
 	}
 	if !fromTime.Before(toTime) {
-		writeErrorJSON(w, http.StatusBadRequest, "'from' must be before 'to'")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "'from' must be before 'to'")
 		return
 	}
 	if toTime.Sub(fromTime) > replayMaxSpan {
-		writeErrorJSON(w, http.StatusBadRequest, "time range exceeds maximum of 7 days")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "time range exceeds maximum of 7 days")
 		return
 	}
 
@@ -179,7 +179,7 @@ func (s *server) handlePolicyReplay(w http.ResponseWriter, r *http.Request) {
 
 	// Determine which policy must be provided.
 	if !body.UseCurrentPolicy && strings.TrimSpace(body.CandidateContent) == "" && strings.TrimSpace(body.CandidateBundleID) == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "one of candidate_content, candidate_bundle_id, or use_current_policy must be specified")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "one of candidate_content, candidate_bundle_id, or use_current_policy must be specified")
 		return
 	}
 
@@ -197,7 +197,7 @@ func (s *server) handlePolicyReplay(w http.ResponseWriter, r *http.Request) {
 	if body.UseCurrentPolicy {
 		policy, snapshot, err = policybundles.BuildPolicyFromBundles(bundles)
 		if err != nil {
-			writeErrorJSON(w, http.StatusBadRequest, fmt.Sprintf("current policy invalid: %s", err.Error()))
+			writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, fmt.Sprintf("current policy invalid: %s", err.Error()))
 			return
 		}
 	} else {
@@ -215,7 +215,7 @@ func (s *server) handlePolicyReplay(w http.ResponseWriter, r *http.Request) {
 		}
 		policy, snapshot, err = policybundles.BuildPolicyFromBundles(working)
 		if err != nil {
-			writeErrorJSON(w, http.StatusBadRequest, fmt.Sprintf("candidate policy invalid: %s", err.Error()))
+			writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, fmt.Sprintf("candidate policy invalid: %s", err.Error()))
 			return
 		}
 	}

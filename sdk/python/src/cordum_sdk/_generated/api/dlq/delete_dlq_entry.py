@@ -8,34 +8,28 @@ from ...types import Response, UNSET
 from ... import errors
 
 
-
-
 def _get_kwargs(
     job_id: str,
     *,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
 
-
-
-    
-
-    
-
     _kwargs: Dict[str, Any] = {
         "method": "delete",
-        "url": "/api/v1/dlq/{job_id}".format(job_id=job_id,),
+        "url": "/api/v1/dlq/{job_id}".format(
+            job_id=job_id,
+        ),
     }
-
 
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Any]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Any]:
     if response.status_code == 204:
         return None
     if response.status_code == 401:
@@ -52,7 +46,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Any]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Any]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -66,9 +62,8 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
 ) -> Response[Any]:
-    """ Remove a DLQ entry
+    """Remove a DLQ entry
 
     Args:
         job_id (str):
@@ -80,13 +75,11 @@ def sync_detailed(
 
     Returns:
         Response[Any]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         job_id=job_id,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -101,9 +94,8 @@ async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
 ) -> Response[Any]:
-    """ Remove a DLQ entry
+    """Remove a DLQ entry
 
     Args:
         job_id (str):
@@ -115,18 +107,13 @@ async def asyncio_detailed(
 
     Returns:
         Response[Any]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         job_id=job_id,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
-

@@ -91,17 +91,32 @@ var (
 		model.JobStateQuarantined: true,
 	}
 	allowedTransitions = map[model.JobState][]model.JobState{
-		"":                     {model.JobStatePending, model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateFailed},
-		model.JobStatePending:  {model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded},
-		model.JobStateApproval: {model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded},
+		// Initial "" → Cancelled allowed for early-cancel races where a workflow
+		// cancellation arrives before the scheduler has written any state.
+		"":                    {model.JobStatePending, model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateFailed, model.JobStateCancelled},
+		model.JobStatePending: {model.JobStateApproval, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateRetrying},
+		// Approval → Cancelled: workflow CancelRun routinely cancels approval-gate
+		// jobs; the scheduler-side setJobState on JOB_STATUS_CANCELLED must succeed
+		// for any in-flight approval job whose worker returns CANCELLED.
+		model.JobStateApproval: {model.JobStatePending, model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled},
 		// Quarantined transitions from active states: output policy 2-phase evaluation
 		// can quarantine a job at any point during execution if the output scanner
 		// detects unsafe content. See ADR-005 (output-policy-2-phase).
 		// SCHEDULED self-transition allowed for dispatch publish rollback
 		// (DISPATCHED→SCHEDULED fails, second replay starts at SCHEDULED).
-		model.JobStateScheduled:  {model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateQuarantined},
-		model.JobStateDispatched: {model.JobStateScheduled, model.JobStateRunning, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
-		model.JobStateRunning:    {model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined},
+		model.JobStateScheduled:  {model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateDenied, model.JobStateFailed, model.JobStateTimeout, model.JobStateSucceeded, model.JobStateCancelled, model.JobStateQuarantined, model.JobStateRetrying},
+		model.JobStateDispatched: {model.JobStateScheduled, model.JobStateRunning, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined, model.JobStateRetrying},
+		// Running → Running: a no-op self-transition tolerated so worker
+		// progress/heartbeat redeliveries (or scheduler re-dispatch loops on the
+		// same jobID before the worker finalizes) do not trip invalid-transition
+		// errors. Idempotent — the state, timestamp index, and event log are all
+		// re-asserted with the same value.
+		model.JobStateRunning: {model.JobStateRunning, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout, model.JobStateQuarantined, model.JobStateRetrying},
+		// Retrying is a non-terminal "awaiting retry re-dispatch" state. Workflow
+		// engines that exhaust their retry budget transition Retrying → Failed;
+		// successful re-dispatch transitions Retrying → Dispatched/Running; a
+		// cancellation while retry-pending transitions Retrying → Cancelled.
+		model.JobStateRetrying: {model.JobStateScheduled, model.JobStateDispatched, model.JobStateRunning, model.JobStateRetrying, model.JobStateSucceeded, model.JobStateFailed, model.JobStateCancelled, model.JobStateTimeout},
 		// Succeeded → Quarantined: async output scanning may flag content after the
 		// job completes. This is the only allowed post-success transition.
 		model.JobStateSucceeded:   {model.JobStateQuarantined},
@@ -515,6 +530,32 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 		url = defaultRedisURL
 	}
 
+	ttl := redisJobStoreMetaTTL()
+	client, err := redisutil.NewClient(url)
+	if err != nil {
+		return nil, fmt.Errorf("parse redis url: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("connect redis: %w", err)
+	}
+
+	idempotencyTTL := redisJobStoreIdempotencyTTL()
+	slog.Debug("job store connected", "component", "store", "metaTTL", ttl.String(), "idempotencyTTL", idempotencyTTL.String())
+	return &RedisJobStore{client: client, metaTTL: ttl, idempotencyTTL: idempotencyTTL}, nil
+}
+
+// NewRedisJobStoreFromClient constructs a Redis-backed JobStore from a shared client.
+func NewRedisJobStoreFromClient(client redis.UniversalClient) *RedisJobStore {
+	return &RedisJobStore{
+		client:         client,
+		metaTTL:        redisJobStoreMetaTTL(),
+		idempotencyTTL: redisJobStoreIdempotencyTTL(),
+	}
+}
+
+func redisJobStoreMetaTTL() time.Duration {
 	ttl := defaultJobMetaTTL
 	if v := os.Getenv(envJobMetaTTLSeconds); v != "" {
 		secs, err := strconv.Atoi(v)
@@ -536,18 +577,10 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 			ttl = parsed
 		}
 	}
-	client, err := redisutil.NewClient(url)
-	if err != nil {
-		return nil, fmt.Errorf("parse redis url: %w", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("connect redis: %w", err)
-	}
+	return ttl
+}
 
-	// Idempotency keys must outlive the job lifecycle to prevent
-	// duplicate jobs on late retries. Default: 90 days.
+func redisJobStoreIdempotencyTTL() time.Duration {
 	idempotencyTTL := 90 * 24 * time.Hour
 	if v := os.Getenv("CORDUM_IDEMPOTENCY_TTL"); v != "" {
 		if parsed, err := time.ParseDuration(v); err != nil {
@@ -556,9 +589,7 @@ func NewRedisJobStore(url string) (*RedisJobStore, error) {
 			idempotencyTTL = parsed
 		}
 	}
-
-	slog.Debug("job store connected", "component", "store", "metaTTL", ttl.String(), "idempotencyTTL", idempotencyTTL.String())
-	return &RedisJobStore{client: client, metaTTL: ttl, idempotencyTTL: idempotencyTTL}, nil
+	return idempotencyTTL
 }
 
 func (s *RedisJobStore) SetState(ctx context.Context, jobID string, state model.JobState) error {

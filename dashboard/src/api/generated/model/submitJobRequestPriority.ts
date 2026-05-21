@@ -9,12 +9,12 @@
 /**
  * Job scheduling priority
  */
-export type SubmitJobRequestPriority = typeof SubmitJobRequestPriority[keyof typeof SubmitJobRequestPriority];
-
+export type SubmitJobRequestPriority =
+  (typeof SubmitJobRequestPriority)[keyof typeof SubmitJobRequestPriority];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const SubmitJobRequestPriority = {
-  batch: 'batch',
-  critical: 'critical',
-  interactive: 'interactive',
+  batch: "batch",
+  critical: "critical",
+  interactive: "interactive",
 } as const;

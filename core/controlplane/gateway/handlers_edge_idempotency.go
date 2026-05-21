@@ -28,9 +28,7 @@ import (
 // across different write endpoints by the same tenant does NOT collide.
 const (
 	edgeSessionCreateEndpoint   = "POST /api/v1/edge/sessions"
-	edgeSessionEndEndpoint      = "POST /api/v1/edge/sessions/:id/end"
 	edgeExecutionCreateEndpoint = "POST /api/v1/edge/sessions/:id/executions"
-	edgeExecutionEndEndpoint    = "POST /api/v1/edge/executions/:id/end"
 	edgeApprovalApproveEndpoint = "POST /api/v1/edge/approvals/:ref/approve"
 	edgeApprovalRejectEndpoint  = "POST /api/v1/edge/approvals/:ref/reject"
 )
@@ -133,16 +131,16 @@ type edgeIdempotentWriteResult struct {
 //     edgeErrCodeIdempotencyConflict and returns true.
 //   - On a fresh Reserved state, invokes writeFn(). If it returns an
 //     error, the wrapper:
-//       (a) calls store.ReleaseIdempotency so the client can retry,
-//       (b) invokes errFn(err) so the caller emits its endpoint-specific
-//           error envelope (e.g. ErrParentSessionTerminal → 409 vs
-//           ErrApprovalConflict → 409 vs ErrEventListTooLarge → 422),
-//       (c) returns true.
+//     (a) calls store.ReleaseIdempotency so the client can retry,
+//     (b) invokes errFn(err) so the caller emits its endpoint-specific
+//     error envelope (e.g. ErrParentSessionTerminal → 409 vs
+//     ErrApprovalConflict → 409 vs ErrEventListTooLarge → 422),
+//     (c) returns true.
 //     If writeFn succeeds, the wrapper:
-//       (a) calls CompleteIdempotency with the response shape so future
-//           replays serve the cached body,
-//       (b) writes status/content-type/body to w,
-//       (c) returns true.
+//     (a) calls CompleteIdempotency with the response shape so future
+//     replays serve the cached body,
+//     (b) writes status/content-type/body to w,
+//     (c) returns true.
 //   - Returns false ONLY in the impossible-defensive case (handled
 //     elsewhere by the caller).
 //

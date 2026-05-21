@@ -271,13 +271,13 @@ func (s *server) handleShadowResultsSummary(w http.ResponseWriter, r *http.Reque
 
 	bundleID, ok := extractBundleIDFromPath(r)
 	if !ok {
-		writeErrorJSON(w, http.StatusBadRequest, "bundle id required in path")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyShadowQuery, "bundle id required in path")
 		return
 	}
 
 	fromMs, toMs, httpErr := parseShadowResultsRange(r)
 	if httpErr != nil {
-		writeErrorJSON(w, httpErr.status, httpErr.message)
+		writeJSONError(w, httpErr.status, errorCodePolicyShadowQuery, httpErr.message)
 		return
 	}
 
@@ -416,19 +416,19 @@ func (s *server) handleShadowResultsComparisons(w http.ResponseWriter, r *http.R
 
 	bundleID, ok := extractBundleIDFromPath(r)
 	if !ok {
-		writeErrorJSON(w, http.StatusBadRequest, "bundle id required in path")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyShadowQuery, "bundle id required in path")
 		return
 	}
 	fromMs, toMs, httpErr := parseShadowResultsRange(r)
 	if httpErr != nil {
-		writeErrorJSON(w, httpErr.status, httpErr.message)
+		writeJSONError(w, httpErr.status, errorCodePolicyShadowQuery, httpErr.message)
 		return
 	}
 
 	q := r.URL.Query()
 	diffFilter := strings.ToLower(strings.TrimSpace(q.Get("diff")))
 	if _, okDiff := validShadowDiffFilters[diffFilter]; !okDiff {
-		writeErrorJSON(w, http.StatusBadRequest,
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyShadowQuery,
 			"diff must be one of: escalated, relaxed, approval_differ, unchanged, all")
 		return
 	}
@@ -440,11 +440,11 @@ func (s *server) handleShadowResultsComparisons(w http.ResponseWriter, r *http.R
 	if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
 		v, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || v <= 0 {
-			writeErrorJSON(w, http.StatusBadRequest, "limit must be a positive integer")
+			writeJSONError(w, http.StatusBadRequest, errorCodePolicyShadowQuery, "limit must be a positive integer")
 			return
 		}
 		if v > shadowComparisonsMaxLimit {
-			writeErrorJSON(w, http.StatusBadRequest,
+			writeJSONError(w, http.StatusBadRequest, errorCodePolicyShadowQuery,
 				fmt.Sprintf("limit exceeds maximum (%d)", shadowComparisonsMaxLimit))
 			return
 		}
@@ -452,7 +452,7 @@ func (s *server) handleShadowResultsComparisons(w http.ResponseWriter, r *http.R
 	}
 	cursor := strings.TrimSpace(q.Get("cursor"))
 	if cursor != "" && !isValidStreamID(cursor) {
-		writeErrorJSON(w, http.StatusBadRequest, "cursor must be a Redis Stream ID (<ms>-<seq>)")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyShadowQuery, "cursor must be a Redis Stream ID (<ms>-<seq>)")
 		return
 	}
 
@@ -621,19 +621,19 @@ func (s *server) handleShadowResultsTimeseries(w http.ResponseWriter, r *http.Re
 
 	bundleID, ok := extractBundleIDFromPath(r)
 	if !ok {
-		writeErrorJSON(w, http.StatusBadRequest, "bundle id required in path")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyShadowQuery, "bundle id required in path")
 		return
 	}
 	fromMs, toMs, httpErr := parseShadowResultsRange(r)
 	if httpErr != nil {
-		writeErrorJSON(w, httpErr.status, httpErr.message)
+		writeJSONError(w, httpErr.status, errorCodePolicyShadowQuery, httpErr.message)
 		return
 	}
 
 	bucket := strings.TrimSpace(r.URL.Query().Get("bucket"))
 	bucketMs, okBucket := shadowBucketDurations[bucket]
 	if !okBucket {
-		writeErrorJSON(w, http.StatusBadRequest,
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyShadowQuery,
 			"bucket must be one of: 1m, 5m, 15m, 1h, 1d")
 		return
 	}
@@ -646,7 +646,7 @@ func (s *server) handleShadowResultsTimeseries(w http.ResponseWriter, r *http.Re
 		bucketCount++
 	}
 	if bucketCount > shadowTimeseriesMaxBuckets {
-		writeErrorJSON(w, http.StatusBadRequest,
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyShadowQuery,
 			fmt.Sprintf("bucket resolution too fine for range: %d buckets exceeds %d max", bucketCount, shadowTimeseriesMaxBuckets))
 		return
 	}

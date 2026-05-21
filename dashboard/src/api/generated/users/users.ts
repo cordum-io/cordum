@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,8 +18,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   AuthUser,
@@ -35,358 +32,535 @@ import type {
   NotFoundResponse,
   ResetUserPasswordBody,
   UnauthorizedResponse,
-  UpdateUserRequest
-} from '.././model';
+  UpdateUserRequest,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * @summary Create a user
  */
 export const createUser = (
-    createUserRequest: CreateUserRequest,
- signal?: AbortSignal
+  createUserRequest: CreateUserRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<AuthUser>(
-      {url: `/api/v1/users`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: createUserRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<AuthUser>({
+    url: `/api/v1/users`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: createUserRequest,
+    signal,
+  });
+};
 
+export const getCreateUserMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ConflictResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createUser>>,
+    TError,
+    { data: CreateUserRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createUser>>,
+  TError,
+  { data: CreateUserRequest },
+  TContext
+> => {
+  const mutationKey = ["createUser"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getCreateUserMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createUser>>, TError,{data: CreateUserRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof createUser>>, TError,{data: CreateUserRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createUser>>,
+    { data: CreateUserRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['createUser'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return createUser(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type CreateUserMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createUser>>
+>;
+export type CreateUserMutationBody = CreateUserRequest;
+export type CreateUserMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ConflictResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createUser>>, {data: CreateUserRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createUser(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateUserMutationResult = NonNullable<Awaited<ReturnType<typeof createUser>>>
-    export type CreateUserMutationBody = CreateUserRequest
-    export type CreateUserMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Create a user
  */
-export const useCreateUser = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createUser>>, TError,{data: CreateUserRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createUser>>,
-        TError,
-        {data: CreateUserRequest},
-        TContext
-      > => {
+export const useCreateUser = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ConflictResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createUser>>,
+      TError,
+      { data: CreateUserRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createUser>>,
+  TError,
+  { data: CreateUserRequest },
+  TContext
+> => {
+  const mutationOptions = getCreateUserMutationOptions(options);
 
-      const mutationOptions = getCreateUserMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary List all users
  */
-export const listUsers = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<ListUsers200>(
-      {url: `/api/v1/users`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const listUsers = (signal?: AbortSignal) => {
+  return apiClient<ListUsers200>({
+    url: `/api/v1/users`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getListUsersQueryKey = () => {
-    return [
-    `/api/v1/users`
-    ] as const;
-    }
+  return [`/api/v1/users`] as const;
+};
 
-    
-export const getListUsersQueryOptions = <TData = Awaited<ReturnType<typeof listUsers>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>>, }
-) => {
+export const getListUsersQueryOptions = <
+  TData = Awaited<ReturnType<typeof listUsers>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListUsersQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getListUsersQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listUsers>>> = ({
+    signal,
+  }) => listUsers(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listUsers>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listUsers>>> = ({ signal }) => listUsers(signal);
+export type ListUsersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listUsers>>
+>;
+export type ListUsersQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListUsersQueryResult = NonNullable<Awaited<ReturnType<typeof listUsers>>>
-export type ListUsersQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
-
-
-export function useListUsers<TData = Awaited<ReturnType<typeof listUsers>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>> & Pick<
+export function useListUsers<
+  TData = Awaited<ReturnType<typeof listUsers>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listUsers>>,
           TError,
           Awaited<ReturnType<typeof listUsers>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListUsers<TData = Awaited<ReturnType<typeof listUsers>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListUsers<
+  TData = Awaited<ReturnType<typeof listUsers>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listUsers>>,
           TError,
           Awaited<ReturnType<typeof listUsers>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListUsers<TData = Awaited<ReturnType<typeof listUsers>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListUsers<
+  TData = Awaited<ReturnType<typeof listUsers>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List all users
  */
 
-export function useListUsers<TData = Awaited<ReturnType<typeof listUsers>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListUsers<
+  TData = Awaited<ReturnType<typeof listUsers>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listUsers>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListUsersQueryOptions(options);
 
-  const queryOptions = getListUsersQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Update a user
  */
 export const updateUser = (
-    id: string,
-    updateUserRequest: UpdateUserRequest,
- ) => {
-      
-      
-      return apiClient<AuthUser>(
-      {url: `/api/v1/users/${id}`, method: 'PUT',
-      headers: {'Content-Type': 'application/json', },
-      data: updateUserRequest
-    },
-      );
-    }
-  
+  id: string,
+  updateUserRequest: UpdateUserRequest,
+) => {
+  return apiClient<AuthUser>({
+    url: `/api/v1/users/${id}`,
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    data: updateUserRequest,
+  });
+};
 
+export const getUpdateUserMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateUser>>,
+    TError,
+    { id: string; data: UpdateUserRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateUser>>,
+  TError,
+  { id: string; data: UpdateUserRequest },
+  TContext
+> => {
+  const mutationKey = ["updateUser"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getUpdateUserMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateUser>>, TError,{id: string;data: UpdateUserRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof updateUser>>, TError,{id: string;data: UpdateUserRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateUser>>,
+    { id: string; data: UpdateUserRequest }
+  > = (props) => {
+    const { id, data } = props ?? {};
 
-const mutationKey = ['updateUser'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return updateUser(id, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type UpdateUserMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateUser>>
+>;
+export type UpdateUserMutationBody = UpdateUserRequest;
+export type UpdateUserMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateUser>>, {id: string;data: UpdateUserRequest}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  updateUser(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type UpdateUserMutationResult = NonNullable<Awaited<ReturnType<typeof updateUser>>>
-    export type UpdateUserMutationBody = UpdateUserRequest
-    export type UpdateUserMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Update a user
  */
-export const useUpdateUser = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateUser>>, TError,{id: string;data: UpdateUserRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof updateUser>>,
-        TError,
-        {id: string;data: UpdateUserRequest},
-        TContext
-      > => {
+export const useUpdateUser = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof updateUser>>,
+      TError,
+      { id: string; data: UpdateUserRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof updateUser>>,
+  TError,
+  { id: string; data: UpdateUserRequest },
+  TContext
+> => {
+  const mutationOptions = getUpdateUserMutationOptions(options);
 
-      const mutationOptions = getUpdateUserMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Delete a user
  */
-export const deleteUser = (
-    id: string,
- ) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/users/${id}`, method: 'DELETE'
-    },
-      );
-    }
-  
+export const deleteUser = (id: string) => {
+  return apiClient<void>({ url: `/api/v1/users/${id}`, method: "DELETE" });
+};
 
+export const getDeleteUserMutationOptions = <
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteUser>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteUser>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["deleteUser"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getDeleteUserMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteUser>>, TError,{id: string}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof deleteUser>>, TError,{id: string}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteUser>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
 
-const mutationKey = ['deleteUser'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return deleteUser(id);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type DeleteUserMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteUser>>
+>;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteUser>>, {id: string}> = (props) => {
-          const {id} = props ?? {};
+export type DeleteUserMutationError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-          return  deleteUser(id,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type DeleteUserMutationResult = NonNullable<Awaited<ReturnType<typeof deleteUser>>>
-    
-    export type DeleteUserMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Delete a user
  */
-export const useDeleteUser = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteUser>>, TError,{id: string}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof deleteUser>>,
-        TError,
-        {id: string},
-        TContext
-      > => {
+export const useDeleteUser = <
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deleteUser>>,
+      TError,
+      { id: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof deleteUser>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationOptions = getDeleteUserMutationOptions(options);
 
-      const mutationOptions = getDeleteUserMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Reset a user's password (admin)
  */
 export const resetUserPassword = (
-    id: string,
-    resetUserPasswordBody: ResetUserPasswordBody,
- signal?: AbortSignal
+  id: string,
+  resetUserPasswordBody: ResetUserPasswordBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/users/${id}/password`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: resetUserPasswordBody, signal
-    },
-      );
-    }
-  
+  return apiClient<void>({
+    url: `/api/v1/users/${id}/password`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: resetUserPasswordBody,
+    signal,
+  });
+};
 
+export const getResetUserPasswordMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof resetUserPassword>>,
+    TError,
+    { id: string; data: ResetUserPasswordBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof resetUserPassword>>,
+  TError,
+  { id: string; data: ResetUserPasswordBody },
+  TContext
+> => {
+  const mutationKey = ["resetUserPassword"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getResetUserPasswordMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetUserPassword>>, TError,{id: string;data: ResetUserPasswordBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof resetUserPassword>>, TError,{id: string;data: ResetUserPasswordBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof resetUserPassword>>,
+    { id: string; data: ResetUserPasswordBody }
+  > = (props) => {
+    const { id, data } = props ?? {};
 
-const mutationKey = ['resetUserPassword'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return resetUserPassword(id, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type ResetUserPasswordMutationResult = NonNullable<
+  Awaited<ReturnType<typeof resetUserPassword>>
+>;
+export type ResetUserPasswordMutationBody = ResetUserPasswordBody;
+export type ResetUserPasswordMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resetUserPassword>>, {id: string;data: ResetUserPasswordBody}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  resetUserPassword(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ResetUserPasswordMutationResult = NonNullable<Awaited<ReturnType<typeof resetUserPassword>>>
-    export type ResetUserPasswordMutationBody = ResetUserPasswordBody
-    export type ResetUserPasswordMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse
-
-    /**
+/**
  * @summary Reset a user's password (admin)
  */
-export const useResetUserPassword = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resetUserPassword>>, TError,{id: string;data: ResetUserPasswordBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof resetUserPassword>>,
-        TError,
-        {id: string;data: ResetUserPasswordBody},
-        TContext
-      > => {
+export const useResetUserPassword = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof resetUserPassword>>,
+      TError,
+      { id: string; data: ResetUserPasswordBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof resetUserPassword>>,
+  TError,
+  { id: string; data: ResetUserPasswordBody },
+  TContext
+> => {
+  const mutationOptions = getResetUserPasswordMutationOptions(options);
 
-      const mutationOptions = getResetUserPasswordMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    
+  return useMutation(mutationOptions, queryClient);
+};

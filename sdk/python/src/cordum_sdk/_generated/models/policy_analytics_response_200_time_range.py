@@ -15,25 +15,20 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="PolicyAnalyticsResponse200TimeRange")
 
 
 @_attrs_define
 class PolicyAnalyticsResponse200TimeRange:
-    """ 
-        Attributes:
-            from_ (Union[Unset, datetime.datetime]):
-            to (Union[Unset, datetime.datetime]):
-     """
+    """
+    Attributes:
+        from_ (Union[Unset, datetime.datetime]):
+        to (Union[Unset, datetime.datetime]):
+    """
 
     from_: Union[Unset, datetime.datetime] = UNSET
     to: Union[Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from_: Union[Unset, str] = UNSET
@@ -44,11 +39,9 @@ class PolicyAnalyticsResponse200TimeRange:
         if not isinstance(self.to, Unset):
             to = self.to.isoformat()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if from_ is not UNSET:
             field_dict["from"] = from_
         if to is not UNSET:
@@ -56,36 +49,27 @@ class PolicyAnalyticsResponse200TimeRange:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
         _from_ = d.pop("from", UNSET)
         from_: Union[Unset, datetime.datetime]
-        if isinstance(_from_,  Unset):
+        if isinstance(_from_, Unset):
             from_ = UNSET
         else:
             from_ = isoparse(_from_)
 
-
-
-
         _to = d.pop("to", UNSET)
         to: Union[Unset, datetime.datetime]
-        if isinstance(_to,  Unset):
+        if isinstance(_to, Unset):
             to = UNSET
         else:
             to = isoparse(_to)
-
-
-
 
         policy_analytics_response_200_time_range = cls(
             from_=from_,
             to=to,
         )
-
 
         policy_analytics_response_200_time_range.additional_properties = d
         return policy_analytics_response_200_time_range

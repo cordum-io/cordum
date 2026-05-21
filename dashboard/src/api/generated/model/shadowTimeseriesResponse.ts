@@ -5,8 +5,8 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { ShadowTimeseriesResponseBucket } from './shadowTimeseriesResponseBucket';
-import type { ShadowTimeseriesBucket } from './shadowTimeseriesBucket';
+import type { ShadowTimeseriesResponseBucket } from "./shadowTimeseriesResponseBucket";
+import type { ShadowTimeseriesBucket } from "./shadowTimeseriesBucket";
 
 export interface ShadowTimeseriesResponse {
   /** Bucket width as the caller requested (e.g. `1m`, `5m`). */

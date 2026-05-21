@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any, Dict, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Union, cast
 
 import httpx
 
@@ -10,11 +10,11 @@ from ... import errors
 from ...models.error import Error
 from ...models.export_audit_compliance_format import ExportAuditComplianceFormat
 from ...types import UNSET, Unset
+from dateutil.parser import isoparse
 from typing import cast
 from typing import Dict
 from typing import Union
 import datetime
-
 
 
 def _get_kwargs(
@@ -24,14 +24,9 @@ def _get_kwargs(
     format_: Union[Unset, ExportAuditComplianceFormat] = ExportAuditComplianceFormat.NDJSON,
     max_events: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-
 
     params: Dict[str, Any] = {}
 
@@ -53,9 +48,7 @@ def _get_kwargs(
 
     params["max_events"] = max_events
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -63,12 +56,13 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, Error, str]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, Error, str]]:
     if response.status_code == 200:
         response_200 = response.text
         return response_200
@@ -87,8 +81,6 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
     if response.status_code == 503:
         response_503 = Error.from_dict(response.json())
 
-
-
         return response_503
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -96,7 +88,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, Error, str]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, Error, str]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -113,9 +107,8 @@ def sync_detailed(
     format_: Union[Unset, ExportAuditComplianceFormat] = ExportAuditComplianceFormat.NDJSON,
     max_events: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, Error, str]]:
-    """ Stream compliance audit export
+    """Stream compliance audit export
 
      Streams a compliance-shaped audit export (ndjson or csv) for a bounded time window.
     Admin-only; gated by the `siem_export` or `audit_export` entitlement. The response is
@@ -136,16 +129,14 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, Error, str]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         from_=from_,
-to=to,
-format_=format_,
-max_events=max_events,
-x_tenant_id=x_tenant_id,
-
+        to=to,
+        format_=format_,
+        max_events=max_events,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -153,6 +144,7 @@ x_tenant_id=x_tenant_id,
     )
 
     return _build_response(client=client, response=response)
+
 
 def sync(
     *,
@@ -162,9 +154,8 @@ def sync(
     format_: Union[Unset, ExportAuditComplianceFormat] = ExportAuditComplianceFormat.NDJSON,
     max_events: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, Error, str]]:
-    """ Stream compliance audit export
+    """Stream compliance audit export
 
      Streams a compliance-shaped audit export (ndjson or csv) for a bounded time window.
     Admin-only; gated by the `siem_export` or `audit_export` entitlement. The response is
@@ -185,18 +176,17 @@ def sync(
 
     Returns:
         Union[Any, Error, str]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-from_=from_,
-to=to,
-format_=format_,
-max_events=max_events,
-x_tenant_id=x_tenant_id,
-
+        from_=from_,
+        to=to,
+        format_=format_,
+        max_events=max_events,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
@@ -206,9 +196,8 @@ async def asyncio_detailed(
     format_: Union[Unset, ExportAuditComplianceFormat] = ExportAuditComplianceFormat.NDJSON,
     max_events: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, Error, str]]:
-    """ Stream compliance audit export
+    """Stream compliance audit export
 
      Streams a compliance-shaped audit export (ndjson or csv) for a bounded time window.
     Admin-only; gated by the `siem_export` or `audit_export` entitlement. The response is
@@ -229,23 +218,20 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, Error, str]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         from_=from_,
-to=to,
-format_=format_,
-max_events=max_events,
-x_tenant_id=x_tenant_id,
-
+        to=to,
+        format_=format_,
+        max_events=max_events,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
@@ -255,9 +241,8 @@ async def asyncio(
     format_: Union[Unset, ExportAuditComplianceFormat] = ExportAuditComplianceFormat.NDJSON,
     max_events: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, Error, str]]:
-    """ Stream compliance audit export
+    """Stream compliance audit export
 
      Streams a compliance-shaped audit export (ndjson or csv) for a bounded time window.
     Admin-only; gated by the `siem_export` or `audit_export` entitlement. The response is
@@ -278,15 +263,15 @@ async def asyncio(
 
     Returns:
         Union[Any, Error, str]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-from_=from_,
-to=to,
-format_=format_,
-max_events=max_events,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            from_=from_,
+            to=to,
+            format_=format_,
+            max_events=max_events,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

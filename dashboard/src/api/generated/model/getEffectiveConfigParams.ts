@@ -7,8 +7,8 @@
  */
 
 export type GetEffectiveConfigParams = {
-org_id?: string;
-team_id?: string;
-workflow_id?: string;
-step_id?: string;
+  org_id?: string;
+  team_id?: string;
+  workflow_id?: string;
+  step_id?: string;
 };

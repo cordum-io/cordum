@@ -17,26 +17,22 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="APIKeyInfo")
 
 
 @_attrs_define
 class APIKeyInfo:
-    """ 
-        Attributes:
-            id (Union[Unset, str]):
-            name (Union[Unset, str]):
-            prefix (Union[Unset, str]): First characters of the key for identification
-            scopes (Union[Unset, List[str]]):
-            created_at (Union[Unset, datetime.datetime]):
-            last_used (Union[None, Unset, datetime.datetime]):
-            usage_count (Union[Unset, int]):
-            expires_at (Union[None, Unset, datetime.datetime]):
-     """
+    """
+    Attributes:
+        id (Union[Unset, str]):
+        name (Union[Unset, str]):
+        prefix (Union[Unset, str]): First characters of the key for identification
+        scopes (Union[Unset, List[str]]):
+        created_at (Union[Unset, datetime.datetime]):
+        last_used (Union[None, Unset, datetime.datetime]):
+        usage_count (Union[Unset, int]):
+        expires_at (Union[None, Unset, datetime.datetime]):
+    """
 
     id: Union[Unset, str] = UNSET
     name: Union[Unset, str] = UNSET
@@ -48,7 +44,6 @@ class APIKeyInfo:
     expires_at: Union[None, Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         id = self.id
 
@@ -59,8 +54,6 @@ class APIKeyInfo:
         scopes: Union[Unset, List[str]] = UNSET
         if not isinstance(self.scopes, Unset):
             scopes = self.scopes
-
-
 
         created_at: Union[Unset, str] = UNSET
         if not isinstance(self.created_at, Unset):
@@ -84,11 +77,9 @@ class APIKeyInfo:
         else:
             expires_at = self.expires_at
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if id is not UNSET:
             field_dict["id"] = id
         if name is not UNSET:
@@ -108,8 +99,6 @@ class APIKeyInfo:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -121,16 +110,12 @@ class APIKeyInfo:
 
         scopes = cast(List[str], d.pop("scopes", UNSET))
 
-
         _created_at = d.pop("createdAt", UNSET)
         created_at: Union[Unset, datetime.datetime]
-        if isinstance(_created_at,  Unset):
+        if isinstance(_created_at, Unset):
             created_at = UNSET
         else:
             created_at = isoparse(_created_at)
-
-
-
 
         def _parse_last_used(data: object) -> Union[None, Unset, datetime.datetime]:
             if data is None:
@@ -142,15 +127,12 @@ class APIKeyInfo:
                     raise TypeError()
                 last_used_type_0 = isoparse(data)
 
-
-
                 return last_used_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
             return cast(Union[None, Unset, datetime.datetime], data)
 
         last_used = _parse_last_used(d.pop("lastUsed", UNSET))
-
 
         usage_count = d.pop("usageCount", UNSET)
 
@@ -164,15 +146,12 @@ class APIKeyInfo:
                     raise TypeError()
                 expires_at_type_0 = isoparse(data)
 
-
-
                 return expires_at_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
             return cast(Union[None, Unset, datetime.datetime], data)
 
         expires_at = _parse_expires_at(d.pop("expiresAt", UNSET))
-
 
         api_key_info = cls(
             id=id,
@@ -184,7 +163,6 @@ class APIKeyInfo:
             usage_count=usage_count,
             expires_at=expires_at,
         )
-
 
         api_key_info.additional_properties = d
         return api_key_info

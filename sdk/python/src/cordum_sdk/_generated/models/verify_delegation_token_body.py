@@ -12,43 +12,37 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="VerifyDelegationTokenBody")
 
 
 @_attrs_define
 class VerifyDelegationTokenBody:
-    """ 
-        Attributes:
-            token (str):
-            expected_audience (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        token (str):
+        expected_audience (Union[Unset, str]):
+    """
 
     token: str
     expected_audience: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         token = self.token
 
         expected_audience = self.expected_audience
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "token": token,
-        })
+        field_dict.update(
+            {
+                "token": token,
+            }
+        )
         if expected_audience is not UNSET:
             field_dict["expected_audience"] = expected_audience
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -61,7 +55,6 @@ class VerifyDelegationTokenBody:
             token=token,
             expected_audience=expected_audience,
         )
-
 
         verify_delegation_token_body.additional_properties = d
         return verify_delegation_token_body

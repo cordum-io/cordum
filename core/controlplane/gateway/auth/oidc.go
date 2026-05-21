@@ -22,6 +22,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"log/slog"
@@ -228,10 +229,8 @@ func NewOIDCProvider(cfg OIDCConfig) (*OIDCProvider, error) {
 	}
 
 	p := &OIDCProvider{
-		cfg: cfg,
-		httpClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
+		cfg:             cfg,
+		httpClient:      newOIDCHTTPClient(),
 		rsaKeys:         make(map[string]*rsa.PublicKey),
 		ecKeys:          make(map[string]*ecdsa.PublicKey),
 		stopCh:          make(chan struct{}),
@@ -322,6 +321,16 @@ func NewOIDCProviderFromEnv() (*OIDCProvider, error) {
 func (p *OIDCProvider) Close() {
 	close(p.stopCh)
 	<-p.done
+	closeOIDCIdleConnections(p.httpClient)
+}
+
+func closeOIDCIdleConnections(client *http.Client) {
+	if client == nil || client.Transport == nil {
+		return
+	}
+	if closer, ok := client.Transport.(interface{ CloseIdleConnections() }); ok {
+		closer.CloseIdleConnections()
+	}
 }
 
 // ValidateJWT parses and validates a JWT token string against the cached JWKS.
@@ -1152,7 +1161,13 @@ func validateOIDCURL(raw string) (*url.URL, error) {
 	if len(allowlist) > 0 && !hostAllowed(host, allowlist) {
 		return nil, fmt.Errorf("oidc: issuer host not allowed: %s", host)
 	}
-	if env.IsProduction() && !envBool(envOIDCAllowPrivate) {
+	// SSRF defense in all environments: refuse private / loopback /
+	// link-local / cloud-metadata issuer hosts unless explicitly opted
+	// into via CORDUM_OIDC_ALLOW_PRIVATE=true (dev/test escape hatch).
+	// Pre-fix this was gated on env.IsProduction(), so dev / staging
+	// deployments accepted issuer URLs that pointed at the cloud
+	// metadata IP and leaked discovery + JWKS to the local IMDS.
+	if !envBool(envOIDCAllowPrivate) {
 		if err := ensurePublicHost(host); err != nil {
 			return nil, err
 		}
@@ -1230,6 +1245,50 @@ func envBool(name string) bool {
 // isPrivateNet delegates to the shared PrivateIPNets in private_nets.go.
 func isPrivateNet(ip net.IP) bool {
 	return IsPrivateNet(ip)
+}
+
+// newOIDCHTTPClient returns the http.Client used for OIDC discovery and
+// JWKS refresh. It installs a net.Dialer.Control hook that inspects the
+// resolved address at connect time and refuses dials to private /
+// loopback / link-local / multicast / unspecified IPs. This is defense
+// in depth against DNS rebinding: even if validateOIDCURL accepted the
+// hostname at registration, a hostile DNS server can swap the resolved
+// IP between fetches, and refreshJWKS uses the discovery-time URI
+// verbatim. CORDUM_OIDC_ALLOW_PRIVATE=true opens the dialer for the
+// dev/test escape hatch (parallels validateOIDCURL).
+func newOIDCHTTPClient() *http.Client {
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Control: func(network, address string, _ syscall.RawConn) error {
+			if envBool(envOIDCAllowPrivate) {
+				return nil
+			}
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				host = address
+			}
+			ip := net.ParseIP(host)
+			if ip == nil {
+				return fmt.Errorf("oidc: dial refused — unresolved host %q", address)
+			}
+			if isPrivateNet(ip) {
+				return fmt.Errorf("oidc: dial refused — address %s is private / loopback / link-local (DNS rebinding guard)", ip)
+			}
+			return nil
+		},
+	}
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           dialer.DialContext,
+			MaxIdleConns:          10,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
 }
 
 // ===========================================================================

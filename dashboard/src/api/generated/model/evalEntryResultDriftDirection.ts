@@ -6,12 +6,12 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EvalEntryResultDriftDirection = typeof EvalEntryResultDriftDirection[keyof typeof EvalEntryResultDriftDirection];
-
+export type EvalEntryResultDriftDirection =
+  (typeof EvalEntryResultDriftDirection)[keyof typeof EvalEntryResultDriftDirection];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EvalEntryResultDriftDirection = {
-  escalated: 'escalated',
-  relaxed: 'relaxed',
-  unchanged: 'unchanged',
+  escalated: "escalated",
+  relaxed: "relaxed",
+  unchanged: "unchanged",
 } as const;

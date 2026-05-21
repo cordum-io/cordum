@@ -6,11 +6,11 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type ExportAuditComplianceFormat = typeof ExportAuditComplianceFormat[keyof typeof ExportAuditComplianceFormat];
-
+export type ExportAuditComplianceFormat =
+  (typeof ExportAuditComplianceFormat)[keyof typeof ExportAuditComplianceFormat];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const ExportAuditComplianceFormat = {
-  ndjson: 'ndjson',
-  csv: 'csv',
+  ndjson: "ndjson",
+  csv: "csv",
 } as const;

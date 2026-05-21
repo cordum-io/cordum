@@ -5,7 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { PostChatRequestRole } from './postChatRequestRole';
+import type { PostChatRequestRole } from "./postChatRequestRole";
 
 export interface PostChatRequest {
   content: string;

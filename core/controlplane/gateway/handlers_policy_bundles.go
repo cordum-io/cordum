@@ -268,7 +268,7 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 	}
 	ruleID := strings.TrimSpace(r.PathValue("id"))
 	if ruleID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "rule id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "rule id required")
 		return
 	}
 	var body policybundles.OutputRuleToggleRequest
@@ -277,7 +277,7 @@ func (s *server) handlePutPolicyOutputRule(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if body.Enabled == nil {
-		writeErrorJSON(w, http.StatusBadRequest, "enabled is required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "enabled is required")
 		return
 	}
 
@@ -437,11 +437,11 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	}
 	bundleID := policybundles.BundleIDFromRequest(r)
 	if bundleID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "bundle id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "bundle id required")
 		return
 	}
 	if !strings.HasPrefix(bundleID, policybundles.PolicyStudioPrefix) {
-		writeErrorJSON(w, http.StatusBadRequest, "bundle id must start with secops/")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "bundle id must start with secops/")
 		return
 	}
 	var body policybundles.PolicyBundleUpsertRequest
@@ -451,11 +451,11 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	}
 	content := policybundles.SanitizePolicyBundleYAML(strings.TrimSpace(body.Content))
 	if content == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "content required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "content required")
 		return
 	}
 	if _, err := config.ParseSafetyPolicy([]byte(content)); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, fmt.Sprintf("invalid policy content: %v", err))
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, fmt.Sprintf("invalid policy content: %v", err))
 		return
 	}
 
@@ -493,7 +493,7 @@ func (s *server) handlePutPolicyBundle(w http.ResponseWriter, r *http.Request) {
 	// remediation hint so the operator knows exactly what to fix.
 	outcome := signPolicyBundleContent(r.Context(), []byte(content))
 	if outcome.Status != 0 {
-		writeErrorJSON(w, outcome.Status, outcome.Message)
+		writeJSONError(w, outcome.Status, policySigningErrorCode(outcome), outcome.Message)
 		return
 	}
 
@@ -552,7 +552,7 @@ func (s *server) handleDeletePolicyBundle(w http.ResponseWriter, r *http.Request
 	}
 	bundleID := policybundles.BundleIDFromRequest(r)
 	if bundleID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "bundle id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "bundle id required")
 		return
 	}
 
@@ -621,7 +621,7 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 	body.Request.Meta.TenantId = tenant
 	checkReq, err := buildPolicyCheckRequest(r.Context(), &body.Request, s.configSvc, s.tenant)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, err.Error())
 		return
 	}
 
@@ -639,7 +639,7 @@ func (s *server) handleSimulatePolicyBundle(w http.ResponseWriter, r *http.Reque
 	}
 	policy, snapshot, err := policybundles.BuildPolicyFromBundles(working)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, err.Error())
 		return
 	}
 	resp := policybundles.EvaluatePolicyCheck(policy, snapshot, checkReq)
@@ -669,12 +669,12 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if len(bundles) == 0 {
-		writeErrorJSON(w, http.StatusBadRequest, "no bundles configured")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "no bundles configured")
 		return
 	}
 	targets := policybundles.ResolvePublishTargets(bundles, body.BundleIDs)
 	if len(targets) == 0 {
-		writeErrorJSON(w, http.StatusBadRequest, "no policy bundles to publish")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "no policy bundles to publish")
 		return
 	}
 	beforeSnapshot, _ := s.capturePolicyBundleSnapshotWithBundles(r.Context(), bundles, body.Note)
@@ -700,7 +700,7 @@ func (s *server) handlePublishPolicyBundles(w http.ResponseWriter, r *http.Reque
 		bundles[bundleID] = bundle
 	}
 	if err := policybundles.ValidateBundles(bundles); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, err.Error())
 		return
 	}
 	if doc == nil {
@@ -745,7 +745,7 @@ func (s *server) handleRollbackPolicyBundles(w http.ResponseWriter, r *http.Requ
 	}
 	snapshotID := strings.TrimSpace(body.SnapshotID)
 	if snapshotID == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "snapshot_id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePolicyValidationFailed, "snapshot_id required")
 		return
 	}
 	bundles, doc, err := s.loadPolicyBundlesWithDoc(r.Context())
@@ -1284,22 +1284,5 @@ func (s *server) appendAuditEntryNamed(ctx context.Context, action, resourceType
 		ActorID:      actorID,
 		Role:         role,
 		Message:      message,
-	})
-}
-
-// appendAuditEntryWithAgent is like appendAuditEntryNamed but includes agent
-// identity fields in the audit event for SIEM export.
-func (s *server) appendAuditEntryWithAgent(ctx context.Context, action, resourceType, resourceID, resourceName, actorID, role, message, agentID, agentName, agentRiskTier string) {
-	_ = s.appendPolicyAudit(ctx, policybundles.PolicyAuditEntry{
-		Action:        action,
-		ResourceType:  resourceType,
-		ResourceID:    resourceID,
-		ResourceName:  resourceName,
-		ActorID:       actorID,
-		Role:          role,
-		Message:       message,
-		AgentID:       agentID,
-		AgentName:     agentName,
-		AgentRiskTier: agentRiskTier,
 	})
 }

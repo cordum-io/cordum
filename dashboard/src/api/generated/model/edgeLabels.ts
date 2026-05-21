@@ -6,4 +6,6 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export interface EdgeLabels {[key: string]: string}
+export interface EdgeLabels {
+  [key: string]: string;
+}

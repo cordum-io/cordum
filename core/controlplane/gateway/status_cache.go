@@ -21,7 +21,8 @@ func newStatusCache(ttl time.Duration) *statusCache {
 	return &statusCache{ttl: ttl}
 }
 
-// Get returns the cached status if still fresh. Returns nil on miss.
+// Get returns a shallow copy of the cached status if still fresh. Returns nil
+// on miss. Callers may mutate the returned map without changing the cache.
 func (c *statusCache) Get() map[string]any {
 	if c == nil {
 		return nil
@@ -31,7 +32,11 @@ func (c *statusCache) Get() map[string]any {
 	if c.data == nil || time.Since(c.fetchedAt) > c.ttl {
 		return nil
 	}
-	return c.data
+	out := make(map[string]any, len(c.data))
+	for key, value := range c.data {
+		out[key] = value
+	}
+	return out
 }
 
 // Set stores a fresh status response.

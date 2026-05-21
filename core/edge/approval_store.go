@@ -10,7 +10,11 @@ import (
 )
 
 const (
-	ApprovalRefPrefix         = "edge_appr_"
+	ApprovalRefPrefix = "edge_appr_"
+	// DefaultApprovalMaxTTL is the production safety cap for an approval's
+	// hold-creation ExpiresAt. Operator overrides may shorten/lengthen this
+	// cap, but they must remain positive.
+	DefaultApprovalMaxTTL     = 30 * time.Minute
 	defaultApprovalTTL        = 5 * time.Minute
 	approvalRefRandomBytes    = 18
 	maxApprovalFieldBytes     = 2048
@@ -32,7 +36,55 @@ const (
 
 // ErrApprovalConflict marks a fail-closed lifecycle conflict that API
 // handlers should surface as HTTP 409 without leaking internal Redis details.
+// Callers needing the specific failure family use errors.As against
+// *ApprovalConflictError to extract Kind.
 var ErrApprovalConflict = errors.New("edge approval: conflict")
+
+// ApprovalConflictKind is the discriminator on an approval-lifecycle
+// failure. The MCP entry-path layer maps Kind directly to the
+// JSON-RPC -32096 error.data.kind enum, so the snake_case values are
+// part of the wire contract.
+type ApprovalConflictKind string
+
+const (
+	ApprovalConflictKindUnknown        ApprovalConflictKind = ""
+	ApprovalConflictKindNotFound       ApprovalConflictKind = "not_found"
+	ApprovalConflictKindRejected       ApprovalConflictKind = "rejected"
+	ApprovalConflictKindExpired        ApprovalConflictKind = "expired"
+	ApprovalConflictKindConsumed       ApprovalConflictKind = "consumed"
+	ApprovalConflictKindArgsMismatch   ApprovalConflictKind = "args_mismatch"
+	ApprovalConflictKindPolicyMismatch ApprovalConflictKind = "policy_mismatch"
+	ApprovalConflictKindTupleMismatch  ApprovalConflictKind = "tuple_mismatch"
+	ApprovalConflictKindSelfApproval   ApprovalConflictKind = "self_approval"
+	ApprovalConflictKindCrossTenant    ApprovalConflictKind = "cross_tenant"
+)
+
+// ApprovalConflictError is the typed wrapper around ErrApprovalConflict
+// carrying the specific failure family. errors.Is on the sentinel still
+// works for backward compatibility (the wrap chain includes
+// ErrApprovalConflict); new callers can errors.As to extract Kind.
+type ApprovalConflictError struct {
+	Kind   ApprovalConflictKind
+	Reason string
+}
+
+func (e *ApprovalConflictError) Error() string {
+	if e == nil {
+		return "edge approval: conflict"
+	}
+	if e.Reason == "" {
+		return fmt.Sprintf("edge approval: conflict (kind=%s)", e.Kind)
+	}
+	return fmt.Sprintf("edge approval: conflict (kind=%s): %s", e.Kind, e.Reason)
+}
+
+func (e *ApprovalConflictError) Unwrap() error { return ErrApprovalConflict }
+
+// newApprovalConflict returns a typed conflict error chained to
+// ErrApprovalConflict so existing errors.Is callers keep working.
+func newApprovalConflict(kind ApprovalConflictKind, reason string) error {
+	return &ApprovalConflictError{Kind: kind, Reason: reason}
+}
 
 // ErrEventListTooLarge is returned by EnqueueApproval (via loadEventFromTx)
 // when the parent execution's event list exceeds maxEventsPerApprovalValidation
@@ -98,6 +150,19 @@ type ApprovalResolution struct {
 
 // ApprovalClaimRequest is the agent-side consume-once check. The action tuple
 // and policy snapshot are revalidated inside the store transition.
+//
+// CallerAgentID is the authenticated identity of the agent presenting the
+// claim. When non-empty, the store-level CAS adds a defense-in-depth
+// self-approval check: a claim where CallerAgentID matches the approval's
+// ResolverID (the principal who issued /approve) is refused with
+// ApprovalConflictError{Kind:ApprovalConflictKindSelfApproval}. In real MCP
+// retry semantics the caller is the same principal as the original Requester
+// (the agent re-issues the tool call with _approval_ref), so the Requester
+// field is NOT a comparison target — only ResolverID is. The approve-time
+// requesterMatchesApprover guard enforces Requester != ResolverID at the
+// /approve API surface; this store-level check is defense-in-depth backing
+// that guard so a refactor that bypasses the API-layer check still fails
+// closed at the store.
 type ApprovalClaimRequest struct {
 	TenantID       string
 	ApprovalRef    string
@@ -108,6 +173,7 @@ type ApprovalClaimRequest struct {
 	InputHash      string
 	PolicySnapshot string
 	ConsumedAt     time.Time
+	CallerAgentID  string
 }
 
 // GenerateApprovalRef returns a crypto-random, URL-safe approval handle.

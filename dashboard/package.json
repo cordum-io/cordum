@@ -87,6 +87,7 @@
     "msw": "^2.13.5",
     "orval": "^7",
     "postcss": "^8.5.10",
+    "prettier": "^3.6.2",
     "rollup-plugin-visualizer": "^7.0.1",
     "start-server-and-test": "^3.0.2",
     "tailwindcss": "^4.1.14",

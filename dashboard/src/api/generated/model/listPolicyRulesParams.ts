@@ -7,5 +7,5 @@
  */
 
 export type ListPolicyRulesParams = {
-include_disabled?: boolean;
+  include_disabled?: boolean;
 };

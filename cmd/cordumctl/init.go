@@ -290,13 +290,13 @@ Local Cordum project scaffold.
 ## Prerequisites
 
 - Docker and Docker Compose (v2+)
-- ` + "`openssl`" + ` for API key generation
+- `+"`openssl`"+` for API key generation
 
 ## Configuration
 
-Create a ` + "`.env`" + ` file (or export variables) before starting:
+Create a `+"`.env`"+` file (or export variables) before starting:
 
-` + "```" + `
+`+"```"+`
 # Required: API key for the gateway (generate with: openssl rand -hex 32)
 CORDUM_API_KEY=<your-generated-key>
 
@@ -305,17 +305,17 @@ REDIS_PASSWORD=cordum-dev
 
 # Optional: pin a specific release version
 CORDUM_VERSION=latest
-` + "```" + `
+`+"```"+`
 
 > **Production**: You MUST change REDIS_PASSWORD to a strong random value
 > and generate a unique CORDUM_API_KEY. The defaults are for local development only.
 >
 > **Kubernetes**: API keys are stored in K8s secrets. Retrieve with:
-> ` + "`kubectl get secret cordum-api-key -n cordum -o jsonpath='{.data.API_KEY}' | base64 -d`" + `
+> `+"`kubectl get secret cordum-api-key -n cordum -o jsonpath='{.data.API_KEY}' | base64 -d`"+`
 
 ## Start the stack
 
-` + "```bash" + `
+`+"```bash"+`
 # Generate an API key
 export CORDUM_API_KEY="$(openssl rand -hex 32)"
 
@@ -324,17 +324,17 @@ docker compose up -d
 
 # Verify everything is healthy
 docker compose ps
-` + "```" + `
+`+"```"+`
 
 ## Create the sample workflow
 
-` + "```bash" + `
+`+"```bash"+`
 cordumctl workflow create --file workflows/hello.json
-` + "```" + `
+`+"```"+`
 
 ## Start a run and approve it
 
-` + "```bash" + `
+`+"```bash"+`
 run_id=$(cordumctl run start <workflow_id>)
 
 # Find the workflow gate job in the approvals queue, then approve it
@@ -342,7 +342,7 @@ job_id=$(curl -sS http://localhost:8081/api/v1/approvals \
   -H "X-API-Key: $CORDUM_API_KEY" \
   -H "X-Tenant-ID: default" | jq -r '.items[0].job.id')
 cordumctl approval job ${job_id} --approve
-` + "```" + `
+`+"```"+`
 
 ## Open the dashboard
 

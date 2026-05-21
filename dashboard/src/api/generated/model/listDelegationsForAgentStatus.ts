@@ -6,13 +6,13 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type ListDelegationsForAgentStatus = typeof ListDelegationsForAgentStatus[keyof typeof ListDelegationsForAgentStatus];
-
+export type ListDelegationsForAgentStatus =
+  (typeof ListDelegationsForAgentStatus)[keyof typeof ListDelegationsForAgentStatus];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const ListDelegationsForAgentStatus = {
-  active: 'active',
-  revoked: 'revoked',
-  expired: 'expired',
-  all: 'all',
+  active: "active",
+  revoked: "revoked",
+  expired: "expired",
+  all: "all",
 } as const;

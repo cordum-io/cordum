@@ -98,7 +98,7 @@ func (s *server) handleMCPUsage(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	since, until, herr := parseMCPRange(q, now, mcpUsageDefaultLookback)
 	if herr != nil {
-		writeErrorJSON(w, herr.status, herr.message)
+		writeJSONError(w, herr.status, herr.code, herr.message)
 		return
 	}
 	agentFilter := strings.TrimSpace(q.Get("agent"))
@@ -321,6 +321,7 @@ func walkMCPEvents(
 
 type mcpHTTPError struct {
 	status  int
+	code    string
 	message string
 }
 
@@ -338,22 +339,22 @@ func parseMCPRange(q map[string][]string, now time.Time, defaultLookback time.Du
 	if raw := get("until"); raw != "" {
 		v, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || v < 0 {
-			return time.Time{}, time.Time{}, &mcpHTTPError{http.StatusBadRequest, "until must be a non-negative unix millisecond"}
+			return time.Time{}, time.Time{}, &mcpHTTPError{http.StatusBadRequest, errorCodeMCPRangeInvalid, "until must be a non-negative unix millisecond"}
 		}
 		until = time.UnixMilli(v).UTC()
 	}
 	if raw := get("since"); raw != "" {
 		v, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || v < 0 {
-			return time.Time{}, time.Time{}, &mcpHTTPError{http.StatusBadRequest, "since must be a non-negative unix millisecond"}
+			return time.Time{}, time.Time{}, &mcpHTTPError{http.StatusBadRequest, errorCodeMCPRangeInvalid, "since must be a non-negative unix millisecond"}
 		}
 		since = time.UnixMilli(v).UTC()
 	}
 	if !until.After(since) {
-		return time.Time{}, time.Time{}, &mcpHTTPError{http.StatusBadRequest, "until must be > since"}
+		return time.Time{}, time.Time{}, &mcpHTTPError{http.StatusBadRequest, errorCodeMCPRangeInvalid, "until must be > since"}
 	}
 	if until.Sub(since) > maxVerifySinceUntilSpread {
-		return time.Time{}, time.Time{}, &mcpHTTPError{http.StatusBadRequest, "since/until range exceeds 30 days"}
+		return time.Time{}, time.Time{}, &mcpHTTPError{http.StatusBadRequest, errorCodeMCPRangeInvalid, "since/until range exceeds 30 days"}
 	}
 	return since, until, nil
 }

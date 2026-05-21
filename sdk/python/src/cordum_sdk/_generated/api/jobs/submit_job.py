@@ -16,25 +16,17 @@ from typing import Union
 from uuid import UUID
 
 
-
 def _get_kwargs(
     *,
     body: SubmitJobRequest,
     x_tenant_id: str,
     idempotency_key: Union[Unset, UUID] = UNSET,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
 
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
-
-
-
-    
-
-    
 
     _kwargs: Dict[str, Any] = {
         "method": "post",
@@ -43,7 +35,6 @@ def _get_kwargs(
 
     _body = body.to_dict()
 
-
     _kwargs["json"] = _body
     headers["Content-Type"] = "application/json"
 
@@ -51,11 +42,11 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, SubmitJobResponse]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, SubmitJobResponse]]:
     if response.status_code == 200:
         response_200 = SubmitJobResponse.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 400:
@@ -79,7 +70,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, SubmitJobResponse]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, SubmitJobResponse]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -94,9 +87,8 @@ def sync_detailed(
     body: SubmitJobRequest,
     x_tenant_id: str,
     idempotency_key: Union[Unset, UUID] = UNSET,
-
 ) -> Response[Union[Any, SubmitJobResponse]]:
-    """ Submit a new job
+    """Submit a new job
 
     Args:
         x_tenant_id (str):
@@ -109,14 +101,12 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, SubmitJobResponse]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         body=body,
-x_tenant_id=x_tenant_id,
-idempotency_key=idempotency_key,
-
+        x_tenant_id=x_tenant_id,
+        idempotency_key=idempotency_key,
     )
 
     response = client.get_httpx_client().request(
@@ -125,15 +115,15 @@ idempotency_key=idempotency_key,
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: SubmitJobRequest,
     x_tenant_id: str,
     idempotency_key: Union[Unset, UUID] = UNSET,
-
 ) -> Optional[Union[Any, SubmitJobResponse]]:
-    """ Submit a new job
+    """Submit a new job
 
     Args:
         x_tenant_id (str):
@@ -146,16 +136,15 @@ def sync(
 
     Returns:
         Union[Any, SubmitJobResponse]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-body=body,
-x_tenant_id=x_tenant_id,
-idempotency_key=idempotency_key,
-
+        body=body,
+        x_tenant_id=x_tenant_id,
+        idempotency_key=idempotency_key,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
@@ -163,9 +152,8 @@ async def asyncio_detailed(
     body: SubmitJobRequest,
     x_tenant_id: str,
     idempotency_key: Union[Unset, UUID] = UNSET,
-
 ) -> Response[Union[Any, SubmitJobResponse]]:
-    """ Submit a new job
+    """Submit a new job
 
     Args:
         x_tenant_id (str):
@@ -178,21 +166,18 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, SubmitJobResponse]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         body=body,
-x_tenant_id=x_tenant_id,
-idempotency_key=idempotency_key,
-
+        x_tenant_id=x_tenant_id,
+        idempotency_key=idempotency_key,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
@@ -200,9 +185,8 @@ async def asyncio(
     body: SubmitJobRequest,
     x_tenant_id: str,
     idempotency_key: Union[Unset, UUID] = UNSET,
-
 ) -> Optional[Union[Any, SubmitJobResponse]]:
-    """ Submit a new job
+    """Submit a new job
 
     Args:
         x_tenant_id (str):
@@ -215,13 +199,13 @@ async def asyncio(
 
     Returns:
         Union[Any, SubmitJobResponse]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-body=body,
-x_tenant_id=x_tenant_id,
-idempotency_key=idempotency_key,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            body=body,
+            x_tenant_id=x_tenant_id,
+            idempotency_key=idempotency_key,
+        )
+    ).parsed

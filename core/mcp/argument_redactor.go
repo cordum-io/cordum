@@ -72,11 +72,30 @@ func DefaultRedactionRules() []RedactionRule {
 		{FieldName: "private_key", Replacement: "[REDACTED:private_key]", Description: "private_key"},
 		{FieldName: "privateKey", Replacement: "[REDACTED:private_key]", Description: "private_key"},
 		// Regex heuristics — defence in depth for secrets that slipped
-		// into plain string fields.
+		// into plain string fields. Order matters when multiple patterns
+		// could match a substring: a more specific shape (sk_live_,
+		// PEM block) takes precedence over a broader prefix (sk-).
 		{Regex: `AKIA[0-9A-Z]{16}`, Replacement: "[REDACTED:aws_access_key]", Description: "aws_access_key"},
 		{Regex: `sk_live_[a-zA-Z0-9]{24,}`, Replacement: "[REDACTED:stripe_secret]", Description: "stripe_secret"},
+		// Anthropic-style sk- API keys, plus any other vendor that adopted
+		// the `sk-<random>` convention (OpenAI legacy, plain `sk-`).
+		// Requires >= 16 trailing chars to skip benign `sk-` substrings.
+		{Regex: `sk-[A-Za-z0-9_\-]{16,}`, Replacement: "[REDACTED:api_key]", Description: "api_key"},
+		// GitHub token families: classic PAT (ghp_), OAuth (gho_),
+		// user-server (ghu_), server-server (ghs_), refresh (ghr_).
+		{Regex: `gh[opusr]_[A-Za-z0-9]{16,}`, Replacement: "[REDACTED:github_token]", Description: "github_token"},
+		// GitHub fine-grained PAT (github_pat_<prefix>_<suffix>) carries
+		// underscores in the body and slips past the classic [A-Za-z0-9]
+		// character class. The longer prefix is matched before the
+		// gh[opusr]_ rule above so a github_pat_ token never falls
+		// through to a more permissive pattern.
+		{Regex: `github_pat_[A-Za-z0-9_]{16,}`, Replacement: "[REDACTED:github_token]", Description: "github_token"},
+		// GitHub Enterprise (ghe_) token family — same shape as the
+		// other gh* tokens but the `e` discriminator isn't in
+		// [opusr], so it needs its own pattern.
+		{Regex: `ghe_[A-Za-z0-9_]{16,}`, Replacement: "[REDACTED:github_token]", Description: "github_token"},
 		{Regex: `eyJ[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+\.[a-zA-Z0-9_\-]+`, Replacement: "[REDACTED:jwt]", Description: "jwt"},
-		{Regex: `-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]+?-----END [A-Z ]+PRIVATE KEY-----`, Replacement: "[REDACTED:pem_private_key]", Description: "pem_private_key"},
+		{Regex: `-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+?-----END [A-Z ]*PRIVATE KEY-----`, Replacement: "[REDACTED:pem_private_key]", Description: "pem_private_key"},
 	}
 }
 
@@ -124,26 +143,42 @@ func MergeRedactionRules(base, overrides []RedactionRule) []RedactionRule {
 		return append([]RedactionRule(nil), base...)
 	}
 	seen := make(map[string]int)
+	seenRegex := make(map[string]struct{})
 	merged := make([]RedactionRule, 0)
 	for _, r := range base {
-		if r.FieldName != "" {
-			key := strings.ToLower(strings.TrimSpace(r.FieldName))
+		if key := redactionFieldKey(r.FieldName); key != "" {
 			seen[key] = len(merged)
+		}
+		if key := redactionRegexKey(r.Regex); key != "" {
+			seenRegex[key] = struct{}{}
 		}
 		merged = append(merged, r)
 	}
 	for _, r := range overrides {
-		if r.FieldName != "" {
-			key := strings.ToLower(strings.TrimSpace(r.FieldName))
+		if key := redactionFieldKey(r.FieldName); key != "" {
 			if idx, ok := seen[key]; ok {
 				merged[idx] = r
 				continue
 			}
 			seen[key] = len(merged)
 		}
+		if key := redactionRegexKey(r.Regex); key != "" {
+			if _, ok := seenRegex[key]; ok {
+				continue
+			}
+			seenRegex[key] = struct{}{}
+		}
 		merged = append(merged, r)
 	}
 	return merged
+}
+
+func redactionFieldKey(field string) string {
+	return strings.ToLower(strings.TrimSpace(field))
+}
+
+func redactionRegexKey(pattern string) string {
+	return strings.TrimSpace(pattern)
 }
 
 // NewPolicyRedactor compiles a rule set into a redactor. Invalid

@@ -37,6 +37,11 @@ func NewRedisStore(url string) (*RedisStore, error) {
 	return &RedisStore{client: client}, nil
 }
 
+// NewRedisStoreFromClient constructs a lock store from a shared Redis client.
+func NewRedisStoreFromClient(client redis.UniversalClient) *RedisStore {
+	return &RedisStore{client: client}
+}
+
 // Close shuts down the Redis client.
 func (s *RedisStore) Close() error {
 	if s == nil || s.client == nil {

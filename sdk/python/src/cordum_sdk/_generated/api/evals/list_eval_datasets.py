@@ -14,7 +14,6 @@ from typing import Dict
 from typing import Union
 
 
-
 def _get_kwargs(
     *,
     cursor: Union[Unset, str] = UNSET,
@@ -23,14 +22,9 @@ def _get_kwargs(
     created_after: Union[Unset, str] = UNSET,
     created_before: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
@@ -44,9 +38,7 @@ def _get_kwargs(
 
     params["created_before"] = created_before
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -54,16 +46,15 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, ListEvalDatasetsResponse200]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, ListEvalDatasetsResponse200]]:
     if response.status_code == 200:
         response_200 = ListEvalDatasetsResponse200.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 400:
@@ -84,7 +75,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, ListEvalDatasetsResponse200]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, ListEvalDatasetsResponse200]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -102,9 +95,8 @@ def sync_detailed(
     created_after: Union[Unset, str] = UNSET,
     created_before: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ListEvalDatasetsResponse200]]:
-    """ List eval datasets
+    """List eval datasets
 
     Args:
         cursor (Union[Unset, str]):
@@ -120,17 +112,15 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, ListEvalDatasetsResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         cursor=cursor,
-limit=limit,
-name_prefix=name_prefix,
-created_after=created_after,
-created_before=created_before,
-x_tenant_id=x_tenant_id,
-
+        limit=limit,
+        name_prefix=name_prefix,
+        created_after=created_after,
+        created_before=created_before,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -138,6 +128,7 @@ x_tenant_id=x_tenant_id,
     )
 
     return _build_response(client=client, response=response)
+
 
 def sync(
     *,
@@ -148,9 +139,8 @@ def sync(
     created_after: Union[Unset, str] = UNSET,
     created_before: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ListEvalDatasetsResponse200]]:
-    """ List eval datasets
+    """List eval datasets
 
     Args:
         cursor (Union[Unset, str]):
@@ -166,19 +156,18 @@ def sync(
 
     Returns:
         Union[Any, ListEvalDatasetsResponse200]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-cursor=cursor,
-limit=limit,
-name_prefix=name_prefix,
-created_after=created_after,
-created_before=created_before,
-x_tenant_id=x_tenant_id,
-
+        cursor=cursor,
+        limit=limit,
+        name_prefix=name_prefix,
+        created_after=created_after,
+        created_before=created_before,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
@@ -189,9 +178,8 @@ async def asyncio_detailed(
     created_after: Union[Unset, str] = UNSET,
     created_before: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ListEvalDatasetsResponse200]]:
-    """ List eval datasets
+    """List eval datasets
 
     Args:
         cursor (Union[Unset, str]):
@@ -207,24 +195,21 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, ListEvalDatasetsResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         cursor=cursor,
-limit=limit,
-name_prefix=name_prefix,
-created_after=created_after,
-created_before=created_before,
-x_tenant_id=x_tenant_id,
-
+        limit=limit,
+        name_prefix=name_prefix,
+        created_after=created_after,
+        created_before=created_before,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
@@ -235,9 +220,8 @@ async def asyncio(
     created_after: Union[Unset, str] = UNSET,
     created_before: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ListEvalDatasetsResponse200]]:
-    """ List eval datasets
+    """List eval datasets
 
     Args:
         cursor (Union[Unset, str]):
@@ -253,16 +237,16 @@ async def asyncio(
 
     Returns:
         Union[Any, ListEvalDatasetsResponse200]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-cursor=cursor,
-limit=limit,
-name_prefix=name_prefix,
-created_after=created_after,
-created_before=created_before,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            cursor=cursor,
+            limit=limit,
+            name_prefix=name_prefix,
+            created_after=created_after,
+            created_before=created_before,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

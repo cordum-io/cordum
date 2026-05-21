@@ -6,13 +6,13 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type PackRecordStatus = typeof PackRecordStatus[keyof typeof PackRecordStatus];
-
+export type PackRecordStatus =
+  (typeof PackRecordStatus)[keyof typeof PackRecordStatus];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const PackRecordStatus = {
-  ACTIVE: 'ACTIVE',
-  INACTIVE: 'INACTIVE',
-  UNINSTALLED: 'UNINSTALLED',
-  ERROR: 'ERROR',
+  ACTIVE: "ACTIVE",
+  INACTIVE: "INACTIVE",
+  UNINSTALLED: "UNINSTALLED",
+  ERROR: "ERROR",
 } as const;

@@ -64,12 +64,35 @@ every classification the tool touches must also be in the identity's list.
 Missing classifications deny the tool. Empty tool classifications skip the
 gate entirely.
 
+## MCP action-gate allowlists
+
+The gateway's MCP action gate performs additional checks on the structured
+`mcp_call` action descriptor after the identity is resolved from the persisted
+agent identity store:
+
+- `AllowedServers` is matched as glob patterns against the MCP server name.
+- `AllowedResources` is matched as glob patterns against `cordum://` target
+  resource URIs when an action names `TargetURL`.
+- `Entitlements` must contain the action's `RequiredEntitlement` token.
+
+These lists are opt-in and fail closed. An older persisted identity that omits
+`allowed_servers`, `allowed_resources`, or `entitlements` does not receive a
+wildcard grant; server-guarded, resource-guarded, or entitlement-guarded MCP
+actions deny with `server_not_allowlisted`, `resource_not_allowlisted`, or
+`unlicensed` respectively.
+
 ### Fail-closed defaults
 
 - **No identity on the request context.** `tools/list` returns an empty
   slice; `tools/call` returns `-32098 not_authorized`.
 - **Unknown tier on the identity.** Same result as no identity.
 - **Empty `AllowedTools`.** Zero tools visible.
+- **Empty `AllowedServers`.** MCP action-gate checks deny any action that names
+  a server.
+- **Empty `AllowedResources`.** MCP action-gate checks deny any action that
+  names a target resource URI.
+- **Empty `Entitlements`.** MCP action-gate checks deny any action with a
+  required entitlement.
 - **Unknown tier on a tool.** Treated as `high` — operators must explicitly
   opt a tool into a lower tier.
 
@@ -202,8 +225,9 @@ effect is observable.
 
 ## Operational checklist
 
-- Every agent identity has a populated `AllowedTools`, `RiskTier`, and
-  (when needed) `DataClassifications`.
+- Every agent identity has populated `AllowedTools`, `AllowedServers`,
+  `RiskTier`, and (when needed) `AllowedResources`, `Entitlements`, and
+  `DataClassifications`.
 - High-sensitivity tools (`jobs.delete`, `workflows.cancel`,
   `audit.export`) are declared at `risk_tier: high` or `critical` in
   their code registration.

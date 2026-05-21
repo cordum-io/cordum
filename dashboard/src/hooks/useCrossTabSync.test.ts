@@ -134,7 +134,6 @@ describe("useCrossTabSync", () => {
 
   it("handles auth-login message using payload directly, not localStorage", async () => {
     // localStorage has stale/different data — should NOT be used for BroadcastChannel
-    window.localStorage.setItem("cordum-api-key", "stale-key");
     window.localStorage.setItem(
       "cordum-user",
       JSON.stringify({ id: "stale-user", username: "stale", email: "", display_name: "", roles: [], tenant: "stale" }),
@@ -144,7 +143,7 @@ describe("useCrossTabSync", () => {
 
     channel().emit({
       type: "auth-login",
-      token: "fresh-token",
+      creds: { mode: "apikey", key: "fresh-token" },
       user: {
         id: "u1",
         username: "alice",
@@ -157,39 +156,66 @@ describe("useCrossTabSync", () => {
 
     await hook.waitFor(() => {
       expect(loginMock).toHaveBeenCalledWith(
-        "fresh-token",
+        { mode: "apikey", key: "fresh-token" },
         expect.objectContaining({ id: "u1", tenant: "tenant-1" }),
       );
     });
     // Verify it used message payload, not localStorage
     expect(loginMock).not.toHaveBeenCalledWith(
-      "stale-key",
       expect.anything(),
+      expect.objectContaining({ id: "stale-user" }),
     );
 
     hook.unmount();
   });
 
-  it("storage-event login fallback reads token and user from localStorage", async () => {
-    window.localStorage.setItem(
-      "cordum-user",
-      JSON.stringify({
-        id: "u2",
-        username: "bob",
-        email: "bob@example.com",
-        display_name: "Bob",
-        roles: ["viewer"],
-        tenant: "tenant-2",
-      }),
-    );
-
+  it("auth-login broadcast in session mode carries no token (cookie syncs separately)", async () => {
     const hook = renderWithQueryClient(() => useCrossTabSync());
 
-    window.dispatchEvent(makeStorageEvent({ key: "cordum-api-key", newValue: "storage-token" }));
+    channel().emit({
+      type: "auth-login",
+      creds: { mode: "session" },
+      user: {
+        id: "admin",
+        username: "admin",
+        email: "",
+        display_name: "admin",
+        roles: ["admin"],
+        tenant: "default",
+      },
+    });
 
     await hook.waitFor(() => {
       expect(loginMock).toHaveBeenCalledWith(
-        "storage-token",
+        { mode: "session" },
+        expect.objectContaining({ id: "admin" }),
+      );
+    });
+
+    hook.unmount();
+  });
+
+  it("storage-event login fallback synthesizes session-mode login from cordum-user", async () => {
+    // The storage-event path no longer carries the apiKey — the cookie is the
+    // auth artefact, and apikey-mode tabs use the BroadcastChannel primary path.
+    // A `cordum-user` write means another tab just authenticated; we treat the
+    // new tab's view conservatively as session mode (the cookie will gate
+    // actual requests).
+    const hook = renderWithQueryClient(() => useCrossTabSync());
+
+    const userJson = JSON.stringify({
+      id: "u2",
+      username: "bob",
+      email: "bob@example.com",
+      display_name: "Bob",
+      roles: ["viewer"],
+      tenant: "tenant-2",
+    });
+    window.dispatchEvent(makeStorageEvent({ key: "cordum-user", newValue: userJson }));
+
+    await hook.waitFor(() => {
+      expect(loginMock).toHaveBeenCalledWith(
+        { mode: "session" },
         expect.objectContaining({ id: "u2", tenant: "tenant-2" }),
       );
     });
@@ -198,11 +224,9 @@ describe("useCrossTabSync", () => {
   });
 
   it("storage-event login fallback skips login when user data is corrupt", async () => {
-    window.localStorage.setItem("cordum-user", "not-json{{{");
-
     const hook = renderWithQueryClient(() => useCrossTabSync());
 
-    window.dispatchEvent(makeStorageEvent({ key: "cordum-api-key", newValue: "some-token" }));
+    window.dispatchEvent(makeStorageEvent({ key: "cordum-user", newValue: "not-json{{{" }));
 
     // Give it a tick to process
     await new Promise((r) => setTimeout(r, 50));
@@ -229,7 +253,8 @@ describe("useCrossTabSync", () => {
   it("handles storage-event fallback for logout and theme changes", async () => {
     const hook = renderWithQueryClient(() => useCrossTabSync());
 
-    window.dispatchEvent(makeStorageEvent({ key: "cordum-api-key", newValue: null }));
+    // cordum-user cleared from another tab → logout signal
+    window.dispatchEvent(makeStorageEvent({ key: "cordum-user", newValue: null }));
     await hook.waitFor(() => {
       expect(logoutMock).toHaveBeenCalledTimes(1);
     });

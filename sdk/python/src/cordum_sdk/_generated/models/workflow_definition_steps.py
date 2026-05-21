@@ -12,10 +12,7 @@ from typing import cast
 from typing import Dict
 
 if TYPE_CHECKING:
-  from ..models.workflow_step import WorkflowStep
-
-
-
+    from ..models.workflow_step import WorkflowStep
 
 
 T = TypeVar("T", bound="WorkflowDefinitionSteps")
@@ -23,37 +20,29 @@ T = TypeVar("T", bound="WorkflowDefinitionSteps")
 
 @_attrs_define
 class WorkflowDefinitionSteps:
-    """ Map of step ID to step definition
+    """Map of step ID to step definition"""
 
-     """
-
-    additional_properties: Dict[str, 'WorkflowStep'] = _attrs_field(init=False, factory=dict)
-
+    additional_properties: Dict[str, "WorkflowStep"] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.workflow_step import WorkflowStep
-        
+
         field_dict: Dict[str, Any] = {}
         for prop_name, prop in self.additional_properties.items():
             field_dict[prop_name] = prop.to_dict()
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.workflow_step import WorkflowStep
-        d = src_dict.copy()
-        workflow_definition_steps = cls(
-        )
 
+        d = src_dict.copy()
+        workflow_definition_steps = cls()
 
         additional_properties = {}
         for prop_name, prop_dict in d.items():
             additional_property = WorkflowStep.from_dict(prop_dict)
-
-
 
             additional_properties[prop_name] = additional_property
 
@@ -64,10 +53,10 @@ class WorkflowDefinitionSteps:
     def additional_keys(self) -> List[str]:
         return list(self.additional_properties.keys())
 
-    def __getitem__(self, key: str) -> 'WorkflowStep':
+    def __getitem__(self, key: str) -> "WorkflowStep":
         return self.additional_properties[key]
 
-    def __setitem__(self, key: str, value: 'WorkflowStep') -> None:
+    def __setitem__(self, key: str, value: "WorkflowStep") -> None:
         self.additional_properties[key] = value
 
     def __delitem__(self, key: str) -> None:

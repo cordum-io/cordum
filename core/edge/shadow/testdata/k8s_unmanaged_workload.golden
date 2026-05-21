@@ -1,0 +1,45 @@
+{
+  "finding_id": "edge_shadow_k8s-workload-1",
+  "tenant_id": "tenant-k8s",
+  "audience": "both",
+  "severity": "medium",
+  "action_kind": "adopt_unmanaged_workload",
+  "summary": "Adopt the unmanaged claude-code workload: allowlist it or attach the cordum-agentd sidecar.",
+  "risk_explanation": "A Kubernetes workload runs an agent image but is not on the operator's WorkloadAllowlist AND has no cordum-agentd sidecar. Until adopted, agent sessions launched from this workload run without Cordum policy / hook routing. Signals: unmanaged_workload.",
+  "recommended_action": "Choose ONE: (A) add the workload to WorkloadAllowlist in the Cordum operator config, OR (B) patch the workload to inject the cordum-agentd sidecar.",
+  "safety_notes": [
+    "All steps are advisory — Cordum Edge does not auto-execute remediation.",
+    "Never substitute live secrets into the placeholders shown below; use your secret-manager / api-key-helper.",
+    "Cordum NEVER mutates Kubernetes cluster state; every kubectl command must be applied by the operator.",
+    "Only target namespaces you own; cross-tenant patches are explicitly out of scope (Q5 enforce-scope-out)."
+  ],
+  "steps": [
+    {
+      "id": "adopt_unmanaged_workload.allowlist",
+      "title": "Option A — add the workload to the operator's WorkloadAllowlist",
+      "kind": "adopt_unmanaged_workload",
+      "command": "# In cordum operator config (WorkloadAllowlist), append:\n- research-bot",
+      "docs_url": "docs/edge/shadow-remediation.md",
+      "conditions": [
+        "only acceptable when the workload is operator-vetted (not customer-tenant-owned)",
+        "reload the K8s detector ConfigMap so the allowlist takes effect on the next poll"
+      ]
+    },
+    {
+      "id": "adopt_unmanaged_workload.sidecar_patch",
+      "title": "Option B — inject the cordum-agentd sidecar so the workload becomes Cordum-managed",
+      "kind": "adopt_unmanaged_workload",
+      "command": "kubectl --context prod-east-1 -n team-research patch deployment/research-bot --type=strategic --patch \"$(cat \u003c\u003c'PATCH'\nspec:\n  template:\n    metadata:\n      labels:\n        cordum.io/heartbeat: \"true\"\n    spec:\n      containers:\n        - name: cordum-agentd\n          image: \u003ccordum-allowlisted-registry\u003e/cordum-agentd:\u003cversion\u003e\n          args: [\"--mode=sidecar\", \"--gateway=\u003cgateway-url\u003e\", \"--tenant-id=\u003ctenant-id\u003e\"]\nPATCH\n)\"",
+      "requires_backup": true,
+      "docs_url": "docs/edge/managed-settings-deploy.md",
+      "conditions": [
+        "backup the workload manifest before applying (kubectl get -o yaml \u003e backup.yaml)",
+        "sidecar image MUST be on the operator's ImageRegistryAllowlist",
+        "this is a rolling restart — schedule in a maintenance window for stateful workloads"
+      ]
+    }
+  ],
+  "generator_version": "1.0.0",
+  "generated_at": "2026-05-17T16:00:00Z",
+  "advisory_only": true
+}

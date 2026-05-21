@@ -15,10 +15,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.config_document_data import ConfigDocumentData
-
-
-
+    from ..models.config_document_data import ConfigDocumentData
 
 
 T = TypeVar("T", bound="ConfigDocument")
@@ -26,25 +23,24 @@ T = TypeVar("T", bound="ConfigDocument")
 
 @_attrs_define
 class ConfigDocument:
-    """ 
-        Attributes:
-            scope (Union[Unset, ConfigDocumentScope]):
-            scope_id (Union[Unset, str]):
-            data (Union[Unset, ConfigDocumentData]): Configuration key-value pairs
-     """
+    """
+    Attributes:
+        scope (Union[Unset, ConfigDocumentScope]):
+        scope_id (Union[Unset, str]):
+        data (Union[Unset, ConfigDocumentData]): Configuration key-value pairs
+    """
 
     scope: Union[Unset, ConfigDocumentScope] = UNSET
     scope_id: Union[Unset, str] = UNSET
-    data: Union[Unset, 'ConfigDocumentData'] = UNSET
+    data: Union[Unset, "ConfigDocumentData"] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.config_document_data import ConfigDocumentData
+
         scope: Union[Unset, str] = UNSET
         if not isinstance(self.scope, Unset):
             scope = self.scope.value
-
 
         scope_id = self.scope_id
 
@@ -52,11 +48,9 @@ class ConfigDocument:
         if not isinstance(self.data, Unset):
             data = self.data.to_dict()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if scope is not UNSET:
             field_dict["scope"] = scope
         if scope_id is not UNSET:
@@ -66,40 +60,32 @@ class ConfigDocument:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.config_document_data import ConfigDocumentData
+
         d = src_dict.copy()
         _scope = d.pop("scope", UNSET)
         scope: Union[Unset, ConfigDocumentScope]
-        if isinstance(_scope,  Unset):
+        if isinstance(_scope, Unset):
             scope = UNSET
         else:
             scope = ConfigDocumentScope(_scope)
-
-
-
 
         scope_id = d.pop("scope_id", UNSET)
 
         _data = d.pop("data", UNSET)
         data: Union[Unset, ConfigDocumentData]
-        if isinstance(_data,  Unset):
+        if isinstance(_data, Unset):
             data = UNSET
         else:
             data = ConfigDocumentData.from_dict(_data)
-
-
-
 
         config_document = cls(
             scope=scope,
             scope_id=scope_id,
             data=data,
         )
-
 
         config_document.additional_properties = d
         return config_document

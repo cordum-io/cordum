@@ -40,7 +40,7 @@ func newStubPreapproval(tenant, agent string, tools ...string) *stubPreapproval 
 func TestApprovalGate_PreapprovalBypass_SkipsEnqueueAndMarksHandle(t *testing.T) {
 	t.Parallel()
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(testRedisOptions(mr.Addr()))
 	t.Cleanup(func() { _ = client.Close() })
 
 	store := NewMCPApprovalStore(client)
@@ -76,7 +76,7 @@ func TestApprovalGate_PreapprovalBypass_SkipsEnqueueAndMarksHandle(t *testing.T)
 func TestApprovalGate_NoPreapproval_EnqueuesAsUsual(t *testing.T) {
 	t.Parallel()
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(testRedisOptions(mr.Addr()))
 	t.Cleanup(func() { _ = client.Close() })
 
 	store := NewMCPApprovalStore(client)
@@ -114,7 +114,7 @@ func TestApprovalGate_NoPreapproval_EnqueuesAsUsual(t *testing.T) {
 func TestApprovalGate_PreapprovalOnlyConsidersRequiresApprovalTrue(t *testing.T) {
 	t.Parallel()
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(testRedisOptions(mr.Addr()))
 	t.Cleanup(func() { _ = client.Close() })
 
 	store := NewMCPApprovalStore(client)

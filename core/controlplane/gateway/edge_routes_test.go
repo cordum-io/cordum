@@ -1283,6 +1283,7 @@ func edgeRouteExpectations() []edgeRouteExpectation {
 		{method: http.MethodPost, path: "/api/v1/edge/approvals/{approval_ref}/wait"},
 		{method: http.MethodPost, path: "/api/v1/edge/evaluate"},
 		{method: http.MethodPost, path: "/api/v1/edge/sessions/{session_id}/export"},
+		{method: http.MethodPost, path: "/api/v1/edge/runtime/events"},
 	}
 }
 

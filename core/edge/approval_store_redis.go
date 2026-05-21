@@ -53,6 +53,14 @@ func edgeApprovalTupleIndexKey(tenantID, sessionID, executionID, actionHash stri
 	return "edge:approvals:index:tuple:" + strings.TrimSpace(tenantID) + ":" + strings.TrimSpace(sessionID) + ":" + strings.TrimSpace(executionID) + ":" + strings.TrimSpace(actionHash)
 }
 
+// edgeApprovalActionHashIndexKey returns the per-(tenant, actionHash) ZSet
+// key. Members are approval refs; score is approval.CreatedAt.UnixMicro()
+// so ZREVRANGE returns most-recent-first. Populated by EnqueueApproval and
+// consumed by GetApprovalsByActionHash + LookupByActionHash.
+func edgeApprovalActionHashIndexKey(tenantID, actionHash string) string {
+	return "edge:approvals:index:hash:" + strings.TrimSpace(tenantID) + ":" + strings.TrimSpace(actionHash)
+}
+
 func (s *RedisStore) EnqueueApproval(ctx context.Context, req EdgeApprovalRequest) (*EdgeApproval, error) {
 	if err := s.ensureReady(); err != nil {
 		return nil, err
@@ -96,6 +104,15 @@ func (s *RedisStore) EnqueueApproval(ctx context.Context, req EdgeApprovalReques
 		if expiresAt.Before(now) {
 			return fmt.Errorf("expires_at must be >= created_at")
 		}
+		// EDGE-103: clip ExpiresAt to (now + approvalMaxTTL) when the store
+		// has a configured maximum. Bound holds the approval to a finite
+		// review window so a malicious or buggy caller cannot park it
+		// indefinitely. Defense-in-depth alongside Redis EXPIREAT.
+		if s.approvalMaxTTL > 0 {
+			if maxExpiresAt := now.Add(s.approvalMaxTTL); expiresAt.After(maxExpiresAt) {
+				expiresAt = maxExpiresAt
+			}
+		}
 
 		approval := EdgeApproval{
 			ApprovalRef:    ref,
@@ -131,6 +148,16 @@ func (s *RedisStore) EnqueueApproval(ctx context.Context, req EdgeApprovalReques
 			pipe.ZAdd(ctx, edgeApprovalPrincipalIndexKey(req.TenantID, req.PrincipalID), redis.Z{Score: score, Member: ref})
 			pipe.ZAdd(ctx, edgeApprovalPrincipalStatusIndexKey(req.TenantID, req.PrincipalID, ApprovalStatusPending), redis.Z{Score: score, Member: ref})
 			pipe.SAdd(ctx, tupleKey, ref)
+			// Action-hash index: lets actiongates.ProvenanceGate /
+			// MutationGate resolve "give me the most recent approved
+			// approval that authorizes THIS action shape" without
+			// scanning per-principal lists. Skipped when ActionHash is
+			// empty (legacy callers that did not bind a hash).
+			if strings.TrimSpace(req.ActionHash) != "" {
+				actionHashKey := edgeApprovalActionHashIndexKey(req.TenantID, req.ActionHash)
+				pipe.ZAdd(ctx, actionHashKey, redis.Z{Score: score, Member: ref})
+				pipe.ZRemRangeByRank(ctx, actionHashKey, 0, -int64(maxApprovalActionHashMembers+1))
+			}
 			return nil
 		})
 		if err == nil {
@@ -167,6 +194,117 @@ func (s *RedisStore) GetApproval(ctx context.Context, tenantID, approvalRef stri
 		return nil, false, nil
 	}
 	return approval, true, nil
+}
+
+// Bounded-fetch caps applied to the action-hash secondary index. The
+// underlying ZSET could grow unbounded for hot (tenantID, actionHash)
+// pairs — every repeat of the same mutation accumulates a new ref.
+// CodeRabbit PR #274 finding #2 flagged the previous `ZRevRange(0,-1)`
+// scan as a memory/latency vector. The caps below split the audit and
+// gate use-cases:
+//
+//   - maxApprovalsByActionHashAudit (256) bounds the surface
+//     GetApprovalsByActionHash returns to UI/audit consumers. Audit
+//     displays don't need more than the most-recent 256 history.
+//   - maxApprovalsByActionHashLookup (64) bounds the gate fast-path.
+//     LookupByActionHash returns the most-recent actionable approval
+//     in this window or signals a clean miss. If no actionable
+//     approval surfaces in the 64 most-recent, the gate re-fires
+//     REQUIRE_HUMAN — fail-closed by design. An attacker burying an
+//     old APPROVED grant under >64 fresh PENDING records cannot
+//     silently land the call using the stale grant.
+//
+// maxApprovalActionHashMembers bounds the physical Redis ZSET hot key
+// itself. It intentionally stays above both read windows so recent audit/UI
+// and gate semantics are unchanged, while older refs remain available via
+// direct approval ref lookup and the independent audit/event pipeline.
+const (
+	maxApprovalsByActionHashAudit  = 256
+	maxApprovalsByActionHashLookup = 64
+	maxApprovalActionHashMembers   = 1000
+)
+
+// listApprovalsByActionHash returns up to `limit` approvals for
+// (tenantID, actionHash), most-recent first. Non-positive limit
+// disables the cap (legacy unbounded behaviour); callers should
+// always pass a positive cap. Empty result on blank inputs.
+func (s *RedisStore) listApprovalsByActionHash(ctx context.Context, tenantID, actionHash string, limit int) ([]EdgeApproval, error) {
+	if err := s.ensureReady(); err != nil {
+		return nil, err
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	actionHash = strings.TrimSpace(actionHash)
+	if tenantID == "" || actionHash == "" {
+		return nil, nil
+	}
+	stop := int64(-1)
+	if limit > 0 {
+		stop = int64(limit - 1)
+	}
+	refs, err := s.client.ZRevRange(ctx, edgeApprovalActionHashIndexKey(tenantID, actionHash), 0, stop).Result()
+	if err != nil {
+		return nil, fmt.Errorf("list approvals by action_hash: %w", err)
+	}
+	out := make([]EdgeApproval, 0, len(refs))
+	for _, ref := range refs {
+		approval, ok, err := s.loadApproval(ctx, ref)
+		if err != nil {
+			return nil, err
+		}
+		if !ok || approval.TenantID != tenantID {
+			continue
+		}
+		out = append(out, *approval)
+	}
+	return out, nil
+}
+
+// GetApprovalsByActionHash returns approvals recorded for (tenantID,
+// actionHash), most-recent first, capped at maxApprovalsByActionHashAudit
+// (256). Empty result when either arg is blank or the index is empty —
+// never an error in that case. Used by the action-layer provenance gate
+// to inspect history when a single "currently-actionable" lookup is
+// insufficient (e.g. for audit display).
+func (s *RedisStore) GetApprovalsByActionHash(ctx context.Context, tenantID, actionHash string) ([]EdgeApproval, error) {
+	return s.listApprovalsByActionHash(ctx, tenantID, actionHash, maxApprovalsByActionHashAudit)
+}
+
+// LookupByActionHash satisfies the actiongates.ApprovalLookup contract by
+// returning the most-recent approved, not-yet-consumed, not-expired
+// approval bound to (tenantID, actionHash). Returns (nil, false, nil) on
+// miss so the caller can map the miss to a not_found-style decision
+// without ambiguity. Pending / rejected / expired / consumed approvals
+// are skipped — the gate considers them "no actionable approval".
+//
+// The scan is bounded to the maxApprovalsByActionHashLookup (64)
+// most-recent entries. If no actionable approval appears in that
+// window, the gate sees a miss and re-fires REQUIRE_HUMAN — fail-closed
+// by design.
+func (s *RedisStore) LookupByActionHash(ctx context.Context, tenantID, actionHash string) (*EdgeApproval, bool, error) {
+	approvals, err := s.listApprovalsByActionHash(ctx, tenantID, actionHash, maxApprovalsByActionHashLookup)
+	if err != nil {
+		return nil, false, err
+	}
+	now := s.now().UTC()
+	for i := range approvals {
+		a := approvals[i]
+		if a.Status != ApprovalStatusApproved {
+			continue
+		}
+		if a.Decision != ApprovalDecisionApprove {
+			continue
+		}
+		if a.ConsumedAt != nil {
+			continue
+		}
+		if a.ExpiresAt != nil && now.After(*a.ExpiresAt) {
+			continue
+		}
+		// Most recent qualifying approval — ZRevRange returns DESC by score.
+		matched := a
+		return &matched, true, nil
+	}
+	return nil, false, nil
 }
 
 func (s *RedisStore) ListApprovals(ctx context.Context, query ListApprovalsQuery) (ApprovalPage, error) {
@@ -296,8 +434,9 @@ func (s *RedisStore) ClaimApproval(ctx context.Context, req ApprovalClaimRequest
 			return nil
 		}
 		if approval.Status != ApprovalStatusApproved || approval.ConsumedAt != nil {
-			result = nil
-			claimed = false
+			if kind, reason := terminalApprovalClaimConflict(approval); kind != ApprovalConflictKindUnknown {
+				claimErr = newApprovalConflict(kind, reason)
+			}
 			return nil
 		}
 		consumedAt := req.ConsumedAt.UTC()
@@ -305,11 +444,11 @@ func (s *RedisStore) ClaimApproval(ctx context.Context, req ApprovalClaimRequest
 			consumedAt = s.now().UTC()
 		}
 		if approval.ExpiresAt != nil && consumedAt.After(*approval.ExpiresAt) {
-			claimErr = fmt.Errorf("%w: approval expired", ErrApprovalConflict)
+			claimErr = newApprovalConflict(ApprovalConflictKindExpired, "approval expired")
 			return nil
 		}
-		if !approvalClaimMatches(approval, req) {
-			claimErr = fmt.Errorf("%w: approval tuple mismatch", ErrApprovalConflict)
+		if kind, reason := classifyApprovalClaimMismatch(approval, req); kind != ApprovalConflictKindUnknown {
+			claimErr = newApprovalConflict(kind, reason)
 			return nil
 		}
 		if err := s.validateApprovalRecordActionableTx(ctx, tx, *approval); err != nil {
@@ -352,6 +491,23 @@ func (s *RedisStore) ClaimApproval(ctx context.Context, req ApprovalClaimRequest
 		return nil, false, claimErr
 	}
 	return result, claimed, nil
+}
+
+func terminalApprovalClaimConflict(approval *EdgeApproval) (ApprovalConflictKind, string) {
+	if approval == nil {
+		return ApprovalConflictKindNotFound, "approval missing"
+	}
+	if approval.ConsumedAt != nil {
+		return ApprovalConflictKindConsumed, "approval already consumed"
+	}
+	switch approval.Status {
+	case ApprovalStatusRejected:
+		return ApprovalConflictKindRejected, "approval rejected"
+	case ApprovalStatusExpired, ApprovalStatusInvalidated:
+		return ApprovalConflictKindExpired, "approval expired"
+	default:
+		return ApprovalConflictKindUnknown, ""
+	}
 }
 
 func (s *RedisStore) ExpireApprovals(ctx context.Context, tenantID string, now time.Time) (int, error) {
@@ -474,6 +630,7 @@ func (s *RedisStore) resolveApproval(ctx context.Context, req ApprovalResolution
 			pipe.ZRem(ctx, edgeApprovalTenantIndexKey(next.TenantID), next.ApprovalRef)
 			if next.Status == ApprovalStatusRejected {
 				pipe.SRem(ctx, edgeApprovalTupleIndexKey(next.TenantID, next.SessionID, next.ExecutionID, next.ActionHash), next.ApprovalRef)
+				pipe.ZRem(ctx, edgeApprovalActionHashIndexKey(next.TenantID, next.ActionHash), next.ApprovalRef)
 			}
 			return nil
 		})
@@ -544,6 +701,7 @@ func (s *RedisStore) expireApproval(ctx context.Context, tenantID, approvalRef s
 			// index so list-without-filter returns only the active set.
 			pipe.ZRem(ctx, edgeApprovalTenantIndexKey(next.TenantID), next.ApprovalRef)
 			pipe.SRem(ctx, edgeApprovalTupleIndexKey(next.TenantID, next.SessionID, next.ExecutionID, next.ActionHash), next.ApprovalRef)
+			pipe.ZRem(ctx, edgeApprovalActionHashIndexKey(next.TenantID, next.ActionHash), next.ApprovalRef)
 			return nil
 		})
 		if err == nil {
@@ -575,6 +733,9 @@ func (s *RedisStore) firstLiveTupleApproval(ctx context.Context, tx *redis.Tx, t
 			return nil, err
 		}
 		if approval.TenantID != req.TenantID || approval.SessionID != req.SessionID || approval.ExecutionID != req.ExecutionID || approval.ActionHash != req.ActionHash {
+			continue
+		}
+		if approval.ExpiresAt != nil && !approval.ExpiresAt.After(s.now().UTC()) {
 			continue
 		}
 		switch approval.Status {
@@ -860,16 +1021,47 @@ func approvalMatchesTuple(approval EdgeApproval, sessionID, executionID, actionH
 		approval.ActionHash == strings.TrimSpace(actionHash)
 }
 
-func approvalClaimMatches(approval *EdgeApproval, req ApprovalClaimRequest) bool {
+// classifyApprovalClaimMismatch inspects an approval against the claim
+// request and returns the specific ApprovalConflictKind that disqualifies
+// the match (or ApprovalConflictKindUnknown if the claim is valid). The
+// helper centralises the field-by-field comparison so ClaimApproval can
+// build a typed ApprovalConflictError downstream callers can dispatch
+// on with errors.As.
+//
+// Ordering follows attacker-surface priority — secret-bearing identity
+// mismatches (self-approval) are tested BEFORE the tuple/args/policy
+// checks so a self-approval attempt cannot be masked by simultaneously
+// mutating a benign field. Tenant separation is handled at the caller
+// (ClaimApproval rejects with kind=not_found by design — leaking
+// tuple existence cross-tenant would help reconnaissance).
+func classifyApprovalClaimMismatch(approval *EdgeApproval, req ApprovalClaimRequest) (ApprovalConflictKind, string) {
 	if approval == nil {
-		return false
+		return ApprovalConflictKindNotFound, "approval missing"
 	}
-	return approval.SessionID == req.SessionID &&
-		approval.ExecutionID == req.ExecutionID &&
-		approval.EventID == req.EventID &&
-		approval.ActionHash == req.ActionHash &&
-		approval.InputHash == req.InputHash &&
-		approval.PolicySnapshot == req.PolicySnapshot
+	// Self-approval check: deny only when the caller (the agent presenting the
+	// claim) matches the ResolverID (the principal who issued /approve). In
+	// MCP retry semantics the agent re-issues the original tool call with
+	// _approval_ref, so caller==Requester is the normal case, NOT
+	// self-approval. The approve-time requesterMatchesApprover guard already
+	// rejects Requester==ResolverID at the API surface; this store-level
+	// check is defense-in-depth backing that guard.
+	if req.CallerAgentID != "" {
+		if approval.ResolverID != "" && approval.ResolverID == req.CallerAgentID {
+			return ApprovalConflictKindSelfApproval, "caller is approver"
+		}
+	}
+	if approval.SessionID != req.SessionID ||
+		approval.ExecutionID != req.ExecutionID ||
+		approval.EventID != req.EventID {
+		return ApprovalConflictKindTupleMismatch, "session/execution/event identity mismatch"
+	}
+	if approval.ActionHash != req.ActionHash || approval.InputHash != req.InputHash {
+		return ApprovalConflictKindArgsMismatch, "canonical args hash differs"
+	}
+	if approval.PolicySnapshot != req.PolicySnapshot {
+		return ApprovalConflictKindPolicyMismatch, "policy snapshot drift"
+	}
+	return ApprovalConflictKindUnknown, ""
 }
 
 func pageApprovals(items []EdgeApproval, start, limit int) ApprovalPage {

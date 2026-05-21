@@ -15,10 +15,9 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.json_rpc_response_error_type_0_data_type_0 import JsonRpcResponseErrorType0DataType0
-
-
-
+    from ..models.json_rpc_response_error_type_0_data_type_0 import (
+        JsonRpcResponseErrorType0DataType0,
+    )
 
 
 T = TypeVar("T", bound="JsonRpcResponseErrorType0")
@@ -26,21 +25,23 @@ T = TypeVar("T", bound="JsonRpcResponseErrorType0")
 
 @_attrs_define
 class JsonRpcResponseErrorType0:
-    """ 
-        Attributes:
-            code (Union[Unset, int]):
-            message (Union[Unset, str]):
-            data (Union['JsonRpcResponseErrorType0DataType0', None, Unset]):
-     """
+    """
+    Attributes:
+        code (Union[Unset, int]):
+        message (Union[Unset, str]):
+        data (Union['JsonRpcResponseErrorType0DataType0', None, Unset]):
+    """
 
     code: Union[Unset, int] = UNSET
     message: Union[Unset, str] = UNSET
-    data: Union['JsonRpcResponseErrorType0DataType0', None, Unset] = UNSET
+    data: Union["JsonRpcResponseErrorType0DataType0", None, Unset] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.json_rpc_response_error_type_0_data_type_0 import JsonRpcResponseErrorType0DataType0
+        from ..models.json_rpc_response_error_type_0_data_type_0 import (
+            JsonRpcResponseErrorType0DataType0,
+        )
+
         code = self.code
 
         message = self.message
@@ -53,11 +54,9 @@ class JsonRpcResponseErrorType0:
         else:
             data = self.data
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if code is not UNSET:
             field_dict["code"] = code
         if message is not UNSET:
@@ -67,17 +66,18 @@ class JsonRpcResponseErrorType0:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.json_rpc_response_error_type_0_data_type_0 import JsonRpcResponseErrorType0DataType0
+        from ..models.json_rpc_response_error_type_0_data_type_0 import (
+            JsonRpcResponseErrorType0DataType0,
+        )
+
         d = src_dict.copy()
         code = d.pop("code", UNSET)
 
         message = d.pop("message", UNSET)
 
-        def _parse_data(data: object) -> Union['JsonRpcResponseErrorType0DataType0', None, Unset]:
+        def _parse_data(data: object) -> Union["JsonRpcResponseErrorType0DataType0", None, Unset]:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -87,22 +87,18 @@ class JsonRpcResponseErrorType0:
                     raise TypeError()
                 data_type_0 = JsonRpcResponseErrorType0DataType0.from_dict(data)
 
-
-
                 return data_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
-            return cast(Union['JsonRpcResponseErrorType0DataType0', None, Unset], data)
+            return cast(Union["JsonRpcResponseErrorType0DataType0", None, Unset], data)
 
         data = _parse_data(d.pop("data", UNSET))
-
 
         json_rpc_response_error_type_0 = cls(
             code=code,
             message=message,
             data=data,
         )
-
 
         json_rpc_response_error_type_0.additional_properties = d
         return json_rpc_response_error_type_0

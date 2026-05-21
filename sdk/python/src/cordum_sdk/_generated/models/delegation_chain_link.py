@@ -16,24 +16,20 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="DelegationChainLink")
 
 
 @_attrs_define
 class DelegationChainLink:
-    """ 
-        Attributes:
-            agent_id (str):
-            issued_at (datetime.datetime):
-            expires_at (datetime.datetime):
-            jti (str):
-            issued_by (str):
-            parent_jti (Union[None, Unset, str]):
-     """
+    """
+    Attributes:
+        agent_id (str):
+        issued_at (datetime.datetime):
+        expires_at (datetime.datetime):
+        jti (str):
+        issued_by (str):
+        parent_jti (Union[None, Unset, str]):
+    """
 
     agent_id: str
     issued_at: datetime.datetime
@@ -42,7 +38,6 @@ class DelegationChainLink:
     issued_by: str
     parent_jti: Union[None, Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         agent_id = self.agent_id
@@ -61,22 +56,21 @@ class DelegationChainLink:
         else:
             parent_jti = self.parent_jti
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "agent_id": agent_id,
-            "issued_at": issued_at,
-            "expires_at": expires_at,
-            "jti": jti,
-            "issued_by": issued_by,
-        })
+        field_dict.update(
+            {
+                "agent_id": agent_id,
+                "issued_at": issued_at,
+                "expires_at": expires_at,
+                "jti": jti,
+                "issued_by": issued_by,
+            }
+        )
         if parent_jti is not UNSET:
             field_dict["parent_jti"] = parent_jti
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -85,13 +79,7 @@ class DelegationChainLink:
 
         issued_at = isoparse(d.pop("issued_at"))
 
-
-
-
         expires_at = isoparse(d.pop("expires_at"))
-
-
-
 
         jti = d.pop("jti")
 
@@ -106,7 +94,6 @@ class DelegationChainLink:
 
         parent_jti = _parse_parent_jti(d.pop("parent_jti", UNSET))
 
-
         delegation_chain_link = cls(
             agent_id=agent_id,
             issued_at=issued_at,
@@ -115,7 +102,6 @@ class DelegationChainLink:
             issued_by=issued_by,
             parent_jti=parent_jti,
         )
-
 
         delegation_chain_link.additional_properties = d
         return delegation_chain_link

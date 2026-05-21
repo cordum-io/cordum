@@ -45,11 +45,28 @@ func fakeStatusServer(t *testing.T, status gatewayStatusResponse, statusCode int
 
 func newEnv(t *testing.T, gateway, apiKey string) *doctorEnv {
 	t.Helper()
+	baseTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		t.Fatalf("unexpected default transport type %T", http.DefaultTransport)
+	}
+	transport := baseTransport.Clone()
+	t.Cleanup(transport.CloseIdleConnections)
 	return &doctorEnv{
 		gateway:    strings.TrimRight(gateway, "/"),
 		apiKey:     apiKey,
 		tenant:     "default",
-		httpClient: &http.Client{Timeout: 2 * time.Second},
+		httpClient: &http.Client{Timeout: 2 * time.Second, Transport: transport},
+	}
+}
+
+func TestNewEnvUsesIsolatedTransport(t *testing.T) {
+	t.Parallel()
+	env := newEnv(t, "http://ignored", "k")
+	if env.httpClient.Transport == nil {
+		t.Fatal("expected test env HTTP client to use an explicit transport")
+	}
+	if env.httpClient.Transport == http.DefaultTransport {
+		t.Fatal("test env must not share http.DefaultTransport across parallel httptest servers")
 	}
 }
 

@@ -3,17 +3,35 @@ package gateway
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
-	"github.com/cordum/cordum/core/licensing"
 )
+
+const (
+	maxRolePermissions = 128
+	maxRoleInherits    = 32
+)
+
+var assignableRBACPermissions = func() map[string]struct{} {
+	allowed := make(map[string]struct{}, len(auth.AllPermissions))
+	for _, permission := range auth.AllPermissions {
+		if permission == auth.PermAdminAll {
+			continue
+		}
+		allowed[permission] = struct{}{}
+	}
+	return allowed
+}()
 
 // handleListRoles returns all role definitions.
 // GET /api/v1/auth/roles
 func (s *server) handleListRoles(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermRolesRead, "admin") {
+		return
+	}
+	if !s.requireRBACEntitlement(w) {
 		return
 	}
 	if s.rbacStore == nil {
@@ -27,12 +45,9 @@ func (s *server) handleListRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Annotate with RBAC entitlement status so the dashboard knows
-	// whether custom roles are editable.
-	entitled := auth.RBACEntitled(s.currentEntitlements())
 	writeJSON(w, map[string]any{
 		"roles":    roles,
-		"entitled": entitled,
+		"entitled": true,
 	})
 }
 
@@ -42,28 +57,29 @@ func (s *server) handleGetRole(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermRolesRead, "admin") {
 		return
 	}
+	if !s.requireRBACEntitlement(w) {
+		return
+	}
 	if s.rbacStore == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "rbac store unavailable")
 		return
 	}
 
-	name := strings.ToLower(strings.TrimSpace(r.PathValue("name")))
-	if name == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "role name required")
+	name, ok := parseRolePathName(w, r.PathValue("name"))
+	if !ok {
 		return
 	}
 
 	role, err := s.rbacStore.GetRole(r.Context(), name)
 	if err != nil {
 		if errors.Is(err, auth.ErrRoleNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, "role not found")
+			writeJSONError(w, http.StatusNotFound, errorCodeRBACRoleNotFound, "role not found")
 			return
 		}
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to get role")
 		return
 	}
 
-	// Resolve flattened permissions for display
 	resolved, resolveErr := s.rbacStore.ResolvePermissions(r.Context(), name)
 	if resolveErr != nil {
 		resolved = role.Permissions
@@ -88,87 +104,94 @@ func (s *server) handlePutRole(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermRolesWrite, "admin") {
 		return
 	}
-
-	// Check RBAC entitlement — custom role management requires it
-	if !auth.RBACEntitled(s.currentEntitlements()) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		_ = json.NewEncoder(w).Encode(licensing.TierLimitHTTPError{
-			Code:       "tier_limit_exceeded",
-			Message:    "advanced RBAC requires an Enterprise license",
-			Limit:      "rbac",
-			UpgradeURL: licensing.DefaultUpgradeURL,
-		})
+	if !s.requireRBACEntitlement(w) {
 		return
 	}
-
 	if s.rbacStore == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "rbac store unavailable")
 		return
 	}
 
-	name := strings.ToLower(strings.TrimSpace(r.PathValue("name")))
-	if name == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "role name required")
+	name, ok := parseRolePathName(w, r.PathValue("name"))
+	if !ok {
 		return
 	}
 
+	req, ok := decodeRoleRequest(w, r)
+	if !ok {
+		return
+	}
+	existing, exists, ok := s.existingRoleForPut(w, r, name)
+	if !ok {
+		return
+	}
+	if exists && existing.BuiltIn {
+		handleBuiltInRoleUpdate(w, existing, req)
+		return
+	}
+	saved, ok := s.saveRoleRequest(w, r, name, req, existing)
+	if !ok {
+		return
+	}
+
+	op := "create"
+	if exists {
+		op = "update"
+	}
+	s.emitRoleUpserted(r, saved, op)
+	writeJSON(w, map[string]any{"role": saved})
+}
+
+func decodeRoleRequest(w http.ResponseWriter, r *http.Request) (roleRequest, bool) {
 	var req roleRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "invalid request body")
-		return
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024))
+	if err := decoder.Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeRBACRequestInvalid, "invalid request body")
+		return roleRequest{}, false
 	}
-
-	// Check if updating a built-in role — only description and permissions can change
-	existing, existErr := s.rbacStore.GetRole(r.Context(), name)
-	if existErr == nil && existing.BuiltIn {
-		// Built-in roles can have their description updated but not inheritance
-		if len(req.Inherits) > 0 && !slicesEqual(req.Inherits, existing.Inherits) {
-			writeErrorJSON(w, http.StatusBadRequest, "cannot change inheritance of built-in role")
-			return
-		}
+	if err := normalizeRoleRequest(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeRBACRequestInvalid, err.Error())
+		return roleRequest{}, false
 	}
+	return req, true
+}
 
-	// Validate inheritance — no cycles, no unknown parents
-	if len(req.Inherits) > 0 {
-		if err := s.rbacStore.ValidateInheritance(r.Context(), name, req.Inherits); err != nil {
-			writeErrorJSON(w, http.StatusBadRequest, err.Error())
-			return
-		}
+func (s *server) existingRoleForPut(w http.ResponseWriter, r *http.Request, name string) (*auth.RoleDefinition, bool, bool) {
+	existing, err := s.rbacStore.GetRole(r.Context(), name)
+	if err == nil {
+		return existing, true, true
 	}
+	if errors.Is(err, auth.ErrRoleNotFound) {
+		return nil, false, true
+	}
+	writeErrorJSON(w, http.StatusInternalServerError, "failed to read role")
+	return nil, false, false
+}
 
+func (s *server) saveRoleRequest(w http.ResponseWriter, r *http.Request, name string, req roleRequest, existing *auth.RoleDefinition) (*auth.RoleDefinition, bool) {
+	if err := validateAssignablePermissions(req.Permissions); err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeRBACPermissionInvalid, err.Error())
+		return nil, false
+	}
 	role := &auth.RoleDefinition{
 		Name:        name,
 		Description: req.Description,
 		Permissions: req.Permissions,
 		Inherits:    req.Inherits,
 	}
-
-	// Preserve built-in flag if role already exists
-	if existErr == nil {
-		role.BuiltIn = existing.BuiltIn
+	if existing != nil {
 		role.CreatedAt = existing.CreatedAt
 	}
-
 	if err := s.rbacStore.PutRole(r.Context(), role); err != nil {
-		writeErrorJSON(w, http.StatusInternalServerError, "failed to save role")
-		return
+		writeJSONError(w, http.StatusBadRequest, errorCodeRBACPermissionInvalid, err.Error())
+		return nil, false
 	}
-
-	// Re-read to get the final state
 	saved, err := s.rbacStore.GetRole(r.Context(), name)
 	if err != nil {
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to read saved role")
-		return
+		return nil, false
 	}
-
-	op := "create"
-	if existErr == nil {
-		op = "update"
-	}
-	s.emitRoleUpserted(r, saved, op)
-
-	writeJSON(w, map[string]any{"role": saved})
+	return saved, true
 }
 
 // handleDeleteRole removes a custom role definition.
@@ -177,38 +200,31 @@ func (s *server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermRolesWrite, "admin") {
 		return
 	}
-
-	// Check RBAC entitlement
-	if !auth.RBACEntitled(s.currentEntitlements()) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		_ = json.NewEncoder(w).Encode(licensing.TierLimitHTTPError{
-			Code:       "tier_limit_exceeded",
-			Message:    "advanced RBAC requires an Enterprise license",
-			Limit:      "rbac",
-			UpgradeURL: licensing.DefaultUpgradeURL,
-		})
+	if !s.requireRBACEntitlement(w) {
 		return
 	}
-
 	if s.rbacStore == nil {
 		writeErrorJSON(w, http.StatusServiceUnavailable, "rbac store unavailable")
 		return
 	}
 
-	name := strings.ToLower(strings.TrimSpace(r.PathValue("name")))
-	if name == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "role name required")
+	name, ok := parseRolePathName(w, r.PathValue("name"))
+	if !ok {
 		return
 	}
 
 	if err := s.rbacStore.DeleteRole(r.Context(), name); err != nil {
+		var roleInUse *auth.RoleInUseError
+		if errors.As(err, &roleInUse) {
+			writeRBACRoleInUseError(w, roleInUse)
+			return
+		}
 		if errors.Is(err, auth.ErrRoleNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, "role not found")
+			writeJSONError(w, http.StatusNotFound, errorCodeRBACRoleNotFound, "role not found")
 			return
 		}
 		if errors.Is(err, auth.ErrBuiltInRole) {
-			writeErrorJSON(w, http.StatusBadRequest, "cannot delete built-in role")
+			writeJSONError(w, http.StatusBadRequest, errorCodeRBACRoleInUse, "cannot delete built-in role")
 			return
 		}
 		writeErrorJSON(w, http.StatusInternalServerError, "failed to delete role")
@@ -216,8 +232,93 @@ func (s *server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.emitRoleDeleted(r, name)
-
 	writeJSON(w, map[string]any{"deleted": true, "name": name})
+}
+
+func (s *server) requireRBACEntitlement(w http.ResponseWriter) bool {
+	if auth.RBACEntitled(s.currentEntitlements()) {
+		return true
+	}
+	writeTierFeatureJSON(w, "rbac", "advanced RBAC requires an Enterprise license")
+	return false
+}
+
+func parseRolePathName(w http.ResponseWriter, raw string) (string, bool) {
+	name := auth.NormalizeRoleName(raw)
+	if err := auth.ValidateRoleName(name); err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodeRBACRequestInvalid, err.Error())
+		return "", false
+	}
+	return name, true
+}
+
+func normalizeRoleRequest(req *roleRequest) error {
+	req.Permissions = trimStringSlice(req.Permissions)
+	req.Inherits = normalizeRoleNames(req.Inherits)
+	if len(req.Permissions) > maxRolePermissions {
+		return fmt.Errorf("permissions exceeds maximum of %d", maxRolePermissions)
+	}
+	if len(req.Inherits) > maxRoleInherits {
+		return fmt.Errorf("inherits exceeds maximum of %d", maxRoleInherits)
+	}
+	for _, parent := range req.Inherits {
+		if err := auth.ValidateRoleName(parent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func normalizeRoleNames(values []string) []string {
+	if len(values) == 0 {
+		return values
+	}
+	normalized := make([]string, len(values))
+	for i, value := range values {
+		normalized[i] = auth.NormalizeRoleName(value)
+	}
+	return normalized
+}
+
+func validateAssignablePermissions(permissions []string) error {
+	for _, permission := range permissions {
+		if _, ok := assignableRBACPermissions[permission]; !ok {
+			return fmt.Errorf("invalid permission %q", permission)
+		}
+	}
+	return nil
+}
+
+func handleBuiltInRoleUpdate(w http.ResponseWriter, existing *auth.RoleDefinition, req roleRequest) {
+	if roleSpecChanged(existing, req) {
+		writeJSONError(w, http.StatusConflict, errorCodeRBACRoleProtected, "cannot modify built-in role")
+		return
+	}
+	writeJSON(w, map[string]any{"role": existing})
+}
+
+func roleSpecChanged(existing *auth.RoleDefinition, req roleRequest) bool {
+	return existing.Description != req.Description ||
+		!slicesEqual(existing.Permissions, req.Permissions) ||
+		!slicesEqual(existing.Inherits, req.Inherits)
+}
+
+func writeRBACRoleInUseError(w http.ResponseWriter, err *auth.RoleInUseError) {
+	refs := []string(nil)
+	message := "role is inherited by another role"
+	if err != nil {
+		refs = append(refs, err.Referencing...)
+		message = err.Error()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error":             errorCodeRBACRoleInUse,
+		"code":              errorCodeRBACRoleInUse,
+		"status":            http.StatusConflict,
+		"message":           message,
+		"referencing_roles": refs,
+	})
 }
 
 // slicesEqual compares two string slices for equality.

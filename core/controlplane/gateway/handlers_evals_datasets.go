@@ -142,11 +142,11 @@ func decodeEvalDatasetJSON(w http.ResponseWriter, r *http.Request, dst any) bool
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			writeErrorJSON(w, http.StatusRequestEntityTooLarge,
+			writeJSONError(w, http.StatusRequestEntityTooLarge, errorCodeEvalDatasetValidationFailed,
 				"eval dataset request body exceeds the 16 MiB cap; split the dataset along a meaningful axis (tenant, topic, risk tier) rather than raising the limit")
 			return false
 		}
-		writeErrorJSON(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalDatasetValidationFailed, "invalid json: "+err.Error())
 		return false
 	}
 	return true
@@ -184,7 +184,7 @@ func (s *server) handleCreateEvalDataset(w http.ResponseWriter, r *http.Request)
 	created, err := s.evalDatasetStore.CreateEvalDataset(r.Context(), dataset)
 	if err != nil {
 		if errors.Is(err, store.ErrEvalDatasetVersionExists) {
-			writeErrorJSON(w, http.StatusConflict,
+			writeJSONError(w, http.StatusConflict, errorCodeEvalDatasetVersionConflict,
 				"eval dataset with that (name, version) already exists — create a new version to change entries")
 			return
 		}
@@ -192,7 +192,7 @@ func (s *server) handleCreateEvalDataset(w http.ResponseWriter, r *http.Request)
 		// surface them as 400 because they indicate caller-visible
 		// input problems; pure server errors (redis down, etc.) would
 		// have been wrapped with infrastructure context upstream.
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalDatasetValidationFailed, err.Error())
 		return
 	}
 
@@ -255,7 +255,7 @@ func (s *server) handleUpdateEvalDataset(w http.ResponseWriter, r *http.Request)
 		targetVersion = *req.Version
 	}
 	if targetVersion <= base.Version {
-		writeErrorJSON(w, http.StatusBadRequest, "version must be greater than the base dataset version")
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalDatasetValidationFailed, "version must be greater than the base dataset version")
 		return
 	}
 
@@ -276,11 +276,11 @@ func (s *server) handleUpdateEvalDataset(w http.ResponseWriter, r *http.Request)
 	created, err := s.evalDatasetStore.CreateEvalDataset(r.Context(), dataset)
 	if err != nil {
 		if errors.Is(err, store.ErrEvalDatasetVersionExists) {
-			writeErrorJSON(w, http.StatusConflict,
+			writeJSONError(w, http.StatusConflict, errorCodeEvalDatasetVersionConflict,
 				"eval dataset successor version already exists — choose a higher version or update from the latest dataset")
 			return
 		}
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalDatasetValidationFailed, err.Error())
 		return
 	}
 
@@ -510,7 +510,7 @@ func (s *server) handleDeleteEvalDataset(w http.ResponseWriter, r *http.Request)
 	// rejected.
 	force := strings.TrimSpace(r.URL.Query().Get("force"))
 	if force != "true" {
-		writeErrorJSON(w, http.StatusBadRequest,
+		writeJSONError(w, http.StatusBadRequest, errorCodeEvalDatasetValidationFailed,
 			"eval dataset delete requires force=true; datasets are immutable by design — create a new version instead, or supply force=true to wipe the record")
 		return
 	}

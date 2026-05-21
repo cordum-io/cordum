@@ -204,6 +204,8 @@ func TestGatewayEdgeEvaluateMapsSafetyDecisionsToHookResponse(t *testing.T) {
 		wantApprovalRef    string
 		wantWaitStrategy   string
 		wantConstraints    bool
+		wantCommand        string
+		wantRedaction      string
 		wantTerminalSubstr string
 	}{
 		{
@@ -248,13 +250,17 @@ func TestGatewayEdgeEvaluateMapsSafetyDecisionsToHookResponse(t *testing.T) {
 				PolicySnapshot: "snap-constrain",
 				RuleId:         "constraint-rule",
 				Constraints: &pb.PolicyConstraints{
-					Toolchain: &pb.ToolchainConstraints{AllowedCommands: []string{"npm test"}},
+					Budgets:        &pb.BudgetConstraints{MaxRuntimeMs: 5000},
+					Toolchain:      &pb.ToolchainConstraints{AllowedCommands: []string{"npm test"}},
+					RedactionLevel: "strict",
 				},
 			},
 			wantDecision:    "CONSTRAIN",
 			wantPermission:  "allow",
 			wantExitCode:    0,
 			wantConstraints: true,
+			wantCommand:     "npm test",
+			wantRedaction:   "strict",
 		},
 		{
 			name:               "unspecified fail closed",
@@ -300,11 +306,35 @@ func TestGatewayEdgeEvaluateMapsSafetyDecisionsToHookResponse(t *testing.T) {
 			if tc.wantConstraints && len(resp.Constraints) == 0 {
 				t.Fatalf("constraints empty, want safety constraints body=%s", rr.Body.String())
 			}
+			if tc.wantCommand != "" {
+				assertEdgeConstraintListContains(t, resp.Constraints, "toolchain", "allowedCommands", tc.wantCommand)
+			}
+			if tc.wantRedaction != "" && resp.Constraints["redactionLevel"] != tc.wantRedaction {
+				t.Fatalf("constraints.redactionLevel = %#v, want %q body=%s", resp.Constraints["redactionLevel"], tc.wantRedaction, rr.Body.String())
+			}
 			if tc.wantTerminalSubstr != "" && !strings.Contains(strings.ToLower(resp.TerminalMessage), tc.wantTerminalSubstr) {
 				t.Fatalf("terminal_message = %q, want substring %q", resp.TerminalMessage, tc.wantTerminalSubstr)
 			}
 		})
 	}
+}
+
+func assertEdgeConstraintListContains(t *testing.T, constraints map[string]any, section, field, want string) {
+	t.Helper()
+	nested, ok := constraints[section].(map[string]any)
+	if !ok {
+		t.Fatalf("constraints[%q] = %#v, want object", section, constraints[section])
+	}
+	values, ok := nested[field].([]any)
+	if !ok {
+		t.Fatalf("constraints[%q][%q] = %#v, want list", section, field, nested[field])
+	}
+	for _, value := range values {
+		if got, ok := value.(string); ok && got == want {
+			return
+		}
+	}
+	t.Fatalf("constraints[%q][%q] = %#v, want entry %q", section, field, values, want)
 }
 
 func TestGatewayEdgeEvaluateRequireApprovalResponseIncludesRetryMetadata(t *testing.T) {
@@ -600,6 +630,71 @@ func TestGatewayEdgeEvaluateRetryConsumesApprovedApprovalAndDeniesDuplicate(t *t
 	}
 	if dup.WaitAfter != "request_new_approval" {
 		t.Fatalf("duplicate wait_after = %q, want request_new_approval", dup.WaitAfter)
+	}
+}
+
+func TestGatewayEdgeEvaluateRetryRejectsSelfApprovalCaller(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		explicitRef bool
+	}{
+		{name: "explicit_approval_ref", explicitRef: true},
+		{name: "auto_consume_reusable_approval", explicitRef: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertEdgeEvaluateSelfApprovalRetryDenied(t, tc.name, tc.explicitRef)
+		})
+	}
+}
+
+func assertEdgeEvaluateSelfApprovalRetryDenied(t *testing.T, name string, explicitRef bool) {
+	t.Helper()
+	safety := &edgeEvaluateStubSafetyClient{response: &pb.PolicyCheckResponse{
+		Decision:         pb.DecisionType_DECISION_TYPE_REQUIRE_HUMAN,
+		Reason:           "needs approval",
+		RuleId:           "approval-rule",
+		ApprovalRequired: true,
+	}}
+	s, handler := newEdgeEvaluateTestServer(t, safety)
+	sink := &testAuditSender{}
+	s.auditExporter = sink
+	session := createEdgeRouteSession(t, handler)
+	safety.response.PolicySnapshot = session.PolicySnapshot
+
+	cmd := map[string]any{"command": "deploy risky change for " + name}
+	body := edgeEvaluateBody(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd)
+	rr := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", body)
+	var initial edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr, &initial)
+	if initial.Decision != string(edgecore.DecisionRequireApproval) || initial.ApprovalRef == "" {
+		t.Fatalf("initial decision/ref = %q/%q, want REQUIRE_APPROVAL + ref body=%s", initial.Decision, initial.ApprovalRef, rr.Body.String())
+	}
+	if _, err := s.edgeStore.ApproveApproval(context.Background(), edgecore.ApprovalResolution{
+		TenantID: edgeRouteTenant, ApprovalRef: initial.ApprovalRef, ResolverID: "principal-edge-a",
+		ResolvedBy: "principal:principal-edge-a", Reason: "simulated bypass of approve-time guard", ResolvedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("approve approval as retry caller: %v", err)
+	}
+	beforeRetryAudits := sink.Len()
+
+	retryBody := body
+	if explicitRef {
+		retryBody = edgeEvaluateBodyWithApprovalRef(session.SessionID, session.ExecutionID, edgeRouteTenant, "Bash", cmd, initial.ApprovalRef)
+	}
+	rr2 := edgeRoutePOST(t, handler, "/api/v1/edge/evaluate", retryBody)
+	var retry edgeEvaluateResponseJSON
+	decodeEdgeRouteJSON(t, rr2, &retry)
+	if rr2.Code != http.StatusOK || retry.Decision != string(edgecore.DecisionDeny) {
+		t.Fatalf("retry status/decision = %d/%q, want 200/DENY body=%s", rr2.Code, retry.Decision, rr2.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(retry.Reason+" "+retry.TerminalMessage), "self-approval") ||
+		strings.Contains(rr2.Body.String(), "principal-edge-a") {
+		t.Fatalf("retry body = %s, want self-approval deny without raw caller principal", rr2.Body.String())
+	}
+	assertSelfApprovalAuditEvent(t, sink, beforeRetryAudits, initial.ApprovalRef, "caller_is_approver")
+	stored, ok, err := s.edgeStore.GetApproval(context.Background(), edgeRouteTenant, initial.ApprovalRef)
+	if err != nil || !ok || stored == nil || stored.ConsumedAt != nil {
+		t.Fatalf("GetApproval after self-approval retry = (%#v,%v,%v), want stored and unconsumed", stored, ok, err)
 	}
 }
 

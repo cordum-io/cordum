@@ -12,36 +12,27 @@ from typing import cast
 from typing import Dict
 
 
-
 def _get_kwargs(
     *,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
-
-    
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
         "url": "/mcp/status",
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, McpStatus]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, McpStatus]]:
     if response.status_code == 200:
         response_200 = McpStatus.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 401:
@@ -56,7 +47,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, McpStatus]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, McpStatus]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -69,9 +62,8 @@ def sync_detailed(
     *,
     client: AuthenticatedClient,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, McpStatus]]:
-    """ Get MCP server status
+    """Get MCP server status
 
     Args:
         x_tenant_id (str):
@@ -82,12 +74,10 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, McpStatus]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         x_tenant_id=x_tenant_id,
-
     )
 
     response = client.get_httpx_client().request(
@@ -96,13 +86,13 @@ def sync_detailed(
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     *,
     client: AuthenticatedClient,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, McpStatus]]:
-    """ Get MCP server status
+    """Get MCP server status
 
     Args:
         x_tenant_id (str):
@@ -113,22 +103,20 @@ def sync(
 
     Returns:
         Union[Any, McpStatus]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, McpStatus]]:
-    """ Get MCP server status
+    """Get MCP server status
 
     Args:
         x_tenant_id (str):
@@ -139,27 +127,23 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, McpStatus]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         x_tenant_id=x_tenant_id,
-
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
     client: AuthenticatedClient,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, McpStatus]]:
-    """ Get MCP server status
+    """Get MCP server status
 
     Args:
         x_tenant_id (str):
@@ -170,11 +154,11 @@ async def asyncio(
 
     Returns:
         Union[Any, McpStatus]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

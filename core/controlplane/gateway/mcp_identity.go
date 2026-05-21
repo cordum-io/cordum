@@ -22,8 +22,11 @@ func mcpIdentityFromStore(src *store.AgentIdentity) *mcp.AgentIdentity {
 	}
 	return &mcp.AgentIdentity{
 		ID:                  src.ID,
-		AllowedTools:        append([]string{}, src.AllowedTools...),
+		AllowedServers:      cloneAgentStrings(src.AllowedServers),
+		AllowedTools:        cloneAgentStrings(src.AllowedTools),
+		AllowedResources:    cloneAgentStrings(src.AllowedResources),
+		Entitlements:        cloneAgentStrings(src.Entitlements),
 		RiskTier:            src.RiskTier,
-		DataClassifications: append([]string{}, src.DataClassifications...),
+		DataClassifications: cloneAgentStrings(src.DataClassifications),
 	}
 }

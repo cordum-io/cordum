@@ -116,6 +116,20 @@ func TestHandleRevokeWorkerSession_AdminHappyPath(t *testing.T) {
 	}
 }
 
+func TestHandleRevokeWorkerSession_RegisteredRoute(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	mux := http.NewServeMux()
+	if err := s.registerRoutes(mux); err != nil {
+		t.Fatalf("registerRoutes: %v", err)
+	}
+	for _, route := range s.routeTable {
+		if route.Method == http.MethodPost && route.Path == "/api/v1/workers/{id}/revoke-session" {
+			return
+		}
+	}
+	t.Fatalf("POST /api/v1/workers/{id}/revoke-session route is not registered; routes=%+v", s.routeTable)
+}
+
 func TestHandleRevokeWorkerSession_NoActiveSessionIsOk(t *testing.T) {
 	// Revoking a worker that has never handshook is a no-op success —
 	// operator scripts can retry safely.

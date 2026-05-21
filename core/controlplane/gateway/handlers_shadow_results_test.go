@@ -30,7 +30,7 @@ func newShadowResultsFixture(t *testing.T) (redis.UniversalClient, func(streamKe
 	if err != nil {
 		t.Fatalf("miniredis: %v", err)
 	}
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
+	client := redis.NewClient(testRedisOptions(srv.Addr()))
 	append := func(streamKey string, ev audit.SIEMEvent) {
 		t.Helper()
 		raw, err := json.Marshal(&ev)

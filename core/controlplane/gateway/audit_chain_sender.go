@@ -2,11 +2,14 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/cordum/cordum/core/audit"
+	"github.com/cordum/cordum/core/model"
 )
 
 const auditChainAppendTimeout = 5 * time.Second
@@ -40,7 +43,29 @@ func (s *auditChainSender) Send(event audit.SIEMEvent) {
 	if s == nil {
 		return
 	}
-	if s.chainer != nil && strings.TrimSpace(event.TenantID) != "" {
+	if s.chainer != nil {
+		// Defense-in-depth: producer sites SHOULD attribute TenantID
+		// explicitly via model.ResolveTenantForAudit (see task-3fad45d3
+		// for the 5 wired sites — middleware.auditReadMiddleware,
+		// edge.SendSIEMEvent, gateway.mcpDenyAuditor, mcp.auditor's
+		// Start{Inbound,Outbound}, gateway's mcpTool{Call,Approval}
+		// AuditHook). This fallback prevents data loss if a NEW
+		// producer site is added without proper attribution. Logged at
+		// slog.Warn (downgraded from Debug 2026-05-16) so CI/dev
+		// surfaces the producer regression loudly rather than letting
+		// it accumulate silently in production audit logs.
+		//
+		// Per-tenant chain semantics stay intact ("default" is its own
+		// stream — no cross-tenant leakage). Task rail #1 keeps this
+		// fallback in place until a CI gate prevents tenantless emissions.
+		if strings.TrimSpace(event.TenantID) == "" {
+			slog.Warn("audit chain: tenantless event — PRODUCER BUG, falling back to default tenant",
+				"event_type", event.EventType,
+				"action", event.Action,
+				"identity_hash", redactedAuditIdentity(event.Identity),
+			)
+			event.TenantID = model.DefaultTenant
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), auditChainAppendTimeout)
 		defer cancel()
 		if err := s.chainer.Append(ctx, &event); err != nil {
@@ -71,4 +96,26 @@ func (s *auditChainSender) Close() error {
 		return nil
 	}
 	return s.downstream.Close()
+}
+
+func redactedAuditIdentity(identity string) string {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return ""
+	}
+	role, principal, ok := strings.Cut(identity, ":")
+	role = strings.TrimSpace(role)
+	principal = strings.TrimSpace(principal)
+	if !ok {
+		role = "unknown"
+		principal = identity
+	}
+	if role == "" {
+		role = "unknown"
+	}
+	if principal == "" {
+		principal = identity
+	}
+	sum := sha256.Sum256([]byte(principal))
+	return role + ":" + hex.EncodeToString(sum[:8])
 }

@@ -30,11 +30,18 @@ func Agents(mux *http.ServeMux, eng *engine.Engine) {
 			})
 		case http.MethodPost:
 			var req struct {
-				Name        string            `json:"name"`
-				Owner       string            `json:"owner"`
-				RiskTier    string            `json:"risk_tier"`
-				Description string            `json:"description"`
-				Labels      map[string]string `json:"labels"`
+				Name                string            `json:"name"`
+				Owner               string            `json:"owner"`
+				RiskTier            string            `json:"risk_tier"`
+				Description         string            `json:"description"`
+				AllowedServers      []string          `json:"allowed_servers"`
+				AllowedTools        []string          `json:"allowed_tools"`
+				AllowedResources    []string          `json:"allowed_resources"`
+				Entitlements        []string          `json:"entitlements"`
+				AllowedTopics       []string          `json:"allowed_topics"`
+				AllowedPools        []string          `json:"allowed_pools"`
+				DataClassifications []string          `json:"data_classifications"`
+				Labels              map[string]string `json:"labels"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				engine.WriteError(w, http.StatusBadRequest, "invalid_json", "request body is not JSON", nil)
@@ -51,15 +58,22 @@ func Agents(mux *http.ServeMux, eng *engine.Engine) {
 			id := eng.NextID("agent")
 			ts := eng.Timestamp(0)
 			agent := &engine.Agent{
-				ID:          id,
-				Name:        req.Name,
-				Owner:       req.Owner,
-				RiskTier:    req.RiskTier,
-				Description: req.Description,
-				Status:      "active",
-				Labels:      req.Labels,
-				CreatedAt:   ts,
-				UpdatedAt:   ts,
+				ID:                  id,
+				Name:                req.Name,
+				Owner:               req.Owner,
+				RiskTier:            req.RiskTier,
+				Description:         req.Description,
+				Status:              "active",
+				AllowedServers:      cloneStrings(req.AllowedServers),
+				AllowedTools:        cloneStrings(req.AllowedTools),
+				AllowedResources:    cloneStrings(req.AllowedResources),
+				Entitlements:        cloneStrings(req.Entitlements),
+				AllowedTopics:       cloneStrings(req.AllowedTopics),
+				AllowedPools:        cloneStrings(req.AllowedPools),
+				DataClassifications: cloneStrings(req.DataClassifications),
+				Labels:              req.Labels,
+				CreatedAt:           ts,
+				UpdatedAt:           ts,
 			}
 			eng.Agents[id] = agent
 			engine.WriteJSON(w, http.StatusCreated, agent)
@@ -92,12 +106,19 @@ func Agents(mux *http.ServeMux, eng *engine.Engine) {
 			engine.WriteJSON(w, http.StatusOK, agent)
 		case http.MethodPut:
 			var req struct {
-				Name        string            `json:"name"`
-				Owner       string            `json:"owner"`
-				RiskTier    string            `json:"risk_tier"`
-				Description string            `json:"description"`
-				Labels      map[string]string `json:"labels"`
-				Status      string            `json:"status"`
+				Name                string            `json:"name"`
+				Owner               string            `json:"owner"`
+				RiskTier            string            `json:"risk_tier"`
+				Description         string            `json:"description"`
+				AllowedServers      []string          `json:"allowed_servers"`
+				AllowedTools        []string          `json:"allowed_tools"`
+				AllowedResources    []string          `json:"allowed_resources"`
+				Entitlements        []string          `json:"entitlements"`
+				AllowedTopics       []string          `json:"allowed_topics"`
+				AllowedPools        []string          `json:"allowed_pools"`
+				DataClassifications []string          `json:"data_classifications"`
+				Labels              map[string]string `json:"labels"`
+				Status              string            `json:"status"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				engine.WriteError(w, http.StatusBadRequest, "invalid_json", "request body is not JSON", nil)
@@ -118,6 +139,27 @@ func Agents(mux *http.ServeMux, eng *engine.Engine) {
 			if req.Labels != nil {
 				agent.Labels = req.Labels
 			}
+			if req.AllowedServers != nil {
+				agent.AllowedServers = cloneStrings(req.AllowedServers)
+			}
+			if req.AllowedTools != nil {
+				agent.AllowedTools = cloneStrings(req.AllowedTools)
+			}
+			if req.AllowedResources != nil {
+				agent.AllowedResources = cloneStrings(req.AllowedResources)
+			}
+			if req.Entitlements != nil {
+				agent.Entitlements = cloneStrings(req.Entitlements)
+			}
+			if req.AllowedTopics != nil {
+				agent.AllowedTopics = cloneStrings(req.AllowedTopics)
+			}
+			if req.AllowedPools != nil {
+				agent.AllowedPools = cloneStrings(req.AllowedPools)
+			}
+			if req.DataClassifications != nil {
+				agent.DataClassifications = cloneStrings(req.DataClassifications)
+			}
 			if req.Status != "" {
 				agent.Status = req.Status
 			}
@@ -132,4 +174,13 @@ func Agents(mux *http.ServeMux, eng *engine.Engine) {
 			engine.WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", r.Method+" not allowed", nil)
 		}
 	})
+}
+
+func cloneStrings(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
 }

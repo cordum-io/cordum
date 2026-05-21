@@ -18,10 +18,7 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.run_summary_error_type_0 import RunSummaryErrorType0
-
-
-
+    from ..models.run_summary_error_type_0 import RunSummaryErrorType0
 
 
 T = TypeVar("T", bound="RunSummary")
@@ -29,27 +26,27 @@ T = TypeVar("T", bound="RunSummary")
 
 @_attrs_define
 class RunSummary:
-    """ 
-        Attributes:
-            id (Union[Unset, str]):
-            workflow_id (Union[Unset, str]):
-            status (Union[Unset, RunSummaryStatus]): Workflow run lifecycle status (lowercase)
-            started_at (Union[Unset, datetime.datetime]):
-            completed_at (Union[None, Unset, datetime.datetime]):
-            error (Union['RunSummaryErrorType0', None, Unset]): Error details as key-value map (e.g. {code, message})
-     """
+    """
+    Attributes:
+        id (Union[Unset, str]):
+        workflow_id (Union[Unset, str]):
+        status (Union[Unset, RunSummaryStatus]): Workflow run lifecycle status (lowercase)
+        started_at (Union[Unset, datetime.datetime]):
+        completed_at (Union[None, Unset, datetime.datetime]):
+        error (Union['RunSummaryErrorType0', None, Unset]): Error details as key-value map (e.g. {code, message})
+    """
 
     id: Union[Unset, str] = UNSET
     workflow_id: Union[Unset, str] = UNSET
     status: Union[Unset, RunSummaryStatus] = UNSET
     started_at: Union[Unset, datetime.datetime] = UNSET
     completed_at: Union[None, Unset, datetime.datetime] = UNSET
-    error: Union['RunSummaryErrorType0', None, Unset] = UNSET
+    error: Union["RunSummaryErrorType0", None, Unset] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.run_summary_error_type_0 import RunSummaryErrorType0
+
         id = self.id
 
         workflow_id = self.workflow_id
@@ -57,7 +54,6 @@ class RunSummary:
         status: Union[Unset, str] = UNSET
         if not isinstance(self.status, Unset):
             status = self.status.value
-
 
         started_at: Union[Unset, str] = UNSET
         if not isinstance(self.started_at, Unset):
@@ -79,11 +75,9 @@ class RunSummary:
         else:
             error = self.error
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if id is not UNSET:
             field_dict["id"] = id
         if workflow_id is not UNSET:
@@ -99,11 +93,10 @@ class RunSummary:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.run_summary_error_type_0 import RunSummaryErrorType0
+
         d = src_dict.copy()
         id = d.pop("id", UNSET)
 
@@ -111,23 +104,17 @@ class RunSummary:
 
         _status = d.pop("status", UNSET)
         status: Union[Unset, RunSummaryStatus]
-        if isinstance(_status,  Unset):
+        if isinstance(_status, Unset):
             status = UNSET
         else:
             status = RunSummaryStatus(_status)
 
-
-
-
         _started_at = d.pop("started_at", UNSET)
         started_at: Union[Unset, datetime.datetime]
-        if isinstance(_started_at,  Unset):
+        if isinstance(_started_at, Unset):
             started_at = UNSET
         else:
             started_at = isoparse(_started_at)
-
-
-
 
         def _parse_completed_at(data: object) -> Union[None, Unset, datetime.datetime]:
             if data is None:
@@ -139,17 +126,14 @@ class RunSummary:
                     raise TypeError()
                 completed_at_type_0 = isoparse(data)
 
-
-
                 return completed_at_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
             return cast(Union[None, Unset, datetime.datetime], data)
 
         completed_at = _parse_completed_at(d.pop("completed_at", UNSET))
 
-
-        def _parse_error(data: object) -> Union['RunSummaryErrorType0', None, Unset]:
+        def _parse_error(data: object) -> Union["RunSummaryErrorType0", None, Unset]:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -159,15 +143,12 @@ class RunSummary:
                     raise TypeError()
                 error_type_0 = RunSummaryErrorType0.from_dict(data)
 
-
-
                 return error_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
-            return cast(Union['RunSummaryErrorType0', None, Unset], data)
+            return cast(Union["RunSummaryErrorType0", None, Unset], data)
 
         error = _parse_error(d.pop("error", UNSET))
-
 
         run_summary = cls(
             id=id,
@@ -177,7 +158,6 @@ class RunSummary:
             completed_at=completed_at,
             error=error,
         )
-
 
         run_summary.additional_properties = d
         return run_summary

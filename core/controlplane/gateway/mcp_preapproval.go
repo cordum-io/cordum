@@ -13,9 +13,9 @@ import (
 // e.g. "cordum_install_*" matches "cordum_install_pack" but not
 // "cordum_uninstall_pack". Exact match otherwise.
 //
-// Fail-closed: any store error resolves to false so a Redis outage
-// can't silently grant bypass. The caller's normal approval-enqueue
-// path takes over.
+// Tenant isolation is enforced by AgentIdentityStore.Get(ctx, tenant, agentID),
+// not by Owner/Team comparisons. Fail-closed: missing tenant/input or any store
+// error resolves to false so the caller's normal approval-enqueue path takes over.
 type agentIdentityPreapprovalLookup struct {
 	store *store.AgentIdentityStore
 }
@@ -28,20 +28,14 @@ func (l *agentIdentityPreapprovalLookup) IsPreapproved(ctx context.Context, tena
 	if l == nil || l.store == nil {
 		return false
 	}
+	tenant = strings.TrimSpace(tenant)
 	agentID = strings.TrimSpace(agentID)
 	toolName = strings.TrimSpace(toolName)
-	if agentID == "" || toolName == "" {
+	if tenant == "" || agentID == "" || toolName == "" {
 		return false
 	}
-	identity, err := l.store.Get(ctx, agentID)
+	identity, err := l.store.Get(ctx, tenant, agentID)
 	if err != nil || identity == nil {
-		return false
-	}
-	// Tenant isolation: if the identity's Owner/Team scope doesn't
-	// match the calling tenant, refuse. Empty owner (multi-tenant
-	// fixture) is permissive — matches the existing AgentIdentity
-	// behaviour on the Allowed* lists.
-	if tenant != "" && identity.Owner != "" && !equalFoldTrim(identity.Owner, tenant) {
 		return false
 	}
 	for _, pattern := range identity.PreapprovedMutatingTools {
@@ -72,8 +66,4 @@ func matchToolPattern(pattern, toolName string) bool {
 		}
 	}
 	return false
-}
-
-func equalFoldTrim(a, b string) bool {
-	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }

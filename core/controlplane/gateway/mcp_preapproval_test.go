@@ -36,7 +36,7 @@ func TestMatchToolPattern(t *testing.T) {
 func TestAgentIdentityPreapprovalLookup_RealStore(t *testing.T) {
 	t.Parallel()
 	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := redis.NewClient(testRedisOptions(mr.Addr()))
 	t.Cleanup(func() { _ = client.Close() })
 	s := store.NewAgentIdentityStoreFromClient(client)
 	if s == nil {
@@ -48,17 +48,19 @@ func TestAgentIdentityPreapprovalLookup_RealStore(t *testing.T) {
 	ctx := context.Background()
 	if _, err := s.Create(ctx, store.AgentIdentity{
 		ID:                       "ci-bot",
+		TenantID:                 "acme",
 		Name:                     "CI Bot",
-		Owner:                    "acme",
+		Owner:                    "platform-owner",
 		RiskTier:                 "medium",
-		PreapprovedMutatingTools: []string{"cordum_install_pack", "cordum_create_workflow"},
+		PreapprovedMutatingTools: []string{"cordum_install_pack", "cordum_create_workflow", "cordum_bulk_*"},
 	}); err != nil {
 		t.Fatalf("create ci-bot: %v", err)
 	}
 	if _, err := s.Create(ctx, store.AgentIdentity{
 		ID:       "human-op",
+		TenantID: "acme",
 		Name:     "Human Op",
-		Owner:    "acme",
+		Owner:    "platform-owner",
 		RiskTier: "high",
 	}); err != nil {
 		t.Fatalf("create human-op: %v", err)
@@ -75,10 +77,13 @@ func TestAgentIdentityPreapprovalLookup_RealStore(t *testing.T) {
 	}{
 		{"ci bot preapproved install", "acme", "ci-bot", "cordum_install_pack", true},
 		{"ci bot preapproved create_workflow", "acme", "ci-bot", "cordum_create_workflow", true},
+		{"ci bot preapproved trailing star", "acme", "ci-bot", "cordum_bulk_update", true},
+		{"trims tenant agent and tool", " acme ", " ci-bot ", " cordum_install_pack ", true},
 		{"ci bot NOT preapproved update_policy", "acme", "ci-bot", "cordum_update_policy_bundle", false},
 		{"human-op never preapproved", "acme", "human-op", "cordum_install_pack", false},
 		{"unknown agent → false", "acme", "not-exist", "cordum_install_pack", false},
-		{"cross-tenant refused", "other-co", "ci-bot", "cordum_install_pack", false},
+		{"cross-tenant same agent/tool refused", "other-co", "ci-bot", "cordum_install_pack", false},
+		{"empty tenant → false", "", "ci-bot", "cordum_install_pack", false},
 		{"empty agent → false", "acme", "", "cordum_install_pack", false},
 		{"empty tool → false", "acme", "ci-bot", "", false},
 	}
@@ -88,6 +93,20 @@ func TestAgentIdentityPreapprovalLookup_RealStore(t *testing.T) {
 				t.Errorf("IsPreapproved(%q, %q, %q) = %v, want %v", tc.tenant, tc.agent, tc.tool, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestAgentIdentityPreapprovalLookup_StoreError(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(testRedisOptions(mr.Addr()))
+	s := store.NewAgentIdentityStoreFromClient(client)
+	lookup := newAgentIdentityPreapprovalLookup(s)
+	if err := client.Close(); err != nil {
+		t.Fatalf("close redis client: %v", err)
+	}
+	if lookup.IsPreapproved(context.Background(), "tenant-a", "agent-a", "cordum_install_pack") {
+		t.Fatalf("store error must fail-closed")
 	}
 }
 

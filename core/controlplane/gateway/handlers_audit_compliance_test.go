@@ -206,6 +206,51 @@ func TestHandleAuditExport_CSVHappyPath(t *testing.T) {
 	}
 }
 
+func TestComplianceExport_DoesNotLeakInternalErrors(t *testing.T) {
+	for _, format := range []string{"json", "csv"} {
+		t.Run(format, func(t *testing.T) {
+			s, _, _ := newTestGateway(t)
+			grantExportEntitlement(t, s)
+			client := s.redisClient()
+			if client == nil {
+				t.Fatal("redis client is nil")
+			}
+			if err := client.Close(); err != nil {
+				t.Fatalf("close redis client: %v", err)
+			}
+
+			req := adminCtx(httptest.NewRequest(http.MethodGet,
+				"/api/v1/audit/export?format="+format+rangeQS(), nil))
+			rec := httptest.NewRecorder()
+			s.handleAuditExport(rec, req)
+
+			assertComplianceExportInternalErrorRedacted(t, rec.Body.String())
+		})
+	}
+}
+
+func assertComplianceExportInternalErrorRedacted(t *testing.T, body string) {
+	t.Helper()
+	forbidden := []string{
+		"10.0.0.5",
+		"6379",
+		"dial tcp",
+		"audit:chain:",
+		"redis:",
+		"client is closed",
+		"/var/lib/redis/dump.rdb",
+		`C:\Redis\dump.rdb`,
+	}
+	for _, token := range forbidden {
+		if strings.Contains(body, token) {
+			t.Fatalf("response body leaked %q:\n%s", token, body)
+		}
+	}
+	if !strings.Contains(body, "export failed") {
+		t.Fatalf("response body missing generic export failure marker:\n%s", body)
+	}
+}
+
 // TestHandleAuditExport_ExcelModeAddsBOM verifies the Excel toggle.
 func TestHandleAuditExport_ExcelModeAddsBOM(t *testing.T) {
 	s, _, _ := newTestGateway(t)

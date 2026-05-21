@@ -17,7 +17,6 @@ from typing import Dict
 from typing import Union
 
 
-
 def _get_kwargs(
     *,
     window: Union[Unset, GetApprovalAnalyticsWindow] = UNSET,
@@ -26,14 +25,9 @@ def _get_kwargs(
     group_by: Union[Unset, GetApprovalAnalyticsGroupBy] = GetApprovalAnalyticsGroupBy.OVERALL,
     limit: Union[Unset, int] = 10,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
@@ -55,9 +49,7 @@ def _get_kwargs(
 
     params["limit"] = limit
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -65,16 +57,15 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, ApprovalAnalyticsResponse, Error]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, ApprovalAnalyticsResponse, Error]]:
     if response.status_code == 200:
         response_200 = ApprovalAnalyticsResponse.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 400:
@@ -89,8 +80,6 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
     if response.status_code == 503:
         response_503 = Error.from_dict(response.json())
 
-
-
         return response_503
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -98,7 +87,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, ApprovalAnalyticsResponse, Error]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, ApprovalAnalyticsResponse, Error]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -116,9 +107,8 @@ def sync_detailed(
     group_by: Union[Unset, GetApprovalAnalyticsGroupBy] = GetApprovalAnalyticsGroupBy.OVERALL,
     limit: Union[Unset, int] = 10,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ApprovalAnalyticsResponse, Error]]:
-    """ Approval analytics (time-to-approve, auto vs manual, bottlenecks)
+    """Approval analytics (time-to-approve, auto vs manual, bottlenecks)
 
      Aggregated approval KPIs for the requested window. Consumes the
     Policy Decision Log as the source of truth, pairs each
@@ -147,17 +137,15 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, ApprovalAnalyticsResponse, Error]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         window=window,
-since=since,
-until=until,
-group_by=group_by,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
+        since=since,
+        until=until,
+        group_by=group_by,
+        limit=limit,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -165,6 +153,7 @@ x_tenant_id=x_tenant_id,
     )
 
     return _build_response(client=client, response=response)
+
 
 def sync(
     *,
@@ -175,9 +164,8 @@ def sync(
     group_by: Union[Unset, GetApprovalAnalyticsGroupBy] = GetApprovalAnalyticsGroupBy.OVERALL,
     limit: Union[Unset, int] = 10,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ApprovalAnalyticsResponse, Error]]:
-    """ Approval analytics (time-to-approve, auto vs manual, bottlenecks)
+    """Approval analytics (time-to-approve, auto vs manual, bottlenecks)
 
      Aggregated approval KPIs for the requested window. Consumes the
     Policy Decision Log as the source of truth, pairs each
@@ -206,19 +194,18 @@ def sync(
 
     Returns:
         Union[Any, ApprovalAnalyticsResponse, Error]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-window=window,
-since=since,
-until=until,
-group_by=group_by,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
+        window=window,
+        since=since,
+        until=until,
+        group_by=group_by,
+        limit=limit,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
@@ -229,9 +216,8 @@ async def asyncio_detailed(
     group_by: Union[Unset, GetApprovalAnalyticsGroupBy] = GetApprovalAnalyticsGroupBy.OVERALL,
     limit: Union[Unset, int] = 10,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ApprovalAnalyticsResponse, Error]]:
-    """ Approval analytics (time-to-approve, auto vs manual, bottlenecks)
+    """Approval analytics (time-to-approve, auto vs manual, bottlenecks)
 
      Aggregated approval KPIs for the requested window. Consumes the
     Policy Decision Log as the source of truth, pairs each
@@ -260,24 +246,21 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, ApprovalAnalyticsResponse, Error]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         window=window,
-since=since,
-until=until,
-group_by=group_by,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
+        since=since,
+        until=until,
+        group_by=group_by,
+        limit=limit,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
@@ -288,9 +271,8 @@ async def asyncio(
     group_by: Union[Unset, GetApprovalAnalyticsGroupBy] = GetApprovalAnalyticsGroupBy.OVERALL,
     limit: Union[Unset, int] = 10,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ApprovalAnalyticsResponse, Error]]:
-    """ Approval analytics (time-to-approve, auto vs manual, bottlenecks)
+    """Approval analytics (time-to-approve, auto vs manual, bottlenecks)
 
      Aggregated approval KPIs for the requested window. Consumes the
     Policy Decision Log as the source of truth, pairs each
@@ -319,16 +301,16 @@ async def asyncio(
 
     Returns:
         Union[Any, ApprovalAnalyticsResponse, Error]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-window=window,
-since=since,
-until=until,
-group_by=group_by,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            window=window,
+            since=since,
+            until=until,
+            group_by=group_by,
+            limit=limit,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

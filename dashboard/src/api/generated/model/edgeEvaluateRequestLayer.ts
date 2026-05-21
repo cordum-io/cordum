@@ -6,15 +6,15 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeEvaluateRequestLayer = typeof EdgeEvaluateRequestLayer[keyof typeof EdgeEvaluateRequestLayer];
-
+export type EdgeEvaluateRequestLayer =
+  (typeof EdgeEvaluateRequestLayer)[keyof typeof EdgeEvaluateRequestLayer];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeEvaluateRequestLayer = {
-  hook: 'hook',
-  mcp: 'mcp',
-  llm: 'llm',
-  runtime: 'runtime',
-  workflow: 'workflow',
-  system: 'system',
+  hook: "hook",
+  mcp: "mcp",
+  llm: "llm",
+  runtime: "runtime",
+  workflow: "workflow",
+  system: "system",
 } as const;

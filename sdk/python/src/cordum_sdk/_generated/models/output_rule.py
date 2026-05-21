@@ -16,10 +16,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.output_rule_config_type_0 import OutputRuleConfigType0
-
-
-
+    from ..models.output_rule_config_type_0 import OutputRuleConfigType0
 
 
 T = TypeVar("T", bound="OutputRule")
@@ -27,17 +24,17 @@ T = TypeVar("T", bound="OutputRule")
 
 @_attrs_define
 class OutputRule:
-    """ 
-        Attributes:
-            id (Union[Unset, str]):
-            name (Union[Unset, str]):
-            description (Union[Unset, str]):
-            enabled (Union[Unset, bool]):
-            scanner_type (Union[Unset, str]):
-            pattern (Union[None, Unset, str]):
-            action (Union[Unset, OutputRuleAction]):
-            config (Union['OutputRuleConfigType0', None, Unset]):
-     """
+    """
+    Attributes:
+        id (Union[Unset, str]):
+        name (Union[Unset, str]):
+        description (Union[Unset, str]):
+        enabled (Union[Unset, bool]):
+        scanner_type (Union[Unset, str]):
+        pattern (Union[None, Unset, str]):
+        action (Union[Unset, OutputRuleAction]):
+        config (Union['OutputRuleConfigType0', None, Unset]):
+    """
 
     id: Union[Unset, str] = UNSET
     name: Union[Unset, str] = UNSET
@@ -46,12 +43,12 @@ class OutputRule:
     scanner_type: Union[Unset, str] = UNSET
     pattern: Union[None, Unset, str] = UNSET
     action: Union[Unset, OutputRuleAction] = UNSET
-    config: Union['OutputRuleConfigType0', None, Unset] = UNSET
+    config: Union["OutputRuleConfigType0", None, Unset] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.output_rule_config_type_0 import OutputRuleConfigType0
+
         id = self.id
 
         name = self.name
@@ -72,7 +69,6 @@ class OutputRule:
         if not isinstance(self.action, Unset):
             action = self.action.value
 
-
         config: Union[Dict[str, Any], None, Unset]
         if isinstance(self.config, Unset):
             config = UNSET
@@ -81,11 +77,9 @@ class OutputRule:
         else:
             config = self.config
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if id is not UNSET:
             field_dict["id"] = id
         if name is not UNSET:
@@ -105,11 +99,10 @@ class OutputRule:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.output_rule_config_type_0 import OutputRuleConfigType0
+
         d = src_dict.copy()
         id = d.pop("id", UNSET)
 
@@ -130,18 +123,14 @@ class OutputRule:
 
         pattern = _parse_pattern(d.pop("pattern", UNSET))
 
-
         _action = d.pop("action", UNSET)
         action: Union[Unset, OutputRuleAction]
-        if isinstance(_action,  Unset):
+        if isinstance(_action, Unset):
             action = UNSET
         else:
             action = OutputRuleAction(_action)
 
-
-
-
-        def _parse_config(data: object) -> Union['OutputRuleConfigType0', None, Unset]:
+        def _parse_config(data: object) -> Union["OutputRuleConfigType0", None, Unset]:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -151,15 +140,12 @@ class OutputRule:
                     raise TypeError()
                 config_type_0 = OutputRuleConfigType0.from_dict(data)
 
-
-
                 return config_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
-            return cast(Union['OutputRuleConfigType0', None, Unset], data)
+            return cast(Union["OutputRuleConfigType0", None, Unset], data)
 
         config = _parse_config(d.pop("config", UNSET))
-
 
         output_rule = cls(
             id=id,
@@ -171,7 +157,6 @@ class OutputRule:
             action=action,
             config=config,
         )
-
 
         output_rule.additional_properties = d
         return output_rule

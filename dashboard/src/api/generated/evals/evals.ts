@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,12 +18,11 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   BadRequestResponse,
-  ConflictResponse,
   CreateEvalDataset201,
   CreateEvalDatasetBody,
   CreateEvalDatasetFromIncidents200,
@@ -37,6 +33,7 @@ import type {
   CreateEvalDatasetSuccessorBody,
   DeleteEvalDatasetParams,
   DeleteEvalRunParams,
+  Error,
   EvalRunAcceptedResponse,
   EvalRunRequest,
   EvalRunResult,
@@ -49,969 +46,1680 @@ import type {
   ListEvalDatasetsParams,
   ListEvalRunsParams,
   NotFoundResponse,
-  PayloadTooLargeResponse,
   RateLimitedResponse,
   ServiceUnavailableResponse,
-  UnauthorizedResponse
-} from '.././model';
+  UnauthorizedResponse,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * @summary Derive an eval dataset from governance incidents
  */
 export const createEvalDatasetFromIncidents = (
-    createEvalDatasetFromIncidentsBody: CreateEvalDatasetFromIncidentsBody,
-    params?: CreateEvalDatasetFromIncidentsParams,
- signal?: AbortSignal
+  createEvalDatasetFromIncidentsBody: CreateEvalDatasetFromIncidentsBody,
+  params?: CreateEvalDatasetFromIncidentsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<CreateEvalDatasetFromIncidents200 | CreateEvalDatasetFromIncidents201>(
-      {url: `/api/v1/evals/datasets/from-incidents`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: createEvalDatasetFromIncidentsBody,
-        params, signal
+  return apiClient<
+    CreateEvalDatasetFromIncidents200 | CreateEvalDatasetFromIncidents201
+  >({
+    url: `/api/v1/evals/datasets/from-incidents`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: createEvalDatasetFromIncidentsBody,
+    params,
+    signal,
+  });
+};
+
+export const getCreateEvalDatasetFromIncidentsMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | RateLimitedResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createEvalDatasetFromIncidents>>,
+    TError,
+    {
+      data: CreateEvalDatasetFromIncidentsBody;
+      params?: CreateEvalDatasetFromIncidentsParams;
     },
-      );
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createEvalDatasetFromIncidents>>,
+  TError,
+  {
+    data: CreateEvalDatasetFromIncidentsBody;
+    params?: CreateEvalDatasetFromIncidentsParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["createEvalDatasetFromIncidents"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createEvalDatasetFromIncidents>>,
+    {
+      data: CreateEvalDatasetFromIncidentsBody;
+      params?: CreateEvalDatasetFromIncidentsParams;
     }
-  
+  > = (props) => {
+    const { data, params } = props ?? {};
 
+    return createEvalDatasetFromIncidents(data, params);
+  };
 
-export const getCreateEvalDatasetFromIncidentsMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | RateLimitedResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEvalDatasetFromIncidents>>, TError,{data: CreateEvalDatasetFromIncidentsBody;params?: CreateEvalDatasetFromIncidentsParams}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof createEvalDatasetFromIncidents>>, TError,{data: CreateEvalDatasetFromIncidentsBody;params?: CreateEvalDatasetFromIncidentsParams}, TContext> => {
+  return { mutationFn, ...mutationOptions };
+};
 
-const mutationKey = ['createEvalDatasetFromIncidents'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+export type CreateEvalDatasetFromIncidentsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createEvalDatasetFromIncidents>>
+>;
+export type CreateEvalDatasetFromIncidentsMutationBody =
+  CreateEvalDatasetFromIncidentsBody;
+export type CreateEvalDatasetFromIncidentsMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | RateLimitedResponse
+  | ServiceUnavailableResponse;
 
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createEvalDatasetFromIncidents>>, {data: CreateEvalDatasetFromIncidentsBody;params?: CreateEvalDatasetFromIncidentsParams}> = (props) => {
-          const {data,params} = props ?? {};
-
-          return  createEvalDatasetFromIncidents(data,params,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateEvalDatasetFromIncidentsMutationResult = NonNullable<Awaited<ReturnType<typeof createEvalDatasetFromIncidents>>>
-    export type CreateEvalDatasetFromIncidentsMutationBody = CreateEvalDatasetFromIncidentsBody
-    export type CreateEvalDatasetFromIncidentsMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | RateLimitedResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Derive an eval dataset from governance incidents
  */
-export const useCreateEvalDatasetFromIncidents = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | RateLimitedResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEvalDatasetFromIncidents>>, TError,{data: CreateEvalDatasetFromIncidentsBody;params?: CreateEvalDatasetFromIncidentsParams}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createEvalDatasetFromIncidents>>,
-        TError,
-        {data: CreateEvalDatasetFromIncidentsBody;params?: CreateEvalDatasetFromIncidentsParams},
-        TContext
-      > => {
+export const useCreateEvalDatasetFromIncidents = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | RateLimitedResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createEvalDatasetFromIncidents>>,
+      TError,
+      {
+        data: CreateEvalDatasetFromIncidentsBody;
+        params?: CreateEvalDatasetFromIncidentsParams;
+      },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createEvalDatasetFromIncidents>>,
+  TError,
+  {
+    data: CreateEvalDatasetFromIncidentsBody;
+    params?: CreateEvalDatasetFromIncidentsParams;
+  },
+  TContext
+> => {
+  const mutationOptions =
+    getCreateEvalDatasetFromIncidentsMutationOptions(options);
 
-      const mutationOptions = getCreateEvalDatasetFromIncidentsMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary List eval datasets
  */
 export const listEvalDatasets = (
-    params?: ListEvalDatasetsParams,
- signal?: AbortSignal
+  params?: ListEvalDatasetsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ListEvalDatasets200>(
-      {url: `/api/v1/evals/datasets`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<ListEvalDatasets200>({
+    url: `/api/v1/evals/datasets`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getListEvalDatasetsQueryKey = (params?: ListEvalDatasetsParams,) => {
-    return [
-    `/api/v1/evals/datasets`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListEvalDatasetsQueryOptions = <TData = Awaited<ReturnType<typeof listEvalDatasets>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(params?: ListEvalDatasetsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalDatasets>>, TError, TData>>, }
+export const getListEvalDatasetsQueryKey = (
+  params?: ListEvalDatasetsParams,
 ) => {
+  return [`/api/v1/evals/datasets`, ...(params ? [params] : [])] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getListEvalDatasetsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listEvalDatasets>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListEvalDatasetsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEvalDatasets>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListEvalDatasetsQueryKey(params);
+  const queryKey =
+    queryOptions?.queryKey ?? getListEvalDatasetsQueryKey(params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listEvalDatasets>>
+  > = ({ signal }) => listEvalDatasets(params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEvalDatasets>>> = ({ signal }) => listEvalDatasets(params, signal);
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listEvalDatasets>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type ListEvalDatasetsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listEvalDatasets>>
+>;
+export type ListEvalDatasetsQueryError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEvalDatasets>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListEvalDatasetsQueryResult = NonNullable<Awaited<ReturnType<typeof listEvalDatasets>>>
-export type ListEvalDatasetsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useListEvalDatasets<TData = Awaited<ReturnType<typeof listEvalDatasets>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params: undefined |  ListEvalDatasetsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalDatasets>>, TError, TData>> & Pick<
+export function useListEvalDatasets<
+  TData = Awaited<ReturnType<typeof listEvalDatasets>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params: undefined | ListEvalDatasetsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEvalDatasets>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEvalDatasets>>,
           TError,
           Awaited<ReturnType<typeof listEvalDatasets>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEvalDatasets<TData = Awaited<ReturnType<typeof listEvalDatasets>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListEvalDatasetsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalDatasets>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListEvalDatasets<
+  TData = Awaited<ReturnType<typeof listEvalDatasets>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListEvalDatasetsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEvalDatasets>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEvalDatasets>>,
           TError,
           Awaited<ReturnType<typeof listEvalDatasets>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEvalDatasets<TData = Awaited<ReturnType<typeof listEvalDatasets>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListEvalDatasetsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalDatasets>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListEvalDatasets<
+  TData = Awaited<ReturnType<typeof listEvalDatasets>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListEvalDatasetsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEvalDatasets>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List eval datasets
  */
 
-export function useListEvalDatasets<TData = Awaited<ReturnType<typeof listEvalDatasets>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListEvalDatasetsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalDatasets>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListEvalDatasets<
+  TData = Awaited<ReturnType<typeof listEvalDatasets>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListEvalDatasetsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEvalDatasets>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListEvalDatasetsQueryOptions(params, options);
 
-  const queryOptions = getListEvalDatasetsQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Create a curated eval dataset
  */
 export const createEvalDataset = (
-    createEvalDatasetBody: CreateEvalDatasetBody,
- signal?: AbortSignal
+  createEvalDatasetBody: CreateEvalDatasetBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<CreateEvalDataset201>(
-      {url: `/api/v1/evals/datasets`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: createEvalDatasetBody, signal
-    },
-      );
-    }
-  
+  return apiClient<CreateEvalDataset201>({
+    url: `/api/v1/evals/datasets`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: createEvalDatasetBody,
+    signal,
+  });
+};
 
+export const getCreateEvalDatasetMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createEvalDataset>>,
+    TError,
+    { data: CreateEvalDatasetBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createEvalDataset>>,
+  TError,
+  { data: CreateEvalDatasetBody },
+  TContext
+> => {
+  const mutationKey = ["createEvalDataset"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getCreateEvalDatasetMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse | PayloadTooLargeResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEvalDataset>>, TError,{data: CreateEvalDatasetBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof createEvalDataset>>, TError,{data: CreateEvalDatasetBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createEvalDataset>>,
+    { data: CreateEvalDatasetBody }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['createEvalDataset'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return createEvalDataset(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type CreateEvalDatasetMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createEvalDataset>>
+>;
+export type CreateEvalDatasetMutationBody = CreateEvalDatasetBody;
+export type CreateEvalDatasetMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createEvalDataset>>, {data: CreateEvalDatasetBody}> = (props) => {
-          const {data} = props ?? {};
-
-          return  createEvalDataset(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateEvalDatasetMutationResult = NonNullable<Awaited<ReturnType<typeof createEvalDataset>>>
-    export type CreateEvalDatasetMutationBody = CreateEvalDatasetBody
-    export type CreateEvalDatasetMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse | PayloadTooLargeResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Create a curated eval dataset
  */
-export const useCreateEvalDataset = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ConflictResponse | PayloadTooLargeResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEvalDataset>>, TError,{data: CreateEvalDatasetBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createEvalDataset>>,
-        TError,
-        {data: CreateEvalDatasetBody},
-        TContext
-      > => {
+export const useCreateEvalDataset = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createEvalDataset>>,
+      TError,
+      { data: CreateEvalDatasetBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createEvalDataset>>,
+  TError,
+  { data: CreateEvalDatasetBody },
+  TContext
+> => {
+  const mutationOptions = getCreateEvalDatasetMutationOptions(options);
 
-      const mutationOptions = getCreateEvalDatasetMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary List versions for an eval dataset family
  */
-export const listEvalDatasetVersions = (
-    name: string,
- signal?: AbortSignal
+export const listEvalDatasetVersions = (name: string, signal?: AbortSignal) => {
+  return apiClient<ListEvalDatasetVersions200>({
+    url: `/api/v1/evals/datasets/by-name/${name}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getListEvalDatasetVersionsQueryKey = (name?: string) => {
+  return [`/api/v1/evals/datasets/by-name/${name}`] as const;
+};
+
+export const getListEvalDatasetVersionsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listEvalDatasetVersions>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEvalDatasetVersions>>,
+        TError,
+        TData
+      >
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<ListEvalDatasetVersions200>(
-      {url: `/api/v1/evals/datasets/by-name/${name}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey =
+    queryOptions?.queryKey ?? getListEvalDatasetVersionsQueryKey(name);
 
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listEvalDatasetVersions>>
+  > = ({ signal }) => listEvalDatasetVersions(name, signal);
 
-export const getListEvalDatasetVersionsQueryKey = (name?: string,) => {
-    return [
-    `/api/v1/evals/datasets/by-name/${name}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!name,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listEvalDatasetVersions>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getListEvalDatasetVersionsQueryOptions = <TData = Awaited<ReturnType<typeof listEvalDatasetVersions>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalDatasetVersions>>, TError, TData>>, }
-) => {
+export type ListEvalDatasetVersionsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listEvalDatasetVersions>>
+>;
+export type ListEvalDatasetVersionsQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getListEvalDatasetVersionsQueryKey(name);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEvalDatasetVersions>>> = ({ signal }) => listEvalDatasetVersions(name, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(name), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEvalDatasetVersions>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListEvalDatasetVersionsQueryResult = NonNullable<Awaited<ReturnType<typeof listEvalDatasetVersions>>>
-export type ListEvalDatasetVersionsQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-
-export function useListEvalDatasetVersions<TData = Awaited<ReturnType<typeof listEvalDatasetVersions>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- name: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalDatasetVersions>>, TError, TData>> & Pick<
+export function useListEvalDatasetVersions<
+  TData = Awaited<ReturnType<typeof listEvalDatasetVersions>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEvalDatasetVersions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEvalDatasetVersions>>,
           TError,
           Awaited<ReturnType<typeof listEvalDatasetVersions>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEvalDatasetVersions<TData = Awaited<ReturnType<typeof listEvalDatasetVersions>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalDatasetVersions>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListEvalDatasetVersions<
+  TData = Awaited<ReturnType<typeof listEvalDatasetVersions>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEvalDatasetVersions>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEvalDatasetVersions>>,
           TError,
           Awaited<ReturnType<typeof listEvalDatasetVersions>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEvalDatasetVersions<TData = Awaited<ReturnType<typeof listEvalDatasetVersions>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalDatasetVersions>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListEvalDatasetVersions<
+  TData = Awaited<ReturnType<typeof listEvalDatasetVersions>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEvalDatasetVersions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List versions for an eval dataset family
  */
 
-export function useListEvalDatasetVersions<TData = Awaited<ReturnType<typeof listEvalDatasetVersions>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- name: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalDatasetVersions>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListEvalDatasetVersions<
+  TData = Awaited<ReturnType<typeof listEvalDatasetVersions>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listEvalDatasetVersions>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListEvalDatasetVersionsQueryOptions(name, options);
 
-  const queryOptions = getListEvalDatasetVersionsQueryOptions(name,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Get a dataset by name and version
  */
 export const getEvalDatasetByNameVersion = (
-    name: string,
-    version: number,
- signal?: AbortSignal
+  name: string,
+  version: number,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<GetEvalDatasetByNameVersion200>(
-      {url: `/api/v1/evals/datasets/by-name/${name}/versions/${version}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  return apiClient<GetEvalDatasetByNameVersion200>({
+    url: `/api/v1/evals/datasets/by-name/${name}/versions/${version}`,
+    method: "GET",
+    signal,
+  });
+};
 
-
-
-export const getGetEvalDatasetByNameVersionQueryKey = (name?: string,
-    version?: number,) => {
-    return [
-    `/api/v1/evals/datasets/by-name/${name}/versions/${version}`
-    ] as const;
-    }
-
-    
-export const getGetEvalDatasetByNameVersionQueryOptions = <TData = Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(name: string,
-    version: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>, TError, TData>>, }
+export const getGetEvalDatasetByNameVersionQueryKey = (
+  name?: string,
+  version?: number,
 ) => {
+  return [
+    `/api/v1/evals/datasets/by-name/${name}/versions/${version}`,
+  ] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getGetEvalDatasetByNameVersionQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  version: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetEvalDatasetByNameVersionQueryKey(name,version);
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetEvalDatasetByNameVersionQueryKey(name, version);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>
+  > = ({ signal }) => getEvalDatasetByNameVersion(name, version, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>> = ({ signal }) => getEvalDatasetByNameVersion(name,version, signal);
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(name && version),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type GetEvalDatasetByNameVersionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>
+>;
+export type GetEvalDatasetByNameVersionQueryError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-      
-
-   return  { queryKey, queryFn, enabled: !!(name && version), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetEvalDatasetByNameVersionQueryResult = NonNullable<Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>>
-export type GetEvalDatasetByNameVersionQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-
-export function useGetEvalDatasetByNameVersion<TData = Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- name: string,
-    version: number, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>, TError, TData>> & Pick<
+export function useGetEvalDatasetByNameVersion<
+  TData = Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  version: number,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
           TError,
           Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetEvalDatasetByNameVersion<TData = Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- name: string,
-    version: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetEvalDatasetByNameVersion<
+  TData = Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  version: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
           TError,
           Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetEvalDatasetByNameVersion<TData = Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- name: string,
-    version: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetEvalDatasetByNameVersion<
+  TData = Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  version: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get a dataset by name and version
  */
 
-export function useGetEvalDatasetByNameVersion<TData = Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- name: string,
-    version: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetEvalDatasetByNameVersion<
+  TData = Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  name: string,
+  version: number,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getEvalDatasetByNameVersion>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetEvalDatasetByNameVersionQueryOptions(
+    name,
+    version,
+    options,
+  );
 
-  const queryOptions = getGetEvalDatasetByNameVersionQueryOptions(name,version,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
-
-
-
 /**
  * @summary Get one eval dataset
  */
-export const getEvalDataset = (
-    id: string,
- signal?: AbortSignal
+export const getEvalDataset = (id: string, signal?: AbortSignal) => {
+  return apiClient<GetEvalDataset200>({
+    url: `/api/v1/evals/datasets/${id}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetEvalDatasetQueryKey = (id?: string) => {
+  return [`/api/v1/evals/datasets/${id}`] as const;
+};
+
+export const getGetEvalDatasetQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEvalDataset>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEvalDataset>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<GetEvalDataset200>(
-      {url: `/api/v1/evals/datasets/${id}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetEvalDatasetQueryKey(id);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getEvalDataset>>> = ({
+    signal,
+  }) => getEvalDataset(id, signal);
 
-export const getGetEvalDatasetQueryKey = (id?: string,) => {
-    return [
-    `/api/v1/evals/datasets/${id}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEvalDataset>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetEvalDatasetQueryOptions = <TData = Awaited<ReturnType<typeof getEvalDataset>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalDataset>>, TError, TData>>, }
-) => {
+export type GetEvalDatasetQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEvalDataset>>
+>;
+export type GetEvalDatasetQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetEvalDatasetQueryKey(id);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEvalDataset>>> = ({ signal }) => getEvalDataset(id, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEvalDataset>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetEvalDatasetQueryResult = NonNullable<Awaited<ReturnType<typeof getEvalDataset>>>
-export type GetEvalDatasetQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-
-export function useGetEvalDataset<TData = Awaited<ReturnType<typeof getEvalDataset>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalDataset>>, TError, TData>> & Pick<
+export function useGetEvalDataset<
+  TData = Awaited<ReturnType<typeof getEvalDataset>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEvalDataset>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEvalDataset>>,
           TError,
           Awaited<ReturnType<typeof getEvalDataset>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetEvalDataset<TData = Awaited<ReturnType<typeof getEvalDataset>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalDataset>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetEvalDataset<
+  TData = Awaited<ReturnType<typeof getEvalDataset>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEvalDataset>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEvalDataset>>,
           TError,
           Awaited<ReturnType<typeof getEvalDataset>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetEvalDataset<TData = Awaited<ReturnType<typeof getEvalDataset>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalDataset>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetEvalDataset<
+  TData = Awaited<ReturnType<typeof getEvalDataset>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEvalDataset>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get one eval dataset
  */
 
-export function useGetEvalDataset<TData = Awaited<ReturnType<typeof getEvalDataset>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalDataset>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetEvalDataset<
+  TData = Awaited<ReturnType<typeof getEvalDataset>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEvalDataset>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetEvalDatasetQueryOptions(id, options);
 
-  const queryOptions = getGetEvalDatasetQueryOptions(id,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Create a successor version from an existing dataset
  */
 export const createEvalDatasetSuccessor = (
-    id: string,
-    createEvalDatasetSuccessorBody: CreateEvalDatasetSuccessorBody,
- ) => {
-      
-      
-      return apiClient<CreateEvalDatasetSuccessor200>(
-      {url: `/api/v1/evals/datasets/${id}`, method: 'PUT',
-      headers: {'Content-Type': 'application/json', },
-      data: createEvalDatasetSuccessorBody
-    },
-      );
-    }
-  
+  id: string,
+  createEvalDatasetSuccessorBody: CreateEvalDatasetSuccessorBody,
+) => {
+  return apiClient<CreateEvalDatasetSuccessor200>({
+    url: `/api/v1/evals/datasets/${id}`,
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    data: createEvalDatasetSuccessorBody,
+  });
+};
 
+export const getCreateEvalDatasetSuccessorMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createEvalDatasetSuccessor>>,
+    TError,
+    { id: string; data: CreateEvalDatasetSuccessorBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createEvalDatasetSuccessor>>,
+  TError,
+  { id: string; data: CreateEvalDatasetSuccessorBody },
+  TContext
+> => {
+  const mutationKey = ["createEvalDatasetSuccessor"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getCreateEvalDatasetSuccessorMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | PayloadTooLargeResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEvalDatasetSuccessor>>, TError,{id: string;data: CreateEvalDatasetSuccessorBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof createEvalDatasetSuccessor>>, TError,{id: string;data: CreateEvalDatasetSuccessorBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createEvalDatasetSuccessor>>,
+    { id: string; data: CreateEvalDatasetSuccessorBody }
+  > = (props) => {
+    const { id, data } = props ?? {};
 
-const mutationKey = ['createEvalDatasetSuccessor'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return createEvalDatasetSuccessor(id, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type CreateEvalDatasetSuccessorMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createEvalDatasetSuccessor>>
+>;
+export type CreateEvalDatasetSuccessorMutationBody =
+  CreateEvalDatasetSuccessorBody;
+export type CreateEvalDatasetSuccessorMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createEvalDatasetSuccessor>>, {id: string;data: CreateEvalDatasetSuccessorBody}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  createEvalDatasetSuccessor(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type CreateEvalDatasetSuccessorMutationResult = NonNullable<Awaited<ReturnType<typeof createEvalDatasetSuccessor>>>
-    export type CreateEvalDatasetSuccessorMutationBody = CreateEvalDatasetSuccessorBody
-    export type CreateEvalDatasetSuccessorMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | PayloadTooLargeResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Create a successor version from an existing dataset
  */
-export const useCreateEvalDatasetSuccessor = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | PayloadTooLargeResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createEvalDatasetSuccessor>>, TError,{id: string;data: CreateEvalDatasetSuccessorBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof createEvalDatasetSuccessor>>,
-        TError,
-        {id: string;data: CreateEvalDatasetSuccessorBody},
-        TContext
-      > => {
+export const useCreateEvalDatasetSuccessor = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof createEvalDatasetSuccessor>>,
+      TError,
+      { id: string; data: CreateEvalDatasetSuccessorBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof createEvalDatasetSuccessor>>,
+  TError,
+  { id: string; data: CreateEvalDatasetSuccessorBody },
+  TContext
+> => {
+  const mutationOptions = getCreateEvalDatasetSuccessorMutationOptions(options);
 
-      const mutationOptions = getCreateEvalDatasetSuccessorMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Delete an eval dataset
  */
 export const deleteEvalDataset = (
-    id: string,
-    params?: DeleteEvalDatasetParams,
- ) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/evals/datasets/${id}`, method: 'DELETE',
-        params
-    },
-      );
-    }
-  
+  id: string,
+  params?: DeleteEvalDatasetParams,
+) => {
+  return apiClient<void>({
+    url: `/api/v1/evals/datasets/${id}`,
+    method: "DELETE",
+    params,
+  });
+};
 
+export const getDeleteEvalDatasetMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteEvalDataset>>,
+    TError,
+    { id: string; params?: DeleteEvalDatasetParams },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteEvalDataset>>,
+  TError,
+  { id: string; params?: DeleteEvalDatasetParams },
+  TContext
+> => {
+  const mutationKey = ["deleteEvalDataset"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getDeleteEvalDatasetMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEvalDataset>>, TError,{id: string;params?: DeleteEvalDatasetParams}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof deleteEvalDataset>>, TError,{id: string;params?: DeleteEvalDatasetParams}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteEvalDataset>>,
+    { id: string; params?: DeleteEvalDatasetParams }
+  > = (props) => {
+    const { id, params } = props ?? {};
 
-const mutationKey = ['deleteEvalDataset'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return deleteEvalDataset(id, params);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type DeleteEvalDatasetMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteEvalDataset>>
+>;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteEvalDataset>>, {id: string;params?: DeleteEvalDatasetParams}> = (props) => {
-          const {id,params} = props ?? {};
+export type DeleteEvalDatasetMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-          return  deleteEvalDataset(id,params,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type DeleteEvalDatasetMutationResult = NonNullable<Awaited<ReturnType<typeof deleteEvalDataset>>>
-    
-    export type DeleteEvalDatasetMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Delete an eval dataset
  */
-export const useDeleteEvalDataset = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEvalDataset>>, TError,{id: string;params?: DeleteEvalDatasetParams}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof deleteEvalDataset>>,
-        TError,
-        {id: string;params?: DeleteEvalDatasetParams},
-        TContext
-      > => {
+export const useDeleteEvalDataset = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deleteEvalDataset>>,
+      TError,
+      { id: string; params?: DeleteEvalDatasetParams },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof deleteEvalDataset>>,
+  TError,
+  { id: string; params?: DeleteEvalDatasetParams },
+  TContext
+> => {
+  const mutationOptions = getDeleteEvalDatasetMutationOptions(options);
 
-      const mutationOptions = getDeleteEvalDatasetMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * Synchronous for ≤500 entries (returns 200 with full result), asynchronous for larger datasets (returns 202 with run_id; poll GET /evals/runs/{runId}).
  * @summary Run an eval dataset against the active or candidate policy
  */
 export const runEvalDataset = (
-    id: string,
-    evalRunRequest?: EvalRunRequest,
- signal?: AbortSignal
+  id: string,
+  evalRunRequest?: EvalRunRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EvalRunResult | EvalRunAcceptedResponse>(
-      {url: `/api/v1/evals/datasets/${id}/run`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: evalRunRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<EvalRunResult | EvalRunAcceptedResponse>({
+    url: `/api/v1/evals/datasets/${id}/run`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: evalRunRequest,
+    signal,
+  });
+};
 
+export const getRunEvalDatasetMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | RateLimitedResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runEvalDataset>>,
+    TError,
+    { id: string; data: EvalRunRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof runEvalDataset>>,
+  TError,
+  { id: string; data: EvalRunRequest },
+  TContext
+> => {
+  const mutationKey = ["runEvalDataset"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getRunEvalDatasetMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | RateLimitedResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runEvalDataset>>, TError,{id: string;data: EvalRunRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof runEvalDataset>>, TError,{id: string;data: EvalRunRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof runEvalDataset>>,
+    { id: string; data: EvalRunRequest }
+  > = (props) => {
+    const { id, data } = props ?? {};
 
-const mutationKey = ['runEvalDataset'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return runEvalDataset(id, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type RunEvalDatasetMutationResult = NonNullable<
+  Awaited<ReturnType<typeof runEvalDataset>>
+>;
+export type RunEvalDatasetMutationBody = EvalRunRequest;
+export type RunEvalDatasetMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | RateLimitedResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof runEvalDataset>>, {id: string;data: EvalRunRequest}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  runEvalDataset(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type RunEvalDatasetMutationResult = NonNullable<Awaited<ReturnType<typeof runEvalDataset>>>
-    export type RunEvalDatasetMutationBody = EvalRunRequest
-    export type RunEvalDatasetMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | RateLimitedResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Run an eval dataset against the active or candidate policy
  */
-export const useRunEvalDataset = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | RateLimitedResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof runEvalDataset>>, TError,{id: string;data: EvalRunRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof runEvalDataset>>,
-        TError,
-        {id: string;data: EvalRunRequest},
-        TContext
-      > => {
+export const useRunEvalDataset = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | RateLimitedResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof runEvalDataset>>,
+      TError,
+      { id: string; data: EvalRunRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof runEvalDataset>>,
+  TError,
+  { id: string; data: EvalRunRequest },
+  TContext
+> => {
+  const mutationOptions = getRunEvalDatasetMutationOptions(options);
 
-      const mutationOptions = getRunEvalDatasetMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary List historical runs for one eval dataset
  */
 export const listEvalRuns = (
-    id: string,
-    params?: ListEvalRunsParams,
- signal?: AbortSignal
+  id: string,
+  params?: ListEvalRunsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<EvalRunsResponse>(
-      {url: `/api/v1/evals/datasets/${id}/runs`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<EvalRunsResponse>({
+    url: `/api/v1/evals/datasets/${id}/runs`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getListEvalRunsQueryKey = (id?: string,
-    params?: ListEvalRunsParams,) => {
-    return [
-    `/api/v1/evals/datasets/${id}/runs`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListEvalRunsQueryOptions = <TData = Awaited<ReturnType<typeof listEvalRuns>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(id: string,
-    params?: ListEvalRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalRuns>>, TError, TData>>, }
+export const getListEvalRunsQueryKey = (
+  id?: string,
+  params?: ListEvalRunsParams,
 ) => {
+  return [
+    `/api/v1/evals/datasets/${id}/runs`,
+    ...(params ? [params] : []),
+  ] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getListEvalRunsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listEvalRuns>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params?: ListEvalRunsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listEvalRuns>>, TError, TData>
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListEvalRunsQueryKey(id,params);
+  const queryKey =
+    queryOptions?.queryKey ?? getListEvalRunsQueryKey(id, params);
 
-  
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listEvalRuns>>> = ({
+    signal,
+  }) => listEvalRuns(id, params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listEvalRuns>>> = ({ signal }) => listEvalRuns(id,params, signal);
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listEvalRuns>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type ListEvalRunsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listEvalRuns>>
+>;
+export type ListEvalRunsQueryError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listEvalRuns>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListEvalRunsQueryResult = NonNullable<Awaited<ReturnType<typeof listEvalRuns>>>
-export type ListEvalRunsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-
-export function useListEvalRuns<TData = Awaited<ReturnType<typeof listEvalRuns>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string,
-    params: undefined |  ListEvalRunsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalRuns>>, TError, TData>> & Pick<
+export function useListEvalRuns<
+  TData = Awaited<ReturnType<typeof listEvalRuns>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params: undefined | ListEvalRunsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listEvalRuns>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEvalRuns>>,
           TError,
           Awaited<ReturnType<typeof listEvalRuns>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEvalRuns<TData = Awaited<ReturnType<typeof listEvalRuns>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string,
-    params?: ListEvalRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalRuns>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListEvalRuns<
+  TData = Awaited<ReturnType<typeof listEvalRuns>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params?: ListEvalRunsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listEvalRuns>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listEvalRuns>>,
           TError,
           Awaited<ReturnType<typeof listEvalRuns>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListEvalRuns<TData = Awaited<ReturnType<typeof listEvalRuns>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string,
-    params?: ListEvalRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalRuns>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListEvalRuns<
+  TData = Awaited<ReturnType<typeof listEvalRuns>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params?: ListEvalRunsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listEvalRuns>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List historical runs for one eval dataset
  */
 
-export function useListEvalRuns<TData = Awaited<ReturnType<typeof listEvalRuns>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string,
-    params?: ListEvalRunsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listEvalRuns>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListEvalRuns<
+  TData = Awaited<ReturnType<typeof listEvalRuns>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  params?: ListEvalRunsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listEvalRuns>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListEvalRunsQueryOptions(id, params, options);
 
-  const queryOptions = getListEvalRunsQueryOptions(id,params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
-
-
-
 /**
  * @summary Get one eval run
  */
-export const getEvalRun = (
-    runId: string,
- signal?: AbortSignal
+export const getEvalRun = (runId: string, signal?: AbortSignal) => {
+  return apiClient<EvalRunResult | EvalRunAcceptedResponse>({
+    url: `/api/v1/evals/runs/${runId}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetEvalRunQueryKey = (runId?: string) => {
+  return [`/api/v1/evals/runs/${runId}`] as const;
+};
+
+export const getGetEvalRunQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEvalRun>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEvalRun>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<EvalRunResult | EvalRunAcceptedResponse>(
-      {url: `/api/v1/evals/runs/${runId}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetEvalRunQueryKey(runId);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getEvalRun>>> = ({
+    signal,
+  }) => getEvalRun(runId, signal);
 
-export const getGetEvalRunQueryKey = (runId?: string,) => {
-    return [
-    `/api/v1/evals/runs/${runId}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!runId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEvalRun>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetEvalRunQueryOptions = <TData = Awaited<ReturnType<typeof getEvalRun>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalRun>>, TError, TData>>, }
-) => {
+export type GetEvalRunQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEvalRun>>
+>;
+export type GetEvalRunQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetEvalRunQueryKey(runId);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getEvalRun>>> = ({ signal }) => getEvalRun(runId, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(runId), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getEvalRun>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetEvalRunQueryResult = NonNullable<Awaited<ReturnType<typeof getEvalRun>>>
-export type GetEvalRunQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-
-export function useGetEvalRun<TData = Awaited<ReturnType<typeof getEvalRun>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- runId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalRun>>, TError, TData>> & Pick<
+export function useGetEvalRun<
+  TData = Awaited<ReturnType<typeof getEvalRun>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  runId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEvalRun>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEvalRun>>,
           TError,
           Awaited<ReturnType<typeof getEvalRun>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetEvalRun<TData = Awaited<ReturnType<typeof getEvalRun>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalRun>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetEvalRun<
+  TData = Awaited<ReturnType<typeof getEvalRun>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEvalRun>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getEvalRun>>,
           TError,
           Awaited<ReturnType<typeof getEvalRun>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetEvalRun<TData = Awaited<ReturnType<typeof getEvalRun>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalRun>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetEvalRun<
+  TData = Awaited<ReturnType<typeof getEvalRun>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEvalRun>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get one eval run
  */
 
-export function useGetEvalRun<TData = Awaited<ReturnType<typeof getEvalRun>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- runId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getEvalRun>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetEvalRun<
+  TData = Awaited<ReturnType<typeof getEvalRun>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getEvalRun>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetEvalRunQueryOptions(runId, options);
 
-  const queryOptions = getGetEvalRunQueryOptions(runId,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
+/**
+ * @summary Delete a historical eval run
+ */
+export const deleteEvalRun = (runId: string, params?: DeleteEvalRunParams) => {
+  return apiClient<void>({
+    url: `/api/v1/evals/runs/${runId}`,
+    method: "DELETE",
+    params,
+  });
+};
 
+export const getDeleteEvalRunMutationOptions = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteEvalRun>>,
+    TError,
+    { runId: string; params?: DeleteEvalRunParams },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteEvalRun>>,
+  TError,
+  { runId: string; params?: DeleteEvalRunParams },
+  TContext
+> => {
+  const mutationKey = ["deleteEvalRun"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteEvalRun>>,
+    { runId: string; params?: DeleteEvalRunParams }
+  > = (props) => {
+    const { runId, params } = props ?? {};
+
+    return deleteEvalRun(runId, params);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteEvalRunMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteEvalRun>>
+>;
+
+export type DeleteEvalRunMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
 /**
  * @summary Delete a historical eval run
  */
-export const deleteEvalRun = (
-    runId: string,
-    params?: DeleteEvalRunParams,
- ) => {
-      
-      
-      return apiClient<void>(
-      {url: `/api/v1/evals/runs/${runId}`, method: 'DELETE',
-        params
-    },
-      );
-    }
-  
+export const useDeleteEvalRun = <
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deleteEvalRun>>,
+      TError,
+      { runId: string; params?: DeleteEvalRunParams },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof deleteEvalRun>>,
+  TError,
+  { runId: string; params?: DeleteEvalRunParams },
+  TContext
+> => {
+  const mutationOptions = getDeleteEvalRunMutationOptions(options);
 
-
-export const getDeleteEvalRunMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEvalRun>>, TError,{runId: string;params?: DeleteEvalRunParams}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof deleteEvalRun>>, TError,{runId: string;params?: DeleteEvalRunParams}, TContext> => {
-
-const mutationKey = ['deleteEvalRun'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
-
-      
-
-
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteEvalRun>>, {runId: string;params?: DeleteEvalRunParams}> = (props) => {
-          const {runId,params} = props ?? {};
-
-          return  deleteEvalRun(runId,params,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type DeleteEvalRunMutationResult = NonNullable<Awaited<ReturnType<typeof deleteEvalRun>>>
-    
-    export type DeleteEvalRunMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-    /**
- * @summary Delete a historical eval run
- */
-export const useDeleteEvalRun = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteEvalRun>>, TError,{runId: string;params?: DeleteEvalRunParams}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof deleteEvalRun>>,
-        TError,
-        {runId: string;params?: DeleteEvalRunParams},
-        TContext
-      > => {
-
-      const mutationOptions = getDeleteEvalRunMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    
+  return useMutation(mutationOptions, queryClient);
+};

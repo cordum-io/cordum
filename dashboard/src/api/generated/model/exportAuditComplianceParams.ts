@@ -5,23 +5,23 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { ExportAuditComplianceFormat } from './exportAuditComplianceFormat';
+import type { ExportAuditComplianceFormat } from "./exportAuditComplianceFormat";
 
 export type ExportAuditComplianceParams = {
-/**
- * Inclusive lower bound (RFC3339 timestamp)
- */
-from?: string;
-/**
- * Exclusive upper bound (RFC3339 timestamp)
- */
-to?: string;
-/**
- * Output format
- */
-format?: ExportAuditComplianceFormat;
-/**
- * Cap on events emitted (clamped to entitlement ceiling)
- */
-max_events?: number;
+  /**
+   * Inclusive lower bound (RFC3339 timestamp)
+   */
+  from?: string;
+  /**
+   * Exclusive upper bound (RFC3339 timestamp)
+   */
+  to?: string;
+  /**
+   * Output format
+   */
+  format?: ExportAuditComplianceFormat;
+  /**
+   * Cap on events emitted (clamped to entitlement ceiling)
+   */
+  max_events?: number;
 };

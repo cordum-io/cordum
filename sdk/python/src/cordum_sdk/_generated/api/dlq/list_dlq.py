@@ -15,27 +15,19 @@ from typing import Dict
 from typing import Union
 
 
-
 def _get_kwargs(
     *,
     limit: Union[Unset, int] = 50,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
     params["limit"] = limit
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -43,19 +35,18 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, List['DLQEntry']]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, List["DLQEntry"]]]:
     if response.status_code == 200:
         response_200 = []
         _response_200 = response.json()
-        for response_200_item_data in (_response_200):
+        for response_200_item_data in _response_200:
             response_200_item = DLQEntry.from_dict(response_200_item_data)
-
-
 
             response_200.append(response_200_item)
 
@@ -75,7 +66,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, List['DLQEntry']]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, List["DLQEntry"]]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -89,9 +82,8 @@ def sync_detailed(
     client: Union[AuthenticatedClient, Client],
     limit: Union[Unset, int] = 50,
     x_tenant_id: str,
-
-) -> Response[Union[Any, List['DLQEntry']]]:
-    """ List dead-letter queue entries
+) -> Response[Union[Any, List["DLQEntry"]]]:
+    """List dead-letter queue entries
 
     Args:
         limit (Union[Unset, int]):  Default: 50.
@@ -103,13 +95,11 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, List['DLQEntry']]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         limit=limit,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -118,14 +108,14 @@ x_tenant_id=x_tenant_id,
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     limit: Union[Unset, int] = 50,
     x_tenant_id: str,
-
-) -> Optional[Union[Any, List['DLQEntry']]]:
-    """ List dead-letter queue entries
+) -> Optional[Union[Any, List["DLQEntry"]]]:
+    """List dead-letter queue entries
 
     Args:
         limit (Union[Unset, int]):  Default: 50.
@@ -137,24 +127,22 @@ def sync(
 
     Returns:
         Union[Any, List['DLQEntry']]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
+        limit=limit,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     limit: Union[Unset, int] = 50,
     x_tenant_id: str,
-
-) -> Response[Union[Any, List['DLQEntry']]]:
-    """ List dead-letter queue entries
+) -> Response[Union[Any, List["DLQEntry"]]]:
+    """List dead-letter queue entries
 
     Args:
         limit (Union[Unset, int]):  Default: 50.
@@ -166,29 +154,25 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, List['DLQEntry']]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         limit=limit,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     limit: Union[Unset, int] = 50,
     x_tenant_id: str,
-
-) -> Optional[Union[Any, List['DLQEntry']]]:
-    """ List dead-letter queue entries
+) -> Optional[Union[Any, List["DLQEntry"]]]:
+    """List dead-letter queue entries
 
     Args:
         limit (Union[Unset, int]):  Default: 50.
@@ -200,12 +184,12 @@ async def asyncio(
 
     Returns:
         Union[Any, List['DLQEntry']]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            limit=limit,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

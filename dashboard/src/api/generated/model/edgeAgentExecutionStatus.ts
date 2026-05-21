@@ -6,16 +6,16 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeAgentExecutionStatus = typeof EdgeAgentExecutionStatus[keyof typeof EdgeAgentExecutionStatus];
-
+export type EdgeAgentExecutionStatus =
+  (typeof EdgeAgentExecutionStatus)[keyof typeof EdgeAgentExecutionStatus];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeAgentExecutionStatus = {
-  running: 'running',
-  waiting_for_approval: 'waiting_for_approval',
-  succeeded: 'succeeded',
-  failed: 'failed',
-  cancelled: 'cancelled',
-  timeout: 'timeout',
-  degraded: 'degraded',
+  running: "running",
+  waiting_for_approval: "waiting_for_approval",
+  succeeded: "succeeded",
+  failed: "failed",
+  cancelled: "cancelled",
+  timeout: "timeout",
+  degraded: "degraded",
 } as const;

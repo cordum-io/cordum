@@ -1,12 +1,14 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,6 +17,8 @@ import (
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
 	"github.com/cordum/cordum/core/controlplane/gateway/pools"
 	"github.com/cordum/cordum/core/infra/config"
+	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/model"
 )
 
 var ErrPoolNotFound = errors.New("pool not found")
@@ -56,6 +60,20 @@ func (e topicPoolMappingNotFoundError) Error() string {
 
 func (e topicPoolMappingNotFoundError) Is(target error) bool {
 	return target == ErrTopicPoolMappingNotFound
+}
+
+type poolInUseError struct {
+	pool       string
+	status     string
+	queuedJobs int
+	agentIDs   []string
+}
+
+func (e *poolInUseError) Error() string {
+	if e == nil {
+		return "pool in use"
+	}
+	return fmt.Sprintf("pool %q is in use", e.pool)
 }
 
 // ---------------------------------------------------------------------------
@@ -139,7 +157,7 @@ func (s *server) handleCreatePool(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(r.PathValue("name"))
 	if err := pools.ValidatePoolName(name); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
 		return
 	}
 
@@ -155,7 +173,7 @@ func (s *server) handleCreatePool(w http.ResponseWriter, r *http.Request) {
 		Description: req.Description,
 	}
 	if err := pools.ValidatePoolConfig(newPool); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
 		return
 	}
 
@@ -174,15 +192,15 @@ func (s *server) handleCreatePool(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, configsvc.ErrRevisionConflict) {
-			writeErrorJSON(w, http.StatusConflict, "config update conflict — retry")
+			writeJSONError(w, http.StatusConflict, errorCodePoolVersionConflict, "config update conflict — retry")
 			return
 		}
 		if strings.Contains(err.Error(), "already exists") {
-			writeErrorJSON(w, http.StatusConflict, err.Error())
+			writeJSONError(w, http.StatusConflict, errorCodePoolNameConflict, err.Error())
 			return
 		}
 		slog.Error("create pool failed", "pool", name, "error", err)
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
 		return
 	}
 
@@ -214,7 +232,7 @@ func (s *server) handleUpdatePool(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(r.PathValue("name"))
 	if err := pools.ValidatePoolName(name); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
 		return
 	}
 
@@ -253,15 +271,15 @@ func (s *server) handleUpdatePool(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, configsvc.ErrRevisionConflict) {
-			writeErrorJSON(w, http.StatusConflict, "config update conflict — retry")
+			writeJSONError(w, http.StatusConflict, errorCodePoolVersionConflict, "config update conflict — retry")
 			return
 		}
 		if errors.Is(err, ErrPoolNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, err.Error())
+			writeJSONError(w, http.StatusNotFound, errorCodePoolNotFound, err.Error())
 			return
 		}
 		slog.Error("update pool failed", "pool", name, "error", err)
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
 		return
 	}
 
@@ -285,47 +303,35 @@ func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimSpace(r.PathValue("name"))
 	if err := pools.ValidatePoolName(name); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
 		return
 	}
 
 	force := r.URL.Query().Get("force") == "true"
-
-	err := s.configSvc.SetWithRetry(r.Context(), configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
-		topics, poolMap, err := extractPoolsFromConfig(doc)
-		if err != nil {
-			return err
-		}
-		if _, ok := poolMap[name]; !ok {
-			return poolNotFoundError{pool: name}
-		}
-		if err := pools.ValidatePoolDelete(name, poolMap, topics, force); err != nil {
-			return err
-		}
-		delete(poolMap, name)
-		// Remove pool from all topic mappings
-		for topic, plist := range topics {
-			filtered := slices.DeleteFunc(plist, func(p string) bool { return p == name })
-			if len(filtered) == 0 {
-				delete(topics, topic)
-			} else {
-				topics[topic] = filtered
-			}
-		}
-		writePoolsToConfig(doc, topics, poolMap)
-		return nil
-	})
+	tenant, err := s.resolveTenant(r, "")
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
+		return
+	}
+	// Pool config is system-scoped, but agent identity blockers are tenant-scoped;
+	// use the authenticated request tenant rather than the store's legacy empty-tenant path.
+	err = s.deletePoolFromConfig(r.Context(), tenant, name, force)
 	if err != nil {
 		if errors.Is(err, configsvc.ErrRevisionConflict) {
-			writeErrorJSON(w, http.StatusConflict, "config update conflict — retry")
+			writeJSONError(w, http.StatusConflict, errorCodePoolVersionConflict, "config update conflict — retry")
 			return
 		}
 		if errors.Is(err, ErrPoolNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, err.Error())
+			writeJSONError(w, http.StatusNotFound, errorCodePoolNotFound, err.Error())
+			return
+		}
+		var inUse *poolInUseError
+		if errors.As(err, &inUse) {
+			writePoolInUseError(w, inUse)
 			return
 		}
 		if strings.Contains(err.Error(), "active topic mapping") {
-			writeErrorJSON(w, http.StatusBadRequest, err.Error())
+			writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
 			return
 		}
 		slog.Error("delete pool failed", "pool", name, "error", err)
@@ -338,6 +344,52 @@ func (s *server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *server) deletePoolFromConfig(ctx context.Context, tenantID, name string, force bool) error {
+	return s.configSvc.SetWithRetry(ctx, configsvc.ScopeSystem, "default", 3, func(doc *configsvc.Document) error {
+		topics, poolMap, err := extractPoolsFromConfig(doc)
+		if err != nil {
+			return err
+		}
+		if err := s.validatePoolDelete(ctx, tenantID, name, force, topics, poolMap); err != nil {
+			return err
+		}
+		delete(poolMap, name)
+		removePoolFromTopicMappings(name, topics)
+		writePoolsToConfig(doc, topics, poolMap)
+		return nil
+	})
+}
+
+func (s *server) validatePoolDelete(ctx context.Context, tenantID, name string, force bool, topics map[string][]string, poolMap map[string]config.PoolConfig) error {
+	existing, ok := poolMap[name]
+	if !ok {
+		return poolNotFoundError{pool: name}
+	}
+	status := existing.EffectiveStatus()
+	if force && status != config.PoolStatusInactive {
+		return &poolInUseError{pool: name, status: status}
+	}
+	queuedJobs, agentIDs, err := s.poolDeleteBlockers(ctx, tenantID, name, topics)
+	if err != nil {
+		return err
+	}
+	if queuedJobs > 0 || len(agentIDs) > 0 {
+		return &poolInUseError{pool: name, status: status, queuedJobs: queuedJobs, agentIDs: agentIDs}
+	}
+	return pools.ValidatePoolDelete(name, poolMap, topics, force)
+}
+
+func removePoolFromTopicMappings(name string, topics map[string][]string) {
+	for topic, plist := range topics {
+		filtered := slices.DeleteFunc(plist, func(p string) bool { return p == name })
+		if len(filtered) == 0 {
+			delete(topics, topic)
+			continue
+		}
+		topics[topic] = filtered
+	}
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/v1/pools/{name}/drain — start draining
 // ---------------------------------------------------------------------------
@@ -346,13 +398,18 @@ type drainPoolRequest struct {
 	TimeoutSeconds int `json:"timeout_seconds"`
 }
 
+const (
+	defaultDrainTimeoutSeconds = 300
+	maxDrainTimeoutSeconds     = 3600
+)
+
 func (s *server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePermissionOrRole(w, r, auth.PermPoolsWrite, "admin") {
 		return
 	}
 	name := strings.TrimSpace(r.PathValue("name"))
 	if err := pools.ValidatePoolName(name); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
 		return
 	}
 
@@ -362,7 +419,11 @@ func (s *server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.TimeoutSeconds <= 0 {
-		req.TimeoutSeconds = 300
+		req.TimeoutSeconds = defaultDrainTimeoutSeconds
+	}
+	if req.TimeoutSeconds > maxDrainTimeoutSeconds {
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, "timeout_seconds exceeds maximum")
+		return
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -390,15 +451,15 @@ func (s *server) handleDrainPool(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, configsvc.ErrRevisionConflict) {
-			writeErrorJSON(w, http.StatusConflict, "config update conflict — retry")
+			writeJSONError(w, http.StatusConflict, errorCodePoolVersionConflict, "config update conflict — retry")
 			return
 		}
 		if errors.Is(err, ErrPoolNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, err.Error())
+			writeJSONError(w, http.StatusNotFound, errorCodePoolNotFound, err.Error())
 			return
 		}
 		if strings.Contains(err.Error(), "cannot drain") {
-			writeErrorJSON(w, http.StatusBadRequest, err.Error())
+			writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
 			return
 		}
 		slog.Error("drain pool failed", "pool", name, "error", err)
@@ -427,11 +488,11 @@ func (s *server) handleAddTopicToPool(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.PathValue("name"))
 	topic := strings.TrimSpace(r.PathValue("topic"))
 	if err := pools.ValidatePoolName(name); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
 		return
 	}
 	if err := pools.ValidateTopicName(topic); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
 		return
 	}
 
@@ -453,11 +514,11 @@ func (s *server) handleAddTopicToPool(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, configsvc.ErrRevisionConflict) {
-			writeErrorJSON(w, http.StatusConflict, "config update conflict — retry")
+			writeJSONError(w, http.StatusConflict, errorCodePoolVersionConflict, "config update conflict — retry")
 			return
 		}
 		if errors.Is(err, ErrPoolNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, err.Error())
+			writeJSONError(w, http.StatusNotFound, errorCodePoolNotFound, err.Error())
 			return
 		}
 		slog.Error("add topic to pool failed", "pool", name, "topic", topic, "error", err)
@@ -482,7 +543,11 @@ func (s *server) handleRemoveTopicFromPool(w http.ResponseWriter, r *http.Reques
 	name := strings.TrimSpace(r.PathValue("name"))
 	topic := strings.TrimSpace(r.PathValue("topic"))
 	if err := pools.ValidatePoolName(name); err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
+		return
+	}
+	if err := pools.ValidateTopicName(topic); err != nil {
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, err.Error())
 		return
 	}
 
@@ -509,11 +574,11 @@ func (s *server) handleRemoveTopicFromPool(w http.ResponseWriter, r *http.Reques
 	})
 	if err != nil {
 		if errors.Is(err, configsvc.ErrRevisionConflict) {
-			writeErrorJSON(w, http.StatusConflict, "config update conflict — retry")
+			writeJSONError(w, http.StatusConflict, errorCodePoolVersionConflict, "config update conflict — retry")
 			return
 		}
 		if errors.Is(err, ErrTopicNotFound) || errors.Is(err, ErrTopicPoolMappingNotFound) {
-			writeErrorJSON(w, http.StatusNotFound, err.Error())
+			writeJSONError(w, http.StatusNotFound, errorCodeTopicNotFound, err.Error())
 			return
 		}
 		slog.Error("remove topic from pool failed", "pool", name, "topic", topic, "error", err)
@@ -525,4 +590,95 @@ func (s *server) handleRemoveTopicFromPool(w http.ResponseWriter, r *http.Reques
 	s.appendAuditEntryNamed(r.Context(), "remove_topic", "pool", name, name, policybundles.PolicyActorID(r), policybundles.PolicyRole(r),
 		fmt.Sprintf("remove topic %s from pool %s", topic, name))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) poolDeleteBlockers(ctx context.Context, tenantID, pool string, topics map[string][]string) (int, []string, error) {
+	queuedJobs, err := s.countPoolQueuedJobs(ctx, pool, topics)
+	if err != nil {
+		return 0, nil, err
+	}
+	agentIDs, err := s.agentIDsReferencingPool(ctx, tenantID, pool)
+	if err != nil {
+		return 0, nil, err
+	}
+	return queuedJobs, agentIDs, nil
+}
+
+func (s *server) countPoolQueuedJobs(ctx context.Context, pool string, topics map[string][]string) (int, error) {
+	if s.jobStore == nil {
+		return 0, nil
+	}
+	states := []model.JobState{
+		model.JobStatePending, model.JobStateApproval, model.JobStateScheduled,
+		model.JobStateDispatched, model.JobStateRunning, model.JobStateRetrying,
+	}
+	total := 0
+	before := time.Now().UTC().Add(time.Hour).UnixMicro()
+	for _, state := range states {
+		records, err := s.jobStore.ListJobsByState(ctx, state, before, 5000)
+		if err != nil {
+			return 0, err
+		}
+		for _, record := range records {
+			if topicUsesPool(record.Topic, topics, pool) {
+				total++
+			}
+		}
+	}
+	return total, nil
+}
+
+func (s *server) agentIDsReferencingPool(ctx context.Context, tenantID, pool string) ([]string, error) {
+	if s.agentIdentityStore == nil {
+		return nil, nil
+	}
+	var ids []string
+	cursor := ""
+	for {
+		agents, next, err := s.agentIdentityStore.List(ctx, tenantID, cursor, 200, store.AgentIdentityFilter{})
+		if err != nil {
+			return nil, err
+		}
+		for _, agent := range agents {
+			if agent != nil && slices.Contains(agent.AllowedPools, pool) {
+				ids = append(ids, agent.ID)
+			}
+		}
+		if next == "" || next == cursor {
+			break
+		}
+		cursor = next
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+func topicUsesPool(topic string, topics map[string][]string, pool string) bool {
+	if topic == "" {
+		return false
+	}
+	return slices.Contains(topics[topic], pool)
+}
+
+func writePoolInUseError(w http.ResponseWriter, err *poolInUseError) {
+	resp := map[string]any{
+		"error":       errorCodePoolInUse,
+		"code":        errorCodePoolInUse,
+		"status":      http.StatusConflict,
+		"message":     "pool in use",
+		"pool":        "",
+		"pool_status": "",
+		"queued_jobs": 0,
+		"agent_ids":   []string{},
+	}
+	if err != nil {
+		resp["message"] = err.Error()
+		resp["pool"] = err.pool
+		resp["pool_status"] = err.status
+		resp["queued_jobs"] = err.queuedJobs
+		resp["agent_ids"] = append([]string{}, err.agentIDs...)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	_ = json.NewEncoder(w).Encode(resp)
 }

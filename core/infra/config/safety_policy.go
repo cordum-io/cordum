@@ -18,6 +18,10 @@ type SafetyPolicy struct {
 	Rules           []PolicyRule            `yaml:"rules"`
 	InputPolicy     InputPolicyConfig       `yaml:"input_policy"`
 	InputRules      []InputPolicyRule       `yaml:"input_rules"`
+	// RequireHuman controls DENY → REQUIRE_HUMAN downgrade thresholds
+	// applied during input-rule evaluation. Per architect amendment
+	// comment-79a9e609 on task-96f931fe.
+	RequireHuman    RequireHumanThreshold   `yaml:"require_human,omitempty" json:"require_human,omitempty"`
 	OutputPolicy    OutputPolicyConfig      `yaml:"output_policy"`
 	OutputRules     []OutputPolicyRule      `yaml:"output_rules"`
 	DefaultTenant   string                  `yaml:"default_tenant,omitempty"`
@@ -31,6 +35,43 @@ type InputPolicyConfig struct {
 	Enabled      bool   `yaml:"enabled"`
 	FailMode     string `yaml:"fail_mode,omitempty"`      // open|closed (default: closed = requeue when kernel down)
 	MaxScanBytes int    `yaml:"max_scan_bytes,omitempty"` // default 2 MiB
+}
+
+// RequireHumanThreshold defines when a matched input-rule whose authored
+// decision is "deny" should be downgraded to REQUIRE_HUMAN instead. The
+// safety kernel reads the threshold from the policy snapshot and consults
+// it inside the input-rule dispatch loop.
+//
+// Per architect amendment comment-79a9e609 (task-96f931fe): an input rule
+// whose finding falls below either floor — OR a prompt-only request that
+// lacks an ActionDescriptor — is "truly ambiguous" and resolves to a
+// human approval rather than a hard deny. DoD #4 ("FP examples allowed
+// or require-human only when truly ambiguous") authorizes this routing.
+//
+// The threshold is intentionally a 2-output dial: rules below the floor
+// route to REQUIRE_HUMAN, rules at-or-above stay DENY. No third "ALLOW"
+// branch — adding one would require a session-metadata educational-context
+// carrier that does not exist (carved out by amendment §(1)).
+//
+// Zero values fall back to the strictest interpretation: empty
+// MinSeverityForDeny means any severity floor is acceptable for DENY;
+// zero MinConfidenceForDeny means any confidence is acceptable. This
+// preserves the legacy DENY-everything behavior when an operator has
+// not opted in.
+type RequireHumanThreshold struct {
+	// MinSeverityForDeny is the minimum finding severity that a "deny"
+	// rule must produce to remain DENY. Severities below this floor
+	// downgrade to REQUIRE_HUMAN. Uses the existing Severity string
+	// vocabulary: "low", "medium", "high", "critical".
+	MinSeverityForDeny string `yaml:"min_severity_for_deny,omitempty"`
+	// MinConfidenceForDeny is the minimum finding confidence (0.0–1.0)
+	// that a "deny" rule must produce to remain DENY. Lower values
+	// downgrade to REQUIRE_HUMAN.
+	MinConfidenceForDeny float32 `yaml:"min_confidence_for_deny,omitempty"`
+	// DowngradeWhenPromptOnly downgrades a "deny" rule to REQUIRE_HUMAN
+	// when the request has no ActionDescriptor (prompt-only — no
+	// action-bound target). Default false preserves legacy behavior.
+	DowngradeWhenPromptOnly bool `yaml:"downgrade_when_prompt_only,omitempty"`
 }
 
 // InputPolicyRule defines policy checks on job input content.
@@ -359,18 +400,8 @@ type DiffConstraints struct {
 	DenyPathGlobs []string `yaml:"deny_path_globs"`
 }
 
-// MCPPolicy defines allow/deny rules for MCP servers/tools/resources.
-type MCPPolicy struct {
-	AllowServers   []string `json:"allow_servers" yaml:"allow_servers"`
-	DenyServers    []string `json:"deny_servers" yaml:"deny_servers"`
-	AllowTools     []string `json:"allow_tools" yaml:"allow_tools"`
-	DenyTools      []string `json:"deny_tools" yaml:"deny_tools"`
-	AllowResources []string `json:"allow_resources" yaml:"allow_resources"`
-	DenyResources  []string `json:"deny_resources" yaml:"deny_resources"`
-	AllowActions   []string `json:"allow_actions" yaml:"allow_actions"`
-	DenyActions    []string `json:"deny_actions" yaml:"deny_actions"`
-}
-
+// MCPPolicy defines allow/deny rules for MCP servers/tools/resources, plus
+// the per-tenant EDGE-100 MCP Gateway enable flag.
 // TenantPolicy captures legacy allow/deny topics per tenant.
 type TenantPolicy struct {
 	AllowTopics      []string  `yaml:"allow_topics"`
@@ -390,7 +421,125 @@ type PolicyInput struct {
 	SecretsPresent bool
 	MCP            MCPRequest
 	Delegation     *DelegationContext
+	// Action carries structured request metadata for deterministic pre-dispatch
+	// action-layer gates (file/url/tenant/mutation/mcp/provenance). nil means
+	// no action-layer evaluation; existing rule evaluation runs unchanged.
+	Action *ActionDescriptor
 }
+
+// ActionKind enumerates the action-gate dispatch families. Gates inspect this
+// to short-circuit when an action does not target their domain.
+type ActionKind string
+
+const (
+	ActionKindFile            ActionKind = "file"
+	ActionKindURL             ActionKind = "url"
+	ActionKindTenantQuery     ActionKind = "tenant_query"
+	ActionKindMutation        ActionKind = "mutation"
+	ActionKindMCPCall         ActionKind = "mcp_call"
+	ActionKindProvenanceCheck ActionKind = "provenance_check"
+)
+
+// ActionVerb names the operation an actor is requesting. Free-form by design:
+// new packs/tools must be able to declare verbs without a config bump. The
+// destructive set is enforced by the mutation gate, not by parser validation.
+type ActionVerb string
+
+const (
+	ActionVerbRead          ActionVerb = "read"
+	ActionVerbWrite         ActionVerb = "write"
+	ActionVerbDelete        ActionVerb = "delete"
+	ActionVerbDrop          ActionVerb = "drop"
+	ActionVerbTruncate      ActionVerb = "truncate"
+	ActionVerbExport        ActionVerb = "export"
+	ActionVerbPayment       ActionVerb = "payment"
+	ActionVerbAdminGrant    ActionVerb = "admin_grant"
+	ActionVerbAdminRevoke   ActionVerb = "admin_revoke"
+	ActionVerbRoleAssign    ActionVerb = "role_assign"
+	ActionVerbRoleRemove    ActionVerb = "role_remove"
+	ActionVerbLicenseCreate ActionVerb = "license_create"
+	ActionVerbLicenseRevoke ActionVerb = "license_revoke"
+	ActionVerbLicenseChange ActionVerb = "license_change"
+	ActionVerbKeyRotate     ActionVerb = "key_rotate"
+	ActionVerbKeyDelete     ActionVerb = "key_delete"
+	ActionVerbSecretsWrite  ActionVerb = "secrets_write"
+	ActionVerbSecretsDelete ActionVerb = "secrets_delete"
+	ActionVerbConfigWrite   ActionVerb = "config_write"
+	ActionVerbConfigDelete  ActionVerb = "config_delete"
+	ActionVerbBackupRestore ActionVerb = "backup_restore"
+	ActionVerbTenantCreate  ActionVerb = "tenant_create"
+	ActionVerbTenantDelete  ActionVerb = "tenant_delete"
+)
+
+// ActionDescriptor carries the structured request payload that action-layer
+// gates evaluate. Every field is optional; gates inspect Kind+Verb first and
+// short-circuit when no relevant data is present. Untrusted body fields
+// (TargetPath, TargetURL, Args, ApprovalClaim.ClaimText) MUST NOT be the sole
+// basis for authorization — auth-derived tenant and backend-resolved approval
+// records take precedence.
+type ActionDescriptor struct {
+	Kind   ActionKind `json:"kind,omitempty"`
+	Verb   ActionVerb `json:"verb,omitempty"`
+	Server string     `json:"server,omitempty"` // MCP server identifier (mcp_call)
+	Tool   string     `json:"tool,omitempty"`   // MCP tool identifier (mcp_call)
+
+	// TargetPath is a filesystem path (file kind). Untrusted; gates canonicalize
+	// before matching.
+	TargetPath string `json:"target_path,omitempty"`
+	// TargetURL is an absolute URL (url kind). Untrusted; gates parse + resolve.
+	TargetURL string `json:"target_url,omitempty"`
+	// TargetResource describes the object a mutation/tenant-query operates on.
+	// OwnerTenant is server-derived (not from request body) when populated by
+	// the gateway; otherwise gates compare against AuthContext.Tenant.
+	TargetResource *ActionTargetResource `json:"target_resource,omitempty"`
+
+	// Filters captures structured query predicates (column => literal). Wildcards
+	// lists predicates whose value was '*' or otherwise unbounded; tenant gate
+	// blocks wildcards on owner_id/tenant_id.
+	Filters   map[string]string `json:"filters,omitempty"`
+	Wildcards []string          `json:"wildcards,omitempty"`
+
+	// Args is arbitrary tool/MCP arg map (mcp_call), capped at 64KB serialized
+	// upstream. Gates inspect known sensitive keys (force, no_confirm, recursive).
+	Args map[string]any `json:"args,omitempty"`
+
+	// RiskTags is a free-form set surfaced by the upstream classifier (e.g.
+	// "requires_provenance", "data:pii"). Used by gates to widen denials.
+	RiskTags []string `json:"risk_tags,omitempty"`
+
+	// RequiredEntitlement is the license/capability token that the calling
+	// identity must hold for an mcp_call action. Resolved server-side from
+	// per-server registry metadata, not user-supplied. Empty means the
+	// action carries no entitlement requirement (e.g. read-only tools).
+	RequiredEntitlement string `json:"required_entitlement,omitempty"`
+
+	// ApprovalClaim carries the user-presented approval reference. ClaimText is
+	// untrusted prose ("approved by CFO") and MUST NOT pass on its own.
+	// ApprovalRef is looked up server-side against Cordum approval records.
+	ApprovalClaim *ActionApprovalClaim `json:"approval_claim,omitempty"`
+}
+
+// ActionTargetResource identifies an object referenced by an action. OwnerTenant
+// is authoritative only when gateway-supplied; gates that need it for tenant
+// boundaries cross-check against AuthContext.Tenant.
+type ActionTargetResource struct {
+	Type        string `json:"type,omitempty"`
+	ID          string `json:"id,omitempty"`
+	OwnerTenant string `json:"owner_tenant,omitempty"`
+	Archived    bool   `json:"archived,omitempty"`
+}
+
+// ActionApprovalClaim represents a caller's claim of human approval for a
+// destructive action. The provenance gate requires ApprovalRef to resolve to a
+// Cordum EdgeApproval; ClaimText is logged for audit only and never grants.
+type ActionApprovalClaim struct {
+	ClaimText   string `json:"claim_text,omitempty"`
+	ApprovalRef string `json:"approval_ref,omitempty"`
+}
+
+// ActionArgsMaxSerializedBytes caps the wire size of ActionDescriptor.Args.
+// The gateway rejects oversize requests before reaching the kernel.
+const ActionArgsMaxSerializedBytes = 64 * 1024
 
 // PolicyMeta captures structured job metadata for policy checks.
 type PolicyMeta struct {

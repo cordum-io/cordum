@@ -13,29 +13,24 @@ from typing import cast
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="GetOutputPolicyStatsResponse200")
 
 
 @_attrs_define
 class GetOutputPolicyStatsResponse200:
-    """ 
-        Attributes:
-            total_checks_24h (int):
-            quarantined_24h (int):
-            avg_latency_ms (int):
-            last_check_at (datetime.datetime):
-     """
+    """
+    Attributes:
+        total_checks_24h (int):
+        quarantined_24h (int):
+        avg_latency_ms (int):
+        last_check_at (datetime.datetime):
+    """
 
     total_checks_24h: int
     quarantined_24h: int
     avg_latency_ms: int
     last_check_at: datetime.datetime
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         total_checks_24h = self.total_checks_24h
@@ -46,19 +41,18 @@ class GetOutputPolicyStatsResponse200:
 
         last_check_at = self.last_check_at.isoformat()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "total_checks_24h": total_checks_24h,
-            "quarantined_24h": quarantined_24h,
-            "avg_latency_ms": avg_latency_ms,
-            "last_check_at": last_check_at,
-        })
+        field_dict.update(
+            {
+                "total_checks_24h": total_checks_24h,
+                "quarantined_24h": quarantined_24h,
+                "avg_latency_ms": avg_latency_ms,
+                "last_check_at": last_check_at,
+            }
+        )
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -71,16 +65,12 @@ class GetOutputPolicyStatsResponse200:
 
         last_check_at = isoparse(d.pop("last_check_at"))
 
-
-
-
         get_output_policy_stats_response_200 = cls(
             total_checks_24h=total_checks_24h,
             quarantined_24h=quarantined_24h,
             avg_latency_ms=avg_latency_ms,
             last_check_at=last_check_at,
         )
-
 
         get_output_policy_stats_response_200.additional_properties = d
         return get_output_policy_stats_response_200

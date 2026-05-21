@@ -56,6 +56,13 @@ agent then retries the same action; replay checks bind the approval to the
 action hash, input hash, and policy snapshot. Approval records a governance
 decision; it does not edit command content.
 
+For destructive actions, the backend approval must also have matching resolved
+audit provenance before the retry is allowed: the tenant audit chain needs an
+approved `EventEdgeApprovalResolved` / `edge.approval_resolved` event with the
+same `approval_ref` and `action_hash`. A requested-only approval event is not
+proof of approval, and raw prompts, transcripts, and tool payloads are not
+persisted as audit evidence.
+
 ## Fail modes
 
 | Mode | Behavior |

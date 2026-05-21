@@ -8,6 +8,7 @@ import (
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/controlplane/gateway/policybundles"
+	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -82,6 +83,27 @@ func (s *server) handlePolicyCheck(w http.ResponseWriter, r *http.Request, mode 
 	if err != nil {
 		writeErrorJSON(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// Action-layer gates run BEFORE the safety-kernel call. The pipeline
+	// short-circuits with an HTTP error envelope (or a 200 informational
+	// shape for simulate REQUIRE_HUMAN) so the caller learns the exact
+	// gate Code via HTTP status. Callers that send no Action skip this
+	// path; legacy behavior is unchanged.
+	if s.actionGatePipeline != nil && req.Action != nil {
+		input := &config.PolicyInput{
+			Tenant: tenant,
+			Topic:  req.Topic,
+			Labels: req.Labels,
+			Meta:   config.PolicyMeta{ActorID: req.PrincipalId},
+			Action: req.Action,
+		}
+		if gateDec, fired := s.actionGatePipeline.Run(r.Context(), input); fired {
+			s.emitPolicyActionGateAudit(r.Context(), tenant, principalID, mode, &req, gateDec)
+			writeActionGatePolicyError(w, r, mode, gateDec)
+			return
+		}
+		checkReq = stripGatewayForwardedActionDescriptor(checkReq)
 	}
 
 	var resp *pb.PolicyCheckResponse

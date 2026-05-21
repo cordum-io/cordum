@@ -15,25 +15,21 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="PolicyBundleSummary")
 
 
 @_attrs_define
 class PolicyBundleSummary:
-    """ 
-        Attributes:
-            id (Union[Unset, str]):
-            enabled (Union[Unset, bool]):
-            source (Union[Unset, str]):
-            author (Union[Unset, str]):
-            message (Union[Unset, str]):
-            rule_count (Union[Unset, int]):
-            updated_at (Union[Unset, datetime.datetime]):
-     """
+    """
+    Attributes:
+        id (Union[Unset, str]):
+        enabled (Union[Unset, bool]):
+        source (Union[Unset, str]):
+        author (Union[Unset, str]):
+        message (Union[Unset, str]):
+        rule_count (Union[Unset, int]):
+        updated_at (Union[Unset, datetime.datetime]):
+    """
 
     id: Union[Unset, str] = UNSET
     enabled: Union[Unset, bool] = UNSET
@@ -43,7 +39,6 @@ class PolicyBundleSummary:
     rule_count: Union[Unset, int] = UNSET
     updated_at: Union[Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         id = self.id
@@ -62,11 +57,9 @@ class PolicyBundleSummary:
         if not isinstance(self.updated_at, Unset):
             updated_at = self.updated_at.isoformat()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if id is not UNSET:
             field_dict["id"] = id
         if enabled is not UNSET:
@@ -83,8 +76,6 @@ class PolicyBundleSummary:
             field_dict["updated_at"] = updated_at
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -103,13 +94,10 @@ class PolicyBundleSummary:
 
         _updated_at = d.pop("updated_at", UNSET)
         updated_at: Union[Unset, datetime.datetime]
-        if isinstance(_updated_at,  Unset):
+        if isinstance(_updated_at, Unset):
             updated_at = UNSET
         else:
             updated_at = isoparse(_updated_at)
-
-
-
 
         policy_bundle_summary = cls(
             id=id,
@@ -120,7 +108,6 @@ class PolicyBundleSummary:
             rule_count=rule_count,
             updated_at=updated_at,
         )
-
 
         policy_bundle_summary.additional_properties = d
         return policy_bundle_summary

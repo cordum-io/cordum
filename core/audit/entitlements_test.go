@@ -103,6 +103,7 @@ func TestNewExporterFromEnvWithEntitlementsDisablesSIEMForCommunity(t *testing.T
 func TestNewExporterFromEnvWithEntitlementsSetsRetentionTTL(t *testing.T) {
 	t.Setenv("CORDUM_AUDIT_EXPORT_TYPE", "webhook")
 	t.Setenv("CORDUM_AUDIT_EXPORT_WEBHOOK_URL", "https://example.com/hook")
+	t.Setenv("CORDUM_AUDIT_EXPORT_WEBHOOK_SECRET", "12345678901234567890123456789012")
 
 	exp, err := NewExporterFromEnvWithEntitlements(newAuditEntitlementResolver(t, licensing.PlanCommunity, func(entitlements *licensing.Entitlements) {
 		entitlements.SIEMExport = true

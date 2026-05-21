@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,8 +18,8 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   BadRequestResponse,
@@ -33,444 +30,746 @@ import type {
   ServiceUnavailableResponse,
   SetTelemetryConsent200,
   SetTelemetryConsentBody,
-  UnauthorizedResponse
-} from '.././model';
+  UnauthorizedResponse,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * @summary Telemetry status
  */
-export const getTelemetryStatus = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<GetTelemetryStatus200>(
-      {url: `/api/v1/telemetry/status`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const getTelemetryStatus = (signal?: AbortSignal) => {
+  return apiClient<GetTelemetryStatus200>({
+    url: `/api/v1/telemetry/status`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getGetTelemetryStatusQueryKey = () => {
-    return [
-    `/api/v1/telemetry/status`
-    ] as const;
-    }
+  return [`/api/v1/telemetry/status`] as const;
+};
 
-    
-export const getGetTelemetryStatusQueryOptions = <TData = Awaited<ReturnType<typeof getTelemetryStatus>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTelemetryStatus>>, TError, TData>>, }
-) => {
+export const getGetTelemetryStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getTelemetryStatus>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof getTelemetryStatus>>,
+      TError,
+      TData
+    >
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetTelemetryStatusQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getGetTelemetryStatusQueryKey();
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getTelemetryStatus>>
+  > = ({ signal }) => getTelemetryStatus(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getTelemetryStatus>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTelemetryStatus>>> = ({ signal }) => getTelemetryStatus(signal);
+export type GetTelemetryStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getTelemetryStatus>>
+>;
+export type GetTelemetryStatusQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTelemetryStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetTelemetryStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getTelemetryStatus>>>
-export type GetTelemetryStatusQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
-
-
-export function useGetTelemetryStatus<TData = Awaited<ReturnType<typeof getTelemetryStatus>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTelemetryStatus>>, TError, TData>> & Pick<
+export function useGetTelemetryStatus<
+  TData = Awaited<ReturnType<typeof getTelemetryStatus>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getTelemetryStatus>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getTelemetryStatus>>,
           TError,
           Awaited<ReturnType<typeof getTelemetryStatus>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetTelemetryStatus<TData = Awaited<ReturnType<typeof getTelemetryStatus>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTelemetryStatus>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetTelemetryStatus<
+  TData = Awaited<ReturnType<typeof getTelemetryStatus>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getTelemetryStatus>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getTelemetryStatus>>,
           TError,
           Awaited<ReturnType<typeof getTelemetryStatus>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetTelemetryStatus<TData = Awaited<ReturnType<typeof getTelemetryStatus>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTelemetryStatus>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetTelemetryStatus<
+  TData = Awaited<ReturnType<typeof getTelemetryStatus>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getTelemetryStatus>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Telemetry status
  */
 
-export function useGetTelemetryStatus<TData = Awaited<ReturnType<typeof getTelemetryStatus>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTelemetryStatus>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetTelemetryStatus<
+  TData = Awaited<ReturnType<typeof getTelemetryStatus>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getTelemetryStatus>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetTelemetryStatusQueryOptions(options);
 
-  const queryOptions = getGetTelemetryStatusQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
-
-
-
 /**
  * @summary Telemetry inspect
  */
-export const inspectTelemetryPayload = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<GenericObject>(
-      {url: `/api/v1/telemetry/inspect`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const inspectTelemetryPayload = (signal?: AbortSignal) => {
+  return apiClient<GenericObject>({
+    url: `/api/v1/telemetry/inspect`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getInspectTelemetryPayloadQueryKey = () => {
-    return [
-    `/api/v1/telemetry/inspect`
-    ] as const;
-    }
+  return [`/api/v1/telemetry/inspect`] as const;
+};
 
-    
-export const getInspectTelemetryPayloadQueryOptions = <TData = Awaited<ReturnType<typeof inspectTelemetryPayload>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof inspectTelemetryPayload>>, TError, TData>>, }
-) => {
+export const getInspectTelemetryPayloadQueryOptions = <
+  TData = Awaited<ReturnType<typeof inspectTelemetryPayload>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof inspectTelemetryPayload>>,
+      TError,
+      TData
+    >
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey =
+    queryOptions?.queryKey ?? getInspectTelemetryPayloadQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getInspectTelemetryPayloadQueryKey();
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof inspectTelemetryPayload>>
+  > = ({ signal }) => inspectTelemetryPayload(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof inspectTelemetryPayload>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof inspectTelemetryPayload>>> = ({ signal }) => inspectTelemetryPayload(signal);
+export type InspectTelemetryPayloadQueryResult = NonNullable<
+  Awaited<ReturnType<typeof inspectTelemetryPayload>>
+>;
+export type InspectTelemetryPayloadQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof inspectTelemetryPayload>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type InspectTelemetryPayloadQueryResult = NonNullable<Awaited<ReturnType<typeof inspectTelemetryPayload>>>
-export type InspectTelemetryPayloadQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
-
-
-export function useInspectTelemetryPayload<TData = Awaited<ReturnType<typeof inspectTelemetryPayload>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof inspectTelemetryPayload>>, TError, TData>> & Pick<
+export function useInspectTelemetryPayload<
+  TData = Awaited<ReturnType<typeof inspectTelemetryPayload>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof inspectTelemetryPayload>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof inspectTelemetryPayload>>,
           TError,
           Awaited<ReturnType<typeof inspectTelemetryPayload>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useInspectTelemetryPayload<TData = Awaited<ReturnType<typeof inspectTelemetryPayload>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof inspectTelemetryPayload>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useInspectTelemetryPayload<
+  TData = Awaited<ReturnType<typeof inspectTelemetryPayload>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof inspectTelemetryPayload>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof inspectTelemetryPayload>>,
           TError,
           Awaited<ReturnType<typeof inspectTelemetryPayload>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useInspectTelemetryPayload<TData = Awaited<ReturnType<typeof inspectTelemetryPayload>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof inspectTelemetryPayload>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useInspectTelemetryPayload<
+  TData = Awaited<ReturnType<typeof inspectTelemetryPayload>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof inspectTelemetryPayload>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Telemetry inspect
  */
 
-export function useInspectTelemetryPayload<TData = Awaited<ReturnType<typeof inspectTelemetryPayload>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof inspectTelemetryPayload>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useInspectTelemetryPayload<
+  TData = Awaited<ReturnType<typeof inspectTelemetryPayload>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof inspectTelemetryPayload>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getInspectTelemetryPayloadQueryOptions(options);
 
-  const queryOptions = getInspectTelemetryPayloadQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
-
-
-
 /**
  * @summary Telemetry export
  */
-export const exportTelemetryPayload = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<GenericObject>(
-      {url: `/api/v1/telemetry/export`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const exportTelemetryPayload = (signal?: AbortSignal) => {
+  return apiClient<GenericObject>({
+    url: `/api/v1/telemetry/export`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getExportTelemetryPayloadQueryKey = () => {
-    return [
-    `/api/v1/telemetry/export`
-    ] as const;
-    }
+  return [`/api/v1/telemetry/export`] as const;
+};
 
-    
-export const getExportTelemetryPayloadQueryOptions = <TData = Awaited<ReturnType<typeof exportTelemetryPayload>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportTelemetryPayload>>, TError, TData>>, }
-) => {
+export const getExportTelemetryPayloadQueryOptions = <
+  TData = Awaited<ReturnType<typeof exportTelemetryPayload>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof exportTelemetryPayload>>,
+      TError,
+      TData
+    >
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey =
+    queryOptions?.queryKey ?? getExportTelemetryPayloadQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getExportTelemetryPayloadQueryKey();
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof exportTelemetryPayload>>
+  > = ({ signal }) => exportTelemetryPayload(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof exportTelemetryPayload>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof exportTelemetryPayload>>> = ({ signal }) => exportTelemetryPayload(signal);
+export type ExportTelemetryPayloadQueryResult = NonNullable<
+  Awaited<ReturnType<typeof exportTelemetryPayload>>
+>;
+export type ExportTelemetryPayloadQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof exportTelemetryPayload>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ExportTelemetryPayloadQueryResult = NonNullable<Awaited<ReturnType<typeof exportTelemetryPayload>>>
-export type ExportTelemetryPayloadQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
-
-
-export function useExportTelemetryPayload<TData = Awaited<ReturnType<typeof exportTelemetryPayload>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportTelemetryPayload>>, TError, TData>> & Pick<
+export function useExportTelemetryPayload<
+  TData = Awaited<ReturnType<typeof exportTelemetryPayload>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof exportTelemetryPayload>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof exportTelemetryPayload>>,
           TError,
           Awaited<ReturnType<typeof exportTelemetryPayload>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useExportTelemetryPayload<TData = Awaited<ReturnType<typeof exportTelemetryPayload>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportTelemetryPayload>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useExportTelemetryPayload<
+  TData = Awaited<ReturnType<typeof exportTelemetryPayload>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof exportTelemetryPayload>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof exportTelemetryPayload>>,
           TError,
           Awaited<ReturnType<typeof exportTelemetryPayload>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useExportTelemetryPayload<TData = Awaited<ReturnType<typeof exportTelemetryPayload>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportTelemetryPayload>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useExportTelemetryPayload<
+  TData = Awaited<ReturnType<typeof exportTelemetryPayload>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof exportTelemetryPayload>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Telemetry export
  */
 
-export function useExportTelemetryPayload<TData = Awaited<ReturnType<typeof exportTelemetryPayload>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof exportTelemetryPayload>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useExportTelemetryPayload<
+  TData = Awaited<ReturnType<typeof exportTelemetryPayload>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof exportTelemetryPayload>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getExportTelemetryPayloadQueryOptions(options);
 
-  const queryOptions = getExportTelemetryPayloadQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
-
-
-
 /**
  * @summary Telemetry usage
  */
-export const getTelemetryUsage = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<GenericObject>(
-      {url: `/api/v1/telemetry/usage`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const getTelemetryUsage = (signal?: AbortSignal) => {
+  return apiClient<GenericObject>({
+    url: `/api/v1/telemetry/usage`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getGetTelemetryUsageQueryKey = () => {
-    return [
-    `/api/v1/telemetry/usage`
-    ] as const;
-    }
+  return [`/api/v1/telemetry/usage`] as const;
+};
 
-    
-export const getGetTelemetryUsageQueryOptions = <TData = Awaited<ReturnType<typeof getTelemetryUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTelemetryUsage>>, TError, TData>>, }
-) => {
+export const getGetTelemetryUsageQueryOptions = <
+  TData = Awaited<ReturnType<typeof getTelemetryUsage>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof getTelemetryUsage>>,
+      TError,
+      TData
+    >
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetTelemetryUsageQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getGetTelemetryUsageQueryKey();
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getTelemetryUsage>>
+  > = ({ signal }) => getTelemetryUsage(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getTelemetryUsage>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getTelemetryUsage>>> = ({ signal }) => getTelemetryUsage(signal);
+export type GetTelemetryUsageQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getTelemetryUsage>>
+>;
+export type GetTelemetryUsageQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getTelemetryUsage>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetTelemetryUsageQueryResult = NonNullable<Awaited<ReturnType<typeof getTelemetryUsage>>>
-export type GetTelemetryUsageQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
-
-
-export function useGetTelemetryUsage<TData = Awaited<ReturnType<typeof getTelemetryUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTelemetryUsage>>, TError, TData>> & Pick<
+export function useGetTelemetryUsage<
+  TData = Awaited<ReturnType<typeof getTelemetryUsage>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getTelemetryUsage>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getTelemetryUsage>>,
           TError,
           Awaited<ReturnType<typeof getTelemetryUsage>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetTelemetryUsage<TData = Awaited<ReturnType<typeof getTelemetryUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTelemetryUsage>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetTelemetryUsage<
+  TData = Awaited<ReturnType<typeof getTelemetryUsage>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getTelemetryUsage>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getTelemetryUsage>>,
           TError,
           Awaited<ReturnType<typeof getTelemetryUsage>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetTelemetryUsage<TData = Awaited<ReturnType<typeof getTelemetryUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTelemetryUsage>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetTelemetryUsage<
+  TData = Awaited<ReturnType<typeof getTelemetryUsage>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getTelemetryUsage>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Telemetry usage
  */
 
-export function useGetTelemetryUsage<TData = Awaited<ReturnType<typeof getTelemetryUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getTelemetryUsage>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetTelemetryUsage<
+  TData = Awaited<ReturnType<typeof getTelemetryUsage>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getTelemetryUsage>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetTelemetryUsageQueryOptions(options);
 
-  const queryOptions = getGetTelemetryUsageQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Set telemetry mode
  */
 export const setTelemetryConsent = (
-    setTelemetryConsentBody: SetTelemetryConsentBody,
- signal?: AbortSignal
+  setTelemetryConsentBody: SetTelemetryConsentBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<SetTelemetryConsent200>(
-      {url: `/api/v1/telemetry/consent`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: setTelemetryConsentBody, signal
-    },
-      );
-    }
-  
+  return apiClient<SetTelemetryConsent200>({
+    url: `/api/v1/telemetry/consent`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: setTelemetryConsentBody,
+    signal,
+  });
+};
 
+export const getSetTelemetryConsentMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof setTelemetryConsent>>,
+    TError,
+    { data: SetTelemetryConsentBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof setTelemetryConsent>>,
+  TError,
+  { data: SetTelemetryConsentBody },
+  TContext
+> => {
+  const mutationKey = ["setTelemetryConsent"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getSetTelemetryConsentMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTelemetryConsent>>, TError,{data: SetTelemetryConsentBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof setTelemetryConsent>>, TError,{data: SetTelemetryConsentBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof setTelemetryConsent>>,
+    { data: SetTelemetryConsentBody }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['setTelemetryConsent'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return setTelemetryConsent(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type SetTelemetryConsentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof setTelemetryConsent>>
+>;
+export type SetTelemetryConsentMutationBody = SetTelemetryConsentBody;
+export type SetTelemetryConsentMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setTelemetryConsent>>, {data: SetTelemetryConsentBody}> = (props) => {
-          const {data} = props ?? {};
-
-          return  setTelemetryConsent(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type SetTelemetryConsentMutationResult = NonNullable<Awaited<ReturnType<typeof setTelemetryConsent>>>
-    export type SetTelemetryConsentMutationBody = SetTelemetryConsentBody
-    export type SetTelemetryConsentMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Set telemetry mode
  */
-export const useSetTelemetryConsent = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setTelemetryConsent>>, TError,{data: SetTelemetryConsentBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof setTelemetryConsent>>,
-        TError,
-        {data: SetTelemetryConsentBody},
-        TContext
-      > => {
+export const useSetTelemetryConsent = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof setTelemetryConsent>>,
+      TError,
+      { data: SetTelemetryConsentBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof setTelemetryConsent>>,
+  TError,
+  { data: SetTelemetryConsentBody },
+  TContext
+> => {
+  const mutationOptions = getSetTelemetryConsentMutationOptions(options);
 
-      const mutationOptions = getSetTelemetryConsentMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    
+  return useMutation(mutationOptions, queryClient);
+};

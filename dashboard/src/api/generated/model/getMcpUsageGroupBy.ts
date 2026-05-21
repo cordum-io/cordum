@@ -6,12 +6,12 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type GetMcpUsageGroupBy = typeof GetMcpUsageGroupBy[keyof typeof GetMcpUsageGroupBy];
-
+export type GetMcpUsageGroupBy =
+  (typeof GetMcpUsageGroupBy)[keyof typeof GetMcpUsageGroupBy];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const GetMcpUsageGroupBy = {
-  subject: 'subject',
-  method: 'method',
-  tool: 'tool',
+  subject: "subject",
+  method: "method",
+  tool: "tool",
 } as const;

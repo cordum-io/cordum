@@ -76,6 +76,55 @@ function persistLoginTimestamp(ts: number | null): void {
 }
 
 // ---------------------------------------------------------------------------
+// Auth modes
+// ---------------------------------------------------------------------------
+//
+// The gateway accepts two parallel auth mechanisms:
+//
+//   - "apikey":   long-lived pre-issued key, sent as `X-API-Key: <key>`.
+//   - "session":  short-lived token from password/SSO login. The gateway
+//                 sets an httpOnly `cordum_session` cookie that the browser
+//                 sends automatically on every fetch (`credentials: "include"`).
+//                 The dashboard NEVER stores the session token as `apiKey`;
+//                 sending a session token in `X-API-Key` is rejected by the
+//                 gateway (that header is for real API keys only) and used
+//                 to trigger a logout loop.
+//
+// `authMode` is the discriminator. `apiKey` is only meaningful when
+// `authMode === "apikey"`. `apiClient.authHeaders()` branches on this.
+
+export type AuthMode = "apikey" | "session" | "anonymous";
+
+export type AuthCredentials =
+  | { mode: "apikey"; key: string }
+  | { mode: "session" };
+
+// ---------------------------------------------------------------------------
+// Derive auth fields from a config patch (legacy embedded-apiKey support)
+// ---------------------------------------------------------------------------
+//
+// `update({apiKey: "..."})` is the embedded-mode escape hatch — runtime-config
+// (`/config.json`) can pre-populate the dashboard with an API key for
+// self-hosted deployments that ship without a login UI. When that path is
+// taken, we MUST also flip authMode to "apikey" so apiClient sends the
+// X-API-Key header. Clearing the key (`apiKey: ""`) reverts to anonymous.
+//
+// Patches that don't touch apiKey leave authMode and isAuthenticated alone.
+
+function deriveAuthFromPatch(
+  prev: { authMode: AuthMode; isAuthenticated: boolean; apiKey: string },
+  patch: { apiKey?: string },
+): { authMode: AuthMode; isAuthenticated: boolean } {
+  if (patch.apiKey === undefined) {
+    return { authMode: prev.authMode, isAuthenticated: prev.isAuthenticated };
+  }
+  if (patch.apiKey === "") {
+    return { authMode: "anonymous", isAuthenticated: false };
+  }
+  return { authMode: "apikey", isAuthenticated: true };
+}
+
+// ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
 
@@ -103,6 +152,7 @@ interface ConfigState {
 
   // Auth
   user: User | null;
+  authMode: AuthMode;
   isAuthenticated: boolean;
   isLoggingOut: boolean;
   loginTimestamp: number | null;
@@ -114,7 +164,7 @@ interface ConfigState {
 
   // Actions
   update: (patch: ConfigPatch) => void;
-  login: (token: string, user: User) => void;
+  login: (creds: AuthCredentials, user: User) => void;
   logout: () => void;
   refreshLoginTimestamp: () => void;
 }
@@ -132,6 +182,9 @@ export const useConfigStore = create<ConfigState>((set, get) => {
     traceUrlTemplate: "",
     approvalSlaMs: 900_000, // 15 minutes default
     user: savedUser,
+    // savedUser implies a prior session-mode login (cookie is the auth artefact;
+    // no token is persisted). Treat the restored state as session-authenticated.
+    authMode: savedUser ? ("session" as AuthMode) : ("anonymous" as AuthMode),
     isAuthenticated: !!savedUser,
     isLoggingOut: false,
     loginTimestamp: loadLoginTimestamp(),
@@ -148,7 +201,7 @@ export const useConfigStore = create<ConfigState>((set, get) => {
           });
           const { tenantId: _ignored, ...safePatch } = patch;
           const next = { ...s, ...safePatch };
-          return { ...next, isAuthenticated: !!next.apiKey };
+          return { ...next, ...deriveAuthFromPatch(s, safePatch) };
         }
         // Reset event store and query cache on tenant switch to prevent cross-tenant data leakage.
         // Order matters: cancel in-flight queries BEFORE clearing cache and applying new tenant.
@@ -159,18 +212,29 @@ export const useConfigStore = create<ConfigState>((set, get) => {
         }
         const next = { ...s, ...patch };
         const locked = s.tenantLocked || !!(next.tenantId);
-        return { ...next, isAuthenticated: !!next.apiKey, tenantLocked: locked };
+        return { ...next, ...deriveAuthFromPatch(s, patch), tenantLocked: locked };
       }),
 
-    login: (token, user) => {
-      logger.info("config-store", "Login", { userId: user.id, tenant: user.tenant });
+    login: (creds, user) => {
+      logger.info("config-store", "Login", {
+        userId: user.id,
+        tenant: user.tenant,
+        mode: creds.mode,
+      });
       const now = Date.now();
-      // Token stays in memory only — auth cookie set by server handles persistence.
+      // API key (apikey mode) stays in memory only — cookie auth handles
+      // session-mode persistence; nothing is written to localStorage either way.
       clearLegacyToken();
       persistUser(user);
       persistLoginTimestamp(now);
       set({
-        apiKey: token,
+        // apiKey is ONLY set in apikey mode. Session mode relies on the
+        // httpOnly cookie the gateway already set during /auth/login. Storing
+        // the session token here would cause apiClient.authHeaders() to send
+        // it as X-API-Key, which the gateway rejects (header is for real
+        // API keys only) — triggering an immediate logout loop.
+        apiKey: creds.mode === "apikey" ? creds.key : "",
+        authMode: creds.mode,
         user,
         isAuthenticated: true,
         isLoggingOut: false,
@@ -180,7 +244,7 @@ export const useConfigStore = create<ConfigState>((set, get) => {
         principalRole: user.roles?.[0] ?? "",
         tenantLocked: !!(user.tenant),
       });
-      broadcastSync({ type: "auth-login", token, user });
+      broadcastSync({ type: "auth-login", creds, user });
     },
 
     logout: () => {
@@ -202,6 +266,7 @@ export const useConfigStore = create<ConfigState>((set, get) => {
       _queryClient?.clear();
       set({
         apiKey: "",
+        authMode: "anonymous",
         user: null,
         isAuthenticated: false,
         isLoggingOut: true,

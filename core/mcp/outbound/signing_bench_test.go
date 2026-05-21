@@ -1,6 +1,7 @@
 package outbound
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"fmt"
 	"sort"
@@ -49,7 +50,7 @@ func BenchmarkVerify(b *testing.B) {
 	headers, _ := s.SignRequest("m", params, "t", "a")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := v.VerifyRequest(headers, "m", params); err != nil {
+		if err := v.VerifyRequest(context.Background(), headers, "m", params); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -94,7 +95,7 @@ func TestSignVerify_P99RegressionGuard(t *testing.T) {
 		}
 		signTimes = append(signTimes, time.Since(t0))
 		t1 := time.Now()
-		if err := v.VerifyRequest(headers, fmt.Sprintf("m-%d", i), params); err != nil {
+		if err := v.VerifyRequest(context.Background(), headers, fmt.Sprintf("m-%d", i), params); err != nil {
 			t.Fatal(err)
 		}
 		verifyTimes = append(verifyTimes, time.Since(t1))

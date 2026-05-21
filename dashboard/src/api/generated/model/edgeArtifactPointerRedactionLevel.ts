@@ -6,11 +6,11 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeArtifactPointerRedactionLevel = typeof EdgeArtifactPointerRedactionLevel[keyof typeof EdgeArtifactPointerRedactionLevel];
-
+export type EdgeArtifactPointerRedactionLevel =
+  (typeof EdgeArtifactPointerRedactionLevel)[keyof typeof EdgeArtifactPointerRedactionLevel];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeArtifactPointerRedactionLevel = {
-  standard: 'standard',
-  strict: 'strict',
+  standard: "standard",
+  strict: "strict",
 } as const;

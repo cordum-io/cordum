@@ -17,10 +17,7 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.run_step_status_output_type_0 import RunStepStatusOutputType0
-
-
-
+    from ..models.run_step_status_output_type_0 import RunStepStatusOutputType0
 
 
 T = TypeVar("T", bound="RunStepStatus")
@@ -28,16 +25,22 @@ T = TypeVar("T", bound="RunStepStatus")
 
 @_attrs_define
 class RunStepStatus:
-    """ 
-        Attributes:
-            step_id (Union[Unset, str]):
-            status (Union[Unset, str]):
-            started_at (Union[None, Unset, datetime.datetime]):
-            completed_at (Union[None, Unset, datetime.datetime]):
-            job_id (Union[None, Unset, str]):
-            error (Union[None, Unset, str]):
-            output (Union['RunStepStatusOutputType0', None, Unset]):
-     """
+    """
+    Attributes:
+        step_id (Union[Unset, str]):
+        status (Union[Unset, str]):
+        started_at (Union[None, Unset, datetime.datetime]):
+        completed_at (Union[None, Unset, datetime.datetime]):
+        job_id (Union[None, Unset, str]):
+        error (Union[None, Unset, str]):
+        output (Union['RunStepStatusOutputType0', None, Unset]):
+        audit_hash (Union[None, Unset, str]): Audit-chain hash for the safety decision applied to this step,
+            joined from the audit-chain entry produced when the step ran.
+            Unset for skipped or upstream-failed steps where no decision
+            was emitted. Dashboard surfaces this as a copy-on-click chip
+            in the WorkflowNodeGovernanceOverlay.
+             Example: 11473636023072616304.
+    """
 
     step_id: Union[Unset, str] = UNSET
     status: Union[Unset, str] = UNSET
@@ -45,12 +48,13 @@ class RunStepStatus:
     completed_at: Union[None, Unset, datetime.datetime] = UNSET
     job_id: Union[None, Unset, str] = UNSET
     error: Union[None, Unset, str] = UNSET
-    output: Union['RunStepStatusOutputType0', None, Unset] = UNSET
+    output: Union["RunStepStatusOutputType0", None, Unset] = UNSET
+    audit_hash: Union[None, Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.run_step_status_output_type_0 import RunStepStatusOutputType0
+
         step_id = self.step_id
 
         status = self.status
@@ -91,11 +95,15 @@ class RunStepStatus:
         else:
             output = self.output
 
+        audit_hash: Union[None, Unset, str]
+        if isinstance(self.audit_hash, Unset):
+            audit_hash = UNSET
+        else:
+            audit_hash = self.audit_hash
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if step_id is not UNSET:
             field_dict["step_id"] = step_id
         if status is not UNSET:
@@ -110,14 +118,15 @@ class RunStepStatus:
             field_dict["error"] = error
         if output is not UNSET:
             field_dict["output"] = output
+        if audit_hash is not UNSET:
+            field_dict["audit_hash"] = audit_hash
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.run_step_status_output_type_0 import RunStepStatusOutputType0
+
         d = src_dict.copy()
         step_id = d.pop("step_id", UNSET)
 
@@ -133,15 +142,12 @@ class RunStepStatus:
                     raise TypeError()
                 started_at_type_0 = isoparse(data)
 
-
-
                 return started_at_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
             return cast(Union[None, Unset, datetime.datetime], data)
 
         started_at = _parse_started_at(d.pop("started_at", UNSET))
-
 
         def _parse_completed_at(data: object) -> Union[None, Unset, datetime.datetime]:
             if data is None:
@@ -153,15 +159,12 @@ class RunStepStatus:
                     raise TypeError()
                 completed_at_type_0 = isoparse(data)
 
-
-
                 return completed_at_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
             return cast(Union[None, Unset, datetime.datetime], data)
 
         completed_at = _parse_completed_at(d.pop("completed_at", UNSET))
-
 
         def _parse_job_id(data: object) -> Union[None, Unset, str]:
             if data is None:
@@ -172,7 +175,6 @@ class RunStepStatus:
 
         job_id = _parse_job_id(d.pop("job_id", UNSET))
 
-
         def _parse_error(data: object) -> Union[None, Unset, str]:
             if data is None:
                 return data
@@ -182,8 +184,7 @@ class RunStepStatus:
 
         error = _parse_error(d.pop("error", UNSET))
 
-
-        def _parse_output(data: object) -> Union['RunStepStatusOutputType0', None, Unset]:
+        def _parse_output(data: object) -> Union["RunStepStatusOutputType0", None, Unset]:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -193,15 +194,21 @@ class RunStepStatus:
                     raise TypeError()
                 output_type_0 = RunStepStatusOutputType0.from_dict(data)
 
-
-
                 return output_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
-            return cast(Union['RunStepStatusOutputType0', None, Unset], data)
+            return cast(Union["RunStepStatusOutputType0", None, Unset], data)
 
         output = _parse_output(d.pop("output", UNSET))
 
+        def _parse_audit_hash(data: object) -> Union[None, Unset, str]:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(Union[None, Unset, str], data)
+
+        audit_hash = _parse_audit_hash(d.pop("audit_hash", UNSET))
 
         run_step_status = cls(
             step_id=step_id,
@@ -211,8 +218,8 @@ class RunStepStatus:
             job_id=job_id,
             error=error,
             output=output,
+            audit_hash=audit_hash,
         )
-
 
         run_step_status.additional_properties = d
         return run_step_status

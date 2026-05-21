@@ -28,6 +28,13 @@ const (
 	// as a missing WithMCPCallMetadata before dispatch. Distinct from
 	// -32603 so operators can page on it specifically.
 	jsonRPCGatewayMisconfiguredCode = -32097
+	// jsonRPCApprovalLifecycleErrorCode is returned when a tool call carries
+	// `_approval_ref` and the approval-store claim fails (not_found / rejected
+	// / expired / consumed / args_mismatch / policy_mismatch / self_approval
+	// / cross_tenant). The specific failure family rides in error.data.kind
+	// per the edge.ApprovalConflictKind snake_case enum. Distinct from
+	// -32099 (initial approval_required) so clients can branch retry logic.
+	jsonRPCApprovalLifecycleErrorCode = -32096
 )
 
 var (
@@ -39,6 +46,14 @@ var (
 	// Mapped to JSON-RPC -32097 so ops can distinguish a gateway wiring
 	// defect from an ordinary handler failure (-32603).
 	ErrApprovalGateMisconfigured = errors.New("mcp: approval gate misconfigured")
+	// ErrApprovalStoreUnavailable signals the Edge approval store was
+	// reachable in principle (wired) but the EnqueueApproval call
+	// errored. Mapped to JSON-RPC -32096 with error.data.kind=
+	// "approval_store_unavailable" so clients can distinguish a
+	// transient store outage from a genuine policy denial. Wrapped by
+	// gatewayApprovalGate.Check + ConsumeActionGateDecision when Edge
+	// mint fails after metadata was present (the fail-closed branch).
+	ErrApprovalStoreUnavailable = errors.New("approval_store_unavailable: approval store unavailable")
 )
 
 // ToolService provides tool listing and execution for MCP server handlers.
@@ -78,6 +93,85 @@ type MCPServer struct {
 	// returns produce a mcp.tool_invocation SIEMEvent. Wire via
 	// WithAuditor during gateway boot.
 	auditor ToolInvocationAuditor
+	// policyDeps, when non-nil, routes every tools/call through the
+	// production action-gate pipeline before forwarding to s.tools.Call.
+	// EDGE-102 wires this via WithPolicyGate; absent wiring preserves the
+	// legacy direct-dispatch path for dev/test deploys.
+	policyDeps *ToolCallDeps
+	// policyServerName is the logical MCP server identifier the policy
+	// gate consumes (e.g. "cordum.builtin"). Set by WithPolicyGate so
+	// the descriptor's Server field is server-derived, not client-claimed.
+	policyServerName string
+	// approvalHoldDeps, when non-nil, makes handleToolsCall consult the
+	// Edge approval store for an `_approval_ref` arg BEFORE invoking the
+	// tool dispatch path. EDGE-103 wires this via WithApprovalHold; absent
+	// wiring preserves the pre-EDGE-103 path (no resume protocol).
+	approvalHoldDeps *ApprovalHoldDeps
+}
+
+// HasPolicyGate reports whether WithPolicyGate has been wired with the
+// minimum dependencies required to route tools/call through the policy
+// gate. Returns false when the gate was wired with all-zero or partial
+// deps (the server.go partial-wiring guard reset policyDeps to nil).
+// Used by boot-log assertions, dashboard health probes, and tests.
+func (s *MCPServer) HasPolicyGate() bool {
+	return s != nil && s.policyDeps != nil
+}
+
+// PolicyServerName returns the MCP server identifier the gate stamps
+// on every ActionDescriptor.Server (e.g. "cordum.builtin"). Empty when
+// WithPolicyGate has not been wired or was reset by the partial-wiring
+// guard. Operators see this in the boot log so a misconfigured deploy
+// is greppable from cold start.
+func (s *MCPServer) PolicyServerName() string {
+	if s == nil || s.policyDeps == nil {
+		return ""
+	}
+	return s.policyServerName
+}
+
+// PolicyEventEmitter returns the EventEmitter wired through
+// WithPolicyGate so boot-time assertions can confirm the gate is backed
+// by a production emitter (e.g. an edge.RedisStore adapter) rather than
+// a noop fallback. Returns nil when WithPolicyGate has not been wired.
+func (s *MCPServer) PolicyEventEmitter() EventEmitter {
+	if s == nil || s.policyDeps == nil {
+		return nil
+	}
+	return s.policyDeps.EventEmitter
+}
+
+// PolicyArtifactStore returns the ArtifactStore wired through
+// WithPolicyGate so boot-time assertions can confirm the gate is backed
+// by a production artifact store (e.g. an artifacts.Store adapter)
+// rather than a noop fallback. Returns nil when WithPolicyGate has not
+// been wired.
+func (s *MCPServer) PolicyArtifactStore() ArtifactStore {
+	if s == nil || s.policyDeps == nil {
+		return nil
+	}
+	return s.policyDeps.ArtifactStore
+}
+
+// PolicyDispatcher returns the gate-pipeline dispatcher wired through
+// WithPolicyGate so integration tests can drive EvaluateToolCall with
+// the production adapter chain (or substitute a fake dispatcher while
+// keeping the rest of the deps real). Returns nil when WithPolicyGate
+// has not been wired.
+func (s *MCPServer) PolicyDispatcher() PolicyDispatcher {
+	if s == nil || s.policyDeps == nil {
+		return nil
+	}
+	return s.policyDeps.Pipeline
+}
+
+// HasApprovalHold reports whether WithApprovalHold has been wired with
+// the minimum dependencies (non-nil Store + non-nil PolicySnapshot)
+// required to route `_approval_ref` claims through the Edge approval
+// store. Returns false when the partial-wiring guard reset
+// approvalHoldDeps to nil.
+func (s *MCPServer) HasApprovalHold() bool {
+	return s != nil && s.approvalHoldDeps != nil
 }
 
 // WithAuditor attaches a ToolInvocationAuditor so the server emits
@@ -88,6 +182,78 @@ func (s *MCPServer) WithAuditor(a ToolInvocationAuditor) *MCPServer {
 		return s
 	}
 	s.auditor = a
+	return s
+}
+
+// WithPolicyGate routes every tools/call through the production action-
+// gate pipeline before forwarding to the registered tool handler. The
+// gateway boots an MCPServer with WithPolicyGate wired against the
+// production ToolCallDeps (gateway-adapted PolicyDispatcher +
+// EventEmitter + ArtifactStore + ApprovalHandoff). Passing a zero-value
+// ToolCallDeps leaves the gate off so the call falls through to the
+// legacy direct-dispatch path — keeping dev/test deploys working
+// without rewiring.
+//
+// serverName is stamped on every ActionDescriptor.Server emitted by the
+// builder so the descriptor never depends on a client-supplied value.
+// An empty serverName degrades the MCP gate's allowlist enforcement
+// (it has nothing to match against) but does not break the call path.
+func (s *MCPServer) WithPolicyGate(serverName string, deps ToolCallDeps) *MCPServer {
+	if s == nil {
+		return s
+	}
+	if deps.Pipeline == nil && deps.EventEmitter == nil &&
+		deps.ArtifactStore == nil && deps.ApprovalHandoff == nil {
+		// All-zero deps is the explicit opt-out path: leave the gate
+		// off so the call falls through to legacy direct-dispatch.
+		s.policyDeps = nil
+		s.policyServerName = ""
+		return s
+	}
+	// Partial wiring (one of the required dependencies missing) is a
+	// configuration bug. EvaluateToolCall requires both Pipeline and
+	// EventEmitter, so half-wired deps would surface as -32603 on every
+	// tool call. Disable the gate here so the failure is silent in the
+	// happy path and operators see the wiring bug at boot time by
+	// observing policyDeps=nil despite a non-empty WithPolicyGate call.
+	if deps.Pipeline == nil || deps.EventEmitter == nil {
+		s.policyDeps = nil
+		s.policyServerName = ""
+		return s
+	}
+	s.policyDeps = &deps
+	s.policyServerName = serverName
+	return s
+}
+
+// WithApprovalHold wires the EDGE-103 approval-claim consume path. When
+// configured, handleToolsCall checks each `tools/call` for an
+// `_approval_ref` argument and atomically consumes it via the Edge
+// approval store BEFORE invoking the tool dispatch. On a fail-closed
+// lifecycle conflict (rejected / expired / consumed / args_mismatch /
+// policy_mismatch / self_approval / cross_tenant / not_found) the server
+// returns JSON-RPC -32096 with the typed error.data.kind discriminator.
+//
+// Passing zero-value ApprovalHoldDeps disables the path so legacy
+// servers boot unchanged.
+func (s *MCPServer) WithApprovalHold(deps ApprovalHoldDeps) *MCPServer {
+	if s == nil {
+		return s
+	}
+	if deps.Store == nil {
+		s.approvalHoldDeps = nil
+		return s
+	}
+	// PolicySnapshot is required: ProcessApprovalClaim builds an
+	// ApprovalClaimRequest whose validation rejects an empty
+	// PolicySnapshot. Without a snapshot provider the entire resume
+	// path would fail closed at runtime. Refuse to enable the path here
+	// so the misconfiguration surfaces at boot rather than per request.
+	if deps.PolicySnapshot == nil {
+		s.approvalHoldDeps = nil
+		return s
+	}
+	s.approvalHoldDeps = &deps
 	return s
 }
 
@@ -328,6 +494,34 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, s.rpcError(jsonRPCInvalidParamsCode, "invalid params", "name is required")
 	}
+	// EDGE-103: when an `_approval_ref` is present in args, consume the
+	// stored approval BEFORE handing off to invokeTool. On a fail-closed
+	// lifecycle conflict we surface JSON-RPC -32096 with typed
+	// error.data.kind; on a successful consume we replace req.Arguments
+	// with the `_approval_ref`-stripped form so the upstream tool handler
+	// and the policy gate both see the originally-authorized payload.
+	if s.approvalHoldDeps != nil {
+		outcome, err := ProcessApprovalClaim(ctx, *s.approvalHoldDeps, req)
+		if err != nil {
+			if errors.Is(err, errMissingMCPMetadata) {
+				return nil, s.rpcError(jsonRPCGatewayMisconfiguredCode, "approval gate misconfigured", "missing_mcp_metadata")
+			}
+			if errors.Is(err, errMissingPolicySnapshot) {
+				return nil, s.rpcError(jsonRPCGatewayMisconfiguredCode, "approval gate misconfigured", "missing_policy_snapshot")
+			}
+			return nil, s.rpcError(jsonRPCInvalidParamsCode, "invalid approval ref", err.Error())
+		}
+		if outcome.ConflictErr != nil {
+			return nil, s.rpcError(jsonRPCApprovalLifecycleErrorCode, "approval lifecycle error", map[string]any{
+				"kind":         string(outcome.ConflictErr.Kind),
+				"approval_ref": outcome.ClaimRef,
+				"reason":       outcome.ConflictErr.Reason,
+			})
+		}
+		if outcome.Consumed && len(outcome.StrippedArgs) > 0 {
+			req.Arguments = outcome.StrippedArgs
+		}
+	}
 	// Bracket every terminal tools/call with the invocation auditor so
 	// success + handler-error + approval-required + scope-deny all
 	// land on the Merkle audit chain. Start happens BEFORE the call so
@@ -338,7 +532,7 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 		agentID, tenantID := identityForAudit(ctx)
 		ctx, handle = s.auditor.StartInbound(ctx, agentID, tenantID, req.Name, req.Arguments)
 	}
-	result, err := s.tools.Call(ctx, req.Name, req.Arguments)
+	result, err := s.invokeTool(ctx, req)
 	if s.auditor != nil {
 		s.auditor.FinishInbound(handle, result, err)
 	}
@@ -346,6 +540,40 @@ func (s *MCPServer) handleToolsCall(ctx context.Context, params json.RawMessage)
 		return nil, s.mapHandlerError(err)
 	}
 	return result, nil
+}
+
+// invokeTool routes the tools/call through the action-gate policy
+// wrapper when WithPolicyGate has been called, falling back to the
+// direct ToolService.Call path otherwise. The policy path emits
+// mcp.tool.pre/post/failed events, redacts arguments + results,
+// short-circuits on DENY, and hands REQUIRE_HUMAN to the approval
+// store adapter — all per InvokeToolWithPolicy in policy_evaluate.go.
+func (s *MCPServer) invokeTool(ctx context.Context, req ToolCallParams) (*ToolCallResult, error) {
+	if s.policyDeps == nil {
+		return s.tools.Call(ctx, req.Name, req.Arguments)
+	}
+	deps := *s.policyDeps
+	if deps.Upstream == nil {
+		deps.Upstream = toolServiceAdapter{tools: s.tools}
+	}
+	return InvokeToolWithPolicy(ctx, deps, req, s.policyServerName)
+}
+
+// toolServiceAdapter adapts the existing ToolService.Call signature
+// into the UpstreamToolCaller interface so the policy wrapper can
+// forward to the registered handler without changing call sites.
+type toolServiceAdapter struct {
+	tools ToolService
+}
+
+// Invoke implements UpstreamToolCaller by delegating to ToolService.Call.
+// Returns (nil, error) on a nil service so a misconfigured server
+// fails closed instead of nil-deref panicking.
+func (a toolServiceAdapter) Invoke(ctx context.Context, params ToolCallParams) (*ToolCallResult, error) {
+	if a.tools == nil {
+		return nil, errors.New("mcp: tool service unavailable")
+	}
+	return a.tools.Call(ctx, params.Name, params.Arguments)
 }
 
 // identityForAudit returns the (agentID, tenantID) pair the auditor
@@ -419,6 +647,19 @@ func (s *MCPServer) mapHandlerError(err error) *JSONRPCError {
 	// page on a specific code instead of chasing "internal error".
 	if errors.Is(err, ErrApprovalGateMisconfigured) {
 		return s.rpcError(jsonRPCGatewayMisconfiguredCode, "gateway misconfigured", err.Error())
+	}
+	// Approval-store outage signal — surfaces when Edge mint was
+	// attempted (transport metadata present + edgeStore wired) but
+	// EnqueueApproval errored. Distinct from -32603 generic internal
+	// so clients can branch retry logic on a transient store outage
+	// vs a deterministic handler failure. Carries error.data.kind so
+	// the JSON-RPC envelope matches the snake_case enum used by the
+	// other -32096 lifecycle paths (args_mismatch, etc.).
+	if errors.Is(err, ErrApprovalStoreUnavailable) {
+		return s.rpcError(jsonRPCApprovalLifecycleErrorCode, "approval lifecycle error", map[string]any{
+			"kind":   "approval_store_unavailable",
+			"reason": err.Error(),
+		})
 	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):

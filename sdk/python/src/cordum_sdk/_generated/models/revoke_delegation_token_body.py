@@ -12,27 +12,22 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="RevokeDelegationTokenBody")
 
 
 @_attrs_define
 class RevokeDelegationTokenBody:
-    """ 
-        Attributes:
-            jti (str):
-            reason (Union[Unset, str]):
-            cascade (Union[Unset, bool]): When true, revoke downstream delegations that extended this token. Default: True.
-     """
+    """
+    Attributes:
+        jti (str):
+        reason (Union[Unset, str]):
+        cascade (Union[Unset, bool]): When true, revoke downstream delegations that extended this token. Default: True.
+    """
 
     jti: str
     reason: Union[Unset, str] = UNSET
     cascade: Union[Unset, bool] = True
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         jti = self.jti
@@ -41,20 +36,19 @@ class RevokeDelegationTokenBody:
 
         cascade = self.cascade
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "jti": jti,
-        })
+        field_dict.update(
+            {
+                "jti": jti,
+            }
+        )
         if reason is not UNSET:
             field_dict["reason"] = reason
         if cascade is not UNSET:
             field_dict["cascade"] = cascade
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -70,7 +64,6 @@ class RevokeDelegationTokenBody:
             reason=reason,
             cascade=cascade,
         )
-
 
         revoke_delegation_token_body.additional_properties = d
         return revoke_delegation_token_body

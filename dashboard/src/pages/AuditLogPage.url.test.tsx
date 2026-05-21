@@ -20,24 +20,23 @@ import AuditLogPage from "./AuditLogPage";
 function emptyAuditPage() {
   return HttpResponse.json({
     items: [],
-    total: 0,
-    has_more: false,
-    offset: 0,
+    next_cursor: "",
+    returned: 0,
   });
 }
 
 describe("AuditLogPage nuqs URL roundtrip", () => {
-  it("forwards ?action= URL param to the backend fetch", async () => {
+  it("forwards ?action= URL param to the backend fetch as event_type", async () => {
     let capturedUrl: URL | null = null;
     server.use(
-      http.get("*/api/v1/policy/audit", ({ request }) => {
+      http.get("*/api/v1/audit/events", ({ request }) => {
         capturedUrl = new URL(request.url);
         return emptyAuditPage();
       }),
     );
 
     renderWithProviders(
-      <NuqsTestingAdapter searchParams="?action=job.failed">
+      <NuqsTestingAdapter searchParams="?action=mcp.tool_invocation">
         <AuditLogPage />
       </NuqsTestingAdapter>,
     );
@@ -45,13 +44,15 @@ describe("AuditLogPage nuqs URL roundtrip", () => {
     await waitFor(() => {
       expect(capturedUrl).not.toBeNull();
     });
-    expect(capturedUrl!.searchParams.get("action")).toBe("job.failed");
+    // Page keeps ?action= in URL for backward compat; on the wire the
+    // new SIEM endpoint accepts event_type.
+    expect(capturedUrl!.searchParams.get("event_type")).toBe("mcp.tool_invocation");
   });
 
-  it("forwards ?search=, ?agent=, ?from= URL params to the backend fetch with date ISO conversion", async () => {
+  it("forwards ?search= and ?from= URL params to the backend fetch with date ISO conversion", async () => {
     let capturedUrl: URL | null = null;
     server.use(
-      http.get("*/api/v1/policy/audit", ({ request }) => {
+      http.get("*/api/v1/audit/events", ({ request }) => {
         capturedUrl = new URL(request.url);
         return emptyAuditPage();
       }),
@@ -67,8 +68,10 @@ describe("AuditLogPage nuqs URL roundtrip", () => {
       expect(capturedUrl).not.toBeNull();
     });
     expect(capturedUrl!.searchParams.get("search")).toBe("user-5");
-    expect(capturedUrl!.searchParams.get("agent_id")).toBe("agent-alpha");
-    expect(capturedUrl!.searchParams.get("after")).toBe("2026-04-01T00:00:00.000Z");
+    // agent_id is not a server-side filter on /audit/events — applied
+    // client-side over the actor field. ?from= now maps to the
+    // SIEM-feed `from` param (no rename for date filters).
+    expect(capturedUrl!.searchParams.get("from")).toBe("2026-04-01T00:00:00.000Z");
   });
 
   it("clear-filters button strips all filter params from URL", async () => {
@@ -105,7 +108,7 @@ describe("AuditLogPage nuqs URL roundtrip", () => {
   it("malformed ?from= URL value defaults cleanly without throwing the query (adversarial item a)", async () => {
     let capturedUrl: URL | null = null;
     server.use(
-      http.get("*/api/v1/policy/audit", ({ request }) => {
+      http.get("*/api/v1/audit/events", ({ request }) => {
         capturedUrl = new URL(request.url);
         return emptyAuditPage();
       }),
@@ -123,12 +126,12 @@ describe("AuditLogPage nuqs URL roundtrip", () => {
     await waitFor(() => {
       expect(capturedUrl).not.toBeNull();
     });
-    expect(capturedUrl!.searchParams.get("action")).toBe("job.failed");
-    expect(capturedUrl!.searchParams.get("after")).toBeNull();
+    expect(capturedUrl!.searchParams.get("event_type")).toBe("job.failed");
+    expect(capturedUrl!.searchParams.get("from")).toBeNull();
     expect(container.textContent).not.toContain("Failed to load audit log");
   });
 
-  it("selecting an action option pushes ?action= to URL", async () => {
+  it("selecting an event-type option pushes ?action= to URL (backward-compat URL key)", async () => {
     let lastUrlUpdate: UrlUpdateEvent | null = null;
 
     const { container } = renderWithProviders(
@@ -143,14 +146,18 @@ describe("AuditLogPage nuqs URL roundtrip", () => {
     );
 
     const actionSelect = container.querySelector(
-      'select[aria-label="Filter by action"]',
+      'select[aria-label="Filter by event type"]',
     ) as HTMLSelectElement | null;
     expect(actionSelect).toBeTruthy();
-    fireEvent.change(actionSelect!, { target: { value: "job.failed" } });
+    fireEvent.change(actionSelect!, {
+      target: { value: "mcp.tool_invocation" },
+    });
 
     await waitFor(() => {
       expect(lastUrlUpdate).not.toBeNull();
     });
-    expect(lastUrlUpdate!.searchParams.get("action")).toBe("job.failed");
+    expect(lastUrlUpdate!.searchParams.get("action")).toBe(
+      "mcp.tool_invocation",
+    );
   });
 });

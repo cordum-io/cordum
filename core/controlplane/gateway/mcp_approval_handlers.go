@@ -3,6 +3,7 @@ package gateway
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -76,7 +77,7 @@ func (h *mcpApprovalHandler) Get(w http.ResponseWriter, r *http.Request, id stri
 			writeJSONError(w, http.StatusNotFound, "approval_not_found", "no such mcp approval")
 			return
 		}
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeMCPApprovalStoreError(w, r, "get mcp approval", err, slog.String("approval_id", id))
 		return
 	}
 	// Tenant scoping — callers can only see approvals for their own
@@ -114,7 +115,7 @@ func (h *mcpApprovalHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	items, next, err := h.store.ListByStatus(ctx, statusFilter, cursor, int64(limit))
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeMCPApprovalStoreError(w, r, "list mcp approvals", err, slog.String("status", statusFilter))
 		return
 	}
 
@@ -160,19 +161,18 @@ func (h *mcpApprovalHandler) resolve(w http.ResponseWriter, r *http.Request, id 
 			writeJSONError(w, http.StatusNotFound, "approval_not_found", "no such mcp approval")
 			return
 		}
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeMCPApprovalStoreError(w, r, "load mcp approval for resolution", err, slog.String("approval_id", id))
 		return
 	}
 
 	// Self-approval guard — mirrors handleApproveJob. The approver's
 	// composite identity (API-key hash + principal ID) must not overlap
-	// the approval's Requester. Because the Requester on an MCP approval
-	// is recorded as the agent_id (which is the caller's principal when
-	// it set the ctx value in WithMCPCallMetadata), we compare the
-	// principal portion of the approver identity against that agent_id.
+	// the approval's Requester. New records carry the same composite
+	// requester shape; legacy records may still contain a plain principal.
 	approverIdentity := h.getApproverIdentity(r)
 	if rec.Requester != "" && approverIdentity != "" {
-		if requesterMatchesApprover(rec.Requester, approverIdentity) {
+		if requesterMatchesApprover(rec.Requester, approverIdentity) ||
+			identitiesOverlap(rec.Requester, approverIdentity) {
 			writeJSONError(w, http.StatusForbidden, "self_approval_denied",
 				"self-approval not permitted: the approver cannot be the same principal as the call requester")
 			return
@@ -187,24 +187,40 @@ func (h *mcpApprovalHandler) resolve(w http.ResponseWriter, r *http.Request, id 
 	resolverID := h.approverPrincipalID(r)
 	resolved, err := h.store.Resolve(ctx, id, decision, resolverID, strings.TrimSpace(body.Reason))
 	if err != nil {
-		writeJSONError(w, http.StatusConflict, "resolve_failed", err.Error())
+		var stateConflict *MCPApprovalStateConflictError
+		if errors.As(err, &stateConflict) || errors.Is(err, ErrMCPApprovalAlreadyResolved) {
+			status := model.ApprovalStatus("")
+			if stateConflict != nil {
+				status = stateConflict.Status
+			}
+			slog.Warn("mcp approval resolve conflict", "approval_id", id, "status", status, "error", err)
+			writeJSONError(w, http.StatusConflict, "approval_already_resolved", "approval already resolved")
+			return
+		}
+		writeMCPApprovalStoreError(w, r, "resolve mcp approval", err, slog.String("approval_id", id))
 		return
 	}
 	writeJSONObject(w, http.StatusOK, resolved)
 }
 
-// requesterMatchesApprover is the MCP-specific equivalent of
-// identitiesOverlap. The Requester on an MCP approval is the agent_id,
-// so the approver matches when either (a) their composite identity
-// carries the same principal, or (b) their identitiesOverlap check
-// would pass against a synthetic composite constructed from the
-// requester string (for API-key-equality enforcement).
+func writeMCPApprovalStoreError(w http.ResponseWriter, r *http.Request, operation string, err error, attrs ...slog.Attr) {
+	args := []any{"method", r.Method, "path", r.URL.Path, "error", err}
+	for _, attr := range attrs {
+		args = append(args, attr.Key, attr.Value.Any())
+	}
+	slog.Warn(operation+" failed", args...)
+	writeJSONError(w, http.StatusInternalServerError, "mcp_approval_store_error", "mcp approval store unavailable")
+}
+
+// requesterMatchesApprover covers legacy MCP requester values recorded as a
+// plain principal ID. Composite requester values are handled by
+// identitiesOverlap.
 func requesterMatchesApprover(requester, approverIdentity string) bool {
 	if requester == "" || approverIdentity == "" {
 		return false
 	}
 	// The approver's identity is composite: e.g. "apikey:abcd|principal:alice".
-	// Requester is a plain principal ID. Compare the principal segment.
+	// Legacy Requester is a plain principal ID. Compare the principal segment.
 	for _, part := range strings.Split(approverIdentity, "|") {
 		if strings.HasPrefix(part, "principal:") {
 			if strings.TrimPrefix(part, "principal:") == requester {
@@ -213,20 +229,6 @@ func requesterMatchesApprover(requester, approverIdentity string) bool {
 		}
 	}
 	return false
-}
-
-// writeJSONError / writeJSONObject are already declared in helpers —
-// we redeclare thin wrappers here only if the existing helpers have
-// incompatible signatures. At the time of writing writeErrorJSON exists;
-// use it through thin wrappers so handler code stays readable.
-func writeJSONError(w http.ResponseWriter, status int, code, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"error":  message,
-		"code":   code,
-		"status": status,
-	})
 }
 
 func writeJSONObject(w http.ResponseWriter, status int, v any) {

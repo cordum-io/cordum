@@ -2,6 +2,7 @@ package claude
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -34,4 +35,27 @@ func TestPreToolUseAskIncludesUpdatedInput(t *testing.T) {
 		t.Fatalf("Marshal returned error: %v", err)
 	}
 	assertCompactJSON(t, string(data), `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"needs operator confirmation","updatedInput":{"command":"npm test -- --runInBand"}}}`)
+}
+
+func TestPreToolUseOutputRedactsUpdatedInput(t *testing.T) {
+	const secret = "AKIAIOSFODNN7EXAMPLE"
+	out := ClaudeHookOutputForDecision("PreToolUse", AgentdDecision{
+		Decision: DecisionAsk,
+		Reason:   "gateway constrained input",
+		UpdatedInput: map[string]any{
+			"command": "echo " + secret,
+			"env":     map[string]any{"AWS_ACCESS_KEY_ID": secret},
+		},
+	})
+	data, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	encoded := string(data)
+	if strings.Contains(encoded, secret) {
+		t.Fatalf("updatedInput leaked secret to Claude stdout JSON: %s", encoded)
+	}
+	if !strings.Contains(encoded, "redacted") {
+		t.Fatalf("updatedInput did not include redaction marker: %s", encoded)
+	}
 }

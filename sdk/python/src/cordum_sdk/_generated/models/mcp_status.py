@@ -13,29 +13,24 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="McpStatus")
 
 
 @_attrs_define
 class McpStatus:
-    """ 
-        Attributes:
-            running (Union[Unset, bool]):
-            connected_clients (Union[Unset, int]):
-            uptime_seconds (Union[Unset, float]):
-            transport (Union[Unset, McpStatusTransport]):
-     """
+    """
+    Attributes:
+        running (Union[Unset, bool]):
+        connected_clients (Union[Unset, int]):
+        uptime_seconds (Union[Unset, float]):
+        transport (Union[Unset, McpStatusTransport]):
+    """
 
     running: Union[Unset, bool] = UNSET
     connected_clients: Union[Unset, int] = UNSET
     uptime_seconds: Union[Unset, float] = UNSET
     transport: Union[Unset, McpStatusTransport] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         running = self.running
@@ -48,12 +43,9 @@ class McpStatus:
         if not isinstance(self.transport, Unset):
             transport = self.transport.value
 
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if running is not UNSET:
             field_dict["running"] = running
         if connected_clients is not UNSET:
@@ -64,8 +56,6 @@ class McpStatus:
             field_dict["transport"] = transport
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -78,13 +68,10 @@ class McpStatus:
 
         _transport = d.pop("transport", UNSET)
         transport: Union[Unset, McpStatusTransport]
-        if isinstance(_transport,  Unset):
+        if isinstance(_transport, Unset):
             transport = UNSET
         else:
             transport = McpStatusTransport(_transport)
-
-
-
 
         mcp_status = cls(
             running=running,
@@ -92,7 +79,6 @@ class McpStatus:
             uptime_seconds=uptime_seconds,
             transport=transport,
         )
-
 
         mcp_status.additional_properties = d
         return mcp_status

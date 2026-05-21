@@ -13,26 +13,22 @@ from typing import cast, List
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="CreateTopicBody")
 
 
 @_attrs_define
 class CreateTopicBody:
-    """ 
-        Attributes:
-            name (str):
-            pool (Union[Unset, str]):
-            input_schema_id (Union[Unset, str]):
-            output_schema_id (Union[Unset, str]):
-            pack_id (Union[Unset, str]):
-            requires (Union[Unset, List[str]]):
-            risk_tags (Union[Unset, List[str]]):
-            status (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        name (str):
+        pool (Union[Unset, str]):
+        input_schema_id (Union[Unset, str]):
+        output_schema_id (Union[Unset, str]):
+        pack_id (Union[Unset, str]):
+        requires (Union[Unset, List[str]]):
+        risk_tags (Union[Unset, List[str]]):
+        status (Union[Unset, str]):
+    """
 
     name: str
     pool: Union[Unset, str] = UNSET
@@ -43,7 +39,6 @@ class CreateTopicBody:
     risk_tags: Union[Unset, List[str]] = UNSET
     status: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         name = self.name
@@ -60,22 +55,19 @@ class CreateTopicBody:
         if not isinstance(self.requires, Unset):
             requires = self.requires
 
-
-
         risk_tags: Union[Unset, List[str]] = UNSET
         if not isinstance(self.risk_tags, Unset):
             risk_tags = self.risk_tags
 
-
-
         status = self.status
-
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "name": name,
-        })
+        field_dict.update(
+            {
+                "name": name,
+            }
+        )
         if pool is not UNSET:
             field_dict["pool"] = pool
         if input_schema_id is not UNSET:
@@ -93,8 +85,6 @@ class CreateTopicBody:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -110,9 +100,7 @@ class CreateTopicBody:
 
         requires = cast(List[str], d.pop("requires", UNSET))
 
-
         risk_tags = cast(List[str], d.pop("risk_tags", UNSET))
-
 
         status = d.pop("status", UNSET)
 
@@ -126,7 +114,6 @@ class CreateTopicBody:
             risk_tags=risk_tags,
             status=status,
         )
-
 
         create_topic_body.additional_properties = d
         return create_topic_body

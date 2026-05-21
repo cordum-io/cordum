@@ -16,7 +16,7 @@ func TestRedisDecisionLogStoreAppendAndQueryRoundTrip(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	record := decisionFixture("tenant-a", "job-1", time.Date(2026, time.April, 20, 9, 0, 0, 0, time.UTC).UnixMilli())
+	record := decisionFixture("tenant-a", "job-1", decisionFixtureBase(t))
 	if err := store.AppendDecision(ctx, record); err != nil {
 		t.Fatalf("AppendDecision() error = %v", err)
 	}
@@ -47,7 +47,7 @@ func TestRedisDecisionLogStoreQueryFilters(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	base := time.Date(2026, time.April, 20, 10, 0, 0, 0, time.UTC).UnixMilli()
+	base := decisionFixtureBase(t)
 	records := []model.DecisionLogRecord{
 		decisionFixture("tenant-a", "job-1", base-3_000),
 		decisionFixture("tenant-a", "job-2", base-2_000),
@@ -122,7 +122,7 @@ func TestRedisDecisionLogStoreSingleFilterQueriesUseSecondaryIndexes(t *testing.
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	base := time.Date(2026, time.April, 20, 10, 30, 0, 0, time.UTC).UnixMilli()
+	base := decisionFixtureBase(t)
 	records := []model.DecisionLogRecord{
 		decisionFixture("tenant-a", "job-rule", base-4_000),
 		decisionFixture("tenant-a", "job-agent", base-3_000),
@@ -205,7 +205,7 @@ func TestRedisDecisionLogStoreSingleFilterCursorUsesSecondaryIndex(t *testing.T)
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	base := time.Date(2026, time.April, 20, 10, 45, 0, 0, time.UTC).UnixMilli()
+	base := decisionFixtureBase(t)
 	records := []model.DecisionLogRecord{
 		decisionFixture("tenant-a", "job-1", base),
 		decisionFixture("tenant-a", "job-2", base),
@@ -273,7 +273,7 @@ func TestRedisDecisionLogStorePagination(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	base := time.Date(2026, time.April, 20, 11, 0, 0, 0, time.UTC).UnixMilli()
+	base := decisionFixtureBase(t)
 	for i := 0; i < 5; i++ {
 		record := decisionFixture("tenant-a", "job-"+string(rune('A'+i)), base-int64(i)*1000)
 		if err := store.AppendDecision(ctx, record); err != nil {
@@ -339,7 +339,7 @@ func TestRedisDecisionLogStorePaginationHandlesTimestampTies(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	base := time.Date(2026, time.April, 20, 11, 30, 0, 0, time.UTC).UnixMilli()
+	base := decisionFixtureBase(t)
 	records := []model.DecisionLogRecord{
 		decisionFixture("tenant-a", "job-1", base),
 		decisionFixture("tenant-a", "job-2", base),
@@ -395,7 +395,7 @@ func TestRedisDecisionLogStoreDefaultsAndEmptyResults(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	base := time.Date(2026, time.April, 20, 12, 0, 0, 0, time.UTC).UnixMilli()
+	base := decisionFixtureBase(t)
 	for i := 0; i < 60; i++ {
 		record := decisionFixture("tenant-a", jobIDForIndex(i), base-int64(i)*1000)
 		if err := store.AppendDecision(ctx, record); err != nil {
@@ -451,7 +451,7 @@ func TestRedisDecisionLogStoreTTLAppliedOnWrite(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	ctx := context.Background()
-	record := decisionFixture("tenant-a", "job-ttl", time.Date(2026, time.April, 20, 13, 0, 0, 0, time.UTC).UnixMilli())
+	record := decisionFixture("tenant-a", "job-ttl", decisionFixtureBaseWithinTTL(t, 30*time.Second, 120*time.Second))
 	if err := store.AppendDecision(ctx, record); err != nil {
 		t.Fatalf("AppendDecision() error = %v", err)
 	}
@@ -474,6 +474,27 @@ func newTestDecisionLogStore(t *testing.T) (*RedisDecisionLogStore, *miniredis.M
 		t.Fatalf("NewRedisDecisionLogStore() error = %v", err)
 	}
 	return store, srv
+}
+
+func decisionFixtureBase(t *testing.T) int64 {
+	t.Helper()
+	base := time.Now().UTC().Add(-1 * time.Hour)
+	if time.Since(base) > defaultDecisionLogTTL-time.Hour {
+		t.Fatalf("fixture base drifted outside default TTL window: age=%v ttl=%v", time.Since(base), defaultDecisionLogTTL)
+	}
+	return base.UnixMilli()
+}
+
+func decisionFixtureBaseWithinTTL(t *testing.T, age, ttl time.Duration) int64 {
+	t.Helper()
+	if age <= 0 || ttl <= 0 {
+		t.Fatalf("invalid fixture age=%v ttl=%v", age, ttl)
+	}
+	base := time.Now().UTC().Add(-age)
+	if time.Since(base) >= ttl {
+		t.Fatalf("fixture base drifted outside TTL window: age=%v ttl=%v", time.Since(base), ttl)
+	}
+	return base.UnixMilli()
 }
 
 func decisionFixture(tenant, jobID string, timestamp int64) model.DecisionLogRecord {

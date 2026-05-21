@@ -13,23 +13,18 @@ from typing import cast, Union
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="PaginatedResponse")
 
 
 @_attrs_define
 class PaginatedResponse:
-    """ 
-        Attributes:
-            next_cursor (Union[None, Unset, str]): Cursor for the next page (null if no more pages)
-     """
+    """
+    Attributes:
+        next_cursor (Union[None, Unset, str]): Cursor for the next page (null if no more pages)
+    """
 
     next_cursor: Union[None, Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         next_cursor: Union[None, Unset, str]
@@ -38,21 +33,18 @@ class PaginatedResponse:
         else:
             next_cursor = self.next_cursor
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if next_cursor is not UNSET:
             field_dict["next_cursor"] = next_cursor
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
+
         def _parse_next_cursor(data: object) -> Union[None, Unset, str]:
             if data is None:
                 return data
@@ -62,11 +54,9 @@ class PaginatedResponse:
 
         next_cursor = _parse_next_cursor(d.pop("next_cursor", UNSET))
 
-
         paginated_response = cls(
             next_cursor=next_cursor,
         )
-
 
         paginated_response.additional_properties = d
         return paginated_response

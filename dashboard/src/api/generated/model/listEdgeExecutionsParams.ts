@@ -7,13 +7,13 @@
  */
 
 export type ListEdgeExecutionsParams = {
-session_id?: string;
-job_id?: string;
-trace_id?: string;
-workflow_run_id?: string;
-cursor?: string;
-/**
- * @minimum 1
- */
-limit?: number;
+  session_id?: string;
+  job_id?: string;
+  trace_id?: string;
+  workflow_run_id?: string;
+  cursor?: string;
+  /**
+   * @minimum 1
+   */
+  limit?: number;
 };

@@ -5,11 +5,11 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { GetApprovalContext200Approval } from './getApprovalContext200Approval';
-import type { GetApprovalContext200BlastRadius } from './getApprovalContext200BlastRadius';
-import type { GetApprovalContext200PriorApprovalsItem } from './getApprovalContext200PriorApprovalsItem';
-import type { GetApprovalContext200PolicySnapshotSummary } from './getApprovalContext200PolicySnapshotSummary';
-import type { GetApprovalContext200Constraints } from './getApprovalContext200Constraints';
+import type { GetApprovalContext200Approval } from "./getApprovalContext200Approval";
+import type { GetApprovalContext200BlastRadius } from "./getApprovalContext200BlastRadius";
+import type { GetApprovalContext200PriorApprovalsItem } from "./getApprovalContext200PriorApprovalsItem";
+import type { GetApprovalContext200PolicySnapshotSummary } from "./getApprovalContext200PolicySnapshotSummary";
+import type { GetApprovalContext200Constraints } from "./getApprovalContext200Constraints";
 
 export type GetApprovalContext200 = {
   /** Full approval record with decision summary and workflow metadata */

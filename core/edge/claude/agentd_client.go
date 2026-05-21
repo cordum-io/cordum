@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -165,10 +164,8 @@ func (c *HTTPAgentdClient) EvaluateHook(ctx context.Context, req AgentdRequest) 
 }
 
 func isLoopbackHost(host string) bool {
-	h := strings.ToLower(strings.Trim(host, "[]"))
-	if h == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(h)
-	return ip != nil && ip.IsLoopback()
+	// Keep the runtime client in lockstep with validateLoopbackAgentdURL:
+	// managed settings verification must reject exactly the same non-canonical
+	// loopback aliases the hook client refuses to dial.
+	return isLoopbackHookHost(host)
 }

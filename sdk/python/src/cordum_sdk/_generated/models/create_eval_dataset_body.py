@@ -15,10 +15,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.create_eval_dataset_body_entries_item import CreateEvalDatasetBodyEntriesItem
-
-
-
+    from ..models.create_eval_dataset_body_entries_item import CreateEvalDatasetBodyEntriesItem
 
 
 T = TypeVar("T", bound="CreateEvalDatasetBody")
@@ -26,23 +23,23 @@ T = TypeVar("T", bound="CreateEvalDatasetBody")
 
 @_attrs_define
 class CreateEvalDatasetBody:
-    """ 
-        Attributes:
-            name (str):
-            version (int):
-            entries (List['CreateEvalDatasetBodyEntriesItem']):
-            description (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        name (str):
+        version (int):
+        entries (List['CreateEvalDatasetBodyEntriesItem']):
+        description (Union[Unset, str]):
+    """
 
     name: str
     version: int
-    entries: List['CreateEvalDatasetBodyEntriesItem']
+    entries: List["CreateEvalDatasetBodyEntriesItem"]
     description: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         from ..models.create_eval_dataset_body_entries_item import CreateEvalDatasetBodyEntriesItem
+
         name = self.name
 
         version = self.version
@@ -52,28 +49,26 @@ class CreateEvalDatasetBody:
             entries_item = entries_item_data.to_dict()
             entries.append(entries_item)
 
-
-
         description = self.description
-
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "name": name,
-            "version": version,
-            "entries": entries,
-        })
+        field_dict.update(
+            {
+                "name": name,
+                "version": version,
+                "entries": entries,
+            }
+        )
         if description is not UNSET:
             field_dict["description"] = description
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.create_eval_dataset_body_entries_item import CreateEvalDatasetBodyEntriesItem
+
         d = src_dict.copy()
         name = d.pop("name")
 
@@ -81,13 +76,10 @@ class CreateEvalDatasetBody:
 
         entries = []
         _entries = d.pop("entries")
-        for entries_item_data in (_entries):
+        for entries_item_data in _entries:
             entries_item = CreateEvalDatasetBodyEntriesItem.from_dict(entries_item_data)
 
-
-
             entries.append(entries_item)
-
 
         description = d.pop("description", UNSET)
 
@@ -97,7 +89,6 @@ class CreateEvalDatasetBody:
             entries=entries,
             description=description,
         )
-
 
         create_eval_dataset_body.additional_properties = d
         return create_eval_dataset_body

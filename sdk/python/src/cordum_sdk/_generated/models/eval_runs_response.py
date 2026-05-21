@@ -15,10 +15,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.eval_run_result import EvalRunResult
-
-
-
+    from ..models.eval_run_result import EvalRunResult
 
 
 T = TypeVar("T", bound="EvalRunsResponse")
@@ -26,54 +23,49 @@ T = TypeVar("T", bound="EvalRunsResponse")
 
 @_attrs_define
 class EvalRunsResponse:
-    """ 
-        Attributes:
-            items (List['EvalRunResult']):
-            next_cursor (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        items (List['EvalRunResult']):
+        next_cursor (Union[Unset, str]):
+    """
 
-    items: List['EvalRunResult']
+    items: List["EvalRunResult"]
     next_cursor: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         from ..models.eval_run_result import EvalRunResult
+
         items = []
         for items_item_data in self.items:
             items_item = items_item_data.to_dict()
             items.append(items_item)
 
-
-
         next_cursor = self.next_cursor
-
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "items": items,
-        })
+        field_dict.update(
+            {
+                "items": items,
+            }
+        )
         if next_cursor is not UNSET:
             field_dict["next_cursor"] = next_cursor
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.eval_run_result import EvalRunResult
+
         d = src_dict.copy()
         items = []
         _items = d.pop("items")
-        for items_item_data in (_items):
+        for items_item_data in _items:
             items_item = EvalRunResult.from_dict(items_item_data)
 
-
-
             items.append(items_item)
-
 
         next_cursor = d.pop("next_cursor", UNSET)
 
@@ -81,7 +73,6 @@ class EvalRunsResponse:
             items=items,
             next_cursor=next_cursor,
         )
-
 
         eval_runs_response.additional_properties = d
         return eval_runs_response

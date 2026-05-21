@@ -16,11 +16,8 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.json_rpc_response_result_type_0 import JsonRpcResponseResultType0
-  from ..models.json_rpc_response_error_type_0 import JsonRpcResponseErrorType0
-
-
-
+    from ..models.json_rpc_response_error_type_0 import JsonRpcResponseErrorType0
+    from ..models.json_rpc_response_result_type_0 import JsonRpcResponseResultType0
 
 
 T = TypeVar("T", bound="JsonRpcResponse")
@@ -28,28 +25,27 @@ T = TypeVar("T", bound="JsonRpcResponse")
 
 @_attrs_define
 class JsonRpcResponse:
-    """ 
-        Attributes:
-            jsonrpc (Union[Unset, JsonRpcResponseJsonrpc]):
-            id (Union[Unset, int, str]):
-            result (Union['JsonRpcResponseResultType0', None, Unset]):
-            error (Union['JsonRpcResponseErrorType0', None, Unset]):
-     """
+    """
+    Attributes:
+        jsonrpc (Union[Unset, JsonRpcResponseJsonrpc]):
+        id (Union[Unset, int, str]):
+        result (Union['JsonRpcResponseResultType0', None, Unset]):
+        error (Union['JsonRpcResponseErrorType0', None, Unset]):
+    """
 
     jsonrpc: Union[Unset, JsonRpcResponseJsonrpc] = UNSET
     id: Union[Unset, int, str] = UNSET
-    result: Union['JsonRpcResponseResultType0', None, Unset] = UNSET
-    error: Union['JsonRpcResponseErrorType0', None, Unset] = UNSET
+    result: Union["JsonRpcResponseResultType0", None, Unset] = UNSET
+    error: Union["JsonRpcResponseErrorType0", None, Unset] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.json_rpc_response_result_type_0 import JsonRpcResponseResultType0
         from ..models.json_rpc_response_error_type_0 import JsonRpcResponseErrorType0
+        from ..models.json_rpc_response_result_type_0 import JsonRpcResponseResultType0
+
         jsonrpc: Union[Unset, str] = UNSET
         if not isinstance(self.jsonrpc, Unset):
             jsonrpc = self.jsonrpc.value
-
 
         id: Union[Unset, int, str]
         if isinstance(self.id, Unset):
@@ -73,11 +69,9 @@ class JsonRpcResponse:
         else:
             error = self.error
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if jsonrpc is not UNSET:
             field_dict["jsonrpc"] = jsonrpc
         if id is not UNSET:
@@ -89,22 +83,18 @@ class JsonRpcResponse:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.json_rpc_response_result_type_0 import JsonRpcResponseResultType0
         from ..models.json_rpc_response_error_type_0 import JsonRpcResponseErrorType0
+        from ..models.json_rpc_response_result_type_0 import JsonRpcResponseResultType0
+
         d = src_dict.copy()
         _jsonrpc = d.pop("jsonrpc", UNSET)
         jsonrpc: Union[Unset, JsonRpcResponseJsonrpc]
-        if isinstance(_jsonrpc,  Unset):
+        if isinstance(_jsonrpc, Unset):
             jsonrpc = UNSET
         else:
             jsonrpc = JsonRpcResponseJsonrpc(_jsonrpc)
-
-
-
 
         def _parse_id(data: object) -> Union[Unset, int, str]:
             if isinstance(data, Unset):
@@ -113,8 +103,7 @@ class JsonRpcResponse:
 
         id = _parse_id(d.pop("id", UNSET))
 
-
-        def _parse_result(data: object) -> Union['JsonRpcResponseResultType0', None, Unset]:
+        def _parse_result(data: object) -> Union["JsonRpcResponseResultType0", None, Unset]:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -124,17 +113,14 @@ class JsonRpcResponse:
                     raise TypeError()
                 result_type_0 = JsonRpcResponseResultType0.from_dict(data)
 
-
-
                 return result_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
-            return cast(Union['JsonRpcResponseResultType0', None, Unset], data)
+            return cast(Union["JsonRpcResponseResultType0", None, Unset], data)
 
         result = _parse_result(d.pop("result", UNSET))
 
-
-        def _parse_error(data: object) -> Union['JsonRpcResponseErrorType0', None, Unset]:
+        def _parse_error(data: object) -> Union["JsonRpcResponseErrorType0", None, Unset]:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -144,15 +130,12 @@ class JsonRpcResponse:
                     raise TypeError()
                 error_type_0 = JsonRpcResponseErrorType0.from_dict(data)
 
-
-
                 return error_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
-            return cast(Union['JsonRpcResponseErrorType0', None, Unset], data)
+            return cast(Union["JsonRpcResponseErrorType0", None, Unset], data)
 
         error = _parse_error(d.pop("error", UNSET))
-
 
         json_rpc_response = cls(
             jsonrpc=jsonrpc,
@@ -160,7 +143,6 @@ class JsonRpcResponse:
             result=result,
             error=error,
         )
-
 
         json_rpc_response.additional_properties = d
         return json_rpc_response

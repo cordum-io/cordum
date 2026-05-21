@@ -6,10 +6,10 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeEvaluateResponseErrorCode = typeof EdgeEvaluateResponseErrorCode[keyof typeof EdgeEvaluateResponseErrorCode];
-
+export type EdgeEvaluateResponseErrorCode =
+  (typeof EdgeEvaluateResponseErrorCode)[keyof typeof EdgeEvaluateResponseErrorCode];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeEvaluateResponseErrorCode = {
-  safety_unavailable: 'safety_unavailable',
+  safety_unavailable: "safety_unavailable",
 } as const;

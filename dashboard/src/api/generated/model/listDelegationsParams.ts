@@ -5,14 +5,14 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { ListDelegationsStatus } from './listDelegationsStatus';
+import type { ListDelegationsStatus } from "./listDelegationsStatus";
 
 export type ListDelegationsParams = {
-status?: ListDelegationsStatus;
-scope?: string;
-before_expiry?: string;
-since_issued?: string;
-until_issued?: string;
-cursor?: string;
-limit?: number;
+  status?: ListDelegationsStatus;
+  scope?: string;
+  before_expiry?: string;
+  since_issued?: string;
+  until_issued?: string;
+  cursor?: string;
+  limit?: number;
 };

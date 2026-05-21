@@ -4,15 +4,20 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	"github.com/cordum/cordum/core/controlplane/scheduler"
 	"github.com/cordum/cordum/core/controlplane/topicregistry"
 	"github.com/cordum/cordum/core/controlplane/workercredentials"
 	"github.com/cordum/cordum/core/infra/store"
+	"github.com/cordum/cordum/core/licensing"
 	capsdk "github.com/cordum/cordum/core/protocol/capsdk"
 )
 
@@ -131,13 +136,19 @@ func TestRegisterExternalWorker(t *testing.T) {
 
 func TestRevokeWorker(t *testing.T) {
 	s, bus, _ := newTestGateway(t)
+	issuer := wireSessionIssuer(t, s)
+	ctx := context.Background()
 
-	issued, err := s.workerCredentialStore.Create(context.Background(), workercredentials.IssueInput{
+	issued, err := s.workerCredentialStore.Create(ctx, workercredentials.IssueInput{
+		TenantID:  "default",
 		WorkerID:  "external-worker",
 		CreatedBy: "tester",
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
+	}
+	if _, _, err := issuer.Issue(ctx, "external-worker", "default", "v1"); err != nil {
+		t.Fatalf("issue session: %v", err)
 	}
 
 	req := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/workers/credentials/external-worker", nil), &auth.AuthContext{
@@ -153,7 +164,7 @@ func TestRevokeWorker(t *testing.T) {
 		t.Fatalf("expected 204, got %d: %s", rr.Code, rr.Body.String())
 	}
 
-	record, err := s.workerCredentialStore.Get(context.Background(), "external-worker")
+	record, err := s.workerCredentialStore.Get(ctx, "default", "external-worker")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -161,7 +172,7 @@ func TestRevokeWorker(t *testing.T) {
 		t.Fatalf("expected revoked record, got %+v", record)
 	}
 
-	record, ok, err := s.workerCredentialStore.Verify(context.Background(), "external-worker", issued.Token)
+	record, ok, err := s.workerCredentialStore.Verify(ctx, "external-worker", issued.Token)
 	if err != nil {
 		t.Fatalf("Verify revoked: %v", err)
 	}
@@ -170,6 +181,13 @@ func TestRevokeWorker(t *testing.T) {
 	}
 	if record == nil || !record.Revoked() {
 		t.Fatalf("expected revoked record from Verify, got %+v", record)
+	}
+	trust, err := scheduler.NewTrustResolver(s.jobStore.Client()).ResolveTrust(ctx, "external-worker")
+	if err != nil {
+		t.Fatalf("resolve trust after credential revoke: %v", err)
+	}
+	if trust.SessionValid || trust.RevokedAt == nil {
+		t.Fatalf("expected deleting credential to revoke active worker session, got %+v", trust)
 	}
 
 	if len(bus.published) == 0 {
@@ -181,6 +199,148 @@ func TestRevokeWorker(t *testing.T) {
 	}
 	if alert := last.packet.GetAlert(); alert == nil || alert.GetDetails()["scope_id"] != "workers" {
 		t.Fatalf("expected workers config change alert, got %+v", last.packet.GetAlert())
+	}
+}
+
+func createWorkerCredentialForTenant(t *testing.T, s *server, tenant, workerID string) issueWorkerCredentialResponse {
+	t.Helper()
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials",
+		bytes.NewBufferString(fmt.Sprintf(`{"worker_id":%q}`, workerID))), &auth.AuthContext{
+		Tenant:      tenant,
+		Role:        "admin",
+		PrincipalID: tenant + "-admin",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleCreateWorkerCredential(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create %s/%s: expected 201, got %d: %s", tenant, workerID, rec.Code, rec.Body.String())
+	}
+	var resp issueWorkerCredentialResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	return resp
+}
+
+func listWorkerCredentialIDsForTenant(t *testing.T, s *server, tenant string) []string {
+	t.Helper()
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/workers/credentials", nil), &auth.AuthContext{
+		Tenant: tenant,
+		Role:   "admin",
+	})
+	rec := httptest.NewRecorder()
+	s.handleListWorkerCredentials(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list %s: expected 200, got %d: %s", tenant, rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Items []workerCredentialResponse `json:"items"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	ids := make([]string, 0, len(payload.Items))
+	for _, item := range payload.Items {
+		ids = append(ids, item.WorkerID)
+	}
+	return ids
+}
+
+func TestWorkerCredentials_ScopedToTenant(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	tenantA := createWorkerCredentialForTenant(t, s, "tenant-a", "tenant-a-worker")
+	tenantB := createWorkerCredentialForTenant(t, s, "tenant-b", "tenant-b-worker")
+
+	if got := listWorkerCredentialIDsForTenant(t, s, "tenant-a"); !equalStringSlices(got, []string{"tenant-a-worker"}) {
+		t.Fatalf("tenant-a list = %v, want only tenant-a-worker", got)
+	}
+	if got := listWorkerCredentialIDsForTenant(t, s, "tenant-b"); !equalStringSlices(got, []string{"tenant-b-worker"}) {
+		t.Fatalf("tenant-b list = %v, want only tenant-b-worker", got)
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodDelete, "/api/v1/workers/credentials/tenant-b-worker", nil), &auth.AuthContext{
+		Tenant: "tenant-a",
+		Role:   "admin",
+	})
+	req.SetPathValue("worker_id", "tenant-b-worker")
+	rec := httptest.NewRecorder()
+	s.handleDeleteWorkerCredential(rec, req)
+	requireStableErrorCode(t, rec, http.StatusNotFound, "WORKER_CRED_NOT_FOUND")
+
+	if _, ok, err := s.workerCredentialStore.Verify(context.Background(), tenantB.WorkerID, tenantB.Token); err != nil || !ok {
+		t.Fatalf("tenant-b credential must remain valid after tenant-a revoke attempt: ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := s.workerCredentialStore.Verify(context.Background(), tenantA.WorkerID, tenantA.Token); err != nil || !ok {
+		t.Fatalf("tenant-a credential should still verify: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestWorkerCredentials_LicenseCASNoOvershoot(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	// The invariant is exact license-cap enforcement under concurrent CAS, not
+	// a specific cap size. Keep 3x contention but bound the race-detector memory
+	// footprint so WSL runners can repeat the test with -race -count=3.
+	const maxWorkers = 4
+	setTestEntitlements(t, s, licensing.PlanTeam, func(e *licensing.Entitlements) {
+		e.MaxWorkers = maxWorkers
+	})
+
+	const attempts = maxWorkers * 3
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	codes := make(chan int, attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/workers/credentials",
+				bytes.NewBufferString(fmt.Sprintf(`{"worker_id":"cas-worker-%03d"}`, i))), &auth.AuthContext{
+				Tenant:      "default",
+				Role:        "admin",
+				PrincipalID: "admin",
+			})
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			s.handleCreateWorkerCredential(rec, req)
+			codes <- rec.Code
+		}(i)
+	}
+	close(start)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for %d worker credential create attempts", attempts)
+	}
+	close(codes)
+
+	successes := 0
+	for code := range codes {
+		if code == http.StatusCreated {
+			successes++
+		}
+	}
+	if successes != maxWorkers {
+		t.Fatalf("worker license CAS allowed %d creates, want exactly %d", successes, maxWorkers)
+	}
+	records, err := s.workerCredentialStore.List(context.Background(), "default")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	active := 0
+	for _, record := range records {
+		if !record.Revoked() {
+			active++
+		}
+	}
+	if active != maxWorkers {
+		t.Fatalf("stored active worker credentials = %d, want %d", active, maxWorkers)
 	}
 }
 
@@ -199,6 +359,7 @@ func TestCreateCredentialEmptyWorkerID(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
 	}
+	requireStableErrorCode(t, rec, http.StatusBadRequest, "WORKER_CRED_BINDING_INVALID")
 }
 
 func TestCreateCredentialArrayTooLong(t *testing.T) {
@@ -245,6 +406,7 @@ func TestCreateCredentialPoolNotFound(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
+	requireStableErrorCode(t, rec, http.StatusNotFound, "POOL_NOT_FOUND")
 }
 
 func TestRevokeNonexistentCredential(t *testing.T) {
@@ -262,6 +424,7 @@ func TestRevokeNonexistentCredential(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
+	requireStableErrorCode(t, rec, http.StatusNotFound, "WORKER_CRED_NOT_FOUND")
 }
 
 func TestRotateCredentialClearsAgentLink(t *testing.T) {
@@ -363,4 +526,16 @@ func TestRevokeCredentialClearsAgentLink(t *testing.T) {
 	if stale != nil {
 		t.Fatalf("STALE LINKAGE: GetByWorkerID returned agent %q after revoke — should be nil", stale.ID)
 	}
+}
+
+func equalStringSlices(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }

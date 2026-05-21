@@ -74,8 +74,14 @@ headers, or provider secrets to `evaluate`; send redacted action input and hashe
 | `POST /api/v1/edge/approvals/{approval_ref}/reject` | `EdgeApprovalDecisionRequest`: optional bounded `reason`. | `200 EdgeApproval`. | Rejects a pending approval. Same auth/conflict behavior as approve. |
 | `POST /api/v1/edge/approvals/{approval_ref}/wait` | `{ timeout_ms? }`; server defaults/clamps the wait budget. | `200 EdgeApproval`. | Bounded wait used by local/demo inline approval flows. It returns the current approval, possibly still pending. |
 
-Approvals bind to `action_hash`, `input_hash`, `policy_snapshot`, requester, and
-status so an approval cannot be replayed against a different action/input.
+Approvals bind to `action_hash`, `input_hash`, `policy_snapshot`, requester,
+and status so an approval cannot be replayed against a different action/input.
+For destructive action gates, approval consume is followed by audit provenance
+verification: the tenant audit chain must include an approved
+`EventEdgeApprovalResolved` / `edge.approval_resolved` row whose
+`approval_ref` and `action_hash` exactly match the stored approval. A pending or
+requested-only audit row does not authorize the retry; missing, malformed,
+mismatched, or unverifiable provenance fails closed with bounded error details.
 
 ## Events
 

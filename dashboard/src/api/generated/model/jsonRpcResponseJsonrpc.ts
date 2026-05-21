@@ -6,10 +6,10 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type JsonRpcResponseJsonrpc = typeof JsonRpcResponseJsonrpc[keyof typeof JsonRpcResponseJsonrpc];
-
+export type JsonRpcResponseJsonrpc =
+  (typeof JsonRpcResponseJsonrpc)[keyof typeof JsonRpcResponseJsonrpc];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const JsonRpcResponseJsonrpc = {
-  '20': '2.0',
+  "20": "2.0",
 } as const;

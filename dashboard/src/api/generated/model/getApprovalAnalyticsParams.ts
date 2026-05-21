@@ -5,30 +5,30 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { GetApprovalAnalyticsWindow } from './getApprovalAnalyticsWindow';
-import type { GetApprovalAnalyticsGroupBy } from './getApprovalAnalyticsGroupBy';
+import type { GetApprovalAnalyticsWindow } from "./getApprovalAnalyticsWindow";
+import type { GetApprovalAnalyticsGroupBy } from "./getApprovalAnalyticsGroupBy";
 
 export type GetApprovalAnalyticsParams = {
-/**
- * Shorthand for `since`/`until` (wins when supplied). One of `24h`, `7d`, `30d`.
- */
-window?: GetApprovalAnalyticsWindow;
-/**
- * Inclusive lower bound (RFC3339 or unix milliseconds). Defaults to 24h before `until`.
- */
-since?: string;
-/**
- * Exclusive upper bound (RFC3339 or unix milliseconds). Defaults to now.
- */
-until?: string;
-/**
- * Breakdown axis; `overall` returns only the window-wide summary.
- */
-group_by?: GetApprovalAnalyticsGroupBy;
-/**
- * Top-N rows per group (bounded at 50). Ignored when `group_by=overall`.
- * @minimum 1
- * @maximum 50
- */
-limit?: number;
+  /**
+   * Shorthand for `since`/`until` (wins when supplied). One of `24h`, `7d`, `30d`.
+   */
+  window?: GetApprovalAnalyticsWindow;
+  /**
+   * Inclusive lower bound (RFC3339 or unix milliseconds). Defaults to 24h before `until`.
+   */
+  since?: string;
+  /**
+   * Exclusive upper bound (RFC3339 or unix milliseconds). Defaults to now.
+   */
+  until?: string;
+  /**
+   * Breakdown axis; `overall` returns only the window-wide summary.
+   */
+  group_by?: GetApprovalAnalyticsGroupBy;
+  /**
+   * Top-N rows per group (bounded at 50). Ignored when `group_by=overall`.
+   * @minimum 1
+   * @maximum 50
+   */
+  limit?: number;
 };

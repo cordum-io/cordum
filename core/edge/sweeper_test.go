@@ -177,3 +177,51 @@ func TestSessionSweeperSweepOnceReturnsContextCancellation(t *testing.T) {
 		t.Fatalf("SweepOnce canceled error = %v, want context.Canceled", err)
 	}
 }
+
+func TestExpireApprovalsSweeper_RunsPeriodically(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	rec := &abortRecorder{}
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return now }), WithRecorder(rec))
+	defer cleanup()
+
+	createApprovalParents(t, ctx, store, "tenant-a", "sess-appr-sweep", "exec-appr-sweep", "event-appr-sweep", now)
+	req := validApprovalRequest("tenant-a", "sess-appr-sweep", "exec-appr-sweep", "event-appr-sweep", now)
+	req.ExpiresAt = now.Add(time.Minute)
+	approval, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval: %v", err)
+	}
+	now = now.Add(2 * time.Minute)
+
+	sweeper, err := NewApprovalSweeper(store, ApprovalSweeperOptions{
+		Interval: 10 * time.Millisecond,
+		Now:      func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewApprovalSweeper: %v", err)
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go sweeper.Run(runCtx)
+
+	deadline := time.After(time.Second)
+	for {
+		got, ok, err := store.GetApproval(ctx, "tenant-a", approval.ApprovalRef)
+		if err != nil {
+			t.Fatalf("GetApproval: %v", err)
+		}
+		if ok && got.Status == ApprovalStatusExpired {
+			durations, expired := rec.SnapshotApprovalSweepMetrics()
+			if durations == 0 || expired == 0 {
+				t.Fatalf("approval sweep metrics durations=%d expired=%d, want non-zero", durations, expired)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("approval %s did not expire via sweeper; got=%#v", approval.ApprovalRef, got)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}

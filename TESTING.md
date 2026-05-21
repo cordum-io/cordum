@@ -249,6 +249,18 @@ for the first two commands and 10-20 seconds for the repeat suite. `go test
 -race` is not available when CGO is disabled on this platform; use `-count=3`
 as the flake-detection pass.
 
+For full-core local sweeps on Windows/MSYS shared runners, default Go package
+parallelism can exhaust localhost ports when many packages start miniredis or
+httptest listeners at once. If `go test ./core/... -count=1` fails only with
+Windows `connectex` / miniredis / httptest port-exhaustion errors, preserve the
+failure excerpt and use the serialized full-core gate instead:
+
+```bash
+go test -p 1 ./core/... -count=1
+```
+
+Focused package tests should still run normally without `-p 1`.
+
 Only tests that genuinely need a running stack should use integration tags:
 
 ```bash

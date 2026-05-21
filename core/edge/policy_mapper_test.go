@@ -120,6 +120,61 @@ func TestMapEventToPolicyCheckRequestUsesClassifierOutputAndTrustedMetadata(t *t
 	}
 }
 
+func TestPolicyMapperClassificationCompletenessCompatibility(t *testing.T) {
+	event := policyMapperCompatibilityEvent()
+	legacy := ActionClassification{
+		ActionName:     "bash.exec",
+		Capability:     "exec.shell",
+		RiskTags:       []string{"exec"},
+		Labels:         Labels{"command.class": "safe"},
+		InputContent:   []byte(`{"command":"echo ok"}`),
+		InputSizeBytes: 21,
+	}
+
+	req, err := MapEventToPolicyCheckRequest(event, legacy, PolicyMappingOptions{})
+	if err != nil {
+		t.Fatalf("legacy complete classification returned error: %v", err)
+	}
+	assertPolicyCompletenessLabels(t, req.GetLabels(), "true", "")
+
+	partial := legacy
+	partial.RiskTags = nil
+	partial.Complete = false
+	partial.MissingFields = []string{"risk_tags"}
+	req, err = MapEventToPolicyCheckRequest(event, partial, PolicyMappingOptions{})
+	if err != nil {
+		t.Fatalf("partial risk_tags classification returned error: %v", err)
+	}
+	assertPolicyCompletenessLabels(t, req.GetLabels(), "false", "risk_tags")
+
+	classifierProduced, err := ClassifyEvent(event)
+	if err != nil {
+		t.Fatalf("ClassifyEvent: %v", err)
+	}
+	req, err = MapEventToPolicyCheckRequest(event, classifierProduced, PolicyMappingOptions{})
+	if err != nil {
+		t.Fatalf("classifier-produced classification returned error: %v", err)
+	}
+	assertPolicyCompletenessLabels(t, req.GetLabels(), "true", "")
+}
+
+func TestPolicyMapperPartialManualRequiredFieldStillRejected(t *testing.T) {
+	event := policyMapperCompatibilityEvent()
+	partial := ActionClassification{
+		ActionName:    "bash.exec",
+		RiskTags:      []string{"exec"},
+		Complete:      false,
+		MissingFields: []string{"capability"},
+	}
+
+	if _, err := MapEventToPolicyCheckRequest(event, partial, PolicyMappingOptions{}); err == nil {
+		t.Fatal("partial classification missing capability returned nil error")
+	} else if !strings.Contains(err.Error(), "capability") {
+		t.Fatalf("partial classification error = %q, want capability", err.Error())
+	}
+	assertPolicyCompletenessLabels(t, mapLabelsForPolicy(event, partial), "false", "capability")
+}
+
 func TestMapEventToPolicyCheckRequestValidationAndNormalization(t *testing.T) {
 	baseEvent := AgentActionEvent{
 		EventID:     "evt-map-validation",
@@ -200,5 +255,41 @@ func TestMapEventToPolicyCheckRequestValidationAndNormalization(t *testing.T) {
 	req.GetInputContent()[0] = '!'
 	if string(classification.InputContent) != `{"command":"<redacted>"}` {
 		t.Fatalf("mapper did not clone input content; classification content mutated to %s", string(classification.InputContent))
+	}
+}
+
+func policyMapperCompatibilityEvent() AgentActionEvent {
+	return AgentActionEvent{
+		EventID:     "evt-map-compat",
+		SessionID:   "sess-map-compat",
+		ExecutionID: "exec-map-compat",
+		TenantID:    "tenant-map",
+		PrincipalID: "principal-map",
+		Timestamp:   time.Date(2026, 5, 1, 18, 45, 0, 0, time.UTC),
+		Layer:       LayerHook,
+		Kind:        EventKindHookPreToolUse,
+		ToolName:    "Bash",
+		Decision:    DecisionRecorded,
+		Status:      ActionStatusOK,
+		InputRedacted: map[string]any{
+			"command": "echo ok",
+		},
+	}
+}
+
+func assertPolicyCompletenessLabels(t *testing.T, labels map[string]string, wantComplete, wantMissing string) {
+	t.Helper()
+	if got := labels["classifier.complete"]; got != wantComplete {
+		t.Fatalf("classifier.complete = %q, want %q in %#v", got, wantComplete, labels)
+	}
+	gotMissing, hasMissing := labels["classifier.missing_fields"]
+	if wantMissing == "" {
+		if hasMissing {
+			t.Fatalf("classifier.missing_fields = %q, want absent in %#v", gotMissing, labels)
+		}
+		return
+	}
+	if gotMissing != wantMissing {
+		t.Fatalf("classifier.missing_fields = %q, want %q in %#v", gotMissing, wantMissing, labels)
 	}
 }

@@ -274,8 +274,9 @@ func TestRedisStoreApprovalLifecycleEnqueueResolveListAndConsume(t *testing.T) {
 		PolicySnapshot: req.PolicySnapshot,
 		ConsumedAt:     consumedAt.Add(time.Second),
 	})
-	if err != nil {
-		t.Fatalf("second ClaimApproval: %v", err)
+	var consumedConflict *ApprovalConflictError
+	if !errors.As(err, &consumedConflict) || consumedConflict.Kind != ApprovalConflictKindConsumed {
+		t.Fatalf("second ClaimApproval err = %v, want consumed ApprovalConflictError", err)
 	}
 	if secondOK || secondClaim != nil {
 		t.Fatalf("second ClaimApproval = (%#v,%v), want nil,false consume-once", secondClaim, secondOK)
@@ -799,6 +800,31 @@ func TestRedisStoreApprovalExpireAndStaleParentsFailClosed(t *testing.T) {
 	}
 }
 
+func TestFirstLiveTupleApproval_ExcludesExpired(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 5, 1, 18, 0, 0, 0, time.UTC)
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return now }))
+	defer cleanup()
+
+	createApprovalParents(t, ctx, store, "tenant-a", "sess-expired-tuple", "exec-expired-tuple", "event-expired-tuple", now)
+	req := validApprovalRequest("tenant-a", "sess-expired-tuple", "exec-expired-tuple", "event-expired-tuple", now)
+	req.ExpiresAt = now.Add(time.Minute)
+	first, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval first: %v", err)
+	}
+
+	now = now.Add(2 * time.Minute)
+	req.ExpiresAt = now.Add(5 * time.Minute)
+	second, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval second: %v", err)
+	}
+	if second.ApprovalRef == first.ApprovalRef {
+		t.Fatalf("EnqueueApproval reused expired approval %q; want a fresh live tuple approval", first.ApprovalRef)
+	}
+}
+
 func TestRedisStoreApprovalRejectedAndExpiredCannotBeClaimed(t *testing.T) {
 	ctx := context.Background()
 	base := time.Date(2026, 5, 1, 16, 30, 0, 0, time.UTC)
@@ -1198,6 +1224,11 @@ func TestRedisStoreApprovalConcurrentClaimConsumesOnce(t *testing.T) {
 				ConsumedAt:     base.Add(2*time.Minute + time.Duration(i)*time.Microsecond),
 			})
 			if err != nil {
+				var conflict *ApprovalConflictError
+				if errors.As(err, &conflict) && conflict.Kind == ApprovalConflictKindConsumed {
+					results <- false
+					return
+				}
 				errs <- err
 				return
 			}
@@ -1496,7 +1527,22 @@ func assertRedisApprovalCannotBeClaimed(t *testing.T, ctx context.Context, store
 		ConsumedAt:     consumedAt,
 	})
 	if err != nil {
-		t.Fatalf("ClaimApproval terminal approval %q returned err=%v, want nil false result", approval.Status, err)
+		var conflict *ApprovalConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("ClaimApproval terminal approval %q err=%v, want typed ApprovalConflictError", approval.Status, err)
+		}
+		switch approval.Status {
+		case ApprovalStatusRejected:
+			if conflict.Kind != ApprovalConflictKindRejected {
+				t.Fatalf("ClaimApproval conflict kind = %q, want %q", conflict.Kind, ApprovalConflictKindRejected)
+			}
+		case ApprovalStatusExpired, ApprovalStatusInvalidated:
+			if conflict.Kind != ApprovalConflictKindExpired {
+				t.Fatalf("ClaimApproval conflict kind = %q, want %q", conflict.Kind, ApprovalConflictKindExpired)
+			}
+		}
+	} else {
+		t.Fatalf("ClaimApproval terminal approval %q returned nil err, want typed conflict", approval.Status)
 	}
 	if ok || claimed != nil {
 		t.Fatalf("ClaimApproval terminal approval %q = (%#v,%v), want nil,false", approval.Status, claimed, ok)
@@ -1508,6 +1554,498 @@ func assertRedisApprovalCannotBeClaimed(t *testing.T, ctx context.Context, store
 	if stored.Status != approval.Status || stored.ConsumedAt != nil {
 		t.Fatalf("terminal approval after claim = status:%q consumed:%v, want %q nil", stored.Status, stored.ConsumedAt, approval.Status)
 	}
+}
+
+// TestRedisStoreLookupByActionHashReturnsMostRecentApproved seeds two
+// approvals against the same (tenant, action_hash), approves the second,
+// and asserts LookupByActionHash returns the approved one. Verifies the
+// action-hash index that backs actiongates.ApprovalLookup wiring.
+func TestRedisStoreLookupByActionHashReturnsMostRecentApproved(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	now := base
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return now }))
+	defer cleanup()
+
+	sharedHash := "sha256:shared-action-payload"
+	tenant := "tenant-hash"
+
+	createApprovalParents(t, ctx, store, tenant, "sess-h1", "exec-h1", "event-h1", base)
+	req1 := validApprovalRequest(tenant, "sess-h1", "exec-h1", "event-h1", base)
+	req1.ActionHash = sharedHash
+	now = base
+	first, err := store.EnqueueApproval(ctx, req1)
+	if err != nil {
+		t.Fatalf("EnqueueApproval first: %v", err)
+	}
+
+	createApprovalParents(t, ctx, store, tenant, "sess-h2", "exec-h2", "event-h2", base.Add(1*time.Minute))
+	req2 := validApprovalRequest(tenant, "sess-h2", "exec-h2", "event-h2", base.Add(1*time.Minute))
+	req2.ActionHash = sharedHash
+	now = base.Add(1 * time.Minute)
+	second, err := store.EnqueueApproval(ctx, req2)
+	if err != nil {
+		t.Fatalf("EnqueueApproval second: %v", err)
+	}
+
+	// Both refs visible in GetApprovalsByActionHash, most-recent first.
+	all, err := store.GetApprovalsByActionHash(ctx, tenant, sharedHash)
+	if err != nil {
+		t.Fatalf("GetApprovalsByActionHash: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("got %d approvals, want 2", len(all))
+	}
+	if all[0].ApprovalRef != second.ApprovalRef || all[1].ApprovalRef != first.ApprovalRef {
+		t.Fatalf("ordering = [%s, %s], want most-recent first [%s, %s]",
+			all[0].ApprovalRef, all[1].ApprovalRef, second.ApprovalRef, first.ApprovalRef)
+	}
+
+	// Cross-tenant returns empty (action-hash index is tenant-scoped).
+	if other, err := store.GetApprovalsByActionHash(ctx, "tenant-other", sharedHash); err != nil || len(other) != 0 {
+		t.Fatalf("cross-tenant GetApprovalsByActionHash = (%d, %v), want 0/nil", len(other), err)
+	}
+
+	// LookupByActionHash before any approval: no actionable approval.
+	got, ok, err := store.LookupByActionHash(ctx, tenant, sharedHash)
+	if err != nil {
+		t.Fatalf("LookupByActionHash pre-approval err: %v", err)
+	}
+	if ok || got != nil {
+		t.Fatalf("pre-approval lookup = (%#v, %v), want nil/false", got, ok)
+	}
+
+	// Approve the most recent (second) approval; lookup must return it.
+	now = base.Add(2 * time.Minute)
+	if _, err := store.ApproveApproval(ctx, ApprovalResolution{
+		TenantID:    tenant,
+		ApprovalRef: second.ApprovalRef,
+		ResolverID:  "principal-reviewer",
+		ResolvedBy:  "reviewer@example.invalid",
+		Reason:      "approved",
+		ResolvedAt:  now,
+	}); err != nil {
+		t.Fatalf("ApproveApproval second: %v", err)
+	}
+
+	got, ok, err = store.LookupByActionHash(ctx, tenant, sharedHash)
+	if err != nil {
+		t.Fatalf("LookupByActionHash post-approval err: %v", err)
+	}
+	if !ok || got == nil || got.ApprovalRef != second.ApprovalRef {
+		t.Fatalf("post-approval lookup = (%#v, %v), want second approval ref %q", got, ok, second.ApprovalRef)
+	}
+
+	// Consume the approval; lookup must return nil (no actionable approval left).
+	now = base.Add(3 * time.Minute)
+	if _, _, err := store.ClaimApproval(ctx, ApprovalClaimRequest{
+		TenantID:       tenant,
+		ApprovalRef:    second.ApprovalRef,
+		SessionID:      req2.SessionID,
+		ExecutionID:    req2.ExecutionID,
+		EventID:        req2.EventID,
+		ActionHash:     sharedHash,
+		InputHash:      req2.InputHash,
+		PolicySnapshot: req2.PolicySnapshot,
+		ConsumedAt:     now,
+	}); err != nil {
+		t.Fatalf("ClaimApproval: %v", err)
+	}
+	got, ok, err = store.LookupByActionHash(ctx, tenant, sharedHash)
+	if err != nil {
+		t.Fatalf("LookupByActionHash post-claim err: %v", err)
+	}
+	if ok || got != nil {
+		t.Fatalf("post-claim lookup = (%#v, %v), want nil/false (consumed)", got, ok)
+	}
+
+	// Empty action hash short-circuits to nil without an index call.
+	if empty, err := store.GetApprovalsByActionHash(ctx, tenant, ""); err != nil || len(empty) != 0 {
+		t.Fatalf("empty action_hash lookup = (%d, %v), want 0/nil", len(empty), err)
+	}
+}
+
+// TestApprovalConsumePolicySnapshotMismatch is a regression guard for the
+// existing approvalClaimMatches contract: when an approval was minted
+// against policy_snapshot "policy-v1" and the consume call presents
+// "policy-v2", ClaimApproval MUST refuse with ErrApprovalConflict. The
+// behaviour is already implemented (approvalClaimMatches checks PolicySnapshot)
+// but no test pinned it explicitly — this case is asserted via the args/
+// input pair tests but never policy-snapshot in isolation. EDGE-103 surfaces
+// the same mismatch as -32096 error.data.kind=policy_mismatch at the MCP
+// entry-path layer; this test prevents a future refactor from silently
+// dropping the store-level guard that backs that wire-level error.
+func TestApprovalConsumePolicySnapshotMismatch(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 15, 19, 0, 0, 0, time.UTC)
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	createApprovalParents(t, ctx, store, "tenant-a", "sess-pol", "exec-pol", "event-pol", base)
+	req := validApprovalRequest("tenant-a", "sess-pol", "exec-pol", "event-pol", base)
+	req.PolicySnapshot = "policy-v1"
+	approval, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval: %v", err)
+	}
+	if _, err := store.ApproveApproval(ctx, ApprovalResolution{
+		TenantID:    req.TenantID,
+		ApprovalRef: approval.ApprovalRef,
+		ResolverID:  "reviewer",
+		ResolvedBy:  "reviewer@example.invalid",
+		Reason:      "approve for policy drift test",
+		ResolvedAt:  base.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("ApproveApproval: %v", err)
+	}
+
+	claimed, ok, err := store.ClaimApproval(ctx, ApprovalClaimRequest{
+		TenantID:       req.TenantID,
+		ApprovalRef:    approval.ApprovalRef,
+		SessionID:      req.SessionID,
+		ExecutionID:    req.ExecutionID,
+		EventID:        req.EventID,
+		ActionHash:     req.ActionHash,
+		InputHash:      req.InputHash,
+		PolicySnapshot: "policy-v2",
+		ConsumedAt:     base.Add(2 * time.Minute),
+	})
+	if !errors.Is(err, ErrApprovalConflict) || ok || claimed != nil {
+		t.Fatalf("ClaimApproval with drifted policy_snapshot = (%#v,%v,%v); want ErrApprovalConflict nil,false", claimed, ok, err)
+	}
+}
+
+// TestApprovalConsumeRejectsSelfApprovalAtStore pins the store-level
+// self-approval guard architect-cd323a16 mandated in EDGE-103
+// (comment-f1d377b1 section D — defense in depth at BOTH store and entry).
+// The gateway approve path enforces requester != approver; this store check
+// backs that up if a future refactor bypasses the entry-path guard. The store
+// must reject CallerAgentID == ResolverID. CallerAgentID == Requester is valid
+// for ordinary MCP retry semantics unless that same principal is also the
+// resolver/approver.
+func TestApprovalConsumeRejectsSelfApprovalAtStore(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 15, 19, 5, 0, 0, time.UTC)
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	createApprovalParents(t, ctx, store, "tenant-a", "sess-self", "exec-self", "event-self", base)
+	req := validApprovalRequest("tenant-a", "sess-self", "exec-self", "event-self", base)
+	req.Requester = "principal-a"
+	approval, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval: %v", err)
+	}
+	// Approve by the SAME principal who requested — this is the self-approval
+	// scenario the store-level guard MUST reject when Consume happens.
+	if _, err := store.ApproveApproval(ctx, ApprovalResolution{
+		TenantID:    req.TenantID,
+		ApprovalRef: approval.ApprovalRef,
+		ResolverID:  "principal-a",
+		ResolvedBy:  "principal-a@example.invalid",
+		Reason:      "self-approve attempt",
+		ResolvedAt:  base.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("ApproveApproval: %v", err)
+	}
+
+	// Caller is the same principal as the resolver/approver — store must
+	// recognize this as self-approval and refuse to consume. The store owns
+	// the typed-error surface; entry paths compose that into protocol/UI copy.
+	claimed, ok, err := store.ClaimApproval(ctx, ApprovalClaimRequest{
+		TenantID:       req.TenantID,
+		ApprovalRef:    approval.ApprovalRef,
+		SessionID:      req.SessionID,
+		ExecutionID:    req.ExecutionID,
+		EventID:        req.EventID,
+		ActionHash:     req.ActionHash,
+		InputHash:      req.InputHash,
+		PolicySnapshot: req.PolicySnapshot,
+		ConsumedAt:     base.Add(2 * time.Minute),
+		CallerAgentID:  "principal-a",
+	})
+	if !errors.Is(err, ErrApprovalConflict) || ok || claimed != nil {
+		t.Fatalf("ClaimApproval with self-approval caller = (%#v,%v,%v); want ErrApprovalConflict nil,false (store-level defense-in-depth per EDGE-103 amendment D)",
+			claimed, ok, err)
+	}
+}
+
+func TestApprovalCreateClipsExpiresAtToDefaultMaxTTL(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 15, 19, 5, 0, 0, time.UTC)
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return base }))
+	defer cleanup()
+
+	createApprovalParents(t, ctx, store, "tenant-a", "sess-ttl-default", "exec-ttl-default", "event-ttl-default", base)
+	req := validApprovalRequest("tenant-a", "sess-ttl-default", "exec-ttl-default", "event-ttl-default", base)
+	req.ExpiresAt = base.Add(24 * time.Hour)
+	approval, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval: %v", err)
+	}
+	if approval.ExpiresAt == nil {
+		t.Fatalf("approval.ExpiresAt = nil; want clipped to default max %v after base", DefaultApprovalMaxTTL)
+	}
+	want := base.Add(DefaultApprovalMaxTTL)
+	if !approval.ExpiresAt.Equal(want) {
+		t.Fatalf("approval.ExpiresAt = %v; want %v (clipped to DefaultApprovalMaxTTL=%v)",
+			approval.ExpiresAt.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano), DefaultApprovalMaxTTL)
+	}
+}
+
+func TestApprovalCreateClipsExpiresAtToConfiguredMaxTTL(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 15, 19, 10, 0, 0, time.UTC)
+	const maxTTL = 10 * time.Minute
+	store, _, _, cleanup := newRedisEdgeStore(t,
+		WithClock(func() time.Time { return base }),
+		WithApprovalMaxTTL(maxTTL),
+	)
+	defer cleanup()
+
+	createApprovalParents(t, ctx, store, "tenant-a", "sess-ttl", "exec-ttl", "event-ttl", base)
+	req := validApprovalRequest("tenant-a", "sess-ttl", "exec-ttl", "event-ttl", base)
+	req.ExpiresAt = base.Add(24 * time.Hour)
+	approval, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval: %v", err)
+	}
+	if approval.ExpiresAt == nil {
+		t.Fatalf("approval.ExpiresAt = nil; want clipped to %v after base", maxTTL)
+	}
+	want := base.Add(maxTTL)
+	if !approval.ExpiresAt.Equal(want) {
+		t.Fatalf("approval.ExpiresAt = %v; want %v (clipped to ApprovalMaxTTL=%v)",
+			approval.ExpiresAt.Format(time.RFC3339Nano), want.Format(time.RFC3339Nano), maxTTL)
+	}
+}
+
+// TestGetApprovalsByActionHash_AppliesAuditLimit asserts the bounded-
+// fetch contract added by task-69d1f82b (CodeRabbit PR #274 finding #2).
+// Before this change, GetApprovalsByActionHash used ZRevRange(0,-1)
+// and could fetch thousands of refs for a hot (tenant, action_hash)
+// tuple — unbounded memory + latency. After this change, the cap is
+// maxApprovalsByActionHashAudit = 256, most-recent first. 300 refs in,
+// 256 out (cap), with the most-recent 256 preserved.
+func TestGetApprovalsByActionHash_AppliesAuditLimit(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 15, 21, 0, 0, 0, time.UTC)
+	now := base
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return now }))
+	defer cleanup()
+
+	tenant := "tenant-limit"
+	sharedHash := "sha256:hot-action"
+
+	const created = 300
+	for i := 0; i < created; i++ {
+		now = base.Add(time.Duration(i) * time.Second)
+		sessID := fmt.Sprintf("sess-%03d", i)
+		execID := fmt.Sprintf("exec-%03d", i)
+		eventID := fmt.Sprintf("event-%03d", i)
+		createApprovalParents(t, ctx, store, tenant, sessID, execID, eventID, now)
+		req := validApprovalRequest(tenant, sessID, execID, eventID, now)
+		req.ActionHash = sharedHash
+		if _, err := store.EnqueueApproval(ctx, req); err != nil {
+			t.Fatalf("EnqueueApproval %d: %v", i, err)
+		}
+	}
+
+	// DoD #3 bounded-scan proof: with 300 approvals indexed the call must
+	// return exactly maxApprovalsByActionHashAudit rows, most-recent first.
+	// Result-count is the deterministic contract verifier — a regression to
+	// unbounded ZRevRange(0,-1) would return all 300 rows and fail the
+	// len() check below immediately. Wall-clock elapsed is logged for
+	// telemetry only; hard latency thresholds in unit tests are flake-prone
+	// on slow CI runners (PR #276 CodeRabbit #19) and perf bounds belong
+	// in benchmarks, not unit tests.
+	start := time.Now()
+	all, err := store.GetApprovalsByActionHash(ctx, tenant, sharedHash)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("GetApprovalsByActionHash: %v", err)
+	}
+	t.Logf("GetApprovalsByActionHash latency over %d-approval index: %v", created, elapsed)
+	if len(all) != maxApprovalsByActionHashAudit {
+		t.Fatalf("GetApprovalsByActionHash len = %d; want %d (audit cap)", len(all), maxApprovalsByActionHashAudit)
+	}
+	// Most-recent first: index 0 corresponds to event-299 (highest score).
+	if !strings.HasSuffix(all[0].EventID, "-299") {
+		t.Fatalf("most-recent ordering broken: all[0].EventID = %q; want suffix '-299'", all[0].EventID)
+	}
+}
+
+func TestApprovalActionHash_ZSetGrowthIsBounded(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 16, 9, 0, 0, 0, time.UTC)
+	now := base
+	store, client, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return now }))
+	defer cleanup()
+
+	tenant := "tenant-action-hash-bound"
+	otherTenant := "tenant-action-hash-other"
+	sharedHash := "sha256:hot-action-bounded"
+	const overflow = 25
+	total := maxApprovalActionHashMembers + overflow
+	refs := make([]string, 0, total)
+	for i := 0; i < total; i++ {
+		refs = append(refs, enqueueRejectedApprovalForHash(t, ctx, store, &now, base, tenant, sharedHash, i))
+	}
+
+	key := edgeApprovalActionHashIndexKey(tenant, sharedHash)
+	memberCount, err := client.ZCard(ctx, key).Result()
+	if err != nil {
+		t.Fatalf("ZCard action-hash index: %v", err)
+	}
+	if memberCount > int64(maxApprovalActionHashMembers) {
+		t.Fatalf("action-hash index has %d members, want <= %d", memberCount, maxApprovalActionHashMembers)
+	}
+	members, err := client.ZRange(ctx, key, 0, -1).Result()
+	if err != nil {
+		t.Fatalf("ZRange action-hash index: %v", err)
+	}
+	if len(members) != 0 {
+		t.Fatalf("action-hash member len = %d, want 0 terminal approvals retained in hot-path index", len(members))
+	}
+	old, ok, err := store.GetApproval(ctx, tenant, refs[0])
+	if err != nil || !ok || old == nil || old.Status != ApprovalStatusRejected {
+		t.Fatalf("trimmed index member primary record = (%#v,%v,%v), want rejected approval retained", old, ok, err)
+	}
+	otherRef := enqueueRejectedApprovalForHash(t, ctx, store, &now, base, otherTenant, sharedHash, total+1)
+	otherMembers, err := client.ZRange(ctx, edgeApprovalActionHashIndexKey(otherTenant, sharedHash), 0, -1).Result()
+	if err != nil || !reflect.DeepEqual(otherMembers, []string{}) {
+		t.Fatalf("other-tenant action-hash members = %#v, %v; want no rejected approvals retained for %q", otherMembers, err, otherRef)
+	}
+}
+
+func enqueueRejectedApprovalForHash(t *testing.T, ctx context.Context, store *RedisStore, now *time.Time, base time.Time, tenantID, actionHash string, index int) string {
+	t.Helper()
+	*now = base.Add(time.Duration(index) * time.Second)
+	suffix := fmt.Sprintf("%04d", index)
+	sessionID := "sess-bound-" + suffix
+	executionID := "exec-bound-" + suffix
+	eventID := "event-bound-" + suffix
+	createApprovalParents(t, ctx, store, tenantID, sessionID, executionID, eventID, *now)
+	req := validApprovalRequest(tenantID, sessionID, executionID, eventID, *now)
+	req.ActionHash = actionHash
+	approval, err := store.EnqueueApproval(ctx, req)
+	if err != nil {
+		t.Fatalf("EnqueueApproval %d: %v", index, err)
+	}
+	if _, err := store.RejectApproval(ctx, ApprovalResolution{
+		TenantID:    tenantID,
+		ApprovalRef: approval.ApprovalRef,
+		ResolverID:  "reviewer-action-hash",
+		ResolvedBy:  "reviewer@example.invalid",
+		Reason:      "deny after indexing for retention test",
+		ResolvedAt:  now.Add(time.Millisecond),
+	}); err != nil {
+		t.Fatalf("RejectApproval %d: %v", index, err)
+	}
+	return approval.ApprovalRef
+}
+
+// TestLookupByActionHash_FastPathSemanticsDocumented asserts the
+// fast-path semantics added by task-69d1f82b: LookupByActionHash now
+// scans at most maxApprovalsByActionHashLookup = 64 most-recent entries.
+// If no actionable approval surfaces in that window, the caller sees
+// a clean miss — fail-closed by design. An attacker buring an old
+// APPROVED approval under >64 fresh PENDING records causes the gate
+// to re-fire REQUIRE_HUMAN; the call cannot silently land using the
+// stale grant. (1) PENDING fill up to 100 + APPROVED at index 30 →
+// found. (2) Same fill + APPROVED at index 80 → miss.
+func TestLookupByActionHash_FastPathSemanticsDocumented(t *testing.T) {
+	ctx := context.Background()
+	base := time.Date(2026, 5, 15, 21, 30, 0, 0, time.UTC)
+	now := base
+	store, _, _, cleanup := newRedisEdgeStore(t, WithClock(func() time.Time { return now }))
+	defer cleanup()
+
+	tenant := "tenant-fastpath"
+
+	t.Run("approved_within_fast_path_returns_match", func(t *testing.T) {
+		sharedHash := "sha256:fast-path-within"
+		const total = 100
+		// Build oldest→newest so score(i)=base+i. ZRevRange returns
+		// newest first (index 0 = i=99). Place APPROVED such that its
+		// reverse-index < 64 (well within the maxApprovalsByActionHashLookup cap).
+		const approvedReverseIndex = 30 // approved is the 31st-newest
+		approvedIdx := total - 1 - approvedReverseIndex
+		var approvedRef string
+		for i := 0; i < total; i++ {
+			now = base.Add(time.Duration(i) * time.Second)
+			sessID := fmt.Sprintf("sess-w-%03d", i)
+			execID := fmt.Sprintf("exec-w-%03d", i)
+			eventID := fmt.Sprintf("event-w-%03d", i)
+			createApprovalParents(t, ctx, store, tenant, sessID, execID, eventID, now)
+			req := validApprovalRequest(tenant, sessID, execID, eventID, now)
+			req.ActionHash = sharedHash
+			approval, err := store.EnqueueApproval(ctx, req)
+			if err != nil {
+				t.Fatalf("EnqueueApproval %d: %v", i, err)
+			}
+			if i == approvedIdx {
+				approvedRef = approval.ApprovalRef
+				if _, err := store.ApproveApproval(ctx, ApprovalResolution{
+					TenantID:    tenant,
+					ApprovalRef: approval.ApprovalRef,
+					ResolverID:  "reviewer",
+					ResolvedBy:  "reviewer@example.invalid",
+					Reason:      "approve for fast-path test",
+					ResolvedAt:  now.Add(time.Millisecond),
+				}); err != nil {
+					t.Fatalf("ApproveApproval: %v", err)
+				}
+			}
+		}
+		got, ok, err := store.LookupByActionHash(ctx, tenant, sharedHash)
+		if err != nil || !ok || got == nil {
+			t.Fatalf("LookupByActionHash within-fast-path = (%#v,%v,%v); want match", got, ok, err)
+		}
+		if got.ApprovalRef != approvedRef {
+			t.Fatalf("LookupByActionHash ref = %q; want %q", got.ApprovalRef, approvedRef)
+		}
+	})
+
+	t.Run("approved_outside_fast_path_returns_miss", func(t *testing.T) {
+		sharedHash := "sha256:fast-path-outside"
+		const total = 100
+		// Place APPROVED at reverse-index 80 (well beyond the 64-cap).
+		const approvedReverseIndex = 80
+		approvedIdx := total - 1 - approvedReverseIndex
+		for i := 0; i < total; i++ {
+			now = base.Add(time.Duration(i) * time.Second)
+			sessID := fmt.Sprintf("sess-x-%03d", i)
+			execID := fmt.Sprintf("exec-x-%03d", i)
+			eventID := fmt.Sprintf("event-x-%03d", i)
+			createApprovalParents(t, ctx, store, tenant, sessID, execID, eventID, now)
+			req := validApprovalRequest(tenant, sessID, execID, eventID, now)
+			req.ActionHash = sharedHash
+			approval, err := store.EnqueueApproval(ctx, req)
+			if err != nil {
+				t.Fatalf("EnqueueApproval %d: %v", i, err)
+			}
+			if i == approvedIdx {
+				if _, err := store.ApproveApproval(ctx, ApprovalResolution{
+					TenantID:    tenant,
+					ApprovalRef: approval.ApprovalRef,
+					ResolverID:  "reviewer",
+					ResolvedBy:  "reviewer@example.invalid",
+					Reason:      "approve outside fast path",
+					ResolvedAt:  now.Add(time.Millisecond),
+				}); err != nil {
+					t.Fatalf("ApproveApproval: %v", err)
+				}
+			}
+		}
+		got, ok, err := store.LookupByActionHash(ctx, tenant, sharedHash)
+		if err != nil {
+			t.Fatalf("LookupByActionHash beyond-fast-path err: %v", err)
+		}
+		if ok || got != nil {
+			t.Fatalf("LookupByActionHash beyond-fast-path = (%#v,%v); want miss (fail-closed semantics)", got, ok)
+		}
+	})
 }
 
 // prewarmRedisClientPool serially pings the redis client enough times to

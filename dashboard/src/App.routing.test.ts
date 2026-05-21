@@ -40,3 +40,45 @@ describe("App.tsx route registration (regression guard)", () => {
     });
   }
 });
+
+// Source-regex assertions for redirect routes — these don't have a page
+// component (just a <Navigate> child), so REGISTERED_ROUTES isn't the
+// right shape. Each entry asserts the path is registered AND that the
+// Navigate target matches the expected destination query string.
+describe("App.tsx redirect routes (Edge deep-link + DLQ preservation)", () => {
+  it("registers /edge/approvals redirecting to /approvals?lane=edge", () => {
+    expect(
+      appSource,
+      "App.tsx must preserve /edge/approvals → /approvals?lane=edge for bookmarked Edge deep links.",
+    ).toMatch(/path=["']\/edge\/approvals["']/);
+    expect(
+      appSource,
+      "The /edge/approvals route must Navigate to /approvals?lane=edge (preserves Edge-scoped filter via querystring).",
+    ).toMatch(/to=["']\/approvals\?lane=edge["']/);
+  });
+
+  it("registers /edge/audit redirecting to /audit?event_type_prefix=edge", () => {
+    expect(
+      appSource,
+      "App.tsx must preserve /edge/audit → /audit?event_type_prefix=edge for bookmarked Edge deep links.",
+    ).toMatch(/path=["']\/edge\/audit["']/);
+    expect(
+      appSource,
+      "The /edge/audit route must Navigate to /audit?event_type_prefix=edge.",
+    ).toMatch(/to=["']\/audit\?event_type_prefix=edge["']/);
+  });
+
+  it("preserves /dlq → /jobs?status=dlq redirect after Dead Letters sidebar entry removal", () => {
+    // Dead Letters was removed from the Audit sidebar (task-266f21ad)
+    // because DLQ content is folded into JobsPage as ?status=dlq
+    // (task-0bcb9411). Bookmarked /dlq URLs must still resolve.
+    expect(
+      appSource,
+      "App.tsx must still register /dlq even after the sidebar Dead Letters entry was removed.",
+    ).toMatch(/path=["']\/dlq["']/);
+    expect(
+      appSource,
+      "The /dlq route must still render DlqRouteRedirect → /jobs?status=dlq for bookmark preservation.",
+    ).toContain("DlqRouteRedirect");
+  });
+});

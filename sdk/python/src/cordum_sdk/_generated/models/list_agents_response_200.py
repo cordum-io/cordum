@@ -15,10 +15,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.list_agents_response_200_items_item import ListAgentsResponse200ItemsItem
-
-
-
+    from ..models.list_agents_response_200_items_item import ListAgentsResponse200ItemsItem
 
 
 T = TypeVar("T", bound="ListAgentsResponse200")
@@ -26,19 +23,19 @@ T = TypeVar("T", bound="ListAgentsResponse200")
 
 @_attrs_define
 class ListAgentsResponse200:
-    """ 
-        Attributes:
-            items (Union[Unset, List['ListAgentsResponse200ItemsItem']]):
-            cursor (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        items (Union[Unset, List['ListAgentsResponse200ItemsItem']]):
+        cursor (Union[Unset, str]):
+    """
 
-    items: Union[Unset, List['ListAgentsResponse200ItemsItem']] = UNSET
+    items: Union[Unset, List["ListAgentsResponse200ItemsItem"]] = UNSET
     cursor: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         from ..models.list_agents_response_200_items_item import ListAgentsResponse200ItemsItem
+
         items: Union[Unset, List[Dict[str, Any]]] = UNSET
         if not isinstance(self.items, Unset):
             items = []
@@ -46,15 +43,11 @@ class ListAgentsResponse200:
                 items_item = items_item_data.to_dict()
                 items.append(items_item)
 
-
-
         cursor = self.cursor
-
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if items is not UNSET:
             field_dict["items"] = items
         if cursor is not UNSET:
@@ -62,21 +55,17 @@ class ListAgentsResponse200:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.list_agents_response_200_items_item import ListAgentsResponse200ItemsItem
+
         d = src_dict.copy()
         items = []
         _items = d.pop("items", UNSET)
-        for items_item_data in (_items or []):
+        for items_item_data in _items or []:
             items_item = ListAgentsResponse200ItemsItem.from_dict(items_item_data)
 
-
-
             items.append(items_item)
-
 
         cursor = d.pop("cursor", UNSET)
 
@@ -84,7 +73,6 @@ class ListAgentsResponse200:
             items=items,
             cursor=cursor,
         )
-
 
         list_agents_response_200.additional_properties = d
         return list_agents_response_200

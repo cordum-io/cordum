@@ -5,8 +5,8 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { GovernanceHealthGrade } from './governanceHealthGrade';
-import type { GovernanceHealthFactors } from './governanceHealthFactors';
+import type { GovernanceHealthGrade } from "./governanceHealthGrade";
+import type { GovernanceHealthFactors } from "./governanceHealthFactors";
 
 export interface GovernanceHealth {
   score: number;

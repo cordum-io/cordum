@@ -15,10 +15,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.policy_snapshot import PolicySnapshot
-
-
-
+    from ..models.policy_snapshot import PolicySnapshot
 
 
 T = TypeVar("T", bound="ListBundleSnapshotsResponse200")
@@ -26,17 +23,17 @@ T = TypeVar("T", bound="ListBundleSnapshotsResponse200")
 
 @_attrs_define
 class ListBundleSnapshotsResponse200:
-    """ 
-        Attributes:
-            items (Union[Unset, List['PolicySnapshot']]):
-     """
+    """
+    Attributes:
+        items (Union[Unset, List['PolicySnapshot']]):
+    """
 
-    items: Union[Unset, List['PolicySnapshot']] = UNSET
+    items: Union[Unset, List["PolicySnapshot"]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.policy_snapshot import PolicySnapshot
+
         items: Union[Unset, List[Dict[str, Any]]] = UNSET
         if not isinstance(self.items, Unset):
             items = []
@@ -44,38 +41,29 @@ class ListBundleSnapshotsResponse200:
                 items_item = items_item_data.to_dict()
                 items.append(items_item)
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if items is not UNSET:
             field_dict["items"] = items
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.policy_snapshot import PolicySnapshot
+
         d = src_dict.copy()
         items = []
         _items = d.pop("items", UNSET)
-        for items_item_data in (_items or []):
+        for items_item_data in _items or []:
             items_item = PolicySnapshot.from_dict(items_item_data)
 
-
-
             items.append(items_item)
-
 
         list_bundle_snapshots_response_200 = cls(
             items=items,
         )
-
 
         list_bundle_snapshots_response_200.additional_properties = d
         return list_bundle_snapshots_response_200

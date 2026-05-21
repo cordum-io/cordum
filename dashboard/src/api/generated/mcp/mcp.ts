@@ -5,10 +5,7 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useMutation,
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
@@ -21,20 +18,24 @@ import type {
   UseMutationOptions,
   UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   ApprovalDecisionRequest,
   ApproveMcpApproval200,
   BadRequestResponse,
   ConflictResponse,
+  Error,
   ForbiddenResponse,
   GetAgentDeniedEvents200,
   GetAgentToolVisibility200,
   GetMcpApproval200,
+  GetMcpGatewayConfig200,
+  GetMcpGatewayHealth200,
   GetMcpUsage200,
   GetMcpUsageParams,
+  InternalServerErrorResponse,
   JsonRpcRequest,
   JsonRpcResponse,
   ListMcpApprovals200,
@@ -45,17 +46,15 @@ import type {
   ListMcpToolsParams,
   McpStatus,
   NotFoundResponse,
+  PostMcpGatewayClientsConnect200,
   RejectMcpApproval200,
   ServiceUnavailableResponse,
   UnauthorizedResponse,
   VerifyMcpSignature200,
-  VerifyMcpSignatureBody
-} from '.././model';
+  VerifyMcpSignatureBody,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * Opens an SSE connection to the MCP server. The server sends JSON-RPC
@@ -63,1096 +62,2210 @@ notifications and responses over this channel.
 
  * @summary MCP Server-Sent Events stream
  */
-export const mcpSSE = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<string>(
-      {url: `/mcp/sse`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const mcpSSE = (signal?: AbortSignal) => {
+  return apiClient<string>({ url: `/mcp/sse`, method: "GET", signal });
+};
 
 export const getMcpSSEQueryKey = () => {
-    return [
-    `/mcp/sse`
-    ] as const;
-    }
+  return [`/mcp/sse`] as const;
+};
 
-    
-export const getMcpSSEQueryOptions = <TData = Awaited<ReturnType<typeof mcpSSE>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof mcpSSE>>, TError, TData>>, }
-) => {
+export const getMcpSSEQueryOptions = <
+  TData = Awaited<ReturnType<typeof mcpSSE>>,
+  TError = UnauthorizedResponse | ForbiddenResponse | Error,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof mcpSSE>>, TError, TData>
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getMcpSSEQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getMcpSSEQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof mcpSSE>>> = ({
+    signal,
+  }) => mcpSSE(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof mcpSSE>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof mcpSSE>>> = ({ signal }) => mcpSSE(signal);
+export type McpSSEQueryResult = NonNullable<Awaited<ReturnType<typeof mcpSSE>>>;
+export type McpSSEQueryError = UnauthorizedResponse | ForbiddenResponse | Error;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof mcpSSE>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type McpSSEQueryResult = NonNullable<Awaited<ReturnType<typeof mcpSSE>>>
-export type McpSSEQueryError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useMcpSSE<TData = Awaited<ReturnType<typeof mcpSSE>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof mcpSSE>>, TError, TData>> & Pick<
+export function useMcpSSE<
+  TData = Awaited<ReturnType<typeof mcpSSE>>,
+  TError = UnauthorizedResponse | ForbiddenResponse | Error,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof mcpSSE>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof mcpSSE>>,
           TError,
           Awaited<ReturnType<typeof mcpSSE>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useMcpSSE<TData = Awaited<ReturnType<typeof mcpSSE>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof mcpSSE>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useMcpSSE<
+  TData = Awaited<ReturnType<typeof mcpSSE>>,
+  TError = UnauthorizedResponse | ForbiddenResponse | Error,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof mcpSSE>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof mcpSSE>>,
           TError,
           Awaited<ReturnType<typeof mcpSSE>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useMcpSSE<TData = Awaited<ReturnType<typeof mcpSSE>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof mcpSSE>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useMcpSSE<
+  TData = Awaited<ReturnType<typeof mcpSSE>>,
+  TError = UnauthorizedResponse | ForbiddenResponse | Error,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof mcpSSE>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary MCP Server-Sent Events stream
  */
 
-export function useMcpSSE<TData = Awaited<ReturnType<typeof mcpSSE>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof mcpSSE>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useMcpSSE<
+  TData = Awaited<ReturnType<typeof mcpSSE>>,
+  TError = UnauthorizedResponse | ForbiddenResponse | Error,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof mcpSSE>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getMcpSSEQueryOptions(options);
 
-  const queryOptions = getMcpSSEQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Send a JSON-RPC 2.0 message to MCP server
  */
 export const mcpMessage = (
-    jsonRpcRequest: JsonRpcRequest,
- signal?: AbortSignal
+  jsonRpcRequest: JsonRpcRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<JsonRpcResponse>(
-      {url: `/mcp/message`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: jsonRpcRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<JsonRpcResponse>({
+    url: `/mcp/message`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: jsonRpcRequest,
+    signal,
+  });
+};
 
+export const getMcpMessageMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | Error,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof mcpMessage>>,
+    TError,
+    { data: JsonRpcRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof mcpMessage>>,
+  TError,
+  { data: JsonRpcRequest },
+  TContext
+> => {
+  const mutationKey = ["mcpMessage"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getMcpMessageMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof mcpMessage>>, TError,{data: JsonRpcRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof mcpMessage>>, TError,{data: JsonRpcRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof mcpMessage>>,
+    { data: JsonRpcRequest }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['mcpMessage'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return mcpMessage(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type McpMessageMutationResult = NonNullable<
+  Awaited<ReturnType<typeof mcpMessage>>
+>;
+export type McpMessageMutationBody = JsonRpcRequest;
+export type McpMessageMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | Error;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof mcpMessage>>, {data: JsonRpcRequest}> = (props) => {
-          const {data} = props ?? {};
-
-          return  mcpMessage(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type McpMessageMutationResult = NonNullable<Awaited<ReturnType<typeof mcpMessage>>>
-    export type McpMessageMutationBody = JsonRpcRequest
-    export type McpMessageMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Send a JSON-RPC 2.0 message to MCP server
  */
-export const useMcpMessage = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof mcpMessage>>, TError,{data: JsonRpcRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof mcpMessage>>,
-        TError,
-        {data: JsonRpcRequest},
-        TContext
-      > => {
+export const useMcpMessage = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | Error,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof mcpMessage>>,
+      TError,
+      { data: JsonRpcRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof mcpMessage>>,
+  TError,
+  { data: JsonRpcRequest },
+  TContext
+> => {
+  const mutationOptions = getMcpMessageMutationOptions(options);
 
-      const mutationOptions = getMcpMessageMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Get MCP server status
  */
-export const mcpStatus = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<McpStatus>(
-      {url: `/mcp/status`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const mcpStatus = (signal?: AbortSignal) => {
+  return apiClient<McpStatus>({ url: `/mcp/status`, method: "GET", signal });
+};
 
 export const getMcpStatusQueryKey = () => {
-    return [
-    `/mcp/status`
-    ] as const;
-    }
+  return [`/mcp/status`] as const;
+};
 
-    
-export const getMcpStatusQueryOptions = <TData = Awaited<ReturnType<typeof mcpStatus>>, TError = UnauthorizedResponse | ForbiddenResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof mcpStatus>>, TError, TData>>, }
-) => {
+export const getMcpStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof mcpStatus>>,
+  TError = UnauthorizedResponse | ForbiddenResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof mcpStatus>>, TError, TData>
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getMcpStatusQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getMcpStatusQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof mcpStatus>>> = ({
+    signal,
+  }) => mcpStatus(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof mcpStatus>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof mcpStatus>>> = ({ signal }) => mcpStatus(signal);
+export type McpStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof mcpStatus>>
+>;
+export type McpStatusQueryError = UnauthorizedResponse | ForbiddenResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof mcpStatus>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type McpStatusQueryResult = NonNullable<Awaited<ReturnType<typeof mcpStatus>>>
-export type McpStatusQueryError = UnauthorizedResponse | ForbiddenResponse
-
-
-export function useMcpStatus<TData = Awaited<ReturnType<typeof mcpStatus>>, TError = UnauthorizedResponse | ForbiddenResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof mcpStatus>>, TError, TData>> & Pick<
+export function useMcpStatus<
+  TData = Awaited<ReturnType<typeof mcpStatus>>,
+  TError = UnauthorizedResponse | ForbiddenResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof mcpStatus>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof mcpStatus>>,
           TError,
           Awaited<ReturnType<typeof mcpStatus>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useMcpStatus<TData = Awaited<ReturnType<typeof mcpStatus>>, TError = UnauthorizedResponse | ForbiddenResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof mcpStatus>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useMcpStatus<
+  TData = Awaited<ReturnType<typeof mcpStatus>>,
+  TError = UnauthorizedResponse | ForbiddenResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof mcpStatus>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof mcpStatus>>,
           TError,
           Awaited<ReturnType<typeof mcpStatus>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useMcpStatus<TData = Awaited<ReturnType<typeof mcpStatus>>, TError = UnauthorizedResponse | ForbiddenResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof mcpStatus>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useMcpStatus<
+  TData = Awaited<ReturnType<typeof mcpStatus>>,
+  TError = UnauthorizedResponse | ForbiddenResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof mcpStatus>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get MCP server status
  */
 
-export function useMcpStatus<TData = Awaited<ReturnType<typeof mcpStatus>>, TError = UnauthorizedResponse | ForbiddenResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof mcpStatus>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useMcpStatus<
+  TData = Awaited<ReturnType<typeof mcpStatus>>,
+  TError = UnauthorizedResponse | ForbiddenResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof mcpStatus>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getMcpStatusQueryOptions(options);
 
-  const queryOptions = getMcpStatusQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
+/**
+ * @summary EDGE-100 MCP Gateway skeleton — health probe
+ */
+export const getMcpGatewayHealth = (signal?: AbortSignal) => {
+  return apiClient<GetMcpGatewayHealth200>({
+    url: `/api/v1/mcp/gateway/health`,
+    method: "GET",
+    signal,
+  });
+};
 
+export const getGetMcpGatewayHealthQueryKey = () => {
+  return [`/api/v1/mcp/gateway/health`] as const;
+};
 
+export const getGetMcpGatewayHealthQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMcpGatewayHealth>>,
+  TError = ServiceUnavailableResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof getMcpGatewayHealth>>,
+      TError,
+      TData
+    >
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetMcpGatewayHealthQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getMcpGatewayHealth>>
+  > = ({ signal }) => getMcpGatewayHealth(signal);
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMcpGatewayHealth>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type GetMcpGatewayHealthQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMcpGatewayHealth>>
+>;
+export type GetMcpGatewayHealthQueryError = ServiceUnavailableResponse;
+
+export function useGetMcpGatewayHealth<
+  TData = Awaited<ReturnType<typeof getMcpGatewayHealth>>,
+  TError = ServiceUnavailableResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getMcpGatewayHealth>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMcpGatewayHealth>>,
+          TError,
+          Awaited<ReturnType<typeof getMcpGatewayHealth>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetMcpGatewayHealth<
+  TData = Awaited<ReturnType<typeof getMcpGatewayHealth>>,
+  TError = ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getMcpGatewayHealth>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMcpGatewayHealth>>,
+          TError,
+          Awaited<ReturnType<typeof getMcpGatewayHealth>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetMcpGatewayHealth<
+  TData = Awaited<ReturnType<typeof getMcpGatewayHealth>>,
+  TError = ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getMcpGatewayHealth>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary EDGE-100 MCP Gateway skeleton — health probe
+ */
+
+export function useGetMcpGatewayHealth<
+  TData = Awaited<ReturnType<typeof getMcpGatewayHealth>>,
+  TError = ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getMcpGatewayHealth>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetMcpGatewayHealthQueryOptions(options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * @summary EDGE-100 MCP Gateway skeleton — effective per-tenant config (redacted)
+ */
+export const getMcpGatewayConfig = (signal?: AbortSignal) => {
+  return apiClient<GetMcpGatewayConfig200>({
+    url: `/api/v1/mcp/gateway/config`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetMcpGatewayConfigQueryKey = () => {
+  return [`/api/v1/mcp/gateway/config`] as const;
+};
+
+export const getGetMcpGatewayConfigQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMcpGatewayConfig>>,
+  TError = UnauthorizedResponse | ServiceUnavailableResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<
+      Awaited<ReturnType<typeof getMcpGatewayConfig>>,
+      TError,
+      TData
+    >
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetMcpGatewayConfigQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getMcpGatewayConfig>>
+  > = ({ signal }) => getMcpGatewayConfig(signal);
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMcpGatewayConfig>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
+
+export type GetMcpGatewayConfigQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMcpGatewayConfig>>
+>;
+export type GetMcpGatewayConfigQueryError =
+  | UnauthorizedResponse
+  | ServiceUnavailableResponse;
+
+export function useGetMcpGatewayConfig<
+  TData = Awaited<ReturnType<typeof getMcpGatewayConfig>>,
+  TError = UnauthorizedResponse | ServiceUnavailableResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getMcpGatewayConfig>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMcpGatewayConfig>>,
+          TError,
+          Awaited<ReturnType<typeof getMcpGatewayConfig>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetMcpGatewayConfig<
+  TData = Awaited<ReturnType<typeof getMcpGatewayConfig>>,
+  TError = UnauthorizedResponse | ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getMcpGatewayConfig>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getMcpGatewayConfig>>,
+          TError,
+          Awaited<ReturnType<typeof getMcpGatewayConfig>>
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetMcpGatewayConfig<
+  TData = Awaited<ReturnType<typeof getMcpGatewayConfig>>,
+  TError = UnauthorizedResponse | ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getMcpGatewayConfig>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+/**
+ * @summary EDGE-100 MCP Gateway skeleton — effective per-tenant config (redacted)
+ */
+
+export function useGetMcpGatewayConfig<
+  TData = Awaited<ReturnType<typeof getMcpGatewayConfig>>,
+  TError = UnauthorizedResponse | ServiceUnavailableResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getMcpGatewayConfig>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetMcpGatewayConfigQueryOptions(options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Catch-all for `/api/v1/mcp/gateway/upstream/*`. Always returns 503 in
+the P1 skeleton: `gateway_disabled` when MCPPolicy.GatewayEnabled is
+false (default), `no_upstream_configured` when true but the EDGE-101
+upstream registry is empty.
+
+ * @summary EDGE-100 MCP Gateway skeleton — upstream forwarding (disabled by default)
+ */
+export const postMcpGatewayUpstream = (signal?: AbortSignal) => {
+  return apiClient<unknown>({
+    url: `/api/v1/mcp/gateway/upstream`,
+    method: "POST",
+    signal,
+  });
+};
+
+export const getPostMcpGatewayUpstreamMutationOptions = <
+  TError = UnauthorizedResponse | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof postMcpGatewayUpstream>>,
+    TError,
+    void,
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof postMcpGatewayUpstream>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["postMcpGatewayUpstream"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof postMcpGatewayUpstream>>,
+    void
+  > = () => {
+    return postMcpGatewayUpstream();
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PostMcpGatewayUpstreamMutationResult = NonNullable<
+  Awaited<ReturnType<typeof postMcpGatewayUpstream>>
+>;
+
+export type PostMcpGatewayUpstreamMutationError =
+  | UnauthorizedResponse
+  | ServiceUnavailableResponse;
+
+/**
+ * @summary EDGE-100 MCP Gateway skeleton — upstream forwarding (disabled by default)
+ */
+export const usePostMcpGatewayUpstream = <
+  TError = UnauthorizedResponse | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof postMcpGatewayUpstream>>,
+      TError,
+      void,
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof postMcpGatewayUpstream>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationOptions = getPostMcpGatewayUpstreamMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+/**
+ * Creates an EdgeSession + AgentExecution attributed to the resolved
+tenant + authenticated principal (never to request-body claims) and
+emits an `mcp.server.connected` event on success or
+`mcp.server.failed` on the failure path.
+
+ * @summary EDGE-100 MCP Gateway skeleton — register an MCP client connect
+ */
+export const postMcpGatewayClientsConnect = (signal?: AbortSignal) => {
+  return apiClient<PostMcpGatewayClientsConnect200>({
+    url: `/api/v1/mcp/gateway/clients/connect`,
+    method: "POST",
+    signal,
+  });
+};
+
+export const getPostMcpGatewayClientsConnectMutationOptions = <
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof postMcpGatewayClientsConnect>>,
+    TError,
+    void,
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof postMcpGatewayClientsConnect>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["postMcpGatewayClientsConnect"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof postMcpGatewayClientsConnect>>,
+    void
+  > = () => {
+    return postMcpGatewayClientsConnect();
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PostMcpGatewayClientsConnectMutationResult = NonNullable<
+  Awaited<ReturnType<typeof postMcpGatewayClientsConnect>>
+>;
+
+export type PostMcpGatewayClientsConnectMutationError =
+  | UnauthorizedResponse
+  | InternalServerErrorResponse;
+
+/**
+ * @summary EDGE-100 MCP Gateway skeleton — register an MCP client connect
+ */
+export const usePostMcpGatewayClientsConnect = <
+  TError = UnauthorizedResponse | InternalServerErrorResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof postMcpGatewayClientsConnect>>,
+      TError,
+      void,
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof postMcpGatewayClientsConnect>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationOptions =
+    getPostMcpGatewayClientsConnectMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
 /**
  * @summary List MCP tool-call approvals
  */
 export const listMcpApprovals = (
-    params?: ListMcpApprovalsParams,
- signal?: AbortSignal
+  params?: ListMcpApprovalsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ListMcpApprovals200>(
-      {url: `/api/v1/mcp/approvals`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<ListMcpApprovals200>({
+    url: `/api/v1/mcp/approvals`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getListMcpApprovalsQueryKey = (params?: ListMcpApprovalsParams,) => {
-    return [
-    `/api/v1/mcp/approvals`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListMcpApprovalsQueryOptions = <TData = Awaited<ReturnType<typeof listMcpApprovals>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(params?: ListMcpApprovalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpApprovals>>, TError, TData>>, }
+export const getListMcpApprovalsQueryKey = (
+  params?: ListMcpApprovalsParams,
 ) => {
+  return [`/api/v1/mcp/approvals`, ...(params ? [params] : [])] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getListMcpApprovalsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listMcpApprovals>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListMcpApprovalsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listMcpApprovals>>,
+        TError,
+        TData
+      >
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListMcpApprovalsQueryKey(params);
+  const queryKey =
+    queryOptions?.queryKey ?? getListMcpApprovalsQueryKey(params);
 
-  
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listMcpApprovals>>
+  > = ({ signal }) => listMcpApprovals(params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMcpApprovals>>> = ({ signal }) => listMcpApprovals(params, signal);
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listMcpApprovals>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type ListMcpApprovalsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listMcpApprovals>>
+>;
+export type ListMcpApprovalsQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMcpApprovals>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListMcpApprovalsQueryResult = NonNullable<Awaited<ReturnType<typeof listMcpApprovals>>>
-export type ListMcpApprovalsQueryError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useListMcpApprovals<TData = Awaited<ReturnType<typeof listMcpApprovals>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params: undefined |  ListMcpApprovalsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpApprovals>>, TError, TData>> & Pick<
+export function useListMcpApprovals<
+  TData = Awaited<ReturnType<typeof listMcpApprovals>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params: undefined | ListMcpApprovalsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listMcpApprovals>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listMcpApprovals>>,
           TError,
           Awaited<ReturnType<typeof listMcpApprovals>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListMcpApprovals<TData = Awaited<ReturnType<typeof listMcpApprovals>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListMcpApprovalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpApprovals>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListMcpApprovals<
+  TData = Awaited<ReturnType<typeof listMcpApprovals>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListMcpApprovalsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listMcpApprovals>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listMcpApprovals>>,
           TError,
           Awaited<ReturnType<typeof listMcpApprovals>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListMcpApprovals<TData = Awaited<ReturnType<typeof listMcpApprovals>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListMcpApprovalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpApprovals>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListMcpApprovals<
+  TData = Awaited<ReturnType<typeof listMcpApprovals>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListMcpApprovalsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listMcpApprovals>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List MCP tool-call approvals
  */
 
-export function useListMcpApprovals<TData = Awaited<ReturnType<typeof listMcpApprovals>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListMcpApprovalsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpApprovals>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListMcpApprovals<
+  TData = Awaited<ReturnType<typeof listMcpApprovals>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListMcpApprovalsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listMcpApprovals>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListMcpApprovalsQueryOptions(params, options);
 
-  const queryOptions = getListMcpApprovalsQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
-
-
-
 /**
  * @summary Get one MCP approval record
  */
-export const getMcpApproval = (
-    id: string,
- signal?: AbortSignal
+export const getMcpApproval = (id: string, signal?: AbortSignal) => {
+  return apiClient<GetMcpApproval200>({
+    url: `/api/v1/mcp/approvals/${id}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetMcpApprovalQueryKey = (id?: string) => {
+  return [`/api/v1/mcp/approvals/${id}`] as const;
+};
+
+export const getGetMcpApprovalQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMcpApproval>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMcpApproval>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<GetMcpApproval200>(
-      {url: `/api/v1/mcp/approvals/${id}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetMcpApprovalQueryKey(id);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getMcpApproval>>> = ({
+    signal,
+  }) => getMcpApproval(id, signal);
 
-export const getGetMcpApprovalQueryKey = (id?: string,) => {
-    return [
-    `/api/v1/mcp/approvals/${id}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMcpApproval>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetMcpApprovalQueryOptions = <TData = Awaited<ReturnType<typeof getMcpApproval>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMcpApproval>>, TError, TData>>, }
-) => {
+export type GetMcpApprovalQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMcpApproval>>
+>;
+export type GetMcpApprovalQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ServiceUnavailableResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetMcpApprovalQueryKey(id);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMcpApproval>>> = ({ signal }) => getMcpApproval(id, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMcpApproval>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetMcpApprovalQueryResult = NonNullable<Awaited<ReturnType<typeof getMcpApproval>>>
-export type GetMcpApprovalQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-
-export function useGetMcpApproval<TData = Awaited<ReturnType<typeof getMcpApproval>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMcpApproval>>, TError, TData>> & Pick<
+export function useGetMcpApproval<
+  TData = Awaited<ReturnType<typeof getMcpApproval>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMcpApproval>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getMcpApproval>>,
           TError,
           Awaited<ReturnType<typeof getMcpApproval>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetMcpApproval<TData = Awaited<ReturnType<typeof getMcpApproval>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMcpApproval>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetMcpApproval<
+  TData = Awaited<ReturnType<typeof getMcpApproval>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMcpApproval>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getMcpApproval>>,
           TError,
           Awaited<ReturnType<typeof getMcpApproval>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetMcpApproval<TData = Awaited<ReturnType<typeof getMcpApproval>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMcpApproval>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetMcpApproval<
+  TData = Awaited<ReturnType<typeof getMcpApproval>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMcpApproval>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get one MCP approval record
  */
 
-export function useGetMcpApproval<TData = Awaited<ReturnType<typeof getMcpApproval>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMcpApproval>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetMcpApproval<
+  TData = Awaited<ReturnType<typeof getMcpApproval>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMcpApproval>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetMcpApprovalQueryOptions(id, options);
 
-  const queryOptions = getGetMcpApprovalQueryOptions(id,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary Approve an MCP tool-call approval request
  */
 export const approveMcpApproval = (
-    id: string,
-    approvalDecisionRequest?: ApprovalDecisionRequest,
- signal?: AbortSignal
+  id: string,
+  approvalDecisionRequest?: ApprovalDecisionRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ApproveMcpApproval200>(
-      {url: `/api/v1/mcp/approvals/${id}/approve`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: approvalDecisionRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<ApproveMcpApproval200>({
+    url: `/api/v1/mcp/approvals/${id}/approve`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: approvalDecisionRequest,
+    signal,
+  });
+};
 
+export const getApproveMcpApprovalMutationOptions = <
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ConflictResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approveMcpApproval>>,
+    TError,
+    { id: string; data: ApprovalDecisionRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof approveMcpApproval>>,
+  TError,
+  { id: string; data: ApprovalDecisionRequest },
+  TContext
+> => {
+  const mutationKey = ["approveMcpApproval"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getApproveMcpApprovalMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveMcpApproval>>, TError,{id: string;data: ApprovalDecisionRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof approveMcpApproval>>, TError,{id: string;data: ApprovalDecisionRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof approveMcpApproval>>,
+    { id: string; data: ApprovalDecisionRequest }
+  > = (props) => {
+    const { id, data } = props ?? {};
 
-const mutationKey = ['approveMcpApproval'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return approveMcpApproval(id, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type ApproveMcpApprovalMutationResult = NonNullable<
+  Awaited<ReturnType<typeof approveMcpApproval>>
+>;
+export type ApproveMcpApprovalMutationBody = ApprovalDecisionRequest;
+export type ApproveMcpApprovalMutationError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ConflictResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof approveMcpApproval>>, {id: string;data: ApprovalDecisionRequest}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  approveMcpApproval(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type ApproveMcpApprovalMutationResult = NonNullable<Awaited<ReturnType<typeof approveMcpApproval>>>
-    export type ApproveMcpApprovalMutationBody = ApprovalDecisionRequest
-    export type ApproveMcpApprovalMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Approve an MCP tool-call approval request
  */
-export const useApproveMcpApproval = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof approveMcpApproval>>, TError,{id: string;data: ApprovalDecisionRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof approveMcpApproval>>,
-        TError,
-        {id: string;data: ApprovalDecisionRequest},
-        TContext
-      > => {
+export const useApproveMcpApproval = <
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ConflictResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof approveMcpApproval>>,
+      TError,
+      { id: string; data: ApprovalDecisionRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof approveMcpApproval>>,
+  TError,
+  { id: string; data: ApprovalDecisionRequest },
+  TContext
+> => {
+  const mutationOptions = getApproveMcpApprovalMutationOptions(options);
 
-      const mutationOptions = getApproveMcpApprovalMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * @summary Reject an MCP tool-call approval request
  */
 export const rejectMcpApproval = (
-    id: string,
-    approvalDecisionRequest?: ApprovalDecisionRequest,
- signal?: AbortSignal
+  id: string,
+  approvalDecisionRequest?: ApprovalDecisionRequest,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<RejectMcpApproval200>(
-      {url: `/api/v1/mcp/approvals/${id}/reject`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: approvalDecisionRequest, signal
-    },
-      );
-    }
-  
+  return apiClient<RejectMcpApproval200>({
+    url: `/api/v1/mcp/approvals/${id}/reject`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: approvalDecisionRequest,
+    signal,
+  });
+};
 
+export const getRejectMcpApprovalMutationOptions = <
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ConflictResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rejectMcpApproval>>,
+    TError,
+    { id: string; data: ApprovalDecisionRequest },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof rejectMcpApproval>>,
+  TError,
+  { id: string; data: ApprovalDecisionRequest },
+  TContext
+> => {
+  const mutationKey = ["rejectMcpApproval"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getRejectMcpApprovalMutationOptions = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectMcpApproval>>, TError,{id: string;data: ApprovalDecisionRequest}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof rejectMcpApproval>>, TError,{id: string;data: ApprovalDecisionRequest}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof rejectMcpApproval>>,
+    { id: string; data: ApprovalDecisionRequest }
+  > = (props) => {
+    const { id, data } = props ?? {};
 
-const mutationKey = ['rejectMcpApproval'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return rejectMcpApproval(id, data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type RejectMcpApprovalMutationResult = NonNullable<
+  Awaited<ReturnType<typeof rejectMcpApproval>>
+>;
+export type RejectMcpApprovalMutationBody = ApprovalDecisionRequest;
+export type RejectMcpApprovalMutationError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | ConflictResponse
+  | ServiceUnavailableResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof rejectMcpApproval>>, {id: string;data: ApprovalDecisionRequest}> = (props) => {
-          const {id,data} = props ?? {};
-
-          return  rejectMcpApproval(id,data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type RejectMcpApprovalMutationResult = NonNullable<Awaited<ReturnType<typeof rejectMcpApproval>>>
-    export type RejectMcpApprovalMutationBody = ApprovalDecisionRequest
-    export type RejectMcpApprovalMutationError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Reject an MCP tool-call approval request
  */
-export const useRejectMcpApproval = <TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ConflictResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof rejectMcpApproval>>, TError,{id: string;data: ApprovalDecisionRequest}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof rejectMcpApproval>>,
-        TError,
-        {id: string;data: ApprovalDecisionRequest},
-        TContext
-      > => {
+export const useRejectMcpApproval = <
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | ConflictResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof rejectMcpApproval>>,
+      TError,
+      { id: string; data: ApprovalDecisionRequest },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof rejectMcpApproval>>,
+  TError,
+  { id: string; data: ApprovalDecisionRequest },
+  TContext
+> => {
+  const mutationOptions = getRejectMcpApprovalMutationOptions(options);
 
-      const mutationOptions = getRejectMcpApprovalMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * Verify an ECDSA signature over an MCP request against the trusted-key store. Admin-only. See docs/mcp/outbound-signing.md.
  * @summary Verify an outbound MCP signature (admin-gated)
  */
 export const verifyMcpSignature = (
-    verifyMcpSignatureBody: VerifyMcpSignatureBody,
- signal?: AbortSignal
+  verifyMcpSignatureBody: VerifyMcpSignatureBody,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<VerifyMcpSignature200>(
-      {url: `/api/v1/mcp/verify-signature`, method: 'POST',
-      headers: {'Content-Type': 'application/json', },
-      data: verifyMcpSignatureBody, signal
-    },
-      );
-    }
-  
+  return apiClient<VerifyMcpSignature200>({
+    url: `/api/v1/mcp/verify-signature`,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    data: verifyMcpSignatureBody,
+    signal,
+  });
+};
 
+export const getVerifyMcpSignatureMutationOptions = <
+  TError = Error | UnauthorizedResponse | ForbiddenResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof verifyMcpSignature>>,
+    TError,
+    { data: VerifyMcpSignatureBody },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof verifyMcpSignature>>,
+  TError,
+  { data: VerifyMcpSignatureBody },
+  TContext
+> => {
+  const mutationKey = ["verifyMcpSignature"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
-export const getVerifyMcpSignatureMutationOptions = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyMcpSignature>>, TError,{data: VerifyMcpSignatureBody}, TContext>, }
-): UseMutationOptions<Awaited<ReturnType<typeof verifyMcpSignature>>, TError,{data: VerifyMcpSignatureBody}, TContext> => {
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof verifyMcpSignature>>,
+    { data: VerifyMcpSignatureBody }
+  > = (props) => {
+    const { data } = props ?? {};
 
-const mutationKey = ['verifyMcpSignature'];
-const {mutation: mutationOptions} = options ?
-      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
-      options
-      : {...options, mutation: {...options.mutation, mutationKey}}
-      : {mutation: { mutationKey, }};
+    return verifyMcpSignature(data);
+  };
 
-      
+  return { mutationFn, ...mutationOptions };
+};
 
+export type VerifyMcpSignatureMutationResult = NonNullable<
+  Awaited<ReturnType<typeof verifyMcpSignature>>
+>;
+export type VerifyMcpSignatureMutationBody = VerifyMcpSignatureBody;
+export type VerifyMcpSignatureMutationError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse;
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof verifyMcpSignature>>, {data: VerifyMcpSignatureBody}> = (props) => {
-          const {data} = props ?? {};
-
-          return  verifyMcpSignature(data,)
-        }
-
-        
-
-
-  return  { mutationFn, ...mutationOptions }}
-
-    export type VerifyMcpSignatureMutationResult = NonNullable<Awaited<ReturnType<typeof verifyMcpSignature>>>
-    export type VerifyMcpSignatureMutationBody = VerifyMcpSignatureBody
-    export type VerifyMcpSignatureMutationError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-    /**
+/**
  * @summary Verify an outbound MCP signature (admin-gated)
  */
-export const useVerifyMcpSignature = <TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof verifyMcpSignature>>, TError,{data: VerifyMcpSignatureBody}, TContext>, }
- , queryClient?: QueryClient): UseMutationResult<
-        Awaited<ReturnType<typeof verifyMcpSignature>>,
-        TError,
-        {data: VerifyMcpSignatureBody},
-        TContext
-      > => {
+export const useVerifyMcpSignature = <
+  TError = Error | UnauthorizedResponse | ForbiddenResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof verifyMcpSignature>>,
+      TError,
+      { data: VerifyMcpSignatureBody },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof verifyMcpSignature>>,
+  TError,
+  { data: VerifyMcpSignatureBody },
+  TContext
+> => {
+  const mutationOptions = getVerifyMcpSignatureMutationOptions(options);
 
-      const mutationOptions = getVerifyMcpSignatureMutationOptions(options);
-
-      return useMutation(mutationOptions, queryClient);
-    }
-    /**
+  return useMutation(mutationOptions, queryClient);
+};
+/**
  * Walks the tenant's audit chain stream and returns observed outbound MCP calls, filtered by time range + subject. Admin-only.
  * @summary List outbound MCP signed-call events
  */
 export const listMcpOutbound = (
-    params?: ListMcpOutboundParams,
- signal?: AbortSignal
+  params?: ListMcpOutboundParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ListMcpOutbound200>(
-      {url: `/api/v1/mcp/outbound`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<ListMcpOutbound200>({
+    url: `/api/v1/mcp/outbound`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
+export const getListMcpOutboundQueryKey = (params?: ListMcpOutboundParams) => {
+  return [`/api/v1/mcp/outbound`, ...(params ? [params] : [])] as const;
+};
 
-
-export const getListMcpOutboundQueryKey = (params?: ListMcpOutboundParams,) => {
-    return [
-    `/api/v1/mcp/outbound`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListMcpOutboundQueryOptions = <TData = Awaited<ReturnType<typeof listMcpOutbound>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(params?: ListMcpOutboundParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpOutbound>>, TError, TData>>, }
+export const getListMcpOutboundQueryOptions = <
+  TData = Awaited<ReturnType<typeof listMcpOutbound>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListMcpOutboundParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listMcpOutbound>>,
+        TError,
+        TData
+      >
+    >;
+  },
 ) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListMcpOutboundQueryKey(params);
 
-  const queryKey =  queryOptions?.queryKey ?? getListMcpOutboundQueryKey(params);
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listMcpOutbound>>> = ({
+    signal,
+  }) => listMcpOutbound(params, signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listMcpOutbound>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMcpOutbound>>> = ({ signal }) => listMcpOutbound(params, signal);
+export type ListMcpOutboundQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listMcpOutbound>>
+>;
+export type ListMcpOutboundQueryError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMcpOutbound>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListMcpOutboundQueryResult = NonNullable<Awaited<ReturnType<typeof listMcpOutbound>>>
-export type ListMcpOutboundQueryError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useListMcpOutbound<TData = Awaited<ReturnType<typeof listMcpOutbound>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params: undefined |  ListMcpOutboundParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpOutbound>>, TError, TData>> & Pick<
+export function useListMcpOutbound<
+  TData = Awaited<ReturnType<typeof listMcpOutbound>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params: undefined | ListMcpOutboundParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listMcpOutbound>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listMcpOutbound>>,
           TError,
           Awaited<ReturnType<typeof listMcpOutbound>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListMcpOutbound<TData = Awaited<ReturnType<typeof listMcpOutbound>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListMcpOutboundParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpOutbound>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListMcpOutbound<
+  TData = Awaited<ReturnType<typeof listMcpOutbound>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListMcpOutboundParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listMcpOutbound>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listMcpOutbound>>,
           TError,
           Awaited<ReturnType<typeof listMcpOutbound>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListMcpOutbound<TData = Awaited<ReturnType<typeof listMcpOutbound>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListMcpOutboundParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpOutbound>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListMcpOutbound<
+  TData = Awaited<ReturnType<typeof listMcpOutbound>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListMcpOutboundParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listMcpOutbound>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List outbound MCP signed-call events
  */
 
-export function useListMcpOutbound<TData = Awaited<ReturnType<typeof listMcpOutbound>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: ListMcpOutboundParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpOutbound>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListMcpOutbound<
+  TData = Awaited<ReturnType<typeof listMcpOutbound>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: ListMcpOutboundParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof listMcpOutbound>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListMcpOutboundQueryOptions(params, options);
 
-  const queryOptions = getListMcpOutboundQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * Walks the tenant's audit chain and buckets outbound MCP calls by subject, method, and tool for usage analytics. Admin-only.
  * @summary Outbound MCP usage buckets from the audit chain
  */
 export const getMcpUsage = (
-    params?: GetMcpUsageParams,
- signal?: AbortSignal
+  params?: GetMcpUsageParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<GetMcpUsage200>(
-      {url: `/api/v1/mcp/usage`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<GetMcpUsage200>({
+    url: `/api/v1/mcp/usage`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
+export const getGetMcpUsageQueryKey = (params?: GetMcpUsageParams) => {
+  return [`/api/v1/mcp/usage`, ...(params ? [params] : [])] as const;
+};
 
-
-export const getGetMcpUsageQueryKey = (params?: GetMcpUsageParams,) => {
-    return [
-    `/api/v1/mcp/usage`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getGetMcpUsageQueryOptions = <TData = Awaited<ReturnType<typeof getMcpUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(params?: GetMcpUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMcpUsage>>, TError, TData>>, }
+export const getGetMcpUsageQueryOptions = <
+  TData = Awaited<ReturnType<typeof getMcpUsage>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: GetMcpUsageParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMcpUsage>>, TError, TData>
+    >;
+  },
 ) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getGetMcpUsageQueryKey(params);
 
-  const queryKey =  queryOptions?.queryKey ?? getGetMcpUsageQueryKey(params);
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getMcpUsage>>> = ({
+    signal,
+  }) => getMcpUsage(params, signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getMcpUsage>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMcpUsage>>> = ({ signal }) => getMcpUsage(params, signal);
+export type GetMcpUsageQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getMcpUsage>>
+>;
+export type GetMcpUsageQueryError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMcpUsage>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetMcpUsageQueryResult = NonNullable<Awaited<ReturnType<typeof getMcpUsage>>>
-export type GetMcpUsageQueryError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse
-
-
-export function useGetMcpUsage<TData = Awaited<ReturnType<typeof getMcpUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params: undefined |  GetMcpUsageParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMcpUsage>>, TError, TData>> & Pick<
+export function useGetMcpUsage<
+  TData = Awaited<ReturnType<typeof getMcpUsage>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params: undefined | GetMcpUsageParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMcpUsage>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getMcpUsage>>,
           TError,
           Awaited<ReturnType<typeof getMcpUsage>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetMcpUsage<TData = Awaited<ReturnType<typeof getMcpUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: GetMcpUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMcpUsage>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetMcpUsage<
+  TData = Awaited<ReturnType<typeof getMcpUsage>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: GetMcpUsageParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMcpUsage>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getMcpUsage>>,
           TError,
           Awaited<ReturnType<typeof getMcpUsage>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetMcpUsage<TData = Awaited<ReturnType<typeof getMcpUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: GetMcpUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMcpUsage>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetMcpUsage<
+  TData = Awaited<ReturnType<typeof getMcpUsage>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: GetMcpUsageParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMcpUsage>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Outbound MCP usage buckets from the audit chain
  */
 
-export function useGetMcpUsage<TData = Awaited<ReturnType<typeof getMcpUsage>>, TError = UnauthorizedResponse | ForbiddenResponse | ServiceUnavailableResponse>(
- params?: GetMcpUsageParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getMcpUsage>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetMcpUsage<
+  TData = Awaited<ReturnType<typeof getMcpUsage>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  params?: GetMcpUsageParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getMcpUsage>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetMcpUsageQueryOptions(params, options);
 
-  const queryOptions = getGetMcpUsageQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * Returns the MCP tool catalogue. Without an `agent_id` query parameter, returns the unfiltered admin view. With `agent_id`, returns the subset of tools the identity is entitled to call after applying the MCP risk- tier and data-classification filter.
  * @summary List MCP tools visible to an agent or the full catalogue
  */
 export const listMcpTools = (
-    params?: ListMcpToolsParams,
- signal?: AbortSignal
+  params?: ListMcpToolsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<ListMcpTools200>(
-      {url: `/api/v1/mcp/tools`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<ListMcpTools200>({
+    url: `/api/v1/mcp/tools`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
+export const getListMcpToolsQueryKey = (params?: ListMcpToolsParams) => {
+  return [`/api/v1/mcp/tools`, ...(params ? [params] : [])] as const;
+};
 
-
-export const getListMcpToolsQueryKey = (params?: ListMcpToolsParams,) => {
-    return [
-    `/api/v1/mcp/tools`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getListMcpToolsQueryOptions = <TData = Awaited<ReturnType<typeof listMcpTools>>, TError = UnauthorizedResponse | ForbiddenResponse>(params?: ListMcpToolsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpTools>>, TError, TData>>, }
+export const getListMcpToolsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listMcpTools>>,
+  TError = UnauthorizedResponse | ForbiddenResponse | Error,
+>(
+  params?: ListMcpToolsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listMcpTools>>, TError, TData>
+    >;
+  },
 ) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListMcpToolsQueryKey(params);
 
-  const queryKey =  queryOptions?.queryKey ?? getListMcpToolsQueryKey(params);
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listMcpTools>>> = ({
+    signal,
+  }) => listMcpTools(params, signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listMcpTools>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMcpTools>>> = ({ signal }) => listMcpTools(params, signal);
+export type ListMcpToolsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listMcpTools>>
+>;
+export type ListMcpToolsQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | Error;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMcpTools>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListMcpToolsQueryResult = NonNullable<Awaited<ReturnType<typeof listMcpTools>>>
-export type ListMcpToolsQueryError = UnauthorizedResponse | ForbiddenResponse
-
-
-export function useListMcpTools<TData = Awaited<ReturnType<typeof listMcpTools>>, TError = UnauthorizedResponse | ForbiddenResponse>(
- params: undefined |  ListMcpToolsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpTools>>, TError, TData>> & Pick<
+export function useListMcpTools<
+  TData = Awaited<ReturnType<typeof listMcpTools>>,
+  TError = UnauthorizedResponse | ForbiddenResponse | Error,
+>(
+  params: undefined | ListMcpToolsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listMcpTools>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listMcpTools>>,
           TError,
           Awaited<ReturnType<typeof listMcpTools>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListMcpTools<TData = Awaited<ReturnType<typeof listMcpTools>>, TError = UnauthorizedResponse | ForbiddenResponse>(
- params?: ListMcpToolsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpTools>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListMcpTools<
+  TData = Awaited<ReturnType<typeof listMcpTools>>,
+  TError = UnauthorizedResponse | ForbiddenResponse | Error,
+>(
+  params?: ListMcpToolsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listMcpTools>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listMcpTools>>,
           TError,
           Awaited<ReturnType<typeof listMcpTools>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListMcpTools<TData = Awaited<ReturnType<typeof listMcpTools>>, TError = UnauthorizedResponse | ForbiddenResponse>(
- params?: ListMcpToolsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpTools>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListMcpTools<
+  TData = Awaited<ReturnType<typeof listMcpTools>>,
+  TError = UnauthorizedResponse | ForbiddenResponse | Error,
+>(
+  params?: ListMcpToolsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listMcpTools>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List MCP tools visible to an agent or the full catalogue
  */
 
-export function useListMcpTools<TData = Awaited<ReturnType<typeof listMcpTools>>, TError = UnauthorizedResponse | ForbiddenResponse>(
- params?: ListMcpToolsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMcpTools>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListMcpTools<
+  TData = Awaited<ReturnType<typeof listMcpTools>>,
+  TError = UnauthorizedResponse | ForbiddenResponse | Error,
+>(
+  params?: ListMcpToolsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listMcpTools>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListMcpToolsQueryOptions(params, options);
 
-  const queryOptions = getListMcpToolsQueryOptions(params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * Returns the subset of the MCP tool catalogue this agent identity can call after applying the identity-aware filter (risk tier + data classification). A revoked or suspended identity returns an empty list with an advisory `note` field rather than failing.
  * @summary List MCP tools visible to a specific agent identity
  */
-export const getAgentToolVisibility = (
-    id: string,
- signal?: AbortSignal
+export const getAgentToolVisibility = (id: string, signal?: AbortSignal) => {
+  return apiClient<GetAgentToolVisibility200>({
+    url: `/api/v1/agents/${id}/tools`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetAgentToolVisibilityQueryKey = (id?: string) => {
+  return [`/api/v1/agents/${id}/tools`] as const;
+};
+
+export const getGetAgentToolVisibilityQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAgentToolVisibility>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getAgentToolVisibility>>,
+        TError,
+        TData
+      >
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<GetAgentToolVisibility200>(
-      {url: `/api/v1/agents/${id}/tools`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAgentToolVisibilityQueryKey(id);
 
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAgentToolVisibility>>
+  > = ({ signal }) => getAgentToolVisibility(id, signal);
 
-export const getGetAgentToolVisibilityQueryKey = (id?: string,) => {
-    return [
-    `/api/v1/agents/${id}/tools`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAgentToolVisibility>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetAgentToolVisibilityQueryOptions = <TData = Awaited<ReturnType<typeof getAgentToolVisibility>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentToolVisibility>>, TError, TData>>, }
-) => {
+export type GetAgentToolVisibilityQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAgentToolVisibility>>
+>;
+export type GetAgentToolVisibilityQueryError =
+  | Error
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | ServiceUnavailableResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetAgentToolVisibilityQueryKey(id);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentToolVisibility>>> = ({ signal }) => getAgentToolVisibility(id, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgentToolVisibility>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetAgentToolVisibilityQueryResult = NonNullable<Awaited<ReturnType<typeof getAgentToolVisibility>>>
-export type GetAgentToolVisibilityQueryError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse
-
-
-export function useGetAgentToolVisibility<TData = Awaited<ReturnType<typeof getAgentToolVisibility>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentToolVisibility>>, TError, TData>> & Pick<
+export function useGetAgentToolVisibility<
+  TData = Awaited<ReturnType<typeof getAgentToolVisibility>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getAgentToolVisibility>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getAgentToolVisibility>>,
           TError,
           Awaited<ReturnType<typeof getAgentToolVisibility>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetAgentToolVisibility<TData = Awaited<ReturnType<typeof getAgentToolVisibility>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentToolVisibility>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetAgentToolVisibility<
+  TData = Awaited<ReturnType<typeof getAgentToolVisibility>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getAgentToolVisibility>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getAgentToolVisibility>>,
           TError,
           Awaited<ReturnType<typeof getAgentToolVisibility>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetAgentToolVisibility<TData = Awaited<ReturnType<typeof getAgentToolVisibility>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentToolVisibility>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetAgentToolVisibility<
+  TData = Awaited<ReturnType<typeof getAgentToolVisibility>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getAgentToolVisibility>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List MCP tools visible to a specific agent identity
  */
 
-export function useGetAgentToolVisibility<TData = Awaited<ReturnType<typeof getAgentToolVisibility>>, TError = UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | ServiceUnavailableResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentToolVisibility>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetAgentToolVisibility<
+  TData = Awaited<ReturnType<typeof getAgentToolVisibility>>,
+  TError =
+    | Error
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | ServiceUnavailableResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getAgentToolVisibility>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetAgentToolVisibilityQueryOptions(id, options);
 
-  const queryOptions = getGetAgentToolVisibilityQueryOptions(id,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * Returns up to 50 of the most recent `mcp_tool_denied` audit events for the identity from the gateway's in-memory ring. Feeds the dashboard "recent denials" panel without requiring a SIEM pipeline.
  * @summary Recent mcp_tool_denied events for an agent identity
  */
-export const getAgentDeniedEvents = (
-    id: string,
- signal?: AbortSignal
+export const getAgentDeniedEvents = (id: string, signal?: AbortSignal) => {
+  return apiClient<GetAgentDeniedEvents200>({
+    url: `/api/v1/agents/${id}/denied-events`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetAgentDeniedEventsQueryKey = (id?: string) => {
+  return [`/api/v1/agents/${id}/denied-events`] as const;
+};
+
+export const getGetAgentDeniedEventsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAgentDeniedEvents>>,
+  TError = UnauthorizedResponse | ForbiddenResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getAgentDeniedEvents>>,
+        TError,
+        TData
+      >
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<GetAgentDeniedEvents200>(
-      {url: `/api/v1/agents/${id}/denied-events`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAgentDeniedEventsQueryKey(id);
 
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAgentDeniedEvents>>
+  > = ({ signal }) => getAgentDeniedEvents(id, signal);
 
-export const getGetAgentDeniedEventsQueryKey = (id?: string,) => {
-    return [
-    `/api/v1/agents/${id}/denied-events`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAgentDeniedEvents>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    
-export const getGetAgentDeniedEventsQueryOptions = <TData = Awaited<ReturnType<typeof getAgentDeniedEvents>>, TError = UnauthorizedResponse | ForbiddenResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentDeniedEvents>>, TError, TData>>, }
-) => {
+export type GetAgentDeniedEventsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAgentDeniedEvents>>
+>;
+export type GetAgentDeniedEventsQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetAgentDeniedEventsQueryKey(id);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentDeniedEvents>>> = ({ signal }) => getAgentDeniedEvents(id, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgentDeniedEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetAgentDeniedEventsQueryResult = NonNullable<Awaited<ReturnType<typeof getAgentDeniedEvents>>>
-export type GetAgentDeniedEventsQueryError = UnauthorizedResponse | ForbiddenResponse
-
-
-export function useGetAgentDeniedEvents<TData = Awaited<ReturnType<typeof getAgentDeniedEvents>>, TError = UnauthorizedResponse | ForbiddenResponse>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentDeniedEvents>>, TError, TData>> & Pick<
+export function useGetAgentDeniedEvents<
+  TData = Awaited<ReturnType<typeof getAgentDeniedEvents>>,
+  TError = UnauthorizedResponse | ForbiddenResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getAgentDeniedEvents>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getAgentDeniedEvents>>,
           TError,
           Awaited<ReturnType<typeof getAgentDeniedEvents>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetAgentDeniedEvents<TData = Awaited<ReturnType<typeof getAgentDeniedEvents>>, TError = UnauthorizedResponse | ForbiddenResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentDeniedEvents>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetAgentDeniedEvents<
+  TData = Awaited<ReturnType<typeof getAgentDeniedEvents>>,
+  TError = UnauthorizedResponse | ForbiddenResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getAgentDeniedEvents>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getAgentDeniedEvents>>,
           TError,
           Awaited<ReturnType<typeof getAgentDeniedEvents>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetAgentDeniedEvents<TData = Awaited<ReturnType<typeof getAgentDeniedEvents>>, TError = UnauthorizedResponse | ForbiddenResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentDeniedEvents>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetAgentDeniedEvents<
+  TData = Awaited<ReturnType<typeof getAgentDeniedEvents>>,
+  TError = UnauthorizedResponse | ForbiddenResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getAgentDeniedEvents>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Recent mcp_tool_denied events for an agent identity
  */
 
-export function useGetAgentDeniedEvents<TData = Awaited<ReturnType<typeof getAgentDeniedEvents>>, TError = UnauthorizedResponse | ForbiddenResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentDeniedEvents>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetAgentDeniedEvents<
+  TData = Awaited<ReturnType<typeof getAgentDeniedEvents>>,
+  TError = UnauthorizedResponse | ForbiddenResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getAgentDeniedEvents>>,
+        TError,
+        TData
+      >
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetAgentDeniedEventsQueryOptions(id, options);
 
-  const queryOptions = getGetAgentDeniedEventsQueryOptions(id,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
-

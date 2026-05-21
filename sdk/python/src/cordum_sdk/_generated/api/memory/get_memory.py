@@ -14,20 +14,14 @@ from typing import Dict
 from typing import Union
 
 
-
 def _get_kwargs(
     *,
     ptr: Union[Unset, str] = UNSET,
     key: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
@@ -35,9 +29,7 @@ def _get_kwargs(
 
     params["key"] = key
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -45,16 +37,15 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, GetMemoryResponse200]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, GetMemoryResponse200]]:
     if response.status_code == 200:
         response_200 = GetMemoryResponse200.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 401:
@@ -72,7 +63,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, GetMemoryResponse200]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, GetMemoryResponse200]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -87,9 +80,8 @@ def sync_detailed(
     ptr: Union[Unset, str] = UNSET,
     key: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, GetMemoryResponse200]]:
-    """ Get memory data by pointer or key
+    """Get memory data by pointer or key
 
     Args:
         ptr (Union[Unset, str]):
@@ -102,14 +94,12 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, GetMemoryResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         ptr=ptr,
-key=key,
-x_tenant_id=x_tenant_id,
-
+        key=key,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -118,15 +108,15 @@ x_tenant_id=x_tenant_id,
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     ptr: Union[Unset, str] = UNSET,
     key: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, GetMemoryResponse200]]:
-    """ Get memory data by pointer or key
+    """Get memory data by pointer or key
 
     Args:
         ptr (Union[Unset, str]):
@@ -139,16 +129,15 @@ def sync(
 
     Returns:
         Union[Any, GetMemoryResponse200]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-ptr=ptr,
-key=key,
-x_tenant_id=x_tenant_id,
-
+        ptr=ptr,
+        key=key,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
@@ -156,9 +145,8 @@ async def asyncio_detailed(
     ptr: Union[Unset, str] = UNSET,
     key: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, GetMemoryResponse200]]:
-    """ Get memory data by pointer or key
+    """Get memory data by pointer or key
 
     Args:
         ptr (Union[Unset, str]):
@@ -171,21 +159,18 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, GetMemoryResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         ptr=ptr,
-key=key,
-x_tenant_id=x_tenant_id,
-
+        key=key,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
@@ -193,9 +178,8 @@ async def asyncio(
     ptr: Union[Unset, str] = UNSET,
     key: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, GetMemoryResponse200]]:
-    """ Get memory data by pointer or key
+    """Get memory data by pointer or key
 
     Args:
         ptr (Union[Unset, str]):
@@ -208,13 +192,13 @@ async def asyncio(
 
     Returns:
         Union[Any, GetMemoryResponse200]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-ptr=ptr,
-key=key,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            ptr=ptr,
+            key=key,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

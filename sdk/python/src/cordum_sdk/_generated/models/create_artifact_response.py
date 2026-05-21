@@ -12,44 +12,35 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="CreateArtifactResponse")
 
 
 @_attrs_define
 class CreateArtifactResponse:
-    """ 
-        Attributes:
-            artifact_ptr (Union[Unset, str]):
-            size_bytes (Union[Unset, int]):
-     """
+    """
+    Attributes:
+        artifact_ptr (Union[Unset, str]):
+        size_bytes (Union[Unset, int]):
+    """
 
     artifact_ptr: Union[Unset, str] = UNSET
     size_bytes: Union[Unset, int] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         artifact_ptr = self.artifact_ptr
 
         size_bytes = self.size_bytes
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if artifact_ptr is not UNSET:
             field_dict["artifact_ptr"] = artifact_ptr
         if size_bytes is not UNSET:
             field_dict["size_bytes"] = size_bytes
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -62,7 +53,6 @@ class CreateArtifactResponse:
             artifact_ptr=artifact_ptr,
             size_bytes=size_bytes,
         )
-
 
         create_artifact_response.additional_properties = d
         return create_artifact_response

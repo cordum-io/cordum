@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -32,8 +33,21 @@ import (
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	wf "github.com/cordum/cordum/core/workflow"
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 )
+
+type testRedisBackend struct {
+	addr string
+	db   int
+}
+
+var windowsGatewayRedis struct {
+	mu      sync.Mutex
+	srv     *miniredis.Miniredis
+	nextDB  int
+	started bool
+}
 
 type stubBus struct {
 	mu          sync.Mutex
@@ -294,78 +308,95 @@ func enableTestAuth(s *server) {
 	}
 }
 
-func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
+func newTestRedisBackend(t *testing.T) testRedisBackend {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return newWindowsTestRedisBackend(t)
+	}
+	srv, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("miniredis: %v", err)
+	}
+	t.Cleanup(srv.Close)
+	return testRedisBackend{addr: srv.Addr()}
+}
+
+func newWindowsTestRedisBackend(t *testing.T) testRedisBackend {
+	t.Helper()
+	windowsGatewayRedis.mu.Lock()
+	defer windowsGatewayRedis.mu.Unlock()
+	if !windowsGatewayRedis.started {
+		srv, err := miniredis.Run()
+		if err != nil {
+			t.Fatalf("miniredis: %v", err)
+		}
+		windowsGatewayRedis.srv = srv
+		windowsGatewayRedis.started = true
+	}
+	db := windowsGatewayRedis.nextDB
+	windowsGatewayRedis.nextDB++
+	return testRedisBackend{addr: windowsGatewayRedis.srv.Addr(), db: db}
+}
+
+func closeWindowsGatewayRedis() {
+	windowsGatewayRedis.mu.Lock()
+	defer windowsGatewayRedis.mu.Unlock()
+	if windowsGatewayRedis.srv != nil {
+		windowsGatewayRedis.srv.Close()
+		windowsGatewayRedis.srv = nil
+	}
+	windowsGatewayRedis.started = false
+	windowsGatewayRedis.nextDB = 0
+}
+
+func newSharedTestRedisClient(t *testing.T, backend testRedisBackend) *redis.Client {
 	t.Helper()
 
-	// Constrain Redis pool size to prevent socket exhaustion under -count=3 on Windows.
-	// Use os.Setenv (not t.Setenv) because some callers use t.Parallel().
-	prev := os.Getenv("REDIS_POOL_SIZE")
-	if err := os.Setenv("REDIS_POOL_SIZE", "3"); err != nil {
-		t.Fatalf("setenv REDIS_POOL_SIZE: %v", err)
-	}
-	t.Cleanup(func() {
-		if prev == "" {
-			_ = os.Unsetenv("REDIS_POOL_SIZE") //nolint:errcheck // best-effort cleanup
-		} else {
-			_ = os.Setenv("REDIS_POOL_SIZE", prev) //nolint:errcheck // best-effort cleanup
-		}
+	client := redis.NewClient(&redis.Options{
+		Addr:         backend.addr,
+		DB:           backend.db,
+		PoolSize:     1,
+		MinIdleConns: 0,
+		MaxRetries:   1,
 	})
+	t.Cleanup(func() { _ = client.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.Ping(ctx).Err(); err != nil {
+		t.Fatalf("redis ping: %v", err)
+	}
+	return client
+}
+
+func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
+	t.Helper()
 
 	// Allow loopback in tests (httptest.NewServer binds to 127.0.0.1).
 	prevSkip := skipPrivateIPCheck.Load()
 	skipPrivateIPCheck.Store(true)
 	t.Cleanup(func() { skipPrivateIPCheck.Store(prevSkip) })
 
-	srv, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("miniredis: %v", err)
-	}
-	t.Cleanup(srv.Close)
-
-	redisURL := "redis://" + srv.Addr()
-	memStore, err := store.NewRedisStore(redisURL)
-	if err != nil {
-		t.Fatalf("mem store: %v", err)
-	}
-	jobStore, err := store.NewRedisJobStore(redisURL)
-	if err != nil {
-		t.Fatalf("job store: %v", err)
-	}
-	workflowStore, err := wf.NewRedisWorkflowStore(redisURL)
-	if err != nil {
-		t.Fatalf("workflow store: %v", err)
-	}
-	configSvc, err := configsvc.New(redisURL)
-	if err != nil {
-		t.Fatalf("config svc: %v", err)
-	}
-	decisionLogStore, err := store.NewRedisDecisionLogStore(redisURL)
-	if err != nil {
-		t.Fatalf("decision log store: %v", err)
-	}
-	rbacStore, err := auth.NewRBACStore(redisURL)
-	if err != nil {
-		t.Fatalf("rbac store: %v", err)
-	}
+	// TestMain owns Redis pool sizing for this package. Avoid per-fixture
+	// environment mutation here because newTestGateway has t.Parallel callers.
+	// Windows shares one miniredis listener and uses a unique Redis DB for
+	// each gateway, preserving isolation without thousands of listener binds.
+	backend := newTestRedisBackend(t)
+	client := newSharedTestRedisClient(t, backend)
+	jobClient := newSharedTestRedisClient(t, backend)
+	memStore := store.NewRedisStoreFromClient(client)
+	jobStore := store.NewRedisJobStoreFromClient(jobClient)
+	workflowStore := wf.NewRedisWorkflowStoreFromClient(client)
+	configSvc := configsvc.NewFromClient(client)
+	decisionLogStore := store.NewRedisDecisionLogStoreFromClient(client)
+	rbacStore := auth.NewRBACStoreFromClient(client)
 	if err := rbacStore.BootstrapDefaultRoles(context.Background()); err != nil {
 		t.Fatalf("rbac bootstrap: %v", err)
 	}
-	schemaRegistry, err := schema.NewRegistry(redisURL)
-	if err != nil {
-		t.Fatalf("schema registry: %v", err)
-	}
-	dlqStore, err := store.NewDLQStore(redisURL, 0)
-	if err != nil {
-		t.Fatalf("dlq store: %v", err)
-	}
-	artifactStore, err := artifacts.NewRedisStore(redisURL)
-	if err != nil {
-		t.Fatalf("artifact store: %v", err)
-	}
-	lockStore, err := locks.NewRedisStore(redisURL)
-	if err != nil {
-		t.Fatalf("lock store: %v", err)
-	}
+	schemaRegistry := schema.NewRegistryFromClient(client)
+	dlqStore := store.NewDLQStoreFromClient(client, 0)
+	artifactStore := artifacts.NewRedisStoreFromClient(client)
+	lockStore := locks.NewRedisStoreFromClient(client)
 
 	bus := &stubBus{}
 	safetyClient := &stubSafetyClient{snapshots: []string{"snap-test"}}
@@ -417,7 +448,55 @@ func newTestGateway(t *testing.T) (*server, *stubBus, *stubSafetyClient) {
 		_ = lockStore.Close()
 	})
 
+	s.wireGovernanceEvaluator()
 	return s, bus, safetyClient
+}
+
+func TestNewTestGatewayRespectsProcessRedisPoolEnv(t *testing.T) {
+	t.Setenv("REDIS_POOL_SIZE", "1")
+
+	s, _, _ := newTestGateway(t)
+
+	if got := os.Getenv("REDIS_POOL_SIZE"); got != "1" {
+		t.Fatalf("REDIS_POOL_SIZE = %q, want process-level TestMain cap to remain 1", got)
+	}
+	client, ok := s.jobStore.Client().(*redis.Client)
+	if !ok {
+		t.Fatalf("job store client type = %T, want *redis.Client", s.jobStore.Client())
+	}
+	if client.Options().PoolSize != 1 {
+		t.Fatalf("PoolSize = %d, want 1", client.Options().PoolSize)
+	}
+	memStore, ok := s.memStore.(*store.RedisStore)
+	if !ok {
+		t.Fatalf("mem store type = %T, want *store.RedisStore", s.memStore)
+	}
+	if memStore.Client() == s.jobStore.Client() {
+		t.Fatal("newTestGateway keeps job store on a separate client for fault-injection tests")
+	}
+}
+
+func TestNewTestGatewayWindowsUsesSharedListenerWithDistinctDBs(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows-only miniredis listener reuse")
+	}
+	s1, _, _ := newTestGateway(t)
+	s2, _, _ := newTestGateway(t)
+
+	client1, ok := s1.jobStore.Client().(*redis.Client)
+	if !ok {
+		t.Fatalf("gateway 1 job client type = %T, want *redis.Client", s1.jobStore.Client())
+	}
+	client2, ok := s2.jobStore.Client().(*redis.Client)
+	if !ok {
+		t.Fatalf("gateway 2 job client type = %T, want *redis.Client", s2.jobStore.Client())
+	}
+	if client1.Options().Addr != client2.Options().Addr {
+		t.Fatalf("Addr mismatch: %q != %q", client1.Options().Addr, client2.Options().Addr)
+	}
+	if client1.Options().DB == client2.Options().DB {
+		t.Fatalf("DB = %d for both gateways, want isolated DBs", client1.Options().DB)
+	}
 }
 
 func setTestEntitlements(t *testing.T, s *server, plan licensing.Plan, mutate func(*licensing.Entitlements)) {
@@ -451,6 +530,34 @@ func setTestLicense(t *testing.T, s *server, claims licensing.Claims) {
 		s.entitlements = resolver
 	}
 	resolver.ForceState(plan, entitlements, claims.Rights)
+}
+
+func TestRequirePermissionOrRoleKeepsLegacyRoleGateWhenRBACPermits(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	s.auth = testAuthProvider{}
+	setTestEntitlements(t, s, licensing.PlanEnterprise, func(e *licensing.Entitlements) {
+		e.RBAC = true
+	})
+	if err := s.rbacStore.PutRole(context.Background(), &auth.RoleDefinition{
+		Name:        "config-writer",
+		Permissions: []string{auth.PermConfigWrite},
+	}); err != nil {
+		t.Fatalf("put role: %v", err)
+	}
+
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/config", strings.NewReader(`{}`)), &auth.AuthContext{
+		Tenant:      "default",
+		Role:        "config-writer",
+		PrincipalID: "writer",
+	})
+	rec := httptest.NewRecorder()
+
+	if s.requirePermissionOrRole(rec, req, auth.PermConfigWrite, "admin") {
+		t.Fatal("custom role with permission bypassed legacy admin role gate")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
 }
 
 // failingSafetyClient is a test stub whose Evaluate always returns an error,
@@ -757,5 +864,40 @@ func TestMaxConcurrentRuns_DefaultFallback(t *testing.T) {
 	// DoD: "Starting run #11 returns 429" — default must be <= 10.
 	if limit > 10 {
 		t.Fatalf("default %d is too high — red-team #15 started 20 runs, must block at 10", limit)
+	}
+}
+
+func TestErrorHelpersUnified_AllEmitCodeField(t *testing.T) {
+	tests := []struct {
+		name  string
+		write func(http.ResponseWriter)
+	}{
+		{
+			name: "writeErrorJSON",
+			write: func(w http.ResponseWriter) {
+				writeErrorJSON(w, http.StatusBadRequest, "bad request")
+			},
+		},
+		{
+			name: "writeJSONError",
+			write: func(w http.ResponseWriter) {
+				writeJSONError(w, http.StatusBadRequest, "bad_request", "bad request")
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			tc.write(rec)
+			var resp map[string]any
+			if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode response: %v; body=%s", err, rec.Body.String())
+			}
+			code, ok := resp["code"].(string)
+			if !ok || strings.TrimSpace(code) == "" {
+				t.Fatalf("%s response missing non-empty code field: %#v", tc.name, resp)
+			}
+		})
 	}
 }

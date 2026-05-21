@@ -60,7 +60,11 @@ Route families:
 - Events: `POST /api/v1/edge/events`, `POST /api/v1/edge/events/batch`, `GET /api/v1/edge/sessions/{session_id}/events`, `GET /api/v1/edge/executions/{execution_id}/events`
 - Export: `POST /api/v1/edge/sessions/{session_id}/export`
 
-See [Edge API reference](edge/api.md) for request/response shapes, stable error
+Destructive action gates require resolved approval provenance in addition to
+the approval store: `EventEdgeApprovalResolved` / `edge.approval_resolved` with
+approved decision and exact tenant, `approval_ref`, and `action_hash` matches.
+Requested-only approval events are not sufficient. See
+[Edge API reference](edge/api.md) for request/response shapes, stable error
 codes, idempotency, approval visibility, and artifact export behavior. The
 canonical schema remains [OpenAPI](api/openapi/cordum-api.yaml).
 

@@ -17,10 +17,7 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.delegation_lineage_chain_link import DelegationLineageChainLink
-
-
-
+    from ..models.delegation_lineage_chain_link import DelegationLineageChainLink
 
 
 T = TypeVar("T", bound="DelegationLineageView")
@@ -28,35 +25,35 @@ T = TypeVar("T", bound="DelegationLineageView")
 
 @_attrs_define
 class DelegationLineageView:
-    """ 
-        Attributes:
-            jti (Union[Unset, str]):
-            audience (Union[Unset, str]):
-            root_issuer (Union[Unset, str]):
-            parent_issuer (Union[Unset, str]):
-            chain_depth (Union[Unset, int]):
-            chain (Union[Unset, List['DelegationLineageChainLink']]):
-            scope (Union[Unset, List[str]]):
-            expires_at (Union[Unset, datetime.datetime]):
-            verified_at (Union[Unset, int]):
-            reverified_at_dispatch (Union[Unset, bool]):
-     """
+    """
+    Attributes:
+        jti (Union[Unset, str]):
+        audience (Union[Unset, str]):
+        root_issuer (Union[Unset, str]):
+        parent_issuer (Union[Unset, str]):
+        chain_depth (Union[Unset, int]):
+        chain (Union[Unset, List['DelegationLineageChainLink']]):
+        scope (Union[Unset, List[str]]):
+        expires_at (Union[Unset, datetime.datetime]):
+        verified_at (Union[Unset, int]):
+        reverified_at_dispatch (Union[Unset, bool]):
+    """
 
     jti: Union[Unset, str] = UNSET
     audience: Union[Unset, str] = UNSET
     root_issuer: Union[Unset, str] = UNSET
     parent_issuer: Union[Unset, str] = UNSET
     chain_depth: Union[Unset, int] = UNSET
-    chain: Union[Unset, List['DelegationLineageChainLink']] = UNSET
+    chain: Union[Unset, List["DelegationLineageChainLink"]] = UNSET
     scope: Union[Unset, List[str]] = UNSET
     expires_at: Union[Unset, datetime.datetime] = UNSET
     verified_at: Union[Unset, int] = UNSET
     reverified_at_dispatch: Union[Unset, bool] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         from ..models.delegation_lineage_chain_link import DelegationLineageChainLink
+
         jti = self.jti
 
         audience = self.audience
@@ -74,13 +71,9 @@ class DelegationLineageView:
                 chain_item = chain_item_data.to_dict()
                 chain.append(chain_item)
 
-
-
         scope: Union[Unset, List[str]] = UNSET
         if not isinstance(self.scope, Unset):
             scope = self.scope
-
-
 
         expires_at: Union[Unset, str] = UNSET
         if not isinstance(self.expires_at, Unset):
@@ -90,11 +83,9 @@ class DelegationLineageView:
 
         reverified_at_dispatch = self.reverified_at_dispatch
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if jti is not UNSET:
             field_dict["jti"] = jti
         if audience is not UNSET:
@@ -118,11 +109,10 @@ class DelegationLineageView:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.delegation_lineage_chain_link import DelegationLineageChainLink
+
         d = src_dict.copy()
         jti = d.pop("jti", UNSET)
 
@@ -136,26 +126,19 @@ class DelegationLineageView:
 
         chain = []
         _chain = d.pop("chain", UNSET)
-        for chain_item_data in (_chain or []):
+        for chain_item_data in _chain or []:
             chain_item = DelegationLineageChainLink.from_dict(chain_item_data)
-
-
 
             chain.append(chain_item)
 
-
         scope = cast(List[str], d.pop("scope", UNSET))
-
 
         _expires_at = d.pop("expires_at", UNSET)
         expires_at: Union[Unset, datetime.datetime]
-        if isinstance(_expires_at,  Unset):
+        if isinstance(_expires_at, Unset):
             expires_at = UNSET
         else:
             expires_at = isoparse(_expires_at)
-
-
-
 
         verified_at = d.pop("verified_at", UNSET)
 
@@ -173,7 +156,6 @@ class DelegationLineageView:
             verified_at=verified_at,
             reverified_at_dispatch=reverified_at_dispatch,
         )
-
 
         delegation_lineage_view.additional_properties = d
         return delegation_lineage_view

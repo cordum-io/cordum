@@ -78,6 +78,7 @@ describe("AgentIdentity types", () => {
     expect(agent.description).toBeUndefined();
     expect(agent.team).toBeUndefined();
     expect(agent.allowed_topics).toBeUndefined();
+    expect(agent.preapproved_mutating_tools).toBeUndefined();
     expect(agent.data_classifications).toBeUndefined();
   });
 });

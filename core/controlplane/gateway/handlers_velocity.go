@@ -160,7 +160,7 @@ func (s *server) handleCreateVelocityRule(w http.ResponseWriter, r *http.Request
 
 	def, err := normalizeVelocityRuleRequest(body, "")
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeVelocityRuleInvalid, err.Error())
 		return
 	}
 
@@ -172,7 +172,7 @@ func (s *server) handleCreateVelocityRule(w http.ResponseWriter, r *http.Request
 
 	bundleID := velocityRuleBundleID(def.ID)
 	if _, exists := bundles[bundleID]; exists {
-		writeErrorJSON(w, http.StatusConflict, "velocity rule already exists")
+		writeJSONError(w, http.StatusConflict, errorCodeVelocityRuleConflict, "velocity rule already exists")
 		return
 	}
 	if limitErr := s.velocityRuleLimitError(int64(countVelocityRuleBundles(bundles) + 1)); limitErr != nil {
@@ -183,7 +183,7 @@ func (s *server) handleCreateVelocityRule(w http.ResponseWriter, r *http.Request
 	now := time.Now().UTC().Format(time.RFC3339)
 	bundle, err := velocityRuleBundleMap(def, now, "")
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeVelocityRuleInvalid, err.Error())
 		return
 	}
 	bundles[bundleID] = bundle
@@ -271,7 +271,7 @@ func (s *server) handlePutVelocityRule(w http.ResponseWriter, r *http.Request) {
 
 	ruleID, err := normalizeVelocityRuleID(r.PathValue("id"))
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeVelocityRuleInvalid, err.Error())
 		return
 	}
 
@@ -282,7 +282,7 @@ func (s *server) handlePutVelocityRule(w http.ResponseWriter, r *http.Request) {
 	}
 	def, err := normalizeVelocityRuleRequest(body, ruleID)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeVelocityRuleInvalid, err.Error())
 		return
 	}
 
@@ -295,7 +295,7 @@ func (s *server) handlePutVelocityRule(w http.ResponseWriter, r *http.Request) {
 	bundleID := velocityRuleBundleID(ruleID)
 	existingRaw, exists := bundles[bundleID]
 	if !exists {
-		writeErrorJSON(w, http.StatusNotFound, "velocity rule not found")
+		writeJSONError(w, http.StatusNotFound, errorCodeVelocityRuleConflict, "velocity rule not found")
 		return
 	}
 	existingBundle, _ := existingRaw.(map[string]any)
@@ -303,7 +303,7 @@ func (s *server) handlePutVelocityRule(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	bundle, err := velocityRuleBundleMap(def, now, createdAt)
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeVelocityRuleInvalid, err.Error())
 		return
 	}
 	if def.Enabled == nil && existingBundle != nil {
@@ -348,7 +348,7 @@ func (s *server) handleDeleteVelocityRule(w http.ResponseWriter, r *http.Request
 
 	ruleID, err := normalizeVelocityRuleID(r.PathValue("id"))
 	if err != nil {
-		writeErrorJSON(w, http.StatusBadRequest, err.Error())
+		writeJSONError(w, http.StatusBadRequest, errorCodeVelocityRuleInvalid, err.Error())
 		return
 	}
 
@@ -359,7 +359,7 @@ func (s *server) handleDeleteVelocityRule(w http.ResponseWriter, r *http.Request
 	}
 	bundleID := velocityRuleBundleID(ruleID)
 	if _, exists := bundles[bundleID]; !exists {
-		writeErrorJSON(w, http.StatusNotFound, "velocity rule not found")
+		writeJSONError(w, http.StatusNotFound, errorCodeVelocityRuleConflict, "velocity rule not found")
 		return
 	}
 

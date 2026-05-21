@@ -75,6 +75,8 @@ func main() {
 		runGovernanceCmd(args)
 	case "edge":
 		os.Exit(runEdgeCmd(args))
+	case "shadow":
+		os.Exit(runShadowCmd(args))
 	default:
 		usage()
 		os.Exit(1)
@@ -380,6 +382,8 @@ Usage:
   cordumctl mcp approve <approval_id> [--reason text]
   cordumctl mcp reject <approval_id> [--reason text]
   cordumctl mcp tools list [--agent-id X] [--json]
+  cordumctl mcp upstream add|validate --name NAME (--endpoint URL|--command ARG...) [--auth-secret-ref secret://...] [--validate-only]
+  cordumctl mcp upstream list|get|disable|enable [NAME]
   cordumctl dev [--file docker-compose.yml] [--build] [--detach]
   cordumctl up [--file docker-compose.yml] [--build] [--detach]
   cordumctl status [--json]

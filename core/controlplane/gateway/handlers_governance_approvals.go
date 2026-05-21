@@ -32,6 +32,7 @@ const (
 	approvalAnalyticsMaxLimit            = 50
 	approvalAnalyticsCandidateMultiplier = 50 // Limit*50 candidate scan cap
 	approvalAnalyticsCacheTTL            = 30 * time.Second
+	approvalAnalyticsCacheMaxEntries     = 512
 	approvalAnalyticsMaxWindowDays       = 30
 )
 
@@ -499,9 +500,10 @@ func approvalAnalyticsCacheKey(tenant string, q approvalAnalyticsQuery) string {
 // truth. A burst of identical requests from the same dashboard tab
 // collapses to one decision-log query.
 type approvalAnalyticsMemCache struct {
-	mu      sync.Mutex
-	ttl     time.Duration
-	entries map[string]approvalAnalyticsCacheEntry
+	mu         sync.Mutex
+	ttl        time.Duration
+	maxEntries int
+	entries    map[string]approvalAnalyticsCacheEntry
 }
 
 type approvalAnalyticsCacheEntry struct {
@@ -513,8 +515,9 @@ type approvalAnalyticsCacheEntry struct {
 // default TTL. The server wires this up at construction time.
 func newApprovalAnalyticsCache() *approvalAnalyticsMemCache {
 	return &approvalAnalyticsMemCache{
-		ttl:     approvalAnalyticsCacheTTL,
-		entries: map[string]approvalAnalyticsCacheEntry{},
+		ttl:        approvalAnalyticsCacheTTL,
+		maxEntries: approvalAnalyticsCacheMaxEntries,
+		entries:    map[string]approvalAnalyticsCacheEntry{},
 	}
 }
 
@@ -541,5 +544,28 @@ func (c *approvalAnalyticsMemCache) set(key string, resp approvalAnalyticsRespon
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries[key] = approvalAnalyticsCacheEntry{response: resp, expires: time.Now().Add(c.ttl)}
+	now := time.Now()
+	c.evictExpiredLocked(now)
+	if c.maxEntries <= 0 {
+		c.maxEntries = approvalAnalyticsCacheMaxEntries
+	}
+	if _, exists := c.entries[key]; !exists && len(c.entries) >= c.maxEntries {
+		c.evictOneLocked()
+	}
+	c.entries[key] = approvalAnalyticsCacheEntry{response: resp, expires: now.Add(c.ttl)}
+}
+
+func (c *approvalAnalyticsMemCache) evictExpiredLocked(now time.Time) {
+	for key, entry := range c.entries {
+		if now.After(entry.expires) {
+			delete(c.entries, key)
+		}
+	}
+}
+
+func (c *approvalAnalyticsMemCache) evictOneLocked() {
+	for key := range c.entries {
+		delete(c.entries, key)
+		return
+	}
 }

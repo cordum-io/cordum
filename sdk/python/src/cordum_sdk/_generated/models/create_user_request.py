@@ -12,23 +12,19 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="CreateUserRequest")
 
 
 @_attrs_define
 class CreateUserRequest:
-    """ 
-        Attributes:
-            username (str):
-            password (str):
-            email (Union[Unset, str]):
-            tenant (Union[Unset, str]):
-            role (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        username (str):
+        password (str):
+        email (Union[Unset, str]):
+        tenant (Union[Unset, str]):
+        role (Union[Unset, str]):
+    """
 
     username: str
     password: str
@@ -36,7 +32,6 @@ class CreateUserRequest:
     tenant: Union[Unset, str] = UNSET
     role: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         username = self.username
@@ -49,13 +44,14 @@ class CreateUserRequest:
 
         role = self.role
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "username": username,
-            "password": password,
-        })
+        field_dict.update(
+            {
+                "username": username,
+                "password": password,
+            }
+        )
         if email is not UNSET:
             field_dict["email"] = email
         if tenant is not UNSET:
@@ -64,8 +60,6 @@ class CreateUserRequest:
             field_dict["role"] = role
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -87,7 +81,6 @@ class CreateUserRequest:
             tenant=tenant,
             role=role,
         )
-
 
         create_user_request.additional_properties = d
         return create_user_request

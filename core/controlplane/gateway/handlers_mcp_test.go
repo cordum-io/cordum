@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/configsvc"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/mcp"
@@ -52,6 +54,135 @@ func (a mcpTestAuth) RequireTenantAccess(*http.Request, string) error { return n
 
 func (a mcpTestAuth) ResolvePrincipal(_ *http.Request, requested string) (string, error) {
 	return requested, nil
+}
+
+type mcpReauthTestAuth struct {
+	calls atomic.Int32
+}
+
+func (a *mcpReauthTestAuth) AuthenticateHTTP(*http.Request) (*auth.AuthContext, error) {
+	if call := a.calls.Add(1); call > 1 {
+		return nil, errors.New("credential revoked")
+	}
+	return &auth.AuthContext{
+		APIKey:      "test-key",
+		Tenant:      "default",
+		PrincipalID: "tester",
+		Role:        "admin",
+		AuthSource:  auth.AuthSourceAPIKey,
+	}, nil
+}
+
+func (a *mcpReauthTestAuth) AuthenticateGRPC(context.Context) (*auth.AuthContext, error) {
+	return &auth.AuthContext{Tenant: "default"}, nil
+}
+
+func (a *mcpReauthTestAuth) RequireRole(*http.Request, ...string) error { return nil }
+
+func (a *mcpReauthTestAuth) ResolveTenant(_ *http.Request, requested, fallback string) (string, error) {
+	if strings.TrimSpace(requested) != "" {
+		return requested, nil
+	}
+	return fallback, nil
+}
+
+func (a *mcpReauthTestAuth) RequireTenantAccess(*http.Request, string) error { return nil }
+
+func (a *mcpReauthTestAuth) ResolvePrincipal(_ *http.Request, requested string) (string, error) {
+	return requested, nil
+}
+
+// TestMCPToolCallAuditHookDefaultsEmptyTenant asserts the producer-
+// side fallback contract for the gateway's tool-call audit forwarder
+// (handlers_mcp.go::mcpToolCallAuditHook): an event arriving with
+// empty TenantID (upstream producer bug or new producer site not yet
+// wired to ResolveTenantForAudit) is rewritten to model.DefaultTenant
+// before reaching the downstream sender. Defense-in-depth at the
+// gateway boundary so the sink-level slog.Warn (Phase 4) only fires
+// on genuinely-novel producer paths.
+func TestMCPToolCallAuditHookDefaultsEmptyTenant(t *testing.T) {
+	t.Parallel()
+	cap := &captureAuditSender{}
+	s := &server{auditExporter: cap}
+	hook := s.mcpToolCallAuditHook()
+	if hook == nil {
+		t.Fatal("mcpToolCallAuditHook returned nil; expected non-nil hook when auditExporter is wired")
+	}
+	hook(audit.SIEMEvent{
+		EventType: audit.EventMCPToolInvocation,
+		TenantID:  "", // upstream producer left it empty
+		Action:    "invoke",
+	})
+	events := cap.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(events))
+	}
+	if events[0].TenantID != "default" {
+		t.Fatalf("TenantID = %q, want %q (hook must default empty TenantID)",
+			events[0].TenantID, "default")
+	}
+}
+
+// TestMCPApprovalAuditHookDefaultsEmptyTenant mirrors the previous
+// test for the approval-lifecycle hook. MCPApprovalStore writes
+// SIEMEvents from MCPApprovalRecord.Tenant; if a future enqueue path
+// slips through with an empty Tenant, the hook catches the gap before
+// the chain sender's slog.Warn fires.
+func TestMCPApprovalAuditHookDefaultsEmptyTenant(t *testing.T) {
+	t.Parallel()
+	cap := &captureAuditSender{}
+	s := &server{auditExporter: cap}
+	hook := s.mcpApprovalAuditHook()
+	if hook == nil {
+		t.Fatal("mcpApprovalAuditHook returned nil; expected non-nil hook when auditExporter is wired")
+	}
+	hook(audit.SIEMEvent{
+		EventType: audit.EventMCPToolApproval,
+		TenantID:  "",
+		Action:    "approved",
+	})
+	events := cap.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(events))
+	}
+	if events[0].TenantID != "default" {
+		t.Fatalf("TenantID = %q, want %q (hook must default empty TenantID)",
+			events[0].TenantID, "default")
+	}
+}
+
+func TestMcpTenantFromContext_FailsClosedOnMissingAuth(t *testing.T) {
+	t.Parallel()
+	s := &server{}
+	handlerCalled := false
+
+	status, _, raw, err := s.invokeMCPJSONHandler(
+		context.Background(),
+		http.MethodPost,
+		"/api/v1/policy/simulate",
+		nil,
+		nil,
+		map[string]any{"topic": "job.default"},
+		func(w http.ResponseWriter, r *http.Request) {
+			handlerCalled = true
+			if got := r.Header.Get("X-Tenant-ID"); got != "" {
+				t.Fatalf("handler saw fallback tenant header %q; want fail-closed before dispatch", got)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		},
+	)
+	if err != nil {
+		t.Fatalf("invokeMCPJSONHandler returned unexpected err: %v", err)
+	}
+	if handlerCalled {
+		t.Fatal("handler was called without auth/server tenant context; want fail-closed")
+	}
+	if status != http.StatusUnauthorized && status != http.StatusForbidden {
+		t.Fatalf("status = %d body=%s, want 401 or 403", status, string(raw))
+	}
+	if strings.Contains(string(raw), `"default"`) {
+		t.Fatalf("missing-tenant response should not stamp or mention default tenant: %s", raw)
+	}
 }
 
 func TestRegisterMCPRoutesEnforcesAuthAndHandlesPing(t *testing.T) {
@@ -353,6 +484,47 @@ func TestHandleSetConfigReloadsMCPRuntimeConfig(t *testing.T) {
 	}
 	if got := len(resources.List()); got != 0 {
 		t.Fatalf("expected resource disabled after mcp reload, got %d", got)
+	}
+}
+
+func TestMCPSSEReauthFirstTickRevokedCredentialDisconnectsWithinTwoSeconds(t *testing.T) {
+	authProvider := &mcpReauthTestAuth{}
+	transport := mcp.NewHTTPTransport(mcp.DefaultMaxMessageBytes, mcp.DefaultHTTPResponseTimeout)
+	s := &server{auth: authProvider}
+	s.setMCPRuntime(&mcpRuntimeState{transport: "http", httpTransport: transport})
+	t.Cleanup(func() {
+		_ = transport.Close()
+		s.clearMCPRuntime()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/mcp/sse", nil).WithContext(ctx)
+	req.Header.Set("X-API-Key", "test-key")
+	req.Header.Set("X-Tenant-ID", "default")
+	rr := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.mcpAuth(s.handleMCPSSE)(rr, req)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+		t.Fatalf("SSE handler did not disconnect within 2s after revoked re-auth; auth calls=%d", authProvider.calls.Load())
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("SSE status = %d, want %d", rr.Code, http.StatusOK)
+	}
+	if calls := authProvider.calls.Load(); calls < 2 {
+		t.Fatalf("AuthenticateHTTP calls = %d, want initial auth plus first re-auth", calls)
 	}
 }
 

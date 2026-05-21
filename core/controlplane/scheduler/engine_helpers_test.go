@@ -48,11 +48,11 @@ func TestIsRetryableSchedulingError(t *testing.T) {
 
 func TestReasonCodeForSchedulingError(t *testing.T) {
 	cases := map[error]string{
-		ErrNoPoolMapping: "no_pool_mapping",
-		ErrNoWorkers:     "no_workers",
+		ErrNoPoolMapping:  "no_pool_mapping",
+		ErrNoWorkers:      "no_workers",
 		ErrPoolOverloaded: "pool_overloaded",
-		ErrTenantLimit:   "tenant_limit",
-		errors.New("x"):  "dispatch_failed",
+		ErrTenantLimit:    "tenant_limit",
+		errors.New("x"):   "dispatch_failed",
 	}
 	for err, expect := range cases {
 		if got := reasonCodeForSchedulingError(err); got != expect {

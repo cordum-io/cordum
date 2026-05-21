@@ -6,14 +6,14 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeExecutionCreateRequestAdapter = typeof EdgeExecutionCreateRequestAdapter[keyof typeof EdgeExecutionCreateRequestAdapter];
-
+export type EdgeExecutionCreateRequestAdapter =
+  (typeof EdgeExecutionCreateRequestAdapter)[keyof typeof EdgeExecutionCreateRequestAdapter];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeExecutionCreateRequestAdapter = {
-  'claude-code-hook': 'claude-code-hook',
-  'mcp-gateway': 'mcp-gateway',
-  'llm-proxy': 'llm-proxy',
-  'runtime-sidecar': 'runtime-sidecar',
-  'sdk-runner': 'sdk-runner',
+  "claude-code-hook": "claude-code-hook",
+  "mcp-gateway": "mcp-gateway",
+  "llm-proxy": "llm-proxy",
+  "runtime-sidecar": "runtime-sidecar",
+  "sdk-runner": "sdk-runner",
 } as const;

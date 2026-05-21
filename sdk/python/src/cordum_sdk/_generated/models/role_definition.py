@@ -16,25 +16,21 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="RoleDefinition")
 
 
 @_attrs_define
 class RoleDefinition:
-    """ 
-        Attributes:
-            name (str):
-            description (Union[Unset, str]):
-            permissions (Union[Unset, List[str]]):
-            inherits (Union[Unset, List[str]]):
-            built_in (Union[Unset, bool]):
-            created_at (Union[Unset, datetime.datetime]):
-            updated_at (Union[Unset, datetime.datetime]):
-     """
+    """
+    Attributes:
+        name (str):
+        description (Union[Unset, str]):
+        permissions (Union[Unset, List[str]]):
+        inherits (Union[Unset, List[str]]):
+        built_in (Union[Unset, bool]):
+        created_at (Union[Unset, datetime.datetime]):
+        updated_at (Union[Unset, datetime.datetime]):
+    """
 
     name: str
     description: Union[Unset, str] = UNSET
@@ -45,7 +41,6 @@ class RoleDefinition:
     updated_at: Union[Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         name = self.name
 
@@ -55,13 +50,9 @@ class RoleDefinition:
         if not isinstance(self.permissions, Unset):
             permissions = self.permissions
 
-
-
         inherits: Union[Unset, List[str]] = UNSET
         if not isinstance(self.inherits, Unset):
             inherits = self.inherits
-
-
 
         built_in = self.built_in
 
@@ -73,12 +64,13 @@ class RoleDefinition:
         if not isinstance(self.updated_at, Unset):
             updated_at = self.updated_at.isoformat()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "name": name,
-        })
+        field_dict.update(
+            {
+                "name": name,
+            }
+        )
         if description is not UNSET:
             field_dict["description"] = description
         if permissions is not UNSET:
@@ -94,8 +86,6 @@ class RoleDefinition:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -105,31 +95,23 @@ class RoleDefinition:
 
         permissions = cast(List[str], d.pop("permissions", UNSET))
 
-
         inherits = cast(List[str], d.pop("inherits", UNSET))
-
 
         built_in = d.pop("built_in", UNSET)
 
         _created_at = d.pop("created_at", UNSET)
         created_at: Union[Unset, datetime.datetime]
-        if isinstance(_created_at,  Unset):
+        if isinstance(_created_at, Unset):
             created_at = UNSET
         else:
             created_at = isoparse(_created_at)
 
-
-
-
         _updated_at = d.pop("updated_at", UNSET)
         updated_at: Union[Unset, datetime.datetime]
-        if isinstance(_updated_at,  Unset):
+        if isinstance(_updated_at, Unset):
             updated_at = UNSET
         else:
             updated_at = isoparse(_updated_at)
-
-
-
 
         role_definition = cls(
             name=name,
@@ -140,7 +122,6 @@ class RoleDefinition:
             created_at=created_at,
             updated_at=updated_at,
         )
-
 
         role_definition.additional_properties = d
         return role_definition

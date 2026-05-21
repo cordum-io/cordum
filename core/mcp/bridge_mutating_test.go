@@ -175,10 +175,13 @@ func TestHTTPBridge_RegisterAgent(t *testing.T) {
 	})
 	b := mutatingBridge(t, srv)
 	out, err := b.RegisterAgent(context.Background(), RegisterAgentInput{
-		Name:         "Quickstart bot",
-		Owner:        "acme",
-		RiskTier:     "medium",
-		AllowedTools: []string{"cordum_list_jobs"},
+		Name:             "Quickstart bot",
+		Owner:            "acme",
+		RiskTier:         "medium",
+		AllowedServers:   []string{"prod-mcp"},
+		AllowedTools:     []string{"cordum_list_jobs"},
+		AllowedResources: []string{"cordum://repos/*"},
+		Entitlements:     []string{"repo.read"},
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -202,6 +205,15 @@ func TestHTTPBridge_RegisterAgent(t *testing.T) {
 	if tools, _ := captured.body["allowed_tools"].([]any); len(tools) != 1 {
 		t.Fatalf("allowed_tools not forwarded: %v", captured.body)
 	}
+	if servers, _ := captured.body["allowed_servers"].([]any); len(servers) != 1 {
+		t.Fatalf("allowed_servers not forwarded: %v", captured.body)
+	}
+	if resources, _ := captured.body["allowed_resources"].([]any); len(resources) != 1 {
+		t.Fatalf("allowed_resources not forwarded: %v", captured.body)
+	}
+	if entitlements, _ := captured.body["entitlements"].([]any); len(entitlements) != 1 {
+		t.Fatalf("entitlements not forwarded: %v", captured.body)
+	}
 }
 
 func TestHTTPBridge_RegisterAgent_RequiresCoreFields(t *testing.T) {
@@ -209,9 +221,9 @@ func TestHTTPBridge_RegisterAgent_RequiresCoreFields(t *testing.T) {
 	srv, _ := newStubGateway(t, http.StatusOK, nil)
 	b := mutatingBridge(t, srv)
 	cases := []RegisterAgentInput{
-		{Owner: "o", RiskTier: "low"},                // no name
-		{Name: "n", RiskTier: "low"},                 // no owner
-		{Name: "n", Owner: "o"},                      // no risk_tier
+		{Owner: "o", RiskTier: "low"}, // no name
+		{Name: "n", RiskTier: "low"},  // no owner
+		{Name: "n", Owner: "o"},       // no risk_tier
 	}
 	for i, c := range cases {
 		if _, err := b.RegisterAgent(context.Background(), c); err == nil {
@@ -301,12 +313,18 @@ func TestHTTPBridge_SetAgentScope(t *testing.T) {
 	srv, captured := newStubGateway(t, http.StatusOK, map[string]any{
 		"id":                         "agt-1",
 		"allowed_tools":              []any{"cordum_list_jobs", "cordum_get_job"},
+		"allowed_servers":            []any{"prod-mcp"},
+		"allowed_resources":          []any{"cordum://repos/*"},
+		"entitlements":               []any{"repo.read"},
 		"preapproved_mutating_tools": []any{"cordum_install_pack"},
 	})
 	b := mutatingBridge(t, srv)
 	out, err := b.SetAgentScope(context.Background(), SetAgentScopeInput{
 		AgentID:                  "agt-1",
 		AllowedTools:             []string{"cordum_list_jobs", "cordum_get_job"},
+		AllowedServers:           []string{"prod-mcp"},
+		AllowedResources:         []string{"cordum://repos/*"},
+		Entitlements:             []string{"repo.read"},
 		PreapprovedMutatingTools: []string{"cordum_install_pack"},
 	})
 	if err != nil {
@@ -315,11 +333,23 @@ func TestHTTPBridge_SetAgentScope(t *testing.T) {
 	if out.AgentID != "agt-1" || len(out.AllowedTools) != 2 || len(out.PreapprovedMutatingTools) != 1 {
 		t.Fatalf("wrong output: %+v", out)
 	}
+	if len(out.AllowedServers) != 1 || len(out.AllowedResources) != 1 || len(out.Entitlements) != 1 {
+		t.Fatalf("MCP allowlist output missing: %+v", out)
+	}
 	if captured.method != http.MethodPut {
 		t.Fatalf("wrong method: %s", captured.method)
 	}
 	if captured.path != "/api/v1/agents/agt-1" {
 		t.Fatalf("wrong path: %s", captured.path)
+	}
+	if servers, _ := captured.body["allowed_servers"].([]any); len(servers) != 1 {
+		t.Fatalf("allowed_servers not forwarded: %v", captured.body)
+	}
+	if resources, _ := captured.body["allowed_resources"].([]any); len(resources) != 1 {
+		t.Fatalf("allowed_resources not forwarded: %v", captured.body)
+	}
+	if entitlements, _ := captured.body["entitlements"].([]any); len(entitlements) != 1 {
+		t.Fatalf("entitlements not forwarded: %v", captured.body)
 	}
 }
 

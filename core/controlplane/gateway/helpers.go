@@ -96,6 +96,13 @@ type policyCheckRequest struct {
 	MemoryId        string             `json:"memory_id"`
 	EffectiveConfig any                `json:"effective_config"`
 	Meta            *policyMetaRequest `json:"meta"`
+	// Action carries structured request metadata for deterministic
+	// pre-rule action-layer gates (file/url/tenant/mutation/mcp/
+	// provenance). When non-nil and the gateway is wired with a
+	// pipeline, gates run before the kernel call and may short-circuit
+	// with an HTTP error envelope. Existing callers that send no Action
+	// are unaffected.
+	Action *config.ActionDescriptor `json:"action,omitempty"`
 }
 
 func (r *submitJobRequest) applyDefaults(defaultTenant string) {
@@ -419,6 +426,35 @@ func buildPolicyCheckRequest(ctx context.Context, req *policyCheckRequest, cfgSv
 	}
 	meta := buildJobMetadata(req.Meta, tenant, strings.TrimSpace(req.PrincipalId))
 
+	// Propagate ActionDescriptor across the gRPC boundary by encoding it
+	// into a reserved Labels key. The `_` prefix is stripped by the
+	// label-clean loop in this package (see clean loop in injectContentLabels)
+	// so it never leaks back to clients. The kernel's
+	// safetykernel.actionDescriptorFromRequest extractor reads this key.
+	//
+	// Defense-in-depth: ALWAYS strip the descriptor key from the client-
+	// supplied Labels first, then re-inject only when this gateway has
+	// authenticated/validated a real Action from the parsed HTTP body.
+	// Without the strip, a client could set `_action.descriptor_json`
+	// directly with `req.Action=nil` and the kernel-side extractor
+	// would consume attacker-controlled descriptor data, allowing
+	// confused-deputy audit log poisoning (target_type values surface
+	// in SIEM events) and unverified gate decisions on the kernel
+	// defensive path.
+	labels := stripReservedActionDescriptorLabel(req.Labels)
+	if req.Action != nil {
+		encoded, err := encodeActionDescriptorLabel(req.Action)
+		if err != nil {
+			return nil, fmt.Errorf("encode action descriptor: %w", err)
+		}
+		if encoded != "" {
+			if labels == nil {
+				labels = make(map[string]string, 1)
+			}
+			labels[labelActionDescriptorJSON] = encoded
+		}
+	}
+
 	checkReq := &pb.PolicyCheckRequest{
 		JobId:         strings.TrimSpace(req.JobId),
 		Topic:         topic,
@@ -427,7 +463,7 @@ func buildPolicyCheckRequest(ctx context.Context, req *policyCheckRequest, cfgSv
 		EstimatedCost: req.EstimatedCost,
 		Budget:        req.Budget,
 		PrincipalId:   strings.TrimSpace(req.PrincipalId),
-		Labels:        req.Labels,
+		Labels:        labels,
 		MemoryId:      strings.TrimSpace(req.MemoryId),
 		Meta:          meta,
 	}
@@ -750,15 +786,30 @@ func (e jobBackpressureError) Error() string {
 // The scheduler separately enforces a per-job policy concurrency limit from the
 // safety kernel (PolicyConstraints.Budgets.MaxConcurrentJobs) against the same
 // active count — that is the policy-enforcement gate.
+//
+// Failure semantics (audit-fix task-2a52e7da #8):
+//   - nil configSvc: log warning and return nil (allow). Production deployments
+//     must wire configSvc; tests intentionally skip backpressure.
+//   - configSvc.Effective error: fail-closed. A misconfigured config service
+//     must not silently disable the system-capacity gate.
+//   - Missing or zero limits in config: return nil (allow). Operators may
+//     intentionally configure unlimited capacity.
 func (s *server) enforceJobBackpressure(ctx context.Context, orgID, teamID string) error {
 	if s == nil || s.jobStore == nil {
 		return nil
 	}
 	if s.configSvc == nil {
+		slog.Warn("enforceJobBackpressure: configSvc not wired — backpressure disabled",
+			"tenant", orgID, "team", teamID)
 		return nil
 	}
 	cfg, err := s.configSvc.Effective(ctx, orgID, teamID, "", "")
-	if err != nil || cfg == nil {
+	if err != nil {
+		// Fail-closed: do not silently bypass capacity enforcement when the
+		// config service is broken. Surfaces as 503 at the caller.
+		return fmt.Errorf("config service unavailable: %w", err)
+	}
+	if cfg == nil {
 		return nil
 	}
 	limit := lookupIntPath(cfg, "limits", "max_concurrent_jobs")
@@ -838,7 +889,7 @@ func appendUniqueTag(tags []string, tag string) []string {
 	return append(tags, tag)
 }
 
-func parseContextMode(topic, explicit string) string {
+func parseContextMode(_, explicit string) string {
 	switch strings.ToLower(explicit) {
 	case "chat":
 		return "chat"
@@ -881,6 +932,14 @@ func (s *server) enforceMemoryID(ctx context.Context, orgID, teamID, workflowID,
 	}
 	cfg, ok := config.ParseEffectiveContextMap(cfgMap)
 	if !ok {
+		// ParseEffectiveContextMap returns ok=false either because no "context"
+		// section is configured (legitimate absence — allow) or because a
+		// "context" section exists but is malformed (fail-closed — a malformed
+		// policy must not silently bypass memory-id enforcement).
+		// Audit-fix task-2a52e7da #9.
+		if rawCtx, hasContext := cfgMap["context"]; hasContext && rawCtx != nil {
+			return memoryPolicyError{status: http.StatusServiceUnavailable, msg: "memory policy config malformed"}
+		}
 		return nil
 	}
 	allowed, reason := config.MemoryIDAllowed(cfg, memoryID)
@@ -890,7 +949,7 @@ func (s *server) enforceMemoryID(ctx context.Context, orgID, teamID, workflowID,
 	return nil
 }
 
-func deriveMemoryIDFromReq(topic, explicit, jobID string) string {
+func deriveMemoryIDFromReq(_, explicit, jobID string) string {
 	if explicit != "" {
 		return store.NormalizeMemoryID(explicit)
 	}
@@ -1006,14 +1065,52 @@ func writeJSON(w http.ResponseWriter, v any) {
 	}
 }
 
-// writeErrorJSON writes a structured JSON error response with the given HTTP status.
-func writeErrorJSON(w http.ResponseWriter, status int, message string) {
+// writeJSONError writes the canonical non-Edge error envelope.
+func writeJSONError(w http.ResponseWriter, status int, code, message string) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = fallbackErrorCode(status, message)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	resp := map[string]any{"error": message, "status": status}
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"error":  message,
+		"code":   code,
+		"status": status,
+	}); err != nil {
 		slog.Warn("json encode error response failed", "error", err)
 	}
+}
+
+// writeErrorJSON preserves legacy call sites while emitting the canonical
+// `{error, code, status}` shape documented by components.schemas.Error.
+func writeErrorJSON(w http.ResponseWriter, status int, message string) {
+	writeJSONError(w, status, fallbackErrorCode(status, message), message)
+}
+
+func fallbackErrorCode(status int, message string) string {
+	source := strings.TrimSpace(message)
+	if source == "" {
+		source = http.StatusText(status)
+	}
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range strings.ToLower(source) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			b.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	code := strings.Trim(b.String(), "_")
+	if code == "" {
+		return "error"
+	}
+	return code
 }
 
 func writeTierLimitJSON(w http.ResponseWriter, limitErr *licensing.TierLimitError) {
@@ -1109,6 +1206,7 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any) error {
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
 	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
@@ -1251,10 +1349,11 @@ func (s *server) requireStoreAndRole(w http.ResponseWriter, r *http.Request, rol
 }
 
 // requirePermissionOrRole enforces a named RBAC permission when advanced RBAC
-// is entitled, and otherwise falls back to the legacy role gate.
+// is entitled, while still applying any supplied legacy role gate.
 //
-// This preserves historical admin/operator/viewer behavior when RBAC is off,
-// while allowing custom roles to work in production when RBAC is on.
+// This preserves historical admin/operator/viewer route boundaries when RBAC
+// is on or off, so a custom role cannot bypass legacy admin/operator/viewer
+// checks by holding the named permission alone.
 func (s *server) requirePermissionOrRole(w http.ResponseWriter, r *http.Request, permission string, legacyRoles ...string) bool {
 	if strings.TrimSpace(permission) == "" {
 		if len(legacyRoles) == 0 {
@@ -1271,6 +1370,12 @@ func (s *server) requirePermissionOrRole(w http.ResponseWriter, r *http.Request,
 		if err := s.permChecker.RequirePermission(r, permission); err != nil {
 			writeForbidden(w, r, err)
 			return false
+		}
+		if len(legacyRoles) > 0 {
+			if err := s.requireRole(r, legacyRoles...); err != nil {
+				writeForbidden(w, r, err)
+				return false
+			}
 		}
 		return s.requireLicensePermission(w, r, permission)
 	}
@@ -1378,7 +1483,7 @@ func submitterIdentity(r *http.Request) string {
 	var parts []string
 	if ac.APIKey != "" {
 		h := sha256.Sum256([]byte(ac.APIKey))
-		parts = append(parts, "apikey:"+hex.EncodeToString(h[:4]))
+		parts = append(parts, "apikey:"+hex.EncodeToString(h[:8]))
 	}
 	if ac.PrincipalID != "" {
 		parts = append(parts, "principal:"+ac.PrincipalID)
@@ -1393,13 +1498,19 @@ func identitiesOverlap(a, b string) bool {
 	if a == b {
 		return true
 	}
-	aKey := extractIdentityPart(a, "apikey:")
-	bKey := extractIdentityPart(b, "apikey:")
-	return aKey != "" && aKey == bKey
+	aKey := strings.TrimPrefix(extractIdentityPart(a, "apikey:"), "apikey:")
+	bKey := strings.TrimPrefix(extractIdentityPart(b, "apikey:"), "apikey:")
+	if aKey != "" && aKey == bKey {
+		return true
+	}
+	aPrincipal := strings.TrimPrefix(extractIdentityPart(a, "principal:"), "principal:")
+	bPrincipal := strings.TrimPrefix(extractIdentityPart(b, "principal:"), "principal:")
+	return aPrincipal != "" && aPrincipal == bPrincipal
 }
 
 func extractIdentityPart(identity, prefix string) string {
 	for _, part := range strings.Split(identity, "|") {
+		part = strings.TrimSpace(part)
 		if strings.HasPrefix(part, prefix) {
 			return part
 		}
@@ -1417,7 +1528,7 @@ func submitterIdentityFromContext(ctx context.Context) string {
 	var parts []string
 	if ac.APIKey != "" {
 		h := sha256.Sum256([]byte(ac.APIKey))
-		parts = append(parts, "apikey:"+hex.EncodeToString(h[:4]))
+		parts = append(parts, "apikey:"+hex.EncodeToString(h[:8]))
 	}
 	if ac.PrincipalID != "" {
 		parts = append(parts, "principal:"+ac.PrincipalID)

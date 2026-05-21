@@ -47,6 +47,7 @@ cordumctl edge doctor \
 | `--agentd-path` | `CORDUM_AGENTD_PATH` or PATH lookup | `cordum-agentd` executable to verify. |
 | `--agentd-url` | `CORDUM_AGENTD_URL`, `CORDUM_AGENTD_SOCKET`, or local default | Local loopback hook URL to dial. |
 | `--settings-path` | `CORDUM_EDGE_SETTINGS_PATH`, `CLAUDE_SETTINGS_PATH`, or `~/.claude/settings.json` | Claude settings JSON to validate. |
+| `--managed-settings-path` | `CORDUM_EDGE_MANAGED_SETTINGS_PATH` | Managed-settings JSON to validate via the `managed_settings_compliance` check. Empty = skip (non-enterprise hosts). |
 | `--dashboard-url` | `CORDUM_EDGE_DASHBOARD_URL`, `CORDUM_DASHBOARD_URL` | Optional dashboard reachability probe. |
 | `--timeout` | `30` | Overall deadline in seconds. Each check is still individually bounded. |
 | `--json` | false | Emit JSON envelope instead of the human table. |
@@ -68,6 +69,11 @@ The doctor reports `ok`, `warn`, `fail`, or `skip` for each check:
 - Edge demo policy fixture rules loaded from `examples/cordum-edge-pack`.
 - Optional dashboard reachability.
 - Policy-mode implications.
+- Managed settings compliance: when `--managed-settings-path` (or
+  `CORDUM_EDGE_MANAGED_SETTINGS_PATH`) is set, validates the deployed
+  `managed-settings.json` against the 14 enterprise invariants documented
+  in [managed-settings-deploy.md § 6](managed-settings-deploy.md#6-verification-reference).
+  Empty path → `skip` so non-enterprise hosts do not see a spurious failure.
 
 ## Exit codes
 
@@ -127,5 +133,7 @@ bootstrap/keychain controls for enterprise rollout.
 | `CORDUM_AGENTD_URL must not persist nonce` | Regenerate settings. The nonce belongs only in process environment. |
 | `local agentd not reachable` | Start `cordumctl edge claude` or `cordum-agentd` with a loopback `CORDUM_AGENTD_URL`. |
 | `Edge demo policy missing` | `cordumctl pack install ./examples/cordum-edge-pack`. |
+| `managed-settings.json not found at <path>` | MDM payload not yet applied; check sync status, then `cordumctl edge managed-settings export --output <dir>` for a quick local sanity copy. |
+| `managed settings drift: <field> …` | Hand-edited or stale managed-settings.json; re-deploy via MDM and re-run doctor. See [managed-settings-deploy.md § 10](managed-settings-deploy.md#10-troubleshooting). |
 
 Doctor never runs fixes automatically. Re-run it after applying a remediation.

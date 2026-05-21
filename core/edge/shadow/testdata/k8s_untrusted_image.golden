@@ -1,0 +1,41 @@
+{
+  "finding_id": "edge_shadow_k8s-image-1",
+  "tenant_id": "tenant-k8s",
+  "audience": "enterprise",
+  "severity": "low",
+  "action_kind": "rebase_agent_image",
+  "summary": "Rebase the claude-code workload onto an allowlisted container image registry.",
+  "risk_explanation": "A workload's container image is pulled from a registry that is not on the operator's ImageRegistryAllowlist. Untrusted registries can ship modified agent binaries or runtime payloads. Signals: untrusted_agent_image.",
+  "recommended_action": "Repoint the workload's container image to your Cordum-allowlisted registry mirror; verify the digest before rolling out.",
+  "safety_notes": [
+    "All steps are advisory — Cordum Edge does not auto-execute remediation.",
+    "Never substitute live secrets into the placeholders shown below; use your secret-manager / api-key-helper.",
+    "Cordum NEVER mutates Kubernetes cluster state; every kubectl command must be applied by the operator.",
+    "Only target namespaces you own; cross-tenant patches are explicitly out of scope (Q5 enforce-scope-out)."
+  ],
+  "steps": [
+    {
+      "id": "rebase_agent_image.identify_current",
+      "title": "Identify the current (untrusted) image reference",
+      "kind": "rebase_agent_image",
+      "command": "# Current image: docker.io/anthropic/claude-code:v1.2\nkubectl --context prod-east-1 -n team-research get deployment/research-bot -o jsonpath='{.spec.template.spec.containers[*].image}'",
+      "docs_url": "docs/edge/shadow-remediation.md"
+    },
+    {
+      "id": "rebase_agent_image.patch_to_allowlisted",
+      "title": "Rebase the workload onto an allowlisted registry",
+      "kind": "rebase_agent_image",
+      "command": "kubectl --context prod-east-1 -n team-research set image deployment/research-bot \u003ccontainer-name\u003e=\u003ccordum-allowlisted-registry\u003e/\u003cimage-name\u003e:\u003ctag\u003e",
+      "requires_backup": true,
+      "docs_url": "docs/edge/shadow-remediation.md",
+      "conditions": [
+        "verify the destination digest matches the upstream image before applying",
+        "replace \u003ccontainer-name\u003e with the matching container from the previous step",
+        "rolling restart applies — schedule for low-traffic windows on user-facing workloads"
+      ]
+    }
+  ],
+  "generator_version": "1.0.0",
+  "generated_at": "2026-05-17T16:00:00Z",
+  "advisory_only": true
+}

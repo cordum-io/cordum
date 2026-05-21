@@ -34,8 +34,8 @@ rules:
 
 	// Phase 1: studio + invariants + pack all installed.
 	withPack := map[string]any{
-		"secops/global":             studioBundle,
-		PolicyInvariantsBundleKey:   invariantsBundle,
+		"secops/global":           studioBundle,
+		PolicyInvariantsBundleKey: invariantsBundle,
 		"pack/example/policy": map[string]any{"content": `version: "1"
 rules:
   - id: pack-allow-secret-read

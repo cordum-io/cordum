@@ -13,22 +13,18 @@ from typing import cast, List
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="PublishPolicyRequest")
 
 
 @_attrs_define
 class PublishPolicyRequest:
-    """ 
-        Attributes:
-            bundle_ids (List[str]):
-            author (str):
-            message (Union[Unset, str]):
-            note (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        bundle_ids (List[str]):
+        author (str):
+        message (Union[Unset, str]):
+        note (Union[Unset, str]):
+    """
 
     bundle_ids: List[str]
     author: str
@@ -36,11 +32,8 @@ class PublishPolicyRequest:
     note: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         bundle_ids = self.bundle_ids
-
-
 
         author = self.author
 
@@ -48,13 +41,14 @@ class PublishPolicyRequest:
 
         note = self.note
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "bundle_ids": bundle_ids,
-            "author": author,
-        })
+        field_dict.update(
+            {
+                "bundle_ids": bundle_ids,
+                "author": author,
+            }
+        )
         if message is not UNSET:
             field_dict["message"] = message
         if note is not UNSET:
@@ -62,13 +56,10 @@ class PublishPolicyRequest:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
         bundle_ids = cast(List[str], d.pop("bundle_ids"))
-
 
         author = d.pop("author")
 
@@ -82,7 +73,6 @@ class PublishPolicyRequest:
             message=message,
             note=note,
         )
-
 
         publish_policy_request.additional_properties = d
         return publish_policy_request

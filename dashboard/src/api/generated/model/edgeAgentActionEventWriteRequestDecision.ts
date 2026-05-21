@@ -6,15 +6,15 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeAgentActionEventWriteRequestDecision = typeof EdgeAgentActionEventWriteRequestDecision[keyof typeof EdgeAgentActionEventWriteRequestDecision];
-
+export type EdgeAgentActionEventWriteRequestDecision =
+  (typeof EdgeAgentActionEventWriteRequestDecision)[keyof typeof EdgeAgentActionEventWriteRequestDecision];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeAgentActionEventWriteRequestDecision = {
-  ALLOW: 'ALLOW',
-  DENY: 'DENY',
-  REQUIRE_APPROVAL: 'REQUIRE_APPROVAL',
-  THROTTLE: 'THROTTLE',
-  CONSTRAIN: 'CONSTRAIN',
-  RECORDED: 'RECORDED',
+  ALLOW: "ALLOW",
+  DENY: "DENY",
+  REQUIRE_APPROVAL: "REQUIRE_APPROVAL",
+  THROTTLE: "THROTTLE",
+  CONSTRAIN: "CONSTRAIN",
+  RECORDED: "RECORDED",
 } as const;

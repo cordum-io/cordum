@@ -10,4 +10,6 @@
  * Parsed policy constraints from safety decision
  * @nullable
  */
-export type GetApprovalContext200Constraints = { [key: string]: unknown } | null;
+export type GetApprovalContext200Constraints = {
+  [key: string]: unknown;
+} | null;

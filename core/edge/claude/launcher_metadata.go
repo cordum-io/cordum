@@ -156,7 +156,7 @@ func writeLaunchSettings(root string, cfg launchConfig, meta LaunchMetadata, sta
 	return path, settings, nil
 }
 
-func waitForLaunchState(ctx context.Context, dir string, timeout time.Duration) (launchSessionState, error) {
+func waitForLaunchStateOrAgentdExit(ctx context.Context, dir string, timeout time.Duration, done <-chan error) (launchSessionState, error) {
 	deadline, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	ticker := time.NewTicker(50 * time.Millisecond)
@@ -166,6 +166,8 @@ func waitForLaunchState(ctx context.Context, dir string, timeout time.Duration) 
 			return state, nil
 		}
 		select {
+		case err := <-done:
+			return launchSessionState{}, agentdExitedBeforeReadyError(err)
 		case <-deadline.Done():
 			return launchSessionState{}, fmt.Errorf("timed out waiting for agentd session state in %s", dir)
 		case <-ticker.C:

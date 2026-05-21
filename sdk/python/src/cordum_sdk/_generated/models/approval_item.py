@@ -18,11 +18,8 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.approval_item_constraints_type_0 import ApprovalItemConstraintsType0
-  from ..models.job_summary import JobSummary
-
-
-
+    from ..models.job_summary import JobSummary
+    from ..models.approval_item_constraints_type_0 import ApprovalItemConstraintsType0
 
 
 T = TypeVar("T", bound="ApprovalItem")
@@ -30,36 +27,36 @@ T = TypeVar("T", bound="ApprovalItem")
 
 @_attrs_define
 class ApprovalItem:
-    """ 
-        Attributes:
-            job (Union[Unset, JobSummary]):
-            decision (Union[Unset, ApprovalItemDecision]):
-            policy_snapshot (Union[None, Unset, str]):
-            policy_rule_id (Union[None, Unset, str]):
-            policy_reason (Union[None, Unset, str]):
-            constraints (Union['ApprovalItemConstraintsType0', None, Unset]):
-            approval_required (Union[Unset, bool]):
-            requested_at (Union[Unset, datetime.datetime]):
-            decided_at (Union[None, Unset, datetime.datetime]):
-            decided_by (Union[None, Unset, str]):
-     """
+    """
+    Attributes:
+        job (Union[Unset, JobSummary]):
+        decision (Union[Unset, ApprovalItemDecision]):
+        policy_snapshot (Union[None, Unset, str]):
+        policy_rule_id (Union[None, Unset, str]):
+        policy_reason (Union[None, Unset, str]):
+        constraints (Union['ApprovalItemConstraintsType0', None, Unset]):
+        approval_required (Union[Unset, bool]):
+        requested_at (Union[Unset, datetime.datetime]):
+        decided_at (Union[None, Unset, datetime.datetime]):
+        decided_by (Union[None, Unset, str]):
+    """
 
-    job: Union[Unset, 'JobSummary'] = UNSET
+    job: Union[Unset, "JobSummary"] = UNSET
     decision: Union[Unset, ApprovalItemDecision] = UNSET
     policy_snapshot: Union[None, Unset, str] = UNSET
     policy_rule_id: Union[None, Unset, str] = UNSET
     policy_reason: Union[None, Unset, str] = UNSET
-    constraints: Union['ApprovalItemConstraintsType0', None, Unset] = UNSET
+    constraints: Union["ApprovalItemConstraintsType0", None, Unset] = UNSET
     approval_required: Union[Unset, bool] = UNSET
     requested_at: Union[Unset, datetime.datetime] = UNSET
     decided_at: Union[None, Unset, datetime.datetime] = UNSET
     decided_by: Union[None, Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.approval_item_constraints_type_0 import ApprovalItemConstraintsType0
         from ..models.job_summary import JobSummary
+        from ..models.approval_item_constraints_type_0 import ApprovalItemConstraintsType0
+
         job: Union[Unset, Dict[str, Any]] = UNSET
         if not isinstance(self.job, Unset):
             job = self.job.to_dict()
@@ -67,7 +64,6 @@ class ApprovalItem:
         decision: Union[Unset, str] = UNSET
         if not isinstance(self.decision, Unset):
             decision = self.decision.value
-
 
         policy_snapshot: Union[None, Unset, str]
         if isinstance(self.policy_snapshot, Unset):
@@ -115,11 +111,9 @@ class ApprovalItem:
         else:
             decided_by = self.decided_by
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if job is not UNSET:
             field_dict["job"] = job
         if decision is not UNSET:
@@ -143,32 +137,25 @@ class ApprovalItem:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.approval_item_constraints_type_0 import ApprovalItemConstraintsType0
         from ..models.job_summary import JobSummary
+        from ..models.approval_item_constraints_type_0 import ApprovalItemConstraintsType0
+
         d = src_dict.copy()
         _job = d.pop("job", UNSET)
         job: Union[Unset, JobSummary]
-        if isinstance(_job,  Unset):
+        if isinstance(_job, Unset):
             job = UNSET
         else:
             job = JobSummary.from_dict(_job)
 
-
-
-
         _decision = d.pop("decision", UNSET)
         decision: Union[Unset, ApprovalItemDecision]
-        if isinstance(_decision,  Unset):
+        if isinstance(_decision, Unset):
             decision = UNSET
         else:
             decision = ApprovalItemDecision(_decision)
-
-
-
 
         def _parse_policy_snapshot(data: object) -> Union[None, Unset, str]:
             if data is None:
@@ -179,7 +166,6 @@ class ApprovalItem:
 
         policy_snapshot = _parse_policy_snapshot(d.pop("policy_snapshot", UNSET))
 
-
         def _parse_policy_rule_id(data: object) -> Union[None, Unset, str]:
             if data is None:
                 return data
@@ -188,7 +174,6 @@ class ApprovalItem:
             return cast(Union[None, Unset, str], data)
 
         policy_rule_id = _parse_policy_rule_id(d.pop("policy_rule_id", UNSET))
-
 
         def _parse_policy_reason(data: object) -> Union[None, Unset, str]:
             if data is None:
@@ -199,8 +184,7 @@ class ApprovalItem:
 
         policy_reason = _parse_policy_reason(d.pop("policy_reason", UNSET))
 
-
-        def _parse_constraints(data: object) -> Union['ApprovalItemConstraintsType0', None, Unset]:
+        def _parse_constraints(data: object) -> Union["ApprovalItemConstraintsType0", None, Unset]:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -210,27 +194,21 @@ class ApprovalItem:
                     raise TypeError()
                 constraints_type_0 = ApprovalItemConstraintsType0.from_dict(data)
 
-
-
                 return constraints_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
-            return cast(Union['ApprovalItemConstraintsType0', None, Unset], data)
+            return cast(Union["ApprovalItemConstraintsType0", None, Unset], data)
 
         constraints = _parse_constraints(d.pop("constraints", UNSET))
-
 
         approval_required = d.pop("approval_required", UNSET)
 
         _requested_at = d.pop("requested_at", UNSET)
         requested_at: Union[Unset, datetime.datetime]
-        if isinstance(_requested_at,  Unset):
+        if isinstance(_requested_at, Unset):
             requested_at = UNSET
         else:
             requested_at = isoparse(_requested_at)
-
-
-
 
         def _parse_decided_at(data: object) -> Union[None, Unset, datetime.datetime]:
             if data is None:
@@ -242,15 +220,12 @@ class ApprovalItem:
                     raise TypeError()
                 decided_at_type_0 = isoparse(data)
 
-
-
                 return decided_at_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
             return cast(Union[None, Unset, datetime.datetime], data)
 
         decided_at = _parse_decided_at(d.pop("decided_at", UNSET))
-
 
         def _parse_decided_by(data: object) -> Union[None, Unset, str]:
             if data is None:
@@ -260,7 +235,6 @@ class ApprovalItem:
             return cast(Union[None, Unset, str], data)
 
         decided_by = _parse_decided_by(d.pop("decided_by", UNSET))
-
 
         approval_item = cls(
             job=job,
@@ -274,7 +248,6 @@ class ApprovalItem:
             decided_at=decided_at,
             decided_by=decided_by,
         )
-
 
         approval_item.additional_properties = d
         return approval_item

@@ -8,11 +8,20 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// NonceStoreCommandTimeout bounds every NonceStore SeenAndRecord call.
+// A wedged Redis must not freeze the verifier indefinitely — pre-fix,
+// RedisNonceStore captured ctx=context.Background() at construction
+// and every verifier inherited it, turning a slow Redis into a DoS
+// amplifier on the signed-call verify endpoint.
+const NonceStoreCommandTimeout = 500 * time.Millisecond
+
 // NonceStore is the replay-protection substrate. SeenAndRecord returns
 // true when the nonce has already been observed within its TTL,
-// atomically recording it for future calls when not seen.
+// atomically recording it for future calls when not seen. The ctx
+// parameter bounds the underlying store call so a wedged backend
+// surfaces as ctx.Err() instead of a stuck goroutine.
 type NonceStore interface {
-	SeenAndRecord(nonce string, ttl time.Duration) (bool, error)
+	SeenAndRecord(ctx context.Context, nonce string, ttl time.Duration) (bool, error)
 }
 
 // InMemoryNonceStore is a mutex-protected map keyed on nonce. Suitable
@@ -30,10 +39,13 @@ func NewInMemoryNonceStore() *InMemoryNonceStore {
 	return &InMemoryNonceStore{seen: make(map[string]time.Time), now: func() time.Time { return time.Now().UTC() }}
 }
 
-// SeenAndRecord satisfies NonceStore. Expired entries are opportunistically
-// garbage-collected on every call so long-running processes don't leak
+// SeenAndRecord satisfies NonceStore. ctx is accepted for interface
+// uniformity with RedisNonceStore but ignored here — the in-memory
+// path has no I/O, so cancellation only matters when the call would
+// otherwise block. Expired entries are opportunistically garbage-
+// collected on every call so long-running processes don't leak
 // memory — cheap compared to a dedicated reaper goroutine.
-func (s *InMemoryNonceStore) SeenAndRecord(nonce string, ttl time.Duration) (bool, error) {
+func (s *InMemoryNonceStore) SeenAndRecord(_ context.Context, nonce string, ttl time.Duration) (bool, error) {
 	if ttl <= 0 {
 		ttl = DefaultClockSkew
 	}
@@ -69,7 +81,6 @@ func (s *InMemoryNonceStore) Size() int {
 type RedisNonceStore struct {
 	client redis.UniversalClient
 	prefix string
-	ctx    context.Context
 }
 
 // NewRedisNonceStore wires a store. prefix is prepended to each nonce
@@ -79,16 +90,25 @@ func NewRedisNonceStore(client redis.UniversalClient, prefix string) *RedisNonce
 	if prefix == "" {
 		prefix = "mcp:outbound:nonce:"
 	}
-	return &RedisNonceStore{client: client, prefix: prefix, ctx: context.Background()}
+	return &RedisNonceStore{client: client, prefix: prefix}
 }
 
 // SeenAndRecord satisfies NonceStore via Redis SET NX EX. First write
-// wins; subsequent writes within the TTL return (true, nil).
-func (s *RedisNonceStore) SeenAndRecord(nonce string, ttl time.Duration) (bool, error) {
+// wins; subsequent writes within the TTL return (true, nil). The
+// caller-supplied ctx is wrapped with NonceStoreCommandTimeout so a
+// wedged Redis surfaces as a bounded error instead of a stuck verifier
+// goroutine; if the caller already attached a tighter deadline, that
+// deadline still wins.
+func (s *RedisNonceStore) SeenAndRecord(ctx context.Context, nonce string, ttl time.Duration) (bool, error) {
 	if ttl <= 0 {
 		ttl = DefaultClockSkew
 	}
-	ok, err := s.client.SetNX(s.ctx, s.prefix+nonce, "1", ttl).Result()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmdCtx, cancel := context.WithTimeout(ctx, NonceStoreCommandTimeout)
+	defer cancel()
+	ok, err := s.client.SetNX(cmdCtx, s.prefix+nonce, "1", ttl).Result()
 	if err != nil {
 		return false, err
 	}

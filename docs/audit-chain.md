@@ -182,6 +182,26 @@ Optional parameters:
 | `hmac_mismatch` | HMAC-SHA256 tag verification failed |
 | `retention_trimmed` | Expected gap due to log retention policy |
 
+### Edge approval provenance
+
+Cordum Edge uses the same verifier for destructive action provenance. After the
+approval store says an `EdgeApproval` is approved, the Gateway verifies the
+tenant's audit chain over the approval window and requires one resolved approval
+event:
+
+- `event_type` is `EventEdgeApprovalResolved` / `edge.approval_resolved`;
+- `decision` is `approved` or `approve`;
+- `tenant_id`, `extra.approval_ref`, and `extra.action_hash` exactly match the
+  stored approval.
+
+`EventEdgeApprovalRequested` / `edge.approval_requested` is intentionally not
+accepted as approval provenance by itself: it only proves a review was requested.
+Wrong tenant/ref/hash, malformed event JSON, rejected/expired outcomes, missing
+Redis/chainer/verifier dependencies, or compromised hash/HMAC/linkage fail
+closed. The check uses the same bounded verification parameters (`since`,
+`until`, and max scan limit) and never depends on raw tool payloads, prompts,
+transcripts, or approval secrets being stored in the chain.
+
 ## Pipeline Architecture
 
 ```text

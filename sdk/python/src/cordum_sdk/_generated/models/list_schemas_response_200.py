@@ -13,10 +13,7 @@ from typing import cast, List
 from typing import Dict
 
 if TYPE_CHECKING:
-  from ..models.schema_record import SchemaRecord
-
-
-
+    from ..models.schema_record import SchemaRecord
 
 
 T = TypeVar("T", bound="ListSchemasResponse200")
@@ -24,53 +21,47 @@ T = TypeVar("T", bound="ListSchemasResponse200")
 
 @_attrs_define
 class ListSchemasResponse200:
-    """ 
-        Attributes:
-            schemas (List['SchemaRecord']):
-     """
+    """
+    Attributes:
+        schemas (List['SchemaRecord']):
+    """
 
-    schemas: List['SchemaRecord']
+    schemas: List["SchemaRecord"]
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.schema_record import SchemaRecord
+
         schemas = []
         for schemas_item_data in self.schemas:
             schemas_item = schemas_item_data.to_dict()
             schemas.append(schemas_item)
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "schemas": schemas,
-        })
+        field_dict.update(
+            {
+                "schemas": schemas,
+            }
+        )
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.schema_record import SchemaRecord
+
         d = src_dict.copy()
         schemas = []
         _schemas = d.pop("schemas")
-        for schemas_item_data in (_schemas):
+        for schemas_item_data in _schemas:
             schemas_item = SchemaRecord.from_dict(schemas_item_data)
 
-
-
             schemas.append(schemas_item)
-
 
         list_schemas_response_200 = cls(
             schemas=schemas,
         )
-
 
         list_schemas_response_200.additional_properties = d
         return list_schemas_response_200

@@ -13,13 +13,12 @@
 
  * @nullable
  */
-export type AuthSource = typeof AuthSource[keyof typeof AuthSource] | null;
-
+export type AuthSource = (typeof AuthSource)[keyof typeof AuthSource] | null;
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const AuthSource = {
-  api_key: 'api_key',
-  jwt: 'jwt',
-  oidc: 'oidc',
-  session: 'session',
+  api_key: "api_key",
+  jwt: "jwt",
+  oidc: "oidc",
+  session: "session",
 } as const;

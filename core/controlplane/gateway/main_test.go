@@ -1,13 +1,24 @@
 package gateway
 
 import (
+	"flag"
 	"os"
+	"runtime"
 	"testing"
 
 	"github.com/cordum/cordum/core/policysign"
 )
 
 func TestMain(m *testing.M) {
+	// Windows keeps closed localhost sockets unavailable long enough that
+	// the gateway package's many t.Parallel miniredis/httptest fixtures can
+	// exhaust ephemeral ports before go-redis has a chance to reconnect.
+	// Keep the default developer command usable on Windows while leaving
+	// Linux CI/package parallelism unchanged.
+	if runtime.GOOS == "windows" {
+		_ = flag.Set("test.parallel", "1")
+	}
+
 	// Reduce Redis connection-pool sizes for test runs to prevent
 	// ephemeral-port exhaustion on Windows when many tests create
 	// miniredis-backed stores concurrently.
@@ -26,5 +37,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv(policysign.EnvStrictMode) == "" {
 		_ = os.Setenv(policysign.EnvStrictMode, "off")
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	closeWindowsGatewayRedis()
+	os.Exit(code)
 }

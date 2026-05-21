@@ -40,18 +40,7 @@ func NewRedisDecisionLogStore(url string) (*RedisDecisionLogStore, error) {
 		url = defaultRedisURL
 	}
 
-	ttl := defaultDecisionLogTTL
-	if raw := strings.TrimSpace(os.Getenv(decisionLogTTLSecondsEnv)); raw != "" {
-		secs, err := strconv.Atoi(raw)
-		if err != nil {
-			slog.Warn("invalid "+decisionLogTTLSecondsEnv+", using default", "value", sanitizeLogValue(raw), "error", sanitizeLogValue(err.Error()), "default", defaultDecisionLogTTL)
-		} else if secs <= 0 {
-			slog.Warn("non-positive "+decisionLogTTLSecondsEnv+", using default", "value", secs, "default", defaultDecisionLogTTL)
-		} else {
-			ttl = time.Duration(secs) * time.Second
-		}
-	}
-
+	ttl := redisDecisionLogTTL()
 	client, err := redisutil.NewClient(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse redis url: %w", err)
@@ -65,6 +54,26 @@ func NewRedisDecisionLogStore(url string) (*RedisDecisionLogStore, error) {
 
 	slog.Debug("decision log store connected", "component", "store", "ttl", ttl.String())
 	return &RedisDecisionLogStore{client: client, ttl: ttl}, nil
+}
+
+// NewRedisDecisionLogStoreFromClient constructs a decision-log store from a shared Redis client.
+func NewRedisDecisionLogStoreFromClient(client redis.UniversalClient) *RedisDecisionLogStore {
+	return &RedisDecisionLogStore{client: client, ttl: redisDecisionLogTTL()}
+}
+
+func redisDecisionLogTTL() time.Duration {
+	ttl := defaultDecisionLogTTL
+	if raw := strings.TrimSpace(os.Getenv(decisionLogTTLSecondsEnv)); raw != "" {
+		secs, err := strconv.Atoi(raw)
+		if err != nil {
+			slog.Warn("invalid "+decisionLogTTLSecondsEnv+", using default", "value", sanitizeLogValue(raw), "error", sanitizeLogValue(err.Error()), "default", defaultDecisionLogTTL)
+		} else if secs <= 0 {
+			slog.Warn("non-positive "+decisionLogTTLSecondsEnv+", using default", "value", secs, "default", defaultDecisionLogTTL)
+		} else {
+			ttl = time.Duration(secs) * time.Second
+		}
+	}
+	return ttl
 }
 
 func (s *RedisDecisionLogStore) Close() error {

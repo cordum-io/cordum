@@ -5,11 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/redisutil"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
+	"github.com/redis/go-redis/v9"
 )
 
 func boolPtr(v bool) *bool { return &v }
@@ -489,6 +491,62 @@ func TestEvaluateOutputDirect(t *testing.T) {
 	if resp.Decision != "allow" {
 		t.Fatalf("expected allow, got %q", resp.Decision)
 	}
+}
+
+func TestEvaluateOutput_FailClosedOnResultGetError(t *testing.T) {
+	resultClient := redis.NewClient(&redis.Options{
+		Addr:         "127.0.0.1:1",
+		MaxRetries:   0,
+		DialTimeout:  20 * time.Millisecond,
+		ReadTimeout:  20 * time.Millisecond,
+		WriteTimeout: 20 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = resultClient.Close() })
+
+	srv := &server{
+		scanners: defaultOutputScanners(),
+	}
+	_ = srv.setPolicy(context.Background(), &config.SafetyPolicy{
+		OutputPolicy: config.OutputPolicyConfig{Enabled: true, FailMode: "open"},
+		OutputRules: []config.OutputPolicyRule{
+			{
+				ID:       "out-secret-pointer-fail",
+				Decision: "quarantine",
+				Match: config.OutputPolicyMatch{
+					Topics:   []string{"job.*"},
+					Scanners: []string{"secret"},
+				},
+			},
+		},
+	}, "snap-pointer-fail")
+	srv.resultClient = resultClient
+
+	resp, err := srv.EvaluateOutput(context.Background(), &OutputEvaluateRequest{
+		JobID:     "job-pointer-fail",
+		Topic:     "job.default",
+		ResultPtr: "redis://res:job-pointer-fail",
+	})
+	if err != nil {
+		return
+	}
+	if resp == nil {
+		t.Fatal("expected fail-closed response or error, got nil response and nil error")
+	}
+	if resp.Decision == "allow" {
+		t.Fatalf("expected result pointer read error to fail closed, got allow: %#v", resp)
+	}
+	if resp.Decision == "quarantine" && !hasOutputFindingType(resp.Findings, "pointer_unreadable") {
+		t.Fatalf("expected pointer_unreadable finding on quarantine response, got %#v", resp.Findings)
+	}
+}
+
+func hasOutputFindingType(findings []outputFinding, want string) bool {
+	for _, finding := range findings {
+		if finding.Type == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestEvaluateOutputKeywordAndContentType(t *testing.T) {

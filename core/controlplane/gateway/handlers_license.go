@@ -66,7 +66,7 @@ func (s *server) handleGetLicenseUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	registeredWorkers, connectedWorkers, workerCount, err := s.effectiveWorkerCount(r.Context())
+	registeredWorkers, connectedWorkers, workerCount, err := s.effectiveWorkerCount(r.Context(), "")
 	if err != nil {
 		writeInternalError(w, r, "worker count", err)
 		return

@@ -5,12 +5,12 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { EdgeAgentActionEventLayer } from './edgeAgentActionEventLayer';
-import type { EdgeAgentActionEventInputRedacted } from './edgeAgentActionEventInputRedacted';
-import type { EdgeAgentActionEventDecision } from './edgeAgentActionEventDecision';
-import type { EdgeArtifactPointer } from './edgeArtifactPointer';
-import type { EdgeAgentActionEventStatus } from './edgeAgentActionEventStatus';
-import type { EdgeLabels } from './edgeLabels';
+import type { EdgeAgentActionEventLayer } from "./edgeAgentActionEventLayer";
+import type { EdgeAgentActionEventInputRedacted } from "./edgeAgentActionEventInputRedacted";
+import type { EdgeAgentActionEventDecision } from "./edgeAgentActionEventDecision";
+import type { EdgeArtifactPointer } from "./edgeArtifactPointer";
+import type { EdgeAgentActionEventStatus } from "./edgeAgentActionEventStatus";
+import type { EdgeLabels } from "./edgeLabels";
 
 export interface EdgeAgentActionEvent {
   event_id: string;

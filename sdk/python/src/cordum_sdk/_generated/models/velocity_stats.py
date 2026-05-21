@@ -16,27 +16,23 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="VelocityStats")
 
 
 @_attrs_define
 class VelocityStats:
-    """ 
-        Attributes:
-            id (str):
-            hit_count_24h (Union[Unset, int]):
-            hit_rate_24h (Union[Unset, float]):
-            current_window_count (Union[Unset, int]):
-            current_window_max (Union[Unset, int]):
-            active_buckets (Union[Unset, int]):
-            exceeded_buckets (Union[Unset, int]):
-            last_triggered (Union[Unset, datetime.datetime]):
-            hourly_hits (Union[Unset, List[int]]):
-     """
+    """
+    Attributes:
+        id (str):
+        hit_count_24h (Union[Unset, int]):
+        hit_rate_24h (Union[Unset, float]):
+        current_window_count (Union[Unset, int]):
+        current_window_max (Union[Unset, int]):
+        active_buckets (Union[Unset, int]):
+        exceeded_buckets (Union[Unset, int]):
+        last_triggered (Union[Unset, datetime.datetime]):
+        hourly_hits (Union[Unset, List[int]]):
+    """
 
     id: str
     hit_count_24h: Union[Unset, int] = UNSET
@@ -48,7 +44,6 @@ class VelocityStats:
     last_triggered: Union[Unset, datetime.datetime] = UNSET
     hourly_hits: Union[Unset, List[int]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         id = self.id
@@ -73,14 +68,13 @@ class VelocityStats:
         if not isinstance(self.hourly_hits, Unset):
             hourly_hits = self.hourly_hits
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "id": id,
-        })
+        field_dict.update(
+            {
+                "id": id,
+            }
+        )
         if hit_count_24h is not UNSET:
             field_dict["hit_count_24h"] = hit_count_24h
         if hit_rate_24h is not UNSET:
@@ -99,8 +93,6 @@ class VelocityStats:
             field_dict["hourly_hits"] = hourly_hits
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -121,16 +113,12 @@ class VelocityStats:
 
         _last_triggered = d.pop("last_triggered", UNSET)
         last_triggered: Union[Unset, datetime.datetime]
-        if isinstance(_last_triggered,  Unset):
+        if isinstance(_last_triggered, Unset):
             last_triggered = UNSET
         else:
             last_triggered = isoparse(_last_triggered)
 
-
-
-
         hourly_hits = cast(List[int], d.pop("hourly_hits", UNSET))
-
 
         velocity_stats = cls(
             id=id,
@@ -143,7 +131,6 @@ class VelocityStats:
             last_triggered=last_triggered,
             hourly_hits=hourly_hits,
         )
-
 
         velocity_stats.additional_properties = d
         return velocity_stats

@@ -7,12 +7,12 @@
  */
 
 export type ListGovernanceDecisionsParams = {
-since?: string;
-until?: string;
-topic?: string;
-rule_id?: string;
-verdict?: string;
-agent_id?: string;
-cursor?: string;
-limit?: number;
+  since?: string;
+  until?: string;
+  topic?: string;
+  rule_id?: string;
+  verdict?: string;
+  agent_id?: string;
+  cursor?: string;
+  limit?: number;
 };

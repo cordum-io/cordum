@@ -53,7 +53,7 @@ func scaffoldLangchain(target string, force bool) error {
 	if err := writeFileOverwrite(filepath.Join(target, "config", "safety.yaml"), langchainSafetyYAML); err != nil {
 		return err
 	}
-	return patchComposeWithWorker(target, "cordum-langchain-worker", force)
+	return patchComposeWithWorker(target, "cordum-langchain-worker")
 }
 
 // scaffoldCrewAI generates a CrewAI project with Cordum safety gates.
@@ -71,7 +71,7 @@ func scaffoldCrewAI(target string, force bool) error {
 	if err := writeFileOverwrite(filepath.Join(target, "config", "safety.yaml"), crewaiSafetyYAML); err != nil {
 		return err
 	}
-	return patchComposeWithWorker(target, "cordum-crewai-worker", force)
+	return patchComposeWithWorker(target, "cordum-crewai-worker")
 }
 
 // scaffoldAutoGen generates an AutoGen multi-agent project with Cordum governance.
@@ -89,11 +89,11 @@ func scaffoldAutoGen(target string, force bool) error {
 	if err := writeFileOverwrite(filepath.Join(target, "config", "safety.yaml"), autogenSafetyYAML); err != nil {
 		return err
 	}
-	return patchComposeWithWorker(target, "cordum-autogen-worker", force)
+	return patchComposeWithWorker(target, "cordum-autogen-worker")
 }
 
 // patchComposeWithWorker appends the framework worker service to docker-compose.yml.
-func patchComposeWithWorker(target, serviceName string, force bool) error {
+func patchComposeWithWorker(target, serviceName string) error {
 	workerService := fmt.Sprintf(`
   %s:
     build:

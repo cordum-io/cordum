@@ -6,13 +6,13 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type OutputRuleAction = typeof OutputRuleAction[keyof typeof OutputRuleAction];
-
+export type OutputRuleAction =
+  (typeof OutputRuleAction)[keyof typeof OutputRuleAction];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const OutputRuleAction = {
-  BLOCK: 'BLOCK',
-  REDACT: 'REDACT',
-  WARN: 'WARN',
-  LOG: 'LOG',
+  BLOCK: "BLOCK",
+  REDACT: "REDACT",
+  WARN: "WARN",
+  LOG: "LOG",
 } as const;

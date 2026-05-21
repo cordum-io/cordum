@@ -17,10 +17,7 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.policy_rule import PolicyRule
-
-
-
+    from ..models.policy_rule import PolicyRule
 
 
 T = TypeVar("T", bound="PolicyBundleDetail")
@@ -28,18 +25,18 @@ T = TypeVar("T", bound="PolicyBundleDetail")
 
 @_attrs_define
 class PolicyBundleDetail:
-    """ 
-        Attributes:
-            id (Union[Unset, str]):
-            enabled (Union[Unset, bool]):
-            source (Union[Unset, str]):
-            author (Union[Unset, str]):
-            message (Union[Unset, str]):
-            rule_count (Union[Unset, int]):
-            updated_at (Union[Unset, datetime.datetime]):
-            content (Union[Unset, str]): Raw YAML content of the bundle
-            rules (Union[Unset, List['PolicyRule']]):
-     """
+    """
+    Attributes:
+        id (Union[Unset, str]):
+        enabled (Union[Unset, bool]):
+        source (Union[Unset, str]):
+        author (Union[Unset, str]):
+        message (Union[Unset, str]):
+        rule_count (Union[Unset, int]):
+        updated_at (Union[Unset, datetime.datetime]):
+        content (Union[Unset, str]): Raw YAML content of the bundle
+        rules (Union[Unset, List['PolicyRule']]):
+    """
 
     id: Union[Unset, str] = UNSET
     enabled: Union[Unset, bool] = UNSET
@@ -49,12 +46,12 @@ class PolicyBundleDetail:
     rule_count: Union[Unset, int] = UNSET
     updated_at: Union[Unset, datetime.datetime] = UNSET
     content: Union[Unset, str] = UNSET
-    rules: Union[Unset, List['PolicyRule']] = UNSET
+    rules: Union[Unset, List["PolicyRule"]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.policy_rule import PolicyRule
+
         id = self.id
 
         enabled = self.enabled
@@ -80,13 +77,9 @@ class PolicyBundleDetail:
                 rules_item = rules_item_data.to_dict()
                 rules.append(rules_item)
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if id is not UNSET:
             field_dict["id"] = id
         if enabled is not UNSET:
@@ -108,11 +101,10 @@ class PolicyBundleDetail:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.policy_rule import PolicyRule
+
         d = src_dict.copy()
         id = d.pop("id", UNSET)
 
@@ -128,25 +120,19 @@ class PolicyBundleDetail:
 
         _updated_at = d.pop("updated_at", UNSET)
         updated_at: Union[Unset, datetime.datetime]
-        if isinstance(_updated_at,  Unset):
+        if isinstance(_updated_at, Unset):
             updated_at = UNSET
         else:
             updated_at = isoparse(_updated_at)
-
-
-
 
         content = d.pop("content", UNSET)
 
         rules = []
         _rules = d.pop("rules", UNSET)
-        for rules_item_data in (_rules or []):
+        for rules_item_data in _rules or []:
             rules_item = PolicyRule.from_dict(rules_item_data)
 
-
-
             rules.append(rules_item)
-
 
         policy_bundle_detail = cls(
             id=id,
@@ -159,7 +145,6 @@ class PolicyBundleDetail:
             content=content,
             rules=rules,
         )
-
 
         policy_bundle_detail.additional_properties = d
         return policy_bundle_detail

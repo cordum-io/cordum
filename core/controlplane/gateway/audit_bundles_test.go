@@ -138,7 +138,7 @@ func TestListSignedBundleSnapshots_SeedsFromStore(t *testing.T) {
 		t.Fatalf("unsigned bundle put: %d %s", rec.Code, rec.Body.String())
 	}
 
-	snaps, err := s.listSignedBundleSnapshots(testContext(), "default", time.Time{}, time.Time{})
+	snaps, err := s.listSignedBundleSnapshots(testContext(), time.Time{}, time.Time{})
 	if err != nil {
 		t.Fatalf("listSignedBundleSnapshots: %v", err)
 	}

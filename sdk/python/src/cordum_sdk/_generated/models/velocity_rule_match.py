@@ -13,52 +13,39 @@ from typing import cast, List
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="VelocityRuleMatch")
 
 
 @_attrs_define
 class VelocityRuleMatch:
-    """ 
-        Attributes:
-            topics (Union[Unset, List[str]]):
-            tenants (Union[Unset, List[str]]):
-            risk_tags (Union[Unset, List[str]]):
-     """
+    """
+    Attributes:
+        topics (Union[Unset, List[str]]):
+        tenants (Union[Unset, List[str]]):
+        risk_tags (Union[Unset, List[str]]):
+    """
 
     topics: Union[Unset, List[str]] = UNSET
     tenants: Union[Unset, List[str]] = UNSET
     risk_tags: Union[Unset, List[str]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         topics: Union[Unset, List[str]] = UNSET
         if not isinstance(self.topics, Unset):
             topics = self.topics
 
-
-
         tenants: Union[Unset, List[str]] = UNSET
         if not isinstance(self.tenants, Unset):
             tenants = self.tenants
-
-
 
         risk_tags: Union[Unset, List[str]] = UNSET
         if not isinstance(self.risk_tags, Unset):
             risk_tags = self.risk_tags
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if topics is not UNSET:
             field_dict["topics"] = topics
         if tenants is not UNSET:
@@ -68,26 +55,20 @@ class VelocityRuleMatch:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
         topics = cast(List[str], d.pop("topics", UNSET))
 
-
         tenants = cast(List[str], d.pop("tenants", UNSET))
 
-
         risk_tags = cast(List[str], d.pop("risk_tags", UNSET))
-
 
         velocity_rule_match = cls(
             topics=topics,
             tenants=tenants,
             risk_tags=risk_tags,
         )
-
 
         velocity_rule_match.additional_properties = d
         return velocity_rule_match

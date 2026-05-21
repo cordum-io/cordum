@@ -10,6 +10,7 @@ import (
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/model"
+	"github.com/redis/go-redis/v9"
 )
 
 // newTestMCPHandler builds an mcpApprovalHandler backed by miniredis
@@ -80,6 +81,94 @@ func TestApproveRejectsSelfApproval(t *testing.T) {
 	}
 	if got.Status != model.ApprovalStatusPending {
 		t.Errorf("status = %q, want pending", got.Status)
+	}
+}
+
+func TestMCPApprovalRejectsSameKeyDifferentPrincipalComposite(t *testing.T) {
+	t.Parallel()
+	h := newTestMCPHandler(t, "")
+	h.getApproverIdentity = func(_ *http.Request) string {
+		return "apikey:sharedhash|principal:bob"
+	}
+	h.approverPrincipalID = func(_ *http.Request) string { return "bob" }
+	rec := seedPending(t, h, "agent-1", "files.delete")
+	rec.Requester = "apikey:sharedhash|principal:alice"
+	mustWriteMCPApprovalRecord(t, h.store, rec)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/mcp/"+rec.ID+"/approve", strings.NewReader(`{"reason":"lgtm"}`))
+	rr := httptest.NewRecorder()
+	h.Approve(rr, req, rec.ID)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "self_approval_denied") {
+		t.Fatalf("body = %s, want self_approval_denied", rr.Body.String())
+	}
+}
+
+func TestMCPApprovalRejectsSamePrincipalDifferentKeyComposite(t *testing.T) {
+	t.Parallel()
+	h := newTestMCPHandler(t, "")
+	h.getApproverIdentity = func(_ *http.Request) string {
+		return "apikey:approverhash|principal:alice"
+	}
+	h.approverPrincipalID = func(_ *http.Request) string { return "alice" }
+	rec := seedPending(t, h, "agent-1", "files.delete")
+	rec.Requester = "apikey:requesterhash|principal:alice"
+	mustWriteMCPApprovalRecord(t, h.store, rec)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/mcp/"+rec.ID+"/approve", strings.NewReader(`{"reason":"lgtm"}`))
+	rr := httptest.NewRecorder()
+	h.Approve(rr, req, rec.ID)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "self_approval_denied") {
+		t.Fatalf("body = %s, want self_approval_denied", rr.Body.String())
+	}
+}
+
+func TestMCPApprovalHandlers_NoRawErrorLeak(t *testing.T) {
+	t.Parallel()
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
+	_ = client.Close()
+	h := newMCPApprovalHandler(NewMCPApprovalStore(client))
+
+	for _, tc := range []struct {
+		name string
+		run  func(*httptest.ResponseRecorder)
+	}{
+		{"get", func(rr *httptest.ResponseRecorder) {
+			req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/mcp/approvals/appr", nil), &auth.AuthContext{Tenant: "default"})
+			h.Get(rr, req, "appr")
+		}},
+		{"list", func(rr *httptest.ResponseRecorder) {
+			req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/mcp/approvals", nil), &auth.AuthContext{Tenant: "default"})
+			h.List(rr, req)
+		}},
+		{"resolve_get", func(rr *httptest.ResponseRecorder) {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/mcp/approvals/appr/approve", nil)
+			h.Approve(rr, req, "appr")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			tc.run(rr)
+			if strings.Contains(rr.Body.String(), "client is closed") {
+				t.Fatalf("%s leaked raw redis error: %s", tc.name, rr.Body.String())
+			}
+		})
+	}
+}
+
+func mustWriteMCPApprovalRecord(t *testing.T, store *MCPApprovalStore, rec *MCPApprovalRecord) {
+	t.Helper()
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatalf("marshal mcp approval: %v", err)
+	}
+	if err := store.client.Set(context.Background(), mcpApprovalKey(rec.ID), raw, 0).Err(); err != nil {
+		t.Fatalf("write mcp approval: %v", err)
 	}
 }
 

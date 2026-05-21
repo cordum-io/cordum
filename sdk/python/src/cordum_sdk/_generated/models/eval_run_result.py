@@ -16,11 +16,8 @@ from uuid import UUID
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.eval_entry_result import EvalEntryResult
-  from ..models.eval_run_summary import EvalRunSummary
-
-
-
+    from ..models.eval_run_summary import EvalRunSummary
+    from ..models.eval_entry_result import EvalEntryResult
 
 
 T = TypeVar("T", bound="EvalRunResult")
@@ -28,19 +25,19 @@ T = TypeVar("T", bound="EvalRunResult")
 
 @_attrs_define
 class EvalRunResult:
-    """ 
-        Attributes:
-            run_id (UUID):
-            dataset_id (str):
-            dataset_name (str):
-            dataset_version (int):
-            tenant (str):
-            policy_snapshot (str):
-            started_at (datetime.datetime):
-            completed_at (datetime.datetime):
-            summary (EvalRunSummary):
-            entries (List['EvalEntryResult']):
-     """
+    """
+    Attributes:
+        run_id (UUID):
+        dataset_id (str):
+        dataset_name (str):
+        dataset_version (int):
+        tenant (str):
+        policy_snapshot (str):
+        started_at (datetime.datetime):
+        completed_at (datetime.datetime):
+        summary (EvalRunSummary):
+        entries (List['EvalEntryResult']):
+    """
 
     run_id: UUID
     dataset_id: str
@@ -50,14 +47,14 @@ class EvalRunResult:
     policy_snapshot: str
     started_at: datetime.datetime
     completed_at: datetime.datetime
-    summary: 'EvalRunSummary'
-    entries: List['EvalEntryResult']
+    summary: "EvalRunSummary"
+    entries: List["EvalEntryResult"]
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.eval_entry_result import EvalEntryResult
         from ..models.eval_run_summary import EvalRunSummary
+        from ..models.eval_entry_result import EvalEntryResult
+
         run_id = str(self.run_id)
 
         dataset_id = self.dataset_id
@@ -81,37 +78,32 @@ class EvalRunResult:
             entries_item = entries_item_data.to_dict()
             entries.append(entries_item)
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "run_id": run_id,
-            "dataset_id": dataset_id,
-            "dataset_name": dataset_name,
-            "dataset_version": dataset_version,
-            "tenant": tenant,
-            "policy_snapshot": policy_snapshot,
-            "started_at": started_at,
-            "completed_at": completed_at,
-            "summary": summary,
-            "entries": entries,
-        })
+        field_dict.update(
+            {
+                "run_id": run_id,
+                "dataset_id": dataset_id,
+                "dataset_name": dataset_name,
+                "dataset_version": dataset_version,
+                "tenant": tenant,
+                "policy_snapshot": policy_snapshot,
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "summary": summary,
+                "entries": entries,
+            }
+        )
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.eval_entry_result import EvalEntryResult
         from ..models.eval_run_summary import EvalRunSummary
+        from ..models.eval_entry_result import EvalEntryResult
+
         d = src_dict.copy()
         run_id = UUID(d.pop("run_id"))
-
-
-
 
         dataset_id = d.pop("dataset_id")
 
@@ -125,28 +117,16 @@ class EvalRunResult:
 
         started_at = isoparse(d.pop("started_at"))
 
-
-
-
         completed_at = isoparse(d.pop("completed_at"))
-
-
-
 
         summary = EvalRunSummary.from_dict(d.pop("summary"))
 
-
-
-
         entries = []
         _entries = d.pop("entries")
-        for entries_item_data in (_entries):
+        for entries_item_data in _entries:
             entries_item = EvalEntryResult.from_dict(entries_item_data)
 
-
-
             entries.append(entries_item)
-
 
         eval_run_result = cls(
             run_id=run_id,
@@ -160,7 +140,6 @@ class EvalRunResult:
             summary=summary,
             entries=entries,
         )
-
 
         eval_run_result.additional_properties = d
         return eval_run_result

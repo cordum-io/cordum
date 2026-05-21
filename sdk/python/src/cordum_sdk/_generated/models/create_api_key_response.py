@@ -14,10 +14,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.api_key_info import APIKeyInfo
-
-
-
+    from ..models.api_key_info import APIKeyInfo
 
 
 T = TypeVar("T", bound="CreateAPIKeyResponse")
@@ -25,30 +22,28 @@ T = TypeVar("T", bound="CreateAPIKeyResponse")
 
 @_attrs_define
 class CreateAPIKeyResponse:
-    """ 
-        Attributes:
-            key (Union[Unset, APIKeyInfo]):
-            secret (Union[Unset, str]): Raw API key secret (shown only once)
-     """
+    """
+    Attributes:
+        key (Union[Unset, APIKeyInfo]):
+        secret (Union[Unset, str]): Raw API key secret (shown only once)
+    """
 
-    key: Union[Unset, 'APIKeyInfo'] = UNSET
+    key: Union[Unset, "APIKeyInfo"] = UNSET
     secret: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
         from ..models.api_key_info import APIKeyInfo
+
         key: Union[Unset, Dict[str, Any]] = UNSET
         if not isinstance(self.key, Unset):
             key = self.key.to_dict()
 
         secret = self.secret
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if key is not UNSET:
             field_dict["key"] = key
         if secret is not UNSET:
@@ -56,21 +51,17 @@ class CreateAPIKeyResponse:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.api_key_info import APIKeyInfo
+
         d = src_dict.copy()
         _key = d.pop("key", UNSET)
         key: Union[Unset, APIKeyInfo]
-        if isinstance(_key,  Unset):
+        if isinstance(_key, Unset):
             key = UNSET
         else:
             key = APIKeyInfo.from_dict(_key)
-
-
-
 
         secret = d.pop("secret", UNSET)
 
@@ -78,7 +69,6 @@ class CreateAPIKeyResponse:
             key=key,
             secret=secret,
         )
-
 
         create_api_key_response.additional_properties = d
         return create_api_key_response

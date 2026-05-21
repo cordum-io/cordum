@@ -6,13 +6,13 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type PolicyRuleAction = typeof PolicyRuleAction[keyof typeof PolicyRuleAction];
-
+export type PolicyRuleAction =
+  (typeof PolicyRuleAction)[keyof typeof PolicyRuleAction];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const PolicyRuleAction = {
-  ALLOW: 'ALLOW',
-  DENY: 'DENY',
-  QUARANTINE: 'QUARANTINE',
-  REQUIRE_APPROVAL: 'REQUIRE_APPROVAL',
+  ALLOW: "ALLOW",
+  DENY: "DENY",
+  QUARANTINE: "QUARANTINE",
+  REQUIRE_APPROVAL: "REQUIRE_APPROVAL",
 } as const;

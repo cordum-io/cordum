@@ -40,7 +40,7 @@ func silenceLogs(b *testing.B) {
 // benchBus discards all publishes to avoid unbounded slice growth in benchmarks.
 type benchBus struct{}
 
-func (b *benchBus) Publish(string, *pb.BusPacket) error                    { return nil }
+func (b *benchBus) Publish(string, *pb.BusPacket) error                       { return nil }
 func (b *benchBus) Subscribe(string, string, func(*pb.BusPacket) error) error { return nil }
 
 // BenchmarkHandlePacket exercises the full HandlePacket -> processJob path:

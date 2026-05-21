@@ -9,37 +9,25 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 
-
-
-
-
-
 T = TypeVar("T", bound="DryRunWorkflowBodyInput")
 
 
 @_attrs_define
 class DryRunWorkflowBodyInput:
-    """ 
-     """
+    """ """
 
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
-        dry_run_workflow_body_input = cls(
-        )
-
+        dry_run_workflow_body_input = cls()
 
         dry_run_workflow_body_input.additional_properties = d
         return dry_run_workflow_body_input

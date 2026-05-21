@@ -5,9 +5,9 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { ApprovalAnalyticsResponseWindow } from './approvalAnalyticsResponseWindow';
-import type { ApprovalAnalyticsSummary } from './approvalAnalyticsSummary';
-import type { ApprovalAnalyticsGroup } from './approvalAnalyticsGroup';
+import type { ApprovalAnalyticsResponseWindow } from "./approvalAnalyticsResponseWindow";
+import type { ApprovalAnalyticsSummary } from "./approvalAnalyticsSummary";
+import type { ApprovalAnalyticsGroup } from "./approvalAnalyticsGroup";
 
 export interface ApprovalAnalyticsResponse {
   window: ApprovalAnalyticsResponseWindow;

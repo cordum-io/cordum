@@ -124,3 +124,70 @@ func TestLegacyTenantIDRecordIsRekeyedWithoutOverwritingOtherTenants(t *testing.
 		t.Fatalf("tenant-b record missing after set: %+v", doc.Data)
 	}
 }
+
+// TestServiceDeleteForTenant_ScopedDelete verifies that DeleteForTenant
+// removes only the caller tenant's registrations and leaves other tenants'
+// records intact. Regression for PR #276 audit finding (MEDIUM,
+// topicregistry/service.go:192-228) — legacy Delete/DeleteMany match purely
+// on Name and remove every tenant's record sharing that name.
+func TestServiceDeleteForTenant_ScopedDelete(t *testing.T) {
+	registry, _, cleanup := newTopicRegistryTestService(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := registry.SetMany(ctx, []Registration{
+		{Name: "job.shared", TenantID: "tenant-a", Pool: "pool-a", Status: StatusActive},
+		{Name: "job.shared", TenantID: "tenant-b", Pool: "pool-b", Status: StatusActive},
+		{Name: "job.shared", Pool: "pool-global", Status: StatusActive},
+	}); err != nil {
+		t.Fatalf("seed registrations: %v", err)
+	}
+
+	if err := registry.DeleteForTenant(ctx, "tenant-a", []string{"job.shared"}); err != nil {
+		t.Fatalf("DeleteForTenant tenant-a: %v", err)
+	}
+
+	// tenant-a record must be gone.
+	regA, _, err := registry.GetForTenant(ctx, "tenant-a", "job.shared")
+	if err != nil {
+		t.Fatalf("GetForTenant tenant-a: %v", err)
+	}
+	if regA == nil || regA.TenantID != "" {
+		// After deleting tenant-a's record, the global record remains as fallback.
+		if regA != nil && regA.TenantID == "" {
+			// expected fallback to global
+		} else {
+			t.Fatalf("tenant-a should fall back to global after DeleteForTenant, got %+v", regA)
+		}
+	}
+
+	// tenant-b record MUST be intact (cross-tenant isolation).
+	regB, _, err := registry.GetForTenant(ctx, "tenant-b", "job.shared")
+	if err != nil {
+		t.Fatalf("GetForTenant tenant-b: %v", err)
+	}
+	if regB == nil || regB.Pool != "pool-b" || regB.TenantID != "tenant-b" {
+		t.Fatalf("CROSS-TENANT DELETE: DeleteForTenant(tenant-a) destroyed tenant-b's record: %+v", regB)
+	}
+
+	// Global record MUST be intact.
+	all, err := registry.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var sawGlobal, sawB bool
+	for _, item := range all.Items {
+		if item.Name == "job.shared" && item.TenantID == "" {
+			sawGlobal = true
+		}
+		if item.Name == "job.shared" && item.TenantID == "tenant-b" {
+			sawB = true
+		}
+	}
+	if !sawGlobal {
+		t.Fatalf("global job.shared record destroyed by tenant-a delete: %+v", all.Items)
+	}
+	if !sawB {
+		t.Fatalf("tenant-b job.shared record destroyed by tenant-a delete: %+v", all.Items)
+	}
+}

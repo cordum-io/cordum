@@ -14,7 +14,6 @@ from typing import Dict
 from typing import Union
 
 
-
 def _get_kwargs(
     *,
     since: Union[Unset, str] = UNSET,
@@ -26,14 +25,9 @@ def _get_kwargs(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
@@ -53,9 +47,7 @@ def _get_kwargs(
 
     params["limit"] = limit
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -63,16 +55,15 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, ListGovernanceDecisionsResponse200]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, ListGovernanceDecisionsResponse200]]:
     if response.status_code == 200:
         response_200 = ListGovernanceDecisionsResponse200.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 400:
@@ -93,7 +84,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, ListGovernanceDecisionsResponse200]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, ListGovernanceDecisionsResponse200]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -114,9 +107,8 @@ def sync_detailed(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ListGovernanceDecisionsResponse200]]:
-    """ Query the governance decision log
+    """Query the governance decision log
 
     Args:
         since (Union[Unset, str]):
@@ -135,20 +127,18 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, ListGovernanceDecisionsResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         since=since,
-until=until,
-topic=topic,
-rule_id=rule_id,
-verdict=verdict,
-agent_id=agent_id,
-cursor=cursor,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
+        until=until,
+        topic=topic,
+        rule_id=rule_id,
+        verdict=verdict,
+        agent_id=agent_id,
+        cursor=cursor,
+        limit=limit,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -156,6 +146,7 @@ x_tenant_id=x_tenant_id,
     )
 
     return _build_response(client=client, response=response)
+
 
 def sync(
     *,
@@ -169,9 +160,8 @@ def sync(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ListGovernanceDecisionsResponse200]]:
-    """ Query the governance decision log
+    """Query the governance decision log
 
     Args:
         since (Union[Unset, str]):
@@ -190,22 +180,21 @@ def sync(
 
     Returns:
         Union[Any, ListGovernanceDecisionsResponse200]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-since=since,
-until=until,
-topic=topic,
-rule_id=rule_id,
-verdict=verdict,
-agent_id=agent_id,
-cursor=cursor,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
+        since=since,
+        until=until,
+        topic=topic,
+        rule_id=rule_id,
+        verdict=verdict,
+        agent_id=agent_id,
+        cursor=cursor,
+        limit=limit,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
@@ -219,9 +208,8 @@ async def asyncio_detailed(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ListGovernanceDecisionsResponse200]]:
-    """ Query the governance decision log
+    """Query the governance decision log
 
     Args:
         since (Union[Unset, str]):
@@ -240,27 +228,24 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, ListGovernanceDecisionsResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         since=since,
-until=until,
-topic=topic,
-rule_id=rule_id,
-verdict=verdict,
-agent_id=agent_id,
-cursor=cursor,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
+        until=until,
+        topic=topic,
+        rule_id=rule_id,
+        verdict=verdict,
+        agent_id=agent_id,
+        cursor=cursor,
+        limit=limit,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
@@ -274,9 +259,8 @@ async def asyncio(
     cursor: Union[Unset, str] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ListGovernanceDecisionsResponse200]]:
-    """ Query the governance decision log
+    """Query the governance decision log
 
     Args:
         since (Union[Unset, str]):
@@ -295,19 +279,19 @@ async def asyncio(
 
     Returns:
         Union[Any, ListGovernanceDecisionsResponse200]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-since=since,
-until=until,
-topic=topic,
-rule_id=rule_id,
-verdict=verdict,
-agent_id=agent_id,
-cursor=cursor,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            since=since,
+            until=until,
+            topic=topic,
+            rule_id=rule_id,
+            verdict=verdict,
+            agent_id=agent_id,
+            cursor=cursor,
+            limit=limit,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

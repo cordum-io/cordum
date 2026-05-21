@@ -7,16 +7,55 @@ import "strings"
 // core/infra/store.AgentIdentity so callers can copy values directly
 // without taking a heavy import into core/mcp. A nil pointer or a
 // zero-value identity fails closed — no tools are visible.
+//
+// Immutable after publish. Once a producer hands an *AgentIdentity
+// off — typically by stashing it in a request context via
+// ContextWithIdentity — no field MAY be reassigned and the backing
+// arrays of AllowedTools / AllowedServers / AllowedResources /
+// Entitlements / DataClassifications MUST NOT be mutated. The
+// filterCache's keyFor reads these slice fields without any lock,
+// relying on this contract; concurrent mutation would race
+// slice-header reads against writes.
+//
+// Producers MUST construct a fresh struct, copy any caller-owned
+// slice via `append([]string{}, src.Xs...)`, and never offer a write
+// path on a published pointer. The two production producers
+// (gateway.mcpIdentityFromStore in
+// core/controlplane/gateway/mcp_identity.go and the gateway-fetched
+// identity in core/mcp/tools/register.go) satisfy this; an
+// identity-store refresh constructs a NEW *AgentIdentity rather than
+// mutating an existing one. Refreshing an in-flight identity must
+// follow the same copy-on-publish pattern.
 type AgentIdentity struct {
 	// ID is used for audit events when a call is denied. Not load-bearing
 	// for filtering itself.
 	ID string
+
+	// AllowedServers is a list of MCP server-name glob patterns. The
+	// actiongates MCP gate admits an mcp_call action only when its Server
+	// matches at least one pattern. Empty = no servers (fail-closed).
+	// FilterForIdentity does not consult this field; it is enforced at
+	// the action gate layer.
+	AllowedServers []string
 
 	// AllowedTools is a list of tool-name glob patterns. A tool is
 	// admitted only if its Name matches at least one pattern. The empty
 	// slice means "no tools" — operators must opt in to every tool an
 	// identity can use. The pattern "*" admits every tool.
 	AllowedTools []string
+
+	// AllowedResources is a list of cordum:// resource URI glob patterns
+	// the identity may target. Consulted by the actiongates MCP gate when
+	// an action specifies TargetURL. Empty = no resources (fail-closed)
+	// for actions that name one. Actions with no TargetURL skip this
+	// check.
+	AllowedResources []string
+
+	// Entitlements lists license/capability tokens the identity holds
+	// (e.g. "vault.read", "anthropic.claude", "billing.export"). The
+	// actiongates MCP gate denies actions whose RequiredEntitlement is
+	// not present here. Empty = no entitlements granted.
+	Entitlements []string
 
 	// RiskTier is the actor's own risk tier. The filter admits tools
 	// whose required tier is less-than-or-equal to the actor's tier.

@@ -15,10 +15,9 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.list_governance_decisions_response_200_items_item import ListGovernanceDecisionsResponse200ItemsItem
-
-
-
+    from ..models.list_governance_decisions_response_200_items_item import (
+        ListGovernanceDecisionsResponse200ItemsItem,
+    )
 
 
 T = TypeVar("T", bound="ListGovernanceDecisionsResponse200")
@@ -26,19 +25,21 @@ T = TypeVar("T", bound="ListGovernanceDecisionsResponse200")
 
 @_attrs_define
 class ListGovernanceDecisionsResponse200:
-    """ 
-        Attributes:
-            items (Union[Unset, List['ListGovernanceDecisionsResponse200ItemsItem']]):
-            next_cursor (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        items (Union[Unset, List['ListGovernanceDecisionsResponse200ItemsItem']]):
+        next_cursor (Union[Unset, str]):
+    """
 
-    items: Union[Unset, List['ListGovernanceDecisionsResponse200ItemsItem']] = UNSET
+    items: Union[Unset, List["ListGovernanceDecisionsResponse200ItemsItem"]] = UNSET
     next_cursor: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.list_governance_decisions_response_200_items_item import ListGovernanceDecisionsResponse200ItemsItem
+        from ..models.list_governance_decisions_response_200_items_item import (
+            ListGovernanceDecisionsResponse200ItemsItem,
+        )
+
         items: Union[Unset, List[Dict[str, Any]]] = UNSET
         if not isinstance(self.items, Unset):
             items = []
@@ -46,15 +47,11 @@ class ListGovernanceDecisionsResponse200:
                 items_item = items_item_data.to_dict()
                 items.append(items_item)
 
-
-
         next_cursor = self.next_cursor
-
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if items is not UNSET:
             field_dict["items"] = items
         if next_cursor is not UNSET:
@@ -62,21 +59,19 @@ class ListGovernanceDecisionsResponse200:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.list_governance_decisions_response_200_items_item import ListGovernanceDecisionsResponse200ItemsItem
+        from ..models.list_governance_decisions_response_200_items_item import (
+            ListGovernanceDecisionsResponse200ItemsItem,
+        )
+
         d = src_dict.copy()
         items = []
         _items = d.pop("items", UNSET)
-        for items_item_data in (_items or []):
+        for items_item_data in _items or []:
             items_item = ListGovernanceDecisionsResponse200ItemsItem.from_dict(items_item_data)
 
-
-
             items.append(items_item)
-
 
         next_cursor = d.pop("next_cursor", UNSET)
 
@@ -84,7 +79,6 @@ class ListGovernanceDecisionsResponse200:
             items=items,
             next_cursor=next_cursor,
         )
-
 
         list_governance_decisions_response_200.additional_properties = d
         return list_governance_decisions_response_200

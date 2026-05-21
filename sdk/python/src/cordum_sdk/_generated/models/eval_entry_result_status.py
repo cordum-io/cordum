@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class EvalEntryResultStatus(str, Enum):
     ERROR = "error"
     FAIL = "fail"

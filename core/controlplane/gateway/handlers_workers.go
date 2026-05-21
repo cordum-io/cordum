@@ -30,7 +30,7 @@ func (s *server) handleRevokeWorkerSession(w http.ResponseWriter, r *http.Reques
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "worker id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeWorkerSessionInvalid, "worker id required")
 		return
 	}
 	if s.sessionIssuer == nil {
@@ -40,7 +40,7 @@ func (s *server) handleRevokeWorkerSession(w http.ResponseWriter, r *http.Reques
 	}
 	tenant, tenErr := s.resolveTenant(r, "")
 	if tenErr != nil {
-		writeErrorJSON(w, http.StatusBadRequest, "tenant required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeWorkerSessionInvalid, "tenant required")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -139,7 +139,7 @@ func (s *server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
 
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "worker id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeWorkerSessionInvalid, "worker id required")
 		return
 	}
 
@@ -170,7 +170,7 @@ func (s *server) handleGetWorker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeErrorJSON(w, http.StatusNotFound, "worker not found")
+	writeJSONError(w, http.StatusNotFound, errorCodeWorkerNotFound, "worker not found")
 }
 
 // handleGetWorkerJobs returns recent jobs processed by a specific worker.
@@ -183,7 +183,7 @@ func (s *server) handleGetWorkerJobs(w http.ResponseWriter, r *http.Request) {
 
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "worker id required")
+		writeJSONError(w, http.StatusBadRequest, errorCodeWorkerSessionInvalid, "worker id required")
 		return
 	}
 
@@ -216,7 +216,7 @@ func (s *server) handleGetWorkerJobs(w http.ResponseWriter, r *http.Request) {
 	if len(jobs) == 0 {
 		pool := s.resolveWorkerPool(id)
 		if pool == "" {
-			writeErrorJSON(w, http.StatusNotFound, "worker not found")
+			writeJSONError(w, http.StatusNotFound, errorCodeWorkerNotFound, "worker not found")
 			return
 		}
 		jobs = s.recentJobsByPool(r.Context(), pool, limit)
@@ -320,7 +320,7 @@ func (s *server) handleGetPool(w http.ResponseWriter, r *http.Request) {
 
 	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
-		writeErrorJSON(w, http.StatusBadRequest, "pool name required")
+		writeJSONError(w, http.StatusBadRequest, errorCodePoolInvalidConfig, "pool name required")
 		return
 	}
 
@@ -329,13 +329,13 @@ func (s *server) handleGetPool(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("worker snapshot read failed", "error", err)
 	}
 	if snap == nil {
-		writeErrorJSON(w, http.StatusNotFound, "pool not found")
+		writeJSONError(w, http.StatusNotFound, errorCodePoolNotFound, "pool not found")
 		return
 	}
 
 	ps, ok := snap.Pools[name]
 	if !ok {
-		writeErrorJSON(w, http.StatusNotFound, "pool not found")
+		writeJSONError(w, http.StatusNotFound, errorCodePoolNotFound, "pool not found")
 		return
 	}
 

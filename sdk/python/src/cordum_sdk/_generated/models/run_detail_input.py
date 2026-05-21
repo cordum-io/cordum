@@ -9,37 +9,25 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 
-
-
-
-
-
 T = TypeVar("T", bound="RunDetailInput")
 
 
 @_attrs_define
 class RunDetailInput:
-    """ 
-     """
+    """ """
 
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
-        run_detail_input = cls(
-        )
-
+        run_detail_input = cls()
 
         run_detail_input.additional_properties = d
         return run_detail_input

@@ -17,27 +17,22 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="CreateAPIKeyRequest")
 
 
 @_attrs_define
 class CreateAPIKeyRequest:
-    """ 
-        Attributes:
-            name (str):
-            scopes (Union[Unset, List[str]]):
-            expires_at (Union[None, Unset, datetime.datetime]):
-     """
+    """
+    Attributes:
+        name (str):
+        scopes (Union[Unset, List[str]]):
+        expires_at (Union[None, Unset, datetime.datetime]):
+    """
 
     name: str
     scopes: Union[Unset, List[str]] = UNSET
     expires_at: Union[None, Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         name = self.name
@@ -45,8 +40,6 @@ class CreateAPIKeyRequest:
         scopes: Union[Unset, List[str]] = UNSET
         if not isinstance(self.scopes, Unset):
             scopes = self.scopes
-
-
 
         expires_at: Union[None, Unset, str]
         if isinstance(self.expires_at, Unset):
@@ -56,12 +49,13 @@ class CreateAPIKeyRequest:
         else:
             expires_at = self.expires_at
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "name": name,
-        })
+        field_dict.update(
+            {
+                "name": name,
+            }
+        )
         if scopes is not UNSET:
             field_dict["scopes"] = scopes
         if expires_at is not UNSET:
@@ -69,15 +63,12 @@ class CreateAPIKeyRequest:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
         name = d.pop("name")
 
         scopes = cast(List[str], d.pop("scopes", UNSET))
-
 
         def _parse_expires_at(data: object) -> Union[None, Unset, datetime.datetime]:
             if data is None:
@@ -89,22 +80,18 @@ class CreateAPIKeyRequest:
                     raise TypeError()
                 expires_at_type_0 = isoparse(data)
 
-
-
                 return expires_at_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
             return cast(Union[None, Unset, datetime.datetime], data)
 
         expires_at = _parse_expires_at(d.pop("expiresAt", UNSET))
-
 
         create_api_key_request = cls(
             name=name,
             scopes=scopes,
             expires_at=expires_at,
         )
-
 
         create_api_key_request.additional_properties = d
         return create_api_key_request

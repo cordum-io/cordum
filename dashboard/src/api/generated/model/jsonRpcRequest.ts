@@ -5,9 +5,9 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { JsonRpcRequestJsonrpc } from './jsonRpcRequestJsonrpc';
-import type { JsonRpcRequestId } from './jsonRpcRequestId';
-import type { JsonRpcRequestParams } from './jsonRpcRequestParams';
+import type { JsonRpcRequestJsonrpc } from "./jsonRpcRequestJsonrpc";
+import type { JsonRpcRequestId } from "./jsonRpcRequestId";
+import type { JsonRpcRequestParams } from "./jsonRpcRequestParams";
 
 export interface JsonRpcRequest {
   jsonrpc: JsonRpcRequestJsonrpc;

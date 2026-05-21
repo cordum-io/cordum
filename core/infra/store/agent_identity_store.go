@@ -47,7 +47,10 @@ type AgentIdentity struct {
 	RiskTier                 string   `json:"risk_tier"`
 	AllowedTopics            []string `json:"allowed_topics,omitempty"`
 	AllowedPools             []string `json:"allowed_pools,omitempty"`
+	AllowedServers           []string `json:"allowed_servers,omitempty"`
 	AllowedTools             []string `json:"allowed_tools,omitempty"`
+	AllowedResources         []string `json:"allowed_resources,omitempty"`
+	Entitlements             []string `json:"entitlements,omitempty"`
 	PreapprovedMutatingTools []string `json:"preapproved_mutating_tools,omitempty"`
 	DataClassifications      []string `json:"data_classifications,omitempty"`
 	Status                   string   `json:"status"`
@@ -134,8 +137,13 @@ func (s *AgentIdentityStore) Create(ctx context.Context, identity AgentIdentity)
 	return &identity, nil
 }
 
-// Get returns the agent identity by ID, or nil if not found.
-func (s *AgentIdentityStore) Get(ctx context.Context, id string) (*AgentIdentity, error) {
+// Get returns the agent identity by ID scoped to tenantID, or nil if not
+// found OR if the stored TenantID does not match. An empty tenantID bypasses
+// the tenant check and is reserved for internal/system lookups (audit
+// enrichment, worker handshake) where the caller is not a tenant principal.
+// Returning nil (not a forbidden error) on mismatch prevents an existence
+// oracle for cross-tenant ID guesses.
+func (s *AgentIdentityStore) Get(ctx context.Context, tenantID, id string) (*AgentIdentity, error) {
 	if s == nil || s.client == nil {
 		return nil, fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
@@ -156,13 +164,23 @@ func (s *AgentIdentityStore) Get(ctx context.Context, id string) (*AgentIdentity
 	if err := json.Unmarshal(data, &identity); err != nil {
 		return nil, fmt.Errorf("unmarshal agent identity %s: %w", id, err)
 	}
+	identity = normalizeAgentIdentity(identity)
+	if tenantID = strings.TrimSpace(tenantID); tenantID != "" {
+		if strings.TrimSpace(identity.TenantID) != tenantID {
+			return nil, nil
+		}
+	}
 	return &identity, nil
 }
 
-// List returns agent identities with cursor-based pagination and optional filtering.
-func (s *AgentIdentityStore) List(ctx context.Context, cursor string, limit int, filter AgentIdentityFilter) ([]*AgentIdentity, string, error) {
+// List returns tenant-scoped agent identities with cursor-based pagination and optional filtering.
+func (s *AgentIdentityStore) List(ctx context.Context, tenantID, cursor string, limit int, filter AgentIdentityFilter) ([]*AgentIdentity, string, error) {
 	if s == nil || s.client == nil {
 		return nil, "", fmt.Errorf("agent_identity_store: redis client not initialized")
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return nil, "", fmt.Errorf("agent identity tenant id required")
 	}
 	if limit <= 0 {
 		limit = defaultAgentListLimit
@@ -210,6 +228,7 @@ func (s *AgentIdentityStore) List(ctx context.Context, cursor string, limit int,
 	var results []*AgentIdentity
 	var lastScore float64
 	var itemsAtLastScore int64
+	processedAny := false
 	scanOffset := resumeOffset
 	scanMin := minScore
 
@@ -227,14 +246,13 @@ func (s *AgentIdentityStore) List(ctx context.Context, cursor string, limit int,
 			break // exhausted the sorted set
 		}
 
+		processedInBatch := 0
 		for _, z := range members {
 			if len(results) >= limit {
 				break
 			}
-			id, ok := z.Member.(string)
-			if !ok {
-				continue
-			}
+			processedInBatch++
+			processedAny = true
 			// Track items consumed per score bucket. Reset when crossing into
 			// a new score so the next-page offset is scoped to that bucket.
 			if z.Score != lastScore {
@@ -243,7 +261,11 @@ func (s *AgentIdentityStore) List(ctx context.Context, cursor string, limit int,
 			}
 			itemsAtLastScore++
 
-			identity, err := s.Get(ctx, id)
+			id, ok := z.Member.(string)
+			if !ok {
+				continue
+			}
+			identity, err := s.Get(ctx, tenantID, id)
 			if err != nil {
 				slog.Warn("list agent identities: skip unreadable entry", "id", id, "error", err)
 				continue
@@ -257,26 +279,14 @@ func (s *AgentIdentityStore) List(ctx context.Context, cursor string, limit int,
 			results = append(results, identity)
 		}
 
-		// Advance scan position for the next batch. Use the last member's
-		// score as the new min to avoid re-scanning lower scores.
-		lastMember := members[len(members)-1]
-		if lastMember.Score == lastScore {
-			// Still in the same score bucket — advance offset within it.
-			scanOffset += int64(len(members))
-		} else {
-			// Crossed into a new score — advance min and count items at the new score.
-			scanMin = strconv.FormatFloat(lastMember.Score, 'f', -1, 64)
-			// Re-count items at the new score from this batch.
-			var countAtNew int64
-			for i := len(members) - 1; i >= 0; i-- {
-				if members[i].Score == lastMember.Score {
-					countAtNew++
-				} else {
-					break
-				}
-			}
-			scanOffset = countAtNew
+		if processedInBatch == 0 {
+			break
 		}
+		// Advance internal scanning by only the members this call actually
+		// processed. A fetched Redis batch may contain entries beyond the
+		// requested page limit; using len(members) here would skip those
+		// unprocessed records on the next page.
+		scanOffset += int64(processedInBatch)
 	}
 
 	// Build the next-page cursor.
@@ -288,7 +298,7 @@ func (s *AgentIdentityStore) List(ctx context.Context, cursor string, limit int,
 	//     bucket, so offset is just items consumed at lastScore on this page.
 	//     The new min=lastScore already skips everything below.
 	nextCursorStr := ""
-	if len(results) >= limit && lastScore > 0 {
+	if len(results) >= limit && processedAny {
 		var nextOffset int64
 		if hasCursorScore && lastScore == cursorScoreF {
 			nextOffset = resumeOffset + itemsAtLastScore
@@ -301,8 +311,12 @@ func (s *AgentIdentityStore) List(ctx context.Context, cursor string, limit int,
 	return results, nextCursorStr, nil
 }
 
-// Update applies partial updates to an existing agent identity.
-func (s *AgentIdentityStore) Update(ctx context.Context, id string, updates AgentIdentity) (*AgentIdentity, error) {
+// Update applies partial updates to an existing agent identity scoped to
+// tenantID. An empty tenantID bypasses the tenant check. When tenantID is
+// set and the stored identity's TenantID differs, Update returns a "not
+// found" error — the same error class as a missing record — to avoid an
+// existence oracle for cross-tenant probes.
+func (s *AgentIdentityStore) Update(ctx context.Context, tenantID, id string, updates AgentIdentity) (*AgentIdentity, error) {
 	if s == nil || s.client == nil {
 		return nil, fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
@@ -311,7 +325,7 @@ func (s *AgentIdentityStore) Update(ctx context.Context, id string, updates Agen
 		return nil, fmt.Errorf("agent identity id required")
 	}
 
-	existing, err := s.Get(ctx, id)
+	existing, err := s.Get(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -343,8 +357,17 @@ func (s *AgentIdentityStore) Update(ctx context.Context, id string, updates Agen
 	if updates.AllowedPools != nil {
 		existing.AllowedPools = updates.AllowedPools
 	}
+	if updates.AllowedServers != nil {
+		existing.AllowedServers = updates.AllowedServers
+	}
 	if updates.AllowedTools != nil {
 		existing.AllowedTools = updates.AllowedTools
+	}
+	if updates.AllowedResources != nil {
+		existing.AllowedResources = updates.AllowedResources
+	}
+	if updates.Entitlements != nil {
+		existing.Entitlements = updates.Entitlements
 	}
 	if updates.PreapprovedMutatingTools != nil {
 		existing.PreapprovedMutatingTools = updates.PreapprovedMutatingTools
@@ -370,8 +393,12 @@ func (s *AgentIdentityStore) Update(ctx context.Context, id string, updates Agen
 	return existing, nil
 }
 
-// Delete soft-deletes an agent identity by setting status to "revoked".
-func (s *AgentIdentityStore) Delete(ctx context.Context, id string) error {
+// Delete soft-deletes an agent identity by setting status to "revoked",
+// scoped to tenantID. An empty tenantID bypasses the tenant check. When
+// tenantID is set and the stored identity's TenantID differs, Delete
+// returns a "not found" error — the same error class as a missing record
+// — to avoid an existence oracle for cross-tenant probes.
+func (s *AgentIdentityStore) Delete(ctx context.Context, tenantID, id string) error {
 	if s == nil || s.client == nil {
 		return fmt.Errorf("agent_identity_store: redis client not initialized")
 	}
@@ -380,7 +407,7 @@ func (s *AgentIdentityStore) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("agent identity id required")
 	}
 
-	existing, err := s.Get(ctx, id)
+	existing, err := s.Get(ctx, tenantID, id)
 	if err != nil {
 		return err
 	}
@@ -418,7 +445,7 @@ func (s *AgentIdentityStore) GetByWorkerID(ctx context.Context, workerID string)
 		}
 		return nil, fmt.Errorf("get agent by worker %s: %w", workerID, err)
 	}
-	return s.Get(ctx, agentID)
+	return s.Get(ctx, "", agentID)
 }
 
 // LinkWorker creates a reverse-lookup mapping from worker ID to agent identity ID.
@@ -493,7 +520,10 @@ func normalizeAgentIdentity(a AgentIdentity) AgentIdentity {
 	a.Status = strings.ToLower(strings.TrimSpace(a.Status))
 	a.AllowedTopics = normalizeStringSlice(a.AllowedTopics)
 	a.AllowedPools = normalizeStringSlice(a.AllowedPools)
+	a.AllowedServers = normalizeStringSlice(a.AllowedServers)
 	a.AllowedTools = normalizeStringSlice(a.AllowedTools)
+	a.AllowedResources = normalizeStringSlice(a.AllowedResources)
+	a.Entitlements = normalizeStringSlice(a.Entitlements)
 	a.PreapprovedMutatingTools = normalizeStringSlice(a.PreapprovedMutatingTools)
 	a.DataClassifications = normalizeStringSlice(a.DataClassifications)
 	return a

@@ -1781,10 +1781,7 @@ func TestCloseChannelNonBlocking(t *testing.T) {
 
 func TestSlowClientEviction(t *testing.T) {
 	s := &server{
-		clients:       make(map[*websocket.Conn]*wsClient),
-		eventsCh:      make(chan wsEvent, 10),
-		wsClientBufSz: 1, // tiny buffer to force eviction
-		shutdownCh:    make(chan struct{}),
+		clients: make(map[*websocket.Conn]*wsClient),
 	}
 
 	// Simulate a "slow" client with buffer 1.
@@ -1853,8 +1850,6 @@ func TestSlowClientEviction(t *testing.T) {
 func TestWSClientBufferSizeUsedInHandlers(t *testing.T) {
 	bufSize := 512
 	s := &server{
-		clients:       make(map[*websocket.Conn]*wsClient),
-		eventsCh:      make(chan wsEvent, 1),
 		wsClientBufSz: bufSize,
 	}
 

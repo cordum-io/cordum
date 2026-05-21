@@ -86,7 +86,7 @@ func TestSessionTokenIssue_RequiresAllFields(t *testing.T) {
 	defer cleanup()
 
 	cases := []struct {
-		name                     string
+		name                      string
 		agent, tenant, sdkVersion string
 	}{
 		{"empty agent", "", "tenant", "v1"},
@@ -504,5 +504,5 @@ type fakeClock struct {
 	now time.Time
 }
 
-func (f *fakeClock) Now() time.Time      { return f.now }
+func (f *fakeClock) Now() time.Time          { return f.now }
 func (f *fakeClock) Advance(d time.Duration) { f.now = f.now.Add(d) }

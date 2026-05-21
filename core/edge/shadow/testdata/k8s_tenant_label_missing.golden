@@ -1,0 +1,42 @@
+{
+  "finding_id": "edge_shadow_k8s-tenant-1",
+  "tenant_id": "tenant-k8s",
+  "audience": "enterprise",
+  "severity": "low",
+  "action_kind": "apply_tenant_label",
+  "summary": "Label the Kubernetes namespace with the Cordum tenant id so the detector can resolve a tenant.",
+  "risk_explanation": "A Kubernetes namespace that contains agent-image pods is missing the Cordum tenant label. Without the label, findings from this namespace cannot be tenant-scoped and default to quarantine. Signals: namespace_untenanted.",
+  "recommended_action": "Run `kubectl label namespace \u003cns\u003e cordum.io/tenant-id=\u003cid\u003e` under operator credentials; verify by re-running the detector.",
+  "safety_notes": [
+    "All steps are advisory — Cordum Edge does not auto-execute remediation.",
+    "Never substitute live secrets into the placeholders shown below; use your secret-manager / api-key-helper.",
+    "Cordum NEVER mutates Kubernetes cluster state; every kubectl command must be applied by the operator.",
+    "Only target namespaces you own; cross-tenant patches are explicitly out of scope (Q5 enforce-scope-out)."
+  ],
+  "steps": [
+    {
+      "id": "apply_tenant_label.namespace_patch",
+      "title": "Label the namespace with the Cordum tenant id",
+      "kind": "apply_tenant_label",
+      "command": "kubectl --context prod-east-1 label namespace team-research cordum.io/tenant-id=\u003ctenant-id\u003e --overwrite",
+      "docs_url": "docs/edge/shadow-remediation.md",
+      "conditions": [
+        "requires kubectl access scoped to the namespace",
+        "verify the tenant id is the value Cordum expects for this cluster"
+      ]
+    },
+    {
+      "id": "apply_tenant_label.verify_indicator_pods",
+      "title": "Re-label or recreate indicator pods so the K8s detector observes the tenant binding",
+      "kind": "apply_tenant_label",
+      "command": "kubectl --context prod-east-1 -n team-research annotate pods --all cordum.io/tenant-source=namespace --overwrite",
+      "docs_url": "docs/edge/shadow-remediation.md",
+      "conditions": [
+        "only annotate pods you own; cross-tenant pods MUST be left untouched"
+      ]
+    }
+  ],
+  "generator_version": "1.0.0",
+  "generated_at": "2026-05-17T16:00:00Z",
+  "advisory_only": true
+}

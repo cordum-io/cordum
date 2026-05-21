@@ -58,7 +58,7 @@ func preToolUseOutput(d AgentdDecision) ClaudeHookOutput {
 		HookEventName:            "PreToolUse",
 		PermissionDecision:       permission,
 		PermissionDecisionReason: reason,
-		UpdatedInput:             d.UpdatedInput,
+		UpdatedInput:             redactHookBoundaryMap(d.UpdatedInput),
 		AdditionalContext:        d.AdditionalContext,
 	}}
 }

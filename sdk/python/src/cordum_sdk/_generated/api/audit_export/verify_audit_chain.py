@@ -1,5 +1,5 @@
 from http import HTTPStatus
-from typing import Any, Dict, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Union, cast
 
 import httpx
 
@@ -7,13 +7,11 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
-from ...models.error import Error
-from ...models.generic_object import GenericObject
+from ...models.audit_verify_result import AuditVerifyResult
 from ...types import UNSET, Unset
 from typing import cast
 from typing import Dict
 from typing import Union
-
 
 
 def _get_kwargs(
@@ -23,14 +21,9 @@ def _get_kwargs(
     until: Union[Unset, int] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-
 
     params: Dict[str, Any] = {}
 
@@ -42,9 +35,7 @@ def _get_kwargs(
 
     params["limit"] = limit
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -52,16 +43,15 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, Error, GenericObject]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, AuditVerifyResult]]:
     if response.status_code == 200:
-        response_200 = GenericObject.from_dict(response.json())
-
-
+        response_200 = AuditVerifyResult.from_dict(response.json())
 
         return response_200
     if response.status_code == 400:
@@ -77,10 +67,7 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         response_500 = cast(Any, None)
         return response_500
     if response.status_code == 503:
-        response_503 = Error.from_dict(response.json())
-
-
-
+        response_503 = cast(Any, None)
         return response_503
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -88,7 +75,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, Error, GenericObject]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, AuditVerifyResult]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -105,14 +94,13 @@ def sync_detailed(
     until: Union[Unset, int] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
-) -> Response[Union[Any, Error, GenericObject]]:
-    """ Verify audit chain integrity
+) -> Response[Union[Any, AuditVerifyResult]]:
+    """Verify audit chain integrity
 
      Walks the tenant's audit stream and attests integrity of the hash chain. Reports
-    `status=ok` on a contiguous chain, `status=gap` with classification when seq numbers are
-    missing (retention-trimmed vs suspected tampering), and `status=tamper` on a broken hash
-    link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
+    `status=ok` on a contiguous chain, `status=partial` when gaps are below the
+    retention boundary, and `status=compromised` for missing sequence numbers or a
+    broken hash link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
     integrity report surface, not event retrieval.
 
     Args:
@@ -127,17 +115,15 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, Error, GenericObject]]
-     """
-
+        Response[Union[Any, AuditVerifyResult]]
+    """
 
     kwargs = _get_kwargs(
         tenant=tenant,
-since=since,
-until=until,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
+        since=since,
+        until=until,
+        limit=limit,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -145,6 +131,7 @@ x_tenant_id=x_tenant_id,
     )
 
     return _build_response(client=client, response=response)
+
 
 def sync(
     *,
@@ -154,14 +141,13 @@ def sync(
     until: Union[Unset, int] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
-) -> Optional[Union[Any, Error, GenericObject]]:
-    """ Verify audit chain integrity
+) -> Optional[Union[Any, AuditVerifyResult]]:
+    """Verify audit chain integrity
 
      Walks the tenant's audit stream and attests integrity of the hash chain. Reports
-    `status=ok` on a contiguous chain, `status=gap` with classification when seq numbers are
-    missing (retention-trimmed vs suspected tampering), and `status=tamper` on a broken hash
-    link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
+    `status=ok` on a contiguous chain, `status=partial` when gaps are below the
+    retention boundary, and `status=compromised` for missing sequence numbers or a
+    broken hash link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
     integrity report surface, not event retrieval.
 
     Args:
@@ -176,19 +162,18 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, Error, GenericObject]
-     """
-
+        Union[Any, AuditVerifyResult]
+    """
 
     return sync_detailed(
         client=client,
-tenant=tenant,
-since=since,
-until=until,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
+        tenant=tenant,
+        since=since,
+        until=until,
+        limit=limit,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
@@ -198,14 +183,13 @@ async def asyncio_detailed(
     until: Union[Unset, int] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
-) -> Response[Union[Any, Error, GenericObject]]:
-    """ Verify audit chain integrity
+) -> Response[Union[Any, AuditVerifyResult]]:
+    """Verify audit chain integrity
 
      Walks the tenant's audit stream and attests integrity of the hash chain. Reports
-    `status=ok` on a contiguous chain, `status=gap` with classification when seq numbers are
-    missing (retention-trimmed vs suspected tampering), and `status=tamper` on a broken hash
-    link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
+    `status=ok` on a contiguous chain, `status=partial` when gaps are below the
+    retention boundary, and `status=compromised` for missing sequence numbers or a
+    broken hash link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
     integrity report surface, not event retrieval.
 
     Args:
@@ -220,24 +204,21 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Union[Any, Error, GenericObject]]
-     """
-
+        Response[Union[Any, AuditVerifyResult]]
+    """
 
     kwargs = _get_kwargs(
         tenant=tenant,
-since=since,
-until=until,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
+        since=since,
+        until=until,
+        limit=limit,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
@@ -247,14 +228,13 @@ async def asyncio(
     until: Union[Unset, int] = UNSET,
     limit: Union[Unset, int] = UNSET,
     x_tenant_id: str,
-
-) -> Optional[Union[Any, Error, GenericObject]]:
-    """ Verify audit chain integrity
+) -> Optional[Union[Any, AuditVerifyResult]]:
+    """Verify audit chain integrity
 
      Walks the tenant's audit stream and attests integrity of the hash chain. Reports
-    `status=ok` on a contiguous chain, `status=gap` with classification when seq numbers are
-    missing (retention-trimmed vs suspected tampering), and `status=tamper` on a broken hash
-    link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
+    `status=ok` on a contiguous chain, `status=partial` when gaps are below the
+    retention boundary, and `status=compromised` for missing sequence numbers or a
+    broken hash link. Admin-only and entitlement-gated; NEVER returns raw event bodies — this is an
     integrity report surface, not event retrieval.
 
     Args:
@@ -269,16 +249,16 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Union[Any, Error, GenericObject]
-     """
+        Union[Any, AuditVerifyResult]
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-tenant=tenant,
-since=since,
-until=until,
-limit=limit,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            tenant=tenant,
+            since=since,
+            until=until,
+            limit=limit,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

@@ -5,14 +5,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
 	edgecore "github.com/cordum/cordum/core/edge"
 	agentdcore "github.com/cordum/cordum/core/edge/agentd"
 	"github.com/cordum/cordum/core/edge/claude"
+	"github.com/cordum/cordum/core/edge/keychain"
+	"github.com/cordum/cordum/core/edge/listenerhandoff"
 	"github.com/cordum/cordum/core/infra/logging"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -22,6 +26,10 @@ type cliOptions struct {
 	Env    map[string]string
 	Stderr io.Writer
 	Run    func(context.Context, runConfig) error
+	// Keyring overrides the default OS-native keychain provider for the
+	// bootstrap secret load. Tests inject a mock; production leaves this
+	// nil so cordum-agentd uses keychain.NewOSKeyring().
+	Keyring keychain.Keyring
 }
 
 type runConfig struct {
@@ -30,6 +38,12 @@ type runConfig struct {
 	SocketPath string
 	FailClosed bool
 	Env        map[string]string
+	// Keyring sources boot-time secrets (CORDUM_AGENTD_NONCE,
+	// CORDUM_API_KEY) from the OS-native credential store before
+	// LoadConfig consumes the env map. Nil falls back to a process-wide
+	// OS keyring; tests inject a mock to exercise strict-mode failure
+	// paths without touching the host keychain.
+	Keyring keychain.Keyring
 }
 
 func main() {
@@ -60,6 +74,7 @@ func runCLI(ctx context.Context, opts cliOptions) int {
 		SocketPath: envValue(env, "CORDUM_AGENTD_SOCKET"),
 		FailClosed: parseBoolEnv(envValue(env, "CORDUM_AGENTD_FAIL_CLOSED")),
 		Env:        env,
+		Keyring:    opts.Keyring,
 	}
 
 	fs := flag.NewFlagSet("cordum-agentd", flag.ContinueOnError)
@@ -90,18 +105,18 @@ func runCLI(ctx context.Context, opts cliOptions) int {
 }
 
 func defaultRun(ctx context.Context, cfg runConfig) error {
-	opts, err := defaultRunOptions(cfg)
+	opts, err := defaultRunOptions(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	return agentdcore.Run(ctx, opts)
 }
 
-func defaultRunOptions(cfg runConfig) (agentdcore.RunOptions, error) {
-	return defaultRunOptionsWithRecorder(cfg, nil)
+func defaultRunOptions(ctx context.Context, cfg runConfig) (agentdcore.RunOptions, error) {
+	return defaultRunOptionsWithRecorder(ctx, cfg, nil)
 }
 
-func defaultRunOptionsWithRecorder(cfg runConfig, recorder edgecore.Recorder) (agentdcore.RunOptions, error) {
+func defaultRunOptionsWithRecorder(ctx context.Context, cfg runConfig, recorder edgecore.Recorder) (agentdcore.RunOptions, error) {
 	env := cloneEnv(cfg.Env)
 	if env == nil {
 		env = environMap(os.Environ())
@@ -118,7 +133,20 @@ func defaultRunOptionsWithRecorder(cfg runConfig, recorder edgecore.Recorder) (a
 	if cfg.FailClosed {
 		env["CORDUM_AGENTD_FAIL_CLOSED"] = "true"
 	}
+	kr := cfg.Keyring
+	if kr == nil {
+		kr = keychain.NewOSKeyring()
+	}
+	mode := resolveBootstrapMode(env)
+	env, err := loadBootstrapSecrets(ctx, kr, mode, env, os.Stderr)
+	if err != nil {
+		return agentdcore.RunOptions{}, err
+	}
 	loaded, err := agentdcore.LoadConfig(env)
+	if err != nil {
+		return agentdcore.RunOptions{}, err
+	}
+	inheritedListener, err := inheritedListenerFromEnv(env)
 	if err != nil {
 		return agentdcore.RunOptions{}, err
 	}
@@ -135,11 +163,33 @@ func defaultRunOptionsWithRecorder(cfg runConfig, recorder edgecore.Recorder) (a
 	// Prometheus registry as the rest of agentd's edge metrics.
 	claude.SetRedactionRecorder(recorder)
 	return agentdcore.RunOptions{
-		Config:   loaded,
-		Metadata: meta,
-		Nonce:    nonce,
-		Recorder: recorder,
+		Config:            loaded,
+		Metadata:          meta,
+		Nonce:             nonce,
+		Recorder:          recorder,
+		InheritedListener: inheritedListener,
 	}, nil
+}
+
+func inheritedListenerFromEnv(env map[string]string) (net.Listener, error) {
+	key, raw := listenerhandoff.ValueForCurrentPlatform(env)
+	if raw == "" {
+		return nil, nil
+	}
+	fd, err := strconv.ParseUint(raw, 10, 0)
+	if err != nil {
+		return nil, fmt.Errorf("%s invalid", key)
+	}
+	file := os.NewFile(uintptr(fd), "cordum-agentd-listener")
+	if file == nil {
+		return nil, fmt.Errorf("%s invalid", key)
+	}
+	defer func() { _ = file.Close() }()
+	ln, err := net.FileListener(file)
+	if err != nil {
+		return nil, fmt.Errorf("open inherited agentd listener: %w", err)
+	}
+	return ln, nil
 }
 
 func writeUsage(w io.Writer) {

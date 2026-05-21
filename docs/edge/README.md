@@ -56,7 +56,7 @@ redacted summaries, hashes, and artifact pointers.
 | Sessions and executions | Register, heartbeat, end, and inspect governed agent runs. | [API](api.md) |
 | Events and streams | Append idempotent action events, batch evidence, and stream `edge.event`. | [API](api.md), [observability](observability.md) |
 | Policy/evaluate | Classify actions, call Safety Kernel policy, and return allow/deny/approval/constrain decisions. | [policy](../edge-policy.md), [mapper](claude-hook-mapper.md) |
-| Approvals | Create, list, approve/reject, and optionally wait on approvals with replay-safe hashes. | [API](api.md) |
+| Approvals | Create, list, approve/reject, and optionally wait on approvals with replay-safe hashes and resolved audit provenance. | [API](api.md), [observability](observability.md) |
 | Artifacts and export | Attach artifact pointer metadata and export an audit-ready session evidence bundle. | [evidence export](../edge-export.md) |
 
 ## Enforcement layers
@@ -115,6 +115,9 @@ or provider secrets into Edge events, settings files, issue comments, or docs.
 
 Use [managed settings templates](managed-settings-template.md) to understand the
 enterprise shape, but do not treat the developer wrapper as fleet enforcement.
+For the end-to-end fleet rollout playbook (Jamf, Intune, Linux/WSL),
+drift-detection check, and synthetic-rollback test surface, see
+[managed-settings-deploy.md](managed-settings-deploy.md).
 
 ## Demo and operating paths
 
@@ -123,7 +126,10 @@ enterprise shape, but do not treat the developer wrapper as fleet enforcement.
 - **CLI reference:** [cli.md](cli.md) and the existing
   [cordumctl edge claude contract](cordumctl-edge-claude.md). Use
   [cordumctl edge doctor](cordumctl-edge-doctor.md) for local diagnostics.
-- **Configuration:** [configuration.md](configuration.md).
+- **Configuration:** [configuration.md](configuration.md). Operator-facing
+  env-var reference for shadow detection, retention, runtime ingest, and
+  managed-policy mode lives in
+  [environment-variables.md](environment-variables.md).
 - **Retention:** [retention.md](retention.md).
 - **API reference:** [api.md](api.md) plus the canonical
   [OpenAPI spec](../api/openapi/cordum-api.yaml).

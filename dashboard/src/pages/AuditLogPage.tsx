@@ -3,19 +3,21 @@
  *
  * v2.5 hero rewrite (task-55f813b3):
  *  - Filters serialised to URL via nuqs (URL roundtrip restores state).
- *  - Hand-rolled <table> swapped for primitives/DataTable (auto-virtualizes
- *    when row count > 100; decision-identity 3px left edge).
+ *  - Hand-rolled <table> swapped for primitives/DataTable; Audit Log opts
+ *    into page scrolling so the trail is not trapped in a fixed table box.
  *  - Row-click opens a Drawer with event detail + chain-signature drilldown
  *    (DoD #4 amended via comment-832277b0 — drilldown derives per-event
  *    chain status from the cached /audit/verify result, no N+1).
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryState, parseAsString } from "nuqs";
 import { parseAsSearchTerm } from "@/lib/url-state";
 import type { ColumnDef } from "@tanstack/react-table";
 import { get } from "@/api/client";
-import { useGetPolicyAudit } from "@/api/generated/policy/policy";
-import type { GetPolicyAuditParams } from "@/api/generated/model/getPolicyAuditParams";
+import {
+  useInfiniteAuditEvents,
+  type AuditEventsFilters,
+} from "@/hooks/useAuditEvents";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -50,12 +52,17 @@ import {
   type AuditVerifyResult,
 } from "@/hooks/useAuditVerify";
 import { useIsAdmin } from "@/hooks/usePermission";
-import type { PolicyAuditEntry } from "@/api/generated/model/policyAuditEntry";
 
-// `PolicyAuditEntry` is the openapi-declared shape; spec enrichment in
-// task-7efe8c34 brought it into parity with the backend struct so the
-// generated `useGetPolicyAudit` hook is now usable directly. The previous
-// `& Record<string, unknown>` intersection is no longer needed.
+// The page now sources rows from the SIEM-feed `GET /api/v1/audit/events`
+// (full chained feed: MCP, edge, worker, output policy, delegation, ...)
+// via `useInfiniteAuditEvents`. The previous path called
+// `useGetPolicyAudit` which only exposed the policy-bundle audit subset
+// — Yaron's bug report ("I DONT SEE ALL LOGS RECORD IN AUDIT LOG PAGE")
+// pinned that gap. Cursor pagination via the server's `next_cursor` is
+// the next-page mechanism (server caps a single page at 200); an
+// IntersectionObserver sentinel near the end of the trail fetches the next
+// page automatically, with a button retained as an accessible fallback. See
+// docs/audit/list-api.md for the contract.
 
 interface AuditEvent {
   id: string;
@@ -113,25 +120,68 @@ export function shouldFetchNextAuditPage(
   return !!entries[0]?.isIntersecting && hasNextPage && !isFetchingNextPage;
 }
 
-function mapEvent(e: PolicyAuditEntry): AuditEvent {
-  // `seq` is not part of the openapi-declared PolicyAuditEntry shape —
-  // the gateway's /policy/audit handler does not emit it. Tests stub it
-  // via MSW for the chain-integrity drilldown path (AuditLogPage.render
-  // verifies "Verified"/"Unverified"/"Pending" based on event.seq vs
-  // chain.first_seq/last_seq). Capture it via narrow extension cast so
-  // the test contract stays intact; in production the field is absent
-  // and AuditEvent.seq is undefined as before.
-  const seqRaw = (e as PolicyAuditEntry & { seq?: unknown }).seq;
+// siemResourceTypeFromEventType extracts the resource family prefix from
+// an event_type like `mcp.tool_invocation`, `edge.action_attempted`, or
+// `worker_trust_change`. Mirrors the same split logic used by
+// `mapAuditEvent` in api/transform.ts; duplicated here as a small helper
+// so the page doesn't pull the entire transform module just for this.
+function siemResourceTypeFromEventType(eventType: string): string {
+  const trimmed = eventType.trim();
+  if (!trimmed) return "";
+  const dotIdx = trimmed.indexOf(".");
+  const usIdx = trimmed.indexOf("_");
+  const candidates = [dotIdx, usIdx].filter((i) => i > 0);
+  if (candidates.length === 0) return trimmed.toLowerCase();
+  return trimmed.slice(0, Math.min(...candidates)).toLowerCase();
+}
+
+// SiemAuditEventInput from the /audit/events response. Keeping this local
+// to the page so the renderer doesn't pull the orval-generated wire type
+// just to translate a few fields into the on-screen shape.
+interface SiemAuditEvent {
+  id: string;
+  seq?: number;
+  timestamp: string;
+  event_type: string;
+  severity?: string;
+  tenant_id?: string;
+  agent_id?: string;
+  job_id?: string;
+  action: string;
+  decision?: string;
+  reason?: string;
+  identity?: string;
+  extra?: Record<string, string>;
+}
+
+function mapEvent(e: SiemAuditEvent): AuditEvent {
+  const extra = e.extra ?? {};
+  const actor =
+    (e.identity && String(e.identity).trim()) ||
+    (e.agent_id && String(e.agent_id).trim()) ||
+    "unknown";
+  const resourceType = siemResourceTypeFromEventType(e.event_type);
+  const resourceId =
+    (extra["resource_id"] as string | undefined) ||
+    (extra["session_id"] as string | undefined) ||
+    (extra["execution_id"] as string | undefined) ||
+    (extra["job_id"] as string | undefined) ||
+    e.job_id ||
+    undefined;
+  // SIEM feed carries the chain seq directly — the previous policy-feed
+  // path had to extension-cast for it. ChainIntegrityWidget consumes this
+  // verbatim for verified/unverified/pending classification.
+  const seq = typeof e.seq === "number" ? e.seq : undefined;
   return {
     id: e.id,
-    action: e.action,
-    actor: e.actor_id || e.role || "unknown",
-    resource: e.resource_type || "",
-    resourceId: e.resource_id ?? undefined,
-    detail: e.message ?? undefined,
-    timestamp: e.created_at || e.timestamp || "",
+    action: e.action || e.event_type,
+    actor,
+    resource: resourceType,
+    resourceId,
+    detail: e.reason ?? undefined,
+    timestamp: e.timestamp || "",
     decision: e.decision ?? undefined,
-    seq: typeof seqRaw === "number" ? seqRaw : undefined,
+    seq,
   };
 }
 
@@ -160,6 +210,8 @@ interface AgentOption {
 }
 
 export default function AuditLogPage() {
+  const nextPageSentinelRef = useRef<HTMLDivElement | null>(null);
+  const nextPageFetchPendingRef = useRef(false);
   const tenantId = useConfigStore((s) => s.tenantId);
   const isAdmin = useIsAdmin();
 
@@ -183,6 +235,18 @@ export default function AuditLogPage() {
     "to",
     parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
   );
+  // task-266f21ad: `?event_type_prefix=edge` is the URL contract the new
+  // Edge sidebar item lands on (via /edge/audit →
+  // /audit?event_type_prefix=edge redirect). Filters events client-side
+  // by matching `event.action.startsWith(prefix)`. Today's
+  // /audit/events feed primarily carries policy/auth events; edge.*
+  // event types will populate the filtered view once task-00b82b90's
+  // SIEM-feed wiring lands. Read-only here (no setter) — the redirect
+  // sets the param.
+  const [eventTypePrefix] = useQueryState(
+    "event_type_prefix",
+    parseAsString.withDefault("").withOptions({ clearOnDefault: true }),
+  );
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [expandedEventId, setExpandedEventId] = useState<string | null>(null);
 
@@ -198,41 +262,90 @@ export default function AuditLogPage() {
       });
   }, []);
 
-  // Build typed query params for the generated hook. Unset filters drop
-  // out (orval omits undefined values from the query string), so the
-  // produced URL matches the previous manual construction.
-  const auditParams = useMemo<GetPolicyAuditParams>(() => {
-    const p: GetPolicyAuditParams = {
-      limit: PAGE_LIMIT,
-      offset: 0,
+  // Build typed filters for useInfiniteAuditEvents. Unset filters drop
+  // out (undefined values are omitted from the query string by the
+  // hook). The SIEM-feed endpoint takes event_type rather than the
+  // legacy `action` filter; we forward actionFilter as event_type so
+  // existing URL state (?action=...) continues to narrow the page
+  // additively. agent_id is not yet a server-side filter on
+  // /audit/events — applied client-side below.
+  const auditFilters = useMemo<AuditEventsFilters>(() => {
+    const p: AuditEventsFilters = {
+      // Server caps limit at MaxAuditEventsLimit=200. Per-page render
+      // budget is the same; older records are reached via
+      // fetchNextPage (cursor-based pagination through the server's
+      // next_cursor).
+      limit: Math.min(PAGE_LIMIT, 200),
     };
-    if (actionFilter) p.action = actionFilter;
-    if (agentFilter) p.agent_id = agentFilter;
-    // Defensive ISO conversion: malformed `?from=banana` URL values
-    // would throw at toISOString() and break the whole query. Validate
-    // the parsed Date before forwarding; silently drop unparseable
-    // input so the rest of the filter set still applies.
+    if (actionFilter) p.eventType = [actionFilter];
     if (dateFrom) {
       const d = new Date(dateFrom);
-      if (!Number.isNaN(d.getTime())) p.after = d.toISOString();
+      if (!Number.isNaN(d.getTime())) p.from = d.toISOString();
     }
     if (dateTo) {
       const d = new Date(dateTo + "T23:59:59");
-      if (!Number.isNaN(d.getTime())) p.before = d.toISOString();
+      if (!Number.isNaN(d.getTime())) p.to = d.toISOString();
     }
     if (search) p.search = search;
     return p;
-  }, [actionFilter, agentFilter, dateFrom, dateTo, search]);
+  }, [actionFilter, dateFrom, dateTo, search]);
 
-  const { data, isLoading, isError, error, refetch } = useGetPolicyAudit(
-    auditParams,
-  );
+  const {
+    pages,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteAuditEvents(auditFilters);
 
-  const events: AuditEvent[] = useMemo(
-    () => (data?.items ?? []).map(mapEvent),
-    [data],
-  );
-  const total = data?.total;
+  useEffect(() => {
+    if (!isFetchingNextPage) {
+      nextPageFetchPendingRef.current = false;
+    }
+  }, [isFetchingNextPage]);
+
+  useEffect(() => {
+    const node = nextPageSentinelRef.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (
+          shouldFetchNextAuditPage(entries, !!hasNextPage, isFetchingNextPage) &&
+          !nextPageFetchPendingRef.current
+        ) {
+          nextPageFetchPendingRef.current = true;
+          void fetchNextPage().finally(() => {
+            nextPageFetchPendingRef.current = false;
+          });
+        }
+      },
+      { rootMargin: "320px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
+
+  const events: AuditEvent[] = useMemo(() => {
+    const raw = pages.flatMap((p) => p.items as SiemAuditEvent[]);
+    let mapped = raw.map(mapEvent);
+    if (agentFilter) {
+      const needle = agentFilter.toLowerCase();
+      mapped = mapped.filter((e) => e.actor.toLowerCase().includes(needle));
+    }
+    if (eventTypePrefix) {
+      const prefix = eventTypePrefix.toLowerCase();
+      mapped = mapped.filter((e) => e.action.toLowerCase().startsWith(prefix));
+    }
+    return mapped;
+  }, [pages, agentFilter, eventTypePrefix]);
+  // Server emits per-page `returned` rather than a global total —
+  // cursor pagination is unbounded by design (a global count would
+  // require an O(stream) scan). The render below shows the running
+  // count across all loaded pages plus "more available" when the
+  // cursor is non-empty; the scroll sentinel handles depth.
   const expandedEvent = useMemo(
     () => events.find((e) => e.id === expandedEventId) ?? null,
     [events, expandedEventId],
@@ -434,20 +547,56 @@ export default function AuditLogPage() {
                 />
               </LabeledField>
 
-              <LabeledField label="Action">
+              <LabeledField label="Event type">
                 <Select
                   value={actionFilter}
                   onChange={(e) => void setActionFilter(e.target.value || null)}
-                  aria-label="Filter by action"
+                  aria-label="Filter by event type"
                   className="bg-surface-1"
                 >
-                  <option value="">All Actions</option>
-                  <option value="job.created">Job Created</option>
-                  <option value="job.completed">Job Completed</option>
-                  <option value="job.failed">Job Failed</option>
-                  <option value="approval.decided">Approval Decided</option>
-                  <option value="policy.updated">Policy Updated</option>
-                  <option value="worker.registered">Worker Registered</option>
+                  <option value="">All event types</option>
+                  <optgroup label="Safety / Policy">
+                    <option value="safety.decision">Safety decision</option>
+                    <option value="safety.approval">Safety approval</option>
+                    <option value="safety.policy_change">Policy change</option>
+                  </optgroup>
+                  <optgroup label="MCP">
+                    <option value="mcp.tool_invocation">MCP tool invocation</option>
+                    <option value="mcp.tool_approval">MCP tool approval</option>
+                    <option value="mcp.tool_denied">MCP tool denied</option>
+                    <option value="mcp.signature_invalid">MCP signature invalid</option>
+                  </optgroup>
+                  <optgroup label="Edge (Claude Code)">
+                    <option value="edge.session_started">Edge session started</option>
+                    <option value="edge.action_attempted">Edge action attempted</option>
+                    <option value="edge.policy_decision">Edge policy decision</option>
+                    <option value="edge.action_denied">Edge action denied</option>
+                    <option value="edge.approval_requested">Edge approval requested</option>
+                    <option value="edge.fail_closed">Edge fail closed</option>
+                  </optgroup>
+                  <optgroup label="Worker / Topic">
+                    <option value="worker_trust_change">Worker trust change</option>
+                    <option value="topic_registered">Topic registered</option>
+                    <option value="topic_unregistered">Topic unregistered</option>
+                  </optgroup>
+                  <optgroup label="Auth">
+                    <option value="system.auth">System auth</option>
+                    <option value="auth.api_key_created">API key created</option>
+                    <option value="auth.api_key_revoked">API key revoked</option>
+                    <option value="auth.role_upserted">Role upserted</option>
+                    <option value="auth.role_deleted">Role deleted</option>
+                  </optgroup>
+                  <optgroup label="Delegation">
+                    <option value="delegation.lineage">Delegation lineage</option>
+                    <option value="delegation.rejected">Delegation rejected</option>
+                  </optgroup>
+                  <optgroup label="License">
+                    <option value="license.legacy_format_rejected">License legacy rejected</option>
+                    <option value="license.breakglass_activated">License breakglass</option>
+                  </optgroup>
+                  <optgroup label="Action gates">
+                    <option value="actiongate.denied">Action gate denied</option>
+                  </optgroup>
                 </Select>
               </LabeledField>
 
@@ -526,14 +675,11 @@ export default function AuditLogPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-            {total != null ? (
-              <span>
-                Showing {events.length} of {total} events
-                {filtersActive && " (filtered)"}
-              </span>
-            ) : (
-              <span>Showing {events.length} events</span>
-            )}
+            <span>
+              Showing {events.length} event{events.length === 1 ? "" : "s"}
+              {filtersActive && " (filtered)"}
+              {hasNextPage && " · more available"}
+            </span>
             {filtersActive && (
               <span>
                 Narrowed by search, action, agent, or date range filters.
@@ -553,6 +699,7 @@ export default function AuditLogPage() {
             columns={columns}
             data={events}
             decisionAccessor={decisionAccessor}
+            disableVirtualization
             onRowClick={(event) => setExpandedEventId(event.id)}
             emptyState={
               <EmptyState
@@ -566,6 +713,30 @@ export default function AuditLogPage() {
               />
             }
           />
+          <div ref={nextPageSentinelRef} aria-hidden="true" className="h-px" />
+          <div
+            className="flex flex-wrap items-center justify-center gap-3 border-t border-border bg-surface-1 p-4 text-sm text-muted-foreground"
+            aria-live="polite"
+          >
+            {isFetchingNextPage ? (
+              <span>Loading more audit events…</span>
+            ) : hasNextPage ? (
+              <>
+                <span>Scroll for older audit events.</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void fetchNextPage()}
+                  disabled={isFetchingNextPage}
+                  aria-label="Load more audit events"
+                >
+                  Load more
+                </Button>
+              </>
+            ) : events.length > 0 ? (
+              <span>End of audit trail.</span>
+            ) : null}
+          </div>
         </div>
       )}
 

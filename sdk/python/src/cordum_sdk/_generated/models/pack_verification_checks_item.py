@@ -12,27 +12,22 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="PackVerificationChecksItem")
 
 
 @_attrs_define
 class PackVerificationChecksItem:
-    """ 
-        Attributes:
-            name (Union[Unset, str]):
-            passed (Union[Unset, bool]):
-            message (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        name (Union[Unset, str]):
+        passed (Union[Unset, bool]):
+        message (Union[Unset, str]):
+    """
 
     name: Union[Unset, str] = UNSET
     passed: Union[Unset, bool] = UNSET
     message: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         name = self.name
@@ -41,11 +36,9 @@ class PackVerificationChecksItem:
 
         message = self.message
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if name is not UNSET:
             field_dict["name"] = name
         if passed is not UNSET:
@@ -54,8 +47,6 @@ class PackVerificationChecksItem:
             field_dict["message"] = message
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -71,7 +62,6 @@ class PackVerificationChecksItem:
             passed=passed,
             message=message,
         )
-
 
         pack_verification_checks_item.additional_properties = d
         return pack_verification_checks_item

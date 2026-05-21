@@ -147,11 +147,14 @@ REDIS_TLS_CERT="${REDIS_TLS_CERT:-$(to_worker_tls_path "${CLIENT_CERT}")}"
 REDIS_TLS_KEY="${REDIS_TLS_KEY:-$(to_worker_tls_path "${CLIENT_KEY}")}"
 NATS_TLS_INSECURE="${NATS_TLS_INSECURE:-${CORDUM_TLS_INSECURE:-}}"
 REDIS_TLS_INSECURE="${REDIS_TLS_INSECURE:-${CORDUM_TLS_INSECURE:-}}"
+WORKER_LOG="$(mktemp -t demo-guardrails-worker.XXXXXX.log)"
 
 cleanup() {
   if [[ -n "${WORKER_PID:-}" ]]; then
     kill "${WORKER_PID}" >/dev/null 2>&1 || true
+    wait "${WORKER_PID}" >/dev/null 2>&1 || true
   fi
+  rm -f "${WORKER_LOG}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -170,7 +173,7 @@ echo "[guardrails] starting demo worker"
   REDIS_TLS_CERT="${REDIS_TLS_CERT:-}" \
   REDIS_TLS_KEY="${REDIS_TLS_KEY:-}" \
   REDIS_TLS_INSECURE="${REDIS_TLS_INSECURE:-}" \
-  go run .) &
+  go run .) >"${WORKER_LOG}" 2>&1 &
 WORKER_PID=$!
 
 echo "[guardrails] waiting for worker heartbeat"
@@ -199,6 +202,8 @@ for _ in {1..120}; do
 done
 if [[ "${worker_ready}" != "1" ]]; then
   echo "worker did not register in time" >&2
+  echo "[guardrails] worker log (tail):" >&2
+  tail -50 "${WORKER_LOG}" >&2 2>/dev/null || true
   exit 1
 fi
 

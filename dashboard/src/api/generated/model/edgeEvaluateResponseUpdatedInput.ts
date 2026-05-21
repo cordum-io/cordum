@@ -9,4 +9,6 @@
 /**
  * @nullable
  */
-export type EdgeEvaluateResponseUpdatedInput = { [key: string]: unknown } | null;
+export type EdgeEvaluateResponseUpdatedInput = {
+  [key: string]: unknown;
+} | null;

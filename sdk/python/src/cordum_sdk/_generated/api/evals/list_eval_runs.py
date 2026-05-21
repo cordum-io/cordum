@@ -16,7 +16,6 @@ from typing import Union
 import datetime
 
 
-
 def _get_kwargs(
     id: str,
     *,
@@ -27,14 +26,9 @@ def _get_kwargs(
     until: Union[Unset, datetime.datetime] = UNSET,
     min_score: Union[Unset, float] = UNSET,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
@@ -56,26 +50,25 @@ def _get_kwargs(
 
     params["min_score"] = min_score
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
-        "url": "/api/v1/evals/datasets/{id}/runs".format(id=id,),
+        "url": "/api/v1/evals/datasets/{id}/runs".format(
+            id=id,
+        ),
         "params": params,
     }
-
 
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, EvalRunsResponse]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, EvalRunsResponse]]:
     if response.status_code == 200:
         response_200 = EvalRunsResponse.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 400:
@@ -99,7 +92,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, EvalRunsResponse]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, EvalRunsResponse]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -119,9 +114,8 @@ def sync_detailed(
     until: Union[Unset, datetime.datetime] = UNSET,
     min_score: Union[Unset, float] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, EvalRunsResponse]]:
-    """ List historical runs for one eval dataset
+    """List historical runs for one eval dataset
 
     Args:
         id (str):
@@ -139,19 +133,17 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, EvalRunsResponse]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         id=id,
-cursor=cursor,
-limit=limit,
-has_regression=has_regression,
-since=since,
-until=until,
-min_score=min_score,
-x_tenant_id=x_tenant_id,
-
+        cursor=cursor,
+        limit=limit,
+        has_regression=has_regression,
+        since=since,
+        until=until,
+        min_score=min_score,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -159,6 +151,7 @@ x_tenant_id=x_tenant_id,
     )
 
     return _build_response(client=client, response=response)
+
 
 def sync(
     id: str,
@@ -171,9 +164,8 @@ def sync(
     until: Union[Unset, datetime.datetime] = UNSET,
     min_score: Union[Unset, float] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, EvalRunsResponse]]:
-    """ List historical runs for one eval dataset
+    """List historical runs for one eval dataset
 
     Args:
         id (str):
@@ -191,21 +183,20 @@ def sync(
 
     Returns:
         Union[Any, EvalRunsResponse]
-     """
-
+    """
 
     return sync_detailed(
         id=id,
-client=client,
-cursor=cursor,
-limit=limit,
-has_regression=has_regression,
-since=since,
-until=until,
-min_score=min_score,
-x_tenant_id=x_tenant_id,
-
+        client=client,
+        cursor=cursor,
+        limit=limit,
+        has_regression=has_regression,
+        since=since,
+        until=until,
+        min_score=min_score,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     id: str,
@@ -218,9 +209,8 @@ async def asyncio_detailed(
     until: Union[Unset, datetime.datetime] = UNSET,
     min_score: Union[Unset, float] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, EvalRunsResponse]]:
-    """ List historical runs for one eval dataset
+    """List historical runs for one eval dataset
 
     Args:
         id (str):
@@ -238,26 +228,23 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, EvalRunsResponse]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         id=id,
-cursor=cursor,
-limit=limit,
-has_regression=has_regression,
-since=since,
-until=until,
-min_score=min_score,
-x_tenant_id=x_tenant_id,
-
+        cursor=cursor,
+        limit=limit,
+        has_regression=has_regression,
+        since=since,
+        until=until,
+        min_score=min_score,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     id: str,
@@ -270,9 +257,8 @@ async def asyncio(
     until: Union[Unset, datetime.datetime] = UNSET,
     min_score: Union[Unset, float] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, EvalRunsResponse]]:
-    """ List historical runs for one eval dataset
+    """List historical runs for one eval dataset
 
     Args:
         id (str):
@@ -290,18 +276,18 @@ async def asyncio(
 
     Returns:
         Union[Any, EvalRunsResponse]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        id=id,
-client=client,
-cursor=cursor,
-limit=limit,
-has_regression=has_regression,
-since=since,
-until=until,
-min_score=min_score,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            id=id,
+            client=client,
+            cursor=cursor,
+            limit=limit,
+            has_regression=has_regression,
+            since=since,
+            until=until,
+            min_score=min_score,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

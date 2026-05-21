@@ -205,15 +205,15 @@ func TestSummarizeApprovals_WindowValidation(t *testing.T) {
 	r := NewPromptRegistry()
 	_ = RegisterAllPrompts(r)
 	cases := map[string]bool{
-		"":      true,   // empty defaults to 24h
-		"24h":   true,
-		"7d":    true,
-		"30d":   true,
-		"720h":  true,
-		"31d":   false,
-		"abc":   false,
-		"5":     false,
-		"-3h":   false,
+		"":     true, // empty defaults to 24h
+		"24h":  true,
+		"7d":   true,
+		"30d":  true,
+		"720h": true,
+		"31d":  false,
+		"abc":  false,
+		"5":    false,
+		"-3h":  false,
 	}
 	for window, ok := range cases {
 		args := map[string]string{"window": window}

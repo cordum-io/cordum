@@ -12,44 +12,35 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="StatusResponseLicenseType0")
 
 
 @_attrs_define
 class StatusResponseLicenseType0:
-    """ 
-        Attributes:
-            valid (Union[Unset, bool]):
-            tier (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        valid (Union[Unset, bool]):
+        tier (Union[Unset, str]):
+    """
 
     valid: Union[Unset, bool] = UNSET
     tier: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         valid = self.valid
 
         tier = self.tier
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if valid is not UNSET:
             field_dict["valid"] = valid
         if tier is not UNSET:
             field_dict["tier"] = tier
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -62,7 +53,6 @@ class StatusResponseLicenseType0:
             valid=valid,
             tier=tier,
         )
-
 
         status_response_license_type_0.additional_properties = d
         return status_response_license_type_0

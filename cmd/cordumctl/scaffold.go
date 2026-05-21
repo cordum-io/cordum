@@ -25,7 +25,7 @@ func writeFile(path, content string, force bool) error {
 	if !force {
 		if _, err := os.Stat(path); err == nil {
 			return fmt.Errorf("file exists: %s", path)
-		} else if err != nil && !os.IsNotExist(err) {
+		} else if !os.IsNotExist(err) {
 			return err
 		}
 	}

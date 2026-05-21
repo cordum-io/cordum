@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class PostChatRequestRole(str, Enum):
     ASSISTANT = "assistant"
     SYSTEM = "system"

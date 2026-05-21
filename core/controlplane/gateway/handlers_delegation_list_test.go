@@ -19,7 +19,6 @@ func TestHandleListDelegationsFiltersAndPagination(t *testing.T) {
 	setTestEntitlements(t, s, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
 		entitlements.RBAC = true
 	})
-	putTestRole(t, s, "delegation-reader", auth.PermDelegationRead)
 	putTestRole(t, s, "restricted", auth.PermJobsRead)
 
 	store := s.delegationListStore()
@@ -80,7 +79,7 @@ func TestHandleListDelegationsFiltersAndPagination(t *testing.T) {
 		ExpiresAt:      now.Add(time.Hour),
 	})
 
-	rr := delegationList(t, s, "/api/v1/delegations?status=revoked&limit=10", "delegation-reader")
+	rr := delegationList(t, s, "/api/v1/delegations?status=revoked&limit=10", "admin")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
@@ -89,28 +88,31 @@ func TestHandleListDelegationsFiltersAndPagination(t *testing.T) {
 		t.Fatalf("unexpected revoked page: %#v", page)
 	}
 
-	rr = delegationList(t, s, "/api/v1/delegations?scope=ploy", "delegation-reader")
+	rr = delegationList(t, s, "/api/v1/delegations?scope=ploy", "admin")
 	page = decodeDelegationListPage(t, rr)
 	if len(page.Items) != 1 || page.Items[0].JTI != "dlg-revoked" {
 		t.Fatalf("unexpected scope page: %#v", page)
 	}
 
-	rr = delegationList(t, s, "/api/v1/delegations?before_expiry="+now.Add(5*time.Minute).Format(time.RFC3339), "delegation-reader")
+	rr = delegationList(t, s, "/api/v1/delegations?before_expiry="+now.Add(5*time.Minute).Format(time.RFC3339), "admin")
 	page = decodeDelegationListPage(t, rr)
 	if len(page.Items) != 1 || page.Items[0].JTI != "dlg-expired" {
 		t.Fatalf("unexpected before_expiry page: %#v", page)
 	}
 
-	rr = delegationList(t, s, "/api/v1/delegations?limit=1", "delegation-reader")
+	rr = delegationList(t, s, "/api/v1/delegations?limit=1", "admin")
 	page = decodeDelegationListPage(t, rr)
 	if len(page.Items) != 1 || page.NextCursor == "" {
 		t.Fatalf("expected paginated page, got %#v", page)
 	}
-	rr = delegationList(t, s, "/api/v1/delegations?limit=1&cursor="+page.NextCursor, "delegation-reader")
+	rr = delegationList(t, s, "/api/v1/delegations?limit=1&cursor="+page.NextCursor, "admin")
 	page2 := decodeDelegationListPage(t, rr)
 	if len(page2.Items) != 1 || page2.Items[0].JTI == page.Items[0].JTI {
 		t.Fatalf("unexpected second page: %#v", page2)
 	}
+
+	rr = delegationList(t, s, "/api/v1/delegations?status=bogus", "admin")
+	assertOperatorErrorCode(t, rr, http.StatusBadRequest, "DELEGATION_REQUEST_INVALID")
 }
 
 func TestHandleListAgentDelegationsAndRBAC(t *testing.T) {
@@ -119,7 +121,6 @@ func TestHandleListAgentDelegationsAndRBAC(t *testing.T) {
 	setTestEntitlements(t, s, licensing.PlanEnterprise, func(entitlements *licensing.Entitlements) {
 		entitlements.RBAC = true
 	})
-	putTestRole(t, s, "delegation-reader", auth.PermDelegationRead)
 
 	store := s.delegationListStore()
 	now := time.Now().UTC()
@@ -153,7 +154,7 @@ func TestHandleListAgentDelegationsAndRBAC(t *testing.T) {
 	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/agent-a/delegations", nil), &auth.AuthContext{
 		Tenant:      "default",
 		PrincipalID: "reader",
-		Role:        "delegation-reader",
+		Role:        "admin",
 	})
 	req.SetPathValue("id", "agent-a")
 	rr := httptest.NewRecorder()

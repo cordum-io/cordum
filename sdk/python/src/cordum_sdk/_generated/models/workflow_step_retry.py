@@ -12,44 +12,35 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="WorkflowStepRetry")
 
 
 @_attrs_define
 class WorkflowStepRetry:
-    """ 
-        Attributes:
-            max_attempts (Union[Unset, int]):
-            backoff_sec (Union[Unset, int]):
-     """
+    """
+    Attributes:
+        max_attempts (Union[Unset, int]):
+        backoff_sec (Union[Unset, int]):
+    """
 
     max_attempts: Union[Unset, int] = UNSET
     backoff_sec: Union[Unset, int] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         max_attempts = self.max_attempts
 
         backoff_sec = self.backoff_sec
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if max_attempts is not UNSET:
             field_dict["max_attempts"] = max_attempts
         if backoff_sec is not UNSET:
             field_dict["backoff_sec"] = backoff_sec
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -62,7 +53,6 @@ class WorkflowStepRetry:
             max_attempts=max_attempts,
             backoff_sec=backoff_sec,
         )
-
 
         workflow_step_retry.additional_properties = d
         return workflow_step_retry

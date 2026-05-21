@@ -15,25 +15,21 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="DLQEntry")
 
 
 @_attrs_define
 class DLQEntry:
-    """ 
-        Attributes:
-            job_id (Union[Unset, str]):
-            topic (Union[Unset, str]):
-            tenant (Union[Unset, str]):
-            error (Union[Unset, str]):
-            failed_at (Union[Unset, datetime.datetime]):
-            retry_count (Union[Unset, int]):
-            original_state (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        job_id (Union[Unset, str]):
+        topic (Union[Unset, str]):
+        tenant (Union[Unset, str]):
+        error (Union[Unset, str]):
+        failed_at (Union[Unset, datetime.datetime]):
+        retry_count (Union[Unset, int]):
+        original_state (Union[Unset, str]):
+    """
 
     job_id: Union[Unset, str] = UNSET
     topic: Union[Unset, str] = UNSET
@@ -43,7 +39,6 @@ class DLQEntry:
     retry_count: Union[Unset, int] = UNSET
     original_state: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         job_id = self.job_id
@@ -62,11 +57,9 @@ class DLQEntry:
 
         original_state = self.original_state
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if job_id is not UNSET:
             field_dict["job_id"] = job_id
         if topic is not UNSET:
@@ -84,8 +77,6 @@ class DLQEntry:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -99,13 +90,10 @@ class DLQEntry:
 
         _failed_at = d.pop("failed_at", UNSET)
         failed_at: Union[Unset, datetime.datetime]
-        if isinstance(_failed_at,  Unset):
+        if isinstance(_failed_at, Unset):
             failed_at = UNSET
         else:
             failed_at = isoparse(_failed_at)
-
-
-
 
         retry_count = d.pop("retry_count", UNSET)
 
@@ -120,7 +108,6 @@ class DLQEntry:
             retry_count=retry_count,
             original_state=original_state,
         )
-
 
         dlq_entry.additional_properties = d
         return dlq_entry

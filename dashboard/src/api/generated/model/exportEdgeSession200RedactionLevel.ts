@@ -6,11 +6,11 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type ExportEdgeSession200RedactionLevel = typeof ExportEdgeSession200RedactionLevel[keyof typeof ExportEdgeSession200RedactionLevel];
-
+export type ExportEdgeSession200RedactionLevel =
+  (typeof ExportEdgeSession200RedactionLevel)[keyof typeof ExportEdgeSession200RedactionLevel];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const ExportEdgeSession200RedactionLevel = {
-  standard: 'standard',
-  strict: 'strict',
+  standard: "standard",
+  strict: "strict",
 } as const;

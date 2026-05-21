@@ -17,28 +17,24 @@ from typing import Union
 import datetime
 
 
-
-
-
-
 T = TypeVar("T", bound="AuthUser")
 
 
 @_attrs_define
 class AuthUser:
-    """ 
-        Attributes:
-            id (Union[Unset, str]):
-            username (Union[Unset, str]):
-            email (Union[Unset, str]):
-            display_name (Union[Unset, str]):
-            tenant (Union[Unset, str]):
-            roles (Union[Unset, List[str]]):
-            source (Union[Unset, str]): Auth source (local, saml, oidc)
-            created_at (Union[Unset, datetime.datetime]):
-            updated_at (Union[Unset, datetime.datetime]):
-            last_login_at (Union[None, Unset, datetime.datetime]):
-     """
+    """
+    Attributes:
+        id (Union[Unset, str]):
+        username (Union[Unset, str]):
+        email (Union[Unset, str]):
+        display_name (Union[Unset, str]):
+        tenant (Union[Unset, str]):
+        roles (Union[Unset, List[str]]):
+        source (Union[Unset, str]): Auth source (local, saml, oidc)
+        created_at (Union[Unset, datetime.datetime]):
+        updated_at (Union[Unset, datetime.datetime]):
+        last_login_at (Union[None, Unset, datetime.datetime]):
+    """
 
     id: Union[Unset, str] = UNSET
     username: Union[Unset, str] = UNSET
@@ -51,7 +47,6 @@ class AuthUser:
     updated_at: Union[Unset, datetime.datetime] = UNSET
     last_login_at: Union[None, Unset, datetime.datetime] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         id = self.id
@@ -67,8 +62,6 @@ class AuthUser:
         roles: Union[Unset, List[str]] = UNSET
         if not isinstance(self.roles, Unset):
             roles = self.roles
-
-
 
         source = self.source
 
@@ -88,11 +81,9 @@ class AuthUser:
         else:
             last_login_at = self.last_login_at
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if id is not UNSET:
             field_dict["id"] = id
         if username is not UNSET:
@@ -116,8 +107,6 @@ class AuthUser:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
@@ -133,28 +122,21 @@ class AuthUser:
 
         roles = cast(List[str], d.pop("roles", UNSET))
 
-
         source = d.pop("source", UNSET)
 
         _created_at = d.pop("created_at", UNSET)
         created_at: Union[Unset, datetime.datetime]
-        if isinstance(_created_at,  Unset):
+        if isinstance(_created_at, Unset):
             created_at = UNSET
         else:
             created_at = isoparse(_created_at)
 
-
-
-
         _updated_at = d.pop("updated_at", UNSET)
         updated_at: Union[Unset, datetime.datetime]
-        if isinstance(_updated_at,  Unset):
+        if isinstance(_updated_at, Unset):
             updated_at = UNSET
         else:
             updated_at = isoparse(_updated_at)
-
-
-
 
         def _parse_last_login_at(data: object) -> Union[None, Unset, datetime.datetime]:
             if data is None:
@@ -166,15 +148,12 @@ class AuthUser:
                     raise TypeError()
                 last_login_at_type_0 = isoparse(data)
 
-
-
                 return last_login_at_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
             return cast(Union[None, Unset, datetime.datetime], data)
 
         last_login_at = _parse_last_login_at(d.pop("last_login_at", UNSET))
-
 
         auth_user = cls(
             id=id,
@@ -188,7 +167,6 @@ class AuthUser:
             updated_at=updated_at,
             last_login_at=last_login_at,
         )
-
 
         auth_user.additional_properties = d
         return auth_user

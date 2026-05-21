@@ -12,44 +12,35 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="CancelJobResponse200")
 
 
 @_attrs_define
 class CancelJobResponse200:
-    """ 
-        Attributes:
-            id (Union[Unset, str]):
-            state (Union[Unset, str]):  Example: CANCELLED.
-     """
+    """
+    Attributes:
+        id (Union[Unset, str]):
+        state (Union[Unset, str]):  Example: CANCELLED.
+    """
 
     id: Union[Unset, str] = UNSET
     state: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         id = self.id
 
         state = self.state
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if id is not UNSET:
             field_dict["id"] = id
         if state is not UNSET:
             field_dict["state"] = state
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -62,7 +53,6 @@ class CancelJobResponse200:
             id=id,
             state=state,
         )
-
 
         cancel_job_response_200.additional_properties = d
         return cancel_job_response_200

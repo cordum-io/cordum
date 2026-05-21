@@ -16,10 +16,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.json_rpc_request_params import JsonRpcRequestParams
-
-
-
+    from ..models.json_rpc_request_params import JsonRpcRequestParams
 
 
 T = TypeVar("T", bound="JsonRpcRequest")
@@ -27,23 +24,23 @@ T = TypeVar("T", bound="JsonRpcRequest")
 
 @_attrs_define
 class JsonRpcRequest:
-    """ 
-        Attributes:
-            jsonrpc (JsonRpcRequestJsonrpc):
-            method (str):
-            id (Union[Unset, int, str]):
-            params (Union[Unset, JsonRpcRequestParams]):
-     """
+    """
+    Attributes:
+        jsonrpc (JsonRpcRequestJsonrpc):
+        method (str):
+        id (Union[Unset, int, str]):
+        params (Union[Unset, JsonRpcRequestParams]):
+    """
 
     jsonrpc: JsonRpcRequestJsonrpc
     method: str
     id: Union[Unset, int, str] = UNSET
-    params: Union[Unset, 'JsonRpcRequestParams'] = UNSET
+    params: Union[Unset, "JsonRpcRequestParams"] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.json_rpc_request_params import JsonRpcRequestParams
+
         jsonrpc = self.jsonrpc.value
 
         method = self.method
@@ -58,13 +55,14 @@ class JsonRpcRequest:
         if not isinstance(self.params, Unset):
             params = self.params.to_dict()
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "jsonrpc": jsonrpc,
-            "method": method,
-        })
+        field_dict.update(
+            {
+                "jsonrpc": jsonrpc,
+                "method": method,
+            }
+        )
         if id is not UNSET:
             field_dict["id"] = id
         if params is not UNSET:
@@ -72,16 +70,12 @@ class JsonRpcRequest:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.json_rpc_request_params import JsonRpcRequestParams
+
         d = src_dict.copy()
         jsonrpc = JsonRpcRequestJsonrpc(d.pop("jsonrpc"))
-
-
-
 
         method = d.pop("method")
 
@@ -92,16 +86,12 @@ class JsonRpcRequest:
 
         id = _parse_id(d.pop("id", UNSET))
 
-
         _params = d.pop("params", UNSET)
         params: Union[Unset, JsonRpcRequestParams]
-        if isinstance(_params,  Unset):
+        if isinstance(_params, Unset):
             params = UNSET
         else:
             params = JsonRpcRequestParams.from_dict(_params)
-
-
-
 
         json_rpc_request = cls(
             jsonrpc=jsonrpc,
@@ -109,7 +99,6 @@ class JsonRpcRequest:
             id=id,
             params=params,
         )
-
 
         json_rpc_request.additional_properties = d
         return json_rpc_request

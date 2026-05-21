@@ -7,6 +7,7 @@ import (
 
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/mcp"
+	"github.com/cordum/cordum/core/model"
 )
 
 // mcpDenyAuditor implements mcp.DenyAuditor on top of the gateway's
@@ -57,11 +58,15 @@ func (a *mcpDenyAuditor) ToolDenied(ctx context.Context, ev mcp.DenyEvent) {
 	if a.tenant != nil {
 		tenant = a.tenant(ctx)
 	}
+	// Resolve via the canonical helper so a nil-lookup or a lookup that
+	// returned "" (anonymous tool deny, dev deploy with no tenant
+	// resolver wired) lands on the default tenant chain instead of
+	// surfacing as a sink-level slog.Warn. task-3fad45d3.
 	siem := audit.SIEMEvent{
 		Timestamp: time.Now().UTC(),
 		EventType: audit.EventMCPToolDenied,
 		Severity:  audit.SeverityHigh,
-		TenantID:  tenant,
+		TenantID:  model.ResolveTenantForAudit(tenant, ""),
 		AgentID:   ev.AgentID,
 		Action:    "deny",
 		Decision:  "deny",

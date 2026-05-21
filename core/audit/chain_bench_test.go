@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
+	"github.com/cordum/cordum/core/internal/testredis"
 )
+
+const fullSuiteP99Ceiling = 25 * time.Millisecond
 
 // BenchmarkChainer_Append exercises the hot path: one Append per
 // iteration against an in-process miniredis. The Lua CAS script runs
@@ -24,8 +26,7 @@ func BenchmarkChainer_Append(b *testing.B) {
 		b.Fatalf("miniredis: %v", err)
 	}
 	defer mr.Close()
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer func() { _ = client.Close() }()
+	client := testredis.NewClient(b, mr.Addr())
 	c := NewChainer(client, "bench:chain:")
 
 	ev := &SIEMEvent{
@@ -94,7 +95,7 @@ func TestChainer_Append10kLatency(t *testing.T) {
 	// storm or a new allocation on the hot path). The plan's <1ms
 	// target applies to real Redis; asserting it against miniredis
 	// would be flaky on slow CI.
-	ceiling := 10 * time.Millisecond
+	ceiling := fullSuiteP99Ceiling
 	if raceDetectorEnabled {
 		// The required CI test job runs `go test -race ./...`; the race
 		// detector instruments every miniredis/Lua round trip and can push

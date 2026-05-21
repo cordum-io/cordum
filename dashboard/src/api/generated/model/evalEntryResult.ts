@@ -5,9 +5,9 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { EvalEntryResultInput } from './evalEntryResultInput';
-import type { EvalEntryResultStatus } from './evalEntryResultStatus';
-import type { EvalEntryResultDriftDirection } from './evalEntryResultDriftDirection';
+import type { EvalEntryResultInput } from "./evalEntryResultInput";
+import type { EvalEntryResultStatus } from "./evalEntryResultStatus";
+import type { EvalEntryResultDriftDirection } from "./evalEntryResultDriftDirection";
 
 export interface EvalEntryResult {
   entry_id: string;

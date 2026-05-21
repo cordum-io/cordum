@@ -2002,9 +2002,9 @@ func TestParseJobEvent(t *testing.T) {
 			wantOK: true, wantTS: 1700000000, wantSt: "PENDING",
 		},
 		{
-			name:    "valid JSON with context",
-			raw:     `{"ts":1700000001,"state":"SCHEDULED","ctx":{"rule":"r1","eval_ms":42}}`,
-			wantOK:  true, wantTS: 1700000001, wantSt: "SCHEDULED",
+			name:   "valid JSON with context",
+			raw:    `{"ts":1700000001,"state":"SCHEDULED","ctx":{"rule":"r1","eval_ms":42}}`,
+			wantOK: true, wantTS: 1700000001, wantSt: "SCHEDULED",
 			wantCtx: true,
 		},
 		{
@@ -2074,12 +2074,12 @@ func TestSetStateWithContext_RoundTrip(t *testing.T) {
 
 	// Set initial state with rich context
 	evtCtx := &model.StateEventContext{
-		Rule:   "safety-rule-1",
-		Reason: "PII detected",
-		EvalMs: 42,
+		Rule:     "safety-rule-1",
+		Reason:   "PII detected",
+		EvalMs:   42,
 		EvalPath: []string{"input_scan", "pii_check"},
-		Topic:  "job.default",
-		Extra:  map[string]string{"custom": "value"},
+		Topic:    "job.default",
+		Extra:    map[string]string{"custom": "value"},
 	}
 	if err := store.SetStateWithContext(ctx, jobID, model.JobStatePending, evtCtx); err != nil {
 		t.Fatalf("SetStateWithContext: %v", err)

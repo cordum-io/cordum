@@ -14,11 +14,8 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.generic_object import GenericObject
-  from ..models.license_info import LicenseInfo
-
-
-
+    from ..models.license_info import LicenseInfo
+    from ..models.generic_object import GenericObject
 
 
 T = TypeVar("T", bound="GetLicenseResponse200")
@@ -26,26 +23,26 @@ T = TypeVar("T", bound="GetLicenseResponse200")
 
 @_attrs_define
 class GetLicenseResponse200:
-    """ 
-        Attributes:
-            plan (str):
-            entitlements (GenericObject):
-            rights (GenericObject):
-            license_ (Union[Unset, LicenseInfo]):
-            expiry_status (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        plan (str):
+        entitlements (GenericObject):
+        rights (GenericObject):
+        license_ (Union[Unset, LicenseInfo]):
+        expiry_status (Union[Unset, str]):
+    """
 
     plan: str
-    entitlements: 'GenericObject'
-    rights: 'GenericObject'
-    license_: Union[Unset, 'LicenseInfo'] = UNSET
+    entitlements: "GenericObject"
+    rights: "GenericObject"
+    license_: Union[Unset, "LicenseInfo"] = UNSET
     expiry_status: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        from ..models.generic_object import GenericObject
         from ..models.license_info import LicenseInfo
+        from ..models.generic_object import GenericObject
+
         plan = self.plan
 
         entitlements = self.entitlements.to_dict()
@@ -58,14 +55,15 @@ class GetLicenseResponse200:
 
         expiry_status = self.expiry_status
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "plan": plan,
-            "entitlements": entitlements,
-            "rights": rights,
-        })
+        field_dict.update(
+            {
+                "plan": plan,
+                "entitlements": entitlements,
+                "rights": rights,
+            }
+        )
         if license_ is not UNSET:
             field_dict["license"] = license_
         if expiry_status is not UNSET:
@@ -73,34 +71,24 @@ class GetLicenseResponse200:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
-        from ..models.generic_object import GenericObject
         from ..models.license_info import LicenseInfo
+        from ..models.generic_object import GenericObject
+
         d = src_dict.copy()
         plan = d.pop("plan")
 
         entitlements = GenericObject.from_dict(d.pop("entitlements"))
 
-
-
-
         rights = GenericObject.from_dict(d.pop("rights"))
-
-
-
 
         _license_ = d.pop("license", UNSET)
         license_: Union[Unset, LicenseInfo]
-        if isinstance(_license_,  Unset):
+        if isinstance(_license_, Unset):
             license_ = UNSET
         else:
             license_ = LicenseInfo.from_dict(_license_)
-
-
-
 
         expiry_status = d.pop("expiry_status", UNSET)
 
@@ -111,7 +99,6 @@ class GetLicenseResponse200:
             license_=license_,
             expiry_status=expiry_status,
         )
-
 
         get_license_response_200.additional_properties = d
         return get_license_response_200

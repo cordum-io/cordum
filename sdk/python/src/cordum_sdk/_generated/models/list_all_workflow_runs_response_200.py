@@ -16,10 +16,7 @@ from typing import Dict
 from typing import Union
 
 if TYPE_CHECKING:
-  from ..models.run_summary import RunSummary
-
-
-
+    from ..models.run_summary import RunSummary
 
 
 T = TypeVar("T", bound="ListAllWorkflowRunsResponse200")
@@ -27,19 +24,19 @@ T = TypeVar("T", bound="ListAllWorkflowRunsResponse200")
 
 @_attrs_define
 class ListAllWorkflowRunsResponse200:
-    """ 
-        Attributes:
-            next_cursor (Union[None, Unset, str]): Cursor for the next page (null if no more pages)
-            items (Union[Unset, List['RunSummary']]):
-     """
+    """
+    Attributes:
+        next_cursor (Union[None, Unset, str]): Cursor for the next page (null if no more pages)
+        items (Union[Unset, List['RunSummary']]):
+    """
 
     next_cursor: Union[None, Unset, str] = UNSET
-    items: Union[Unset, List['RunSummary']] = UNSET
+    items: Union[Unset, List["RunSummary"]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.run_summary import RunSummary
+
         next_cursor: Union[None, Unset, str]
         if isinstance(self.next_cursor, Unset):
             next_cursor = UNSET
@@ -53,13 +50,9 @@ class ListAllWorkflowRunsResponse200:
                 items_item = items_item_data.to_dict()
                 items.append(items_item)
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if next_cursor is not UNSET:
             field_dict["next_cursor"] = next_cursor
         if items is not UNSET:
@@ -67,12 +60,12 @@ class ListAllWorkflowRunsResponse200:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.run_summary import RunSummary
+
         d = src_dict.copy()
+
         def _parse_next_cursor(data: object) -> Union[None, Unset, str]:
             if data is None:
                 return data
@@ -82,22 +75,17 @@ class ListAllWorkflowRunsResponse200:
 
         next_cursor = _parse_next_cursor(d.pop("next_cursor", UNSET))
 
-
         items = []
         _items = d.pop("items", UNSET)
-        for items_item_data in (_items or []):
+        for items_item_data in _items or []:
             items_item = RunSummary.from_dict(items_item_data)
 
-
-
             items.append(items_item)
-
 
         list_all_workflow_runs_response_200 = cls(
             next_cursor=next_cursor,
             items=items,
         )
-
 
         list_all_workflow_runs_response_200.additional_properties = d
         return list_all_workflow_runs_response_200

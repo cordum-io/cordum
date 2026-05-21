@@ -9,14 +9,14 @@
 /**
  * Empty while pending; terminal decisions match status.
  */
-export type EdgeApprovalDecision = typeof EdgeApprovalDecision[keyof typeof EdgeApprovalDecision];
-
+export type EdgeApprovalDecision =
+  (typeof EdgeApprovalDecision)[keyof typeof EdgeApprovalDecision];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeApprovalDecision = {
-  '': '',
-  approve: 'approve',
-  reject: 'reject',
-  expire: 'expire',
-  invalidate: 'invalidate',
+  "": "",
+  approve: "approve",
+  reject: "reject",
+  expire: "expire",
+  invalidate: "invalidate",
 } as const;

@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class OutputRuleAction(str, Enum):
     BLOCK = "BLOCK"
     LOG = "LOG"

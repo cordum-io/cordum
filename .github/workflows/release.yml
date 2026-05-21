@@ -1,0 +1,375 @@
+name: Release binaries
+
+# EDGE-151 — release-time binary integrity. On every `v*` tag this workflow:
+#   1. Cross-compiles cordum-hook, cordum-agentd, and cordum-claude for 5
+#      desktop targets (Linux amd64/arm64, macOS amd64/arm64, Windows amd64)
+#      with the production release fingerprint pinned at link time.
+#   2. Tier 1 (always-on, when GPG_RELEASE_KEY_PRIVATE is provisioned):
+#      writes a deterministic SHA256SUMS manifest and produces a detached
+#      ASCII-armored signature SHA256SUMS.asc.
+#   3. Tier 2 (conditional on OS-native secrets + canonical-repo only):
+#      Apple Developer ID codesign + notarization for the darwin binaries,
+#      Authenticode signtool for the windows binary. Forks degrade
+#      gracefully to Tier 1 via `continue-on-error: true`.
+#   4. Publishes the signed manifest + binaries via `gh release create`.
+#
+# Fork behaviour: missing secrets cause the matching job to log a banner
+# and exit success-skipped; the workflow still succeeds with Tier 1 only.
+# See docs/security/binary-signing.md for the trust boundary.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  version-monotonicity:
+    # EDGE-151-DOWNGRADE: refuse a tag push whose semver is not strictly
+    # greater than the most recently published tag. Prevents accidental
+    # sibling-release downgrade at the moment a tag is created — the
+    # release-time companion to install.{sh,ps1}'s version-floor check.
+    name: tag monotonicity gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Fetch tags
+        run: git fetch --tags --force
+      - name: Resolve pushed and prior tags
+        id: tags
+        run: |
+          set -euo pipefail
+          pushed="${GITHUB_REF#refs/tags/}"
+          # Most-recent prior tag, excluding the one being pushed. We fall
+          # back to v0.0.0 when no prior tag exists (first release ever).
+          prior="$(git tag --list 'v*' --sort=-v:refname \
+                    | grep -vxF "$pushed" | head -1)"
+          if [ -z "$prior" ]; then
+            prior="v0.0.0"
+          fi
+          echo "pushed=$pushed" >>"$GITHUB_OUTPUT"
+          echo "prior=$prior"   >>"$GITHUB_OUTPUT"
+          echo "Pushed: $pushed, Prior: $prior"
+      - name: Enforce monotonicity
+        run: |
+          set -euo pipefail
+          go run ./tools/sign/cmd/version-cli monotonic-or-fail \
+            "${{ steps.tags.outputs.pushed }}" \
+            "${{ steps.tags.outputs.prior }}" \
+            || {
+              echo "::error::release tag ${{ steps.tags.outputs.pushed }} is not strictly greater than prior ${{ steps.tags.outputs.prior }} — refusing to publish a downgrade"
+              exit 1
+            }
+
+  build:
+    name: build ${{ matrix.binary }} ${{ matrix.target.goos }}/${{ matrix.target.goarch }}
+    needs: [version-monotonicity]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        binary: [cordum-hook, cordum-agentd, cordum-claude]
+        target:
+          - { goos: linux,   goarch: amd64, ext: ''     }
+          - { goos: linux,   goarch: arm64, ext: ''     }
+          - { goos: darwin,  goarch: amd64, ext: ''     }
+          - { goos: darwin,  goarch: arm64, ext: ''     }
+          - { goos: windows, goarch: amd64, ext: '.exe' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Cross-compile
+        env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+          CGO_ENABLED: '0'
+          RELEASE_FINGERPRINT: ${{ secrets.RELEASE_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          out="bin/${{ matrix.binary }}-${{ matrix.target.goos }}-${{ matrix.target.goarch }}${{ matrix.target.ext }}"
+          go build \
+            -trimpath \
+            -ldflags "-s -w -X github.com/cordum/cordum/tools/sign.PinnedReleaseFingerprint=${RELEASE_FINGERPRINT:-}" \
+            -o "$out" \
+            ./cmd/${{ matrix.binary }}
+          ls -la "$out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.binary }}-${{ matrix.target.goos }}-${{ matrix.target.goarch }}
+          path: bin/${{ matrix.binary }}-${{ matrix.target.goos }}-${{ matrix.target.goarch }}${{ matrix.target.ext }}
+          retention-days: 1
+
+  sign-darwin:
+    # Tier 2 — Apple Developer ID codesign + notarytool. Canonical repo only.
+    name: codesign+notarize ${{ matrix.target.goarch }}
+    needs: [build]
+    if: github.repository == 'cordum-io/cordum'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { goarch: amd64 }
+          - { goarch: arm64 }
+    steps:
+      - name: Guard on secrets
+        id: have_secrets
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+        run: |
+          if [ -z "${APPLE_DEVELOPER_ID:-}" ]; then
+            echo "::notice::APPLE_DEVELOPER_ID not set — skipping Tier 2 darwin signing"
+            echo "skip=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >>"$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.have_secrets.outputs.skip == 'false'
+        with:
+          pattern: bin-*-darwin-${{ matrix.target.goarch }}
+          merge-multiple: true
+          path: bin/
+      - name: codesign + notarize
+        if: steps.have_secrets.outputs.skip == 'false'
+        env:
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for f in bin/cordum-*-darwin-${{ matrix.target.goarch }}; do
+            codesign --sign "$APPLE_DEVELOPER_ID" --options runtime \
+                     --timestamp --deep --strict "$f"
+            # Notarize requires a .zip envelope for non-bundle binaries.
+            zip -j "${f}.zip" "$f"
+            xcrun notarytool submit "${f}.zip" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_NOTARY_PASSWORD" \
+              --wait
+            # Stapling for binaries is not supported by stapler — the
+            # notary record is verified online by Gatekeeper instead.
+            rm -f "${f}.zip"
+          done
+      - uses: actions/upload-artifact@v4
+        if: steps.have_secrets.outputs.skip == 'false'
+        with:
+          name: signed-darwin-${{ matrix.target.goarch }}
+          path: bin/cordum-*-darwin-${{ matrix.target.goarch }}
+          retention-days: 1
+
+  sign-windows:
+    # Tier 2 — Authenticode. Canonical repo only.
+    name: authenticode windows-amd64
+    needs: [build]
+    if: github.repository == 'cordum-io/cordum'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - name: Guard on secrets
+        id: have_secrets
+        shell: pwsh
+        env:
+          WIN_CERT_PFX_BASE64: ${{ secrets.WIN_CERT_PFX_BASE64 }}
+        run: |
+          if (-not $env:WIN_CERT_PFX_BASE64) {
+            Write-Host "::notice::WIN_CERT_PFX_BASE64 not set — skipping Tier 2 windows signing"
+            "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+            "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+      - uses: actions/download-artifact@v4
+        if: steps.have_secrets.outputs.skip == 'false'
+        with:
+          pattern: bin-*-windows-amd64
+          merge-multiple: true
+          path: bin/
+      - name: signtool
+        if: steps.have_secrets.outputs.skip == 'false'
+        shell: pwsh
+        env:
+          WIN_CERT_PFX_BASE64: ${{ secrets.WIN_CERT_PFX_BASE64 }}
+          WIN_CERT_PASS: ${{ secrets.WIN_CERT_PASS }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pfx = Join-Path $env:RUNNER_TEMP 'cordum-release.pfx'
+          [System.IO.File]::WriteAllBytes($pfx, [System.Convert]::FromBase64String($env:WIN_CERT_PFX_BASE64))
+          $signtool = (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse -Filter 'signtool.exe' |
+                      Where-Object { $_.FullName -match 'x64\\signtool.exe$' } |
+                      Sort-Object FullName -Descending | Select-Object -First 1).FullName
+          Get-ChildItem bin\cordum-*-windows-amd64.exe | ForEach-Object {
+            & $signtool sign /f $pfx /p $env:WIN_CERT_PASS `
+              /tr http://timestamp.digicert.com /td sha256 /fd sha256 $_.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed for $($_.FullName)" }
+          }
+          Remove-Item -LiteralPath $pfx -Force
+      - uses: actions/upload-artifact@v4
+        if: steps.have_secrets.outputs.skip == 'false'
+        with:
+          name: signed-windows-amd64
+          path: bin/cordum-*-windows-amd64.exe
+          retention-days: 1
+
+  sign-manifest:
+    # Tier 1 — always-on GPG-signed SHA256SUMS manifest. Always runs on
+    # ubuntu so forks without OS-native secrets still get the integrity
+    # gate that install.sh + tools/sign/Verifier consume.
+    name: tier1 sign manifest
+    needs: [build, sign-darwin, sign-windows]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Collect (signed if available, else unsigned cross-compiled)
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+      - name: Stage binaries
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          # Prefer signed-* artifacts when present; fall back to bin-*.
+          for d in artifacts/signed-*; do
+            [ -d "$d" ] && cp -av "$d/." release/
+          done
+          for d in artifacts/bin-*; do
+            [ -d "$d" ] || continue
+            for f in "$d"/*; do
+              base="$(basename "$f")"
+              [ -f "release/$base" ] || cp -av "$f" "release/$base"
+            done
+          done
+          ls -la release/
+      - name: Build manifest-cli
+        run: go build -trimpath -o release/.manifest-cli ./tools/sign/cmd/manifest-cli
+      - name: Generate SHA256SUMS
+        working-directory: release
+        run: |
+          set -euo pipefail
+          paths=$(find . -maxdepth 1 -type f -name 'cordum-*' | sort | sed 's|^./||')
+          if [ -z "$paths" ]; then
+            echo "::error::no cordum-* artefacts staged for manifest"
+            exit 1
+          fi
+          ./.manifest-cli $paths > SHA256SUMS
+          rm -f .manifest-cli
+          # EDGE-151-DOWNGRADE: prepend `# version: <tag>` so install.{sh,ps1}
+          # can enforce monotonic floor on the operator endpoint.
+          tag="${GITHUB_REF#refs/tags/}"
+          {
+            printf '# version: %s\n' "$tag"
+            cat SHA256SUMS
+          } > SHA256SUMS.versioned
+          mv -f SHA256SUMS.versioned SHA256SUMS
+          cat SHA256SUMS
+      - name: Probe for Tier 1 secrets
+        id: tier1_secrets
+        env:
+          # Pass secrets through env so step-level `if` can compare a plain
+          # env var instead of a `secrets.*` expression (actionlint rejects
+          # step-level `if: secrets.X != ''`).
+          GPG_RELEASE_KEY_PRIVATE: ${{ secrets.GPG_RELEASE_KEY_PRIVATE }}
+        run: |
+          if [ -n "${GPG_RELEASE_KEY_PRIVATE:-}" ]; then
+            echo "has_gpg=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_gpg=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Detach-sign SHA256SUMS (Tier 1)
+        if: steps.tier1_secrets.outputs.has_gpg == 'true'
+        env:
+          GPG_RELEASE_KEY_PRIVATE: ${{ secrets.GPG_RELEASE_KEY_PRIVATE }}
+          GPG_RELEASE_KEY_PASSPHRASE: ${{ secrets.GPG_RELEASE_KEY_PASSPHRASE }}
+          RELEASE_KEY_ID: ${{ secrets.RELEASE_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          tmp_home="$(mktemp -d)"
+          chmod 700 "$tmp_home"
+          export GNUPGHOME="$tmp_home"
+          echo "$GPG_RELEASE_KEY_PRIVATE" | gpg --batch --import
+          # The release secret stores the private key in ascii-armored
+          # form; allow the workflow to override --local-user with the
+          # explicit fingerprint baked in via RELEASE_FINGERPRINT.
+          gpg --batch --yes --quiet \
+              --pinentry-mode loopback \
+              --passphrase "$GPG_RELEASE_KEY_PASSPHRASE" \
+              --local-user "$RELEASE_KEY_ID" \
+              --detach-sign --armor \
+              --output release/SHA256SUMS.asc \
+              release/SHA256SUMS
+          rm -rf "$tmp_home"
+      - name: Banner — Tier 1 skipped
+        if: steps.tier1_secrets.outputs.has_gpg == 'false'
+        run: |
+          echo "::warning::GPG_RELEASE_KEY_PRIVATE not set on this fork — SHA256SUMS.asc was NOT produced. install.sh will refuse these artefacts in production mode (--dev-allow-unsigned only)."
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: |
+            release/cordum-*
+            release/SHA256SUMS
+            release/SHA256SUMS.asc
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: gh release create
+    needs: [sign-manifest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ !contains(github.ref, '-rc') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+          path: release/
+      - name: Require signed manifest on canonical release
+        if: github.repository == 'cordum-io/cordum'
+        run: |
+          set -euo pipefail
+          if [ ! -f release/SHA256SUMS.asc ]; then
+            echo "::error::canonical release tag ${GITHUB_REF#refs/tags/} requires a signed SHA256SUMS.asc; sign-manifest job did not produce one (GPG_RELEASE_KEY_PRIVATE missing or signing failed). Refusing to publish an unsigned release."
+            exit 1
+          fi
+          if [ ! -f release/SHA256SUMS ]; then
+            echo "::error::release/SHA256SUMS missing"
+            exit 1
+          fi
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          assets=()
+          for f in release/cordum-* release/SHA256SUMS release/SHA256SUMS.asc; do
+            [ -f "$f" ] && assets+=("$f")
+          done
+          gh release create "$tag" \
+            --title "$tag" \
+            --notes "Cordum desktop binaries for $tag. Verify via SHA256SUMS + SHA256SUMS.asc — see docs/security/binary-signing.md." \
+            "${assets[@]}"

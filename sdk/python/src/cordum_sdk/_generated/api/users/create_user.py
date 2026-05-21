@@ -13,21 +13,13 @@ from typing import cast
 from typing import Dict
 
 
-
 def _get_kwargs(
     *,
     body: CreateUserRequest,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
-
-    
 
     _kwargs: Dict[str, Any] = {
         "method": "post",
@@ -36,7 +28,6 @@ def _get_kwargs(
 
     _body = body.to_dict()
 
-
     _kwargs["json"] = _body
     headers["Content-Type"] = "application/json"
 
@@ -44,11 +35,11 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, AuthUser]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, AuthUser]]:
     if response.status_code == 201:
         response_201 = AuthUser.from_dict(response.json())
-
-
 
         return response_201
     if response.status_code == 400:
@@ -72,7 +63,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, AuthUser]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, AuthUser]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -86,9 +79,8 @@ def sync_detailed(
     client: Union[AuthenticatedClient, Client],
     body: CreateUserRequest,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, AuthUser]]:
-    """ Create a user
+    """Create a user
 
     Args:
         x_tenant_id (str):
@@ -100,13 +92,11 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, AuthUser]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         body=body,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -115,14 +105,14 @@ x_tenant_id=x_tenant_id,
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateUserRequest,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, AuthUser]]:
-    """ Create a user
+    """Create a user
 
     Args:
         x_tenant_id (str):
@@ -134,24 +124,22 @@ def sync(
 
     Returns:
         Union[Any, AuthUser]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-body=body,
-x_tenant_id=x_tenant_id,
-
+        body=body,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateUserRequest,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, AuthUser]]:
-    """ Create a user
+    """Create a user
 
     Args:
         x_tenant_id (str):
@@ -163,29 +151,25 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, AuthUser]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         body=body,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     body: CreateUserRequest,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, AuthUser]]:
-    """ Create a user
+    """Create a user
 
     Args:
         x_tenant_id (str):
@@ -197,12 +181,12 @@ async def asyncio(
 
     Returns:
         Union[Any, AuthUser]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-body=body,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            body=body,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

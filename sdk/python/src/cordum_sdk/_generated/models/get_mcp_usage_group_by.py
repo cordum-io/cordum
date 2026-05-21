@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class GetMcpUsageGroupBy(str, Enum):
     METHOD = "method"
     SUBJECT = "subject"

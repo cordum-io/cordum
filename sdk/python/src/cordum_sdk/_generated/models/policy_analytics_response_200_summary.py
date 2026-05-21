@@ -12,29 +12,24 @@ from ..types import UNSET, Unset
 from typing import Union
 
 
-
-
-
-
 T = TypeVar("T", bound="PolicyAnalyticsResponse200Summary")
 
 
 @_attrs_define
 class PolicyAnalyticsResponse200Summary:
-    """ 
-        Attributes:
-            total_rules (Union[Unset, int]):
-            total_hits (Union[Unset, int]):
-            total_overrides (Union[Unset, int]):
-            highest_override_rule_id (Union[Unset, str]):
-     """
+    """
+    Attributes:
+        total_rules (Union[Unset, int]):
+        total_hits (Union[Unset, int]):
+        total_overrides (Union[Unset, int]):
+        highest_override_rule_id (Union[Unset, str]):
+    """
 
     total_rules: Union[Unset, int] = UNSET
     total_hits: Union[Unset, int] = UNSET
     total_overrides: Union[Unset, int] = UNSET
     highest_override_rule_id: Union[Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         total_rules = self.total_rules
@@ -45,11 +40,9 @@ class PolicyAnalyticsResponse200Summary:
 
         highest_override_rule_id = self.highest_override_rule_id
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if total_rules is not UNSET:
             field_dict["total_rules"] = total_rules
         if total_hits is not UNSET:
@@ -60,8 +53,6 @@ class PolicyAnalyticsResponse200Summary:
             field_dict["highest_override_rule_id"] = highest_override_rule_id
 
         return field_dict
-
-
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
@@ -80,7 +71,6 @@ class PolicyAnalyticsResponse200Summary:
             total_overrides=total_overrides,
             highest_override_rule_id=highest_override_rule_id,
         )
-
 
         policy_analytics_response_200_summary.additional_properties = d
         return policy_analytics_response_200_summary

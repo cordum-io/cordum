@@ -17,10 +17,7 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.timeline_event_data_type_0 import TimelineEventDataType0
-
-
-
+    from ..models.timeline_event_data_type_0 import TimelineEventDataType0
 
 
 T = TypeVar("T", bound="TimelineEvent")
@@ -28,25 +25,25 @@ T = TypeVar("T", bound="TimelineEvent")
 
 @_attrs_define
 class TimelineEvent:
-    """ 
-        Attributes:
-            timestamp (Union[Unset, datetime.datetime]):
-            type (Union[Unset, str]):
-            step_id (Union[None, Unset, str]):
-            message (Union[Unset, str]):
-            data (Union['TimelineEventDataType0', None, Unset]):
-     """
+    """
+    Attributes:
+        timestamp (Union[Unset, datetime.datetime]):
+        type (Union[Unset, str]):
+        step_id (Union[None, Unset, str]):
+        message (Union[Unset, str]):
+        data (Union['TimelineEventDataType0', None, Unset]):
+    """
 
     timestamp: Union[Unset, datetime.datetime] = UNSET
     type: Union[Unset, str] = UNSET
     step_id: Union[None, Unset, str] = UNSET
     message: Union[Unset, str] = UNSET
-    data: Union['TimelineEventDataType0', None, Unset] = UNSET
+    data: Union["TimelineEventDataType0", None, Unset] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.timeline_event_data_type_0 import TimelineEventDataType0
+
         timestamp: Union[Unset, str] = UNSET
         if not isinstance(self.timestamp, Unset):
             timestamp = self.timestamp.isoformat()
@@ -69,11 +66,9 @@ class TimelineEvent:
         else:
             data = self.data
 
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-        })
+        field_dict.update({})
         if timestamp is not UNSET:
             field_dict["timestamp"] = timestamp
         if type is not UNSET:
@@ -87,21 +82,17 @@ class TimelineEvent:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.timeline_event_data_type_0 import TimelineEventDataType0
+
         d = src_dict.copy()
         _timestamp = d.pop("timestamp", UNSET)
         timestamp: Union[Unset, datetime.datetime]
-        if isinstance(_timestamp,  Unset):
+        if isinstance(_timestamp, Unset):
             timestamp = UNSET
         else:
             timestamp = isoparse(_timestamp)
-
-
-
 
         type = d.pop("type", UNSET)
 
@@ -114,10 +105,9 @@ class TimelineEvent:
 
         step_id = _parse_step_id(d.pop("step_id", UNSET))
 
-
         message = d.pop("message", UNSET)
 
-        def _parse_data(data: object) -> Union['TimelineEventDataType0', None, Unset]:
+        def _parse_data(data: object) -> Union["TimelineEventDataType0", None, Unset]:
             if data is None:
                 return data
             if isinstance(data, Unset):
@@ -127,15 +117,12 @@ class TimelineEvent:
                     raise TypeError()
                 data_type_0 = TimelineEventDataType0.from_dict(data)
 
-
-
                 return data_type_0
-            except: # noqa: E722
+            except:  # noqa: E722
                 pass
-            return cast(Union['TimelineEventDataType0', None, Unset], data)
+            return cast(Union["TimelineEventDataType0", None, Unset], data)
 
         data = _parse_data(d.pop("data", UNSET))
-
 
         timeline_event = cls(
             timestamp=timestamp,
@@ -144,7 +131,6 @@ class TimelineEvent:
             message=message,
             data=data,
         )
-
 
         timeline_event.additional_properties = d
         return timeline_event

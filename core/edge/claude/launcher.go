@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,6 +108,9 @@ func LaunchEdgeClaude(ctx context.Context, opts LaunchOptions) (LaunchResult, er
 	if err != nil {
 		return LaunchResult{}, err
 	}
+	if cfg.AgentdListener != nil {
+		defer func() { _ = cfg.AgentdListener.Close() }()
+	}
 	claudePath, err := resolveClaudePath(opts)
 	if err != nil && !opts.DryRun && !opts.NoLaunch {
 		return LaunchResult{}, err
@@ -138,7 +142,7 @@ func LaunchEdgeClaude(ctx context.Context, opts LaunchOptions) (LaunchResult, er
 	if err := waitForAgentdReady(ctx, cfg.AgentdURL, agentd.done); err != nil {
 		return LaunchResult{}, err
 	}
-	state, err := waitForLaunchState(ctx, cfg.StateDir, defaultLaunchSessionStateWait)
+	state, err := waitForLaunchStateOrAgentdExit(ctx, cfg.StateDir, defaultLaunchSessionStateWait, agentd.done)
 	if err != nil {
 		return LaunchResult{}, err
 	}
@@ -166,6 +170,7 @@ type launchConfig struct {
 	ApprovalWaitTimeout time.Duration
 	AgentdPath          string
 	AgentdURL           string
+	AgentdListener      net.Listener
 	HookNonce           string
 	HookCommand         string
 	StateDir            string
@@ -197,10 +202,18 @@ func prepareLaunchConfig(opts LaunchOptions, meta LaunchMetadata) (launchConfig,
 		return launchConfig{}, fmt.Errorf("hook command: %w", err)
 	}
 	agentdURL := strings.TrimSpace(opts.AgentdURL)
+	var agentdListener net.Listener
 	if agentdURL == "" {
-		agentdURL, err = reserveLoopbackHookURL()
-		if err != nil {
-			return launchConfig{}, err
+		if supportsAgentdListenerInheritance() {
+			agentdURL, agentdListener, err = reserveLoopbackHookListener()
+			if err != nil {
+				return launchConfig{}, err
+			}
+		} else {
+			agentdURL, err = reserveLoopbackHookURLLegacy()
+			if err != nil {
+				return launchConfig{}, err
+			}
 		}
 	}
 	policy := strings.TrimSpace(opts.PolicyMode)
@@ -215,13 +228,16 @@ func prepareLaunchConfig(opts LaunchOptions, meta LaunchMetadata) (launchConfig,
 	if stateDir != "" {
 		stateDir, err = safeexec.NormalizeDir(stateDir, nil)
 		if err != nil {
+			if agentdListener != nil {
+				_ = agentdListener.Close()
+			}
 			return launchConfig{}, fmt.Errorf("state dir: %w", err)
 		}
 	}
 	return launchConfig{
 		Gateway: strings.TrimRight(strings.TrimSpace(opts.Gateway), "/"), APIKey: strings.TrimSpace(opts.APIKey),
 		TenantID: strings.TrimSpace(opts.TenantID), PolicyMode: policy, ApprovalWaitTimeout: wait,
-		AgentdPath: agentdPath, AgentdURL: agentdURL, HookNonce: nonce,
+		AgentdPath: agentdPath, AgentdURL: agentdURL, AgentdListener: agentdListener, HookNonce: nonce,
 		HookCommand: hookCommand, StateDir: stateDir,
 		DashboardURL: strings.TrimSpace(opts.DashboardURL), Env: opts.Env,
 		CACertPath: strings.TrimSpace(opts.CACertPath),

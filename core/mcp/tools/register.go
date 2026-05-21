@@ -153,7 +153,10 @@ func RegisterWithBridge(registry *mcp.ToolRegistry, bridge mcp.ServiceBridge) er
 // returns on GET /api/v1/agents/{id}. Only fields the filter needs.
 type gatewayAgentResponse struct {
 	ID                  string   `json:"id"`
+	AllowedServers      []string `json:"allowed_servers"`
 	AllowedTools        []string `json:"allowed_tools"`
+	AllowedResources    []string `json:"allowed_resources"`
+	Entitlements        []string `json:"entitlements"`
 	RiskTier            string   `json:"risk_tier"`
 	DataClassifications []string `json:"data_classifications"`
 	Status              string   `json:"status"`
@@ -208,7 +211,10 @@ func (c *GatewayClient) FetchAgentIdentity(ctx context.Context, agentID string) 
 	}
 	return &mcp.AgentIdentity{
 		ID:                  payload.ID,
+		AllowedServers:      append([]string{}, payload.AllowedServers...),
 		AllowedTools:        append([]string{}, payload.AllowedTools...),
+		AllowedResources:    append([]string{}, payload.AllowedResources...),
+		Entitlements:        append([]string{}, payload.Entitlements...),
 		RiskTier:            payload.RiskTier,
 		DataClassifications: append([]string{}, payload.DataClassifications...),
 	}, nil

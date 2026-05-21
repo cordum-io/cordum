@@ -6,4 +6,4 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeApprovalMetadata = {[key: string]: string};
+export type EdgeApprovalMetadata = { [key: string]: string };

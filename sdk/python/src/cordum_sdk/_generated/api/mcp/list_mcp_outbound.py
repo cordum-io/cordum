@@ -16,7 +16,6 @@ from typing import Union
 import datetime
 
 
-
 def _get_kwargs(
     *,
     since: Union[Unset, datetime.datetime] = UNSET,
@@ -24,14 +23,9 @@ def _get_kwargs(
     limit: Union[Unset, int] = 100,
     cursor: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
 
     params: Dict[str, Any] = {}
 
@@ -49,9 +43,7 @@ def _get_kwargs(
 
     params["cursor"] = cursor
 
-
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: Dict[str, Any] = {
         "method": "get",
@@ -59,16 +51,15 @@ def _get_kwargs(
         "params": params,
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, ListMcpOutboundResponse200]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, ListMcpOutboundResponse200]]:
     if response.status_code == 200:
         response_200 = ListMcpOutboundResponse200.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 401:
@@ -86,7 +77,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, ListMcpOutboundResponse200]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, ListMcpOutboundResponse200]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -103,9 +96,8 @@ def sync_detailed(
     limit: Union[Unset, int] = 100,
     cursor: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ListMcpOutboundResponse200]]:
-    """ List outbound MCP signed-call events
+    """List outbound MCP signed-call events
 
      Walks the tenant's audit chain stream and returns observed outbound MCP calls, filtered by time
     range + subject. Admin-only.
@@ -123,16 +115,14 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, ListMcpOutboundResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         since=since,
-until=until,
-limit=limit,
-cursor=cursor,
-x_tenant_id=x_tenant_id,
-
+        until=until,
+        limit=limit,
+        cursor=cursor,
+        x_tenant_id=x_tenant_id,
     )
 
     response = client.get_httpx_client().request(
@@ -140,6 +130,7 @@ x_tenant_id=x_tenant_id,
     )
 
     return _build_response(client=client, response=response)
+
 
 def sync(
     *,
@@ -149,9 +140,8 @@ def sync(
     limit: Union[Unset, int] = 100,
     cursor: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ListMcpOutboundResponse200]]:
-    """ List outbound MCP signed-call events
+    """List outbound MCP signed-call events
 
      Walks the tenant's audit chain stream and returns observed outbound MCP calls, filtered by time
     range + subject. Admin-only.
@@ -169,18 +159,17 @@ def sync(
 
     Returns:
         Union[Any, ListMcpOutboundResponse200]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-since=since,
-until=until,
-limit=limit,
-cursor=cursor,
-x_tenant_id=x_tenant_id,
-
+        since=since,
+        until=until,
+        limit=limit,
+        cursor=cursor,
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
@@ -190,9 +179,8 @@ async def asyncio_detailed(
     limit: Union[Unset, int] = 100,
     cursor: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Response[Union[Any, ListMcpOutboundResponse200]]:
-    """ List outbound MCP signed-call events
+    """List outbound MCP signed-call events
 
      Walks the tenant's audit chain stream and returns observed outbound MCP calls, filtered by time
     range + subject. Admin-only.
@@ -210,23 +198,20 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, ListMcpOutboundResponse200]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         since=since,
-until=until,
-limit=limit,
-cursor=cursor,
-x_tenant_id=x_tenant_id,
-
+        until=until,
+        limit=limit,
+        cursor=cursor,
+        x_tenant_id=x_tenant_id,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
@@ -236,9 +221,8 @@ async def asyncio(
     limit: Union[Unset, int] = 100,
     cursor: Union[Unset, str] = UNSET,
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, ListMcpOutboundResponse200]]:
-    """ List outbound MCP signed-call events
+    """List outbound MCP signed-call events
 
      Walks the tenant's audit chain stream and returns observed outbound MCP calls, filtered by time
     range + subject. Admin-only.
@@ -256,15 +240,15 @@ async def asyncio(
 
     Returns:
         Union[Any, ListMcpOutboundResponse200]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-since=since,
-until=until,
-limit=limit,
-cursor=cursor,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            since=since,
+            until=until,
+            limit=limit,
+            cursor=cursor,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

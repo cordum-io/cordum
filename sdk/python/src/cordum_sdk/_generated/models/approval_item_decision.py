@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class ApprovalItemDecision(str, Enum):
     APPROVED = "APPROVED"
     PENDING = "PENDING"

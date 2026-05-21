@@ -8,8 +8,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/cordum/cordum/core/edge/listenerhandoff"
 )
 
 func TestEdgeClaudeDryRunSettingsOutputRedactsSecrets(t *testing.T) {
@@ -51,6 +54,10 @@ func TestEdgeClaudeDryRunSettingsOutputRedactsSecrets(t *testing.T) {
 	if strings.Contains(env["CORDUM_AGENTD_SOCKET"], "nonce=") {
 		t.Fatalf("agentd socket URL leaked nonce: %s", env["CORDUM_AGENTD_SOCKET"])
 	}
+	listenerKey, listenerValue := listenerhandoff.ValueForCurrentPlatform(env)
+	if listenerValue == "" {
+		t.Fatalf("agentd helper did not receive inherited listener %s: %#v", listenerKey, env)
+	}
 }
 
 func TestMain(m *testing.M) {
@@ -62,15 +69,17 @@ func TestMain(m *testing.M) {
 
 func runCordumctlAgentdHelper() int {
 	captureCLIEnv(os.Getenv("CORDUMCTL_TEST_AGENTD_ENV_PATH"), map[string]string{
-		"CORDUM_AGENTD_NONCE":  os.Getenv("CORDUM_AGENTD_NONCE"),
-		"CORDUM_AGENTD_SOCKET": os.Getenv("CORDUM_AGENTD_SOCKET"),
-		"CORDUM_API_KEY":       os.Getenv("CORDUM_API_KEY"),
+		listenerhandoff.FDEnv:     os.Getenv(listenerhandoff.FDEnv),
+		listenerhandoff.HandleEnv: os.Getenv(listenerhandoff.HandleEnv),
+		"CORDUM_AGENTD_NONCE":     os.Getenv("CORDUM_AGENTD_NONCE"),
+		"CORDUM_AGENTD_SOCKET":    os.Getenv("CORDUM_AGENTD_SOCKET"),
+		"CORDUM_API_KEY":          os.Getenv("CORDUM_API_KEY"),
 	})
 	u, err := url.Parse(os.Getenv("CORDUM_AGENTD_SOCKET"))
 	if err != nil {
 		return 4
 	}
-	ln, err := net.Listen("tcp", u.Host)
+	ln, err := cordumctlAgentdHelperListener(u.Host)
 	if err != nil {
 		return 5
 	}
@@ -85,6 +94,26 @@ func runCordumctlAgentdHelper() int {
 		}
 		_ = conn.Close()
 	}
+}
+
+func cordumctlAgentdHelperListener(host string) (net.Listener, error) {
+	_, raw := listenerhandoff.ValueForCurrentPlatform(map[string]string{
+		listenerhandoff.FDEnv:     os.Getenv(listenerhandoff.FDEnv),
+		listenerhandoff.HandleEnv: os.Getenv(listenerhandoff.HandleEnv),
+	})
+	if raw != "" {
+		fd, err := strconv.Atoi(raw)
+		if err != nil {
+			return nil, err
+		}
+		file := os.NewFile(uintptr(fd), "cordum-agentd-listener")
+		if file == nil {
+			return nil, os.ErrInvalid
+		}
+		defer func() { _ = file.Close() }()
+		return net.FileListener(file)
+	}
+	return net.Listen("tcp", host)
 }
 
 func writeCordumctlState() error {

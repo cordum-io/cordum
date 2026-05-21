@@ -8,27 +8,18 @@ from ...types import Response, UNSET
 from ... import errors
 
 
-
-
-def _get_kwargs(
-    
-) -> Dict[str, Any]:
-    
-
-    
-
-    
-
+def _get_kwargs() -> Dict[str, Any]:
     _kwargs: Dict[str, Any] = {
         "method": "get",
         "url": "/api/v1/stream",
     }
 
-
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Any]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Any]:
     if response.status_code == 101:
         return None
     if response.status_code == 401:
@@ -39,7 +30,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Any]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Any]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -51,9 +44,8 @@ def _build_response(*, client: Union[AuthenticatedClient, Client], response: htt
 def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
-
 ) -> Response[Any]:
-    """ WebSocket event bus stream
+    """WebSocket event bus stream
 
      Upgrades to a WebSocket connection. Authenticates via the
     `cordum-api-key.<base64>` subprotocol. Streams real-time bus events
@@ -69,12 +61,9 @@ def sync_detailed(
 
     Returns:
         Response[Any]
-     """
+    """
 
-
-    kwargs = _get_kwargs(
-        
-    )
+    kwargs = _get_kwargs()
 
     response = client.get_httpx_client().request(
         **kwargs,
@@ -86,9 +75,8 @@ def sync_detailed(
 async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
-
 ) -> Response[Any]:
-    """ WebSocket event bus stream
+    """WebSocket event bus stream
 
      Upgrades to a WebSocket connection. Authenticates via the
     `cordum-api-key.<base64>` subprotocol. Streams real-time bus events
@@ -104,16 +92,10 @@ async def asyncio_detailed(
 
     Returns:
         Response[Any]
-     """
+    """
 
+    kwargs = _get_kwargs()
 
-    kwargs = _get_kwargs(
-        
-    )
-
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
-

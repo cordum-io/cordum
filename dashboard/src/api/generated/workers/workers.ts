@@ -5,20 +5,21 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import {
-  useQuery
-} from '@tanstack/react-query';
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
   DataTag,
   DefinedInitialDataOptions,
   DefinedUseQueryResult,
+  MutationFunction,
   QueryClient,
   QueryFunction,
   QueryKey,
   UndefinedInitialDataOptions,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
-  UseQueryResult
-} from '@tanstack/react-query';
+  UseQueryResult,
+} from "@tanstack/react-query";
 
 import type {
   BadRequestResponse,
@@ -28,296 +29,577 @@ import type {
   InternalServerErrorResponse,
   ListWorkers200,
   NotFoundResponse,
+  RevokeWorkerSession200,
+  ServiceUnavailableResponse,
   UnauthorizedResponse,
-  WorkerRuntime
-} from '.././model';
+  WorkerRuntime,
+} from ".././model";
 
-import { apiClient } from '../../client';
-
-
-
+import { apiClient } from "../../client";
 
 /**
  * @summary List registered workers and heartbeats
  */
-export const listWorkers = (
-    
- signal?: AbortSignal
-) => {
-      
-      
-      return apiClient<ListWorkers200>(
-      {url: `/api/v1/workers`, method: 'GET', signal
-    },
-      );
-    }
-  
-
-
+export const listWorkers = (signal?: AbortSignal) => {
+  return apiClient<ListWorkers200>({
+    url: `/api/v1/workers`,
+    method: "GET",
+    signal,
+  });
+};
 
 export const getListWorkersQueryKey = () => {
-    return [
-    `/api/v1/workers`
-    ] as const;
-    }
+  return [`/api/v1/workers`] as const;
+};
 
-    
-export const getListWorkersQueryOptions = <TData = Awaited<ReturnType<typeof listWorkers>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listWorkers>>, TError, TData>>, }
-) => {
+export const getListWorkersQueryOptions = <
+  TData = Awaited<ReturnType<typeof listWorkers>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof listWorkers>>, TError, TData>
+  >;
+}) => {
+  const { query: queryOptions } = options ?? {};
 
-const {query: queryOptions} = options ?? {};
+  const queryKey = queryOptions?.queryKey ?? getListWorkersQueryKey();
 
-  const queryKey =  queryOptions?.queryKey ?? getListWorkersQueryKey();
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listWorkers>>> = ({
+    signal,
+  }) => listWorkers(signal);
 
-  
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listWorkers>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listWorkers>>> = ({ signal }) => listWorkers(signal);
+export type ListWorkersQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listWorkers>>
+>;
+export type ListWorkersQueryError =
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse;
 
-      
-
-      
-
-   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listWorkers>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type ListWorkersQueryResult = NonNullable<Awaited<ReturnType<typeof listWorkers>>>
-export type ListWorkersQueryError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse
-
-
-export function useListWorkers<TData = Awaited<ReturnType<typeof listWorkers>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listWorkers>>, TError, TData>> & Pick<
+export function useListWorkers<
+  TData = Awaited<ReturnType<typeof listWorkers>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listWorkers>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof listWorkers>>,
           TError,
           Awaited<ReturnType<typeof listWorkers>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListWorkers<TData = Awaited<ReturnType<typeof listWorkers>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listWorkers>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useListWorkers<
+  TData = Awaited<ReturnType<typeof listWorkers>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listWorkers>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof listWorkers>>,
           TError,
           Awaited<ReturnType<typeof listWorkers>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useListWorkers<TData = Awaited<ReturnType<typeof listWorkers>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listWorkers>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useListWorkers<
+  TData = Awaited<ReturnType<typeof listWorkers>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listWorkers>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List registered workers and heartbeats
  */
 
-export function useListWorkers<TData = Awaited<ReturnType<typeof listWorkers>>, TError = UnauthorizedResponse | ForbiddenResponse | InternalServerErrorResponse>(
-  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listWorkers>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useListWorkers<
+  TData = Awaited<ReturnType<typeof listWorkers>>,
+  TError =
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listWorkers>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getListWorkersQueryOptions(options);
 
-  const queryOptions = getListWorkersQueryOptions(options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
-
-
-
 /**
  * @summary Get a single worker runtime snapshot
  */
-export const getWorker = (
-    id: string,
- signal?: AbortSignal
+export const getWorker = (id: string, signal?: AbortSignal) => {
+  return apiClient<WorkerRuntime>({
+    url: `/api/v1/workers/${id}`,
+    method: "GET",
+    signal,
+  });
+};
+
+export const getGetWorkerQueryKey = (id?: string) => {
+  return [`/api/v1/workers/${id}`] as const;
+};
+
+export const getGetWorkerQueryOptions = <
+  TData = Awaited<ReturnType<typeof getWorker>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorker>>, TError, TData>
+    >;
+  },
 ) => {
-      
-      
-      return apiClient<WorkerRuntime>(
-      {url: `/api/v1/workers/${id}`, method: 'GET', signal
-    },
-      );
-    }
-  
+  const { query: queryOptions } = options ?? {};
 
+  const queryKey = queryOptions?.queryKey ?? getGetWorkerQueryKey(id);
 
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorker>>> = ({
+    signal,
+  }) => getWorker(id, signal);
 
-export const getGetWorkerQueryKey = (id?: string,) => {
-    return [
-    `/api/v1/workers/${id}`
-    ] as const;
-    }
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getWorker>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData>;
+  };
+};
 
-    
-export const getGetWorkerQueryOptions = <TData = Awaited<ReturnType<typeof getWorker>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorker>>, TError, TData>>, }
-) => {
+export type GetWorkerQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getWorker>>
+>;
+export type GetWorkerQueryError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse;
 
-const {query: queryOptions} = options ?? {};
-
-  const queryKey =  queryOptions?.queryKey ?? getGetWorkerQueryKey(id);
-
-  
-
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorker>>> = ({ signal }) => getWorker(id, signal);
-
-      
-
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getWorker>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetWorkerQueryResult = NonNullable<Awaited<ReturnType<typeof getWorker>>>
-export type GetWorkerQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse
-
-
-export function useGetWorker<TData = Awaited<ReturnType<typeof getWorker>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
- id: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorker>>, TError, TData>> & Pick<
+export function useGetWorker<
+  TData = Awaited<ReturnType<typeof getWorker>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse,
+>(
+  id: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorker>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getWorker>>,
           TError,
           Awaited<ReturnType<typeof getWorker>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetWorker<TData = Awaited<ReturnType<typeof getWorker>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorker>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetWorker<
+  TData = Awaited<ReturnType<typeof getWorker>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorker>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getWorker>>,
           TError,
           Awaited<ReturnType<typeof getWorker>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetWorker<TData = Awaited<ReturnType<typeof getWorker>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorker>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetWorker<
+  TData = Awaited<ReturnType<typeof getWorker>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorker>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary Get a single worker runtime snapshot
  */
 
-export function useGetWorker<TData = Awaited<ReturnType<typeof getWorker>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse>(
- id: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorker>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetWorker<
+  TData = Awaited<ReturnType<typeof getWorker>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse,
+>(
+  id: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorker>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetWorkerQueryOptions(id, options);
 
-  const queryOptions = getGetWorkerQueryOptions(id,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
-
-
-
 
 /**
  * @summary List jobs associated with a worker
  */
 export const getWorkerJobs = (
-    id: string,
-    params?: GetWorkerJobsParams,
- signal?: AbortSignal
+  id: string,
+  params?: GetWorkerJobsParams,
+  signal?: AbortSignal,
 ) => {
-      
-      
-      return apiClient<GetWorkerJobs200>(
-      {url: `/api/v1/workers/${id}/jobs`, method: 'GET',
-        params, signal
-    },
-      );
-    }
-  
+  return apiClient<GetWorkerJobs200>({
+    url: `/api/v1/workers/${id}/jobs`,
+    method: "GET",
+    params,
+    signal,
+  });
+};
 
-
-
-export const getGetWorkerJobsQueryKey = (id?: string,
-    params?: GetWorkerJobsParams,) => {
-    return [
-    `/api/v1/workers/${id}/jobs`, ...(params ? [params]: [])
-    ] as const;
-    }
-
-    
-export const getGetWorkerJobsQueryOptions = <TData = Awaited<ReturnType<typeof getWorkerJobs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(id: string,
-    params?: GetWorkerJobsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkerJobs>>, TError, TData>>, }
+export const getGetWorkerJobsQueryKey = (
+  id?: string,
+  params?: GetWorkerJobsParams,
 ) => {
+  return [`/api/v1/workers/${id}/jobs`, ...(params ? [params] : [])] as const;
+};
 
-const {query: queryOptions} = options ?? {};
+export const getGetWorkerJobsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getWorkerJobs>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  params?: GetWorkerJobsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorkerJobs>>, TError, TData>
+    >;
+  },
+) => {
+  const { query: queryOptions } = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getGetWorkerJobsQueryKey(id,params);
+  const queryKey =
+    queryOptions?.queryKey ?? getGetWorkerJobsQueryKey(id, params);
 
-  
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorkerJobs>>> = ({
+    signal,
+  }) => getWorkerJobs(id, params, signal);
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWorkerJobs>>> = ({ signal }) => getWorkerJobs(id,params, signal);
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getWorkerJobs>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData> };
+};
 
-      
+export type GetWorkerJobsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getWorkerJobs>>
+>;
+export type GetWorkerJobsQueryError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | NotFoundResponse
+  | InternalServerErrorResponse;
 
-      
-
-   return  { queryKey, queryFn, enabled: !!(id), ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getWorkerJobs>>, TError, TData> & { queryKey: DataTag<QueryKey, TData> }
-}
-
-export type GetWorkerJobsQueryResult = NonNullable<Awaited<ReturnType<typeof getWorkerJobs>>>
-export type GetWorkerJobsQueryError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse
-
-
-export function useGetWorkerJobs<TData = Awaited<ReturnType<typeof getWorkerJobs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string,
-    params: undefined |  GetWorkerJobsParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkerJobs>>, TError, TData>> & Pick<
+export function useGetWorkerJobs<
+  TData = Awaited<ReturnType<typeof getWorkerJobs>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  params: undefined | GetWorkerJobsParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorkerJobs>>, TError, TData>
+    > &
+      Pick<
         DefinedInitialDataOptions<
           Awaited<ReturnType<typeof getWorkerJobs>>,
           TError,
           Awaited<ReturnType<typeof getWorkerJobs>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetWorkerJobs<TData = Awaited<ReturnType<typeof getWorkerJobs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string,
-    params?: GetWorkerJobsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkerJobs>>, TError, TData>> & Pick<
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData>;
+};
+export function useGetWorkerJobs<
+  TData = Awaited<ReturnType<typeof getWorkerJobs>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  params?: GetWorkerJobsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorkerJobs>>, TError, TData>
+    > &
+      Pick<
         UndefinedInitialDataOptions<
           Awaited<ReturnType<typeof getWorkerJobs>>,
           TError,
           Awaited<ReturnType<typeof getWorkerJobs>>
-        > , 'initialData'
-      >, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
-export function useGetWorkerJobs<TData = Awaited<ReturnType<typeof getWorkerJobs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string,
-    params?: GetWorkerJobsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkerJobs>>, TError, TData>>, }
- , queryClient?: QueryClient
-  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> }
+        >,
+        "initialData"
+      >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
+export function useGetWorkerJobs<
+  TData = Awaited<ReturnType<typeof getWorkerJobs>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  params?: GetWorkerJobsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorkerJobs>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
 /**
  * @summary List jobs associated with a worker
  */
 
-export function useGetWorkerJobs<TData = Awaited<ReturnType<typeof getWorkerJobs>>, TError = BadRequestResponse | UnauthorizedResponse | ForbiddenResponse | NotFoundResponse | InternalServerErrorResponse>(
- id: string,
-    params?: GetWorkerJobsParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getWorkerJobs>>, TError, TData>>, }
- , queryClient?: QueryClient 
- ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+export function useGetWorkerJobs<
+  TData = Awaited<ReturnType<typeof getWorkerJobs>>,
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | NotFoundResponse
+    | InternalServerErrorResponse,
+>(
+  id: string,
+  params?: GetWorkerJobsParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getWorkerJobs>>, TError, TData>
+    >;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> } {
+  const queryOptions = getGetWorkerJobsQueryOptions(id, params, options);
 
-  const queryOptions = getGetWorkerJobsQueryOptions(id,params,options)
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData> };
 
-  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData> };
-
-  query.queryKey = queryOptions.queryKey ;
+  query.queryKey = queryOptions.queryKey;
 
   return query;
 }
 
+/**
+ * @summary Revoke an active worker session
+ */
+export const revokeWorkerSession = (id: string, signal?: AbortSignal) => {
+  return apiClient<RevokeWorkerSession200>({
+    url: `/api/v1/workers/${id}/revoke-session`,
+    method: "POST",
+    signal,
+  });
+};
 
+export const getRevokeWorkerSessionMutationOptions = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof revokeWorkerSession>>,
+    TError,
+    { id: string },
+    TContext
+  >;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof revokeWorkerSession>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationKey = ["revokeWorkerSession"];
+  const { mutation: mutationOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey } };
 
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof revokeWorkerSession>>,
+    { id: string }
+  > = (props) => {
+    const { id } = props ?? {};
 
+    return revokeWorkerSession(id);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RevokeWorkerSessionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof revokeWorkerSession>>
+>;
+
+export type RevokeWorkerSessionMutationError =
+  | BadRequestResponse
+  | UnauthorizedResponse
+  | ForbiddenResponse
+  | InternalServerErrorResponse
+  | ServiceUnavailableResponse;
+
+/**
+ * @summary Revoke an active worker session
+ */
+export const useRevokeWorkerSession = <
+  TError =
+    | BadRequestResponse
+    | UnauthorizedResponse
+    | ForbiddenResponse
+    | InternalServerErrorResponse
+    | ServiceUnavailableResponse,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof revokeWorkerSession>>,
+      TError,
+      { id: string },
+      TContext
+    >;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof revokeWorkerSession>>,
+  TError,
+  { id: string },
+  TContext
+> => {
+  const mutationOptions = getRevokeWorkerSessionMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};

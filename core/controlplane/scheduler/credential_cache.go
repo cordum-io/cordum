@@ -57,7 +57,12 @@ type WorkerCredentialCache struct {
 func NewWorkerCredentialCache(service *workercredentials.Service) *WorkerCredentialCache {
 	return &WorkerCredentialCache{
 		service: service,
-		list:    service.List,
+		list: func(ctx context.Context) ([]workercredentials.Credential, error) {
+			if service == nil {
+				return nil, nil
+			}
+			return service.List(ctx, "")
+		},
 		records: map[string]workercredentials.Credential{},
 	}
 }
@@ -73,7 +78,9 @@ func (c *WorkerCredentialCache) Refresh(ctx context.Context) error {
 
 	list := c.list
 	if list == nil && c.service != nil {
-		list = c.service.List
+		list = func(ctx context.Context) ([]workercredentials.Credential, error) {
+			return c.service.List(ctx, "")
+		}
 	}
 	if list == nil {
 		return nil

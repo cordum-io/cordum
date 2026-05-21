@@ -6,4 +6,4 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type LicenseInfoLimits = {[key: string]: number};
+export type LicenseInfoLimits = { [key: string]: number };

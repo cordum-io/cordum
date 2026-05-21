@@ -12,21 +12,55 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func newTestUserStore(t *testing.T) (*RedisUserStore, *miniredis.Miniredis) {
 	t.Helper()
 	srv := newTestMiniredis(t)
 	// Use URL-based constructor: TestLoginThrottleRecoveryFromRedisOutage
-	// restarts the miniredis server mid-test and needs full pool/retry for
-	// automatic reconnection. Constrained pools fail to recover.
-	store, err := NewRedisUserStore("redis://" + srv.Addr())
+	// restarts the miniredis server mid-test and needs constructor-backed
+	// reconnect/backfill behavior. The URL still constrains test pool fan-out.
+	store, err := NewRedisUserStore(testRedisURL(srv.Addr()))
 	if err != nil {
 		t.Fatalf("NewRedisUserStore: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
 	return store, srv
+}
+
+func TestTestRedisURLConstrainsPoolOptions(t *testing.T) {
+	t.Parallel()
+
+	opts, err := redis.ParseURL(testRedisURL("127.0.0.1:6379"))
+	if err != nil {
+		t.Fatalf("ParseURL: %v", err)
+	}
+	if opts.PoolSize != testRedisPoolSize {
+		t.Fatalf("PoolSize = %d, want %d", opts.PoolSize, testRedisPoolSize)
+	}
+	if opts.MinIdleConns != testRedisMinIdleConns {
+		t.Fatalf("MinIdleConns = %d, want %d", opts.MinIdleConns, testRedisMinIdleConns)
+	}
+	if opts.MaxRetries != testRedisMaxRetries {
+		t.Fatalf("MaxRetries = %d, want %d", opts.MaxRetries, testRedisMaxRetries)
+	}
+}
+
+func TestNewTestUserStoreConstrainsRedisPool(t *testing.T) {
+	store, _ := newTestUserStore(t)
+	opts := store.client.Options()
+
+	if opts.PoolSize != testRedisPoolSize {
+		t.Fatalf("PoolSize = %d, want %d", opts.PoolSize, testRedisPoolSize)
+	}
+	if opts.MinIdleConns != testRedisMinIdleConns {
+		t.Fatalf("MinIdleConns = %d, want %d", opts.MinIdleConns, testRedisMinIdleConns)
+	}
+	if opts.MaxRetries != testRedisMaxRetries {
+		t.Fatalf("MaxRetries = %d, want %d", opts.MaxRetries, testRedisMaxRetries)
+	}
 }
 
 func TestLoginThrottle_BlocksAfterMaxAttempts(t *testing.T) {
@@ -190,6 +224,7 @@ func TestLoginThrottleRecoveryFromRedisOutage(t *testing.T) {
 	if err := srv.Start(); err != nil {
 		t.Fatalf("failed to restart redis: %v", err)
 	}
+	waitForRedisClient(t, store)
 	if err := store.CheckLoginThrottle(ctx, "recovery-user", "10.0.0.1"); err != nil {
 		t.Fatalf("expected pass after Redis recovery, got: %v", err)
 	}
@@ -202,6 +237,23 @@ func TestLoginThrottleRecoveryFromRedisOutage(t *testing.T) {
 	// Now should be throttled via Redis.
 	if err := store.CheckLoginThrottle(ctx, "recovery-user", "10.0.0.1"); err == nil {
 		t.Fatal("expected Redis throttle after max attempts post-recovery")
+	}
+}
+
+func waitForRedisClient(t *testing.T, store *RedisUserStore) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		err := store.client.Ping(ctx).Err()
+		cancel()
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("redis did not recover: %v", err)
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }
 
@@ -515,6 +567,34 @@ func TestUserStore_DeleteAndGetReturnsNotFound(t *testing.T) {
 	got, err := store.GetByUsername(ctx, "dave", "default")
 	if err == nil && got != nil && !got.Disabled {
 		t.Fatal("expected user to be disabled or not found after delete")
+	}
+}
+
+func TestUserStoreSoftDelete_RemovesFromTenantIndex(t *testing.T) {
+	store, srv := newTestUserStore(t)
+	ctx := context.Background()
+	user := &User{Username: "tenant-index-delete", Tenant: "default", Role: "user"}
+	if err := store.Create(ctx, user, "SecurePass1!xy"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	ok, err := srv.SIsMember(userTenantIndexPrefix+"default", user.ID)
+	if err != nil {
+		t.Fatalf("SIsMember precondition: %v", err)
+	}
+	if !ok {
+		t.Fatalf("precondition: tenant index does not contain user ID %q", user.ID)
+	}
+
+	if err := store.Delete(ctx, user.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	ok, err = srv.SIsMember(userTenantIndexPrefix+"default", user.ID)
+	if err != nil && !strings.Contains(err.Error(), "no such key") {
+		t.Fatalf("SIsMember after delete: %v", err)
+	}
+	if ok {
+		t.Fatalf("soft-delete left stale user ID %q in tenant index", user.ID)
 	}
 }
 

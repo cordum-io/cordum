@@ -1,0 +1,71 @@
+# cordum-agentd systemd user unit.
+#
+# Install at: ~/.config/systemd/user/cordum-agentd.service
+#
+# Provision boot-time secrets in the per-user Secret Service collection
+# BEFORE enabling the unit — this unit intentionally carries NO Environment=
+# directives with secret values. Use `secret-tool` from libsecret-tools:
+#
+#   secret-tool store --label='cordum-agentd nonce' \
+#       service cordum-agentd username cordum_agentd_nonce
+#   # secret-tool reads the value from stdin and stores under the schema
+#   # (service=cordum-agentd, username=cordum_agentd_nonce) — same tuple the
+#   # keychain bootstrap path expects.
+#
+#   secret-tool store --label='cordum-agentd API key' \
+#       service cordum-agentd username cordum_api_key
+#
+# Enable + start (per-user, no root):
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now cordum-agentd.service
+#
+# Logs:
+#   journalctl --user -u cordum-agentd.service -f
+#
+# Advanced (systemd v250+): if you cannot or will not run a Secret Service
+# session, switch the unit to LoadCredential= pointing at a file-backed
+# secret store. Document the tradeoff carefully — file-mode 0400 with a
+# tmpfiles.d entry is the minimum acceptable substitute, and the file path
+# MUST be excluded from shell history and backups.
+
+[Unit]
+Description=Cordum Edge agent daemon (cordum-agentd)
+Documentation=https://docs.cordum.io/edge
+After=default.target dbus.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cordum-agentd
+Restart=on-failure
+RestartSec=10s
+
+# CORDUM_AGENTD_STRICT=true tells the keychain bootstrap to fail closed if
+# cordum_agentd_nonce or cordum_api_key cannot be sourced from the user's
+# libsecret/D-Bus collection. Do NOT add Environment= directives for those
+# secrets — that would defeat the purpose of this unit.
+Environment=CORDUM_AGENTD_STRICT=true
+Environment=CORDUM_AGENTD_LOG_LEVEL=info
+
+# Resource + privilege bounds. The agent is a long-running per-user
+# process; deny privilege escalation, restrict mount namespace, refuse
+# write access to system directories. The agent only writes to its own
+# state directory under XDG_STATE_HOME.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/cordum %h/.cache/cordum
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@mount @swap @reboot @raw-io @debug
+
+[Install]
+WantedBy=default.target

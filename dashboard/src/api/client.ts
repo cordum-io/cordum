@@ -34,13 +34,18 @@ function requestId(): string {
 }
 
 function authHeaders(): Record<string, string> {
-  const { apiKey, tenantId, principalId, principalRole, user } =
+  const { apiKey, authMode, tenantId, principalId, principalRole, user } =
     useConfigStore.getState();
   const h: Record<string, string> = {
     "Content-Type": "application/json",
     "X-Request-Id": requestId(),
   };
-  if (apiKey) {
+  // X-API-Key is for long-lived API keys only. Session tokens belong in the
+  // httpOnly `cordum_session` cookie which the browser sends automatically
+  // (via `credentials: "include"` below). Sending a session token here is
+  // rejected by the gateway and triggers an immediate logout loop — gate
+  // the header on authMode to make the contract explicit.
+  if (authMode === "apikey" && apiKey) {
     h["X-API-Key"] = apiKey;
   }
   if (tenantId) {

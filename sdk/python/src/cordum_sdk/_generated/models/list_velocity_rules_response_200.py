@@ -17,11 +17,8 @@ from typing import Union
 import datetime
 
 if TYPE_CHECKING:
-  from ..models.generic_object import GenericObject
-  from ..models.velocity_rule import VelocityRule
-
-
-
+    from ..models.generic_object import GenericObject
+    from ..models.velocity_rule import VelocityRule
 
 
 T = TypeVar("T", bound="ListVelocityRulesResponse200")
@@ -29,34 +26,32 @@ T = TypeVar("T", bound="ListVelocityRulesResponse200")
 
 @_attrs_define
 class ListVelocityRulesResponse200:
-    """ 
-        Attributes:
-            items (List['VelocityRule']):
-            count (int):
-            limit (int):
-            updated_at (Union[Unset, datetime.datetime]):
-            upgrade_url (Union[Unset, str]):
-            errors (Union[Unset, List['GenericObject']]):
-     """
+    """
+    Attributes:
+        items (List['VelocityRule']):
+        count (int):
+        limit (int):
+        updated_at (Union[Unset, datetime.datetime]):
+        upgrade_url (Union[Unset, str]):
+        errors (Union[Unset, List['GenericObject']]):
+    """
 
-    items: List['VelocityRule']
+    items: List["VelocityRule"]
     count: int
     limit: int
     updated_at: Union[Unset, datetime.datetime] = UNSET
     upgrade_url: Union[Unset, str] = UNSET
-    errors: Union[Unset, List['GenericObject']] = UNSET
+    errors: Union[Unset, List["GenericObject"]] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
-
 
     def to_dict(self) -> Dict[str, Any]:
         from ..models.generic_object import GenericObject
         from ..models.velocity_rule import VelocityRule
+
         items = []
         for items_item_data in self.items:
             items_item = items_item_data.to_dict()
             items.append(items_item)
-
-
 
         count = self.count
 
@@ -75,16 +70,15 @@ class ListVelocityRulesResponse200:
                 errors_item = errors_item_data.to_dict()
                 errors.append(errors_item)
 
-
-
-
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "items": items,
-            "count": count,
-            "limit": limit,
-        })
+        field_dict.update(
+            {
+                "items": items,
+                "count": count,
+                "limit": limit,
+            }
+        )
         if updated_at is not UNSET:
             field_dict["updated_at"] = updated_at
         if upgrade_url is not UNSET:
@@ -94,22 +88,18 @@ class ListVelocityRulesResponse200:
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         from ..models.generic_object import GenericObject
         from ..models.velocity_rule import VelocityRule
+
         d = src_dict.copy()
         items = []
         _items = d.pop("items")
-        for items_item_data in (_items):
+        for items_item_data in _items:
             items_item = VelocityRule.from_dict(items_item_data)
 
-
-
             items.append(items_item)
-
 
         count = d.pop("count")
 
@@ -117,25 +107,19 @@ class ListVelocityRulesResponse200:
 
         _updated_at = d.pop("updated_at", UNSET)
         updated_at: Union[Unset, datetime.datetime]
-        if isinstance(_updated_at,  Unset):
+        if isinstance(_updated_at, Unset):
             updated_at = UNSET
         else:
             updated_at = isoparse(_updated_at)
-
-
-
 
         upgrade_url = d.pop("upgrade_url", UNSET)
 
         errors = []
         _errors = d.pop("errors", UNSET)
-        for errors_item_data in (_errors or []):
+        for errors_item_data in _errors or []:
             errors_item = GenericObject.from_dict(errors_item_data)
 
-
-
             errors.append(errors_item)
-
 
         list_velocity_rules_response_200 = cls(
             items=items,
@@ -145,7 +129,6 @@ class ListVelocityRulesResponse200:
             upgrade_url=upgrade_url,
             errors=errors,
         )
-
 
         list_velocity_rules_response_200.additional_properties = d
         return list_velocity_rules_response_200

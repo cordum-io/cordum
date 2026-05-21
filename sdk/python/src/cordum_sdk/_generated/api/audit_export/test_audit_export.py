@@ -12,36 +12,27 @@ from typing import cast
 from typing import Dict
 
 
-
 def _get_kwargs(
     *,
     x_tenant_id: str,
-
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
     headers["X-Tenant-ID"] = x_tenant_id
-
-
-
-    
-
-    
 
     _kwargs: Dict[str, Any] = {
         "method": "post",
         "url": "/api/v1/audit/export/test",
     }
 
-
     _kwargs["headers"] = headers
     return _kwargs
 
 
-def _parse_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Optional[Union[Any, GenericObject]]:
+def _parse_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Optional[Union[Any, GenericObject]]:
     if response.status_code == 200:
         response_200 = GenericObject.from_dict(response.json())
-
-
 
         return response_200
     if response.status_code == 401:
@@ -62,7 +53,9 @@ def _parse_response(*, client: Union[AuthenticatedClient, Client], response: htt
         return None
 
 
-def _build_response(*, client: Union[AuthenticatedClient, Client], response: httpx.Response) -> Response[Union[Any, GenericObject]]:
+def _build_response(
+    *, client: Union[AuthenticatedClient, Client], response: httpx.Response
+) -> Response[Union[Any, GenericObject]]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -75,9 +68,8 @@ def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
 ) -> Response[Union[Any, GenericObject]]:
-    """ Audit export test
+    """Audit export test
 
     Args:
         x_tenant_id (str):
@@ -88,12 +80,10 @@ def sync_detailed(
 
     Returns:
         Response[Union[Any, GenericObject]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         x_tenant_id=x_tenant_id,
-
     )
 
     response = client.get_httpx_client().request(
@@ -102,13 +92,13 @@ def sync_detailed(
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, GenericObject]]:
-    """ Audit export test
+    """Audit export test
 
     Args:
         x_tenant_id (str):
@@ -119,22 +109,20 @@ def sync(
 
     Returns:
         Union[Any, GenericObject]
-     """
-
+    """
 
     return sync_detailed(
         client=client,
-x_tenant_id=x_tenant_id,
-
+        x_tenant_id=x_tenant_id,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
 ) -> Response[Union[Any, GenericObject]]:
-    """ Audit export test
+    """Audit export test
 
     Args:
         x_tenant_id (str):
@@ -145,27 +133,23 @@ async def asyncio_detailed(
 
     Returns:
         Response[Union[Any, GenericObject]]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         x_tenant_id=x_tenant_id,
-
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
     x_tenant_id: str,
-
 ) -> Optional[Union[Any, GenericObject]]:
-    """ Audit export test
+    """Audit export test
 
     Args:
         x_tenant_id (str):
@@ -176,11 +160,11 @@ async def asyncio(
 
     Returns:
         Union[Any, GenericObject]
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-x_tenant_id=x_tenant_id,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            x_tenant_id=x_tenant_id,
+        )
+    ).parsed

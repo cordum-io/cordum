@@ -1,0 +1,42 @@
+{
+  "finding_id": "edge_shadow_k8s-egress-1",
+  "tenant_id": "tenant-k8s",
+  "audience": "enterprise",
+  "severity": "high",
+  "action_kind": "extend_egress_policy",
+  "summary": "Extend the NetworkPolicy egress allowlist to include the operator's LLM proxy.",
+  "risk_explanation": "A Kubernetes NetworkPolicy permits broader egress than the operator's LLM-proxy scope. Pods covered by this policy can reach provider APIs directly, bypassing the Cordum LLM proxy and its policy/redaction layer. Signals: egress_bypass.",
+  "recommended_action": "Apply a NetworkPolicy patch adding the operator's LLM-proxy CIDR / namespace selector to the offending policy's egress allowlist.",
+  "safety_notes": [
+    "All steps are advisory — Cordum Edge does not auto-execute remediation.",
+    "Never substitute live secrets into the placeholders shown below; use your secret-manager / api-key-helper.",
+    "Cordum NEVER mutates Kubernetes cluster state; every kubectl command must be applied by the operator.",
+    "Only target namespaces you own; cross-tenant patches are explicitly out of scope (Q5 enforce-scope-out)."
+  ],
+  "steps": [
+    {
+      "id": "extend_egress_policy.preview_diff",
+      "title": "Preview the proposed NetworkPolicy patch",
+      "kind": "extend_egress_policy",
+      "command": "kubectl --context prod-east-1 -n team-research diff -f - \u003c\u003c'YAML'\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: default-egress\n  namespace: team-research\nspec:\n  podSelector: {}  # keep the existing podSelector\n  policyTypes: [Egress]\n  egress:\n    - to:\n        - ipBlock:\n            cidr: \u003cllm-proxy-cidr\u003e           # e.g. 10.42.0.0/16\n        - namespaceSelector:\n            matchLabels:\n              cordum.io/llm-proxy: \"true\"\n      ports:\n        - protocol: TCP\n          port: 443\nYAML",
+      "preview_only": true,
+      "docs_url": "docs/edge/shadow-remediation.md"
+    },
+    {
+      "id": "extend_egress_policy.apply",
+      "title": "Apply the egress allowlist extension once the diff is acceptable",
+      "kind": "extend_egress_policy",
+      "command": "kubectl --context prod-east-1 -n team-research apply -f - \u003c\u003c'YAML'\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: default-egress\n  namespace: team-research\nspec:\n  podSelector: {}  # keep the existing podSelector\n  policyTypes: [Egress]\n  egress:\n    - to:\n        - ipBlock:\n            cidr: \u003cllm-proxy-cidr\u003e           # e.g. 10.42.0.0/16\n        - namespaceSelector:\n            matchLabels:\n              cordum.io/llm-proxy: \"true\"\n      ports:\n        - protocol: TCP\n          port: 443\nYAML",
+      "requires_backup": true,
+      "docs_url": "docs/edge/shadow-remediation.md",
+      "conditions": [
+        "backup the existing NetworkPolicy: kubectl get networkpolicy \u003cname\u003e -o yaml \u003e backup.yaml",
+        "verify \u003cllm-proxy-cidr\u003e matches the operator's LLM proxy egress CIDR",
+        "this strictly extends egress (additive); existing rules MUST remain in place"
+      ]
+    }
+  ],
+  "generator_version": "1.0.0",
+  "generated_at": "2026-05-17T16:00:00Z",
+  "advisory_only": true
+}

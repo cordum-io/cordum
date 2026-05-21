@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	miniredis "github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
+	"github.com/cordum/cordum/core/internal/testredis"
 )
 
 func newTestLegalHoldStore(t *testing.T) (*LegalHoldStore, *miniredis.Miniredis) {
@@ -16,7 +16,7 @@ func newTestLegalHoldStore(t *testing.T) (*LegalHoldStore, *miniredis.Miniredis)
 	if err != nil {
 		t.Skipf("miniredis unavailable: %v", err)
 	}
-	store, err := NewLegalHoldStore("redis://" + srv.Addr())
+	store, err := NewLegalHoldStore(testredis.URL(srv.Addr()))
 	if err != nil {
 		srv.Close()
 		t.Fatalf("new legal hold store: %v", err)
@@ -257,8 +257,7 @@ func TestLegalHold_ChainLinkageUnaffected(t *testing.T) {
 	}
 	t.Cleanup(srv.Close)
 
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	client := testredis.NewClient(t, srv.Addr())
 
 	holdStore := NewLegalHoldStoreFromClient(client)
 	chainer := NewChainer(client, "lh:chain:")

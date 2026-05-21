@@ -2139,18 +2139,28 @@ func (e *Engine) scheduleReady(ctx context.Context, wfDef *Workflow, run *Workfl
 					} else if ptr != "" {
 						req.ContextPtr = ptr
 					}
+					// Reserve attempt + pre-set running fields BEFORE publish so the
+					// revert path (publish failure) has a consistent state to restore.
+					// Mirrors the main-path dispatch at the bottom of this function.
+					child.StartedAt = &now
+					child.Attempts++
+					child.JobID = jobID
+					child.Input = payload
+					child.Item = item
 					packet := makeJobPacket(run.ID, req)
 					if err := e.publishWithTrace(ctx, capsdk.SubjectSubmit, packet); err != nil {
 						slog.Error("publish foreach step", "run_id", run.ID, "step_id", childID, "error", err)
-						child.Status = StepStatusFailed
-						child.Error = map[string]any{"message": err.Error()}
+						// Revert to Pending so a later scheduleReady retries; do NOT
+						// consume an attempt for a transient publish failure (matches
+						// the main path's revert at engine.go where parentSR.Attempts-- runs
+						// after a publish error). Bus idempotency-key protection still
+						// applies if the message was actually delivered.
+						child.Status = StepStatusPending
+						child.Attempts--
+						child.JobID = ""
+						child.StartedAt = nil
 					} else {
 						child.Status = StepStatusRunning
-						child.StartedAt = &now
-						child.Attempts++
-						child.JobID = jobID
-						child.Input = payload
-						child.Item = item
 						runningChildren++
 						dispatchedThisTick[childID] = true
 						data := map[string]any{"foreach_index": idx}

@@ -12,9 +12,23 @@ import (
 	"github.com/cordum/cordum/core/audit"
 	"github.com/cordum/cordum/core/auth/delegation"
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
+	governanceeval "github.com/cordum/cordum/core/governance/evaluator"
+	"github.com/cordum/cordum/core/infra/config"
 	"github.com/cordum/cordum/core/infra/store"
 	"github.com/cordum/cordum/core/licensing"
 )
+
+type recordingGovernanceRunner struct {
+	called bool
+	input  *config.GovernanceInput
+	dec    governanceeval.Decision
+}
+
+func (r *recordingGovernanceRunner) Evaluate(_ context.Context, in *config.GovernanceInput, _ config.GovernancePolicy) governanceeval.Decision {
+	r.called = true
+	r.input = in
+	return r.dec
+}
 
 func setDelegationKeys(t *testing.T) delegation.SigningKey {
 	t.Helper()
@@ -39,12 +53,9 @@ func setDelegationKeys(t *testing.T) delegation.SigningKey {
 
 func createDelegationAgent(t *testing.T, s *server, tenant, id string, actions, topics []string) *store.AgentIdentity {
 	t.Helper()
-	_ = tenant // store.AgentIdentity has no tenant field today; tenant
-	// scoping is enforced upstream at the gateway middleware. The
-	// parameter is kept so existing call sites don't need to change
-	// once per-agent tenant binding lands in the store.
 	created, err := s.agentIdentityStore.Create(context.Background(), store.AgentIdentity{
 		ID:            id,
+		TenantID:      tenant,
 		Name:          id,
 		Owner:         "admin",
 		RiskTier:      "low",
@@ -178,9 +189,102 @@ func TestHandleDelegateAgentCrossTenantAndScopeErrors(t *testing.T) {
 	scopeReq.Header.Set("Content-Type", "application/json")
 	scopeRec := httptest.NewRecorder()
 	s.handleDelegateAgent(scopeRec, scopeReq)
-	if scopeRec.Code != http.StatusBadRequest || !strings.Contains(scopeRec.Body.String(), "scope_exceeded") {
-		t.Fatalf("scope status=%d body=%s", scopeRec.Code, scopeRec.Body.String())
+	assertOperatorErrorCode(t, scopeRec, http.StatusBadRequest, "DELEGATION_SCOPE_EXCEEDED")
+}
+
+func TestEvaluateGovernance_FiresOnDelegation(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	setTestEntitlements(t, s, licensing.PlanEnterprise, func(e *licensing.Entitlements) {
+		e.AgentIdentity = true
+	})
+	setDelegationKeys(t)
+	sink := &recordingAuditSender{}
+	s.auditExporter = sink
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.alpha"})
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.alpha"})
+	createDelegationAgent(t, s, "default", "agent-c", []string{"write"}, []string{"job.alpha"})
+	parent := issueDelegationTokenForGovernanceTest(t, s)
+
+	body := `{"target_agent_id":"agent-c","allowed_actions":["write"],"allowed_topics":["job.alpha"],"parent_token":"` + parent + `"}`
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-b/delegate", strings.NewReader(body)))
+	req.SetPathValue("id", "agent-b")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleDelegateAgent(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	if got := latestDelegationAuditExtra(sink, "governance_rule"); got != config.GovernanceRuleScopeEscalation {
+		t.Fatalf("governance_rule extra = %q, want %q; events=%#v", got, config.GovernanceRuleScopeEscalation, sink.events)
+	}
+}
+
+func TestEvaluateGovernance_DelegationUsesConfiguredEvaluator(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableTestAuth(s)
+	setTestEntitlements(t, s, licensing.PlanEnterprise, func(e *licensing.Entitlements) {
+		e.AgentIdentity = true
+	})
+	setDelegationKeys(t)
+	sink := &recordingAuditSender{}
+	s.auditExporter = sink
+	fake := &recordingGovernanceRunner{dec: governanceeval.Decision{
+		Type:   governanceeval.DecisionDeny,
+		RuleID: "test_configured_governance",
+		Reason: "configured evaluator denied",
+	}}
+	s.SetGovernanceEvaluator(fake, config.DefaultGovernancePolicy())
+
+	createDelegationAgent(t, s, "default", "agent-a", []string{"read"}, []string{"job.alpha"})
+	createDelegationAgent(t, s, "default", "agent-b", []string{"read"}, []string{"job.alpha"})
+	createDelegationAgent(t, s, "default", "agent-c", []string{"read"}, []string{"job.alpha"})
+	parent := issueDelegationTokenForGovernanceTest(t, s)
+
+	body := `{"target_agent_id":"agent-c","allowed_actions":["read"],"allowed_topics":["job.alpha"],"parent_token":"` + parent + `"}`
+	req := adminCtx(httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-b/delegate", strings.NewReader(body)))
+	req.SetPathValue("id", "agent-b")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	s.handleDelegateAgent(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !fake.called {
+		t.Fatal("configured governance evaluator was not called")
+	}
+	if fake.input == nil || fake.input.Operation != config.GovernanceOpDelegation || fake.input.Child.AgentID != "agent-c" {
+		t.Fatalf("governance input = %+v, want delegation for agent-c", fake.input)
+	}
+	if got := latestDelegationAuditExtra(sink, "governance_rule"); got != fake.dec.RuleID {
+		t.Fatalf("governance_rule extra = %q, want %q; events=%#v", got, fake.dec.RuleID, sink.events)
+	}
+}
+
+func issueDelegationTokenForGovernanceTest(t *testing.T, s *server) string {
+	t.Helper()
+	service, err := s.delegationTokenService()
+	if err != nil {
+		t.Fatalf("delegationTokenService() error = %v", err)
+	}
+	token, _, err := service.IssueDelegationToken(context.Background(), delegation.IssueRequest{
+		Tenant: "default", DelegatingAgentID: "agent-a", TargetAgentID: "agent-b",
+		AllowedActions: []string{"read"}, AllowedTopics: []string{"job.alpha"},
+	})
+	if err != nil {
+		t.Fatalf("IssueDelegationToken() error = %v", err)
+	}
+	return token
+}
+
+func latestDelegationAuditExtra(sink *recordingAuditSender, key string) string {
+	for i := len(sink.events) - 1; i >= 0; i-- {
+		if sink.events[i].Action == "delegation.issue" {
+			return sink.events[i].Extra[key]
+		}
+	}
+	return ""
 }
 
 func TestHandleDelegateAgentRejectsTooDeepChain(t *testing.T) {
@@ -237,9 +341,7 @@ func TestHandleDelegateAgentRejectsTooDeepChain(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	s.handleDelegateAgent(rec, req)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "chain_too_deep") {
-		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	assertOperatorErrorCode(t, rec, http.StatusBadRequest, "DELEGATION_CHAIN_TOO_DEEP")
 }
 
 func TestHandleVerifyAndRevokeDelegationStructuredVerdicts(t *testing.T) {
@@ -431,9 +533,7 @@ func TestHandleRevokeDelegationReturnsNotFoundForUnknownJTI(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	s.handleRevokeDelegation(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for unknown jti, got %d body=%s", rec.Code, rec.Body.String())
-	}
+	assertOperatorErrorCode(t, rec, http.StatusNotFound, "DELEGATION_TOKEN_NOT_FOUND")
 }
 
 // TestHandleDelegateAgentRejectsOverflowTTL guards the `ttl_seconds`

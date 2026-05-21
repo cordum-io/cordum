@@ -6,14 +6,14 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeArtifactPointerArtifactType = typeof EdgeArtifactPointerArtifactType[keyof typeof EdgeArtifactPointerArtifactType];
-
+export type EdgeArtifactPointerArtifactType =
+  (typeof EdgeArtifactPointerArtifactType)[keyof typeof EdgeArtifactPointerArtifactType];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeArtifactPointerArtifactType = {
-  edgetranscript: 'edge.transcript',
-  edgediff: 'edge.diff',
-  edgetool_input: 'edge.tool_input',
-  edgetool_result: 'edge.tool_result',
-  edgeevidence_bundle: 'edge.evidence_bundle',
+  edgetranscript: "edge.transcript",
+  edgediff: "edge.diff",
+  edgetool_input: "edge.tool_input",
+  edgetool_result: "edge.tool_result",
+  edgeevidence_bundle: "edge.evidence_bundle",
 } as const;

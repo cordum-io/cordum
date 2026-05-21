@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class SafetyDecisionAction(str, Enum):
     ALLOW = "ALLOW"
     ALLOW_WITH_CONSTRAINTS = "ALLOW_WITH_CONSTRAINTS"

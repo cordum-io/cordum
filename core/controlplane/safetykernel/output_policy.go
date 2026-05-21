@@ -147,7 +147,26 @@ func (s *server) EvaluateOutput(ctx context.Context, req *OutputEvaluateRequest)
 			rctx, cancel := context.WithTimeout(ctx, outputReadTimeout)
 			defer cancel()
 			data, err := s.resultClient.Get(rctx, key).Bytes()
-			if err == nil {
+			if err != nil {
+				if errors.Is(err, redis.Nil) {
+					req.OutputContent = nil
+				} else {
+					slog.Warn("output policy: result pointer unreadable",
+						"result_ptr", req.ResultPtr,
+						"key", key,
+						"err", err,
+					)
+					resp.Decision = "quarantine"
+					resp.Reason = "result pointer unreadable"
+					resp.Findings = []outputFinding{{
+						Type:     "pointer_unreadable",
+						Severity: "critical",
+						Detail:   err.Error(),
+						Scanner:  "result_pointer",
+					}}
+					return resp, nil
+				}
+			} else {
 				req.OutputContent, contentTruncated = truncateOutputContent(data)
 			}
 		}

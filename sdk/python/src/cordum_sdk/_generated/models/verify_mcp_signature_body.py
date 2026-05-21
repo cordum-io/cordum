@@ -9,37 +9,25 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 
-
-
-
-
-
 T = TypeVar("T", bound="VerifyMcpSignatureBody")
 
 
 @_attrs_define
 class VerifyMcpSignatureBody:
-    """ 
-     """
+    """ """
 
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
     def to_dict(self) -> Dict[str, Any]:
-        
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
 
         return field_dict
 
-
-
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
-        verify_mcp_signature_body = cls(
-        )
-
+        verify_mcp_signature_body = cls()
 
         verify_mcp_signature_body.additional_properties = d
         return verify_mcp_signature_body

@@ -6,11 +6,11 @@
  * OpenAPI spec version: 2026-05-09.2
  */
 
-export type EdgeEndSessionRequestStatus = typeof EdgeEndSessionRequestStatus[keyof typeof EdgeEndSessionRequestStatus];
-
+export type EdgeEndSessionRequestStatus =
+  (typeof EdgeEndSessionRequestStatus)[keyof typeof EdgeEndSessionRequestStatus];
 
 // eslint-disable-next-line @typescript-eslint/no-redeclare
 export const EdgeEndSessionRequestStatus = {
-  ended: 'ended',
-  failed: 'failed',
+  ended: "ended",
+  failed: "failed",
 } as const;

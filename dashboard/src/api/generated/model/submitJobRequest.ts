@@ -5,9 +5,9 @@
  * Canonical OpenAPI 3.0.3 spec for the Cordum gateway HTTP surface.
  * OpenAPI spec version: 2026-05-09.2
  */
-import type { SubmitJobRequestPriority } from './submitJobRequestPriority';
-import type { SubmitJobRequestContext } from './submitJobRequestContext';
-import type { SubmitJobRequestLabels } from './submitJobRequestLabels';
+import type { SubmitJobRequestPriority } from "./submitJobRequestPriority";
+import type { SubmitJobRequestContext } from "./submitJobRequestContext";
+import type { SubmitJobRequestLabels } from "./submitJobRequestLabels";
 
 export interface SubmitJobRequest {
   /** The job payload / prompt text */

@@ -78,7 +78,10 @@ type registerAgentArgs struct {
 	RiskTier            string   `json:"risk_tier" required:"true" enum:"low,medium,high,critical" description:"Risk tier for this identity."`
 	AllowedTopics       []string `json:"allowed_topics,omitempty" description:"Topics this agent may drive jobs into."`
 	AllowedPools        []string `json:"allowed_pools,omitempty" description:"Worker pools this agent may schedule against."`
+	AllowedServers      []string `json:"allowed_servers,omitempty" description:"MCP server-name globs this agent may call. Omit to fail closed on server-guarded MCP actions until set."`
 	AllowedTools        []string `json:"allowed_tools,omitempty" description:"MCP tool names the agent may call. Omit for default scope."`
+	AllowedResources    []string `json:"allowed_resources,omitempty" description:"cordum:// resource URI globs this agent may target. Omit to fail closed on resource-guarded MCP actions until set."`
+	Entitlements        []string `json:"entitlements,omitempty" description:"Capability tokens this identity holds for MCP actions that declare required_entitlement."`
 	DataClassifications []string `json:"data_classifications,omitempty" description:"Data sensitivity labels this agent is cleared for."`
 	IdempotencyKey      string   `json:"idempotency_key,omitempty" description:"Retry-safe key."`
 }
@@ -103,6 +106,9 @@ type setAgentScopeArgs struct {
 	AllowedTools             []string `json:"allowed_tools" description:"Full replacement list of MCP tools the agent may call. Pass an empty array to remove all read-only allowances."`
 	AllowedTopics            []string `json:"allowed_topics,omitempty" description:"Full replacement list of topics the agent may drive jobs into."`
 	AllowedPools             []string `json:"allowed_pools,omitempty" description:"Full replacement list of worker pools the agent may schedule against."`
+	AllowedServers           []string `json:"allowed_servers,omitempty" description:"Full replacement list of MCP server-name globs this agent may call. Pass an empty array to remove all server allowances."`
+	AllowedResources         []string `json:"allowed_resources,omitempty" description:"Full replacement list of cordum:// resource URI globs this agent may target. Pass an empty array to remove all resource allowances."`
+	Entitlements             []string `json:"entitlements,omitempty" description:"Full replacement list of capability tokens this identity holds for required-entitlement checks."`
 	DataClassifications      []string `json:"data_classifications,omitempty" description:"Full replacement list of data classifications the agent is cleared for."`
 	PreapprovedMutatingTools []string `json:"preapproved_mutating_tools" description:"Mutating tools this agent may call WITHOUT human approval. Use for CI-CD bots only — documented in docs/mcp/scope-preapproval.md. Pass empty array to require approval for every mutating call."`
 	Status                   string   `json:"status,omitempty" enum:"active,suspended,revoked" description:"Identity lifecycle state."`
@@ -342,7 +348,10 @@ func registerAgentHandler(bridge ServiceBridge) ToolHandler {
 			RiskTier:            strings.TrimSpace(args.RiskTier),
 			AllowedTopics:       append([]string{}, args.AllowedTopics...),
 			AllowedPools:        append([]string{}, args.AllowedPools...),
+			AllowedServers:      append([]string{}, args.AllowedServers...),
 			AllowedTools:        append([]string{}, args.AllowedTools...),
+			AllowedResources:    append([]string{}, args.AllowedResources...),
+			Entitlements:        append([]string{}, args.Entitlements...),
 			DataClassifications: append([]string{}, args.DataClassifications...),
 			IdempotencyKey:      strings.TrimSpace(args.IdempotencyKey),
 		})
@@ -428,6 +437,9 @@ func setAgentScopeHandler(bridge ServiceBridge) ToolHandler {
 			AllowedTools:             append([]string{}, args.AllowedTools...),
 			AllowedTopics:            args.AllowedTopics,
 			AllowedPools:             args.AllowedPools,
+			AllowedServers:           args.AllowedServers,
+			AllowedResources:         args.AllowedResources,
+			Entitlements:             args.Entitlements,
 			DataClassifications:      args.DataClassifications,
 			PreapprovedMutatingTools: append([]string{}, args.PreapprovedMutatingTools...),
 			Status:                   strings.TrimSpace(args.Status),
@@ -441,6 +453,9 @@ func setAgentScopeHandler(bridge ServiceBridge) ToolHandler {
 			"allowed_tools":              out.AllowedTools,
 			"allowed_topics":             out.AllowedTopics,
 			"allowed_pools":              out.AllowedPools,
+			"allowed_servers":            out.AllowedServers,
+			"allowed_resources":          out.AllowedResources,
+			"entitlements":               out.Entitlements,
 			"data_classifications":       out.DataClassifications,
 			"preapproved_mutating_tools": out.PreapprovedMutatingTools,
 			"status":                     out.Status,

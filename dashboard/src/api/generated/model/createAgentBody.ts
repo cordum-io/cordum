@@ -14,6 +14,14 @@ export type CreateAgentBody = {
   risk_tier: string;
   allowed_topics?: string[];
   allowed_pools?: string[];
+  /** MCP server-name glob allowlist. Empty or omitted fail-closes server-guarded MCP actions. */
+  allowed_servers?: string[];
   allowed_tools?: string[];
+  /** cordum:// resource URI glob allowlist. Empty or omitted fail-closes resource-guarded MCP actions. */
+  allowed_resources?: string[];
+  /** Capability tokens the identity holds for MCP required-entitlement checks. */
+  entitlements?: string[];
+  /** Mutating MCP tool names/globs this identity may call without human approval. Empty or omitted requires approval for every mutating tool. */
+  preapproved_mutating_tools?: string[];
   data_classifications?: string[];
 };

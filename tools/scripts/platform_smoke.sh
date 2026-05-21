@@ -126,9 +126,23 @@ fi
 log "step job id: ${job_id}"
 
 log "approving step"
-curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" "${json_header[@]}" \
+approve_body_file=$(mktemp)
+if ! approve_status=$(curl -sS "${CURL_TLS_OPTS[@]}" "${auth_header[@]}" "${json_header[@]}" \
+  -o "${approve_body_file}" -w "%{http_code}" \
   -X POST "${API_BASE}/api/v1/approvals/${job_id}/approve" \
-  -d '{"approved": true}' >/dev/null
+  -d '{"reason":"platform smoke approval"}'); then
+  echo "approval request failed" >&2
+  cat "${approve_body_file}" >&2 2>/dev/null || true
+  rm -f "${approve_body_file}"
+  exit 1
+fi
+if [[ "${approve_status}" != "200" && "${approve_status}" != "204" && "${approve_status}" != "409" ]]; then
+  echo "approval request returned HTTP ${approve_status}, want 200/204/409" >&2
+  cat "${approve_body_file}" >&2
+  rm -f "${approve_body_file}"
+  exit 1
+fi
+rm -f "${approve_body_file}"
 
 status=""
 for _ in {1..20}; do
