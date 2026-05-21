@@ -143,7 +143,11 @@ run_case "T6 failing shard exits nonzero and names shard" 99 \
   "FAIL shard 1/2.*exit=99.*log=.*/shard-1-of-2.jsonl" \
   env TOTAL_SHARDS=2 LOG_DIR="${LOG_DIR}" bash "${SHARD_SCRIPT}" --shard 1/2
 
-run_case "T7 invalid shard is rejected before go test" 2 \
+run_case "T7 failing all exits nonzero and names first failed shard" 99 \
+  "FAIL first_failed_shard=1/2 exit=99 log_dir=.*/logs with spaces" \
+  env TOTAL_SHARDS=2 LOG_DIR="${LOG_DIR}" bash "${SHARD_SCRIPT}" --all
+
+run_case "T8 invalid shard is rejected before go test" 2 \
   "invalid --shard" \
   env LOG_DIR="${LOG_DIR}" bash "${SHARD_SCRIPT}" --shard 0/2
 

@@ -259,12 +259,13 @@ run_all() {
   local i
   local dry_labels=()
   for (( i = 1; i <= TOTAL_SHARDS; i++ )); do
-    if ! run_shard "${i}" "${TOTAL_SHARDS}"; then
+    if run_shard "${i}" "${TOTAL_SHARDS}"; then
+      dry_labels+=("DRY-RUN shard ${i}/${TOTAL_SHARDS}")
+    else
       local rc=$?
       echo "FAIL first_failed_shard=${i}/${TOTAL_SHARDS} exit=${rc} log_dir=${LOG_DIR}" >&2
       return "${rc}"
     fi
-    dry_labels+=("DRY-RUN shard ${i}/${TOTAL_SHARDS}")
   done
 
   if [[ "${DRY_RUN}" -eq 1 ]]; then
