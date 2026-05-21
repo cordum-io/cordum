@@ -104,6 +104,18 @@ type edgeStoreApprovalLookup struct {
 	store edgecore.Store
 }
 
+// LookupByApprovalRef delegates to edge.Store.GetApproval so authorization
+// gates bind the caller-supplied approval_ref directly and retain the store's
+// tenant check. Cross-tenant refs therefore return a clean miss instead of an
+// approval from another tenant. This is an evaluation-time read only; approval
+// consumption remains in the Edge ClaimApproval CAS path.
+func (a edgeStoreApprovalLookup) LookupByApprovalRef(ctx context.Context, tenant, approvalRef string) (*edgecore.EdgeApproval, bool, error) {
+	if a.store == nil {
+		return nil, false, nil
+	}
+	return a.store.GetApproval(ctx, tenant, approvalRef)
+}
+
 // LookupByActionHash delegates to the underlying Redis store. The cast
 // to the concrete *edgecore.RedisStore is necessary because the
 // edgecore.Store interface does not expose LookupByActionHash (only

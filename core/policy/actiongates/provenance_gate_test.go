@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
 	"github.com/cordum/cordum/core/edge"
@@ -24,6 +25,17 @@ func (f *fakeChainVerifier) VerifyForApproval(_ context.Context, _ string, _ *ed
 
 // chainOK is a verifier that always reports an intact chain.
 var chainOK = &fakeChainVerifier{outcome: ChainVerifyOutcome{Status: ChainStatusOK}}
+
+type trackingChainVerifier struct {
+	outcome ChainVerifyOutcome
+	err     error
+	calls   int
+}
+
+func (f *trackingChainVerifier) VerifyForApproval(_ context.Context, _ string, _ *edge.EdgeApproval) (ChainVerifyOutcome, error) {
+	f.calls++
+	return f.outcome, f.err
+}
 
 func provAuthCtx() context.Context {
 	return ctxWithAuth(&auth.AuthContext{Tenant: "tnt_a", PrincipalID: "p1", Role: "user"})
@@ -50,11 +62,32 @@ func provValidApproval(act *config.ActionDescriptor) *edge.EdgeApproval {
 }
 
 func newProvenanceGateWith(approval *edge.EdgeApproval, verifier ChainVerifier, lookupErr error) *ProvenanceGate {
-	lookup := &fakeApprovalLookup{records: map[string]*edge.EdgeApproval{}, err: lookupErr}
+	lookup := &fakeApprovalLookup{
+		records:    map[string]*edge.EdgeApproval{},
+		refRecords: map[string]*edge.EdgeApproval{},
+		err:        lookupErr,
+	}
 	if approval != nil {
-		lookup.records["tnt_a:"+approval.ActionHash] = approval
+		lookup.records[approvalHashKey("tnt_a", approval.ActionHash)] = approval
+		lookup.refRecords[approvalRefKey("tnt_a", approval.ApprovalRef)] = approval
 	}
 	return NewProvenanceGate(ProvenanceGateOptions{Approvals: lookup, ChainVerifier: verifier})
+}
+
+func assertProvenanceDecision(
+	t *testing.T,
+	dec ActionGateDecision,
+	wantDecision pb.DecisionType,
+	wantCode string,
+	subReasonHas string,
+) {
+	t.Helper()
+	if dec.Decision != wantDecision || dec.Code != wantCode {
+		t.Fatalf("got %v / %q, want %v / %q", dec.Decision, dec.Code, wantDecision, wantCode)
+	}
+	if subReasonHas != "" && !strings.Contains(dec.SubReason, subReasonHas) {
+		t.Fatalf("subReason = %q, want substring %q", dec.SubReason, subReasonHas)
+	}
 }
 
 func TestProvenanceGate_NoActionSkips(t *testing.T) {
@@ -141,6 +174,69 @@ func TestProvenanceGate_ClaimTextOnlyRejected(t *testing.T) {
 			const wantReason = "approval claim text is not a substitute for a backend-verified approval record"
 			if dec.Reason != wantReason {
 				t.Fatalf("phrase %q: Reason = %q, want exactly %q", phrase, dec.Reason, wantReason)
+			}
+		})
+	}
+}
+
+func TestProvenanceGate_ApprovalRefBinding(t *testing.T) {
+	act := provMutationAction()
+	hash := CanonicalActionHash(act)
+	real := provValidApproval(act)
+	mismatched := provValidApproval(act)
+	mismatched.ApprovalRef = "appr_mismatch"
+	mismatched.ActionHash = "DIFFERENT_HASH"
+	consumed := provValidApproval(act)
+	consumed.ApprovalRef = "appr_consumed"
+	expired := provValidApproval(act)
+	expired.ApprovalRef = "appr_expired"
+	pending := provValidApproval(act)
+	pending.ApprovalRef = "appr_pending"
+	pending.Status = edge.ApprovalStatusPending
+	pending.Decision = ""
+	rejected := provValidApproval(act)
+	rejected.ApprovalRef = "appr_rejected"
+	rejected.Decision = edge.ApprovalDecisionReject
+	consumedAt := time.Now().UTC().Add(-1 * time.Hour)
+	expiresAt := time.Now().UTC().Add(-1 * time.Minute)
+	consumed.ConsumedAt = &consumedAt
+	expired.ExpiresAt = &expiresAt
+
+	cases := []struct {
+		name              string
+		approvalRef       string
+		refApproval       *edge.EdgeApproval
+		wantDecision      pb.DecisionType
+		wantCode          string
+		subReasonHas      string
+		wantVerifierCalls int
+	}{
+		{"real_ref_allows", real.ApprovalRef, real, pb.DecisionType_DECISION_TYPE_ALLOW, "", "", 1},
+		{"fake_ref_denies_not_found", "appr_fake", nil, pb.DecisionType_DECISION_TYPE_DENY, CodeNotFound, "approval_not_found", 0},
+		{"mismatched_ref_conflicts", mismatched.ApprovalRef, mismatched, pb.DecisionType_DECISION_TYPE_DENY, CodeConflict, "approval_mismatch", 0},
+		{"consumed_ref_conflicts", consumed.ApprovalRef, consumed, pb.DecisionType_DECISION_TYPE_DENY, CodeConflict, "consumed", 0},
+		{"expired_ref_conflicts", expired.ApprovalRef, expired, pb.DecisionType_DECISION_TYPE_DENY, CodeConflict, "expired", 0},
+		{"pending_status_conflicts", pending.ApprovalRef, pending, pb.DecisionType_DECISION_TYPE_DENY, CodeConflict, "approval_status_pending", 0},
+		{"rejected_decision_conflicts", rejected.ApprovalRef, rejected, pb.DecisionType_DECISION_TYPE_DENY, CodeConflict, "approval_decision_reject", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			action := provMutationAction()
+			action.ApprovalClaim = &config.ActionApprovalClaim{ApprovalRef: tc.approvalRef}
+			refRecords := map[string]*edge.EdgeApproval{approvalRefKey("tnt_a", real.ApprovalRef): real}
+			if tc.refApproval != nil {
+				refRecords[approvalRefKey("tnt_a", tc.approvalRef)] = tc.refApproval
+			}
+			lookup := &fakeApprovalLookup{
+				records:    map[string]*edge.EdgeApproval{approvalHashKey("tnt_a", hash): real},
+				refRecords: refRecords,
+			}
+			verifier := &trackingChainVerifier{outcome: ChainVerifyOutcome{Status: ChainStatusOK}}
+			gate := NewProvenanceGate(ProvenanceGateOptions{Approvals: lookup, ChainVerifier: verifier})
+			dec := gate.Evaluate(provAuthCtx(), &config.PolicyInput{Action: action})
+			assertProvenanceDecision(t, dec, tc.wantDecision, tc.wantCode, tc.subReasonHas)
+			if verifier.calls != tc.wantVerifierCalls {
+				t.Fatalf("chain verifier calls = %d, want %d", verifier.calls, tc.wantVerifierCalls)
 			}
 		})
 	}

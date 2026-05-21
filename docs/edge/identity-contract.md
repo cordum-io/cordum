@@ -133,6 +133,13 @@ ApprovalRef is the public-facing reference for an Edge approval —
 clients see it in the evaluate response, dashboard renders it in the
 URL, and resolvers act on it.
 
+During action-gate evaluation, a caller-presented `approval_ref` is the
+primary lookup key. The gateway resolves that exact ref inside the
+authenticated tenant and only then compares the resolved record's
+`action_hash` to the current canonical action hash. A fake or
+cross-tenant ref must miss/fail closed even if another approved record
+exists for the same `action_hash`.
+
 ### States and transitions
 
 `core/edge/approval.go:5-13` `ApprovalStatus` has these values:
@@ -153,6 +160,10 @@ state — it is a one-time use marker. EDGE-042's
 consumes an `approved` record on the first matching retry; subsequent
 retries see no reusable approval and a fresh approval is enqueued
 under a NEW approval_ref.
+
+Evaluation does not consume. The single-use transition happens only in
+the existing `ClaimApproval` CAS path when execution/retry presents the
+bound `approval_ref` with the matching tuple and policy snapshot.
 
 ### Fresh-deny (no approval enqueued)
 

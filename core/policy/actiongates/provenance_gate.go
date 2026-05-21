@@ -73,14 +73,15 @@ type ProvenanceGateOptions struct {
 //     with the verbatim UnverifiedClaimReason.
 //  2. No claim at all → REQUIRE_HUMAN (system should issue an approval).
 //  3. ApprovalRef resolves to no record → DENY/not_found.
-//  4. Approval belongs to a different tenant → DENY/access_denied/approval_tenant_mismatch.
+//  4. Resolved approval is tenant/self/status/decision/consumed/expired/hash invalid
+//     → DENY with the same stable code/sub_reason as MutationGate.
 //  5. Chain verification reports compromised → DENY/internal_error/audit_chain_compromised.
 //  6. Chain verifier reports an evidence gap → DENY/internal_error/audit_evidence_missing.
 //  7. Verifier error or nil verifier → DENY/internal_error fail-closed.
 //
-// The mutation gate is responsible for the surface validation of an
-// approval record (status/decision/expiry/consumption/hash). The
-// provenance gate concentrates on backend-verified evidence. Both run.
+// Like MutationGate, ProvenanceGate resolves approval_ref first and compares
+// the resolved record's ActionHash second. Evaluate remains side-effect free:
+// execute-time single-use consumption stays in the Edge ClaimApproval CAS path.
 type ProvenanceGate struct {
 	approvals     ApprovalLookup
 	chainVerifier ChainVerifier
@@ -135,18 +136,9 @@ func (g *ProvenanceGate) Evaluate(ctx context.Context, in *config.PolicyInput) A
 		return provDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeInternalError,
 			"approval lookup unavailable", "approval_lookup_failed:nil_lookup")
 	}
-	approval, ok, err := g.approvals.LookupByActionHash(ctx, actx.Tenant, CanonicalActionHash(act))
-	if err != nil {
-		return provDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeInternalError,
-			"approval lookup failed", "approval_lookup_failed:"+sanitizeErr(err))
-	}
-	if !ok || approval == nil {
-		return provDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeNotFound,
-			"no approval record for this action", "approval_not_found")
-	}
-	if approval.TenantID != actx.Tenant {
-		return provDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeAccessDenied,
-			"approval is for a different tenant", "approval_tenant_mismatch")
+	approval, failure := bindApprovalRef(ctx, g.approvals, actx, act, act.ApprovalClaim.ApprovalRef)
+	if failure.failed() {
+		return provDecision(failure.Decision, act, failure.Code, failure.Reason, failure.SubReason)
 	}
 
 	if g.chainVerifier == nil {

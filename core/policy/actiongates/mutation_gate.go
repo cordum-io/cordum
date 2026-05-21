@@ -7,10 +7,8 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/cordum/cordum/core/controlplane/gateway/auth"
-	"github.com/cordum/cordum/core/edge"
 	"github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 )
@@ -21,11 +19,16 @@ import (
 //
 // The gate trusts neither ApprovalClaim.ClaimText ("approved by CFO") nor
 // any tenant claim on the action body. Authorization is granted only when
-// the backend resolves ApprovalClaim.ApprovalRef to an EdgeApproval that
-// (a) belongs to the auth tenant, (b) is not self-approved, (c) is in
+// the backend resolves the caller-supplied ApprovalClaim.ApprovalRef to
+// that exact EdgeApproval, and the resolved record (a) belongs to the
+// auth tenant, (b) is not self-approved, (c) is in
 // status "approved" with decision "approve", (d) has not been consumed,
 // (e) has not expired, and (f) carries an ActionHash matching the
 // canonical hash of the current descriptor.
+//
+// Evaluate is side-effect free: it never consumes the approval. The
+// execute-time single-use transition belongs to the Edge approval
+// ClaimApproval CAS path after the caller presents the bound ref.
 type MutationGate struct {
 	approvals ApprovalLookup
 	resources ResourceLookup
@@ -104,43 +107,9 @@ func (g *MutationGate) Evaluate(ctx context.Context, in *config.PolicyInput) Act
 			"destructive action requires human approval", "missing_approval")
 	}
 
-	hash := CanonicalActionHash(act)
-	if g.approvals == nil {
-		return mutDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeInternalError,
-			"approval lookup unavailable", "approval_lookup_failed:nil_lookup")
-	}
-	approval, ok, err := g.approvals.LookupByActionHash(ctx, actx.Tenant, hash)
-	if err != nil {
-		return mutDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeInternalError,
-			"approval lookup failed", "approval_lookup_failed:"+sanitizeErr(err))
-	}
-	if !ok || approval == nil {
-		return mutDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeNotFound,
-			"no approval record for this action", "approval_not_found")
-	}
-
-	if approval.TenantID != actx.Tenant {
-		return mutDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeAccessDenied,
-			"approval is for a different tenant", "approval_tenant_mismatch")
-	}
-	if approval.ResolverID != "" && approval.ResolverID == actx.PrincipalID {
-		return mutDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeAccessDenied,
-			"self-approval is not allowed", "self_approval")
-	}
-	if approval.Status != edge.ApprovalStatusApproved {
-		return mutConflict(act, "approval_status_"+string(approval.Status))
-	}
-	if approval.Decision != edge.ApprovalDecisionApprove {
-		return mutConflict(act, "approval_decision_"+string(approval.Decision))
-	}
-	if approval.ConsumedAt != nil {
-		return mutConflict(act, "approval_consumed")
-	}
-	if approval.ExpiresAt != nil && time.Now().UTC().After(*approval.ExpiresAt) {
-		return mutConflict(act, "approval_expired")
-	}
-	if approval.ActionHash != hash {
-		return mutConflict(act, "approval_mismatch")
+	approval, failure := bindApprovalRef(ctx, g.approvals, actx, act, act.ApprovalClaim.ApprovalRef)
+	if failure.failed() {
+		return mutDecision(failure.Decision, act, failure.Code, failure.Reason, failure.SubReason)
 	}
 
 	if g.resources != nil && act.TargetResource != nil && strings.TrimSpace(act.TargetResource.ID) != "" {
@@ -176,11 +145,6 @@ func mutDecision(decision pb.DecisionType, act *config.ActionDescriptor, code, r
 		SubReason: sub,
 		Extra:     mutExtra(act, sub),
 	}
-}
-
-func mutConflict(act *config.ActionDescriptor, sub string) ActionGateDecision {
-	return mutDecision(pb.DecisionType_DECISION_TYPE_DENY, act, CodeConflict,
-		"approval cannot be used for this action", sub)
 }
 
 func mutExtra(act *config.ActionDescriptor, sub string) map[string]string {

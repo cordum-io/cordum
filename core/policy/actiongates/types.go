@@ -86,11 +86,18 @@ type ActionGate interface {
 	Evaluate(ctx context.Context, input *config.PolicyInput) ActionGateDecision
 }
 
-// ApprovalLookup resolves a CanonicalActionHash (or scoped tenant key) to the
-// most recent matching Cordum EdgeApproval record. Implementations MUST be
-// safe for concurrent use and MUST respect ctx cancellation. A miss is
-// signalled by (nil, false, nil); errors propagate as (nil, false, err).
+// ApprovalLookup resolves Cordum EdgeApproval records for action gates.
+// Authorization gates MUST resolve the caller-supplied approval_ref with
+// LookupByApprovalRef, then compare the returned record's ActionHash against
+// CanonicalActionHash(input.Action) before allowing. LookupByActionHash is kept
+// for explicit audit / legacy lookup needs and must not be used as a substitute
+// for binding a user-supplied approval_ref. Implementations MUST be safe for
+// concurrent use and MUST respect ctx cancellation. A miss is signalled by
+// (nil, false, nil); errors propagate as (nil, false, err) and gates fail
+// closed. Lookup methods must not consume approvals; single-use mutation is
+// owned by the Edge approval claim/CAS path at execute time.
 type ApprovalLookup interface {
+	LookupByApprovalRef(ctx context.Context, tenant string, approvalRef string) (*edge.EdgeApproval, bool, error)
 	LookupByActionHash(ctx context.Context, tenant string, actionHash string) (*edge.EdgeApproval, bool, error)
 }
 
