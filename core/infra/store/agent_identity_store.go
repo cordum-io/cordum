@@ -228,6 +228,7 @@ func (s *AgentIdentityStore) List(ctx context.Context, tenantID, cursor string, 
 	var results []*AgentIdentity
 	var lastScore float64
 	var itemsAtLastScore int64
+	processedAny := false
 	scanOffset := resumeOffset
 	scanMin := minScore
 
@@ -245,14 +246,13 @@ func (s *AgentIdentityStore) List(ctx context.Context, tenantID, cursor string, 
 			break // exhausted the sorted set
 		}
 
+		processedInBatch := 0
 		for _, z := range members {
 			if len(results) >= limit {
 				break
 			}
-			id, ok := z.Member.(string)
-			if !ok {
-				continue
-			}
+			processedInBatch++
+			processedAny = true
 			// Track items consumed per score bucket. Reset when crossing into
 			// a new score so the next-page offset is scoped to that bucket.
 			if z.Score != lastScore {
@@ -261,6 +261,10 @@ func (s *AgentIdentityStore) List(ctx context.Context, tenantID, cursor string, 
 			}
 			itemsAtLastScore++
 
+			id, ok := z.Member.(string)
+			if !ok {
+				continue
+			}
 			identity, err := s.Get(ctx, tenantID, id)
 			if err != nil {
 				slog.Warn("list agent identities: skip unreadable entry", "id", id, "error", err)
@@ -275,26 +279,14 @@ func (s *AgentIdentityStore) List(ctx context.Context, tenantID, cursor string, 
 			results = append(results, identity)
 		}
 
-		// Advance scan position for the next batch. Use the last member's
-		// score as the new min to avoid re-scanning lower scores.
-		lastMember := members[len(members)-1]
-		if lastMember.Score == lastScore {
-			// Still in the same score bucket — advance offset within it.
-			scanOffset += int64(len(members))
-		} else {
-			// Crossed into a new score — advance min and count items at the new score.
-			scanMin = strconv.FormatFloat(lastMember.Score, 'f', -1, 64)
-			// Re-count items at the new score from this batch.
-			var countAtNew int64
-			for i := len(members) - 1; i >= 0; i-- {
-				if members[i].Score == lastMember.Score {
-					countAtNew++
-				} else {
-					break
-				}
-			}
-			scanOffset = countAtNew
+		if processedInBatch == 0 {
+			break
 		}
+		// Advance internal scanning by only the members this call actually
+		// processed. A fetched Redis batch may contain entries beyond the
+		// requested page limit; using len(members) here would skip those
+		// unprocessed records on the next page.
+		scanOffset += int64(processedInBatch)
 	}
 
 	// Build the next-page cursor.
@@ -306,7 +298,7 @@ func (s *AgentIdentityStore) List(ctx context.Context, tenantID, cursor string, 
 	//     bucket, so offset is just items consumed at lastScore on this page.
 	//     The new min=lastScore already skips everything below.
 	nextCursorStr := ""
-	if len(results) >= limit && lastScore > 0 {
+	if len(results) >= limit && processedAny {
 		var nextOffset int64
 		if hasCursorScore && lastScore == cursorScoreF {
 			nextOffset = resumeOffset + itemsAtLastScore

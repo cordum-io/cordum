@@ -603,6 +603,83 @@ func TestAgentIdentityListPaginationLargeSameScore(t *testing.T) {
 	}
 }
 
+func TestAgentIdentityListPaginationLimitFillsInsideFetchedBatch(t *testing.T) {
+	s := newTestAgentIdentityStore(t)
+	ctx := context.Background()
+
+	const (
+		totalItems = 75
+		pageLimit  = 50
+		tenantID   = "tenant-a"
+		score      = 1000000000.0
+	)
+	expected := make(map[string]struct{}, totalItems)
+	for i := range totalItems {
+		id := fmt.Sprintf("agent-midbatch-%03d", i)
+		identity := AgentIdentity{
+			TenantID: tenantID,
+			ID:       id,
+			Name:     fmt.Sprintf("agent midbatch %03d", i),
+			Owner:    "admin",
+			RiskTier: "low",
+			Status:   "active",
+		}
+		if _, err := s.Create(ctx, identity); err != nil {
+			t.Fatalf("Create %s: %v", id, err)
+		}
+		if err := s.client.ZAdd(ctx, agentIdentityIndexKey, redis.Z{
+			Score:  score,
+			Member: id,
+		}).Err(); err != nil {
+			t.Fatalf("force score for %s: %v", id, err)
+		}
+		expected[id] = struct{}{}
+	}
+
+	first, cursor, err := s.List(ctx, tenantID, "", pageLimit, AgentIdentityFilter{})
+	if err != nil {
+		t.Fatalf("List first page: %v", err)
+	}
+	if len(first) != pageLimit {
+		t.Fatalf("first page length = %d, want %d", len(first), pageLimit)
+	}
+	if cursor == "" {
+		t.Fatal("first page cursor is empty; expected cursor for remaining records")
+	}
+	second, nextCursor, err := s.List(ctx, tenantID, cursor, pageLimit, AgentIdentityFilter{})
+	if err != nil {
+		t.Fatalf("List second page: %v", err)
+	}
+	if len(second) != totalItems-pageLimit {
+		t.Fatalf("second page length = %d, want %d", len(second), totalItems-pageLimit)
+	}
+	if nextCursor != "" {
+		t.Fatalf("second page cursor = %q, want empty after exhausting records", nextCursor)
+	}
+	assertAgentIDPagesCoverExpected(t, [][]*AgentIdentity{first, second}, expected)
+}
+
+func assertAgentIDPagesCoverExpected(t *testing.T, pages [][]*AgentIdentity, expected map[string]struct{}) {
+	t.Helper()
+	seen := make(map[string]struct{}, len(expected))
+	for _, page := range pages {
+		for _, identity := range page {
+			if _, duplicate := seen[identity.ID]; duplicate {
+				t.Fatalf("duplicate ID in pagination: %s", identity.ID)
+			}
+			seen[identity.ID] = struct{}{}
+		}
+	}
+	if len(seen) != len(expected) {
+		t.Fatalf("paginated ID count = %d, want %d", len(seen), len(expected))
+	}
+	for id := range expected {
+		if _, ok := seen[id]; !ok {
+			t.Fatalf("missing identity %s in paginated results", id)
+		}
+	}
+}
+
 func TestAgentIdentityListPaginationMixedScores(t *testing.T) {
 	// Regression test: pagination must work when pages cross score boundaries.
 	// Repro from QA: scores [1,1,2,2,2,3] with limit=2 must return all 6 items.

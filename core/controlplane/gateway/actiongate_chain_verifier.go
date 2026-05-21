@@ -17,6 +17,16 @@ import (
 
 var errAuditChainVerifierUnavailable = errors.New("audit chain verifier unavailable")
 
+const (
+	// approvalEvidenceScanMaxEvents is a dedicated guardrail for exact
+	// approval-evidence lookup. It intentionally exceeds audit's default
+	// one-page verify limit so busy tenants do not false-deny when the
+	// approval event sits just past the first 10k entries, while still
+	// bounding Redis stream work per verification.
+	approvalEvidenceScanMaxEvents = audit.MaxVerifyLimit
+	approvalEvidenceScanPageSize  = audit.DefaultVerifyLimit
+)
+
 type auditChainApprovalVerifier struct {
 	client  redis.UniversalClient
 	chainer *audit.Chainer
@@ -180,14 +190,35 @@ func approvalEvidenceExists(
 	if approval == nil || strings.TrimSpace(approval.ApprovalRef) == "" || strings.TrimSpace(approval.ActionHash) == "" {
 		return false, nil
 	}
-	entries, err := client.XRangeN(ctx, streamKey, streamMinID(opts), streamMaxID(opts), verifyScanLimit(opts)).Result()
-	if err != nil {
-		return false, fmt.Errorf("scan approval evidence: %w", err)
-	}
-	for _, entry := range entries {
-		if approvalEvidenceEntryMatches(entry, approval) {
-			return true, nil
+	maxEvents := approvalEvidenceScanCap(opts)
+	cursor := streamMinID(opts)
+	maxID := streamMaxID(opts)
+	var scanned int64
+	for scanned < maxEvents {
+		if err := ctx.Err(); err != nil {
+			return false, fmt.Errorf("scan approval evidence: %w", err)
 		}
+		pageSize := approvalEvidenceScanPageSize
+		if remaining := maxEvents - scanned; remaining < pageSize {
+			pageSize = remaining
+		}
+		entries, err := client.XRangeN(ctx, streamKey, cursor, maxID, pageSize).Result()
+		if err != nil {
+			return false, fmt.Errorf("scan approval evidence: %w", err)
+		}
+		if len(entries) == 0 {
+			return false, nil
+		}
+		for _, entry := range entries {
+			scanned++
+			if approvalEvidenceEntryMatches(entry, approval) {
+				return true, nil
+			}
+			if scanned >= maxEvents {
+				return false, nil
+			}
+		}
+		cursor = "(" + entries[len(entries)-1].ID
 	}
 	return false, nil
 }
@@ -229,6 +260,13 @@ func streamMaxID(opts audit.VerifyOptions) string {
 		return "+"
 	}
 	return strconv.FormatInt(opts.UntilMs, 10) + "-18446744073709551615"
+}
+
+func approvalEvidenceScanCap(opts audit.VerifyOptions) int64 {
+	if opts.Limit > 0 {
+		return verifyScanLimit(opts)
+	}
+	return approvalEvidenceScanMaxEvents
 }
 
 func verifyScanLimit(opts audit.VerifyOptions) int64 {

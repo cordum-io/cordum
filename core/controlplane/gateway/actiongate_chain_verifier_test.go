@@ -134,6 +134,18 @@ func TestAuditChainApprovalVerifier_RequiresExactApprovalEvidence(t *testing.T) 
 		requireApprovalEvidenceGap(t, outcome)
 	})
 
+	t.Run("wrong action hash is an evidence gap", func(t *testing.T) {
+		t.Parallel()
+		client, _, chainer := newVerifierTestChain(t, nil)
+		approval := approvalWindow("tenant-wrong-action-hash")
+		appendApprovalEvidenceEvent(t, chainer, approval, func(ev *audit.SIEMEvent) {
+			ev.Extra["action_hash"] = "action_hash_other"
+		})
+
+		outcome := verifyApprovalForTest(t, client, chainer, approval)
+		requireApprovalEvidenceGap(t, outcome)
+	})
+
 	t.Run("wrong approval ref is an evidence gap", func(t *testing.T) {
 		t.Parallel()
 		client, _, chainer := newVerifierTestChain(t, nil)
@@ -180,6 +192,87 @@ func TestAuditChainApprovalVerifier_RequiresExactApprovalEvidence(t *testing.T) 
 		outcome := verifyApprovalForTest(t, client, chainer, approval)
 		if outcome.Status != actiongates.ChainStatusOK || outcome.HasEvidenceGap {
 			t.Fatalf("outcome = %+v, want OK without evidence gap", outcome)
+		}
+	})
+}
+
+func TestAuditChainApprovalVerifier_FindsApprovalEvidenceBeyondDefaultScanLimit(t *testing.T) {
+	client, _, chainer := newVerifierTestChain(t, nil)
+	approval := approvalWindow("tenant-high-volume-evidence")
+	appendVerifierTestEvents(t, chainer, approval.TenantID, int(audit.DefaultVerifyLimit)+1)
+	appendApprovalEvidenceEvent(t, chainer, approval, nil)
+
+	outcome := verifyApprovalForTest(t, client, chainer, approval)
+	if outcome.Status != actiongates.ChainStatusOK || outcome.HasEvidenceGap {
+		t.Fatalf("outcome = %+v, want OK without evidence gap after %d unrelated events",
+			outcome, audit.DefaultVerifyLimit+1)
+	}
+}
+
+func TestApprovalEvidenceExists_FailClosedEdges(t *testing.T) {
+	t.Run("malformed event json is ignored", func(t *testing.T) {
+		t.Parallel()
+		client, _, chainer := newVerifierTestChain(t, nil)
+		approval := approvalWindow("tenant-malformed-evidence")
+		if err := client.XAdd(context.Background(), &redis.XAddArgs{
+			Stream: chainer.StreamKey(approval.TenantID),
+			Values: map[string]any{"event": "{not-json"},
+		}).Err(); err != nil {
+			t.Fatalf("append malformed evidence candidate: %v", err)
+		}
+
+		found, err := approvalEvidenceExists(
+			context.Background(),
+			client,
+			chainer.StreamKey(approval.TenantID),
+			auditVerifyOptionsForApproval(approval, time.Now().UTC()),
+			approval,
+		)
+		if err != nil {
+			t.Fatalf("approvalEvidenceExists returned error for malformed event: %v", err)
+		}
+		if found {
+			t.Fatal("malformed event JSON matched approval evidence")
+		}
+	})
+
+	t.Run("cap exhaustion fails closed before exact evidence", func(t *testing.T) {
+		client, _, chainer := newVerifierTestChain(t, nil)
+		approval := approvalWindow("tenant-cap-exhausted")
+		appendVerifierTestEvents(t, chainer, approval.TenantID, 2)
+		appendApprovalEvidenceEvent(t, chainer, approval, nil)
+		opts := auditVerifyOptionsForApproval(approval, time.Now().UTC())
+		opts.Limit = 2
+
+		found, err := approvalEvidenceExists(context.Background(), client, chainer.StreamKey(approval.TenantID), opts, approval)
+		if err != nil {
+			t.Fatalf("approvalEvidenceExists cap exhaustion returned error: %v", err)
+		}
+		if found {
+			t.Fatal("approval evidence matched after explicit scan cap was exhausted")
+		}
+	})
+
+	t.Run("stream read error surfaces bounded error", func(t *testing.T) {
+		client, srv, chainer := newVerifierTestChain(t, nil)
+		approval := approvalWindow("tenant-read-error")
+		srv.Close()
+
+		found, err := approvalEvidenceExists(
+			context.Background(),
+			client,
+			chainer.StreamKey(approval.TenantID),
+			auditVerifyOptionsForApproval(approval, time.Now().UTC()),
+			approval,
+		)
+		if err == nil {
+			t.Fatal("approvalEvidenceExists returned nil error after Redis shutdown")
+		}
+		if found {
+			t.Fatal("approval evidence matched despite Redis read error")
+		}
+		if msg := err.Error(); !strings.Contains(msg, "scan approval evidence") || strings.Contains(msg, approval.ActionHash) {
+			t.Fatalf("error = %q, want bounded scan error without raw approval payload", msg)
 		}
 	})
 }
@@ -264,6 +357,12 @@ func requireApprovalEvidenceGap(t *testing.T, outcome actiongates.ChainVerifyOut
 	}
 	if !strings.HasPrefix(outcome.Detail, "approval_evidence_missing:") {
 		t.Fatalf("Detail = %q, want approval evidence gap without raw event contents", outcome.Detail)
+	}
+	if len(outcome.Detail) > len("approval_evidence_missing:")+16 {
+		t.Fatalf("Detail = %q, want bounded approval ref prefix only", outcome.Detail)
+	}
+	if strings.Contains(outcome.Detail, "action_hash_") || strings.ContainsAny(outcome.Detail, "{}") {
+		t.Fatalf("Detail = %q, want no raw event JSON or action hash", outcome.Detail)
 	}
 }
 
