@@ -20,6 +20,7 @@ import (
 	runtimeconfig "github.com/cordum/cordum/core/infra/config"
 	pb "github.com/cordum/cordum/core/protocol/pb/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -99,7 +100,11 @@ func TestPolicyEvaluate_RealSafetyKernelDoesNotRegateGatewayApprovedAction(t *te
 	action := approvedPolicyEvaluateAction(t, ctx, s, "tenant-real-safety", "real-safety")
 	s.wireActionGatePipeline()
 	conn := startRealSafetyKernel(t)
-	defer conn.Close()
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("close safety kernel client: %v", err)
+		}
+	})
 	s.safetyClient = pb.NewSafetyKernelClient(conn)
 
 	rec := httptest.NewRecorder()
@@ -164,20 +169,35 @@ func startRealSafetyKernel(t *testing.T) *grpc.ClientConn {
 
 func dialTestSafetyKernel(t *testing.T, addr string, errCh <-chan error) *grpc.ClientConn {
 	t.Helper()
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("create safety kernel client: %v", err)
+	}
+	conn.Connect()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		conn, err := grpc.DialContext(ctx, addr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
-		cancel()
-		if err == nil {
+		state := conn.GetState()
+		if state == connectivity.Ready {
 			return conn
+		}
+		if state == connectivity.Shutdown {
+			t.Fatalf("safety kernel client shut down before connecting to %s", addr)
 		}
 		select {
 		case runErr := <-errCh:
+			if closeErr := conn.Close(); closeErr != nil {
+				t.Logf("close unready safety kernel client: %v", closeErr)
+			}
 			t.Fatalf("safety kernel exited before accepting connections: %v", runErr)
 		default:
-			time.Sleep(25 * time.Millisecond)
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		conn.WaitForStateChange(ctx, state)
+		cancel()
+		conn.Connect()
+	}
+	if err := conn.Close(); err != nil {
+		t.Logf("close unready safety kernel client: %v", err)
 	}
 	t.Fatalf("safety kernel did not listen on %s before deadline", addr)
 	return nil
