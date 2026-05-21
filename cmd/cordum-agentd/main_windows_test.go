@@ -4,12 +4,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"strconv"
+	"syscall"
 	"testing"
 	"time"
 )
+
+const wsaenotsock syscall.Errno = 10038
 
 func TestInheritedListenerFromWindowsHandleEnvServesReadiness(t *testing.T) {
 	base, err := net.Listen("tcp", "127.0.0.1:0")
@@ -27,12 +31,15 @@ func TestInheritedListenerFromWindowsHandleEnvServesReadiness(t *testing.T) {
 		t.Fatalf("listener file: %v", err)
 	}
 	t.Cleanup(func() { _ = file.Close() })
-	if err := base.Close(); err != nil {
-		t.Fatalf("close original listener: %v", err)
+	inheritedHandle, err := duplicateInheritableHandle(syscall.Handle(file.Fd()))
+	if err != nil {
+		_ = base.Close()
+		t.Fatalf("duplicate listener handle: %v", err)
 	}
+	closeOriginalListenerAfterFile(t, base)
 
 	inherited, err := inheritedListenerFromEnv(map[string]string{
-		"CORDUM_AGENTD_LISTENER_HANDLE": strconv.FormatUint(uint64(file.Fd()), 10),
+		"CORDUM_AGENTD_LISTENER_HANDLE": strconv.FormatUint(uint64(inheritedHandle), 10),
 	})
 	if err != nil {
 		t.Fatalf("inheritedListenerFromEnv returned error: %v", err)
@@ -74,4 +81,33 @@ func TestInheritedListenerFromWindowsHandleEnvServesReadiness(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusNoContent)
 	}
+}
+
+func closeOriginalListenerAfterFile(t *testing.T, ln net.Listener) {
+	t.Helper()
+	if err := ln.Close(); err != nil && !isBenignWindowsListenerCloseError(err) {
+		t.Fatalf("close original listener: %v", err)
+	}
+}
+
+func isBenignWindowsListenerCloseError(err error) bool {
+	return errors.Is(err, net.ErrClosed) || errors.Is(err, wsaenotsock)
+}
+
+func duplicateInheritableHandle(handle syscall.Handle) (syscall.Handle, error) {
+	var duplicate syscall.Handle
+	currentProcess, err := syscall.GetCurrentProcess()
+	if err != nil {
+		return 0, err
+	}
+	err = syscall.DuplicateHandle(
+		currentProcess,
+		handle,
+		currentProcess,
+		&duplicate,
+		0,
+		true,
+		syscall.DUPLICATE_SAME_ACCESS,
+	)
+	return duplicate, err
 }
