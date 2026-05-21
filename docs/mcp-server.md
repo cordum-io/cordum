@@ -109,10 +109,19 @@ gate to off if required deps (action-gate pipeline, event emitter,
 policy snapshot) are missing — the boot log then reports
 `policy_gate_active=false` so misconfigured deploys are visible.
 
-#### ALLOW_WITH_CONSTRAINTS contract
+#### Constraint decisions
 
-When a gate returns `ALLOW_WITH_CONSTRAINTS` with a structured
-`_constraints` map, the constraint payload propagates to both pre and
+The production action-gate pipeline is a blockers/approval path: gates
+allow, deny, throttle, or mint/consume approval holds, but they do not
+emit enforceable generic runtime constraints. Do not rely on an
+action-gate `_constraints` map for single-use approval or other runtime
+limits; those semantics are enforced by the approval store consume path.
+
+`ALLOW_WITH_CONSTRAINTS` remains a compatibility/future-typed dispatcher
+shape for policy-bundle/SafetyKernel constraints and fake-dispatcher
+tests outside the production action-gate pipeline. When such a
+non-actiongate dispatcher returns `ALLOW_WITH_CONSTRAINTS` with a
+structured constraint payload, the payload propagates to both pre and
 post events:
 
 - `event.Decision = constrain` (NOT `allow`)
@@ -121,12 +130,12 @@ post events:
   across hook + MCP surfaces)
 - `event.ErrorMessage` empty (AWC is an allow, just bounded)
 
-If upstream fails after an AWC verdict, the resulting
+If upstream fails after that compatibility/future-typed verdict, the resulting
 `mcp.tool.failed` event still records `Decision=constrain` +
-the constraint map so the audit trail preserves the gate's intent.
+the constraint map so the audit trail preserves the dispatcher intent.
 
 The operator-facing log line carries `constraint_count=<N>` so AWC
-volume spikes are greppable, but never the constraint values
+volume from those non-actiongate paths is greppable, but never the constraint values
 themselves (CLAUDE.md security rail — constraint values may carry
 sensitive policy detail; the full map lives on the audit-bound event
 plus the artifact pointer for forensics).
