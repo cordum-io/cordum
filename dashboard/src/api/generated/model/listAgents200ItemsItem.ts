@@ -15,7 +15,13 @@ export type ListAgents200ItemsItem = {
   risk_tier?: string;
   allowed_topics?: string[];
   allowed_pools?: string[];
+  /** MCP server-name glob allowlist. Empty or omitted fail-closes server-guarded MCP actions. */
+  allowed_servers?: string[];
   allowed_tools?: string[];
+  /** cordum:// resource URI glob allowlist. Empty or omitted fail-closes resource-guarded MCP actions. */
+  allowed_resources?: string[];
+  /** Capability tokens the identity holds for MCP required-entitlement checks. */
+  entitlements?: string[];
   data_classifications?: string[];
   status?: string;
   created_at?: string;

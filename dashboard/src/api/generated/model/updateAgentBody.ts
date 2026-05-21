@@ -15,6 +15,12 @@ export type UpdateAgentBody = {
   status?: string;
   allowed_topics?: string[];
   allowed_pools?: string[];
+  /** Full replacement MCP server-name glob allowlist. Send [] to clear. */
+  allowed_servers?: string[];
   allowed_tools?: string[];
+  /** Full replacement cordum:// resource URI glob allowlist. Send [] to clear. */
+  allowed_resources?: string[];
+  /** Full replacement capability-token list. Send [] to clear. */
+  entitlements?: string[];
   data_classifications?: string[];
 };
