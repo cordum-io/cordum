@@ -75,6 +75,166 @@ func TestCreateAgent(t *testing.T) {
 	}
 }
 
+func TestAgentIdentityAPISurfacesMCPAllowlists(t *testing.T) {
+	s, _, _ := newTestGateway(t)
+	enableAgentIdentityEntitlement(t, s)
+	ctx := context.Background()
+
+	created := createAgentWithMCPAllowlists(t, s)
+	requireAgentMCPFields(t, created, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+
+	stored, err := s.agentIdentityStore.Get(ctx, "default", created.ID)
+	if err != nil {
+		t.Fatalf("get stored agent: %v", err)
+	}
+	requireStoreMCPFields(t, stored, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+
+	got := getAgentViaHandler(t, s, created.ID)
+	requireAgentMCPFields(t, got, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+
+	listed := listAgentViaHandler(t, s, created.ID)
+	requireAgentMCPFields(t, listed, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+
+	updated := updateAgentMCPAllowlists(t, s, created.ID)
+	requireAgentMCPFields(t, updated, []string{"stage-mcp"}, []string{"repo.*"}, nil, []string{"repo.write"})
+	afterUpdate, err := s.agentIdentityStore.Get(ctx, "default", created.ID)
+	if err != nil {
+		t.Fatalf("get updated stored agent: %v", err)
+	}
+	requireStoreMCPFields(t, afterUpdate, []string{"stage-mcp"}, []string{"repo.*"}, []string{}, []string{"repo.write"})
+	assertStringSlice(t, "AllowedTopics preserved", afterUpdate.AllowedTopics, []string{"job.repo"})
+	assertStringSlice(t, "DataClassifications preserved", afterUpdate.DataClassifications, []string{"internal"})
+}
+
+func TestAgentResponseFromIdentityCopiesAllowlistSlices(t *testing.T) {
+	src := &store.AgentIdentity{
+		ID: "agent-copy", Name: "copy", Owner: "admin", RiskTier: "high", Status: "active",
+		AllowedServers: []string{"prod-mcp"}, AllowedTools: []string{"repo.*"},
+		AllowedResources: []string{"cordum://repos/*"}, Entitlements: []string{"repo.read"},
+	}
+	resp := agentResponseFromIdentity(src)
+	resp.AllowedServers[0] = "mutated-server"
+	resp.AllowedTools[0] = "mutated-tool"
+	resp.AllowedResources[0] = "mutated-resource"
+	resp.Entitlements[0] = "mutated-entitlement"
+	requireStoreMCPFields(t, src, []string{"prod-mcp"}, []string{"repo.*"}, []string{"cordum://repos/*"}, []string{"repo.read"})
+}
+
+func createAgentWithMCPAllowlists(t *testing.T, s *server) agentResponse {
+	t.Helper()
+	body := bytes.NewBufferString(`{
+		"name":"repo-bot","owner":"admin","risk_tier":"high",
+		"allowed_topics":["job.repo"],"allowed_tools":["repo.*"],
+		"allowed_servers":["prod-mcp"],"allowed_resources":["cordum://repos/*"],
+		"entitlements":["repo.read"],"data_classifications":["internal"]
+	}`)
+	req := withAuth(httptest.NewRequest(http.MethodPost, "/api/v1/agents", body), &auth.AuthContext{
+		Tenant: "default", Role: "admin", PrincipalID: "admin-user",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	s.handleCreateAgent(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create agent: got %d: %s", rr.Code, rr.Body.String())
+	}
+	return decodeAgentResponse(t, rr)
+}
+
+func getAgentViaHandler(t *testing.T, s *server, id string) agentResponse {
+	t.Helper()
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+id, nil), &auth.AuthContext{
+		Tenant: "default", Role: "admin", PrincipalID: "admin-user",
+	})
+	req.SetPathValue("id", id)
+	rr := httptest.NewRecorder()
+	s.handleGetAgent(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("get agent: got %d: %s", rr.Code, rr.Body.String())
+	}
+	return decodeAgentResponse(t, rr)
+}
+
+func listAgentViaHandler(t *testing.T, s *server, id string) agentResponse {
+	t.Helper()
+	req := withAuth(httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil), &auth.AuthContext{
+		Tenant: "default", Role: "admin", PrincipalID: "admin-user",
+	})
+	rr := httptest.NewRecorder()
+	s.handleListAgents(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list agents: got %d: %s", rr.Code, rr.Body.String())
+	}
+	var listResp struct {
+		Items []agentResponse `json:"items"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	for _, item := range listResp.Items {
+		if item.ID == id {
+			return item
+		}
+	}
+	t.Fatalf("agent %s not found in list response", id)
+	return agentResponse{}
+}
+
+func updateAgentMCPAllowlists(t *testing.T, s *server, id string) agentResponse {
+	t.Helper()
+	body := bytes.NewBufferString(`{
+		"allowed_servers":["stage-mcp"],
+		"allowed_resources":[],
+		"entitlements":["repo.write"]
+	}`)
+	req := withAuth(httptest.NewRequest(http.MethodPut, "/api/v1/agents/"+id, body), &auth.AuthContext{
+		Tenant: "default", Role: "admin", PrincipalID: "admin-user",
+	})
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", id)
+	rr := httptest.NewRecorder()
+	s.handleUpdateAgent(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("update agent: got %d: %s", rr.Code, rr.Body.String())
+	}
+	return decodeAgentResponse(t, rr)
+}
+
+func decodeAgentResponse(t *testing.T, rr *httptest.ResponseRecorder) agentResponse {
+	t.Helper()
+	var resp agentResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode agent response: %v", err)
+	}
+	return resp
+}
+
+func requireAgentMCPFields(
+	t *testing.T,
+	got agentResponse,
+	servers, tools, resources, entitlements []string,
+) {
+	t.Helper()
+	assertStringSlice(t, "response AllowedServers", got.AllowedServers, servers)
+	assertStringSlice(t, "response AllowedTools", got.AllowedTools, tools)
+	assertStringSlice(t, "response AllowedResources", got.AllowedResources, resources)
+	assertStringSlice(t, "response Entitlements", got.Entitlements, entitlements)
+}
+
+func requireStoreMCPFields(
+	t *testing.T,
+	got *store.AgentIdentity,
+	servers, tools, resources, entitlements []string,
+) {
+	t.Helper()
+	if got == nil {
+		t.Fatal("stored identity is nil")
+	}
+	assertStringSlice(t, "store AllowedServers", got.AllowedServers, servers)
+	assertStringSlice(t, "store AllowedTools", got.AllowedTools, tools)
+	assertStringSlice(t, "store AllowedResources", got.AllowedResources, resources)
+	assertStringSlice(t, "store Entitlements", got.Entitlements, entitlements)
+}
+
 func TestCreateAgentValidation(t *testing.T) {
 	s, _, _ := newTestGateway(t)
 	enableAgentIdentityEntitlement(t, s)

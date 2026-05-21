@@ -44,15 +44,22 @@ var Origin = time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 // Agent captures the subset of the real AgentIdentity record the
 // conformance fixtures care about.
 type Agent struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Owner       string            `json:"owner"`
-	RiskTier    string            `json:"risk_tier"`
-	Description string            `json:"description,omitempty"`
-	Status      string            `json:"status"`
-	Labels      map[string]string `json:"labels,omitempty"`
-	CreatedAt   string            `json:"created_at"`
-	UpdatedAt   string            `json:"updated_at"`
+	ID                  string            `json:"id"`
+	Name                string            `json:"name"`
+	Owner               string            `json:"owner"`
+	RiskTier            string            `json:"risk_tier"`
+	Description         string            `json:"description,omitempty"`
+	Status              string            `json:"status"`
+	AllowedServers      []string          `json:"allowed_servers,omitempty"`
+	AllowedTools        []string          `json:"allowed_tools,omitempty"`
+	AllowedResources    []string          `json:"allowed_resources,omitempty"`
+	Entitlements        []string          `json:"entitlements,omitempty"`
+	AllowedTopics       []string          `json:"allowed_topics,omitempty"`
+	AllowedPools        []string          `json:"allowed_pools,omitempty"`
+	DataClassifications []string          `json:"data_classifications,omitempty"`
+	Labels              map[string]string `json:"labels,omitempty"`
+	CreatedAt           string            `json:"created_at"`
+	UpdatedAt           string            `json:"updated_at"`
 }
 
 // Job is the submitted-job state the fixtures track.

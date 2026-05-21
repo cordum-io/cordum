@@ -159,6 +159,9 @@ func (b *stubMutatingBridge) SetAgentScope(_ context.Context, req SetAgentScopeI
 	return &SetAgentScopeOutput{
 		AgentID:                  req.AgentID,
 		AllowedTools:             req.AllowedTools,
+		AllowedServers:           req.AllowedServers,
+		AllowedResources:         req.AllowedResources,
+		Entitlements:             req.Entitlements,
 		PreapprovedMutatingTools: req.PreapprovedMutatingTools,
 	}, nil
 }
@@ -260,11 +263,41 @@ func TestUpdatePolicyBundleHandler_ForwardsContentAndSurfacesSignature(t *testin
 	}
 }
 
+func TestRegisterAgentHandler_ForwardsMCPAllowlists(t *testing.T) {
+	t.Parallel()
+	bridge := &stubMutatingBridge{}
+	handler := registerAgentHandler(bridge)
+	_, err := handler(context.Background(), json.RawMessage(`{
+		"name":"repo-bot","owner":"platform","risk_tier":"high",
+		"allowed_servers":["prod-mcp"],"allowed_tools":["repo.*"],
+		"allowed_resources":["cordum://repos/*"],"entitlements":["repo.read"]
+	}`))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(bridge.lastRegisterAgentInput.AllowedServers) != 1 {
+		t.Fatalf("allowed_servers not forwarded: %+v", bridge.lastRegisterAgentInput)
+	}
+	if len(bridge.lastRegisterAgentInput.AllowedResources) != 1 {
+		t.Fatalf("allowed_resources not forwarded: %+v", bridge.lastRegisterAgentInput)
+	}
+	if len(bridge.lastRegisterAgentInput.Entitlements) != 1 {
+		t.Fatalf("entitlements not forwarded: %+v", bridge.lastRegisterAgentInput)
+	}
+}
+
 func TestSetAgentScopeHandler_SendsBothScopeLists(t *testing.T) {
 	t.Parallel()
 	bridge := &stubMutatingBridge{}
 	handler := setAgentScopeHandler(bridge)
-	_, err := handler(context.Background(), json.RawMessage(`{"agent_id":"a","allowed_tools":["x","y"],"preapproved_mutating_tools":["cordum_install_pack"]}`))
+	_, err := handler(context.Background(), json.RawMessage(`{
+		"agent_id":"a",
+		"allowed_tools":["x","y"],
+		"allowed_servers":["prod-mcp"],
+		"allowed_resources":["cordum://repos/*"],
+		"entitlements":["repo.read"],
+		"preapproved_mutating_tools":["cordum_install_pack"]
+	}`))
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -273,5 +306,14 @@ func TestSetAgentScopeHandler_SendsBothScopeLists(t *testing.T) {
 	}
 	if len(bridge.lastSetAgentScopeInput.PreapprovedMutatingTools) != 1 {
 		t.Fatalf("preapproved_mutating_tools not forwarded: %+v", bridge.lastSetAgentScopeInput)
+	}
+	if len(bridge.lastSetAgentScopeInput.AllowedServers) != 1 {
+		t.Fatalf("allowed_servers not forwarded: %+v", bridge.lastSetAgentScopeInput)
+	}
+	if len(bridge.lastSetAgentScopeInput.AllowedResources) != 1 {
+		t.Fatalf("allowed_resources not forwarded: %+v", bridge.lastSetAgentScopeInput)
+	}
+	if len(bridge.lastSetAgentScopeInput.Entitlements) != 1 {
+		t.Fatalf("entitlements not forwarded: %+v", bridge.lastSetAgentScopeInput)
 	}
 }

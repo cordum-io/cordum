@@ -227,6 +227,64 @@ func TestAgentIdentityUpdate(t *testing.T) {
 	}
 }
 
+func TestAgentIdentityMCPAllowlistsCreateAndUpdate(t *testing.T) {
+	s := newTestAgentIdentityStore(t)
+	ctx := context.Background()
+
+	created, err := s.Create(ctx, AgentIdentity{
+		Name:             "mcp-agent",
+		Owner:            "admin",
+		RiskTier:         "high",
+		AllowedServers:   []string{" prod-mcp ", "prod-mcp", "ci-mcp"},
+		AllowedTools:     []string{"repo.*"},
+		AllowedResources: []string{"cordum://repos/*", " cordum://docs/* "},
+		Entitlements:     []string{"repo.read", "repo.read", "billing.export"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	assertStoreStrings(t, "AllowedServers", created.AllowedServers, []string{"ci-mcp", "prod-mcp"})
+	assertStoreStrings(t, "AllowedResources", created.AllowedResources, []string{"cordum://docs/*", "cordum://repos/*"})
+	assertStoreStrings(t, "Entitlements", created.Entitlements, []string{"billing.export", "repo.read"})
+
+	updated, err := s.Update(ctx, "", created.ID, AgentIdentity{
+		AllowedServers:   []string{"staging-mcp"},
+		AllowedResources: []string{},
+		Entitlements:     []string{"repo.write"},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	assertStoreStrings(t, "AllowedServers update", updated.AllowedServers, []string{"staging-mcp"})
+	assertStoreStrings(t, "AllowedResources clear", updated.AllowedResources, []string{})
+	assertStoreStrings(t, "Entitlements update", updated.Entitlements, []string{"repo.write"})
+	assertStoreStrings(t, "AllowedTools preserved", updated.AllowedTools, []string{"repo.*"})
+}
+
+func TestAgentIdentityGetNormalizesMissingMCPAllowlists(t *testing.T) {
+	s := newTestAgentIdentityStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	raw := fmt.Sprintf(`{
+		"id":"legacy-agent","name":"legacy","owner":"admin","risk_tier":"high",
+		"status":"active","created_at":%q,"updated_at":%q
+	}`, now, now)
+	if err := s.client.Set(ctx, agentIdentityKeyPrefix+"legacy-agent", raw, 0).Err(); err != nil {
+		t.Fatalf("seed legacy identity: %v", err)
+	}
+
+	got, err := s.Get(ctx, "", "legacy-agent")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected legacy identity")
+	}
+	assertStoreStrings(t, "AllowedServers legacy", got.AllowedServers, []string{})
+	assertStoreStrings(t, "AllowedResources legacy", got.AllowedResources, []string{})
+	assertStoreStrings(t, "Entitlements legacy", got.Entitlements, []string{})
+}
+
 func TestAgentIdentityDelete(t *testing.T) {
 	s := newTestAgentIdentityStore(t)
 	ctx := context.Background()
@@ -405,6 +463,18 @@ func TestAgentIdentityGetNotFound(t *testing.T) {
 
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && containsSubstr(s, substr)
+}
+
+func assertStoreStrings(t *testing.T, name string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s length = %d (%v), want %d (%v)", name, len(got), got, len(want), want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("%s[%d] = %q, want %q (full=%v)", name, i, got[i], want[i], got)
+		}
+	}
 }
 
 func TestAgentIdentityListPaginationLargeSameScore(t *testing.T) {

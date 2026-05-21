@@ -89,7 +89,10 @@ type RegisterAgentInput struct {
 	RiskTier            string   `json:"risk_tier"`
 	AllowedTopics       []string `json:"allowed_topics,omitempty"`
 	AllowedPools        []string `json:"allowed_pools,omitempty"`
+	AllowedServers      []string `json:"allowed_servers,omitempty"`
 	AllowedTools        []string `json:"allowed_tools,omitempty"`
+	AllowedResources    []string `json:"allowed_resources,omitempty"`
+	Entitlements        []string `json:"entitlements,omitempty"`
 	DataClassifications []string `json:"data_classifications,omitempty"`
 	IdempotencyKey      string   `json:"idempotency_key,omitempty"`
 }
@@ -147,6 +150,9 @@ type SetAgentScopeInput struct {
 	AllowedTools             []string `json:"allowed_tools,omitempty"`
 	AllowedTopics            []string `json:"allowed_topics,omitempty"`
 	AllowedPools             []string `json:"allowed_pools,omitempty"`
+	AllowedServers           []string `json:"allowed_servers,omitempty"`
+	AllowedResources         []string `json:"allowed_resources,omitempty"`
+	Entitlements             []string `json:"entitlements,omitempty"`
 	DataClassifications      []string `json:"data_classifications,omitempty"`
 	PreapprovedMutatingTools []string `json:"preapproved_mutating_tools,omitempty"`
 	Status                   string   `json:"status,omitempty"`
@@ -158,6 +164,9 @@ type SetAgentScopeOutput struct {
 	AllowedTools             []string `json:"allowed_tools,omitempty"`
 	AllowedTopics            []string `json:"allowed_topics,omitempty"`
 	AllowedPools             []string `json:"allowed_pools,omitempty"`
+	AllowedServers           []string `json:"allowed_servers,omitempty"`
+	AllowedResources         []string `json:"allowed_resources,omitempty"`
+	Entitlements             []string `json:"entitlements,omitempty"`
 	DataClassifications      []string `json:"data_classifications,omitempty"`
 	PreapprovedMutatingTools []string `json:"preapproved_mutating_tools,omitempty"`
 	Status                   string   `json:"status,omitempty"`

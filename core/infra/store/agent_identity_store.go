@@ -47,7 +47,10 @@ type AgentIdentity struct {
 	RiskTier                 string   `json:"risk_tier"`
 	AllowedTopics            []string `json:"allowed_topics,omitempty"`
 	AllowedPools             []string `json:"allowed_pools,omitempty"`
+	AllowedServers           []string `json:"allowed_servers,omitempty"`
 	AllowedTools             []string `json:"allowed_tools,omitempty"`
+	AllowedResources         []string `json:"allowed_resources,omitempty"`
+	Entitlements             []string `json:"entitlements,omitempty"`
 	PreapprovedMutatingTools []string `json:"preapproved_mutating_tools,omitempty"`
 	DataClassifications      []string `json:"data_classifications,omitempty"`
 	Status                   string   `json:"status"`
@@ -161,6 +164,7 @@ func (s *AgentIdentityStore) Get(ctx context.Context, tenantID, id string) (*Age
 	if err := json.Unmarshal(data, &identity); err != nil {
 		return nil, fmt.Errorf("unmarshal agent identity %s: %w", id, err)
 	}
+	identity = normalizeAgentIdentity(identity)
 	if tenantID = strings.TrimSpace(tenantID); tenantID != "" {
 		if strings.TrimSpace(identity.TenantID) != tenantID {
 			return nil, nil
@@ -357,8 +361,17 @@ func (s *AgentIdentityStore) Update(ctx context.Context, tenantID, id string, up
 	if updates.AllowedPools != nil {
 		existing.AllowedPools = updates.AllowedPools
 	}
+	if updates.AllowedServers != nil {
+		existing.AllowedServers = updates.AllowedServers
+	}
 	if updates.AllowedTools != nil {
 		existing.AllowedTools = updates.AllowedTools
+	}
+	if updates.AllowedResources != nil {
+		existing.AllowedResources = updates.AllowedResources
+	}
+	if updates.Entitlements != nil {
+		existing.Entitlements = updates.Entitlements
 	}
 	if updates.PreapprovedMutatingTools != nil {
 		existing.PreapprovedMutatingTools = updates.PreapprovedMutatingTools
@@ -511,7 +524,10 @@ func normalizeAgentIdentity(a AgentIdentity) AgentIdentity {
 	a.Status = strings.ToLower(strings.TrimSpace(a.Status))
 	a.AllowedTopics = normalizeStringSlice(a.AllowedTopics)
 	a.AllowedPools = normalizeStringSlice(a.AllowedPools)
+	a.AllowedServers = normalizeStringSlice(a.AllowedServers)
 	a.AllowedTools = normalizeStringSlice(a.AllowedTools)
+	a.AllowedResources = normalizeStringSlice(a.AllowedResources)
+	a.Entitlements = normalizeStringSlice(a.Entitlements)
 	a.PreapprovedMutatingTools = normalizeStringSlice(a.PreapprovedMutatingTools)
 	a.DataClassifications = normalizeStringSlice(a.DataClassifications)
 	return a

@@ -25,7 +25,10 @@ type createAgentRequest struct {
 	RiskTier            string   `json:"risk_tier"`
 	AllowedTopics       []string `json:"allowed_topics,omitempty"`
 	AllowedPools        []string `json:"allowed_pools,omitempty"`
+	AllowedServers      []string `json:"allowed_servers,omitempty"`
 	AllowedTools        []string `json:"allowed_tools,omitempty"`
+	AllowedResources    []string `json:"allowed_resources,omitempty"`
+	Entitlements        []string `json:"entitlements,omitempty"`
 	DataClassifications []string `json:"data_classifications,omitempty"`
 }
 
@@ -38,7 +41,10 @@ type updateAgentRequest struct {
 	Status              string   `json:"status,omitempty"`
 	AllowedTopics       []string `json:"allowed_topics,omitempty"`
 	AllowedPools        []string `json:"allowed_pools,omitempty"`
+	AllowedServers      []string `json:"allowed_servers,omitempty"`
 	AllowedTools        []string `json:"allowed_tools,omitempty"`
+	AllowedResources    []string `json:"allowed_resources,omitempty"`
+	Entitlements        []string `json:"entitlements,omitempty"`
 	DataClassifications []string `json:"data_classifications,omitempty"`
 }
 
@@ -51,7 +57,10 @@ type agentResponse struct {
 	RiskTier            string   `json:"risk_tier"`
 	AllowedTopics       []string `json:"allowed_topics,omitempty"`
 	AllowedPools        []string `json:"allowed_pools,omitempty"`
+	AllowedServers      []string `json:"allowed_servers,omitempty"`
 	AllowedTools        []string `json:"allowed_tools,omitempty"`
+	AllowedResources    []string `json:"allowed_resources,omitempty"`
+	Entitlements        []string `json:"entitlements,omitempty"`
 	DataClassifications []string `json:"data_classifications,omitempty"`
 	Status              string   `json:"status"`
 	CreatedAt           string   `json:"created_at"`
@@ -67,14 +76,26 @@ func agentResponseFromIdentity(a *store.AgentIdentity) agentResponse {
 		Owner:               a.Owner,
 		Team:                a.Team,
 		RiskTier:            a.RiskTier,
-		AllowedTopics:       a.AllowedTopics,
-		AllowedPools:        a.AllowedPools,
-		AllowedTools:        a.AllowedTools,
-		DataClassifications: a.DataClassifications,
+		AllowedTopics:       cloneAgentStrings(a.AllowedTopics),
+		AllowedPools:        cloneAgentStrings(a.AllowedPools),
+		AllowedServers:      cloneAgentStrings(a.AllowedServers),
+		AllowedTools:        cloneAgentStrings(a.AllowedTools),
+		AllowedResources:    cloneAgentStrings(a.AllowedResources),
+		Entitlements:        cloneAgentStrings(a.Entitlements),
+		DataClassifications: cloneAgentStrings(a.DataClassifications),
 		Status:              a.Status,
 		CreatedAt:           a.CreatedAt,
 		UpdatedAt:           a.UpdatedAt,
 	}
+}
+
+func cloneAgentStrings(in []string) []string {
+	if len(in) == 0 {
+		return []string{}
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
 }
 
 func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +130,10 @@ func (s *server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 		RiskTier:            strings.TrimSpace(req.RiskTier),
 		AllowedTopics:       req.AllowedTopics,
 		AllowedPools:        req.AllowedPools,
+		AllowedServers:      req.AllowedServers,
 		AllowedTools:        req.AllowedTools,
+		AllowedResources:    req.AllowedResources,
+		Entitlements:        req.Entitlements,
 		DataClassifications: req.DataClassifications,
 	}
 
@@ -324,7 +348,10 @@ func (s *server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		Status:              strings.TrimSpace(req.Status),
 		AllowedTopics:       req.AllowedTopics,
 		AllowedPools:        req.AllowedPools,
+		AllowedServers:      req.AllowedServers,
 		AllowedTools:        req.AllowedTools,
+		AllowedResources:    req.AllowedResources,
+		Entitlements:        req.Entitlements,
 		DataClassifications: req.DataClassifications,
 	}
 

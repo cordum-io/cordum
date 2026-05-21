@@ -7394,9 +7394,21 @@ paths:
                         allowed_pools:
                           type: array
                           items: {type: string}
+                        allowed_servers:
+                          type: array
+                          items: {type: string}
+                          description: MCP server-name glob allowlist. Empty or omitted fail-closes server-guarded MCP actions.
                         allowed_tools:
                           type: array
                           items: {type: string}
+                        allowed_resources:
+                          type: array
+                          items: {type: string}
+                          description: cordum:// resource URI glob allowlist. Empty or omitted fail-closes resource-guarded MCP actions.
+                        entitlements:
+                          type: array
+                          items: {type: string}
+                          description: Capability tokens the identity holds for MCP required-entitlement checks.
                         data_classifications:
                           type: array
                           items: {type: string}
@@ -7442,9 +7454,21 @@ paths:
                 allowed_pools:
                   type: array
                   items: {type: string}
+                allowed_servers:
+                  type: array
+                  items: {type: string}
+                  description: MCP server-name glob allowlist. Empty or omitted fail-closes server-guarded MCP actions.
                 allowed_tools:
                   type: array
                   items: {type: string}
+                allowed_resources:
+                  type: array
+                  items: {type: string}
+                  description: cordum:// resource URI glob allowlist. Empty or omitted fail-closes resource-guarded MCP actions.
+                entitlements:
+                  type: array
+                  items: {type: string}
+                  description: Capability tokens the identity holds for MCP required-entitlement checks.
                 data_classifications:
                   type: array
                   items: {type: string}
@@ -7525,9 +7549,21 @@ paths:
                 allowed_pools:
                   type: array
                   items: {type: string}
+                allowed_servers:
+                  type: array
+                  items: {type: string}
+                  description: Full replacement MCP server-name glob allowlist. Send [] to clear.
                 allowed_tools:
                   type: array
                   items: {type: string}
+                allowed_resources:
+                  type: array
+                  items: {type: string}
+                  description: Full replacement cordum:// resource URI glob allowlist. Send [] to clear.
+                entitlements:
+                  type: array
+                  items: {type: string}
+                  description: Full replacement capability-token list. Send [] to clear.
                 data_classifications:
                   type: array
                   items: {type: string}

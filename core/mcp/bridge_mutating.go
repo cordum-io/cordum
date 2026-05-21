@@ -185,8 +185,17 @@ func (b *HTTPServiceBridge) RegisterAgent(ctx context.Context, req RegisterAgent
 	if len(req.AllowedPools) > 0 {
 		body["allowed_pools"] = append([]string{}, req.AllowedPools...)
 	}
+	if len(req.AllowedServers) > 0 {
+		body["allowed_servers"] = append([]string{}, req.AllowedServers...)
+	}
 	if len(req.AllowedTools) > 0 {
 		body["allowed_tools"] = append([]string{}, req.AllowedTools...)
+	}
+	if len(req.AllowedResources) > 0 {
+		body["allowed_resources"] = append([]string{}, req.AllowedResources...)
+	}
+	if len(req.Entitlements) > 0 {
+		body["entitlements"] = append([]string{}, req.Entitlements...)
 	}
 	if len(req.DataClassifications) > 0 {
 		body["data_classifications"] = append([]string{}, req.DataClassifications...)
@@ -296,6 +305,15 @@ func (b *HTTPServiceBridge) SetAgentScope(ctx context.Context, req SetAgentScope
 	if req.AllowedPools != nil {
 		body["allowed_pools"] = append([]string{}, req.AllowedPools...)
 	}
+	if req.AllowedServers != nil {
+		body["allowed_servers"] = append([]string{}, req.AllowedServers...)
+	}
+	if req.AllowedResources != nil {
+		body["allowed_resources"] = append([]string{}, req.AllowedResources...)
+	}
+	if req.Entitlements != nil {
+		body["entitlements"] = append([]string{}, req.Entitlements...)
+	}
 	if req.DataClassifications != nil {
 		body["data_classifications"] = append([]string{}, req.DataClassifications...)
 	}
@@ -330,6 +348,9 @@ func (b *HTTPServiceBridge) SetAgentScope(ctx context.Context, req SetAgentScope
 	out.AllowedTools = collectStrings("allowed_tools")
 	out.AllowedTopics = collectStrings("allowed_topics")
 	out.AllowedPools = collectStrings("allowed_pools")
+	out.AllowedServers = collectStrings("allowed_servers")
+	out.AllowedResources = collectStrings("allowed_resources")
+	out.Entitlements = collectStrings("entitlements")
 	out.DataClassifications = collectStrings("data_classifications")
 	out.PreapprovedMutatingTools = collectStrings("preapproved_mutating_tools")
 	return out, nil
