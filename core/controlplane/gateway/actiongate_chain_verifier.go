@@ -18,11 +18,11 @@ import (
 var errAuditChainVerifierUnavailable = errors.New("audit chain verifier unavailable")
 
 const (
-	// approvalEvidenceScanMaxEvents is a dedicated guardrail for exact
-	// approval-evidence lookup. It intentionally exceeds audit's default
-	// one-page verify limit so busy tenants do not false-deny when the
-	// approval event sits just past the first 10k entries, while still
-	// bounding Redis stream work per verification.
+	// approvalEvidenceScanMaxEvents is the shared guardrail for approval chain
+	// verification plus exact approval-evidence lookup. It intentionally
+	// exceeds audit's default one-page verify limit so busy tenants do not
+	// false-deny when the approval event sits just past the first 10k entries,
+	// while still bounding Redis stream work per verification.
 	approvalEvidenceScanMaxEvents = audit.MaxVerifyLimit
 	approvalEvidenceScanPageSize  = audit.DefaultVerifyLimit
 )
@@ -62,6 +62,7 @@ func (v *auditChainApprovalVerifier) VerifyForApproval(
 	if v.chainer.HMACEnabled() {
 		opts.HMACKey = v.chainer.HMACKeyForVerify()
 	}
+	opts.Limit = approvalEvidenceScanCap(opts)
 	result, err := auditVerifyChainFn(ctx, v.client, streamKey, opts)
 	if err != nil {
 		return actiongates.ChainVerifyOutcome{}, err

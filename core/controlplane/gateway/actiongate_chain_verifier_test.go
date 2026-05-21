@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -209,6 +210,22 @@ func TestAuditChainApprovalVerifier_FindsApprovalEvidenceBeyondDefaultScanLimit(
 	}
 }
 
+func TestAuditChainApprovalVerifier_RejectsCorruptEvidenceBeyondDefaultScanLimit(t *testing.T) {
+	client, _, chainer := newVerifierTestChain(t, nil)
+	approval := approvalWindow("tenant-corrupt-high-volume-evidence")
+	appendVerifierTestEvents(t, chainer, approval.TenantID, int(audit.DefaultVerifyLimit)+1)
+	appendCorruptApprovalEvidenceEvent(t, client, chainer, approval)
+
+	outcome := verifyApprovalForTest(t, client, chainer, approval)
+	if outcome.Status != actiongates.ChainStatusCompromised {
+		t.Fatalf("status = %q, want %q for corrupt evidence beyond %d events: %+v",
+			outcome.Status, actiongates.ChainStatusCompromised, audit.DefaultVerifyLimit, outcome)
+	}
+	if strings.Contains(outcome.Detail, approval.ActionHash) || strings.ContainsAny(outcome.Detail, "{}") {
+		t.Fatalf("Detail = %q, want bounded corruption detail without raw approval evidence", outcome.Detail)
+	}
+}
+
 func TestApprovalEvidenceExists_FailClosedEdges(t *testing.T) {
 	t.Run("malformed event json is ignored", func(t *testing.T) {
 		t.Parallel()
@@ -345,6 +362,61 @@ func appendApprovalEvidenceEvent(
 	if err := chainer.Append(context.Background(), &event); err != nil {
 		t.Fatalf("append approval evidence: %v", err)
 	}
+}
+
+func appendCorruptApprovalEvidenceEvent(
+	t *testing.T,
+	client redis.UniversalClient,
+	chainer *audit.Chainer,
+	approval *edgecore.EdgeApproval,
+) {
+	t.Helper()
+	last := readLastVerifierEvent(t, client, chainer.StreamKey(approval.TenantID))
+	event := audit.SIEMEvent{
+		Timestamp: approval.CreatedAt.Add(time.Minute),
+		EventType: audit.EventEdgeApprovalRequested,
+		Severity:  audit.SeverityMedium,
+		TenantID:  approval.TenantID,
+		Action:    "edge_approval_requested",
+		Decision:  "require_approval",
+		Extra: map[string]string{
+			"approval_ref": approval.ApprovalRef,
+			"action_hash":  approval.ActionHash,
+		},
+		Seq:       last.Seq + 1,
+		PrevHash:  last.EventHash,
+		EventHash: "corrupt_event_hash",
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("marshal corrupt approval evidence: %v", err)
+	}
+	if err := client.XAdd(context.Background(), &redis.XAddArgs{
+		Stream: chainer.StreamKey(approval.TenantID),
+		Values: map[string]any{"seq": strconv.FormatInt(event.Seq, 10), "event": string(payload)},
+	}).Err(); err != nil {
+		t.Fatalf("append corrupt approval evidence: %v", err)
+	}
+}
+
+func readLastVerifierEvent(t *testing.T, client redis.UniversalClient, streamKey string) audit.SIEMEvent {
+	t.Helper()
+	entries, err := client.XRevRangeN(context.Background(), streamKey, "+", "-", 1).Result()
+	if err != nil {
+		t.Fatalf("xrevrange last audit event: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("last audit event count = %d, want 1", len(entries))
+	}
+	payload, ok := entries[0].Values["event"].(string)
+	if !ok || payload == "" {
+		t.Fatalf("last audit event missing event payload: %#v", entries[0].Values)
+	}
+	var event audit.SIEMEvent
+	if err := json.Unmarshal([]byte(payload), &event); err != nil {
+		t.Fatalf("unmarshal last audit event: %v", err)
+	}
+	return event
 }
 
 func requireApprovalEvidenceGap(t *testing.T, outcome actiongates.ChainVerifyOutcome) {
